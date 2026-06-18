@@ -1,6 +1,8 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{poseidon2_hash, Transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64, Poseidon16};
+use fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
+
+const W: usize = 16;
 use std::ops::Add;
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
@@ -53,7 +55,7 @@ where
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
-        let mut hash: Transcript<F, Poseidon16, 16> = Transcript::new();
+        let mut hash = new_transcript::<F>(&pctx.global_info.hash);
         hash.put(&values_to_hash);
         let contribution = hash.get_state();
 
@@ -62,15 +64,16 @@ where
                 values_row[i] = *v;
             }
         } else {
-            for (i, v) in contribution.iter().enumerate().take(16) {
+            for (i, v) in contribution.iter().enumerate().take(W) {
                 values_row[i] = *v;
             }
-            let n_hashes = contributions_size / 16 - 1;
+            let n_hashes = contributions_size / W - 1;
             for j in 0..n_hashes {
-                let mut input: [F; 16] = [F::ZERO; 16];
-                input.copy_from_slice(&values_row[(j * 16)..((j + 1) * 16)]);
-                let output = poseidon2_hash::<F, Poseidon16, 16>(&input);
-                values_row[((j + 1) * 16)..((j + 2) * 16)].copy_from_slice(&output[..16]);
+                let base = j * W;
+                let mut state: [F; W] = [F::ZERO; W];
+                state.copy_from_slice(&values_row[base..base + W]);
+                hash_state(&pctx.global_info.hash, &mut state);
+                values_row[(j + 1) * W..(j + 2) * W].copy_from_slice(&state[..W]);
             }
         }
     });
@@ -89,7 +92,7 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
+    let mut transcript = new_transcript::<F>(&pctx.global_info.hash);
 
     transcript.put(&pctx.get_publics());
 

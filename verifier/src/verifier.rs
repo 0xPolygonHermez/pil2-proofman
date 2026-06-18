@@ -6,9 +6,12 @@ use alloc::vec::Vec;
 use num_traits::Float;
 
 use fields::{
-    intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
-    Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,
+    intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
+    Transcript,
 };
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -99,7 +102,7 @@ pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
 }
 
 #[allow(clippy::type_complexity)]
-pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
+pub fn stark_verify<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &VerifierInfo,
@@ -115,7 +118,13 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         &[Vec<Goldilocks>],
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
-) -> bool {
+) -> bool
+where
+    LeafHash: Hash<Goldilocks>,
+    CompressionHash: Hash<Goldilocks>,
+    TranscriptHash: Hash<Goldilocks>,
+    GrindingHash: Hash<Goldilocks>,
+{
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }
@@ -335,13 +344,14 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
-    let mut transcript: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
+    let mut transcript: Transcript<Goldilocks, TranscriptHash> = Transcript::<Goldilocks, TranscriptHash>::new();
     transcript.put(&root_c);
     if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
+            let mut transcript_publics: Transcript<Goldilocks, TranscriptHash> =
+                Transcript::<Goldilocks, TranscriptHash>::new();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash[0..4]);
@@ -362,7 +372,8 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
+        let mut transcript_evals: Transcript<Goldilocks, TranscriptHash> =
+            Transcript::<Goldilocks, TranscriptHash>::new();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }
@@ -388,7 +399,8 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                     transcript.put(&final_pol[j as usize].value);
                 }
             } else {
-                let mut transcript_final_pol: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
+                let mut transcript_final_pol: Transcript<Goldilocks, TranscriptHash> =
+                    Transcript::<Goldilocks, TranscriptHash>::new();
                 for j in 0..final_pol_size {
                     transcript_final_pol.put(&final_pol[j as usize].value);
                 }
@@ -400,17 +412,25 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     transcript.get_field(&mut challenges[c].value);
     let last_challenge_index = challenges.len() - 1;
-    let pow_hash = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&[
-        challenges[last_challenge_index].value[0],
-        challenges[last_challenge_index].value[1],
-        challenges[last_challenge_index].value[2],
-        nonce,
-    ]);
-    if pow_hash[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
+    // Proof-of-work grinding hash. Uses its own fixed-width hash (Poseidon2_8 for
+    // Poseidon2, Poseidon1_8 for Poseidon1), independent of the transcript/Merkle
+    // widths. The input `[c0, c1, c2, nonce]` is written into a zero-padded state
+    // of the grinding hash's width and permuted in place; the check reads cell 0.
+    let mut pow_state = <GrindingHash as Hash<Goldilocks>>::State::default();
+    {
+        let state = pow_state.as_mut();
+        state[0] = challenges[last_challenge_index].value[0];
+        state[1] = challenges[last_challenge_index].value[1];
+        state[2] = challenges[last_challenge_index].value[2];
+        state[3] = nonce;
+    }
+    <GrindingHash as Hash<Goldilocks>>::hash(&mut pow_state);
+    if pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
         v_error!("Proof of work verification failed");
         return false;
     }
-    let mut transcript_permutation: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
+    let mut transcript_permutation: Transcript<Goldilocks, TranscriptHash> =
+        Transcript::<Goldilocks, TranscriptHash>::new();
     transcript_permutation.put(&challenges[last_challenge_index].value);
     transcript_permutation.put(&[nonce]);
     let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);
@@ -463,9 +483,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     v_debug!("Verifying proof");
 
-    let all_valid = (0..n_queries).into_iter().all(|q| {
+    let check_query = |q: usize| -> bool {
         // 1) Fixed MT
-        if !verify_mt::<Goldilocks, C, W>(
+        if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
             &root_c,
             &s0_last_levels[0],
             &s0_siblings[q][0],
@@ -480,7 +500,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
         // 2) stage MTs
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
-            if !verify_mt::<Goldilocks, C, W>(
+            if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
                 root,
                 &s0_last_levels[s + 1],
                 &s0_siblings[q][s + 1],
@@ -514,7 +534,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         // 4) FRI folding && MT
         for s in 0..verifier_info.n_fri_steps - 1 {
             let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
-            if !verify_mt::<Goldilocks, C, W>(
+            if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
                 &roots_fri[s as usize],
                 &last_levels_fri[s as usize],
                 &siblings_fri[q][s as usize],
@@ -555,7 +575,12 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         }
 
         true
-    });
+    };
+
+    #[cfg(feature = "parallel")]
+    let all_valid = (0..n_queries).into_par_iter().all(check_query);
+    #[cfg(not(feature = "parallel"))]
+    let all_valid = (0..n_queries).all(check_query);
 
     if !all_valid {
         return false;
@@ -568,7 +593,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         }
 
         for s in 0..verifier_info.n_stages + 1 {
-            let computed_root = partial_merkle_tree::<Goldilocks, C, W>(
+            let computed_root = partial_merkle_tree::<Goldilocks, CompressionHash>(
                 &s0_last_levels[s as usize + 1],
                 num_nodes_level,
                 verifier_info.arity,
@@ -581,8 +606,11 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             }
         }
 
-        let computed_root_c =
-            partial_merkle_tree::<Goldilocks, C, W>(&s0_last_levels[0], num_nodes_level, verifier_info.arity);
+        let computed_root_c = partial_merkle_tree::<Goldilocks, CompressionHash>(
+            &s0_last_levels[0],
+            num_nodes_level,
+            verifier_info.arity,
+        );
 
         for i in 0..4 {
             if computed_root_c[i] != root_c[i] {
@@ -596,7 +624,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             while num_nodes_level > verifier_info.arity.pow(verifier_info.last_level_verification as u32) {
                 num_nodes_level = num_nodes_level.div_ceil(verifier_info.arity);
             }
-            let computed_root = partial_merkle_tree::<Goldilocks, C, W>(
+            let computed_root = partial_merkle_tree::<Goldilocks, CompressionHash>(
                 &last_levels_fri[s as usize],
                 num_nodes_level,
                 verifier_info.arity,

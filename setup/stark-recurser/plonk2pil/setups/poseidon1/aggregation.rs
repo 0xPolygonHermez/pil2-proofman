@@ -1,0 +1,546 @@
+//! Aggregation setup.
+//! 62 committed pols, 30 S cols, 5 rows/Poseidon1, 3 CMul/row.
+
+use super::super::super::r1cs::to_plonk::{
+    ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk,
+};
+use super::super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use super::{gen_pil_str, PilTemplateParams};
+use proofman_common::hash_family::GateRole;
+use std::collections::HashMap;
+
+const COMMITTED_POLS: usize = 62;
+const N_COLS: usize = 30;
+const POSEIDON_ROWS: usize = 5;
+const COL_P1: usize = 30; // chain 1 slot (width-16: cols 30..45)
+const COL_P2: usize = 46; // chain 2 slot (width-16: cols 46..61)
+const CMUL_PER_ROW: usize = 3;
+const POSEIDON_WIDTH: usize = 16;
+
+fn rand_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
+}
+
+type PR = (usize, usize, usize); // (row, n_used, max_used)
+
+pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+    let (plonk_constraints, plonk_additions) = r1cs2plonk(r1cs);
+    tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
+
+    let mut cgi = get_custom_gates_info(r1cs);
+    let n_poseidon1_compression = cgi.n(GateRole::PoseidonCompression);
+    let n_poseidon1_sponge = cgi.n(GateRole::PoseidonSponge);
+    let n_total_poseidon = n_poseidon1_compression + n_poseidon1_sponge;
+    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW);
+    let n_poseidon_rows = n_total_poseidon * POSEIDON_ROWS;
+    let n_fft4_rows = cgi.n(GateRole::Fft4);
+    let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
+    let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector);
+    let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
+
+    // Plonk piggyback tiers. CHECK_PLONK fires at PR', PR, FINAL' — those rows expose
+    // all 10 plonk gates → ten_extra. FINAL exposes gates 6,7,8,9 (a[18..29] free) →
+    // four tier. INIT exposes only gates 8,9 (a[24..29]; a[18..23] hold overflow anchors)
+    // → two tier, alongside SelectVal1. EvPol4 → three tier. TreeSelector8 consumes the
+    // entire plonk band a[0..29] — no piggyback.
+    let ten_count = n_total_poseidon * 3; // PR' + PR + FINAL'
+    let four_count = n_total_poseidon; // FINAL row
+    let three_count = n_ev_pol4_rows;
+    let two_count = n_sel_val1_rows + n_total_poseidon; // SelectVal1 + INIT row
+    let _ = n_tree_sel8_rows;
+
+    cgi.n_plonk_rows = {
+        let mut partial: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut half: Vec<(usize, usize)> = Vec::new();
+        let (mut ten, mut four, mut three, mut two) = (ten_count, four_count, three_count, two_count);
+        let mut rows = 0usize;
+        for c in &plonk_constraints {
+            let k = ckey(c);
+            if let Some(pr) = partial.get_mut(&k) {
+                pr.0 += 1;
+                if pr.0 == pr.1 {
+                    partial.remove(&k);
+                }
+            } else if !half.is_empty() {
+                let mut pr = half.remove(0);
+                pr.0 += 1;
+                partial.insert(k, pr);
+            } else if ten > 0 {
+                ten -= 1;
+                partial.insert(k, (1, 2));
+                half.push((2, 10));
+            } else if four > 0 {
+                four -= 1;
+                partial.insert(k, (7, 10));
+            } else if three > 0 {
+                three -= 1;
+                partial.insert(k, (8, 10));
+            } else if two > 0 {
+                two -= 1;
+                partial.insert(k, (9, 10));
+            } else {
+                partial.insert(k.clone(), (1, 2));
+                half.push((2, 10));
+                rows += 1;
+            }
+        }
+        rows
+    };
+
+    let n_used = cgi.n_plonk_rows
+        + n_cmul_rows
+        + n_poseidon_rows
+        + n_fft4_rows
+        + n_ev_pol4_rows
+        + n_tree_sel8_rows
+        + n_sel_val1_rows;
+
+    let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
+    let n = 1usize << n_bits;
+    let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
+    let max_degree = options.max_constraint_degree.unwrap_or(8);
+    let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Compressor{}", rand_hex()));
+
+    let pil_str = gen_pil_str(&PilTemplateParams {
+        template_file: "poseidon1/aggregator",
+        template_name: "Aggregator",
+        namespace_name: &airgroup_name,
+        n_bits,
+        n_publics,
+        max_constraint_degree: max_degree,
+        n_plonk_rows: cgi.n_plonk_rows,
+        n_poseidon1_compression,
+        n_poseidon1_sponge,
+        n_cmul_rows,
+        n_ev_pol4: cgi.n(GateRole::EvPol4),
+        n_fft4: cgi.n(GateRole::Fft4),
+        n_tree_selector8: cgi.n(GateRole::TreeSelector),
+        n_select_val1: cgi.n(GateRole::SelectVal1),
+    });
+
+    tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
+
+    let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
+    let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
+
+    let mut ten_extra: Vec<usize> = Vec::new();
+    let mut four_extra: Vec<usize> = Vec::new();
+    let mut three_extra: Vec<usize> = Vec::new();
+    let mut two_extra: Vec<usize> = Vec::new();
+
+    // CustPoseidon1 (compression) gates come first, then Poseidon1 (sponge) gates,
+    // matching the fixed-col patterns in aggregator.pil.
+    let cust_poseidon1_uses = if n_poseidon1_compression > 0 {
+        filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonCompression))
+    } else {
+        Vec::new()
+    };
+    let poseidon1_uses = if n_poseidon1_sponge > 0 {
+        filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonSponge))
+    } else {
+        Vec::new()
+    };
+    let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::CMul));
+    let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
+    let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
+    let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
+    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
+
+    let mut r = 0usize;
+
+    // ── Poseidon1 — 5 rows per gate (compression then sponge) ────────────────
+    // CustPoseidon1_16 (compression) signal layout: in[16] + key[2] + im[11][16] + out[16] = 210.
+    // Poseidon1_16   (sponge)      signal layout: in[16]         + im[11][16] + out[16] = 208.
+    //
+    // im[] sub-layout (set by the circom Poseidon1_16 / CustPoseidon1_16 template):
+    //   im[0]=R0, im[1]=R1, im[2]=R2, im[3]=R3, im[4]=R4 (post-P transition state),
+    //   im[5]=h1 anchors (11 used + 1 pad), im[6]=midState (intermediate, unused),
+    //   im[7]=h2 anchors (11 used + pad), im[8]=R26, im[9]=R27, im[10]=R28, im[11]=R29
+    //
+    // Witness layout per gate (5 rows):
+    //   row 0 (INIT):    a[0..15]=input, a[16..17]=key (compression only; 0 for sponge),
+    //                    a[18..23]=anchors[16..21], a[30..45]=R0, a[46..61]=R1
+    //   row 1 (PR'):     a[30..45]=R2, a[46..61]=R3
+    //   row 2 (PR):      a[30..45]=R4, a[46..61]=anchors[0..15]
+    //   row 3 (FINAL'):  a[30..45]=R26, a[46..61]=R27
+    //   row 4 (FINAL):   a[0..15]=output, a[30..45]=R28, a[46..61]=R29
+    //
+    // The 22 lane-0 partial anchors are circom im[5][0..10] (rounds 0..10) and
+    // im[7][0..10] (rounds 11..21), placed as anchors[0..15] → chain-2 a[46..61] @ PR
+    // and anchors[16..21] → a[18..23] @ INIT.
+    let process_poseidon1 = |s: &[u64],
+                             is_compression: bool,
+                             s_map: &mut [Vec<u32>],
+                             cv: &mut [Vec<u64>],
+                             ten_extra: &mut Vec<usize>,
+                             four_extra: &mut Vec<usize>,
+                             two_extra: &mut Vec<usize>,
+                             r: usize| {
+        let key_off = if is_compression { 2 } else { 0 };
+        let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
+
+        let input = &s[0..POSEIDON_WIDTH];
+        let key = if is_compression { Some(&s[POSEIDON_WIDTH..POSEIDON_WIDTH + 2]) } else { None };
+        let im_base = POSEIDON_WIDTH + key_off;
+        let r0 = &s[im_base..im_base + POSEIDON_WIDTH]; // im[0]
+        let r1 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
+        let r2 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
+        let r3 = &s[im_base + 3 * POSEIDON_WIDTH..im_base + 4 * POSEIDON_WIDTH]; // im[3]
+        let r4 = &s[im_base + 4 * POSEIDON_WIDTH..im_base + 5 * POSEIDON_WIDTH]; // im[4]: post-P transition
+        let anchors_h1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: anchors rounds 0..10
+                                                                                         // im[6] = midState (intermediate, not stored)
+        let anchors_h2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: anchors rounds 11..21
+        let r26 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
+        let r27 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
+        let r28 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
+        let r29 = &s[im_base + 11 * POSEIDON_WIDTH..im_base + 12 * POSEIDON_WIDTH]; // im[11]
+        let output = &s[im_base + 12 * POSEIDON_WIDTH..im_base + 13 * POSEIDON_WIDTH];
+
+        for i in 0..POSEIDON_WIDTH {
+            s_map[i][r] = input[i] as u32;
+            s_map[i + COL_P1][r] = r0[i] as u32; // row 0 chain 1 = R0 (= circom im[0], permuted input signal)
+            s_map[i + COL_P2][r] = r1[i] as u32; // row 0 chain 2 = R1
+            s_map[i + COL_P1][r + 1] = r2[i] as u32; // row 1 chain 1 = R2
+            s_map[i + COL_P2][r + 1] = r3[i] as u32; // row 1 chain 2 = R3
+            s_map[i + COL_P1][r + 2] = r4[i] as u32; // row 2 chain 1 = R4 (stored transition)
+            s_map[i + COL_P1][r + 3] = r26[i] as u32; // row 3 chain 1 = R26
+            s_map[i + COL_P2][r + 3] = r27[i] as u32; // row 3 chain 2 = R27
+            s_map[i + COL_P1][r + 4] = r28[i] as u32; // row 4 chain 1 = R28
+            s_map[i + COL_P2][r + 4] = r29[i] as u32; // row 4 chain 2 = R29
+            s_map[i][r + 4] = output[i] as u32; // row 4 a[0..15] = output
+        }
+
+        // 22 lane-0 partial anchors: rounds 0..10 = anchors_h1[0..10], rounds 11..21 =
+        // anchors_h2[0..10]. Placed as anchors[0..15] → chain-2 a[46..61] @ PR (row r+2)
+        // and anchors[16..21] → plonk band a[18..23] @ INIT (row r).
+        let anchor = |round: usize| -> u64 {
+            if round <= 10 {
+                anchors_h1[round]
+            } else {
+                anchors_h2[round - 11]
+            }
+        };
+        for round in 0..16 {
+            s_map[round + COL_P2][r + 2] = anchor(round) as u32; // anchors[0..15] → chain-2 @ PR
+        }
+        for round in 16..22 {
+            s_map[(round - 16) + 18][r] = anchor(round) as u32; // anchors[16..21] → a[18..23] @ INIT
+        }
+
+        // Key bits at INIT row cols 16..17 (compression only). At INIT, plonk gate 5
+        // (cols 15..17) doesn't fire (gate-5 selector = CHECK_PLONK, which excludes
+        // INIT), so cells 16, 17 are free for non-plonk witness. Avoids the conflict
+        // that would arise if key bits sat at a row where gate 5 fires (PR', PR, FINAL').
+        if let Some(k) = key {
+            s_map[16][r] = k[0] as u32;
+            s_map[17][r] = k[1] as u32;
+        }
+
+        for off in 0..POSEIDON_ROWS {
+            for item in cv.iter_mut() {
+                item[r + off] = 0;
+            }
+        }
+
+        // Plonk piggyback queues. CHECK_PLONK fires at PR', PR, FINAL' — all 10 plonk
+        // gates active at those rows → ten_extra. INIT fires gates 8,9 only (a[24..29]):
+        // gates 6,7 (a[18..23]) host the 6 partial overflow anchors. FINAL fires gates
+        // 6,7,8,9 (a[18..29] free at FINAL).
+        two_extra.push(r); // INIT row (gates 8,9 via POSEIDON1_INIT)
+        ten_extra.push(r + 1); // PR' row (CHECK_PLONK)
+        ten_extra.push(r + 2); // PR row  (CHECK_PLONK; chain-1 = R4, chain-2 = anchors, plonk band free)
+        ten_extra.push(r + 3); // FINAL' row (CHECK_PLONK)
+        four_extra.push(r + 4); // FINAL row (gates 6,7,8,9 fire via POSEIDON1_FINAL)
+    };
+
+    tracing::info!("Processing {} CustPoseidon1 (compression) gates...", cust_poseidon1_uses.len());
+    for cgu in &cust_poseidon1_uses {
+        process_poseidon1(
+            &cgu.signals,
+            true, // is_compression
+            &mut s_map,
+            &mut cv,
+            &mut ten_extra,
+            &mut four_extra,
+            &mut two_extra,
+            r,
+        );
+        r += POSEIDON_ROWS;
+    }
+
+    tracing::info!("Processing {} Poseidon1 (sponge) gates...", poseidon1_uses.len());
+    for cgu in &poseidon1_uses {
+        process_poseidon1(
+            &cgu.signals,
+            false, // is_compression
+            &mut s_map,
+            &mut cv,
+            &mut ten_extra,
+            &mut four_extra,
+            &mut two_extra,
+            r,
+        );
+        r += POSEIDON_ROWS;
+    }
+    assert_eq!(r, n_poseidon_rows);
+
+    // ── CMul (3/row) ──────────────────────────────────────────────────────────
+    tracing::info!("Processing {} cmul gates...", cmul_uses.len());
+    let mut cmul_row: i64 = -1;
+    let mut cmul_used = 0usize;
+    for cgu in &cmul_uses {
+        assert_eq!(cgu.signals.len(), 9);
+        if cmul_row >= 0 {
+            let row = cmul_row as usize;
+            for (i, item) in s_map[9 * cmul_used..].iter_mut().enumerate().take(9) {
+                item[row] = cgu.signals[i] as u32;
+            }
+            cmul_used += 1;
+            if cmul_used == CMUL_PER_ROW {
+                cmul_row = -1;
+                cmul_used = 0;
+            }
+        } else {
+            for (i, item) in s_map.iter_mut().enumerate().take(9) {
+                item[r] = cgu.signals[i] as u32;
+            }
+            for item in cv.iter_mut() {
+                item[r] = 0;
+            }
+            cmul_row = r as i64;
+            cmul_used = 1;
+            r += 1;
+        }
+    }
+    assert_eq!(r, n_poseidon_rows + n_cmul_rows);
+
+    // ── EvPol4 ────────────────────────────────────────────────────────────────
+    tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
+    for cgu in &ev_pol4_uses {
+        for (i, item) in s_map.iter_mut().enumerate().take(21) {
+            item[r] = cgu.signals[i] as u32;
+        }
+        for item in cv.iter_mut() {
+            item[r] = 0;
+        }
+        three_extra.push(r);
+        r += 1;
+    }
+
+    // ── FFT4 (1 row) ──────────────────────────────────────────────────────────
+    tracing::info!("Processing {} fft4 gates...", fft4_uses.len());
+    for cgu in &fft4_uses {
+        for (i, item) in s_map.iter_mut().enumerate().take(24) {
+            item[r] = cgu.signals[i] as u32;
+        }
+        let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
+        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
+        let fw2 = mulp(first_w, first_w);
+        if fft_type == 4 {
+            cv[0][r] = scale;
+            cv[1][r] = mulp(scale, fw2);
+            cv[2][r] = mulp(scale, first_w);
+            cv[3][r] = mulp(mulp(scale, first_w), fw2);
+            cv[4][r] = mulp(mulp(scale, first_w), inc_w);
+            cv[5][r] = mulp(mulp(mulp(scale, first_w), fw2), inc_w);
+            for item in cv.iter_mut().skip(6) {
+                item[r] = 0;
+            }
+        } else if fft_type == 2 {
+            for item in cv.iter_mut().take(6) {
+                item[r] = 0;
+            }
+            cv[6][r] = scale;
+            cv[7][r] = mulp(scale, first_w);
+            cv[8][r] = mulp(mulp(scale, first_w), inc_w);
+            cv[9][r] = 0;
+        } else {
+            panic!("Invalid FFT4 type: {}", fft_type);
+        }
+        r += 1;
+    }
+
+    // ── TreeSelector8 ─────────────────────────────────────────────────────────
+    // TreeSelector8 signal layout: values[8][3] + keys[3] + out[3] = 30 signals.
+    // Occupies the entire plonk-band a[0..29] → no plonk piggyback at TreeSel rows.
+    tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
+    for cgu in &tree_sel8_uses {
+        assert_eq!(cgu.signals.len(), 30);
+        for (i, item) in s_map.iter_mut().enumerate().take(30) {
+            item[r] = cgu.signals[i] as u32;
+        }
+        for item in cv.iter_mut() {
+            item[r] = 0;
+        }
+        r += 1;
+    }
+
+    // ── SelectVal1 ────────────────────────────────────────────────────────────
+    tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
+    for cgu in &sel_val1_uses {
+        assert_eq!(cgu.signals.len(), 22);
+        for (i, item) in s_map.iter_mut().enumerate().take(22) {
+            item[r] = cgu.signals[i] as u32;
+        }
+        for item in cv.iter_mut() {
+            item[r] = 0;
+        }
+        two_extra.push(r);
+        r += 1;
+    }
+
+    // ── Plonk constraints ─────────────────────────────────────────────────────
+    tracing::info!("Placing {} plonk constraints...", plonk_constraints.len());
+    let mut partial: HashMap<String, PR> = HashMap::new();
+    let mut half: Vec<PR> = Vec::new();
+    let mut pure_plonk_rows: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut plonk_in_pure: usize = 0;
+    let mut plonk_in_custom: usize = 0;
+
+    for (idx, c) in plonk_constraints.iter().enumerate() {
+        if idx % 10_000 == 0 {
+            tracing::debug!("constraint {}/{}", idx, plonk_constraints.len());
+        }
+        let k = ckey(c);
+
+        if let Some(pr) = partial.get_mut(&k) {
+            let n = pr.1;
+            let row = pr.0;
+            s_map[n * 3][row] = c[0] as u32;
+            s_map[n * 3 + 1][row] = c[1] as u32;
+            s_map[n * 3 + 2][row] = c[2] as u32;
+            pr.1 += 1;
+            if pr.1 == pr.2 {
+                partial.remove(&k);
+            }
+            if pure_plonk_rows.contains(&row) {
+                plonk_in_pure += 1;
+            } else {
+                plonk_in_custom += 1;
+            }
+        } else if !half.is_empty() {
+            let mut pr = half.remove(0);
+            let row = pr.0;
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            for i in pr.1..pr.2 {
+                s_map[3 * i][row] = c[0] as u32;
+                s_map[3 * i + 1][row] = c[1] as u32;
+                s_map[3 * i + 2][row] = c[2] as u32;
+            }
+            pr.1 += 1;
+            partial.insert(k, pr);
+            if pure_plonk_rows.contains(&row) {
+                plonk_in_pure += 1;
+            } else {
+                plonk_in_custom += 1;
+            }
+        } else if !ten_extra.is_empty() {
+            let row = ten_extra.remove(0);
+            cv[0][row] = c[3];
+            cv[1][row] = c[4];
+            cv[2][row] = c[5];
+            cv[3][row] = c[6];
+            cv[4][row] = c[7];
+            s_map[0][row] = c[0] as u32;
+            s_map[1][row] = c[1] as u32;
+            s_map[2][row] = c[2] as u32;
+            s_map[3][row] = c[0] as u32;
+            s_map[4][row] = c[1] as u32;
+            s_map[5][row] = c[2] as u32;
+            partial.insert(k.clone(), (row, 1, 2));
+            half.push((row, 2, 10));
+            plonk_in_custom += 1;
+        } else if !four_extra.is_empty() {
+            let row = four_extra.remove(0);
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            // Initial dup across gates 6, 7, 8, 9 (cells 18..29).
+            for i in 6..10 {
+                s_map[3 * i][row] = c[0] as u32;
+                s_map[3 * i + 1][row] = c[1] as u32;
+                s_map[3 * i + 2][row] = c[2] as u32;
+            }
+            partial.insert(k, (row, 7, 10));
+            plonk_in_custom += 1;
+        } else if !three_extra.is_empty() {
+            let row = three_extra.remove(0);
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            // Initial dup across gates 7, 8, 9 (cells 21..29).
+            for i in 7..10 {
+                s_map[3 * i][row] = c[0] as u32;
+                s_map[3 * i + 1][row] = c[1] as u32;
+                s_map[3 * i + 2][row] = c[2] as u32;
+            }
+            partial.insert(k, (row, 8, 10));
+            plonk_in_custom += 1;
+        } else if !two_extra.is_empty() {
+            let row = two_extra.remove(0);
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            // Initial dup across gates 8, 9 (cells 24..29).
+            for i in 8..10 {
+                s_map[3 * i][row] = c[0] as u32;
+                s_map[3 * i + 1][row] = c[1] as u32;
+                s_map[3 * i + 2][row] = c[2] as u32;
+            }
+            partial.insert(k, (row, 9, 10));
+            plonk_in_custom += 1;
+        } else {
+            pure_plonk_rows.insert(r);
+            plonk_in_pure += 1;
+            cv[0][r] = c[3];
+            cv[1][r] = c[4];
+            cv[2][r] = c[5];
+            cv[3][r] = c[6];
+            cv[4][r] = c[7];
+            s_map[0][r] = c[0] as u32;
+            s_map[1][r] = c[1] as u32;
+            s_map[2][r] = c[2] as u32;
+            s_map[3][r] = c[0] as u32;
+            s_map[4][r] = c[1] as u32;
+            s_map[5][r] = c[2] as u32;
+            partial.insert(k.clone(), (r, 1, 2));
+            half.push((r, 2, 10));
+            r += 1;
+        }
+    }
+    assert_eq!(r, n_used, "row count mismatch: {} != {}", r, n_used);
+
+    tracing::info!(
+        "Plonk placement: {} constraints in {} pure plonk rows, {} constraints piggybacked on custom-gate rows",
+        plonk_in_pure,
+        pure_plonk_rows.len(),
+        plonk_in_custom,
+    );
+
+    let sv = build_s_polynomials(N_COLS, n, n_bits, r, &s_map);
+    let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
+
+    SetupResult {
+        fixed_pols,
+        pil_str,
+        n_bits,
+        n_used,
+        s_map,
+        plonk_additions,
+        airgroup_name: airgroup_name.clone(),
+        air_name: airgroup_name,
+    }
+}

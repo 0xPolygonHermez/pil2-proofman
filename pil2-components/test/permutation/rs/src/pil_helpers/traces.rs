@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "2b121161d7299196c31b8cc204263ead9914da79c827f22c18f0f89110c63bf5";
+pub const PILOUT_HASH: &str = "99c206c513074537f78dae301e5084536fa108c001fe7a76383d6588dfdbabc3";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -43,8 +43,8 @@ pub type Permutation1_6Fixed<F> = GenericTrace<Permutation1_6FixedRow<F>, 64, 0,
 trace_row!(Permutation1_6TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
 });
-pub type Permutation1_6Trace<F> = GenericTrace<Permutation1_6TraceRow<F>, 64, 0, 0>;
 
+pub type Permutation1_6Trace<F> = GenericTrace<Permutation1_6TraceRow<F>, 64, 0, 0>;
 
 trace_row!(Permutation1_7FixedRow<F> {
  __L1__: F,
@@ -54,8 +54,8 @@ pub type Permutation1_7Fixed<F> = GenericTrace<Permutation1_7FixedRow<F>, 128, 0
 trace_row!(Permutation1_7TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
 });
-pub type Permutation1_7Trace<F> = GenericTrace<Permutation1_7TraceRow<F>, 128, 0, 1>;
 
+pub type Permutation1_7Trace<F> = GenericTrace<Permutation1_7TraceRow<F>, 128, 0, 1>;
 
 trace_row!(Permutation1_8FixedRow<F> {
  __L1__: F,
@@ -65,8 +65,8 @@ pub type Permutation1_8Fixed<F> = GenericTrace<Permutation1_8FixedRow<F>, 256, 0
 trace_row!(Permutation1_8TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
 });
-pub type Permutation1_8Trace<F> = GenericTrace<Permutation1_8TraceRow<F>, 256, 0, 2>;
 
+pub type Permutation1_8Trace<F> = GenericTrace<Permutation1_8TraceRow<F>, 256, 0, 2>;
 
 trace_row!(Permutation2_6FixedRow<F> {
  __L1__: F,
@@ -76,8 +76,8 @@ pub type Permutation2_6Fixed<F> = GenericTrace<Permutation2_6FixedRow<F>, 512, 0
 trace_row!(Permutation2_6TraceRow<F> {
  c1:F, d1:F, c2:F, d2:F, sel:F,
 });
-pub type Permutation2_6Trace<F> = GenericTrace<Permutation2_6TraceRow<F>, 512, 0, 3>;
 
+pub type Permutation2_6Trace<F> = GenericTrace<Permutation2_6TraceRow<F>, 512, 0, 3>;
 
 values!(Permutation1_6AirGroupValues<F> {
  gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,

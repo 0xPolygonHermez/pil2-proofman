@@ -1,0 +1,12 @@
+// Must fail to compile: range_validator rejects range_size > MAX_RANGE_LEN = (PRIME - 1) / 2.
+
+require "std_range_check.pil"
+
+airtemplate RangeCheckTooBig(const int N = 2**4) {
+    col witness x, sx;
+    range_check(x, 0, (PRIME - 1) / 2, sx);  // ERROR: range too big
+}
+
+airgroup RangeCheckTooBig {
+    RangeCheckTooBig();
+}

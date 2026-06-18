@@ -1,0 +1,25 @@
+// EVPOL4 GATE - Check that the polynomial evaluation is valid
+// Evaluate p(x) = d0*x⁴ + d1*x³ + d2*x²+ d3*x + d4 at point z = a[0]' + a[1]'x + a[2]'x² where
+// d0 = a[0]' + a[1]' * x + a[2]' * x²
+// d1 = a[9] + a[10] * x + a[11] * x²
+// d2 = a[6] + a[7] * x + a[8] * x²
+// d3 = a[3] + a[4] * x + a[5] * x²
+// d4 = a[0] + a[1] * x + a[2] * x²
+// The result must be equal to a[6]' + a[7]' * x + a[8]' * x²
+// The evaluation is performed using the Horner's rule, which means that p(x) is rewritten as
+// p(x) = (d0 * x + d1)*x + d2)*x + d3)*x + d4
+// Note: All operations are performed in Fp³ and so multiplications are performed using CMulAdd
+function evpol4(const expr coefs[][], const expr x[], const expr res[], const expr sel) {
+    
+    const expr acc[5][3];
+    acc[0] = coefs[0];
+    for(int i = 0; i < 4; i++) {
+        acc[i + 1][0] = (acc[i][0]*x[0] + acc[i][1]*x[2] + acc[i][2]*x[1]) + coefs[i+1][0];
+        acc[i + 1][1] = (acc[i][0]*x[1] + acc[i][1]*x[0] + acc[i][1]*x[2] + acc[i][2]*x[1] + acc[i][2]*x[2]) + coefs[i+1][1];
+        acc[i + 1][2] = (acc[i][0]*x[2] + acc[i][2]*x[2] + acc[i][2]*x[0] + acc[i][1]*x[1]) + coefs[i+1][2];
+    }
+
+    sel * (acc[4][0] - res[0]) === 0;
+    sel * (acc[4][1] - res[1]) === 0;
+    sel * (acc[4][2] - res[2]) === 0;
+}

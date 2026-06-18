@@ -1,0 +1,65 @@
+require "std_lookup.pil"
+require "std_permutation.pil"
+require "std_direct.pil"
+
+// OK: different arguments using different opids never overlap.
+airtemplate DistinctOpids(const int N = 2**4) {
+    col witness a, sa, b, sb;
+
+    lookup_assumes(10, [a], sa);       // opid 10 owned by 'Lookup'
+    lookup_proves(10, [a], sa);
+
+    permutation_assumes(11, [b], sb);  // opid 11 owned by 'Permutation'
+    permutation_proves(11, [b], sb);
+}
+
+// OK: a Direct update is a wildcard, so it may share an opid owned by another argument
+//     (this is how e.g. zisk's OPERATION_BUS_ID mixes lookups + direct updates).
+airtemplate DirectWildcard(const int N = 2**4) {
+    col witness c, sc;
+    airval v;
+
+    lookup_assumes(20, [c], sc);    // opid 20 owned by 'Lookup'
+    lookup_proves(20, [c], sc);
+    direct_update_assumes(20, [v]); // Direct = wildcard, allowed to share opid 20
+}
+
+// OK: Isolated PIOPs opt out of the overlap (and completion) checks, so they may
+//     deliberately share an opid across different arguments.
+airtemplate IsolatedOptOut(const int N = 2**4) {
+    col witness d, sd;
+
+    lookup_assumes(30, [d], sd, surname: PIOP_SURNAME_ISOLATED);
+    permutation_assumes(30, [d], sd, surname: PIOP_SURNAME_ISOLATED);
+}
+
+// OK: the same argument may reuse one opid across many airs (a table proven in one air
+//     and assumed in another). Same name -> no overlap.
+airtemplate ReuseAssume(const int N = 2**4) {
+    col witness g, sg;
+    lookup_assumes(40, [g], sg);
+}
+
+airtemplate ReuseProve(const int N = 2**4) {
+    col witness h, mh;
+    lookup_proves(40, [h], mh);
+}
+
+// Lookup cancelling a permutation with the same opid
+airtemplate LookupCancellingPermutation(const int N = 2**4) {
+    col witness e, se, f, sf;
+
+    permutation_proves(50, [f], sf);
+    permutation_assumes(50, [f], sf);
+
+    lookup_proves(50, [e], se);
+}
+
+airgroup OpidsChecks {
+    DistinctOpids();
+    DirectWildcard();
+    IsolatedOptOut();
+    ReuseAssume();
+    ReuseProve();
+    LookupCancellingPermutation();
+}

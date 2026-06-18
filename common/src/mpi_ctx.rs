@@ -550,22 +550,28 @@ impl MpiCtx {
         }
     }
 
-    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
+    pub fn distribute_multiplicities(
+        &self,
+        _multiplicities: &[AtomicU64],
+        _n_cols: usize,
+        _col_len: usize,
+        _owner: i32,
+    ) {
         #[cfg(feature = "mpi")]
         {
-            // Ensure that each multiplicity vector can be operated with u32
-            let mut buff_size = 0;
-            for multiplicity in _multiplicities.iter() {
-                assert!(multiplicity.len() < u32::MAX as usize);
-                buff_size += multiplicity.len() + 1;
+            if self.n_processes <= 1 {
+                return;
             }
 
-            let n_columns = _multiplicities.len();
+            assert!(_col_len < u32::MAX as usize);
+            assert_eq!(_multiplicities.len(), _n_cols * _col_len);
+            let buff_size = _n_cols * (_col_len + 1);
+
             if _owner != self.rank {
                 // Pack multiplicities in a sparse vector
-                let mut packed_multiplicities = vec![0u32; n_columns];
-                for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
-                    for (idx, mul) in multiplicity.iter().enumerate() {
+                let mut packed_multiplicities = vec![0u32; _n_cols];
+                for (col_idx, column) in _multiplicities.chunks(_col_len).enumerate() {
+                    for (idx, mul) in column.iter().enumerate() {
                         let m = mul.load(Ordering::Relaxed);
                         if m != 0 {
                             assert!(m < u32::MAX as u64);
@@ -588,18 +594,19 @@ impl MpiCtx {
                         msg.matched_receive_into(&mut packed_multiplicities);
 
                         // Read counters
-                        let mut counters = vec![0usize; n_columns];
-                        for col_idx in 0..n_columns {
+                        let mut counters = vec![0usize; _n_cols];
+                        for col_idx in 0.._n_cols {
                             counters[col_idx] = packed_multiplicities[col_idx] as usize;
                         }
 
                         // Unpack multiplicities
-                        let mut idx = n_columns;
-                        for col_idx in 0..n_columns {
-                            for _ in 0..counters[col_idx] {
+                        let mut idx = _n_cols;
+                        for (col_idx, &count) in counters.iter().enumerate() {
+                            let col_base = col_idx * _col_len;
+                            for _ in 0..count {
                                 let row_idx = packed_multiplicities[idx] as usize;
                                 let m = packed_multiplicities[idx + 1] as u64;
-                                _multiplicities[col_idx][row_idx].fetch_add(m, Ordering::Relaxed);
+                                _multiplicities[col_base + row_idx].fetch_add(m, Ordering::Relaxed);
                                 idx += 2;
                             }
                         }

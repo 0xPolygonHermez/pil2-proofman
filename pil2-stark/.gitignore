@@ -1,9 +1,13 @@
 build
+.simd_stamp
+.cuda_arch_stamp
+.build_lock
 runtime/*
 !runtime/README.md
 MyLogFile.log
-lib/libstarks.a
-lib/include/
+lib/
+lib-gpu/
+src/goldilocks/CudaArch.mk
 src/goldilocks/build/
 src/goldilocks/build_gpu/
 src/goldilocks/testscpu

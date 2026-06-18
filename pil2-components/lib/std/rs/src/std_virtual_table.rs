@@ -2,10 +2,9 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
     },
 };
-use proofman_util::create_buffer_fast;
 use rayon::prelude::*;
 
 use fields::PrimeField64;
@@ -20,9 +19,9 @@ pub struct StdVirtualTable<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
     pub global_id_by_uid: HashMap<usize, usize>,   // uid -> global_id
     pub indices_by_global_id: Vec<(usize, usize)>, // global_id -> (air_idx, uid_idx)
-    pub virtual_table_airs: Option<Vec<Arc<VirtualTableAir>>>,
+    pub virtual_table_airs: Option<Vec<Arc<VirtualTableAir<F>>>>,
 }
-pub struct VirtualTableAir {
+pub struct VirtualTableAir<F: PrimeField64> {
     airgroup_id: usize,
     air_id: usize,
     shift: u64,
@@ -30,10 +29,14 @@ pub struct VirtualTableAir {
     num_rows: usize,
     num_cols: usize,
     table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
-    multiplicities: Vec<Vec<AtomicU64>>,
+    // Flat col-major: idx = col * num_rows + row. Single allocation.
+    multiplicities: Vec<AtomicU64>,
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    // Persistent trace buffer slot. Pre-allocated in `StdVirtualTable::new`; taken in
+    // `calculate_witness` and refilled by `ProofCtx::free_instance_traces`.
+    trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
@@ -109,12 +112,11 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             }
 
             let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-            let multiplicities = (0..num_muls as usize)
-                .into_par_iter()
-                .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
-                .collect();
+            let multiplicities: Vec<AtomicU64> =
+                (0..(num_muls as usize * num_rows)).into_par_iter().map(|_| AtomicU64::new(0)).collect();
 
-            let virtual_table_air = VirtualTableAir {
+            let trace_buffer = Arc::new(Mutex::new(Some(vec![F::ZERO; num_muls as usize * num_rows])));
+            let virtual_table_air = VirtualTableAir::<F> {
                 airgroup_id,
                 air_id,
                 shift: num_rows.trailing_zeros() as u64,
@@ -126,6 +128,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
                 shared_tables,
+                trace_buffer,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
         }
@@ -150,7 +153,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_row(uid_idx, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, global_id: usize, rows: &[u64], multiplicities: &[u32]) {
+    pub fn inc_virtual_rows(&self, global_id: usize, rows: &[u64], multiplicities: &[u64]) {
+        debug_assert!(!rows.is_empty() && rows.len() == multiplicities.len());
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows(uid_idx, rows, multiplicities);
     }
@@ -160,13 +164,22 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_same_mul(uid_idx, rows, multiplicity);
     }
 
-    pub fn inc_virtual_rows_ranged(&self, global_id: usize, ranged_values: &[u64]) {
+    pub fn inc_virtual_rows_ranged(&self, global_id: usize, start: Option<u64>, multiplicities: &[u64]) {
+        let start = start.unwrap_or(0);
+        // Compute (row, multiplicity) pairs on the fly — no Vec allocation.
+        let pairs = multiplicities.iter().copied().enumerate().map(move |(i, m)| (start + i as u64, m));
+        self.inc_virtual_pairs(global_id, pairs);
+    }
+
+    /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
+    /// Lets callers avoid materializing an intermediate Vec<u64> of rows.
+    pub fn inc_virtual_pairs(&self, global_id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_ranged(uid_idx, ranged_values);
+        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_pairs(uid_idx, pairs);
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
+impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for StdVirtualTable<F> {
     fn pre_calculate_witness(
         &self,
         _stage: u32,
@@ -180,7 +193,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
     }
 }
 
-impl VirtualTableAir {
+impl<F: PrimeField64> VirtualTableAir<F> {
     pub fn get_id(&self, id: usize) -> ProofmanResult<usize> {
         if let Some(pos) = self.table_ids.iter().position(|&(table_id, _)| table_id == id) {
             Ok(pos)
@@ -189,109 +202,55 @@ impl VirtualTableAir {
         }
     }
 
-    /// Processes a slice of input data and updates the multiplicity table.
+    /// Core update function: Updates multiplicities for row/multiplicity pairs
+    fn update(&self, table_offset: u64, iter: impl Iterator<Item = (u64, u64)>) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
+
+        for (row, multiplicity) in iter {
+            if multiplicity == 0 {
+                continue;
+            }
+
+            // Get the offset
+            let offset = table_offset + row;
+
+            // Map it to the appropriate multiplicity
+            let sub_table_idx = offset >> self.shift;
+
+            // Get the row index
+            let row_idx = offset & self.mask;
+
+            // Update the multiplicity (col-major flat layout)
+            self.multiplicities[sub_table_idx as usize * self.num_rows + row_idx as usize]
+                .fetch_add(multiplicity, Ordering::Relaxed);
+        }
+    }
+
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // Get the table offset
-        let table_offset = self.table_ids[id].1; // Acc height of the table
-
-        // Get the offset
-        let offset = table_offset + row;
-
-        // Map it to the appropriate multiplicity
-        let sub_table_idx = offset >> self.shift;
-
-        // Get the row index
-        let row_idx = offset & self.mask;
-
-        // Update the multiplicity
-        self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
+        let table_offset = self.table_ids[id].1;
+        self.update(table_offset, std::iter::once((row, multiplicity)));
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: &[u64], multiplicities: &[u32]) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // Get the table offset
-        let table_offset = self.table_ids[id].1; // Acc height of the table
-
-        for (&row, &multiplicity) in rows.iter().zip(multiplicities.iter()) {
-            if multiplicity == 0 {
-                continue;
-            }
-
-            // Get the offset
-            let offset = table_offset + row;
-
-            // Map it to the appropriate multiplicity
-            let sub_table_idx = offset >> self.shift;
-
-            // Get the row index
-            let row_idx = offset & self.mask;
-
-            // Update the multiplicity
-            self.multiplicities[sub_table_idx as usize][row_idx as usize]
-                .fetch_add(multiplicity as u64, Ordering::Relaxed);
-        }
+    pub fn inc_virtual_rows(&self, id: usize, rows: &[u64], multiplicities: &[u64]) {
+        let table_offset = self.table_ids[id].1;
+        self.update(table_offset, rows.iter().copied().zip(multiplicities.iter().copied()));
     }
 
-    /// Processes a slice of input data and updates the multiplicity table.
     pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: &[u64], multiplicity: u64) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // Get the table offset
-        let table_offset = self.table_ids[id].1; // Acc height of the table
-
-        for row in rows.iter() {
-            // Get the offset
-            let offset = table_offset + row;
-
-            // Map it to the appropriate multiplicity
-            let sub_table_idx = offset >> self.shift;
-
-            // Get the row index
-            let row_idx = offset & self.mask;
-
-            // Update the multiplicity
-            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
-        }
+        let table_offset = self.table_ids[id].1;
+        self.update(table_offset, rows.iter().copied().map(|r| (r, multiplicity)));
     }
 
-    pub fn inc_virtual_rows_ranged(&self, id: usize, ranged_values: &[u64]) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // Get the table offset
-        let table_offset = self.table_ids[id].1; // Acc height of the table
-
-        for (row, &multiplicity) in ranged_values.iter().enumerate() {
-            if multiplicity == 0 {
-                continue;
-            }
-
-            // Get the offset
-            let offset = table_offset + row as u64;
-
-            // Map it to the appropriate multiplicity
-            let sub_table_idx = offset >> self.shift;
-
-            // Get the row index
-            let row_idx = offset & self.mask;
-
-            // Update the multiplicity
-            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
-        }
+    /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
+    pub fn inc_virtual_pairs(&self, id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
+        let table_offset = self.table_ids[id].1;
+        self.update(table_offset, pairs);
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
+impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTableAir<F> {
     fn execute(
         &self,
         pctx: Arc<ProofCtx<F>>,
@@ -309,7 +268,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
-        self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
+        self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
 
@@ -351,20 +310,30 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
 
             if self.shared_tables {
                 let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
-                pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, owner_idx);
+                pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, self.num_cols, self.num_rows, owner_idx);
             }
 
             if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast(buffer_size);
+                // The slot is pre-populated by `new` and refilled by the reclaim hook
+                // on every prior iteration's clear_traces / Drop. If it's empty here,
+                // the reclaim path is broken.
+                let mut buffer = self
+                    .trace_buffer
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("VirtualTableAir trace_buffer must be populated by reclaim before calculate_witness");
+                debug_assert_eq!(buffer.len(), buffer_size);
                 let any_nonzero = std::sync::atomic::AtomicBool::new(false);
+                let num_rows = self.num_rows;
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
-                    for (col, vec) in self.multiplicities.iter().enumerate() {
-                        let v = vec[row].load(Ordering::Relaxed);
+                    for (col, slot) in chunk.iter_mut().enumerate() {
+                        let v = self.multiplicities[col * num_rows + row].load(Ordering::Relaxed);
                         if v != 0 {
                             any_nonzero.store(true, Ordering::Relaxed);
                         }
-                        chunk[col] = F::from_u64(v);
+                        *slot = F::from_u64(v);
                     }
                 });
                 if !any_nonzero.load(Ordering::Relaxed) {
@@ -374,19 +343,15 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                         self.air_id
                     );
                     pctx.dctx_skip_process_instance(instance_id);
+                    *self.trace_buffer.lock().unwrap() = Some(buffer);
                     return Ok(());
                 }
                 let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
                 let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
-                let air_instance = AirInstance::new(TraceInfo::new(
-                    self.airgroup_id,
-                    self.air_id,
-                    n_cols,
-                    self.num_rows,
-                    buffer,
-                    false,
-                    false,
-                ));
+                let air_instance = AirInstance::new(
+                    TraceInfo::new(self.airgroup_id, self.air_id, n_cols, self.num_rows, buffer, false, false)
+                        .with_reclaim_slot(self.trace_buffer.clone()),
+                );
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

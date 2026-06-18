@@ -3,6 +3,8 @@
 
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
+#include "starks_api_internal.hpp"
+#include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "zklog.hpp"
 
@@ -37,8 +39,8 @@ public:
     {
         this->arity = arity;
         transcriptStateSize = HASH_SIZE;
-        transcriptPendingSize = 4*(arity - 1);
-        transcriptOutSize = 4*arity;
+        transcriptPendingSize = 4 * (arity - 1);
+        transcriptOutSize     = 4 * arity;
 
         state = new Goldilocks::Element[transcriptOutSize];
         pending = new Goldilocks::Element[transcriptPendingSize];

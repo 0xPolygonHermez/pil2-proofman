@@ -1,10 +1,8 @@
 use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    load_const_pols, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
 };
-use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
-};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
@@ -58,6 +56,8 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_recursivef: Setup<F>,
     pub vadcop_final_verkey: Vec<u64>,
     pub aux_trace: Arc<Vec<F>>,
+    pub recursivef_const_pols: Arc<Vec<F>>,
+    pub recursivef_const_tree: Arc<Vec<F>>,
     pub d_buffers: Option<*mut c_void>,
     pub reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
     pub snark_prover: Option<*mut c_void>,
@@ -180,8 +180,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         check_const_tree(&setup_recursivef, &d_buffers)?;
 
-        setup_recursivef.load_const_pols();
-        setup_recursivef.load_const_pols_tree();
+        let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
+        load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+        let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
+        let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
+        load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
+        let recursivef_const_tree: Arc<Vec<F>> = Arc::new(recursivef_const_tree_buf);
 
         timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
@@ -190,7 +194,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         } else if gpu {
             Arc::new(Vec::new())
         } else {
-            Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
+            Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize])
         };
 
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
@@ -240,6 +244,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         Ok(Self {
             aux_trace,
+            recursivef_const_pols,
+            recursivef_const_tree,
             setup_recursivef,
             setup_snark_path,
             snark_prover,
@@ -274,6 +280,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.memory_handler_recursive_witness,
             &proof,
             &self.aux_trace,
+            &self.recursivef_const_pols,
+            &self.recursivef_const_tree,
             &self.vadcop_final_verkey,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             self.d_buffers_recursivef,
@@ -443,14 +451,15 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     check_const_tree(&setup_recursivef, &None)?;
 
-    setup_recursivef.load_const_pols();
-    setup_recursivef.load_const_pols_tree();
+    let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
+    load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+    let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
+    let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
+    load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
+    let recursivef_const_tree: Arc<Vec<F>> = Arc::new(recursivef_const_tree_buf);
 
-    let aux_trace = if gpu {
-        Arc::new(Vec::new())
-    } else {
-        Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
-    };
+    let aux_trace =
+        if gpu { Arc::new(Vec::new()) } else { Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize]) };
 
     timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
@@ -492,6 +501,8 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &memory_handler_recursive_witness,
         &proof,
         &aux_trace,
+        &recursivef_const_pols,
+        &recursivef_const_tree,
         &vadcop_final_verkey,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
         d_buffers_recursivef,

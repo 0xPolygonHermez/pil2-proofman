@@ -51,7 +51,7 @@ bool loadFileParallel(void *buffer, const std::string &fileName, uint64_t size, 
 
 void writeFileParallel(const std::string &fileName, const void* buffer, uint64_t size, uint64_t offset = 0);
 
-bool loadFileParallel_block(void* buffer, const std::string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks);
+bool loadFileParallel_block(void* buffer, const std::string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks, uint64_t header_skip_bytes = 0);
 
 void pack_cpu(
     const uint64_t *src,

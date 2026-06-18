@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "c26855220153e3911866b19eb46995bdab3a243a259875673c17589f1c2960dd";
+pub const PILOUT_HASH: &str = "f25326c69820fc145301523b0949b78b1f48482a34ad14eb4645e55fd860db62";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -41,8 +41,8 @@ pub type AirProdFixed<F> = GenericTrace<AirProdFixedRow<F>, 256, 0, 0>;
 trace_row!(AirProdTraceRow<F> {
  a:F, b:F, c:F,
 });
-pub type AirProdTrace<F> = GenericTrace<AirProdTraceRow<F>, 256, 0, 0>;
 
+pub type AirProdTrace<F> = GenericTrace<AirProdTraceRow<F>, 256, 0, 0>;
 
 trace_row!(AirSumFixedRow<F> {
  __L1__: F,
@@ -52,8 +52,8 @@ pub type AirSumFixed<F> = GenericTrace<AirSumFixedRow<F>, 256, 1, 0>;
 trace_row!(AirSumTraceRow<F> {
  a:F, b:F, c:F,
 });
-pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
 
+pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];

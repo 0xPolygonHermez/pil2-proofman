@@ -66,7 +66,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Table7
             self.calculated.store(true, Ordering::Relaxed);
 
             let buffer_size = self.num_cols * self.num_rows;
-            let mut buffer = create_buffer_fast::<F>(buffer_size);
+            let mut buffer = vec![F::ZERO; buffer_size];
             buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                 for (col, vec) in self.multiplicities.iter().enumerate() {
                     chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));

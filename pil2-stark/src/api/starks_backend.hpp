@@ -10,22 +10,24 @@
 // Shared functions (hints, goldilocks arithmetic, etc.) are called directly.
 struct StarksBackend {
     // Const Pols
-    void (*init_gpu_setup)(uint64_t maxBitsExt);
+    void (*init_gpu_setup)(uint64_t maxBitsExt, uint64_t arity);
     void (*tile_const_pols)(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void (*prepare_blocks)(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
     void (*calculate_const_tree)(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
 
     // Witness
     void (*write_custom_commit)(void *root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
-    uint64_t (*commit_witness)(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers);
+    uint64_t (*commit_witness)(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
 
     // Constraints
-    uint64_t (*initialize_instance)(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_);
+    uint64_t (*initialize_instance)(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath);
     void (*calculate_trace_instance)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId);
     void (*verify_constraints)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 
     // Proof generation
-    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath);
+    // customCommitsFixedPath: path to the on-disk custom-commits-fixed file for this
+    // (airgroupId, airId). Empty string means no custom commits for this instance.
+    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath);
     void (*get_stream_proofs)(void *d_buffers_);
     void (*get_stream_proofs_non_blocking)(void *d_buffers_);
     void (*get_stream_id_proof)(void *d_buffers_, uint64_t streamId);
@@ -48,6 +50,10 @@ struct StarksBackend {
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
     uint64_t (*get_num_gpus)();
     void *(*get_unified_buffer_gpu)(void *d_buffers_);
+    uint64_t (*get_unified_buffer_gpu_size)(void *d_buffers_);
+    void (*acquire_first_gpu_buffer)(void *d_buffers_);
+    void (*release_first_gpu_buffer)(void *d_buffers_);
+    uint32_t (*is_first_gpu_buffer_borrowed)(void *d_buffers_);
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*free_fixed_pols_buffer_gpu)(void *d_buffers_);

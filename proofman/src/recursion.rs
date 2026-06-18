@@ -308,7 +308,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    let exec_data_ptr = setup.exec_data.as_ref().map(|v| v.as_ptr() as *mut u64).unwrap();
+    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on setup").as_ptr() as *mut u64;
 
     get_committed_pols_c(
         witness.circom_witness.as_ptr() as *mut u8,
@@ -734,6 +734,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     vadcop_proof: &[u64],
     prover_buffer: &[F],
+    const_pols: &[F],
+    const_tree: &[F],
     vadcop_final_verkey: &[u64],
     prover_buffer_size: usize,
     d_buffers_recursivef: *mut c_void,
@@ -743,7 +745,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     // Cast pointers to usize to make them Send-safe for threading
     let p_setup_addr = p_setup as usize;
-    let const_tree_ptr_addr = setup.get_const_tree_ptr() as usize;
+    let const_tree_ptr_addr = const_tree.as_ptr() as usize;
     let d_buffers_addr = d_buffers_recursivef as usize;
 
     let load_fixed_pols_handle = std::thread::spawn(move || {
@@ -771,7 +773,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    let exec_data_ptr = setup.exec_data.as_ref().map(|v| v.as_ptr() as *mut u64).unwrap();
+    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on RecursiveF setup").as_ptr() as *mut u64;
 
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
@@ -791,8 +793,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        setup.get_const_ptr(),
-        setup.get_const_tree_ptr(),
+        const_pols.as_ptr() as *mut u8,
+        const_tree.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         "",
         0,

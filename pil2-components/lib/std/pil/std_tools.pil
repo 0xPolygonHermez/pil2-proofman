@@ -25,3 +25,46 @@ function get_L1(): expr {
     }
     return air.__L1__;
 }
+
+/**
+ * Enforces that a selector is binary, i.e. sel ∈ {0, 1}.
+ *
+ * A non-constant selector receives the constraint sel·(sel - 1) === 0.
+ * A constant selector is only allowed to be the literal 1 (select all rows),
+ * which is trivially binary and needs no constraint; any other constant is rejected.
+ *
+ * @param sel  The selector expression to constrain.
+ * @param opid The operation ID of the argument, used for error reporting.
+ */
+function constrain_binary_sel(const expr sel, const int opid) {
+    if (sel is int) {
+        // Constant selector: only the literal 1 (all rows) is meaningful and binary.
+        const int sel_val = sel;
+        if (sel_val != 1) {
+            error(`The selector of the argument with opid #${opid} must be either a non-constant binary expression or the constant 1, but got the constant ${sel_val}`);
+        }
+        // sel == 1 is trivially binary; no constraint needed.
+    } else {
+        sel * (sel - 1) === 0;
+    }
+}
+
+/**
+ * Enforces that a free-permutation selector is ternary, i.e. sel ∈ {-1, 0, 1},
+ * where -1 assumes, 1 proves and 0 is inactive.
+ *
+ * @param sel  The selector expression to constrain.
+ * @param opid The operation ID of the permutation, used for error reporting.
+ */
+private function constrain_ternary_sel(const expr sel, const int opid) {
+    if (sel is int) {
+        // Constant selector: only the literals 1 (all proves) and -1 (all assumes) are meaningful.
+        const int sel_val = sel;
+        if (sel_val != 1 && sel_val != -1) {
+            error(`The selector of permutation #${opid} must be either a non-constant ternary expression or one of the constants 1 (all proves) or -1 (all assumes), but got the constant ${sel_val}`);
+        }
+        // sel == 1 or sel == -1 is trivially ternary; no constraint needed.
+    } else {
+        sel * (sel - 1) * (sel + 1) === 0;
+    }
+}

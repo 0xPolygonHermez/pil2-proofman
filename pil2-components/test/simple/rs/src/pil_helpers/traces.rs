@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "5a40690fe07cb56fa782ae5e33ad2ab84f2d2be4d3db96b03cb0e4f9891c6bb2";
+pub const PILOUT_HASH: &str = "1e57cceb4ec0c187d7180bcbadaed82f7e75080933a2a76ff18577909069c5f9";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -43,10 +43,10 @@ trace_row!(SimpleLeftFixedRow<F> {
 pub type SimpleLeftFixed<F> = GenericTrace<SimpleLeftFixedRow<F>, 8, 0, 0>;
 
 trace_row!(SimpleLeftTraceRow<F> {
- a:F, b:F, c:F, d:F, e:F, f:F, g:F, h:F, k:[F; 7],
+ a:F, b:F, c:F, d:F, e:F, f:F, g:F, h:F, mul:F, k:[F; 7],
 });
-pub type SimpleLeftTrace<F> = GenericTrace<SimpleLeftTraceRow<F>, 8, 0, 0>;
 
+pub type SimpleLeftTrace<F> = GenericTrace<SimpleLeftTraceRow<F>, 8, 0, 0>;
 
 trace_row!(SimpleRightFixedRow<F> {
  __L1__: F,
@@ -56,8 +56,8 @@ pub type SimpleRightFixed<F> = GenericTrace<SimpleRightFixedRow<F>, 8, 0, 1>;
 trace_row!(SimpleRightTraceRow<F> {
  a:F, b:F, c:F, d:F, mul:F,
 });
-pub type SimpleRightTrace<F> = GenericTrace<SimpleRightTraceRow<F>, 8, 0, 1>;
 
+pub type SimpleRightTrace<F> = GenericTrace<SimpleRightTraceRow<F>, 8, 0, 1>;
 
 trace_row!(U8AirFixedRow<F> {
  RANGE: [F; 2], __L1__: F,
@@ -67,8 +67,8 @@ pub type U8AirFixed<F> = GenericTrace<U8AirFixedRow<F>, 128, 0, 2>;
 trace_row!(U8AirTraceRow<F> {
  mul:[F; 2],
 });
-pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 128, 0, 2>;
 
+pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 128, 0, 2>;
 
 trace_row!(U16AirFixedRow<F> {
  RANGE: [F; 4], __L1__: F,
@@ -78,8 +78,8 @@ pub type U16AirFixed<F> = GenericTrace<U16AirFixedRow<F>, 16384, 0, 3>;
 trace_row!(U16AirTraceRow<F> {
  mul:[F; 4],
 });
-pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 16384, 0, 3>;
 
+pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 16384, 0, 3>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
  OPID: [F; 11], VALS: [F; 11], __L1__: F,
@@ -89,8 +89,8 @@ pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 64, 
 trace_row!(SpecifiedRangesTraceRow<F> {
  mul:[F; 11],
 });
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 4>;
 
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 4>;
 
 values!(SimpleLeftAirGroupValues<F> {
  gsum_result: FieldExtension<F>,

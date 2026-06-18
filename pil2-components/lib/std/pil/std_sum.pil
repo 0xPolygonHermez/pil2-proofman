@@ -197,6 +197,10 @@ private function init_proof_containers_sum(const int name, const int surname, co
             int proves = 0;
             int assumes = 0;
 
+            // Argument that owns this opid, set by its first consumer.
+            // -1 means no consumer has claimed it yet.
+            int owner_name = -1;
+
             // Track AIR names for diagram
             string proves_airs[ARRAY_SIZE];
             string assumes_airs[ARRAY_SIZE];
@@ -235,6 +239,30 @@ private function initial_checks_sum(const int name, const int surname, const int
             const string surname = get_piop_surname(surname);
             const int expected_exprs = proof.std.gsum.`id${opids[i]}`.expressions;
             error(`The number of expressions of ${name} ${surname} #${opids[i]} must be ${expected_exprs} but was ${exprs_num}`);
+        }
+
+        // Overlap check: range checks allocate their opids internally, hidden from the user.
+        // If a user-chosen opid (e.g. for a lookup or permutation) collides with one of those
+        // hidden opids, their channels silently merge, which is unsound. Other arguments
+        // (lookups, permutations, ...) are free to share an opid with each other, so the check
+        // only fires when a range check sits on one side of the conflict and a different
+        // argument on the other.
+        //
+        // Only consumers claim ownership: proves merely feed the channel
+        // and may legitimately be emitted under a generic name.
+        // Direct/Default updates are wildcards that inject terms into an existing channel,
+        // so they neither claim nor conflict with ownership. Isolated PIOPs opt out.
+        if ((type == SUM_TYPE_ASSUMES || type == SUM_TYPE_FREE) &&
+            name != PIOP_NAME_DIRECT && name != PIOP_NAME_DEFAULT &&
+            surname != PIOP_SURNAME_ISOLATED) {
+            const int owner = proof.std.gsum.`id${opids[i]}`.owner_name;
+            if (owner == -1) {
+                proof.std.gsum.`id${opids[i]}`.owner_name = name;
+            } else if (owner != name && (owner == PIOP_NAME_RANGE_CHECK || name == PIOP_NAME_RANGE_CHECK)) {
+                const string owner_str = get_piop_name(owner);
+                const string name_str = get_piop_name(name);
+                error(`opid #${opids[i]} on the sum bus is shared by a range check and a different argument ('${owner_str}' and '${name_str}'). Range checks allocate their opids internally; assign a distinct opid to avoid the collision.`);
+            }
         }
 
         // The same opid can appear in different airs, so we keep track of the number of proves and assumes

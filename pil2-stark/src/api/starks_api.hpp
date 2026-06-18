@@ -17,6 +17,10 @@ extern "C" {
         }
     };
     
+    // Hash family selector
+    // ========================================================================================
+    void set_hash_family(uint8_t fam);
+
     // SetupCtx
     // ========================================================================================
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);
@@ -36,7 +40,7 @@ extern "C" {
 
     // Const Pols
     // ========================================================================================
-    void init_gpu_setup(uint64_t maxBitsExt);
+    void init_gpu_setup(uint64_t maxBitsExt, uint64_t arity);
     void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile);
     void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
@@ -82,14 +86,14 @@ extern "C" {
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 
-    uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers);
+    uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
 
     // Constraints
     // =================================================================================
     uint64_t get_n_constraints(void *pSetupCtx);
     void get_constraints_lines_sizes(void *pSetupCtx, uint64_t *constraintsLinesSizes);
     void get_constraints_lines(void *pSetupCtx, uint8_t **constraintsLines);
-    uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_);
+    uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath);
     void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId);
     void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 
@@ -106,7 +110,7 @@ extern "C" {
 
     // Gen proof && Recursive Proof
     // =================================================================================
-    uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath);
+    uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath);
     uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream);
     void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols);
     void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
@@ -180,6 +184,10 @@ extern "C" {
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
     void *get_unified_buffer_gpu(void *d_buffers_);
+    uint64_t get_unified_buffer_gpu_size(void *d_buffers_);
+    void acquire_first_gpu_buffer(void *d_buffers_);
+    void release_first_gpu_buffer(void *d_buffers_);
+    uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_);
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);
@@ -193,6 +201,15 @@ extern "C" {
     // Backend selection
     // =================================================================================
     bool set_gpu_mode(bool use_gpu);
+
+    // Build const tree
+    // =================================================================================
+    int build_const_tree_c(const char *const_file, const char *stark_info_file, const char *const_tree_file, const char *ver_key_file, uint64_t *out_root);
+
+    // SNARK setup (fflonk / plonk)
+    // =================================================================================
+    int fflonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
+    int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
 
     // MPI calls
     // =================================================================================

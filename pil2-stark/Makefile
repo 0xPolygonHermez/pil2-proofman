@@ -1,8 +1,43 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
+
+# CUDA arch resolution and its staleness stamp run at parse time (GPU
+# probing, stamp writes, stale-object wipes) — skip all of it when every
+# requested goal is `clean`, where no flags are needed.
+ifeq ($(MAKECMDGOALS),)
+    NEED_CUDA_ARCH := 1
+else ifneq ($(filter-out clean,$(MAKECMDGOALS)),)
+    NEED_CUDA_ARCH := 1
+endif
+
+comma := ,
+
+# GNU make carries 'n' in the first word of MAKEFLAGS under --dry-run;
+# parse-time $(shell) side effects (stamp write, object wipe) must not fire.
+ifneq ($(findstring n,$(filter-out --%,$(firstword -$(MAKEFLAGS)))),)
+    MAKE_DRY_RUN := 1
+endif
 ifneq ($(UNAME_S),Darwin)
+    
+    ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
+    # Canonical arch set for "major" builds: all major architectures since
+    # Ampere — Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer.
+    # sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 50xx
+    # (consumer Blackwell).
+    CUDA_MAJOR_ARCHS := 80 86 89 90 100 120
+    ifdef NEED_CUDA_ARCH
     ifdef CUDA_GENCODE_FLAGS
         $(info CUDA_GENCODE_FLAGS defined externally: $(CUDA_GENCODE_FLAGS))
+    else ifneq ($(strip $(CUDA_ARCHS)),)
+        CUDA_ARCHS_LC := $(subst M,m,$(subst A,a,$(subst J,j,$(subst O,o,$(subst R,r,$(strip $(CUDA_ARCHS)))))))
+        ifeq ($(CUDA_ARCHS_LC),major)
+            CUDA_ARCH_LIST := $(CUDA_MAJOR_ARCHS)
+        else
+            CUDA_ARCH_LIST := $(strip $(subst $(comma), ,$(CUDA_ARCHS)))
+            ifeq ($(CUDA_ARCH_LIST),)
+                $(error CUDA_ARCHS is set but contains no architectures — expected integers (e.g. '89', '89,120') or 'major')
+            endif
+        endif
     else ifdef CUDA_ARCH
         # Legacy single-arch support: convert to gencode + PTX
         CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
@@ -11,14 +46,40 @@ ifneq ($(UNAME_S),Darwin)
         $(info Converted CUDA_ARCH=$(CUDA_ARCH) to gencode flags)
     else
         # Auto-detect from host GPU (single arch, existing behavior)
-        ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
-        INFO := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh && sleep 2)
-        include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
-        CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
-        CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
-                              -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
-        $(info Auto-detected $(CUDA_ARCH), gencode flags set)
+        CONFIGURE_STATUS := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh >&2; echo $$?)
+        ifeq ($(CONFIGURE_STATUS),0)
+            include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
+            CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
+            CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
+                                  -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
+            $(info Auto-detected $(CUDA_ARCH), gencode flags set)
+        else
+            CUDA_ARCH_LIST := $(CUDA_MAJOR_ARCHS)
+            $(warning CUDA arch auto-detection failed — building for all major archs: $(CUDA_ARCH_LIST))
+        endif
     endif
+
+    # Shared gencode construction for the arch-list branches above (CUDA_ARCHS
+    # and the auto-detect fallback): SASS for each arch + PTX for the highest
+    # arch of each Blackwell lineage (sm_100-119 datacenter vs the rest) —
+    # the lineages are NOT cross-compatible, so each needs its own PTX for
+    # forward compatibility with future GPUs.
+    ifneq ($(strip $(CUDA_ARCH_LIST)),)
+        # Validate with make text functions before anything reaches the shell:
+        # a token is numeric iff stripping all digits leaves nothing.
+        strip-digits = $(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(1)))))))))))
+        CUDA_BAD_ARCH := $(strip $(foreach a,$(CUDA_ARCH_LIST),$(if $(call strip-digits,$(a)),$(a))))
+        ifneq ($(CUDA_BAD_ARCH),)
+            $(error CUDA_ARCHS contains invalid entry '$(firstword $(CUDA_BAD_ARCH))' — expected integers (e.g. '89', '89,120') or 'major')
+        endif
+        # Numeric sort + dedup; safe to shell out now, the list is digits-only.
+        CUDA_ARCH_LIST := $(shell printf '%s\n' $(CUDA_ARCH_LIST) | sort -n -u)
+        CUDA_PTX_ARCHS := $(lastword $(filter 10% 11%,$(CUDA_ARCH_LIST))) $(lastword $(filter-out 10% 11%,$(CUDA_ARCH_LIST)))
+        CUDA_GENCODE_FLAGS := $(foreach a,$(CUDA_ARCH_LIST),-gencode arch=compute_$(a),code=sm_$(a)) \
+                              $(foreach p,$(CUDA_PTX_ARCHS),-gencode arch=compute_$(p),code=compute_$(p))
+        $(info CUDA archs $(CUDA_ARCH_LIST), gencode flags set)
+    endif
+    endif # NEED_CUDA_ARCH
 endif
 
 # CUDA detection - check multiple possible locations
@@ -130,6 +191,43 @@ else ifeq ($(UNAME_S),Linux)
         $(info AVX2 is supported by the CPU)
     endif
 
+    # SIMD staleness check: AVX flags are baked into objects
+    # Record the level used by the last build in .simd_stamp and wipe all
+    # build/lib dirs when it no longer matches the current CPU. 
+    ifneq ($(AVX512_SUPPORTED),)
+        SIMD_LEVEL := avx512
+    else ifneq ($(AVX2_SUPPORTED),)
+        SIMD_LEVEL := avx2
+    else
+        SIMD_LEVEL := none
+    endif
+    SIMD_STAMP := .simd_stamp
+    LAST_SIMD := $(shell cat $(SIMD_STAMP) 2>/dev/null)
+    ifneq ($(LAST_SIMD),$(SIMD_LEVEL))
+        HAVE_OBJS := $(shell find $(BUILD_DIR) $(BUILD_DIR_GPU) -name '*.o' -print -quit 2>/dev/null)
+        ifneq ($(HAVE_OBJS),)
+            $(warning SIMD level changed ($(if $(LAST_SIMD),$(LAST_SIMD),unknown) -> $(SIMD_LEVEL)) — removing stale objects ($(BUILD_DIR), $(BUILD_DIR_GPU), $(LIB_DIR), $(LIB_DIR_GPU)))
+            SIMD_CLEAN := $(shell rm -rf $(BUILD_DIR) $(BUILD_DIR_GPU) $(LIB_DIR) $(LIB_DIR_GPU))
+        endif
+        SIMD_WRITE := $(shell echo $(SIMD_LEVEL) > $(SIMD_STAMP))
+    endif
+
+    # CUDA arch staleness check (same rationale as the SIMD check above)
+    ifdef NEED_CUDA_ARCH
+    CUDA_ARCH_STAMP := .cuda_arch_stamp
+    LAST_CUDA_FLAGS := $(shell cat $(CUDA_ARCH_STAMP) 2>/dev/null)
+    ifneq ($(LAST_CUDA_FLAGS),$(strip $(CUDA_GENCODE_FLAGS)))
+        ifndef MAKE_DRY_RUN
+            HAVE_GPU_OBJS := $(shell find $(BUILD_DIR_GPU) -name '*.o' -print -quit 2>/dev/null)
+            ifneq ($(HAVE_GPU_OBJS),)
+                $(warning CUDA gencode flags changed — removing stale GPU objects ($(BUILD_DIR_GPU), $(LIB_DIR_GPU)))
+                CUDA_ARCH_CLEAN := $(shell rm -rf $(BUILD_DIR_GPU) $(LIB_DIR_GPU))
+            endif
+            CUDA_ARCH_WRITE := $(shell echo '$(strip $(CUDA_GENCODE_FLAGS))' > $(CUDA_ARCH_STAMP))
+        endif
+    endif
+    endif # NEED_CUDA_ARCH
+
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 else
     $(error Unsupported platform: $(UNAME_S))
@@ -145,13 +243,13 @@ endif
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -286,11 +384,17 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean
+.PHONY: clean clean_cpu clean_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
 	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
+
+clean_cpu:
+	$(RM) -r $(BUILD_DIR) $(LIB_DIR)
+
+clean_gpu:
+	$(RM) -r $(BUILD_DIR_GPU) $(LIB_DIR_GPU)
 
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)

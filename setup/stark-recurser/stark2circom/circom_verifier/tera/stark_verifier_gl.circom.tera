@@ -1,0 +1,886 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "cmul.circom";
+include "cinv.circom";
+include "bitify.circom";
+include "fft.circom";
+include "evalpol.circom";
+{% if hash == "Poseidon1" %}include "hash/poseidon1/pow.circom";
+include "tree/treeselector8.circom";
+{% if split_linear_hash %}include "hash/poseidon1/merklehash_gpu.circom";
+{% else %}include "hash/poseidon1/merklehash.circom";
+{% endif %}{% else %}include "hash/poseidon2/pow.circom";
+include "tree/treeselector4.circom";
+{% if split_linear_hash %}include "hash/poseidon2/merklehash_gpu.circom";
+{% else %}include "hash/poseidon2/merklehash.circom";
+{% endif %}{% endif %}
+/* 
+    Calculate FRI Queries
+*/
+template {{ calculate_fri_queries_name }}() {
+    
+    signal input challengeFRIQueries[3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}    signal input {binary} enable;
+    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+
+{% if pow_bits > 0 %}    VerifyPoW({{ pow_bits }})(challengeFRIQueries, nonce, enable);
+{% endif %}
+{{ calculate_fri_queries_code }}
+}
+
+/* 
+    Calculate the transcript
+*/ 
+template {{ transcript_name }}() {
+{% if not input_challenges %}{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
+{% endif %}    signal input rootC[4];
+    signal input root1[4];
+{% else %}    signal input globalChallenge[3]; 
+{% endif %}
+
+{% if n_air_values > 0 %}    signal input airValues[{{ n_air_values }}][3];
+{% endif %}
+{% for stage in stages_info %}{% if stage.stage > 1 and stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4];
+{% endif %}{% endfor %}    signal input root{{ q_stage }}[4];
+    signal input evals[{{ ev_map_len }}][3]; 
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4];
+{% endif %}{% endfor %}    signal input finalPol[{{ final_pol_size }}][3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}    signal input {binary} enable;
+
+{% for cp in challenges_per_stage %}    signal output challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}    signal output challengeQ[3];
+    signal output challengeXi[3];
+    signal output challengesFRI[2][3];
+    signal output challengesFRISteps[{{ n_steps + 1 }}][3];
+    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+
+{% if hash_commits %}{% if n_publics > 0 %}    signal publicsHash[4];
+{% endif %}    signal evalsHash[4];
+    signal lastPolFRIHash[4];
+{% endif %}
+
+{% if not input_challenges %}{% if n_publics > 0 and hash_commits %}{{ transcript_publics_code }}
+{% endif %}{% endif %}{% if hash_commits %}{{ transcript_code_stage }}
+{{ transcript_evals_code }}
+{{ transcript_code_fri_mid }}
+{{ transcript_last_pol_fri_code }}
+{{ transcript_code }}{% else %}{{ transcript_code }}{% endif %}
+{% if pow_bits > 0 %}    queriesFRI <== {{ calculate_fri_queries_name }}()(challengesFRISteps[{{ n_steps }}], nonce, enable);
+{% else %}    queriesFRI <== {{ calculate_fri_queries_name }}()(challengesFRISteps[{{ n_steps }}], enable);
+{% endif %}}
+
+/*
+    Verify that FRI polynomials are built properly
+*/
+template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBits, e0) {
+    var nextStep = currStepBits - nextStepBits; 
+    var step = prevStepBits - currStepBits;
+
+    signal input {binary} queriesFRI[currStepBits];
+    signal input friChallenge[3];
+    signal input s_vals_curr[1<< step][3];
+    signal input s_vals_next[1<< nextStep][3];
+    signal input {binary} enable;
+
+    signal sx[currStepBits];
+    
+    sx[0] <==  e0 *( queriesFRI[0] * (invroots(prevStepBits) -1) + 1);
+    for (var i=1; i< currStepBits; i++) {
+        sx[i] <== sx[i-1] *  ( queriesFRI[i] * (invroots(prevStepBits -i) -1) +1);
+    }
+        
+    // Perform an IFFT to obtain the coefficients of the polynomial given s_vals and evaluate it 
+    signal coefs[1 << step][3] <== FFT(step, 3, 1)(s_vals_curr);
+    signal evalXprime[3] <== [friChallenge[0] *  sx[currStepBits - 1], friChallenge[1] * sx[currStepBits - 1], friChallenge[2] *  sx[currStepBits - 1]];
+    signal evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
+
+    signal {binary} keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) { keys_lowValues[i] <== queriesFRI[i + nextStepBits]; } 
+    signal lowValues[3] <== TreeSelector(nextStep, 3)(s_vals_next, keys_lowValues);
+
+    enable * (lowValues[0] - evalPol[0]) === 0;
+    enable * (lowValues[1] - evalPol[1]) === 0;
+    enable * (lowValues[2] - evalPol[2]) === 0;
+}
+
+/* 
+    Verify that all committed polynomials are calculated correctly
+*/
+
+{% for chunk in eval_p_chunks %}template VerifyEvaluationsChunks{{ chunk.idx }}() {
+{% for cp in challenges_per_stage %}    signal input challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}    signal input challengeQ[3];
+    signal input challengeXi[3];
+    signal input evals[{{ ev_map_len }}][3];
+{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
+{% endif %}{% if n_air_values > 0 %}    signal input airvalues[{{ n_air_values }}][3];
+{% endif %}{% if n_proof_values > 0 %}    signal input proofvalues[{{ n_proof_values }}][3];
+{% endif %}
+    signal input Zh[3];
+{% if has_first_row %}    signal input Zfirst[3];
+{% endif %}{% if has_last_row %}    signal input Zlast[3];
+{% endif %}{% for frame in every_frames %}    signal input Zframe{{ frame.idx }}[{{ frame.size }}][3];
+{% endfor %}
+{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
+{% else %}    signal input tmp_{{ inp.id }}[3];
+{% endif %}{% endfor %}
+{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
+{% else %}    signal output tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}{{ chunk.code }}
+}
+
+{% endfor %}
+template parallel {{ verify_evaluations_name }}() {
+{% for cp in challenges_per_stage %}    signal input challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}    signal input challengeQ[3];
+    signal input challengeXi[3];
+    signal input evals[{{ ev_map_len }}][3];
+{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
+{% endif %}{% if n_air_values > 0 %}    signal input airvalues[{{ n_air_values }}][3];
+{% endif %}{% if n_proof_values > 0 %}    signal input proofvalues[{{ n_proof_values }}][3];
+{% endif %}    signal input {binary} enable;
+
+    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    signal zMul[{{ n_bits }}][3];
+    for (var i=0; i< {{ n_bits }} ; i++) {
+        if(i==0){
+            zMul[i] <== CMul()(challengeXi, challengeXi);
+        } else {
+            zMul[i] <== CMul()(zMul[i-1], zMul[i-1]);
+        }
+    }
+
+    // Store the vanishing polynomial Zh(x) = x^nBits - 1 evaluated at z
+    signal Z[3] <== [zMul[{{ n_bits - 1 }}][0] - 1, zMul[{{ n_bits - 1 }}][1], zMul[{{ n_bits - 1 }}][2]];
+    signal Zh[3] <== CInv()(Z);
+
+{% if has_first_row %}    signal Zfirst[3] <== CInv()([challengeXi[0] - 1, challengeXi[1], challengeXi[2]]);
+{% endif %}
+{% if has_last_row %}    signal Zlast[3] <== CInv()([challengeXi[0] - {{ zlast_root }}, challengeXi[1], challengeXi[2]]);
+{% endif %}
+{% for frame in every_frames %}    signal Zframe{{ frame.idx }}[{{ frame.size }}][3];
+{% for op in frame.ops %}{% if op.is_first %}    Zframe{{ frame.idx }}[{{ op.c }}] <== CMul()(Zh, [challengeXi[0] - {{ op.root }}, challengeXi[1], challengeXi[2]]);
+{% else %}    Zframe{{ frame.idx }}[{{ op.c }}] <== CMul()(Zframe{{ frame.idx }}, [challengeXi[0] - {{ op.root }}, challengeXi[1], challengeXi[2]]);
+{% endif %}{% endfor %}{% endfor %}
+    // Using the evaluations committed and the challenges,
+    // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
+{% for chunk in eval_p_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
+{% else %}    signal tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== VerifyEvaluationsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endfor %}
+    signal xAcc[{{ q_deg }}][3]; //Stores, at each step, x^i evaluated at z
+    signal qStep[{{ q_deg - 1 }}][3]; // Stores the evaluations of Q_i
+    signal qAcc[{{ q_deg }}][3]; // Stores the accumulate sum of Q_i
+
+    // Note: Each Qi has degree < n. qDeg determines the number of polynomials of degree < n needed to define Q
+    // Calculate Q(X) = Q1(X) + X^n*Q2(X) + X^(2n)*Q3(X) + ..... X^((qDeg-1)n)*Q(X) evaluated at z 
+    for (var i=0; i< {{ q_deg }}; i++) {
+        if (i==0) {
+            xAcc[0] <== [1, 0, 0];
+            qAcc[0] <== evals[{{ q_pol_ev_id }}+i];
+        } else {
+            xAcc[i] <== CMul()(xAcc[i-1], zMul[{{ n_bits - 1 }}]);
+            qStep[i-1] <== CMul()(xAcc[i], evals[{{ q_pol_ev_id }}+i]);
+            qAcc[i][0] <== qAcc[i-1][0] + qStep[i-1][0];
+            qAcc[i][1] <== qAcc[i-1][1] + qStep[i-1][1];
+            qAcc[i][2] <== qAcc[i-1][2] + qStep[i-1][2];
+        }
+    }
+
+    // Final Verification. Check that Q(X)*Zh(X) = sum of linear combination of q_i
+    enable * (tmp_{{ last_dest_id_p }}[0] - qAcc[{{ q_deg - 1 }}][0]) === 0;
+    enable * (tmp_{{ last_dest_id_p }}[1] - qAcc[{{ q_deg - 1 }}][1]) === 0;
+    enable * (tmp_{{ last_dest_id_p }}[2] - qAcc[{{ q_deg - 1 }}][2]) === 0;
+}
+
+{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}() {
+    signal input challengesFRI[2][3];
+    signal input evals[{{ ev_map_len }}][3];
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
+{% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
+    signal input consts[{{ n_constants }}];
+{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% endfor %}
+    signal input xDivXSubXi[{{ opening_points | length }}][3];
+
+    // Map the s0_vals so that they are converted either into single vars (if they belong to base field) or arrays of 3 elements (if 
+    // they belong to the extended field). 
+    component mapValues = {{ map_values_name }}();
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    mapValues.vals{{ stage.stage }} <== cm{{ stage.stage }};
+{% endif %}{% endfor %}    mapValues.vals{{ q_stage }} <== cm{{ q_stage }};
+{% for cc in custom_commits %}    mapValues.vals_{{ cc.name }}_0 <== custom_{{ cc.name }}_0;
+{% endfor %}
+{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
+{% else %}    signal input tmp_{{ inp.id }}[3];
+{% endif %}{% endfor %}
+{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
+{% else %}    signal output tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}{{ chunk.code }}
+
+}
+{% endfor %}
+
+/* 
+    Verify that the initial FRI polynomial, which is the lineal combination of the committed polynomials
+    during the STARK phases, is built properly
+*/
+template {{ verify_query_name }}(currStepBits, nextStepBits) {
+    var nextStep = currStepBits - nextStepBits; 
+    signal input {binary} queriesFRI[{{ step0_bits }}];
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+    signal input evals[{{ ev_map_len }}][3];
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
+{% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
+    signal input consts[{{ n_constants }}];
+{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% endfor %}
+    signal input s1_vals[1 << nextStep][3];
+    signal input {binary} enable;
+
+    signal xacc[{{ step0_bits }}];
+    xacc[0] <== queriesFRI[0]*({{ gl_shift }} * roots({{ step0_bits }})-{{ gl_shift }}) + {{ gl_shift }};
+    for (var i=1; i<{{ step0_bits }}; i++) {
+        xacc[i] <== xacc[i-1] * ( queriesFRI[i]*(roots({{ step0_bits }} - i) - 1) +1);
+    }
+
+    signal xDivXSubXi[{{ opening_points | length }}][3];
+
+{% for op in opening_points %}    xDivXSubXi[{{ op.idx }}] <== CInv()([xacc[{{ step0_bits - 1 }}] - {{ op.root }} * challengeXi[0], - {{ op.root }} * challengeXi[1], - {{ op.root }} * challengeXi[2]]);
+{% endfor %}
+{% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
+{% else %}    signal tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endfor %}
+    signal queryVals[3];
+    queryVals[0] <== tmp_{{ last_dest_id_q }}[0];
+    queryVals[1] <== tmp_{{ last_dest_id_q }}[1];
+    queryVals[2] <== tmp_{{ last_dest_id_q }}[2];
+
+    signal {binary} s0_keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) {
+        s0_keys_lowValues[i] <== queriesFRI[i + nextStepBits];
+    }
+
+    for(var i = 0; i < nextStepBits; i++) {
+        _ <== queriesFRI[i];
+    }
+   
+    signal lowValues[3] <== TreeSelector(nextStep, 3)(s1_vals, s0_keys_lowValues);
+
+    enable * (lowValues[0] - queryVals[0]) === 0;
+    enable * (lowValues[1] - queryVals[1]) === 0;
+    enable * (lowValues[2] - queryVals[2]) === 0;
+}
+
+// Polynomials can either have dimension 1 (if they are defined in the base field) or dimension 3 (if they are defined in the 
+// extended field). In general, all initial polynomials (constants and tr) will have dim 1 and the other ones such as Z (grand product),
+// Q (quotient) or h_i (plookup) will have dim 3.
+// This function processes the values, which are stored in an array vals[n] and splits them in multiple signals of size 1 (vals_i) 
+// or 3 (vals_i[3]) depending on its dimension.
+template {{ map_values_name }}() {
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input vals{{ stage.stage }}[{{ stage.cm_section_len }}];
+{% endif %}{% endfor %}    signal input vals{{ q_stage }}[{{ q_stage_cm_section_len }}];
+{% for cc in custom_commits %}    signal input vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% endfor %}{% for stage_pols in cm_pols_by_stage %}{% for pol in stage_pols.pols %}{% if pol.dim == 1 %}    signal output cm{{ stage_pols.stage }}_{{ pol.idx }};
+{% else %}    signal output cm{{ stage_pols.stage }}_{{ pol.idx }}[3];
+{% endif %}{% endfor %}{% endfor %}
+{% for cc in custom_commits %}{% for sp in cc.pols_per_stage %}{% for pol in sp.pols %}{% if pol.dim == 1 %}    signal output custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.idx }};
+{% else %}    signal output custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.idx }}[3];
+{% endif %}{% endfor %}{% endfor %}{% endfor %}
+
+{% for cc in custom_commits %}{% for sp in cc.pols_per_stage %}{% for pol in sp.pols %}{% if pol.dim == 1 %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.idx }} <== vals_{{ cc.name }}_0[{{ pol.stage_pos }}];
+{% else %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.idx }} <== [vals_{{ cc.name }}_0[{{ pol.stage_pos }}],vals_{{ cc.name }}_0[{{ pol.stage_pos + 1 }}] , vals_{{ cc.name }}_0[{{ pol.stage_pos + 2 }}]];
+{% endif %}{% endfor %}{% endfor %}{% endfor %}
+{% for stage_pols in cm_pols_by_stage %}{% for pol in stage_pols.pols %}{% if pol.dim == 1 %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== vals{{ stage_pols.stage }}[{{ pol.stage_pos }}];
+{% else %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== [vals{{ stage_pols.stage }}[{{ pol.stage_pos }}],vals{{ stage_pols.stage }}[{{ pol.stage_pos + 1 }}] , vals{{ stage_pols.stage }}[{{ pol.stage_pos + 2 }}]];
+{% endif %}{% endfor %}{% endfor %}}
+
+template {{ verify_final_pol_name }}() {
+    ///////
+    // Check Degree last pol
+    ///////
+    signal input finalPol[{{ final_pol_size }}][3];
+    signal input {binary} enable;
+    
+    // Calculate the IFFT to get the coefficients of finalPol 
+    signal lastIFFT[{{ final_pol_size }}][3] <== FFT({{ n_last_bits }}, 3, 1)(finalPol);
+
+    // Check that the degree of the final polynomial is bounded by the degree defined in the last step of the folding
+    for (var k= {{ max_deg_size }}; k< {{ final_pol_size }}; k++) {
+        for (var e=0; e<3; e++) {
+            enable * lastIFFT[k][e] === 0;
+        }
+    }
+    
+    // The coefficients of lower degree can have any value
+    for (var k= 0; k < {{ max_deg_size }}; k++) {
+        _ <== lastIFFT[k];
+    }
+}
+
+template {{ verify_single_query_name }}() {
+    signal input {binary} queriesFRI[{{ step0_bits }}];
+
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+    signal input challengesFRISteps[{{ n_steps + 1 }}][3];
+    signal input evals[{{ ev_map_len }}][3];
+    signal input {binary} enable;
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ stage.cm_section_len }}];
+    signal input s0_vals{{ stage.stage }}_p[{{ stage.cm_section_len }}][1];
+    signal input s0_siblings{{ stage.stage }}[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ stage.stage }}[{{ s0_last_mt_size }}][4];
+{% else %}    signal input root{{ stage.stage }}[4];
+{% endif %}{% endif %}{% endfor %}
+    signal input s0_vals{{ q_stage }}[{{ q_stage_cm_section_len }}];
+    signal input s0_vals{{ q_stage }}_p[{{ q_stage_cm_section_len }}][1];
+    signal input s0_siblings{{ q_stage }}[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+    signal input s0_valsC[{{ n_constants }}];
+    signal input s0_valsC_p[{{ n_constants }}][1];
+    signal input s0_siblingsC[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
+    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% else %}    signal input root{{ q_stage }}[4];
+    signal input rootC[4];
+{% endif %}
+{% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+    signal input s0_vals_{{ cc.name }}_0_p[{{ cc.section_len_0 }}][1];
+    signal input root_{{ cc.name }}_0[4];
+    signal input s0_siblings_{{ cc.name }}_0[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[{{ step.exponent }}][3];
+    signal input s{{ step.s }}_siblings[{{ step.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
+{% else %}    signal input s{{ step.s }}_root[4];
+{% endif %}{% endif %}{% endfor %}
+    signal input finalPol[{{ final_pol_size }}][3];
+
+    signal {binary} queriesFRIBits[{{ merkle_levels_s0 }}][{{ n_bits_arity }}];
+    for(var j = 0; j < {{ merkle_levels_s0 }}; j++) {
+        for(var k = 0; k < {{ n_bits_arity }}; k++) {
+            if (k + j * {{ n_bits_arity }} >= {{ step0_bits }}) {
+                queriesFRIBits[j][k] <== 0;
+            } else {
+                queriesFRIBits[j][k] <== queriesFRI[j*{{ n_bits_arity }} + k];
+            }
+        }
+    }
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesFRIBits, s0_last_mt_levels{{ stage.stage }}, enable);
+{% else %}    VerifyMerkleHash(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesFRIBits, root{{ stage.stage }}, enable);
+{% endif %}{% endif %}{% endfor %}
+{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRIBits, s0_last_mt_levels{{ q_stage }}, enable);
+    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_valsC_p, s0_siblingsC, queriesFRIBits, s0_last_mt_levelsC, enable);
+{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRIBits, root{{ q_stage }}, enable);
+    VerifyMerkleHash(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_valsC_p, s0_siblingsC, queriesFRIBits, rootC, enable);
+{% endif %}
+{% for cc in custom_commits %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRIBits, s0_last_mt_levels_{{ cc.name }}_0, enable);
+{% else %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRIBits, root_{{ cc.name }}_0, enable);
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_keys_merkle_bits[{{ step.merkle_levels + last_level_verification }}][{{ n_bits_arity }}];
+    for(var j = 0; j < {{ step.merkle_levels + last_level_verification }}; j++) {
+        for(var k = 0; k < {{ n_bits_arity }}; k++) {
+            if (k + j * {{ n_bits_arity }} >= {{ step.n_bits }}) {
+                s{{ step.s }}_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s{{ step.s }}_keys_merkle_bits[j][k] <== queriesFRI[j*{{ n_bits_arity }} + k];
+            }
+        }
+    }
+
+{% if last_level_verification_gt0 %}{% if step.merkle_levels == 0 %}    VerifyMerkleHashUntilLevelEmpty(3, {{ step.exponent }}, {{ arity }}, {{ last_level_verification }}, {{ step.mt_size }})(s{{ step.s }}_vals_p, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_last_mt_levels, enable);
+{% else %}    VerifyMerkleHashUntilLevel(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels }}, {{ last_level_verification }}, {{ step.mt_size }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_last_mt_levels, enable);
+{% endif %}{% else %}    VerifyMerkleHash(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels + last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_root, enable);
+{% endif %}{% endif %}{% endfor %}
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, challengesFRI, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesFRI[{{ step.n_bits }}];
+    for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesFRI[i] <== queriesFRI[i]; }
+    {{ verify_fri_name }}({{ n_bits_ext }}, {{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }})(s{{ step.s }}_queriesFRI, challengesFRISteps[{{ step.s }}], s{{ step.s }}_vals_p, {% if step.is_last %}finalPol{% else %}s{{ step.s + 1 }}_vals_p{% endif %}, enable);
+{% endif %}{% endfor %}}
+
+template parallel {{ verify_queries_batch_name }}(nQueries) {
+    signal input {binary} queriesFRI[nQueries][{{ step0_bits }}];
+
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+    signal input challengesFRISteps[{{ n_steps + 1 }}][3];
+    signal input evals[{{ ev_map_len }}][3];
+    signal input {binary} enable;
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[nQueries][{{ stage.cm_section_len }}];
+    signal input s0_vals{{ stage.stage }}_p[nQueries][{{ stage.cm_section_len }}][1];
+    signal input s0_siblings{{ stage.stage }}[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ stage.stage }}[{{ s0_last_mt_size }}][4];
+{% else %}    signal input root{{ stage.stage }}[4];
+{% endif %}{% endif %}{% endfor %}
+    signal input s0_vals{{ q_stage }}[nQueries][{{ q_stage_cm_section_len }}];
+    signal input s0_vals{{ q_stage }}_p[nQueries][{{ q_stage_cm_section_len }}][1];
+    signal input s0_siblings{{ q_stage }}[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+    signal input s0_valsC[nQueries][{{ n_constants }}];
+    signal input s0_valsC_p[nQueries][{{ n_constants }}][1];
+    signal input s0_siblingsC[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
+    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% else %}    signal input root{{ q_stage }}[4];
+    signal input rootC[4];
+{% endif %}
+{% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[nQueries][{{ cc.section_len_0 }}];
+    signal input s0_vals_{{ cc.name }}_0_p[nQueries][{{ cc.section_len_0 }}][1];
+    signal input root_{{ cc.name }}_0[4];
+    signal input s0_siblings_{{ cc.name }}_0[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[nQueries][{{ step.exponent }}][3];
+    signal input s{{ step.s }}_siblings[nQueries][{{ step.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
+{% else %}    signal input s{{ step.s }}_root[4];
+{% endif %}{% endif %}{% endfor %}
+    signal input finalPol[{{ final_pol_size }}][3];
+
+    for (var q = 0; q < nQueries; q++) {
+        {{ verify_single_query_name }}()(
+            queriesFRI[q],
+            challengeXi,
+            challengesFRI,
+            challengesFRISteps,
+            evals,
+            enable,
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}            s0_vals{{ stage.stage }}[q],
+            s0_vals{{ stage.stage }}_p[q],
+            s0_siblings{{ stage.stage }}[q],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ stage.stage }},
+{% else %}            root{{ stage.stage }},
+{% endif %}{% endif %}{% endfor %}            s0_vals{{ q_stage }}[q],
+            s0_vals{{ q_stage }}_p[q],
+            s0_siblings{{ q_stage }}[q],
+            s0_valsC[q],
+            s0_valsC_p[q],
+            s0_siblingsC[q],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
+            s0_last_mt_levelsC,
+{% else %}            root{{ q_stage }},
+            rootC,
+{% endif %}{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
+            s0_vals_{{ cc.name }}_0_p[q],
+            root_{{ cc.name }}_0,
+            s0_siblings_{{ cc.name }}_0[q],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels_{{ cc.name }}_0,
+{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals_p[q],
+            s{{ step.s }}_siblings[q],
+{% if last_level_verification_gt0 %}            s{{ step.s }}_last_mt_levels,
+{% else %}            s{{ step.s }}_root,
+{% endif %}{% endif %}{% endfor %}            finalPol
+        );
+    }
+}
+
+template {{ verifier_name }}() {
+{% if n_publics > 0 %}    signal input publics[{{ n_publics }}]; // publics polynomials
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3]; // airgroupvalue values
+{% endif %}{% if n_air_values > 0 %}    signal input airvalues[{{ n_air_values }}][3]; // air values
+{% endif %}{% if n_proof_values > 0 %}    signal input proofvalues[{{ n_proof_values }}][3]; // air values
+{% endif %}{% for stage in stages_info %}{% if stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4]; // Merkle tree root of stage {{ stage.stage }}
+{% endif %}{% endfor %}    signal input root{{ q_stage }}[4]; // Merkle tree root of the evaluations of the quotient Q1 and Q2 polynomials
+
+{% if verkey_input %}    signal input rootC[4]; // Merkle tree root of the evaluations of constant polynomials
+{% else %}{% if input_challenges %}    signal output rootC[4] <== [{{ const_root_str }} ]; // Merkle tree root of the evaluations of constant polynomials
+{% else %}    signal rootC[4] <== [{{ const_root_str }} ]; // Merkle tree root of the evaluations of constant polynomials
+{% endif %}{% endif %}
+    signal input evals[{{ ev_map_len }}][3]; // Evaluations of the set polynomials at a challenge value z and gz
+
+    // Leaves values of the merkle tree used to check all the queries
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ n_queries }}][{{ stage.cm_section_len }}];
+{% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];
+    signal input s0_valsC[{{ n_queries }}][{{ n_constants }}];
+
+{% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ n_queries }}][{{ cc.section_len_0 }}];
+{% endfor %}
+    // Merkle proofs for each of the evaluations
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_siblings{{ stage.stage }}[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ stage.stage }}[{{ s0_last_mt_size }}][4];
+{% endif %}{% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
+{% endif %}    signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% endif %}{% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
+{% endif %}{% endfor %}
+    // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4];
+{% endif %}{% endfor %}
+    // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
+    // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
+    // and the sibling paths for each query.
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
+    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
+{% endif %}{% endif %}{% endfor %}
+    // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
+    signal input finalPol[{{ final_pol_size }}][3];
+
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}
+    signal {binary} enabled;
+{% if enable_input %}    signal input enable;
+    enable * (enable -1) === 0;
+    enabled <== enable;
+{% else %}    enabled <== 1;
+{% endif %}
+
+{% if input_challenges %}    signal input globalChallenge[3];
+{% endif %}
+
+{% if multi_fri %}    signal output queryVals[{{ n_queries }}][3];
+{% else %}    signal queryVals[{{ n_queries }}][3];
+{% endif %}
+
+{% for cp in challenges_per_stage %}    signal challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}
+    signal challengeQ[3];
+    signal challengeXi[3];
+    signal challengesFRI[2][3];
+
+    // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
+    // the prover can commit the polynomial.
+    // Remember that, when folding, the prover does as follows: f0 = g_0 + X*g_1 + ... + (X^b)*g_b and then the 
+    // verifier provides a random X so that the prover can commit it. This value is stored here.
+    signal challengesFRISteps[{{ n_steps + 1 }}][3];
+
+    // Challenges from which we derive all the queries
+    signal {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+
+
+    ///////////
+    // Calculate challenges, challengesFRISteps and queriesFRI
+    ///////////
+
+{% if pow_bits > 0 %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
+{% else %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
+{% endif %}
+    ///////////
+    // Preprocess s_i vals
+    ///////////
+
+    // Preprocess the s_i vals given as inputsC so that we can use anonymous components.
+    // Two different processings are done:
+    // For s0_vals, the arrays are transposed so that they fit MerkleHash template
+    // For (s_i)_vals, the values are passed all together in a single array of length nVals*3. We convert them to vals[nVals][3]
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    var s0_vals{{ stage.stage }}_p[{{ n_queries }}][{{ stage.cm_section_len }}][1];
+{% endif %}{% endfor %}    var s0_vals{{ q_stage }}_p[{{ n_queries }}][{{ q_stage_cm_section_len }}][1];
+    var s0_valsC_p[{{ n_queries }}][{{ n_constants }}][1];
+{% for cc in custom_commits %}    var s0_vals_{{ cc.name }}_0_p[{{ n_queries }}][{{ cc.section_len_0 }}][1];
+{% endfor %}{% for step in fri_steps_info %}    var s{{ step.s }}_vals_p[{{ n_queries }}][{{ step.exponent }}][3]; 
+{% endfor %}
+    for (var q=0; q<{{ n_queries }}; q++) {
+        // Preprocess vals for the initial FRI polynomial
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}        for (var i = 0; i < {{ stage.cm_section_len }}; i++) {
+            s0_vals{{ stage.stage }}_p[q][i][0] = s0_vals{{ stage.stage }}[q][i];
+        }
+{% endif %}{% endfor %}        for (var i = 0; i < {{ q_stage_cm_section_len }}; i++) {
+            s0_vals{{ q_stage }}_p[q][i][0] = s0_vals{{ q_stage }}[q][i];
+        }
+        for (var i = 0; i < {{ n_constants }}; i++) {
+            s0_valsC_p[q][i][0] = s0_valsC[q][i];
+        }
+{% for cc in custom_commits %}    for (var i = 0; i < {{ cc.section_len_0 }}; i++) {
+        s0_vals_{{ cc.name }}_0_p[q][i][0] = s0_vals_{{ cc.name }}_0[q][i];
+    }
+{% endfor %}
+        // Preprocess vals for each folded polynomial
+        for(var e=0; e < 3; e++) {
+{% for step in fri_steps_info %}{% if step.s > 0 %}            for(var c=0; c < {{ step.exponent }}; c++) {
+                s{{ step.s }}_vals_p[q][c][e] = s{{ step.s }}_vals[q][c*3+e];
+            }
+{% endif %}{% endfor %}        }
+    }
+
+{% for cc in custom_commits %}    signal root_{{ cc.name }}_0[4] <== [publics[{{ cc.public_values[0] }}], publics[{{ cc.public_values[1] }}], publics[{{ cc.public_values[2] }}], publics[{{ cc.public_values[3] }}]];
+{% endfor %}
+    ///////////
+    // Verify Merkle roots and FRI constraints per query
+    ///////////
+
+    // Batch-size parameters — change QUERIES_BATCH_SIZE and recompile to test different batch sizes.
+    // N_FULL_BATCHES and LAST_BATCH_SIZE are derived automatically.
+    var N_QUERIES = {{ n_queries }};
+    var QUERIES_BATCH_SIZE = {{ batch_size }};
+    var N_FULL_BATCHES = N_QUERIES \ QUERIES_BATCH_SIZE;
+    var LAST_BATCH_SIZE = N_QUERIES - N_FULL_BATCHES * QUERIES_BATCH_SIZE;
+    // Used as signal dimension when LAST_BATCH_SIZE may be 0 (size-0 signals are invalid in Circom).
+    var LAST_BATCH_SIZE_SAFE = LAST_BATCH_SIZE > 0 ? LAST_BATCH_SIZE : 1;
+
+// Work buffers for full batches
+    signal {binary} batch_work_queriesFRI[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step0_bits }}];
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal batch_work_s0_vals{{ stage.stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ stage.cm_section_len }}];
+    signal batch_work_s0_vals{{ stage.stage }}_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ stage.cm_section_len }}][1];
+    signal batch_work_s0_siblings{{ stage.stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% endif %}{% endfor %}
+    signal batch_work_s0_vals{{ q_stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ q_stage_cm_section_len }}];
+    signal batch_work_s0_vals{{ q_stage }}_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ q_stage_cm_section_len }}][1];
+    signal batch_work_s0_siblings{{ q_stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+    signal batch_work_s0_valsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ n_constants }}];
+    signal batch_work_s0_valsC_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ n_constants }}][1];
+    signal batch_work_s0_siblingsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+{% for cc in custom_commits %}    signal batch_work_s0_vals_{{ cc.name }}_0[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ cc.section_len_0 }}];
+    signal batch_work_s0_vals_{{ cc.name }}_0_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ cc.section_len_0 }}][1];
+    signal batch_work_s0_siblings_{{ cc.name }}_0[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal batch_work_s{{ step.s }}_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step.exponent }}][3];
+    signal batch_work_s{{ step.s }}_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step.merkle_levels }}][{{ siblings_width }}];
+{% endif %}{% endfor %}
+    // Process full batches with Circom loop
+    for (var b = 0; b < N_FULL_BATCHES; b++) {
+        var batchStart = b * QUERIES_BATCH_SIZE;
+
+        // Fill work buffers for batch b
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < {{ step0_bits }}; i++) {
+                batch_work_queriesFRI[b][q][i] <== queriesFRI[batchStart + q][i];
+            }
+        }
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < {{ stage.cm_section_len }}; i++) {
+                batch_work_s0_vals{{ stage.stage }}[b][q][i] <== s0_vals{{ stage.stage }}[batchStart + q][i];
+                batch_work_s0_vals{{ stage.stage }}_p[b][q][i][0] <== s0_vals{{ stage.stage }}_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+                for (var k = 0; k < {{ siblings_width }}; k++) {
+                    batch_work_s0_siblings{{ stage.stage }}[b][q][j][k] <== s0_siblings{{ stage.stage }}[batchStart + q][j][k];
+                }
+            }
+        }
+{% endif %}{% endfor %}
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < {{ q_stage_cm_section_len }}; i++) {
+                batch_work_s0_vals{{ q_stage }}[b][q][i] <== s0_vals{{ q_stage }}[batchStart + q][i];
+                batch_work_s0_vals{{ q_stage }}_p[b][q][i][0] <== s0_vals{{ q_stage }}_p[batchStart + q][i][0];
+            }
+            for (var i = 0; i < {{ n_constants }}; i++) {
+                batch_work_s0_valsC[b][q][i] <== s0_valsC[batchStart + q][i];
+                batch_work_s0_valsC_p[b][q][i][0] <== s0_valsC_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+                for (var k = 0; k < {{ siblings_width }}; k++) {
+                    batch_work_s0_siblings{{ q_stage }}[b][q][j][k] <== s0_siblings{{ q_stage }}[batchStart + q][j][k];
+                    batch_work_s0_siblingsC[b][q][j][k] <== s0_siblingsC[batchStart + q][j][k];
+                }
+            }
+        }
+
+{% for cc in custom_commits %}        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < {{ cc.section_len_0 }}; i++) {
+                batch_work_s0_vals_{{ cc.name }}_0[b][q][i] <== s0_vals_{{ cc.name }}_0[batchStart + q][i];
+                batch_work_s0_vals_{{ cc.name }}_0_p[b][q][i][0] <== s0_vals_{{ cc.name }}_0_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+                for (var k = 0; k < {{ siblings_width }}; k++) {
+                    batch_work_s0_siblings_{{ cc.name }}_0[b][q][j][k] <== s0_siblings_{{ cc.name }}_0[batchStart + q][j][k];
+                }
+            }
+        }
+{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < {{ step.exponent }}; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s{{ step.s }}_vals_p[b][q][c][e] <== s{{ step.s }}_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < {{ step.merkle_levels }}; j++) {
+                for (var k = 0; k < {{ siblings_width }}; k++) {
+                    batch_work_s{{ step.s }}_siblings[b][q][j][k] <== s{{ step.s }}_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+{% endif %}{% endfor %}
+        // Call batch verifier with slice [b] of work buffers
+        {{ verify_queries_batch_name }}(QUERIES_BATCH_SIZE)(
+            batch_work_queriesFRI[b],
+            challengeXi,
+            challengesFRI,
+            challengesFRISteps,
+            evals,
+            enabled,
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}            batch_work_s0_vals{{ stage.stage }}[b],
+            batch_work_s0_vals{{ stage.stage }}_p[b],
+            batch_work_s0_siblings{{ stage.stage }}[b],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ stage.stage }},
+{% else %}            root{{ stage.stage }},
+{% endif %}{% endif %}{% endfor %}            batch_work_s0_vals{{ q_stage }}[b],
+            batch_work_s0_vals{{ q_stage }}_p[b],
+            batch_work_s0_siblings{{ q_stage }}[b],
+            batch_work_s0_valsC[b],
+            batch_work_s0_valsC_p[b],
+            batch_work_s0_siblingsC[b],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
+            s0_last_mt_levelsC,
+{% else %}            root{{ q_stage }},
+            rootC,
+{% endif %}{% for cc in custom_commits %}            batch_work_s0_vals_{{ cc.name }}_0[b],
+            batch_work_s0_vals_{{ cc.name }}_0_p[b],
+            root_{{ cc.name }}_0,
+            batch_work_s0_siblings_{{ cc.name }}_0[b],
+{% if last_level_verification_gt0 %}            s0_last_mt_levels_{{ cc.name }}_0,
+{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            batch_work_s{{ step.s }}_vals_p[b],
+            batch_work_s{{ step.s }}_siblings[b],
+{% if last_level_verification_gt0 %}            s{{ step.s }}_last_mt_levels,
+{% else %}            s{{ step.s }}_root,
+{% endif %}{% endif %}{% endfor %}            finalPol
+        );
+    }
+
+// Remainder batch — signal declarations always emitted; call guarded by Circom if (LAST_BATCH_SIZE > 0)
+    signal {binary} remainder_queriesFRI[LAST_BATCH_SIZE_SAFE][{{ step0_bits }}];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < {{ step0_bits }}; i++) {
+            remainder_queriesFRI[q][i] <== queriesFRI[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+        }
+    }
+
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal remainder_s0_vals{{ stage.stage }}[LAST_BATCH_SIZE_SAFE][{{ stage.cm_section_len }}];
+    signal remainder_s0_vals{{ stage.stage }}_p[LAST_BATCH_SIZE_SAFE][{{ stage.cm_section_len }}][1];
+    signal remainder_s0_siblings{{ stage.stage }}[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < {{ stage.cm_section_len }}; i++) {
+            remainder_s0_vals{{ stage.stage }}[q][i] <== s0_vals{{ stage.stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals{{ stage.stage }}_p[q][i][0] <== s0_vals{{ stage.stage }}_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+            for (var k = 0; k < {{ siblings_width }}; k++) {
+                remainder_s0_siblings{{ stage.stage }}[q][j][k] <== s0_siblings{{ stage.stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+{% endif %}{% endfor %}
+    signal remainder_s0_vals{{ q_stage }}[LAST_BATCH_SIZE_SAFE][{{ q_stage_cm_section_len }}];
+    signal remainder_s0_vals{{ q_stage }}_p[LAST_BATCH_SIZE_SAFE][{{ q_stage_cm_section_len }}][1];
+    signal remainder_s0_siblings{{ q_stage }}[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+    signal remainder_s0_valsC[LAST_BATCH_SIZE_SAFE][{{ n_constants }}];
+    signal remainder_s0_valsC_p[LAST_BATCH_SIZE_SAFE][{{ n_constants }}][1];
+    signal remainder_s0_siblingsC[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < {{ q_stage_cm_section_len }}; i++) {
+            remainder_s0_vals{{ q_stage }}[q][i] <== s0_vals{{ q_stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals{{ q_stage }}_p[q][i][0] <== s0_vals{{ q_stage }}_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var i = 0; i < {{ n_constants }}; i++) {
+            remainder_s0_valsC[q][i] <== s0_valsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_valsC_p[q][i][0] <== s0_valsC_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+            for (var k = 0; k < {{ siblings_width }}; k++) {
+                remainder_s0_siblings{{ q_stage }}[q][j][k] <== s0_siblings{{ q_stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+                remainder_s0_siblingsC[q][j][k] <== s0_siblingsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+
+{% for cc in custom_commits %}    signal remainder_s0_vals_{{ cc.name }}_0[LAST_BATCH_SIZE_SAFE][{{ cc.section_len_0 }}];
+    signal remainder_s0_vals_{{ cc.name }}_0_p[LAST_BATCH_SIZE_SAFE][{{ cc.section_len_0 }}][1];
+    signal remainder_s0_siblings_{{ cc.name }}_0[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < {{ cc.section_len_0 }}; i++) {
+            remainder_s0_vals_{{ cc.name }}_0[q][i] <== s0_vals_{{ cc.name }}_0[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals_{{ cc.name }}_0_p[q][i][0] <== s0_vals_{{ cc.name }}_0_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+            for (var k = 0; k < {{ siblings_width }}; k++) {
+                remainder_s0_siblings_{{ cc.name }}_0[q][j][k] <== s0_siblings_{{ cc.name }}_0[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal remainder_s{{ step.s }}_vals_p[LAST_BATCH_SIZE_SAFE][{{ step.exponent }}][3];
+    signal remainder_s{{ step.s }}_siblings[LAST_BATCH_SIZE_SAFE][{{ step.merkle_levels }}][{{ siblings_width }}];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < {{ step.exponent }}; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s{{ step.s }}_vals_p[q][c][e] <== s{{ step.s }}_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < {{ step.merkle_levels }}; j++) {
+            for (var k = 0; k < {{ siblings_width }}; k++) {
+                remainder_s{{ step.s }}_siblings[q][j][k] <== s{{ step.s }}_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+{% endif %}{% endfor %}
+    if (LAST_BATCH_SIZE > 0) {
+    {{ verify_queries_batch_name }}(LAST_BATCH_SIZE)(
+        remainder_queriesFRI,
+        challengeXi,
+        challengesFRI,
+        challengesFRISteps,
+        evals,
+        enabled,
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}        remainder_s0_vals{{ stage.stage }},
+        remainder_s0_vals{{ stage.stage }}_p,
+        remainder_s0_siblings{{ stage.stage }},
+{% if last_level_verification_gt0 %}        s0_last_mt_levels{{ stage.stage }},
+{% else %}        root{{ stage.stage }},
+{% endif %}{% endif %}{% endfor %}    remainder_s0_vals{{ q_stage }},
+    remainder_s0_vals{{ q_stage }}_p,
+    remainder_s0_siblings{{ q_stage }},
+    remainder_s0_valsC,
+    remainder_s0_valsC_p,
+    remainder_s0_siblingsC,
+{% if last_level_verification_gt0 %}        s0_last_mt_levels{{ q_stage }},
+        s0_last_mt_levelsC,
+{% else %}        root{{ q_stage }},
+        rootC,
+{% endif %}{% for cc in custom_commits %}        remainder_s0_vals_{{ cc.name }}_0,
+        remainder_s0_vals_{{ cc.name }}_0_p,
+        root_{{ cc.name }}_0,
+        remainder_s0_siblings_{{ cc.name }}_0,
+{% if last_level_verification_gt0 %}        s0_last_mt_levels_{{ cc.name }}_0,
+{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}        remainder_s{{ step.s }}_vals_p,
+        remainder_s{{ step.s }}_siblings,
+{% if last_level_verification_gt0 %}        s{{ step.s }}_last_mt_levels,
+{% else %}        s{{ step.s }}_root,
+{% endif %}{% endif %}{% endfor %}        finalPol
+    );
+    }
+
+    ///////////
+    // Check constraints polynomial in the evaluation point
+    ///////////
+
+    {{ verify_evaluations_name }}()({{ verify_evals_inputs_joined }});
+
+
+{% if last_level_verification_gt0 %}{% for stage in stages_info %}{% if stage.stage <= n_stages %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels{{ stage.stage }}, root{{ stage.stage }}, enabled);
+{% endif %}{% endfor %}
+    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels{{ q_stage }}, root{{ q_stage }}, enabled);
+
+    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levelsC, rootC, enabled);
+
+{% for cc in custom_commits %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels_{{ cc.name }}_0, root_{{ cc.name }}_0, enabled);
+{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step.mt_size }})(s{{ step.s }}_last_mt_levels, s{{ step.s }}_root, enabled);
+{% endif %}{% endfor %}{% endif %}
+    ///////////
+    // Verify Merkle roots for optimized last levels (shared by all queries)
+    ///////////
+
+    {{ verify_final_pol_name }}()(finalPol, enabled);
+}
+{% if not skip_main %}
+component main {% if n_publics > 0 %}{public [publics]}{% endif %}= {{ verifier_name }}();
+{% endif %}

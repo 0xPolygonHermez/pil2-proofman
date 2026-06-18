@@ -1,0 +1,28 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "iszero.circom";
+{% for vf in verifier_filenames %}include "{{ vf }}";
+{% endfor %}
+{% if not has_compressor %}include "elliptic_curve.circom";
+
+{{ calculate_hashes }}
+{% endif %}
+template Recursive1() {
+
+{{ vadcop_define }}
+{{ stark_signals }}
+{% if has_publics %}    signal input publics[{{ n_publics }}];
+{% endif %}
+{% if has_proof_values %}    signal input proofValues[{{ num_proof_values }}][3];
+{% endif %}
+    signal input globalChallenge[3];
+
+    signal input rootCAgg[4];
+
+{{ stark_assign }}
+
+{{ vadcop_init_or_assign }}
+}
+
+component main {public [{{ pub_names }}]} = Recursive1();

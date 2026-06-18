@@ -60,7 +60,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
                 }
 
                 // Update the virtual table rows
-                self.std_lib.inc_virtual_row(id, row, 1);
+                self.std_lib.inc_virtual_row_one(id, row);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

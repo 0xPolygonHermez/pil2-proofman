@@ -253,7 +253,7 @@ bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool 
     return true;
 }
 
-bool loadFileParallel_block(void* buffer, const string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks) {
+bool loadFileParallel_block(void* buffer, const string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks, uint64_t header_skip_bytes) {
 
     // Check file size
     struct stat sb;
@@ -264,7 +264,7 @@ bool loadFileParallel_block(void* buffer, const string &fileName, uint64_t block
     }
 
     // Validate that the file is large enough for the requested block start
-    uint64_t block_start_offset = (uint64_t)skip_blocks * block_size;
+    uint64_t block_start_offset = header_skip_bytes + (uint64_t)skip_blocks * block_size;
     if ((uint64_t)sb.st_size <= block_start_offset) {
         zklog.error("loadFileParallel_block() file " + fileName + " size " + to_string(sb.st_size) + 
                    " is smaller than block start offset " + to_string(block_start_offset) + " bytes");
@@ -435,3 +435,4 @@ void pack_cpu(
         if (bit_offset > 0) packed_row[word_idx] = word;
     }
 }
+

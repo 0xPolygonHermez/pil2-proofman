@@ -14,6 +14,6 @@
 
 using namespace std;
 
-void buildConstTree(const string constFile, const string starkInfoFile, const string constTreeFile, const string verKeyFile);
+void buildConstTree(const string constFile, const string starkInfoFile, const string constTreeFile, const string verKeyFile, uint64_t *outRoot = nullptr);
 
 #endif

@@ -13,8 +13,10 @@ serde = { version = "1.0.130", default-features = false, features = ["alloc", "d
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 bincode = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
 
 [features]
 default = ["std", "verify"]
 std = ["dep:tracing", "dep:bincode", "serde/std"]
 verify = ["fields/verify"]
+parallel = ["std", "dep:rayon"]

@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.19.0"
+version = "1.0.0-alfa"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
@@ -22,6 +22,8 @@ members = [
     "util",
     "verifier",
     "soundness",
+    "setup/stark-recurser",
+    "setup/pil2-stark",
 
     # PIL2 components library
     "pil2-components/lib/std/rs",
@@ -35,7 +37,9 @@ members = [
     "pil2-components/test/permutation/rs",
     "pil2-components/test/range_check/rs",
     "pil2-components/test/simple/rs",
+    "pil2-components/test/special/rs",
     "pil2-components/test/virtual_tables/rs",
+    "pil2-components/test/common/rs",
 
     # Examples
     "examples/fibonacci-square",
@@ -57,6 +61,8 @@ default-members = [
     "util",
     "verifier",
     "soundness",
+    "setup/stark-recurser",
+    "setup/pil2-stark",
 ]
 
 resolver = "2"
@@ -65,6 +71,7 @@ resolver = "2"
 proofman-macros = { path = "macros" }
 proofman = { path = "proofman" }
 proofman-common = { path = "common" }
+proofman-starks-lib-c = { path = "provers/starks-lib-c" }
 proofman-hints = { path = "hints" }
 proofman-soundness = { path = "soundness" }
 proofman-verifier = { path = "verifier" }
@@ -97,7 +104,9 @@ borsh = { version = "1.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = "0.7.16"
+tracing-subscriber = "0.3.19"
 rustc-hash = "2.1.1"
 itoa = "1.0.17"
 thiserror = { version = "2" }
-rand = "0.10.1"
+rand = "0.10"
+anyhow = "1"

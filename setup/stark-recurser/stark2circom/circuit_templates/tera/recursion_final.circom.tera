@@ -1,0 +1,24 @@
+pragma circom 2.1.0;
+
+{% for vf in verifier_filenames %}    include "{{ vf }}";
+{% endfor %}
+{{ sha256_template }}
+template Main() {
+    signal output publicsHash;
+
+{{ stark_signals }}
+{{ stark_assign }}
+    signal rootC[4];
+    for (var i = 0; i < 4; i++) {
+        rootC[i] <== publics[i];
+    }
+
+    signal publicsProof[{{ n_publics_proof }}];
+    for (var i = 0; i < {{ n_publics_proof }}; i++) {
+        publicsProof[i] <== publics[i + 4];
+    }
+
+    publicsHash <== getSha256Inputs()(publicsProof, rootC);
+}
+
+component main = Main();

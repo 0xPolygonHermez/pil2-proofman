@@ -11,7 +11,7 @@ use proofman_common::SetupCtx;
 
 use colored::Colorize;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
+use proofman_common::{ProofCtx, ProofmanResult};
 use proofman_hints::{
     get_hint_ids_by_name, format_hint_field_output_vec, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
     HintFieldOptions,
@@ -148,13 +148,9 @@ pub fn update_global_debug_data<F: PrimeField64>(
     if is_proves {
         bus_val.shared_data.num_proves += times;
     } else {
-        if times != 1 {
-            return Err(ProofmanError::StdError(format!(
-                "The selector value is invalid: expected 1, but received {times:?}."
-            )));
-        }
         bus_val.shared_data.num_assumes += times;
     }
+
     Ok(())
 }
 

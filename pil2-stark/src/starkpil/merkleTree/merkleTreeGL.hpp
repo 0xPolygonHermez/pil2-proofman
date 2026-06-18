@@ -2,6 +2,8 @@
 #define MERKLETREEGL
 
 #include "goldilocks_base_field.hpp"
+#include "starks_api_internal.hpp"
+#include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
@@ -79,20 +81,27 @@ public:
             numNodesLevel = (numNodesLevel + (arity - 1)) / arity;
         }
         Goldilocks::Element computedRoot[nFieldElements];
-        switch(arity) {
-            case 2:
-                Poseidon2Goldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
-                break;
-            case 3:
-                Poseidon2Goldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
-                break;
-            case 4:
-                Poseidon2Goldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
-                break;
-            default:
-                zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity");
-                exitProcess();
-                exit(-1);
+        switch (get_hash_family()) {
+        case HashFamily::Poseidon1:
+            switch(arity) {
+                case 2: PoseidonGoldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);  break;
+                case 3: PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity); break;
+                case 4: PoseidonGoldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity); break;
+                default:
+                    zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (Poseidon1 supports 2, 3, 4)");
+                    exitProcess(); exit(-1);
+            }
+            break;
+        case HashFamily::Poseidon2:
+            switch(arity) {
+                case 2: Poseidon2Goldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);  break;
+                case 3: Poseidon2Goldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity); break;
+                case 4: Poseidon2Goldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity); break;
+                default:
+                    zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (Poseidon2 supports 2, 3, 4)");
+                    exitProcess(); exit(-1);
+            }
+            break;
         }
 
         for (uint64_t i = 0; i < nFieldElements; ++i) {
