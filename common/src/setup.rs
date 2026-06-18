@@ -8,14 +8,26 @@ use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
 
-pub type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub type GetWitnessTraceFunc = unsafe extern "C" fn(
+    zkin: *mut u64,
+    circom_circuit: *mut c_void,
+    exec_data: *mut u64,
+    trace: *mut c_void,
+    publics: *mut c_void,
+    n: u64,
+    n_publics: u64,
+    n_committed_pols: u64,
+    n_mutexes: u64,
+    signal_values: *mut c_void, // optional pool buffer (>= total_signal_no u64s); null => self-alloc
+) -> i64;
+
+pub type GetTotalSignalNoFunc = unsafe extern "C" fn() -> u64;
 
 #[derive(Debug)]
 pub struct CircomState {
     library: Option<Library>,
     pub circuit: Option<*mut c_void>,
-    pub get_witness_fn: Option<GetWitnessFunc>,
+    pub get_witness_trace_fn: Option<GetWitnessTraceFunc>,
 }
 
 unsafe impl Send for CircomState {}
@@ -84,6 +96,7 @@ pub struct Setup<F: PrimeField64> {
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
     pub size_witness: Option<u64>,
+    pub total_signal_no: Option<u64>,
     pub circom_state: RwLock<CircomState>,
     pub exec_data_path: Option<String>,
     pub exec_data: Option<Arc<Vec<u64>>>,
@@ -297,51 +310,64 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_type != &ProofType::Basic,
         };
 
-        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data_path, exec_data, n_adds) =
-            if needs_circom {
-                let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
-                let rust_lib_filename = setup_path.display().to_string() + lib_extension;
-                let rust_lib_path = Path::new(rust_lib_filename.as_str());
+        let (
+            circom_library,
+            circom_circuit,
+            get_witness_trace_fn,
+            size_witness,
+            total_signal_no,
+            exec_data_path,
+            exec_data,
+            n_adds,
+        ) = if needs_circom {
+            let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+            let rust_lib_filename = setup_path.display().to_string() + lib_extension;
+            let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
-                if !rust_lib_path.exists() {
-                    return Err(ProofmanError::InvalidSetup(format!(
-                        "Rust lib dynamic library not found at path: {rust_lib_path:?}"
-                    )));
-                }
+            if !rust_lib_path.exists() {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Rust lib dynamic library not found at path: {rust_lib_path:?}"
+                )));
+            }
 
-                let library: Library = unsafe { Library::new(rust_lib_path)? };
+            let library: Library = unsafe { Library::new(rust_lib_path)? };
 
-                let dat_filename = setup_path.display().to_string() + ".dat";
-                let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-                let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+            let dat_filename = setup_path.display().to_string() + ".dat";
+            let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+            let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
-                let circom_circuit_ptr = unsafe {
-                    let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
-                    init_circom_circuit(dat_filename_ptr)
-                };
+            let circom_circuit_ptr = unsafe {
+                let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
+                init_circom_circuit(dat_filename_ptr)
+            };
 
-                let witness_size = unsafe {
-                    let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-                    get_size_witness()
-                };
+            let witness_size = unsafe {
+                let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+                get_size_witness()
+            };
 
-                // Load the getWitness function pointer for later use
-                let get_witness_fn = unsafe {
-                    let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-                    Some(*get_witness_symbol)
-                };
+            let total_signal_no = unsafe {
+                library
+                    .get::<GetTotalSignalNoFunc>(b"getTotalSignalNo\0")
+                    .ok()
+                    .map(|sym| (*sym)())
+                    .unwrap_or(witness_size)
+            };
 
-                // Pre-load the entire .exec file into memory. Header is the first two u64s
-                // (n_adds, n_smap); the rest is read sequentially. Pre-loading gives RAM-speed
-                // access during every `get_committed_pols_c` call — no on-demand page faults.
-                let exec_filename = setup_path.display().to_string() + ".exec";
-                let mut file = File::open(&exec_filename)?;
-                let mut bytes = [0u8; 8];
-                file.read_exact(&mut bytes)?;
-                let n_adds = u64::from_le_bytes(bytes);
-                file.read_exact(&mut bytes)?;
-                let n_smap = u64::from_le_bytes(bytes);
-                let exec_data_size_elements: usize = (|| -> Option<usize> {
+            let get_witness_trace_fn =
+                unsafe { library.get::<GetWitnessTraceFunc>(b"getWitnessTrace\0").ok().map(|sym| *sym) };
+
+            // Pre-load the entire .exec file into memory. Header is the first two u64s
+            // (n_adds, n_smap); the rest is read sequentially. Pre-loading gives RAM-speed
+            // access during every `getWitnessTrace` scatter — no on-demand page faults.
+            let exec_filename = setup_path.display().to_string() + ".exec";
+            let mut file = File::open(&exec_filename)?;
+            let mut bytes = [0u8; 8];
+            file.read_exact(&mut bytes)?;
+            let n_adds = u64::from_le_bytes(bytes);
+            file.read_exact(&mut bytes)?;
+            let n_smap = u64::from_le_bytes(bytes);
+            let exec_data_size_elements: usize = (|| -> Option<usize> {
                     let adds_terms = n_adds.checked_mul(4)?;
                     let smap_terms = n_smap.checked_mul(n_cols)?;
                     let elements = 2u64.checked_add(adds_terms)?.checked_add(smap_terms)?;
@@ -352,27 +378,28 @@ impl<F: PrimeField64> Setup<F> {
                         "exec header for {exec_filename}: size overflow (n_adds={n_adds}, n_smap={n_smap}, n_cols={n_cols})"
                     ))
                 })?;
-                // Header already consumed; read the remaining (size - 2) u64s.
-                let mut exec_data: Vec<u64> = vec![0; exec_data_size_elements];
-                exec_data[0] = n_adds;
-                exec_data[1] = n_smap;
-                let body_bytes = (exec_data_size_elements - 2) * 8;
-                let body_slice =
-                    unsafe { std::slice::from_raw_parts_mut(exec_data[2..].as_mut_ptr() as *mut u8, body_bytes) };
-                file.read_exact(body_slice)?;
+            // Header already consumed; read the remaining (size - 2) u64s.
+            let mut exec_data: Vec<u64> = vec![0; exec_data_size_elements];
+            exec_data[0] = n_adds;
+            exec_data[1] = n_smap;
+            let body_bytes = (exec_data_size_elements - 2) * 8;
+            let body_slice =
+                unsafe { std::slice::from_raw_parts_mut(exec_data[2..].as_mut_ptr() as *mut u8, body_bytes) };
+            file.read_exact(body_slice)?;
 
-                (
-                    Some(library),
-                    Some(circom_circuit_ptr),
-                    get_witness_fn,
-                    Some(witness_size),
-                    Some(exec_filename),
-                    Some(Arc::new(exec_data)),
-                    Some(n_adds),
-                )
-            } else {
-                (None, None, None, None, None, None, None)
-            };
+            (
+                Some(library),
+                Some(circom_circuit_ptr),
+                get_witness_trace_fn,
+                Some(witness_size),
+                Some(total_signal_no),
+                Some(exec_filename),
+                Some(Arc::new(exec_data)),
+                Some(n_adds),
+            )
+        } else {
+            (None, None, None, None, None, None, None, None)
+        };
 
         Ok(Self {
             air_id,
@@ -390,7 +417,12 @@ impl<F: PrimeField64> Setup<F> {
             proof_size,
             pinned_proof_size,
             size_witness,
-            circom_state: RwLock::new(CircomState { library: circom_library, circuit: circom_circuit, get_witness_fn }),
+            total_signal_no,
+            circom_state: RwLock::new(CircomState {
+                library: circom_library,
+                circuit: circom_circuit,
+                get_witness_trace_fn,
+            }),
             exec_data_path,
             exec_data,
             n_adds,

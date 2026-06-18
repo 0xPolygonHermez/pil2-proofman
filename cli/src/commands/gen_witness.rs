@@ -61,9 +61,12 @@ impl GenWitnessCmd {
 
         let setup = setups_vadcop.get_setup(airgroup_id, air_id, proof_type)?;
 
-        let witness_size = setup.get_circom_witness_size();
+        let n_cols = setup.n_cols;
+        let n_rows: u64 = 1 << setup.stark_info.stark_struct.n_bits;
+        let n_publics = setup.stark_info.n_publics;
 
-        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
+        let mut trace: Vec<Goldilocks> = vec![Goldilocks::ZERO; n_cols as usize * n_rows as usize];
+        let mut publics: Vec<Goldilocks> = vec![Goldilocks::ZERO; n_publics as usize];
 
         let state = setup.circom_state.read().unwrap();
         let circom_circuit_ptr = match state.circuit {
@@ -71,22 +74,27 @@ impl GenWitnessCmd {
             None => return Err(Box::new(ProofmanError::InvalidSetup("circom_circuit is not initialized".into()))),
         };
 
-        // let publics_circom_size: usize =
-        //     pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
+        let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on setup").as_ptr() as *mut u64;
 
-        // let publics_aggregation = n_publics_aggregation(&pctx, 0);
-        // let null_proof_size = setup.proof_size as usize + publics_aggregation;
-
-        // zkin[publics_circom_size..(publics_circom_size + null_proof_size)].fill(0);
-        // zkin[publics_circom_size + null_proof_size..publics_circom_size + 2*null_proof_size].fill(0);
-        // zkin[publics_circom_size + 2*null_proof_size..].fill(0);
-
-        let get_witness_fn =
-            state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
+        let get_witness_trace_fn = state
+            .get_witness_trace_fn
+            .ok_or(ProofmanError::InvalidSetup("getWitnessTrace function not loaded".to_string()))?;
 
         timer_start_info!(WITNESS_GENERATION);
-        let res =
-            unsafe { get_witness_fn(zkin.as_mut_ptr(), circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1) };
+        let res = unsafe {
+            get_witness_trace_fn(
+                zkin.as_mut_ptr(),
+                circom_circuit_ptr,
+                exec_data_ptr,
+                trace.as_mut_ptr() as *mut c_void,
+                publics.as_mut_ptr() as *mut c_void,
+                n_rows,
+                n_publics,
+                n_cols,
+                1,
+                std::ptr::null_mut(), // no signalValues pool: self-allocate
+            )
+        };
         drop(state);
         timer_stop_and_log_info!(WITNESS_GENERATION);
 

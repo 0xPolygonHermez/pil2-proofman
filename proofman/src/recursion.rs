@@ -19,9 +19,6 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
-pub type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
-
 pub type GetWitnessFinalFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
 
@@ -96,7 +93,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        let circom_witness =
+        let (circom_witness, publics) =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
         timer_stop_and_log_debug!(
             GENERATE_COMPRESSOR_WITNESS,
@@ -111,6 +108,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             air_id,
             proof.global_idx,
             circom_witness,
+            publics,
             setup.n_cols as usize,
         ))
     } else {
@@ -145,7 +143,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
-        let circom_witness =
+        let (circom_witness, publics) =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
         timer_stop_and_log_debug!(
             GENERATE_RECURSIVE1_WITNESS,
@@ -160,6 +158,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             air_id,
             proof.global_idx,
             circom_witness,
+            publics,
             setup.n_cols as usize,
         ))
     }
@@ -211,7 +210,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
             + ".verkey.json";
 
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
-    let circom_witness =
+    let (circom_witness, publics) =
         generate_witness::<F>(setup_recursive2, memory_handler_recursive_witness, 0, &updated_proof_recursive2)?;
 
     timer_stop_and_log_debug!(GENERATE_WITNESS_AGGREGATION);
@@ -221,6 +220,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
         0,
         None,
         circom_witness,
+        publics,
         setup_recursive2.n_cols as usize,
     ))
 }
@@ -299,32 +299,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
-    let mut trace = match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_trace_compressor(),
-        _ => memory_handler_recursive_witness.take_buffer_trace(),
-    };
-
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
-    let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
-
-    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on setup").as_ptr() as *mut u64;
-
-    get_committed_pols_c(
-        witness.circom_witness.as_ptr() as *mut u8,
-        exec_data_ptr,
-        trace.as_mut_ptr() as *mut u8,
-        publics.as_mut_ptr() as *mut u8,
-        setup.size_witness.unwrap(),
-        1 << (setup.stark_info.stark_struct.n_bits),
-        setup.stark_info.n_publics,
-        witness.n_cols as u64,
-    );
-    let circom_witness = std::mem::take(&mut witness.circom_witness);
-    match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.release_buffer_witness_compressor(circom_witness),
-        _ => memory_handler_recursive_witness.release_buffer_witness(circom_witness),
-    }?;
+    let trace = std::mem::take(&mut witness.circom_witness);
+    let publics = std::mem::take(&mut witness.publics);
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
@@ -626,11 +604,18 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     }
 
     timer_start_debug!(GENERATE_VADCOP_FINAL_PROOF_WITNESS);
-    let circom_witness_vadcop_final =
+    let (circom_witness_vadcop_final, publics_vadcop_final) =
         generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &updated_proof)?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_PROOF_WITNESS);
-    let mut witness_final_proof =
-        Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
+    let mut witness_final_proof = Proof::new_witness(
+        ProofType::VadcopFinal,
+        0,
+        0,
+        None,
+        circom_witness_vadcop_final,
+        publics_vadcop_final,
+        setup.n_cols as usize,
+    );
 
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
     let stream_id = generate_recursive_proof::<F>(
@@ -689,7 +674,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     });
 
     timer_start_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
-    let circom_witness_vadcop_final_compressed =
+    let (circom_witness_vadcop_final_compressed, publics_vadcop_final_compressed) =
         generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &vadcop_final_proof[1..])?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
     let mut witness_final_proof = Proof::new_witness(
@@ -698,6 +683,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         0,
         None,
         circom_witness_vadcop_final_compressed,
+        publics_vadcop_final_compressed,
         setup.n_cols as usize,
     );
 
@@ -758,8 +744,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         timer_stop_and_log_debug!(LOAD_FIXED_POLS_RECURSIVEF);
     });
 
-    let mut trace: Vec<F> = memory_handler_recursive_witness.take_buffer_trace();
-
     let proof = &vadcop_proof[1..];
     let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
 
@@ -768,24 +752,9 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     updated_proof[4..].copy_from_slice(proof);
 
     timer_start_debug!(GENERATE_RECURSIVEF_WITNESS);
-    let circom_witness = generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &updated_proof)?;
+    // Fused: getWitnessTrace produces the committed-pol trace + publics directly.
+    let (trace, publics) = generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &updated_proof)?;
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_WITNESS);
-
-    let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
-
-    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on RecursiveF setup").as_ptr() as *mut u64;
-
-    get_committed_pols_c(
-        circom_witness.as_ptr() as *mut u8,
-        exec_data_ptr,
-        trace.as_mut_ptr() as *mut u8,
-        publics.as_mut_ptr() as *mut u8,
-        setup.size_witness.unwrap(),
-        1 << (setup.stark_info.stark_struct.n_bits),
-        setup.stark_info.n_publics,
-        setup.stark_info.map_sections_n["cm1"],
-    );
-    memory_handler_recursive_witness.release_buffer_witness(circom_witness)?;
 
     timer_start_debug!(GENERATE_RECURSIVEF_PROOF);
     // prove
@@ -892,11 +861,12 @@ fn generate_witness<F: PrimeField64>(
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     instance_id: usize,
     zkin: &[u64],
-) -> ProofmanResult<Vec<F>> {
-    let mut witness: Vec<F> = match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
-        _ => memory_handler_recursive_witness.take_buffer_witness(),
+) -> ProofmanResult<(Vec<F>, Vec<F>)> {
+    let mut trace: Vec<F> = match setup.setup_type {
+        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_trace_compressor(),
+        _ => memory_handler_recursive_witness.take_buffer_trace(),
     };
+    let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
     let state = setup.circom_state.read().unwrap();
     let circom_circuit_ptr = match state.circuit {
@@ -904,19 +874,41 @@ fn generate_witness<F: PrimeField64>(
         None => return Err(ProofmanError::InvalidSetup("circom_circuit is not initialized".into())),
     };
 
-    let get_witness_fn =
-        state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
+    let get_witness_trace_fn = state
+        .get_witness_trace_fn
+        .ok_or(ProofmanError::InvalidSetup("getWitnessTrace function not loaded".to_string()))?;
 
-    let nmutex = std::cmp::min(8, rayon::current_num_threads());
+    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on setup").as_ptr() as *mut u64;
+    let n_rows: u64 = 1 << setup.stark_info.stark_struct.n_bits;
+    let n_committed_pols = setup.n_cols;
+
+    // Internal circom solve threads for this witness. Stream-aware (set from
+    // cores/n_streams in proofman) to avoid oversubscription when many recursive
+    // witnesses run concurrently.
+    let nmutex = memory_handler_recursive_witness.witness_threads();
+
+    // Pooled signalValues buffer (reused across proofs, no zeroing — write-before-read).
+    let total_signal_no = setup.total_signal_no.unwrap_or(0) as usize;
+    let mut signal_values = memory_handler_recursive_witness.take_buffer_signal_values(total_signal_no);
+    // Empty => no pool configured: pass null so Circom_CalcWit self-allocates.
+    let signal_values_ptr =
+        if signal_values.is_empty() { std::ptr::null_mut() } else { signal_values.as_mut_ptr() as *mut c_void };
 
     let res: i64 = unsafe {
-        get_witness_fn(
+        get_witness_trace_fn(
             zkin.as_ptr() as *mut u64,
             circom_circuit_ptr,
-            witness.as_mut_ptr() as *mut c_void,
+            exec_data_ptr,
+            trace.as_mut_ptr() as *mut c_void,
+            publics.as_mut_ptr() as *mut c_void,
+            n_rows,
+            publics.len() as u64,
+            n_committed_pols,
             nmutex as u64,
+            signal_values_ptr,
         )
     };
+    memory_handler_recursive_witness.release_buffer_signal_values(signal_values);
     drop(state);
 
     if res != 0 {
@@ -938,7 +930,7 @@ fn generate_witness<F: PrimeField64>(
         )));
     }
 
-    Ok(witness)
+    Ok((trace, publics))
 }
 
 pub fn get_recursive_buffer_sizes<F: PrimeField64>(

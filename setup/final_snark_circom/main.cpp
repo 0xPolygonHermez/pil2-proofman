@@ -28,10 +28,17 @@ Circom_Circuit* loadCircuit(std::string const &datFileName) {
     uint dsize = get_size_of_input_hashmap()*sizeof(HashSignalInfo);
     memcpy((void *)(circuit->InputHashMap), (void *)bdata, dsize);
 
-    circuit->witness2SignalList = new u64[get_size_of_witness()];
-    uint inisize = dsize;    
-    dsize = get_size_of_witness()*sizeof(u64);
-    memcpy((void *)(circuit->witness2SignalList), (void *)(bdata+inisize), dsize);
+    uint inisize = dsize;
+    circuit->witness2SignalIsU32 = (get_total_signal_no() <= 0xFFFFFFFFu);
+    if (circuit->witness2SignalIsU32) {
+        circuit->witness2SignalList32 = new u32[get_size_of_witness()];
+        dsize = get_size_of_witness()*sizeof(u32);
+        memcpy((void *)(circuit->witness2SignalList32), (void *)(bdata+inisize), dsize);
+    } else {
+        circuit->witness2SignalList64 = new u64[get_size_of_witness()];
+        dsize = get_size_of_witness()*sizeof(u64);
+        memcpy((void *)(circuit->witness2SignalList64), (void *)(bdata+inisize), dsize);
+    }
 
     circuit->circuitConstants = new FrElement[get_size_of_constants()];
     if (get_size_of_constants()>0) {
@@ -282,7 +289,8 @@ bool loadJson(Circom_CalcWit *ctx, std::string filename)
 void freeCircuit(Circom_Circuit *circuit)
 {
   delete[] circuit->InputHashMap;
-  delete[] circuit->witness2SignalList;
+  delete[] circuit->witness2SignalList32;
+  delete[] circuit->witness2SignalList64;
   delete[] circuit->circuitConstants;
   delete circuit;
 }

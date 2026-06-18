@@ -54,7 +54,7 @@ public:
   }
   
   inline void getWitness(uint idx, PFrElement val) {
-    Fr_copy(val, &signalValues[circuit->witness2SignalList[idx]]);
+    Fr_copy(val, &signalValues[circuit->witness2Signal(idx)]);
   }
 
   std::string getTrace(u64 id_cmp);

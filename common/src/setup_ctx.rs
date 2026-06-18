@@ -227,6 +227,33 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         }
     }
 
+    /// Sizing for the pooled signalValues buffers (in u64 elements). Returns
+    /// `(large_cap, small_cap)`: `large_cap` is the biggest `total_signal_no`
+    /// across all recursive/compressor/final setups (e.g. Keccakf compressor),
+    /// `small_cap` the largest of the rest. A single large buffer fits any circuit;
+    /// the smalls serve the many lighter recursive proofs. `(0, 0)` if no setup
+    /// exposes a `total_signal_no` (pool then stays off).
+    pub fn signal_pool_sizes(&self) -> (usize, usize) {
+        let mut sizes: Vec<usize> = Vec::new();
+        for sctx in [self.sctx_compressor.as_ref(), self.sctx_recursive1.as_ref(), self.sctx_recursive2.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            sizes.extend(sctx.total_signal_nos());
+        }
+        for setup in
+            [self.setup_vadcop_final.as_ref(), self.setup_vadcop_final_compressed.as_ref()].into_iter().flatten()
+        {
+            if let Some(n) = setup.total_signal_no {
+                sizes.push(n as usize);
+            }
+        }
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        let large = sizes.first().copied().unwrap_or(0);
+        let small = sizes.get(1).copied().unwrap_or(large);
+        (large, small)
+    }
+
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> ProofmanResult<&Setup<F>> {
         match setup_type {
             ProofType::Compressor => self.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id),
@@ -461,6 +488,12 @@ impl<F: PrimeField64> SetupCtx<F> {
 
     pub fn get_setups_list(&self) -> Vec<(usize, usize)> {
         self.setup_repository.setups.keys().cloned().collect()
+    }
+
+    /// `total_signal_no` (circom signalValues length, u64 elements) for every setup
+    /// in this repository. Used to size the signalValues buffer pool.
+    pub fn total_signal_nos(&self) -> Vec<usize> {
+        self.setup_repository.setups.values().filter_map(|s| s.total_signal_no.map(|n| n as usize)).collect()
     }
 
     pub fn get_global_bin(&self) -> *mut c_void {

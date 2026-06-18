@@ -36,8 +36,13 @@ struct IOFieldDefPair {
 struct Circom_Circuit {
   //  const char *P;
   HashSignalInfo* InputHashMap;
-  u64* witness2SignalList;
-  FrElement* circuitConstants;  
+  u32* witness2SignalList32 = nullptr;
+  u64* witness2SignalList64 = nullptr;
+  bool witness2SignalIsU32 = false;
+  inline u64 witness2Signal(uint idx) const {
+    return witness2SignalIsU32 ? (u64)witness2SignalList32[idx] : witness2SignalList64[idx];
+  }
+  FrElement* circuitConstants;
   std::map<u32,IOFieldDefPair> templateInsId2IOSignalInfo;
   IOFieldDefPair* busInsId2FieldInfo;
 };
