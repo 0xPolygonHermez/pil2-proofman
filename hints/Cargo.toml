@@ -1,5 +1,6 @@
 [package]
 name = "proofman-hints"
+description = "Hint definitions and evaluation for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

@@ -1,5 +1,6 @@
 [package]
 name = "proofman-starks-lib-c"
+description = "Rust FFI bindings to the pil2-stark C/CUDA proving library"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

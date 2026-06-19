@@ -1,5 +1,6 @@
 [package]
 name = "proofman-soundness"
+description = "Soundness checks for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

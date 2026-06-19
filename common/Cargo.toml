@@ -1,5 +1,6 @@
 [package]
 name = "proofman-common"
+description = "Shared proof/setup contexts, traces, and STARK metadata types for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

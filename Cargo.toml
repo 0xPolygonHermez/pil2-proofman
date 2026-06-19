@@ -1,7 +1,7 @@
 [workspace.package]
 version = "1.0.0-beta"
 edition = "2021"
-license = "Apache-2.0 or MIT"
+license = "MIT OR Apache-2.0"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
 repository = "https://github.com/0xPolygonHermez/pil2-proofman"
 categories = ["cryptography"]

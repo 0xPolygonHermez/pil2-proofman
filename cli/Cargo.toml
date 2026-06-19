@@ -1,5 +1,6 @@
 [package]
 name = "proofman-cli"
+description = "Command-line toolchain for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

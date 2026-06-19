@@ -1,5 +1,6 @@
 [package]
 name = "proofman"
+description = "PIL2 proof manager: orchestrates witness generation, STARK proving, recursion, and SNARK wrapping"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

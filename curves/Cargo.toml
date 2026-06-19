@@ -1,5 +1,6 @@
 [package]
 name = "curves"
+description = "Elliptic curves over Goldilocks extensions (EcGFp5, EcMasFp5) for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

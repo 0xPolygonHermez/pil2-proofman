@@ -1,5 +1,6 @@
 [package]
 name = "pil2-stark-setup"
+description = "Setup and proving/verifying-key generation for the pil2-stark prover"
 rust-version = "1.89"
 version = { workspace = true }
 edition = { workspace = true }
