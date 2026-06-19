@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
-use fields::{
+use proofman_fields::{
     intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
     Transcript,
 };

@@ -1,4 +1,4 @@
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
     expressions_bin_free_c, expressions_bin_new_c, get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,

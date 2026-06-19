@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;

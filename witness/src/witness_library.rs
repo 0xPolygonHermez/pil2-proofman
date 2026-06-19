@@ -1,5 +1,5 @@
 use crate::WitnessManager;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{ProofCtx, ProofmanResult, VerboseMode, RankInfo};
 
 /// This is the type of the function that is used to load a witness library.

@@ -68,19 +68,20 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-proofman-macros = { path = "macros" }
-proofman = { path = "proofman" }
-proofman-common = { path = "common" }
-proofman-starks-lib-c = { path = "provers/starks-lib-c" }
-proofman-hints = { path = "hints" }
-proofman-soundness = { path = "soundness" }
-proofman-verifier = { path = "verifier" }
-proofman-util = { path = "util" }
-proofman-cli = { path = "cli" }
-pil-std-lib = { path = "pil2-components/lib/std/rs" }
-witness = { path = "witness" }
-pilout = { path = "pilout" }
-fields = { path = "fields" }
+proofman-macros = { path = "macros", version = "1.0.0-beta" }
+proofman = { path = "proofman", version = "1.0.0-beta" }
+proofman-common = { path = "common", version = "1.0.0-beta" }
+proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "1.0.0-beta" }
+proofman-hints = { path = "hints", version = "1.0.0-beta" }
+proofman-soundness = { path = "soundness", version = "1.0.0-beta" }
+proofman-verifier = { path = "verifier", version = "1.0.0-beta" }
+proofman-util = { path = "util", version = "1.0.0-beta" }
+proofman-cli = { path = "cli", version = "1.0.0-beta" }
+pil-std-lib = { path = "pil2-components/lib/std/rs", version = "1.0.0-beta" }
+proofman-witness = { path = "witness", version = "1.0.0-beta" }
+proofman-curves = { path = "curves", version = "1.0.0-beta" }
+pilout = { path = "pilout", version = "1.0.0-beta" }
+proofman-fields = { path = "fields", version = "1.0.0-beta" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.11.1"

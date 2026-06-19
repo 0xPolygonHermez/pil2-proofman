@@ -10,7 +10,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
 use std::fs;
-use fields::{new_transcript, PrimeField64};
+use proofman_fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,

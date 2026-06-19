@@ -1,6 +1,6 @@
 use std::sync::{RwLock, Arc};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{BufferPool, DebugInfo, ProofCtx, ProofmanResult, SetupCtx};
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {

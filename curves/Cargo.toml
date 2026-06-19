@@ -1,5 +1,5 @@
 [package]
-name = "curves"
+name = "proofman-curves"
 description = "Elliptic curves over Goldilocks extensions (EcGFp5, EcMasFp5) for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
@@ -9,7 +9,7 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-fields = { path = "../fields" }
+proofman-fields.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
 

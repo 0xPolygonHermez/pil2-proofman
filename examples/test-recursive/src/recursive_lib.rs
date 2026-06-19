@@ -1,8 +1,8 @@
 use proofman_common::ProofmanResult;
-use witness::{witness_library, WitnessLibrary, WitnessManager};
+use proofman_witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
-use fields::PrimeField64;
-use fields::Goldilocks;
+use proofman_fields::PrimeField64;
+use proofman_fields::Goldilocks;
 use proofman::register_std;
 
 use crate::Compressor;

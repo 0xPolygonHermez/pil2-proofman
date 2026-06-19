@@ -5,7 +5,7 @@ use proofman_common::{initialize_logger, SetupsVadcop, MpiCtx, ProofCtx, Verbose
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use fields::{Field, Goldilocks};
+use proofman_fields::{Field, Goldilocks};
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::Arc;

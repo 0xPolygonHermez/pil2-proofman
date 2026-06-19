@@ -11,4 +11,4 @@ categories = { workspace = true }
 pil2-stark-setup = { path = "../../../../setup/pil2-stark" }
 proofman.workspace = true
 proofman-common.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true

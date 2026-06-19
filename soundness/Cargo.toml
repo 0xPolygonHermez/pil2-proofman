@@ -12,7 +12,7 @@ categories = { workspace = true }
 proofman-common = { workspace = true }
 proofman-hints = { workspace = true }
 pil-std-lib = { workspace = true }
-fields = { workspace = true }
+proofman-fields = { workspace = true }
 serde = { workspace = true }
 tabled = "0.7"
 itoa.workspace = true

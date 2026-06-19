@@ -2,7 +2,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use colored::Colorize;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::generate_and_verify_recursivef;

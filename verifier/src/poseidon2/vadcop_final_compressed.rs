@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::ToString;
-use fields::{Goldilocks, CubicExtensionField, Field, Poseidon2_8, Poseidon2_16};
+use proofman_fields::{Goldilocks, CubicExtensionField, Field, Poseidon2_8, Poseidon2_16};
 use crate::{stark_verify, Boundary, VerifierInfo};
 use crate::VadcopFinalProof;
 

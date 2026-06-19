@@ -1,9 +1,9 @@
 use std::sync::{Arc, RwLock};
 
 use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
-use witness::{WitnessComponent, execute};
+use proofman_witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 

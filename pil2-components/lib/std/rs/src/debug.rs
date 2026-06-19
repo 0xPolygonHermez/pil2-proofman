@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use proofman_common::SetupCtx;
 
 use colored::Colorize;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{ProofCtx, ProofmanResult};
 use proofman_hints::{
     get_hint_ids_by_name, format_hint_field_output_vec, HintFieldOutput, HintFieldValue, HintFieldValuesVec,

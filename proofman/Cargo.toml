@@ -15,12 +15,12 @@ proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 proofman-verifier = { path = "../verifier", features = ["parallel"] }
-curves = { path = "../curves" }
-witness = { path = "../witness" }
 pil-std-lib = { workspace = true }
 
 tracing.workspace = true
-fields.workspace = true
+proofman-curves.workspace = true
+proofman-witness.workspace = true
+proofman-fields.workspace = true
 libloading.workspace = true
 colored.workspace = true
 serde_json.workspace = true

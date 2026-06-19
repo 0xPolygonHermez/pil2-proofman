@@ -2,7 +2,7 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use crate::{ProofmanError, ProofmanResult};
 
 /// Single fixed-size buffer pool over a bounded channel. Internal helper used

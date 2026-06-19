@@ -63,7 +63,7 @@ fn prepare_verifier_rust(
             hash_imports.push(ht);
         }
     }
-    lines.push(format!("use fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
+    lines.push(format!("use proofman_fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
     lines.push("use crate::{stark_verify, Boundary, VerifierInfo};".to_string());
     if vadcop_final_proof {
         lines.push("use crate::VadcopFinalProof;".to_string());

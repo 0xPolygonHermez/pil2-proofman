@@ -1,9 +1,9 @@
 use pil_std_lib::Std;
 use proofman_common::ProofmanResult;
-use witness::{witness_library, WitnessLibrary, WitnessManager};
+use proofman_witness::{witness_library, WitnessLibrary, WitnessManager};
 
-use fields::PrimeField64;
-use fields::Goldilocks;
+use proofman_fields::PrimeField64;
+use proofman_fields::Goldilocks;
 
 use crate::{Lookup0, Lookup1, Lookup2_12, Lookup2_13, Lookup2_15, Lookup3};
 use proofman::register_std;

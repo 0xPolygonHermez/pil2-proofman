@@ -1,5 +1,5 @@
 [package]
-name = "fields"
+name = "proofman-fields"
 description = "Goldilocks field arithmetic, extensions, Poseidon hashes, Merkle trees, and FRI primitives for PIL2 proofman"
 version = { workspace = true }
 edition = { workspace = true }

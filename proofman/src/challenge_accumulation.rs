@@ -1,6 +1,6 @@
-use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
+use proofman_curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
+use proofman_fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 
 const W: usize = 16;
 use std::ops::Add;

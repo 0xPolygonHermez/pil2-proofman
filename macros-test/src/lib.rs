@@ -7,7 +7,7 @@ mod tests {
 
     use proofman_common::GenericTrace;
     use proofman_macros::trace_row;
-    use fields::{Goldilocks, PrimeField64};
+    use proofman_fields::{Goldilocks, PrimeField64};
 
     trace_row!(
         MainRow<F> {

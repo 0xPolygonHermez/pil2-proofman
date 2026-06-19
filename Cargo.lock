@@ -362,10 +362,10 @@ dependencies = [
 name = "common"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "pil2-stark-setup",
  "proofman",
  "proofman-common",
+ "proofman-fields",
 ]
 
 [[package]]
@@ -373,18 +373,18 @@ name = "connection"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -510,16 +510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curves"
-version = "1.0.0-beta"
-dependencies = [
- "fields",
- "num-bigint",
- "num-traits",
- "rand 0.10.1",
-]
-
-[[package]]
 name = "custom_derive"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -535,18 +525,18 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 name = "diff-buses"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -564,7 +554,6 @@ name = "direct-update"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
@@ -572,14 +561,15 @@ dependencies = [
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "serde",
  "serde_arrays",
  "serde_json",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -623,31 +613,19 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 name = "fibonacci-square"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "num-bigint",
  "pil-std-lib",
  "proofman",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
  "proofman-starks-lib-c",
+ "proofman-witness",
  "rayon",
  "serde",
  "serde_arrays",
  "serde_json",
  "tracing",
- "witness",
-]
-
-[[package]]
-name = "fields"
-version = "1.0.0-beta"
-dependencies = [
- "cfg-if",
- "num-bigint",
- "paste",
- "proofman-starks-lib-c",
- "rand 0.10.1",
- "serde",
 ]
 
 [[package]]
@@ -979,27 +957,27 @@ name = "lookup"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
 name = "macros-test"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "proofman",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
  "rayon",
  "serde",
@@ -1173,18 +1151,18 @@ name = "one-instance"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1245,18 +1223,18 @@ name = "permutation"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1355,18 +1333,18 @@ name = "pil-std-lib"
 version = "1.0.0-beta"
 dependencies = [
  "colored",
- "fields",
  "num-bigint",
  "num-traits",
  "proofman-common",
+ "proofman-fields",
  "proofman-hints",
  "proofman-util",
+ "proofman-witness",
  "rayon",
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1375,11 +1353,11 @@ version = "1.0.0-beta"
 dependencies = [
  "anyhow",
  "clap",
- "fields",
  "indexmap",
  "mpi",
  "pilout",
  "proofman-common",
+ "proofman-fields",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1464,26 +1442,26 @@ dependencies = [
  "colored",
  "crossbeam-channel",
  "csv",
- "curves",
- "fields",
  "libloading",
  "mpi",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
  "proofman-common",
+ "proofman-curves",
+ "proofman-fields",
  "proofman-hints",
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
+ "proofman-witness",
  "rayon",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1494,22 +1472,22 @@ dependencies = [
  "clap",
  "colored",
  "convert_case",
- "fields",
  "libloading",
  "pilout",
  "proofman",
  "proofman-common",
+ "proofman-fields",
  "proofman-soundness",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
+ "proofman-witness",
  "regex",
  "serde",
  "serde_json",
  "tinytemplate",
  "toml",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1523,12 +1501,12 @@ dependencies = [
  "crossbeam-queue",
  "csv",
  "env",
- "fields",
  "lazy_static",
  "libc",
  "libloading",
  "mpi",
  "num_cpus",
+ "proofman-fields",
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
@@ -1543,12 +1521,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "proofman-curves"
+version = "1.0.0-beta"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "proofman-fields",
+ "rand 0.10.1",
+]
+
+[[package]]
+name = "proofman-fields"
+version = "1.0.0-beta"
+dependencies = [
+ "cfg-if",
+ "num-bigint",
+ "paste",
+ "proofman-starks-lib-c",
+ "rand 0.10.1",
+ "serde",
+]
+
+[[package]]
 name = "proofman-hints"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "itoa",
  "proofman-common",
+ "proofman-fields",
  "proofman-starks-lib-c",
  "proofman-util",
  "tracing",
@@ -1567,10 +1567,10 @@ dependencies = [
 name = "proofman-soundness"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "itoa",
  "pil-std-lib",
  "proofman-common",
+ "proofman-fields",
  "proofman-hints",
  "serde",
  "tabled",
@@ -1600,10 +1600,23 @@ name = "proofman-verifier"
 version = "1.0.0-beta"
 dependencies = [
  "bincode",
- "fields",
  "num-traits",
+ "proofman-fields",
  "rayon",
  "serde",
+ "tracing",
+]
+
+[[package]]
+name = "proofman-witness"
+version = "1.0.0-beta"
+dependencies = [
+ "colored",
+ "libloading",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-util",
+ "serde_json",
  "tracing",
 ]
 
@@ -1726,7 +1739,6 @@ name = "range-check"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
@@ -1734,11 +1746,12 @@ dependencies = [
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -1991,7 +2004,6 @@ name = "simple"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
@@ -1999,11 +2011,12 @@ dependencies = [
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -2056,11 +2069,11 @@ name = "stark-recurser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fields",
  "indexmap",
  "num-bigint",
  "num-traits",
  "proofman-common",
+ "proofman-fields",
  "rand 0.10.1",
  "serde",
  "serde_json",
@@ -2170,20 +2183,20 @@ dependencies = [
 name = "test-recursive"
 version = "1.0.0-beta"
 dependencies = [
- "fields",
  "libloading",
  "num-bigint",
  "pil-std-lib",
  "proofman",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
  "proofman-starks-lib-c",
+ "proofman-witness",
  "rayon",
  "serde",
  "serde_arrays",
  "serde_json",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -2442,18 +2455,18 @@ name = "virtual-tables"
 version = "1.0.0-beta"
 dependencies = [
  "common",
- "fields",
  "num-bigint",
  "pil-std-lib",
  "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
+ "proofman-fields",
  "proofman-macros",
+ "proofman-witness",
  "rand 0.10.1",
  "rayon",
  "tracing",
- "witness",
 ]
 
 [[package]]
@@ -2810,19 +2823,6 @@ name = "winsafe"
 version = "0.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
-
-[[package]]
-name = "witness"
-version = "1.0.0-beta"
-dependencies = [
- "colored",
- "fields",
- "libloading",
- "proofman-common",
- "proofman-util",
- "serde_json",
- "tracing",
-]
 
 [[package]]
 name = "yansi"

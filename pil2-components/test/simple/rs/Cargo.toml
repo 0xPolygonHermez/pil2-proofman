@@ -18,11 +18,11 @@ proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
 pilout.workspace = true
-witness.workspace = true
+proofman-witness.workspace = true
 tracing.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true
 rayon.workspace = true
 
 [build-dependencies]

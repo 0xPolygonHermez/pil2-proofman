@@ -3,7 +3,7 @@ use std::sync::RwLock;
 use rayon::prelude::*;
 
 use rustc_hash::FxHashMap;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use proofman_common::{DebugInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, store_rows_info_air};
 use proofman_hints::{

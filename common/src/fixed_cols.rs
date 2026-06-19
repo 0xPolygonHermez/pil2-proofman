@@ -1,6 +1,6 @@
 use std::{os::raw::c_void, path::PathBuf};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, calculate_const_tree_bn128_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
     write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c, pack_const_pols_c, tile_const_pols_c,

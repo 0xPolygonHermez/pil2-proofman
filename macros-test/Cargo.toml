@@ -11,7 +11,7 @@ categories.workspace = true
 proofman-macros = { path = "../macros" }
 rayon = { workspace = true }
 proofman-common = { path = "../common" }
-fields = { workspace = true }
+proofman-fields = { workspace = true }
 
 
 proofman = { workspace = true }

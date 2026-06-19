@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{BufferPool, DebugInfo, RankInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
