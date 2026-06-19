@@ -18,6 +18,7 @@ members = [
     "proofman",
     "macros",
     "provers/starks-lib-c",
+    "pil2-stark",
     "witness",
     "util",
     "verifier",
@@ -57,6 +58,7 @@ default-members = [
     "proofman",
     "macros",
     "provers/starks-lib-c",
+    "pil2-stark",
     "witness",
     "util",
     "verifier",
@@ -72,6 +74,7 @@ proofman-macros = { path = "macros", version = "1.0.0-beta" }
 proofman = { path = "proofman", version = "1.0.0-beta" }
 proofman-common = { path = "common", version = "1.0.0-beta" }
 proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "1.0.0-beta" }
+proofman-starks-src = { path = "pil2-stark", version = "1.0.0-beta" }
 proofman-hints = { path = "hints", version = "1.0.0-beta" }
 proofman-soundness = { path = "soundness", version = "1.0.0-beta" }
 proofman-verifier = { path = "verifier", version = "1.0.0-beta" }
