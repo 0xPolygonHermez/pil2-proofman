@@ -161,9 +161,9 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.6.1"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfd1e3f8955a5d7de9fab72fc8373fade9fb8a703968cb200ae3dc6cf08e185a"
+checksum = "2f3f6da4992df95bbcd9af42a6c7dcb994498fc9048230405f3b36ff7cd3f145"
 dependencies = [
  "borsh-derive",
  "bytes",
@@ -172,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.6.1"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfcfdc083699101d5a7965e49925975f2f55060f94f9a05e7187be95d530ca59"
+checksum = "3ae8fb4fb5740e4b2c4884ff95f5f32f5e8479db1e8fd8eb49ddbe09eb09bb7c"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
@@ -211,9 +211,9 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "bytes"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "cc"
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "pil2-stark-setup",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "connection"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "curves"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "num-bigint",
@@ -533,7 +533,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diff-buses"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "num-bigint",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "direct-update"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -621,7 +621,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fibonacci-square"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "num-bigint",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "fields"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "cfg-if",
  "num-bigint",
@@ -976,7 +976,7 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lookup"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -995,7 +995,7 @@ dependencies = [
 
 [[package]]
 name = "macros-test"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "proofman",
@@ -1170,7 +1170,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-instance"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -1242,7 +1242,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permutation"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "colored",
  "fields",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-stark-setup"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
@@ -1396,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "bytes",
  "prost",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "bincode",
  "blake3",
@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "blake3",
  "clap",
@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "bincode",
  "borsh",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "itoa",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-soundness"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "itoa",
@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-util"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "bincode",
  "colored",
@@ -1597,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "bincode",
  "fields",
@@ -1723,7 +1723,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "range-check"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -1988,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "simple"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "special"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
 ]
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "test-recursive"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "fields",
  "libloading",
@@ -2439,7 +2439,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "virtual-tables"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "common",
  "fields",
@@ -2813,7 +2813,7 @@ checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "witness"
-version = "1.0.0-alfa"
+version = "1.0.0-alpha"
 dependencies = [
  "colored",
  "fields",
