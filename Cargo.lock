@@ -938,15 +938,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
-name = "lock_api"
-version = "0.4.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
-dependencies = [
- "scopeguard",
-]
-
-[[package]]
 name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -995,17 +986,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "mio"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
-dependencies = [
- "libc",
- "wasi",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "mpi"
@@ -1175,29 +1155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "parking_lot"
-version = "0.12.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
-dependencies = [
- "lock_api",
- "parking_lot_core",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
-dependencies = [
- "cfg-if",
- "libc",
- "redox_syscall",
- "smallvec",
- "windows-link 0.2.1",
-]
-
-[[package]]
 name = "parse-zoneinfo"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1333,8 +1290,6 @@ name = "pil-std-lib"
 version = "1.0.0-beta"
 dependencies = [
  "colored",
- "num-bigint",
- "num-traits",
  "proofman-common",
  "proofman-fields",
  "proofman-hints",
@@ -1359,7 +1314,6 @@ dependencies = [
  "proofman-common",
  "proofman-fields",
  "proofman-starks-lib-c",
- "proofman-util",
  "prost",
  "rayon",
  "rug",
@@ -1444,7 +1398,6 @@ dependencies = [
  "csv",
  "libloading",
  "mpi",
- "num-bigint",
  "num-traits",
  "pil-std-lib",
  "proofman-common",
@@ -1459,7 +1412,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "tokio",
  "tokio-util",
  "tracing",
 ]
@@ -1494,14 +1446,12 @@ dependencies = [
 name = "proofman-common"
 version = "1.0.0-beta"
 dependencies = [
- "bincode",
  "borsh",
  "colored",
  "crossbeam-channel",
  "crossbeam-queue",
  "csv",
  "env",
- "lazy_static",
  "libc",
  "libloading",
  "mpi",
@@ -1524,8 +1474,6 @@ dependencies = [
 name = "proofman-curves"
 version = "1.0.0-beta"
 dependencies = [
- "num-bigint",
- "num-traits",
  "proofman-fields",
  "rand 0.10.1",
 ]
@@ -1550,7 +1498,6 @@ dependencies = [
  "proofman-common",
  "proofman-fields",
  "proofman-starks-lib-c",
- "proofman-util",
  "tracing",
 ]
 
@@ -1583,7 +1530,6 @@ version = "1.0.0-beta"
 dependencies = [
  "crossbeam-channel",
  "proofman-starks-src",
- "tracing",
 ]
 
 [[package]]
@@ -1594,9 +1540,7 @@ version = "1.0.0-beta"
 name = "proofman-util"
 version = "1.0.0-beta"
 dependencies = [
- "bincode",
  "colored",
- "serde",
  "sysinfo",
 ]
 
@@ -1616,13 +1560,9 @@ dependencies = [
 name = "proofman-witness"
 version = "1.0.0-beta"
 dependencies = [
- "colored",
  "libloading",
  "proofman-common",
  "proofman-fields",
- "proofman-util",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -1780,15 +1720,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_syscall"
-version = "0.5.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
-dependencies = [
- "bitflags",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1887,12 +1818,6 @@ checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
 ]
-
-[[package]]
-name = "scopeguard"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "serde"
@@ -1995,16 +1920,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "signal-hook-registry"
-version = "1.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
-dependencies = [
- "errno",
- "libc",
-]
-
-[[package]]
 name = "simple"
 version = "1.0.0-beta"
 dependencies = [
@@ -2053,16 +1968,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
-name = "socket2"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "special"
 version = "1.0.0-beta"
 dependencies = [
@@ -2074,7 +1979,6 @@ name = "stark-recurser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "indexmap",
  "num-bigint",
  "num-traits",
  "proofman-common",
@@ -2249,26 +2153,7 @@ version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
- "bytes",
- "libc",
- "mio",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
- "socket2",
- "tokio-macros",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "tokio-macros"
-version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]

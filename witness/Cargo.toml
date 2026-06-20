@@ -10,14 +10,10 @@ categories = { workspace = true }
 
 [dependencies]
 proofman-common = { path = "../common" }
-proofman-util = { path = "../util" }
 
-tracing.workspace = true
 proofman-fields.workspace = true
 libloading.workspace = true
 
-colored.workspace = true
-serde_json.workspace = true
 
 [features]
 default = []

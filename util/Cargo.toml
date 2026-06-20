@@ -11,5 +11,3 @@ categories = { workspace = true }
 [dependencies]
 colored.workspace = true
 sysinfo.workspace = true
-serde.workspace = true
-bincode.workspace = true

@@ -10,8 +10,6 @@ categories = { workspace = true }
 
 [dependencies]
 proofman-fields.workspace = true
-num-bigint.workspace = true
-num-traits.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

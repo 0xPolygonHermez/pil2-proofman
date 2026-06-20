@@ -20,7 +20,6 @@ default = []
 proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
 proofman-fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
-proofman-util = { workspace = true }
 stark-recurser = { path = "../stark-recurser" }
 pilout = { workspace = true }
 prost = { workspace = true }
