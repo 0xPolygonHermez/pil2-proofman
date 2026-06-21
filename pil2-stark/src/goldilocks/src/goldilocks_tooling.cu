@@ -41,36 +41,38 @@ static bool copy_small_h2d_if_applicable(const void *src, void *dst, uint64_t to
     return true;
 }
 
-// Kernel to convert row-major layout to tiled layout
-// Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols
-__global__ void fromRowMajorToTiled(
+// Kernel: row-major input -> destination layout `layout` (see getBufferOffset).
+// Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols.
+__global__ void fromRowMajorToColMajor(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,
-    uint64_t* __restrict__ output
+    uint64_t* __restrict__ output,
+    Layout layout
 ) {
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t col = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (row < nRows && col < nCols) {
         uint64_t inputOffset = row * nCols + col;
-        uint64_t outputOffset = getBufferOffset(row, col, nRows, nCols);
+        uint64_t outputOffset = getBufferOffset(row, col, nRows, nCols, layout);
         output[outputOffset] = input[inputOffset];
     }
 }
 
-void fromRowMajorToTiled(
+void fromRowMajorToColMajor(
     uint64_t nRows,
     uint64_t nCols,
     gl64_t* src,
     gl64_t* dst,
+    Layout layout,
     cudaStream_t stream
 ) {
     if (nCols == 0 || nRows == 0) return;
     dim3 block(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid((nRows + block.x - 1) / block.x,
               (nCols + block.y - 1) / block.y);
-    fromRowMajorToTiled<<<grid, block, 0, stream>>>(nRows, nCols, (uint64_t*)src, (uint64_t*)dst);
+    fromRowMajorToColMajor<<<grid, block, 0, stream>>>(nRows, nCols, (uint64_t*)src, (uint64_t*)dst, layout);
     CHECKCUDAERR(cudaGetLastError());
 }
 

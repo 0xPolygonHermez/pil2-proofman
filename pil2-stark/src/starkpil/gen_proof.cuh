@@ -202,7 +202,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
             unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer);
         } else {
-            fromRowMajorToTiled(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetCm1Extended, (gl64_t*)h_params.trace, stream);
+            fromRowMajorToColMajor(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetCm1Extended, (gl64_t*)h_params.trace, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm1"]), stream);
         }
     }
     TimerStopGPU(timer, STARK_STEP_0);

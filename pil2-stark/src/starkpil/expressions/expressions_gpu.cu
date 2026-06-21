@@ -362,50 +362,54 @@ __device__ __forceinline__ void load__(
         return;
     }
 
-    // Trace and aux_trace
+    // Trace and aux_trace (committed pols). A committed section's storage layout is resolveLayout(nBits,
+    // sectionNCols) keyed on the AIR's small-domain nBits = log2(N) -- identical to what the commit/LDE
+    // and Merkle used, so reads agree with writes. ColMajor (flat) puts a column's 3 extension
+    // components domainSize apart; ColMajorTiled addresses each component via getBufferOffset.
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
+        const uint64_t nBits = 63 - __clzll(dArgs->N);
+        const Layout lyt = resolveLayout(nBits, nCols);
 
         if (type == 1 && !dExpsArgs->domainExtended) {
             const uint64_t pos = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->trace[pos];
             out1 = nullptr;
             out2 = nullptr;
             return;
-        } else if (dim == 3 && TILE_WIDTH == 4 && (argIdx & 3) <= 1) {
-            // Same-tile fast path: all 3 extension columns in same tile
-            // col_block values are argIdx&3, (argIdx+1)&3, (argIdx+2)&3 - all consecutive
-            // Offsets differ by TILE_HEIGHT between consecutive columns in same tile
+        } else if (dim == 3 && lyt == Layout::ColMajor) {
+            // Flat: the 3 extension components of column argIdx are domainSize apart.
             const uint64_t pos0 = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + TILE_HEIGHT];
-            out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * TILE_HEIGHT];
+            out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + domainSize];
+            out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * domainSize];
             return;
         } else if (dim == 1) {
             const uint64_t pos0 = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
             out1 = nullptr;
             out2 = nullptr;
             return;
         } else {
+            // dim==3 general (incl. ColMajorTiled): each component addressed independently.
             const uint64_t pos0 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
             const uint64_t pos1 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols);
+                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols, lyt)
+                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols, lyt);
             out1 = (gl64_t*)&dParams->aux_trace[offset + pos1];
             const uint64_t pos2 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols);
+                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols, lyt)
+                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols, lyt);
             out2 = (gl64_t*)&dParams->aux_trace[offset + pos2];
             return;
         }
@@ -433,13 +437,16 @@ __device__ __forceinline__ void load__(
 
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
 {
+    // Writing into a committed section -> must match that section's storage layout (same resolveLayout
+    // the reads use), so a tiled cm section round-trips. dest_domainSize is the section's row count.
+    const Layout lyt = resolveLayout(63 - __clzll(d_expsArgs->dest_domainSize), d_expsArgs->dest_stageCols);
     #pragma unroll
     for (uint32_t i = 0; i < d_expsArgs->dest_dim; i++) {
         if (!d_expsArgs->dest_expr) {
             uint64_t col = d_expsArgs->dest_stagePos + i;
             uint64_t nRows = d_expsArgs->dest_domainSize;
             uint64_t nCols = d_expsArgs->dest_stageCols;
-            uint64_t idx = getBufferOffset(row + threadIdx.x, col, nRows, nCols);
+            uint64_t idx = getBufferOffset(row + threadIdx.x, col, nRows, nCols, lyt);
             d_expsArgs->dest_gpu[idx] = destVals[i * blockDim.x + threadIdx.x];
         } else {
             d_expsArgs->dest_gpu[(row + threadIdx.x) * d_expsArgs->dest_dim + i] = destVals[i * blockDim.x + threadIdx.x];
@@ -506,26 +513,30 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         int64_t o = d_expsArgs->nextStridesExps[openingPointIndex];
         uint64_t l = (r + o) % d_expsArgs->domainSize;
         uint64_t nCols = d_deviceArgs->mapSectionsN[0];
+        Goldilocks::Element *slot = &destVals[k * FIELD_EXTENSION * blockDim.x];
         if (d_destParams[k].op == opType::const_)
         {
             uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols);
-            destVals[threadIdx.x] = d_params->pConstPolsAddress[pos];
+            slot[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
         else
         {
+            // Committed section read: match its storage layout (resolveLayout keyed on the AIR's
+            // small-domain nBits = log2(N) and the section's column count).
             uint64_t offset = d_expsArgs->mapOffsetsExps[d_destParams[k].stage];
             uint64_t nCols = d_deviceArgs->mapSectionsN[d_destParams[k].stage];
+            Layout lyt = resolveLayout(63 - __clzll(d_deviceArgs->N), nCols);
             if (d_destParams[k].stage == 1)
             {
-                uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols); 
-                destVals[threadIdx.x] = d_params->trace[pos];
+                uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, lyt);
+                slot[threadIdx.x] = d_params->trace[pos];
             }
             else
             {
                 for (uint64_t d = 0; d < d_destParams[k].dim; ++d)
                 {
-                    uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols);
-                    destVals[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + pos];
+                    uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols, lyt);
+                    slot[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + pos];
                 }
             }
         }
@@ -791,12 +802,12 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
             {
                 getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
             }
-            
+
         }
 
         if (d_expsArgs->dest_nParams == 2)
         {
-
+            
             multiplyPolynomials__(d_expsArgs, d_destParams, d_deviceArgs, (gl64_t*) destVals, i);
         } else {
             storePolynomial__(d_expsArgs, destVals, i);

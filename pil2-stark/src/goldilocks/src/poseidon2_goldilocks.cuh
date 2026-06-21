@@ -6,8 +6,8 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
-#include "goldilocks_trace_layout.cuh"
-#include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
+#include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset
+#include "poseidon_gpu_common.cuh"      // pow7(gl64_t&), scratchpad
 
 
 
@@ -297,7 +297,7 @@ __device__ __forceinline__ void spongeLoad(const uint64_t *in, uint32_t initial_
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols)
+__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols, Layout layout)
 {
     gl64_t r[RATE_T];
 
@@ -307,7 +307,7 @@ __device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t 
     for (uint32_t i = 0; i < RATE_T; i++) {
         if (i < ncols){
             uint32_t col = initial_col + i;
-            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols);
+            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols, layout);
             r[i] = in[idx];
         }
     }
@@ -379,12 +379,12 @@ __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, ui
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows)
+__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(num_cols - col, RATE_T);
-        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta);
+        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta, layout);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -459,7 +459,7 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     if (num_cols == 0)
     {
@@ -475,7 +475,7 @@ __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *_
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows);
+    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows, layout);
     spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1);
 }
 

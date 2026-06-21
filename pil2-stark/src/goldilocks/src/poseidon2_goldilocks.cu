@@ -158,12 +158,14 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHash(uint64_t * d_hash_output
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    if (layout == Layout::Tiles) {
-        linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
-            <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
-    } else {
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor) {
         linearHashKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
             <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
+    } else {
+        linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+            <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -338,12 +340,14 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletree(
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    if (layout == Layout::Tiles) {
-        linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
-            <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows);
-    } else {
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor) {
         linearHashKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
             <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows);
+    } else {
+        linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+            <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 

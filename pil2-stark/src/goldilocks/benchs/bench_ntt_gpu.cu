@@ -121,7 +121,7 @@ static void INTT_GPU_BENCH(benchmark::State &state)
 
 // ===================================================================
 // LDE -- nBits=20, nBitsExt=22, parameterized by nCols
-// Input is in tiled layout (fromRowMajorToTiled).
+// Input is in flat column-major layout (fromRowMajorToColMajor with Layout::ColMajor).
 // ===================================================================
 
 static void LDE_GPU_BENCH(benchmark::State &state)
@@ -143,7 +143,7 @@ static void LDE_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((BENCH_LDE_SIZE + 127) / 128);
     initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, BENCH_LDE_SIZE, nCols);
-    fromRowMajorToTiled(BENCH_LDE_SIZE, nCols, d_flat, d_src, stream);
+    fromRowMajorToColMajor(BENCH_LDE_SIZE, nCols, d_flat, d_src, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up

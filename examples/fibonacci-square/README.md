@@ -66,7 +66,7 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build2 -r -u ./examples/fibonacci-square/build/fixed
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
 Additionally, to run the snark setup:
@@ -162,7 +162,7 @@ cargo build --workspace \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f --gpu -vv
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -f --gpu -vv
 ```
 ### 2.9 All at once
 

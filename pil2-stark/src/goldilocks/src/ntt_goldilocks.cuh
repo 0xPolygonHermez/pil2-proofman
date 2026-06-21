@@ -138,7 +138,8 @@ public:
     void LDE(gl64_t* d_dst, uint64_t offset_dst,
              gl64_t* d_src, uint64_t offset_src,
              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
-             TimerGPU &timer, cudaStream_t stream);
+             TimerGPU &timer, cudaStream_t stream, bool preserve_src = false,
+             gl64_t* preserve_scratch = nullptr);
 
     void computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                   Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
