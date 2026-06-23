@@ -229,6 +229,13 @@ pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) 
     load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }
 
+pub fn load_const_pols_recursivef<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) {
+    let const_pols_path =
+        if setup.gpu { setup.const_pols_path.clone() } else { setup.setup_path.display().to_string() + ".const" };
+    let const_pols_size = setup.const_pols_size;
+    load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
+}
+
 pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &mut [F]) {
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
