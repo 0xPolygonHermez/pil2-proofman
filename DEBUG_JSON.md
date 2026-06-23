@@ -5,6 +5,9 @@ by the PIL2 Proofman debugger.
 
 ## Overview
 
+This document describes the *input* schema. For the *output* schema — the structured
+`DebugReport` produced by a run — see [DEBUG_REPORT.md](DEBUG_REPORT.md).
+
 `debug.json` controls several independent debug subsystems plus their output destination:
 
 | Section              | Purpose                                                        | Activation    |
@@ -41,6 +44,7 @@ All top-level fields are optional. An empty `debug.json` (`{}`) does nothing.
 ```json
 "instances": {
   "mode": "all",
+  "skip_tables": false,
   "list": [
     {
       "airgroup_id": 0,
@@ -67,6 +71,12 @@ All top-level fields are optional. An empty `debug.json` (`{}`) does nothing.
 - **`mode`** _(optional, default `"all"`)_ — either:
   - `"all"`: process every instance; `list` is used only to attach per-instance debug config.
   - `"only_listed"`: process *only* instances enumerated in `list`; skip everything else.
+- **`skip_tables`** _(optional, default `false`)_ — only consulted in `"only_listed"` mode.
+  By default, table (lookup) instances are **always** processed regardless of `list`, because
+  skipping a lookup table would cause spurious bus mismatches across every air that consumes
+  it. Set to `true` to subject tables to the same filter as everything else (e.g. to skip
+  large tables you don't care about, accepting that bus debug for lookup-heavy opids will be
+  meaningless without their tables). No effect in `"all"` mode.
 - **`list`** _(optional)_ — hierarchical config keyed by airgroup → air → instance.
 
 ### Airgroup entry
@@ -313,6 +323,20 @@ Each range is `[min, max)`:
 Each prefix means: *the top `bits` of the column value equal `value`*. For example,
 `{value: "0xFF", bits: 8}` matches values whose top 8 bits are `0xFF`.
 
+`value` and `bits` are independent: `bits` selects *which* top bits to compare, and the
+column is always treated as 64 bits wide, so `value`'s own hex width is irrelevant. Leading
+zeros in `value` are significant. For example, `{value: "0x1", bits: 8}` matches values whose
+top **8** bits equal `0x01` (i.e. `col >> 56 == 1`) — *not* the same as `{value: "0x1", bits: 1}`,
+which matches values whose single top bit is `1` (the entire upper half of the u64 range):
+
+```json
+// top 8 bits are 0x01 → matches [0x0100_0000_0000_0000, 0x01FF_FFFF_FFFF_FFFF]
+{ "value": "0x1", "bits": 8 }
+
+// top 1 bit is 1 → matches [0x8000_0000_0000_0000, 0xFFFF_FFFF_FFFF_FFFF]
+{ "value": "0x1", "bits": 1 }
+```
+
 - `bits` must be in `1..=64`.
 - `value` must fit in `bits` bits.
 - First match wins.
@@ -500,6 +524,7 @@ a recommended config.
 {
   "instances": {
     "mode": "only_listed",
+    "skip_tables": false,
     "list": [
       {
         "airgroup_id": 0,
@@ -619,6 +644,7 @@ a recommended config.
 | Path | Type | Default | Notes |
 |---|---|---|---|
 | `instances.mode` | `"all"` \| `"only_listed"` | `"all"` | `"only_listed"` skips instances not in `list` |
+| `instances.skip_tables` | bool | `false` | `"only_listed"` only; subject table instances to the filter too |
 | `instances.list[].airgroup_id` | u64 | — | mutually exclusive with `airgroup` |
 | `instances.list[].airgroup` | string | — | mutually exclusive with `airgroup_id` |
 | `instances.list[].airs[].air_id` | u64 | — | mutually exclusive with `air` |
@@ -631,11 +657,10 @@ a recommended config.
 | `constraints.max_print` | usize | `10` | max mismatched constraints printed per failure |
 | `global_constraints.enabled` | bool | `true` | enable global constraint verification |
 | `global_constraints.global_constraint_ids` | [usize] | `[]` (= all) | global constraint indices to verify |
-| `constraints.max_print` | u64 | `10` | max mismatched constraints to print |
 | `bus.opids` | [u64] | `[]` (= all) | which opids to track |
 | `bus.fast_mode` | bool | `true` | counts-only vs full per-value detail |
 | `bus.store_row_info` | bool | `false` | root default for row-info storage |
-| `bus.max_print` | u64 | `10` | max mismatched bus values per opid (regular mode) |
+| `bus.max_print` | usize | `10` | max mismatched bus values per opid (regular mode) |
 | `bus.values_filter` | [[string]] | `[]` | exact bus values to track (decimal or `0x…`) |
 | `bus.group_by[].opid` | u64 | — | which opid this rule applies to (must be unique) |
 | `bus.group_by[].column` | u64 | — | column index in the bus value tuple |
