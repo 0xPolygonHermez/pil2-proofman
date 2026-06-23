@@ -7,6 +7,8 @@
 //! The main entry point is [`plonk2pil`], which dispatches to the appropriate
 //! setup variant based on the `setup_type` argument.
 
+pub mod estimate;
+pub mod merge_copies;
 pub mod packers;
 pub mod r1cs;
 pub mod setups;

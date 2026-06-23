@@ -203,6 +203,7 @@ pub fn gen_recursive_setup(
         airgroup_name: Some(plonk_airgroup_name),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     if template == RecursiveTemplate::Compressor {
         plonk_opts.max_constraint_degree = Some(5);
@@ -248,7 +249,7 @@ pub fn gen_recursive_setup(
         tracing::info!("Compiling {}...", name_filename);
         let compile_status = std::process::Command::new(config.circom_exec)
             .args([
-                "--O1",
+                "--O2",
                 "--r1cs",
                 "--prime",
                 "goldilocks",
@@ -499,7 +500,7 @@ pub fn gen_recursive_setup(
                 let (blowup, last_level) = if template == RecursiveTemplate::Compressor {
                     (2, None) // compressor: default lastLevelVerification (2)
                 } else {
-                    (3, Some(1)) // recursive1/2: JS uses lastLevelVerification: 1
+                    (3, None) // recursive1/2: JS uses lastLevelVerification: 1
                 };
                 crate::types::stark_struct::StarkSettings {
                     blowup_factor: Some(blowup),

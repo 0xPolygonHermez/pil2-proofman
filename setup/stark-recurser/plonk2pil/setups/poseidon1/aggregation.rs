@@ -1,11 +1,10 @@
 //! Aggregation setup.
 //! 62 committed pols, 30 S cols, 5 rows/Poseidon1, 3 CMul/row.
 
-use super::super::super::r1cs::to_plonk::{
-    ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk,
-};
-use super::super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
-use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
+use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
@@ -26,7 +25,7 @@ fn rand_hex() -> String {
 type PR = (usize, usize, usize); // (row, n_used, max_used)
 
 pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
-    let (plonk_constraints, plonk_additions) = r1cs2plonk(r1cs);
+    let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
 
     let mut cgi = get_custom_gates_info(r1cs);
@@ -530,6 +529,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         plonk_in_custom,
     );
 
+    // Apply copy-merge remap to every placed cell (incl. custom-gate I/O) so the
+    // connection argument ties merged signals — the soundness-critical sweep,
+    // then assert each merged equality is actually re-enforced in-band.
+    apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_COLS);
     let sv = build_s_polynomials(N_COLS, n, n_bits, r, &s_map);
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 
