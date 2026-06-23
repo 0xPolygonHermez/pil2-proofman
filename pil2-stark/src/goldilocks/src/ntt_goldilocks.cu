@@ -627,7 +627,49 @@ void nttDitLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl6
 // Class methods
 // =============================================================================
 
-// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain
+// sppark flat-layout computeQ backend (ColMajor). Host-syncs -> not graph-capturable.
+void NTTGoldilocksGPU::computeQSppark(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                                      Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                                      uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
+{
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    sppark_computeq_flat((void *)d_aux_trace, offset_cmQ, offset_q,
+                         (uint32_t)qDeg, (uint32_t)qDim, Goldilocks::toU64(shiftIn),
+                         (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols);
+}
+
+// Native tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
+void NTTGoldilocksGPU::computeQNativeTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                                           Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                                           uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream)
+{
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
+
+    gl64_t* d_S = d_aux_trace + offset_helper;
+    gl64_t *d_q = d_aux_trace + offset_q;
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
+
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((NExtended + block.x - 1) / block.x,
+             (qDim + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    // q-input and cmQ-output storage are ColMajorTiled; the internal butterfly working format is row-major-in-tile.
+    columnMajorToRowMajorKernel<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim, Layout::ColMajorTiled);
+    nttDit(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, qDim, true, false, stream, maxLogDomainSize);
+
+    dim3 threads(TILE_HEIGHT, 1, 1);
+    dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
+    applyCosetShiftKernel<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, nBitsExt - nBits, qDeg, qDim);
+
+    dim3 grid1((NExtended + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    nttDit(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
+    rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols, Layout::ColMajorTiled);
+}
+
+// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain.
+// Dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
 void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                 Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                 uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
@@ -646,45 +688,46 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
         abort();
     }
 
-    uint64_t N = 1 << nBits;
-    uint64_t NExtended = 1 << nBitsExt;
-
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-        sppark_computeq_flat((void *)d_aux_trace, offset_cmQ, offset_q,
-                             (uint32_t)qDeg, (uint32_t)qDim, Goldilocks::toU64(shiftIn),
-                             (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols);
-        TimerStopCategoryGPU(timer, NTT);
-        return;
+        computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+    } else {
+        computeQNativeTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
     }
-
-    // ColMajorTiled backend: prover's own iNTT -> coset -> NTT on the tiled layout.
-    gl64_t* d_S = d_aux_trace + offset_helper;
-    gl64_t *d_q = d_aux_trace + offset_q;
-    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
-
-    dim3 block(TILE_HEIGHT, TILE_WIDTH);
-    dim3 grid0((NExtended + block.x - 1) / block.x,
-             (qDim + block.y - 1) / block.y);
-    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
-    // This branch only runs when resolveLayout(nBits, nCols) == ColMajorTiled, so the q-input and
-    // cmQ-output storage are ColMajorTiled; the internal butterfly working format is row-major-in-tile.
-    columnMajorToRowMajorKernel<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim, Layout::ColMajorTiled);
-    nttDit(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, qDim, true, false, stream, maxLogDomainSize);
-
-    dim3 threads(TILE_HEIGHT, 1, 1);
-    dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
-    applyCosetShiftKernel<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, nBitsExt - nBits, qDeg, qDim);
-
-    dim3 grid1((NExtended + block.x - 1) / block.x,
-             (nCols + block.y - 1) / block.y);
-    nttDit(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
-    rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols, Layout::ColMajorTiled);
 
     TimerStopCategoryGPU(timer, NTT);
 }
 
-// LDE: columnMajorToPacked -> DIF(INTT+zero-pad) -> DIT(NTT) -> rowMajorToColumnMajor
+// sppark flat-layout LDE backend (ColMajor in/out). Host-syncs -> not graph-capturable.
+void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
+                                 uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+                                 cudaStream_t stream, bool preserve_src, gl64_t* preserve_scratch)
+{
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch);
+}
+
+// Native tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
+// columnMajorToPacked -> DIF(INTT+zero-pad) -> DIT(NTT) -> rowMajorToColumnMajor. Pure kernels (capturable).
+void NTTGoldilocksGPU::ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_,
+                                      uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, cudaStream_t stream)
+{
+    uint64_t size = 1 << nBits;
+    uint64_t ext_size = 1 << nBitsExt;
+
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+
+    columnMajorToPackedRowMajorKernel<<<grid0, block, sharedMemSize, stream>>>(d_src_, nBits, d_dst_, nBitsExt, nCols, Layout::ColMajorTiled);
+    nttDifLde(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBitsExt, nCols, true, true, stream, maxLogDomainSize);
+    nttDitLde(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
+    dim3 grid1((ext_size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
+}
+
+// LDE: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
 void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
                            gl64_t* d_src, uint64_t offset_src,
                            uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
@@ -702,32 +745,14 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
         abort();
     }
 
-    uint64_t size = 1 << nBits;
-    uint64_t ext_size = 1 << nBitsExt;
     gl64_t *d_dst_ = &d_dst[offset_dst];
     gl64_t *d_src_ = &d_src[offset_src];
 
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-        sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch);
-        TimerStopCategoryGPU(timer, NTT);
-        return;
+        ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
+    } else {
+        ldeNativeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);
     }
-
-    // ColMajorTiled backend: prover's own batched butterfly LDE on the tiled layout.
-    dim3 block(TILE_HEIGHT, TILE_WIDTH);
-    dim3 grid0((size + block.x - 1) / block.x,
-             (nCols + block.y - 1) / block.y);
-    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
-
-    // This branch only runs when resolveLayout(nBits, nCols) == ColMajorTiled: the small-domain input
-    // and the extended output are both ColMajorTiled storage (internal working format is row-major tile).
-    columnMajorToPackedRowMajorKernel<<<grid0, block, sharedMemSize, stream>>>(d_src_, nBits, d_dst_, nBitsExt, nCols, Layout::ColMajorTiled);
-    nttDifLde(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBitsExt, nCols, true, true, stream, maxLogDomainSize);
-    nttDitLde(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
-    dim3 grid1((ext_size + block.x - 1) / block.x,
-             (nCols + block.y - 1) / block.y);
-    rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
     TimerStopCategoryGPU(timer, NTT);
 }
 
@@ -756,7 +781,28 @@ void NTTGoldilocksGPU::NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStre
     rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, layout);
 }
 
-// Inverse NTT: columnMajorToRowMajor -> bitReversal + DIT(inverse) -> rowMajorToColumnMajor
+// sppark flat-layout INTT backend (ColMajor in-place). Host-syncs -> not graph-capturable.
+void NTTGoldilocksGPU::inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols);
+}
+
+// Native tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
+// (inverse), transpose back. Pure kernels (capturable).
+void NTTGoldilocksGPU::inttNativeTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    uint64_t N = 1 << nBits;
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid_0((N + block_0.x - 1) / block_0.x,
+             (nCols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
+    columnMajorToRowMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
+    nttDit(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBits, nCols, true, false, stream, maxLogDomainSize);
+    rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
+}
+
+// Inverse NTT: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
 void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
     if (nCols == 0 || nBits == 0)
@@ -769,23 +815,11 @@ void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStr
         abort();
     }
 
-    uint64_t N = 1 << nBits;
-
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-        sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols);
-        return;
+        inttSppark(dst, nBits, nCols, stream);
+    } else {
+        inttNativeTiled(dst, nBits, nCols, stream);
     }
-
-    // ColMajorTiled backend (this branch only runs when resolveLayout == ColMajorTiled): transpose
-    // tiled-storage -> row-major, row-major nttDit, transpose back to tiled storage.
-    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
-    dim3 grid_0((N + block_0.x - 1) / block_0.x,
-             (nCols + block_0.y - 1) / block_0.y);
-    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
-    columnMajorToRowMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
-    nttDit(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBits, nCols, true, false, stream, maxLogDomainSize);
-    rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
 }
 
 // =============================================================================
