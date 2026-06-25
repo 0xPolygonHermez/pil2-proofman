@@ -3,6 +3,7 @@
 #include "cuda_utils.hpp"
 #include "goldilocks_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
+#include "expressions_codegen.cuh"
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
@@ -67,6 +68,11 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
     CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
     CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
+
+    ExpsKernel ek = expsOpenForAir(setupCtx);
+    expsLib = ek.lib;
+    expsFn = (void *)ek.fn;
+    expsMinScratch = ek.minScratch;
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -87,6 +93,8 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.argsConstraints));
 
     CHECKCUDAERR(cudaFree(d_deviceArgs));
+
+    expsClose(expsLib);
 }
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
@@ -268,7 +276,14 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     size_t sharedMem = useTmpInShared ? (ptrMem + tmpMem) : ptrMem;
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
+    // If this AIR has a generated Q kernel launch it instead of the bytecode interpreter.
+    bool computed = false;
+    if (dest.dest_gpu != nullptr && expsFn != nullptr) {
+        computed = tryLaunchExps(setupCtx, (ExpsKernelFn)expsFn, expsMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+    }
+    if (!computed) {
+        computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
+    }
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
