@@ -262,75 +262,80 @@ void StarkInfo::load(json j)
 
     if(verify) {
         gpu = false;
-        mapTotalN = 0;
+        mapTotalNCPU = 0;
+        mapTotalNGPU = 0;
         mapTotalNCustomCommitsFixed = 0;
         mapTotalNContributions = 0;
-        mapOffsets[std::make_pair("const", false)] = 0;
+        mapOffsetsCPU[std::make_pair("const", false)] = 0;
+        mapOffsetsGPU[std::make_pair("const", false)] = 0;
         for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
-            mapTotalN += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
+            mapOffsetsCPU[std::make_pair("cm" + to_string(stage), false)] = mapTotalNCPU;
+            mapOffsetsGPU[std::make_pair("cm" + to_string(stage), false)] = mapTotalNGPU;
+            mapTotalNCPU += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
+            mapTotalNGPU += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
         }
 
-        // Set offsets for custom commits fixed
+        // Set offsets for custom commits fixed (same for both layouts here).
         for(uint64_t i = 0; i < customCommits.size(); ++i) {
             if(customCommits[i].stageWidths[0] > 0) {
-                mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsCPU[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsGPU[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
                 mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * starkStruct.nQueries;
             }
         }
     } else if(verify_constraints) {
         uint64_t N = (1 << starkStruct.nBits);
         uint64_t NExtended = (1 << starkStruct.nBitsExt);
-        mapTotalN = 0;
-
-        if(gpu) {
-            mapOffsets[std::make_pair("const", false)] = 0;
-            mapTotalN += N * nConstants;
-        }
 
         mapTotalNCustomCommitsFixed = 0;
         mapTotalNContributions = 0;
 
-        // Set offsets for custom commits fixed
+        // Custom-commits-fixed offsets are layout-agnostic here.
         for(uint64_t i = 0; i < customCommits.size(); ++i) {
             if(customCommits[i].stageWidths[0] > 0) {
-                mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsCPU[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsGPU[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
                 mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * N;
-                mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsCPU[std::make_pair(customCommits[i].name + "0", true)] = mapTotalNCustomCommitsFixed;
+                mapOffsetsGPU[std::make_pair(customCommits[i].name + "0", true)] = mapTotalNCustomCommitsFixed;
                 mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * NExtended + getNumNodesMT(NExtended);
             }
         }
 
-        if(gpu) {
-            mapOffsets[std::make_pair("constraints", false)] = mapTotalN;
-            mapTotalN += N * 3;
-
-            mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
-            mapTotalN += mapTotalNCustomCommitsFixed;
-
-            mapOffsets[std::make_pair("publics", false)] = mapTotalN;
-            mapTotalN += nPublics;
-
-            mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
-            mapTotalN += proofValuesSize;
-
-            mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
-            mapTotalN += airgroupValuesSize;
-
-            mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
-            mapTotalN += airValuesSize;
-
-            mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
-            mapTotalN += 2 * FIELD_EXTENSION;
-        }
-        
+        mapTotalNGPU = 0;
+        mapOffsetsGPU[std::make_pair("const", false)] = 0;
+        mapTotalNGPU += N * nConstants;
+        mapOffsetsGPU[std::make_pair("constraints", false)] = mapTotalNGPU;
+        mapTotalNGPU += N * 3;
+        mapOffsetsGPU[std::make_pair("custom_fixed", false)] = mapTotalNGPU;
+        mapTotalNGPU += mapTotalNCustomCommitsFixed;
+        mapOffsetsGPU[std::make_pair("publics", false)] = mapTotalNGPU;
+        mapTotalNGPU += nPublics;
+        mapOffsetsGPU[std::make_pair("proofvalues", false)] = mapTotalNGPU;
+        mapTotalNGPU += proofValuesSize;
+        mapOffsetsGPU[std::make_pair("airgroupvalues", false)] = mapTotalNGPU;
+        mapTotalNGPU += airgroupValuesSize;
+        mapOffsetsGPU[std::make_pair("airvalues", false)] = mapTotalNGPU;
+        mapTotalNGPU += airValuesSize;
+        mapOffsetsGPU[std::make_pair("challenge", false)] = mapTotalNGPU;
+        mapTotalNGPU += 2 * FIELD_EXTENSION;
         for(uint64_t stage = 1; stage <= nStages; stage++) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
-            mapTotalN += N * mapSectionsN["cm" + to_string(stage)];
+            mapOffsetsGPU[std::make_pair("cm" + to_string(stage), false)] = mapTotalNGPU;
+            mapTotalNGPU += N * mapSectionsN["cm" + to_string(stage)];
         }
-        mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += N * FIELD_EXTENSION;
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
+        mapOffsetsGPU[std::make_pair("q", true)] = mapTotalNGPU;
+        mapTotalNGPU += N * FIELD_EXTENSION;
+        mapOffsetsGPU[std::make_pair("mem_exps", false)] = mapTotalNGPU;
+
+
+        mapTotalNCPU = 0;
+        for(uint64_t stage = 1; stage <= nStages; stage++) {
+            mapOffsetsCPU[std::make_pair("cm" + to_string(stage), false)] = mapTotalNCPU;
+            mapTotalNCPU += N * mapSectionsN["cm" + to_string(stage)];
+        }
+        mapOffsetsCPU[std::make_pair("q", true)] = mapTotalNCPU;
+        mapTotalNCPU += N * FIELD_EXTENSION;
+        mapOffsetsCPU[std::make_pair("mem_exps", false)] = mapTotalNCPU;
     } else {
         setMapOffsets();
     }
@@ -434,6 +439,14 @@ uint64_t StarkInfo::getPinnedProofSize() {
 }
 
 void StarkInfo::setMapOffsets() {
+    setMapOffsetsImpl(false);
+    setMapOffsetsImpl(true);
+}
+
+void StarkInfo::setMapOffsetsImpl(bool useGpuLayout) {
+    auto& mapOffsets = useGpuLayout ? mapOffsetsGPU : mapOffsetsCPU;
+    uint64_t& mapTotalN = useGpuLayout ? mapTotalNGPU : mapTotalNCPU;
+
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 
@@ -458,7 +471,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate && gpu) {    
+    if(!preallocate && useGpuLayout) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
@@ -469,12 +482,12 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    if (gpu) {
+    if (useGpuLayout) {
         mapOffsets[std::make_pair("const", false)] = mapTotalN;
         mapTotalN += N * nConstants;
     }
 
-    if(gpu) {
+    if(useGpuLayout) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
         mapTotalN += mapTotalNCustomCommitsFixed;
 
@@ -586,7 +599,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
     mapTotalN += numNodes;
 
-    if(!gpu) {
+    if(!useGpuLayout) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
@@ -599,7 +612,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("constraints", false)] = mapOffsets[std::make_pair("q", true)];
 
     uint64_t maxSizeHelper = 0;
-    if(gpu) {
+    if(useGpuLayout) {
         maxSizeHelper += boundaries.size() * NExtended;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
         mapOffsets[std::make_pair("x", true)] = mapTotalN;
@@ -612,7 +625,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
     uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), uint64_t(4));
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    if(!gpu) {
+    if(!useGpuLayout) {
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
         LEvSize += maxOpenings * N * FIELD_EXTENSION;
     } else {    
@@ -625,7 +638,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 
-    if (!gpu) {
+    if (!useGpuLayout) {
         uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];
         mapOffsets[std::make_pair("buff_helper_fft_2", false)] = maxTotalNStage2;
         maxTotalNStage2 += NExtended * mapSectionsN["cm2"];
@@ -663,48 +676,67 @@ void StarkInfo::setMapOffsets() {
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
+    setMemoryExpressionsImpl(nTmp1, nTmp3, false);
+    setMemoryExpressionsImpl(nTmp1, nTmp3, true);
+}
+
+void StarkInfo::setMemoryExpressionsImpl(uint64_t nTmp1, uint64_t nTmp3, bool useGpuLayout) {
+    auto& mapOffsets = useGpuLayout ? mapOffsetsGPU : mapOffsetsCPU;
+    uint64_t& mapTotalN = useGpuLayout ? mapTotalNGPU : mapTotalNCPU;
+
+    // `nrowsPack` / `maxNBlocks` are runtime kernel-launch parameters tied to
+    // the active device, not the layout. We compute them per-layout to size
+    // tmp1/tmp3/values correctly inside this map, but only write them back to
+    // the StarkInfo members on the pass matching `gpu` (the real device).
+    uint64_t local_nrowsPack;
+    uint64_t local_maxNBlocks;
     uint64_t mapBuffHelper;
     if(verify) {
-        maxNBlocks = 1;
-        nrowsPack = starkStruct.nQueries;
+        local_maxNBlocks = 1;
+        local_nrowsPack = starkStruct.nQueries;
         mapBuffHelper = mapTotalN;
     } else {
         mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
-        if(!gpu) {
-            nrowsPack = NROWS_PACK;
-            maxNBlocks = omp_get_max_threads();
+        if(!useGpuLayout) {
+            local_nrowsPack = NROWS_PACK;
+            local_maxNBlocks = omp_get_max_threads();
         } else {
-            nrowsPack = 256;
-            maxNBlocks = 512;
+            local_nrowsPack = 256;
+            local_maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
             uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
-            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
-                if (nrowsPack > 128) {
-                    nrowsPack /= 2;
+            while((mapBuffHelper + tmpsUsed * local_nrowsPack * local_maxNBlocks) > maxTotal) {
+                if (local_nrowsPack > 128) {
+                    local_nrowsPack /= 2;
                 } else {
-                    maxNBlocks /= 2;
+                    local_maxNBlocks /= 2;
                 }
             }
         }
     }
-    
-    uint64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
+
+    uint64_t memoryTmp1 = nTmp1 * local_nrowsPack * local_maxNBlocks;
     mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp1;
 
-    uint64_t memoryTmp3 = nTmp3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+    uint64_t memoryTmp3 = nTmp3 * FIELD_EXTENSION * local_nrowsPack * local_maxNBlocks;
     mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp3;
 
-    if(!gpu) {
-        uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+    if(!useGpuLayout) {
+        uint64_t values = 3 * FIELD_EXTENSION * local_nrowsPack * local_maxNBlocks;
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;
     } else {
-        uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        uint64_t destVals = 2 * FIELD_EXTENSION * local_nrowsPack * local_maxNBlocks;
         mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
         mapBuffHelper += destVals;
+    }
+
+    if (useGpuLayout == gpu) {
+        nrowsPack = local_nrowsPack;
+        maxNBlocks = local_maxNBlocks;
     }
 
     if(mapBuffHelper > mapTotalN) {

@@ -1,358 +1,674 @@
 # Debug Configuration JSON Format
 
-This document describes the structure and usage of the `debug.json` configuration file used by the PIL2 Proofman debugger.
+This document describes the structure and usage of the `debug.json` configuration file used
+by the PIL2 Proofman debugger.
 
 ## Overview
 
-The debug.json file allows fine-grained control over which constraints, instances, and bus operations to debug during proof generation. It supports both instance-specific debugging and standard mode debugging for bus operations.
+This document describes the *input* schema. For the *output* schema — the structured
+`DebugReport` produced by a run — see [DEBUG_REPORT.md](DEBUG_REPORT.md).
 
-## Root Structure
+`debug.json` controls several independent debug subsystems plus their output destination:
 
-```json
-{
-  "instances": [...],
-  "global_constraints": [...],
-  "std_mode": {...},
-  "n_print_constraints": <number>,
-  "store_row_info": <boolean>,
-  "skip_prover_instances": <boolean>
-}
-```
+| Section              | Purpose                                                        | Activation    |
+|----------------------|----------------------------------------------------------------|---------------|
+| `instances`          | Which instances to process / per-instance debug config         | Section present (defaults: `mode = "all"`, empty list) |
+| `constraints`        | Per-air algebraic constraint verification                      | `enabled` (default `true`) |
+| `global_constraints` | Global constraint verification                                 | `enabled` (default `true`) |
+| `bus`                | Bus (std-lookup) verification — "do assumes match proves?"     | Section present |
+| `output`             | Debug-output destination (stdout or file)                      | Section present |
 
-### Fields
+**Activation is explicit.** Omit a section to disable its subsystem; the `constraints`
+and `global_constraints` passes are additionally gated by their `enabled` field. There
+are no hidden side effects: presence of one section never silently changes the behavior
+of another.
 
-- **`instances`** _(optional)_: Array of airgroup configurations to debug. If omitted or empty, no instance-specific debugging is performed.
-- **`global_constraints`** _(optional)_: Array of constraint indices to debug at the global level. Defaults to empty array.
-- **`std_mode`** _(optional)_: Configuration for standard mode bus debugging. See [Standard Mode](#standard-mode) section.
-- **`n_print_constraints`** _(optional)_: Maximum number of constraints to print when errors occur. Defaults to system default (10).
-- **`store_row_info`** _(optional)_: Global flag to enable row information storage for detailed debugging. Defaults to `false`.
-- **`skip_prover_instances`** _(optional)_: When `true`, enables instance filtering mode where only instances listed in the `instances` array will be processed. When `false` or omitted, all instances are processed regardless of the `instances` configuration. Defaults to `false`.
-
-## Standard Mode
-
-The `std_mode` section controls bus operation debugging (checking that bus "assumes" match "proves"):
-
-```json
-"std_mode": {
-  "opids": [1, 2, 3],
-  "n_vals": 10,
-  "print_to_file": true,
-  "fast_mode": false
-}
-```
-
-### Fields
-
-- **`opids`** _(optional)_: Array of specific operation IDs (bus IDs) to debug. If empty or omitted, all operations are checked. When specified with non-empty array, `fast_mode` is automatically disabled.
-- **`n_vals`** _(optional)_: Maximum number of mismatched values to print per operation. Defaults to 10.
-- **`print_to_file`** _(optional)_: If `true`, writes debug output to `tmp/debug.log` instead of stdout. Defaults to `false`.
-- **`fast_mode`** _(optional)_: Enable fast mode which only tracks counts without storing detailed location information. Defaults to `true`. Automatically set to `false` when `opids` is specified with non-empty array.
-- **`debug_values`** _(optional)_: Array of arrays of string values representing complete bus values to track. Each inner array represents one complete bus value (which may consist of multiple field components). When specified, only these exact values will be tracked and detailed row information will be automatically enabled for them. See [Debug Values Format](#debug-values-format) for details.
-
-## Debug Values Format
-
-The `debug_values` field allows you to specify exact bus values to monitor. Each bus value is represented as an array of strings, where each string is a field component. When debug values are specified, row information storage is automatically enabled for those values.
-
-### Format
-
-```json
-"std_mode": {
-  "debug_values": [
-    ["123"],           // Single field value
-    ["1", "2", "3"],   // Three field components (e.g., extended field)
-    ["0xff", "0x100"]  // Two field components in hex
-  ]
-}
-```
-
-### Value Parsing Rules
-
-1. **Decimal notation**: `"123"` → parsed as base-10
-2. **Hexadecimal notation**: `"0xff"` or `"0xFF"` → parsed as base-16
-3. **Each inner array** represents one complete bus value to match
-4. **All components** in an inner array are flattened and hashed together
-
-### How It Works
-
-1. Each inner array of strings is parsed into field values
-2. A hash is computed for each complete bus value
-3. During execution, only bus values matching these hashes are tracked
-4. Row information is automatically stored for matching values
-
-### Examples
-
-**Single simple value:**
-```json
-"debug_values": [
-  ["1302180"]
-]
-```
-
-**Multiple simple values:**
-```json
-"debug_values": [
-  ["123"],
-  ["456"],
-  ["0xdeadbeef"]
-]
-```
-
-**Extended field values:**
-```json
-"debug_values": [
-  ["1", "2", "3"],
-  ["0", "1", "0"]
-]
-```
-
-**Mixed:**
-```json
-"debug_values": [
-  ["100"],
-  ["1", "2", "3"],
-  ["0xff"]
-]
-```
-
-## Instance Configuration
-
-The `instances` array defines which specific airgroups, airs, and instances to debug. **Important**: When `skip_prover_instances` is set to `true` and `instances` is specified with a non-empty array, only the listed instances will be processed during proof generation - all other instances will be skipped. This allows you to focus on debugging specific parts of the proof.
-
-```json
-"instances": [
-  {
-    "airgroup_id": 0,
-    "air_ids": [
-      {
-        "air_id": 1,
-        "instance_ids": [
-          {
-            "instance_id": 0,
-            "constraints": [5, 10, 15],
-            "hint_ids": [2, 4],
-            "rows": [100, 200, 300],
-            "store_row_info": true
-          }
-        ],
-        "store_row_info": false
-      }
-    ]
-  }
-]
-```
-
-### Airgroup Object
+## Root structure
 
 ```json
 {
-  "airgroup_id": <number>,
-  "airgroup": "<name>",
-  "air_ids": [...]
+  "instances": { ... },
+  "constraints": { ... },
+  "global_constraints": { ... },
+  "bus": { ... },
+  "output": { ... }
 }
 ```
 
-- **`airgroup_id`** _(conditional)_: Numeric identifier for the airgroup. Either this or `airgroup` must be specified, but not both.
-- **`airgroup`** _(conditional)_: String name of the airgroup. Either this or `airgroup_id` must be specified, but not both.
-- **`air_ids`** _(optional)_: Array of air configurations within this airgroup.
+All top-level fields are optional. An empty `debug.json` (`{}`) does nothing.
 
-### Air Object
+---
 
-```json
-{
-  "air_id": <number>,
-  "air": "<name>",
-  "instance_ids": [...],
-  "store_row_info": <boolean>
-}
-```
-
-- **`air_id`** _(conditional)_: Numeric identifier for the air. Either this or `air` must be specified, but not both.
-- **`air`** _(conditional)_: String name of the air. Either this or `air_id` must be specified, but not both.
-- **`instance_ids`** _(optional)_: Array of instance configurations to debug.
-- **`store_row_info`** _(optional)_: Enable row information storage for all instances in this air. Defaults to `false`.
-
-### Instance Object
+## `instances` — instance filtering and per-instance debug config
 
 ```json
-{
-  "instance_id": <number>,
-  "constraints": [<indices>],
-  "hint_ids": [<ids>],
-  "rows": [<indices>],
-  "store_row_info": <boolean>
-}
-```
-
-- **`instance_id`** _(optional)_: Identifier for this specific instance. Defaults to 0.
-- **`constraints`** _(optional)_: Array of constraint indices to debug. Empty array means no constraint-specific debugging.
-- **`hint_ids`** _(optional)_: Array of hint IDs to debug. Empty array means no hint-specific debugging.
-- **`rows`** _(optional)_: Array of specific row indices to debug. Empty array means no row-specific debugging.
-- **`store_row_info`** _(optional)_: Enable row information storage for this instance. Defaults to `false`. **Note**: Storing row info has performance impact; only enable when you need to see exact row locations of mismatches.
-
-## Examples
-
-### Example 1: Fast Mode - Check All Bus Operations
-
-Simple configuration to verify all bus operations match (assumes vs proves):
-
-```json
-{
-  "std_mode": {
-    "fast_mode": true
-  }
-}
-```
-
-This is the fastest mode - only counts are tracked, no detailed location information is stored.
-
-### Example 2: Debug Specific Operations with Details
-
-Debug only specific operation IDs with detailed output including row locations:
-
-```json
-{
-  "std_mode": {
-    "opids": [5, 12, 23],
-    "n_vals": 20,
-    "print_to_file": true
-  },
-  "store_row_info": true
-}
-```
-
-**Note**: When `opids` is non-empty, `fast_mode` is automatically disabled.
-
-### Example 2b: Debug Specific Values
-
-Track only specific bus values across all operations:
-
-```json
-{
-  "std_mode": {
-    "debug_values": [
-      ["1302180"],
-      ["0", "1", "0"],
-      ["0xdeadbeef"]
-    ],
-    "n_vals": 50,
-    "print_to_file": true
-  }
-}
-```
-
-**Note**: Row information is automatically stored for values matching `debug_values`.
-
-### Example 3: Instance-Specific Debugging
-
-Debug specific constraints and hints in particular instances:
-
-```json
-{
-  "skip_prover_instances": true,
-  "instances": [
-    {
-      "airgroup": "Main",
-      "air_ids": [
-        {
-          "air": "Binary",
-          "instance_ids": [
-            {
-              "instance_id": 0,
-              "constraints": [0, 1, 2],
-              "hint_ids": [5, 10]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Note**: Setting `skip_prover_instances: true` means only the Binary air instance 0 will be processed.
-
-### Example 4: Combined Configuration
-
-Comprehensive debugging with both instance and standard mode:
-
-```json
-{
-  "skip_prover_instances": true,
-  "instances": [
+"instances": {
+  "mode": "all",
+  "skip_tables": false,
+  "list": [
     {
       "airgroup_id": 0,
-      "air_ids": [
+      "airs": [
         {
           "air_id": 1,
-          "instance_ids": [
+          "store_row_info": false,
+          "instances": [
             {
               "instance_id": 0,
-              "constraints": [5, 10],
-              "rows": [100, 200, 300],
+              "constraints": [5, 10, 15],
               "store_row_info": true
             }
           ]
         }
       ]
     }
-  ],
-  "global_constraints": [0, 1, 2],
-  "std_mode": {
-    "opids": [1, 2, 3],
-    "n_vals": 15,
-    "print_to_file": true,
-    "fast_mode": false
-  },
-  "n_print_constraints": 20,
-  "store_row_info": true
+  ]
 }
 ```
 
-### Example 5: Empty Configuration (Default Behavior)
+### Fields
 
-Minimal configuration for standard mode with no specific filtering:
+- **`mode`** _(optional, default `"all"`)_ — either:
+  - `"all"`: process every instance; `list` is used only to attach per-instance debug config.
+  - `"only_listed"`: process *only* instances enumerated in `list`; skip everything else.
+- **`skip_tables`** _(optional, default `false`)_ — only consulted in `"only_listed"` mode.
+  By default, table (lookup) instances are **always** processed regardless of `list`, because
+  skipping a lookup table would cause spurious bus mismatches across every air that consumes
+  it. Set to `true` to subject tables to the same filter as everything else (e.g. to skip
+  large tables you don't care about, accepting that bus debug for lookup-heavy opids will be
+  meaningless without their tables). No effect in `"all"` mode.
+- **`list`** _(optional)_ — hierarchical config keyed by airgroup → air → instance.
+
+### Airgroup entry
 
 ```json
 {
-  "std_mode": {
-    "fast_mode": true
+  "airgroup_id": <number>,    // OR
+  "airgroup":    "<name>",    // exactly one of these two
+  "airs":        [...]
+}
+```
+
+- Exactly one of `airgroup_id` or `airgroup` must be specified.
+
+### Air entry
+
+```json
+{
+  "air_id":         <number>,     // OR
+  "air":            "<name>",     // exactly one of these two
+  "store_row_info": <boolean>,    // optional, default false
+  "instances":      [...]
+}
+```
+
+- Exactly one of `air_id` or `air` must be specified.
+- `store_row_info` at the air level applies to every instance of this air. Bus-debug only.
+
+### Instance entry
+
+```json
+{
+  "instance_id":    <number>,         // optional, default 0
+  "constraints":    [<indices>],      // constraint IDs to verify on this instance
+  "store_row_info": <boolean>         // bus-debug detail flag
+}
+```
+
+- `constraints` is consumed by the constraint-verification pass when the `constraints`
+  section is also enabled.
+- `store_row_info` at instance level overrides the air-level value if both are set.
+
+### Row-info precedence
+
+`store_row_info` can be set at three levels with OR-merge semantics:
+- Root default: `bus.store_row_info`
+- Air level: `instances.list[].airs[].store_row_info`
+- Instance level: `instances.list[].airs[].instances[].store_row_info`
+
+If *any* applicable level is `true`, row info is stored.
+
+---
+
+## `constraints` — per-air algebraic constraint verification
+
+```json
+"constraints": {
+  "enabled":   true,
+  "max_print": 10
+}
+```
+
+### Fields
+
+- **`enabled`** _(default `true`)_ — gates the per-air constraint verification pass.
+- **`max_print`** _(optional, default 10)_ — maximum number of mismatched constraints
+  to print per failing instance. Also inherited by the global pass (see below).
+
+---
+
+## `global_constraints` — global constraint verification
+
+```json
+"global_constraints": {
+  "enabled":               true,
+  "global_constraint_ids": [0, 1, 5]
+}
+```
+
+### Fields
+
+- **`enabled`** _(default `true`)_ — gates the global constraint verification pass.
+  Omit the section to skip global verification entirely.
+- **`global_constraint_ids`** _(optional)_ — array of global-constraint indices to
+  verify. Empty/omitted means **all** global constraints.
+
+`max_print` for the global pass is inherited from the `constraints` section,
+falling back to the default (10) when `constraints` is absent.
+
+---
+
+## `bus` — bus / std-lookup verification
+
+```json
+"bus": {
+  "opids":          [1, 2, 3, 4],
+  "fast_mode":      true,
+  "values_filter":  [["1302180"], ["0", "1", "0"]],
+  "store_row_info": false,
+  "max_print":      10,
+  "group_by":       [ ... ]
+}
+```
+
+### Fields
+
+- **`opids`** _(optional)_ — bus IDs to debug. Empty/omitted means all opids.
+- **`fast_mode`** _(optional, default `true`)_ — storage strategy:
+  - `true`: per-opid balance counts only. Minimal overhead. Independent of `opids`.
+  - `false`: full per-value detail (HashMap keyed by bus-value hash). Higher overhead but
+    richer output.
+
+  `fast_mode` is **independent** of `opids`. Setting `opids` no longer silently disables
+  fast mode.
+- **`values_filter`** _(optional)_ — list of complete bus values to track exclusively.
+  Each inner array is one bus value tuple with its field components as strings (decimal or
+  `0x`-prefixed hex). Has **no side effect** on `constraints`.
+- **`store_row_info`** _(optional, default `false`)_ — root-level default for per-row
+  detail tracking. Overridden by air/instance entries in the `instances` hierarchy.
+- **`max_print`** _(optional, default 10)_ — maximum number of mismatched bus values to
+  print per failing opid (regular mode only).
+- **`group_by`** _(optional)_ — per-opid bucketing rules. See [§ Per-opid bucketing](#per-opid-bucketing).
+
+Presence of this section enables bus debugging. Omit to skip.
+
+---
+
+## Per-opid bucketing
+
+`bus.group_by` subdivides per-opid storage by extracting a value from the bus value tuple
+and classifying it. Useful for narrowing down *which* values cause an imbalance, especially
+in fast mode where you'd otherwise only learn that an opid is off.
+
+```json
+"group_by": [
+  { "opid": 1, "column": 0, "by": "value" },
+  {
+    "opid": 2,
+    "column": 0,
+    "by": "range",
+    "ranges": [
+      { "max": "0x10000" },
+      { "min": "0x10000", "max": "0x100000000" },
+      { "min": "0x100000000" }
+    ]
+  },
+  {
+    "opid": 3,
+    "column": 0,
+    "by": "prefix",
+    "prefixes": [
+      { "value": "0xFF", "bits": 8 }
+    ]
+  }
+]
+```
+
+Each rule:
+- **`opid`** — the bus ID this rule applies to.
+- **`column`** — index into the bus value tuple. One column per rule.
+- **`by`** — classifier discriminator: `"value"`, `"range"`, `"prefix"`, or `"step"`.
+
+Opids not listed in `group_by` keep the un-bucketed behavior (single balance/HashMap per opid).
+
+### Filter mode (opt-in, per classifier)
+
+Every classifier supports a **filter** opt-in that drops unmatched rows entirely instead
+of tracking them. Useful workflow: run fast mode first to spot the interesting bucket,
+then switch to slow mode with the same classifier in *filter* mode to drill down only on
+that bucket without paying the cost of tracking everything else.
+
+| Classifier | How filter activates | Effect |
+|---|---|---|
+| `value` | Add `values: [...]` field | Only listed column values are tracked; others dropped |
+| `range` | Add `filter: true` | Gap-free coverage no longer required; values in gaps dropped |
+| `prefix` | Add `filter: true` | Implicit "no match" catch-all dropped instead of bucketed |
+| `step` | Add `filter: true` | Implicit "out of range" bucket dropped instead of bucketed |
+
+Examples:
+
+```json
+// value filter: track only these specific column values
+{ "opid": 102, "column": 2, "by": "value", "values": ["0x42", "0xff"] }
+
+// range filter: only [0x100, 0x200) — gaps are allowed because filter=true
+{ "opid": 102, "column": 2, "by": "range",
+  "ranges": [{ "min": "0x100", "max": "0x200" }],
+  "filter": true }
+
+// prefix filter: only values whose top 8 bits are 0xFF — others dropped
+{ "opid": 102, "column": 2, "by": "prefix",
+  "prefixes": [{ "value": "0xFF", "bits": 8 }],
+  "filter": true }
+
+// step filter: only [0x1000_0000, 0x2000_0000) in 1MB buckets — OOR dropped
+{ "opid": 102, "column": 2, "by": "step",
+  "start": "0x10000000", "stop": "0x20000000", "step": "0x100000",
+  "filter": true }
+```
+
+### `"value"` — raw column value as bucket
+
+Bucket key is the raw `column[col_idx]` value (canonicalized to u64).
+Cardinality equals the number of distinct values in that column. Unbounded.
+
+Optional `values: ["0x42", ...]` engages filter mode: only listed column values are
+tracked; other rows are dropped entirely.
+
+### `"range"` — bucket by value range
+
+```json
+{
+  "opid": 2,
+  "column": 0,
+  "by": "range",
+  "ranges": [
+    { "max": "0x10000" },
+    { "min": "0x10000", "max": "0x100000000" },
+    { "min": "0x100000000" }
+  ]
+}
+```
+
+Each range is `[min, max)`:
+- Omit `min` to mean `-∞` (only allowed on the first range).
+- Omit `max` to mean `+∞` (only allowed on the last range).
+- Ranges must be **sorted, non-overlapping, and gap-free** — they collectively must cover
+  all u64 values. The parser rejects gappy or overlapping range lists.
+
+### `"prefix"` — bucket by top-bits prefix
+
+```json
+{
+  "opid": 3,
+  "column": 0,
+  "by": "prefix",
+  "prefixes": [
+    { "value": "0xFF", "bits": 8 },
+    { "value": "0xAB", "bits": 8 }
+  ]
+}
+```
+
+Each prefix means: *the top `bits` of the column value equal `value`*. For example,
+`{value: "0xFF", bits: 8}` matches values whose top 8 bits are `0xFF`.
+
+`value` and `bits` are independent: `bits` selects *which* top bits to compare, and the
+column is always treated as 64 bits wide, so `value`'s own hex width is irrelevant. Leading
+zeros in `value` are significant. For example, `{value: "0x1", bits: 8}` matches values whose
+top **8** bits equal `0x01` (i.e. `col >> 56 == 1`) — *not* the same as `{value: "0x1", bits: 1}`,
+which matches values whose single top bit is `1` (the entire upper half of the u64 range):
+
+```json
+// top 8 bits are 0x01 → matches [0x0100_0000_0000_0000, 0x01FF_FFFF_FFFF_FFFF]
+{ "value": "0x1", "bits": 8 }
+
+// top 1 bit is 1 → matches [0x8000_0000_0000_0000, 0xFFFF_FFFF_FFFF_FFFF]
+{ "value": "0x1", "bits": 1 }
+```
+
+- `bits` must be in `1..=64`.
+- `value` must fit in `bits` bits.
+- First match wins.
+- Values matching no prefix land in an implicit "no match" bucket.
+
+### `"step"` — uniform-step buckets
+
+```json
+{
+  "opid": 5,
+  "column": 0,
+  "by": "step",
+  "start": "0x0",
+  "stop":  "0x100000000",
+  "step":  "0x100000"
+}
+```
+
+Divides `[start, stop)` into uniform buckets of width `step`. Useful when you want a
+regular grid (e.g. "one bucket per 1 MB") without listing every range explicitly.
+
+- Bucket index for `col` in `[start, stop)`: `(col - start) / step`.
+- Values outside `[start, stop)` land in an implicit "out of range" bucket.
+- If `(stop - start)` is not a multiple of `step`, the last regular bucket is partial
+  (`[start + (N-1)*step, stop)`).
+- `step` must be > 0; `start` must be strictly less than `stop`.
+
+### Bucketing in regular vs. fast mode
+
+- **Fast mode**: per-bucket balance counts. Output reports which buckets are unbalanced.
+- **Regular mode**: per-bucket per-value detail. Output groups mismatched values under
+  each bucket descriptor (`◆ Bucket: col[0] in [0x10000, 0x100000000)`).
+
+---
+
+## `output` — output destination
+
+```json
+"output": {
+  "to_file":   true,
+  "file_path": "tmp/debug.log"
+}
+```
+
+### Fields
+
+- **`to_file`** _(optional, default `true`)_ — write debug output to a file. Set to
+  `false` to redirect to stdout. The default is `true` because debug output is typically
+  voluminous and would flood the terminal.
+- **`file_path`** _(optional, default `"tmp/debug.log"`)_ — path of the output file. Parent
+  directories are created on demand.
+
+---
+
+## Numeric string parsing
+
+Wherever the schema accepts numeric strings (`values_filter`, range `min`/`max`, prefix
+`value`), values may be:
+
+- Decimal: `"123"`
+- Hex: `"0xFF"` or `"0xfe"`
+
+---
+
+## Examples
+
+### Minimal: verify all constraints, no bus debugging
+
+```json
+{ "constraints": {} }
+```
+
+### Bus debug only, fast mode
+
+```json
+{ "bus": {} }
+```
+
+This enables bus debugging on all opids in fast mode (default `fast_mode: true`),
+without running constraint verification.
+
+### Verify specific global constraints and debug specific opids
+
+```json
+{
+  "constraints":        { "enabled": true, "max_print": 20 },
+  "global_constraints": { "enabled": true, "global_constraint_ids": [0, 1, 5] },
+  "bus":                { "opids": [3, 7], "fast_mode": false, "max_print": 50 }
+}
+```
+
+### Process only one instance, log to a custom file
+
+```json
+{
+  "instances": {
+    "mode": "only_listed",
+    "list": [
+      {
+        "airgroup": "Main",
+        "airs": [
+          {
+            "air": "Binary",
+            "instances": [{ "instance_id": 0, "constraints": [5, 10] }]
+          }
+        ]
+      }
+    ]
+  },
+  "constraints": {},
+  "output": { "to_file": true, "file_path": "/tmp/my-debug.log" }
+}
+```
+
+### Bucket opid 1 by column 0 value, opid 2 by ranges
+
+```json
+{
+  "bus": {
+    "fast_mode": true,
+    "group_by": [
+      { "opid": 1, "column": 0, "by": "value" },
+      {
+        "opid": 2,
+        "column": 0,
+        "by": "range",
+        "ranges": [
+          { "max": "0x10000" },
+          { "min": "0x10000" }
+        ]
+      }
+    ]
   }
 }
 ```
 
-Or simply:
+When opid 1 or opid 2 mismatches, the output identifies the specific value (opid 1) or
+range bucket (opid 2) responsible.
+
+---
+
+## Behavior notes
+
+1. **Activation is explicit.** Omit a section to disable its subsystem; `constraints` and
+   `global_constraints` are additionally gated by their `enabled` field (default `true`).
+   This replaces the old implicit "presence of `std_mode` flips global mode to Debug"
+   behavior.
+
+2. **No hidden coupling between sections.** `bus.values_filter` no longer disables global
+   constraint verification. `bus.opids` no longer silently overrides `bus.fast_mode`.
+
+3. **Mutual exclusivity.** You cannot specify both `airgroup` and `airgroup_id`, or both
+   `air` and `air_id`, in the same object.
+
+4. **`mode: "only_listed"` skips everything not in `list`.** Useful for:
+   - Isolating problematic instances during debugging.
+   - Reducing proof generation time when testing specific components.
+
+5. **Row-info hierarchy.** `bus.store_row_info` (root) → air-level → instance-level, OR-merged.
+
+6. **Output destination.**
+   - When `output.to_file` is `false` or omitted: debug output goes to stdout.
+   - When `output.to_file` is `true`: output is written to `output.file_path` (default
+     `tmp/debug.log`). Parent directories are created automatically.
+
+7. **Performance considerations.**
+   - **Fast mode** (`bus.fast_mode: true`): minimal overhead, only tracks per-opid (or per-bucket) balance.
+   - **Regular mode** (`bus.fast_mode: false`): tracks per-value metadata.
+   - **Row info enabled** (`store_row_info: true`): highest overhead, stores exact row
+     locations of each mismatch. Only enable when needed.
+
+8. **Migration from the old schema.** The new schema is a clean break. Old-format files
+   using `std_mode`, `skip_prover_instances`, `n_print_constraints`, `air_ids`,
+   `instance_ids`, `debug_values`, `hint_ids`, or `rows` no longer parse.
+
+---
+
+## Complete reference
+
+Every supported field in one `debug.json`, with all classifier variants shown side-by-side.
+You wouldn't normally combine all of these — this is a *schema sweep* for API review, not
+a recommended config.
+
 ```json
-{}
+{
+  "instances": {
+    "mode": "only_listed",
+    "skip_tables": false,
+    "list": [
+      {
+        "airgroup_id": 0,
+        "airs": [
+          {
+            "air_id": 1,
+            "store_row_info": false,
+            "instances": [
+              {
+                "instance_id": 0,
+                "constraints": [5, 10, 15],
+                "store_row_info": true
+              },
+              { "instance_id": 2 }
+            ]
+          },
+          { "air": "Module" }
+        ]
+      },
+      {
+        "airgroup": "Main",
+        "airs": [
+          {
+            "air": "Binary",
+            "instances": [{ "instance_id": 0, "constraints": [0, 1, 2] }]
+          }
+        ]
+      }
+    ]
+  },
+
+  "constraints": {
+    "enabled": true,
+    "max_print": 20
+  },
+
+  "global_constraints": {
+    "enabled": true,
+    "global_constraint_ids": [0, 1, 2]
+  },
+
+  "bus": {
+    "opids": [1, 2, 3, 4, 5],
+    "fast_mode": true,
+    "store_row_info": false,
+    "max_print": 10,
+    "values_filter": [
+      ["1302180"],
+      ["0", "1", "0"],
+      ["0xdeadbeef"]
+    ],
+    "group_by": [
+      { "opid": 1, "column": 0, "by": "value" },
+      { "opid": 102, "column": 2, "by": "value", "values": ["0x42", "0xff"] },
+      {
+        "opid": 2,
+        "column": 0,
+        "by": "range",
+        "ranges": [
+          { "max": "0x10000" },
+          { "min": "0x10000", "max": "0x100000000" },
+          { "min": "0x100000000" }
+        ]
+      },
+      {
+        "opid": 22,
+        "column": 0,
+        "by": "range",
+        "ranges": [{ "min": "0x100", "max": "0x200" }],
+        "filter": true
+      },
+      {
+        "opid": 3,
+        "column": 0,
+        "by": "prefix",
+        "prefixes": [
+          { "value": "0xFF", "bits": 8 },
+          { "value": "0xAB", "bits": 8 }
+        ]
+      },
+      {
+        "opid": 33,
+        "column": 0,
+        "by": "prefix",
+        "prefixes": [{ "value": "0xFF", "bits": 8 }],
+        "filter": true
+      },
+      {
+        "opid": 5,
+        "column": 0,
+        "by": "step",
+        "start": "0x0",
+        "stop":  "0x100000000",
+        "step":  "0x100000"
+      },
+      {
+        "opid": 55,
+        "column": 0,
+        "by": "step",
+        "start": "0x10000000",
+        "stop":  "0x20000000",
+        "step":  "0x100000",
+        "filter": true
+      }
+    ]
+  },
+
+  "output": {
+    "to_file": true,
+    "file_path": "tmp/debug.log"
+  }
+}
 ```
 
-## Behavior Notes
+### Field index (quick lookup)
 
-1. **Mutual Exclusivity**: You cannot specify both `airgroup` and `airgroup_id`, or both `air` and `air_id` in the same object.
-
-2. **Instance Filtering**: When `skip_prover_instances` is set to `true` and `instances` is specified with a non-empty array, **only the listed instances will be processed** during proof generation. All other instances are skipped entirely. This is useful for:
-   - Isolating problematic instances during debugging
-   - Reducing proof generation time when testing specific components
-   - Focusing on particular airgroups or airs
-
-3. **Fast Mode Auto-Disable**: When `opids` is specified with a non-empty array, `fast_mode` is automatically set to `false` regardless of the configuration value. This is because detailed information is needed when debugging specific operations.
-
-4. **Debug Values Auto-Store**: When `debug_values` is specified with a non-empty array, row information storage is automatically enabled for matching values, even if `store_row_info` is `false` globally. This allows precise tracking of specific values without the overhead of storing information for all values.
-
-5. **Empty Arrays**: Empty arrays in `instances`, `global_constraints`, `constraints`, `hint_ids`, or `rows` effectively disable that aspect of debugging.
-
-5. **Row Information Hierarchy**: The `store_row_info` flag can be set at three levels with the following precedence (most specific wins):
-   - Root level: applies globally
-   - Air level: applies to all instances in that air
-   - Instance level: applies to specific instance only
-
-6. **Output Destination**: 
-   - When `print_to_file` is `false` (default): Debug output goes to stdout
-   - When `print_to_file` is `true`: Debug output is written to `tmp/debug.log`
-   - The `tmp` directory is created automatically if it doesn't exist
-
-7. **Performance Considerations**:
-   - **Fast mode** (`fast_mode: true`): Minimal overhead, only tracks counts
-   - **Regular mode** (`fast_mode: false`): Tracks additional metadata but not row locations
-   - **Row info enabled** (`store_row_info: true`): Highest overhead, stores exact row locations for each mismatch
-
-8. **Parallel Processing**: The implementation uses parallel processing with multiple maps (currently 2) to reduce lock contention during debug data collection, improving performance on multi-core systems.
+| Path | Type | Default | Notes |
+|---|---|---|---|
+| `instances.mode` | `"all"` \| `"only_listed"` | `"all"` | `"only_listed"` skips instances not in `list` |
+| `instances.skip_tables` | bool | `false` | `"only_listed"` only; subject table instances to the filter too |
+| `instances.list[].airgroup_id` | u64 | — | mutually exclusive with `airgroup` |
+| `instances.list[].airgroup` | string | — | mutually exclusive with `airgroup_id` |
+| `instances.list[].airs[].air_id` | u64 | — | mutually exclusive with `air` |
+| `instances.list[].airs[].air` | string | — | mutually exclusive with `air_id` |
+| `instances.list[].airs[].store_row_info` | bool | `false` | air-level bus-debug detail |
+| `instances.list[].airs[].instances[].instance_id` | u64 | `0` | |
+| `instances.list[].airs[].instances[].constraints` | [u64] | `[]` | constraint indices to verify on this instance |
+| `instances.list[].airs[].instances[].store_row_info` | bool | `false` | instance-level bus-debug detail |
+| `constraints.enabled` | bool | `true` | enable per-air constraint verification |
+| `constraints.max_print` | usize | `10` | max mismatched constraints printed per failure |
+| `global_constraints.enabled` | bool | `true` | enable global constraint verification |
+| `global_constraints.global_constraint_ids` | [usize] | `[]` (= all) | global constraint indices to verify |
+| `bus.opids` | [u64] | `[]` (= all) | which opids to track |
+| `bus.fast_mode` | bool | `true` | counts-only vs full per-value detail |
+| `bus.store_row_info` | bool | `false` | root default for row-info storage |
+| `bus.max_print` | usize | `10` | max mismatched bus values per opid (regular mode) |
+| `bus.values_filter` | [[string]] | `[]` | exact bus values to track (decimal or `0x…`) |
+| `bus.group_by[].opid` | u64 | — | which opid this rule applies to (must be unique) |
+| `bus.group_by[].column` | u64 | — | column index in the bus value tuple |
+| `bus.group_by[].by` | `"value"` \| `"range"` \| `"prefix"` \| `"step"` | — | classifier discriminator |
+| `bus.group_by[].values` | [string] | — | `"value"` only; presence engages filter mode |
+| `bus.group_by[].ranges[]` | `{min?, max?}` | — | `"range"` only; must cover (-∞,+∞) unless `filter: true` |
+| `bus.group_by[].prefixes[]` | `{value, bits}` | — | `"prefix"` only; `bits` in 1..=64 |
+| `bus.group_by[].start` / `.stop` / `.step` | string | — | `"step"` only; `step > 0`, `start < stop` |
+| `bus.group_by[].filter` | bool | `false` | `"range"`/`"prefix"`/`"step"` only; drops unmatched rows |
+| `output.to_file` | bool | `true` | write to file instead of stdout; set `false` for stdout |
+| `output.file_path` | string | `"tmp/debug.log"` | output path; parent dirs auto-created |

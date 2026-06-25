@@ -6,9 +6,7 @@ use rustc_hash::FxHashMap;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{
-    skip_prover_instance, ProofmanError, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx,
-};
+use proofman_common::{skip_prover_instance, ProofmanError, BufferPool, DebugInfo, ProofCtx, ProofmanResult, SetupCtx};
 use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields, update_airgroupvalue, HintFieldOptions};
 
 use crate::{
@@ -212,7 +210,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                 }
             }
 
-            let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
+            let fast_mode = pctx.debug_info.read().unwrap().bus_mode.fast_mode;
             if fast_mode {
                 for &global_instance_id in &global_instance_ids {
                     if !instance_ids.contains(global_instance_id) {
@@ -254,7 +252,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
     }
 
     fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        if debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.bus_mode.enabled {
             let debug_hashes = parse_debug_values_to_hashes::<F>(&pctx)?;
             print_std_debug_info(
                 &pctx,

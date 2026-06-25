@@ -176,9 +176,10 @@ public:
 
     std::map<std::string, uint64_t> mapSectionsN;
 
-    // Precomputed
-    std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
-    
+
+    std::map<std::pair<std::string, bool>, uint64_t> mapOffsetsCPU;
+    std::map<std::pair<std::string, bool>, uint64_t> mapOffsetsGPU;
+
     bool recursive = false;
     bool verify_constraints = false;
     bool verify = false;
@@ -187,7 +188,8 @@ public:
 
     bool calculateFixedExtended = false;
 
-    uint64_t mapTotalN;
+    uint64_t mapTotalNCPU;
+    uint64_t mapTotalNGPU;
     uint64_t mapTotalNContributions;
     uint64_t mapTotalNCustomCommitsFixed;
     
@@ -207,8 +209,10 @@ public:
     void load (json j);
 
     void setMapOffsets();
+    void setMapOffsetsImpl(bool useGpuLayout);
 
     void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
+    void setMemoryExpressionsImpl(uint64_t nTmp1, uint64_t nTmp3, bool useGpuLayout);
 
     void getProofSize();
 

@@ -100,7 +100,8 @@ pub fn print_summary<F: PrimeField64>(
         (print, n)
     };
 
-    let max_prover_memory = sctx.max_prover_buffer_size as f64 * 8.0;
+    let max_prover_memory =
+        (if pctx.gpu { sctx.max_prover_buffer_size_gpu } else { sctx.max_prover_buffer_size_cpu }) as f64 * 8.0;
 
     let mut memory_tables = 0 as f64;
     let mut total_weight: u64 = 0;
@@ -124,7 +125,8 @@ pub fn print_summary<F: PrimeField64>(
             } else {
                 (setup.stark_info.map_sections_n["cm1"] * (1 << setup.stark_info.stark_struct.n_bits)) as f64 * 8.0
             };
-            let memory_instance = setup.prover_buffer_size as f64 * 8.0;
+            let memory_instance =
+                (if pctx.gpu { setup.prover_buffer_size_gpu } else { setup.prover_buffer_size_cpu }) as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
             if is_table {

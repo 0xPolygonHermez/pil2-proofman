@@ -173,6 +173,8 @@ fn add_packed_array_setter_getter(
     *offset += bit_width * total_len;
     let rust_type = type_for_bitwidth(bit_width);
 
+    let max_bit_start = 64 - bit_width;
+
     // Runtime params: i0: usize, ...
     let runtime_idents: Vec<Ident> = dims.iter().enumerate().map(|(i, _)| format_ident!("i{}", i)).collect();
 
@@ -334,7 +336,7 @@ fn add_packed_array_setter_getter(
             let bit_offset: usize = #base_offset + flat * #bit_width;
             let word: usize = bit_offset / 64;
             let bit_start: usize = bit_offset % 64;
-            if bit_start + #bit_width <= 64 {
+            if bit_start <= #max_bit_start {
                 let mask_bits: u64 = ((1u128 << #bit_width) - 1) as u64;
                 self.packed[word] &= !(mask_bits << bit_start);
                 self.packed[word] |= ((value as u64) & mask_bits) << bit_start;
@@ -357,7 +359,7 @@ fn add_packed_array_setter_getter(
             let bit_offset: usize = #base_offset + flat * #bit_width;
             let word: usize = bit_offset / 64;
             let bit_start: usize = bit_offset % 64;
-            let raw_value: u64 = if bit_start + #bit_width <= 64 {
+            let raw_value: u64 = if bit_start <= #max_bit_start {
                 let mask_bits: u64 = ((1u128 << #bit_width) - 1) as u64;
                 (self.packed[word] >> bit_start) & mask_bits
             } else {

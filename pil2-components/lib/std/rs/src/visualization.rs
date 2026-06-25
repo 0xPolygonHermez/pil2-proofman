@@ -34,7 +34,7 @@ pub fn store_debug_data<F: PrimeField64>(
     num_rows: usize,
     is_prod: bool,
 ) -> ProofmanResult<()> {
-    let (skip, instance_info) = skip_prover_instance(pctx, instance_id)?;
+    let (skip, _instance_info) = skip_prover_instance(pctx, instance_id)?;
 
     if skip {
         tracing::info!(
@@ -65,19 +65,10 @@ pub fn store_debug_data<F: PrimeField64>(
 
     let metadata_vec: Vec<DebugDataMetadata> = hint_metadatas
         .iter()
-        .filter_map(|h| {
-            // Check if this hint_id is in the instance_info hint_ids
-            if let Some(ref info) = instance_info {
-                if !info.hint_ids.is_empty() && !info.hint_ids.contains(&h.hint_id) {
-                    return None;
-                }
-            }
-
-            Some(DebugDataMetadata {
-                hint_id: h.hint_id,
-                name_piop: h.name_piop.clone(),
-                name_exprs: h.name_exprs.join(", "),
-            })
+        .map(|h| DebugDataMetadata {
+            hint_id: h.hint_id,
+            name_piop: h.name_piop.clone(),
+            name_exprs: h.name_exprs.join(", "),
         })
         .collect();
 
@@ -98,41 +89,15 @@ pub fn store_debug_data<F: PrimeField64>(
 
     // Process each hint sequentially (safe for writing), but row creation can be parallel
     for hint in hint_metadatas.iter() {
-        // Check if this hint should be included based on instance_info
-        if let Some(ref info) = instance_info {
-            if !info.hint_ids.is_empty() && !info.hint_ids.contains(&hint.hint_id) {
-                continue;
-            }
-        }
-
         let rows: Vec<DebugDataRow> = if hint.deg_expr.is_zero() && hint.deg_mul.is_zero() {
-            // Check if row 0 should be included
-            let should_include = if let Some(ref info) = instance_info {
-                info.rows.is_empty() || info.rows.contains(&0)
-            } else {
-                true // If no instance_info, include all rows
-            };
-
-            if should_include {
-                vec![DebugDataRow {
-                    hint_id: hint.hint_id,
-                    row: 0,
-                    value: format_hint_field_output_vec(&hint.expressions.get(0)),
-                }]
-            } else {
-                vec![]
-            }
+            vec![DebugDataRow {
+                hint_id: hint.hint_id,
+                row: 0,
+                value: format_hint_field_output_vec(&hint.expressions.get(0)),
+            }]
         } else {
-            // Generate rows in parallel, filtering by instance_info.rows
             (0..num_rows)
                 .into_par_iter()
-                .filter(|j| {
-                    if let Some(ref info) = instance_info {
-                        info.rows.is_empty() || info.rows.contains(j)
-                    } else {
-                        true // If no instance_info, include all rows
-                    }
-                })
                 .map(|j| DebugDataRow {
                     hint_id: hint.hint_id,
                     row: j,

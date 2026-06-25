@@ -944,6 +944,7 @@ fn generate_witness<F: PrimeField64>(
 pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
+    gpu: bool,
 ) -> ProofmanResult<usize> {
     let mut max_prover_size = 0;
 
@@ -951,23 +952,40 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
+                max_prover_size = max_prover_size.max(if gpu {
+                    setup_compressor.prover_buffer_size_gpu
+                } else {
+                    setup_compressor.prover_buffer_size_cpu
+                });
             }
 
             let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-            max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
+            max_prover_size = max_prover_size.max(if gpu {
+                setup_recursive1.prover_buffer_size_gpu
+            } else {
+                setup_recursive1.prover_buffer_size_cpu
+            });
         }
     }
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
-        max_prover_size = max_prover_size.max(setup.prover_buffer_size);
+        max_prover_size =
+            max_prover_size.max(if gpu { setup.prover_buffer_size_gpu } else { setup.prover_buffer_size_cpu });
     }
 
     max_prover_size = max_prover_size
-        .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
-        .max(setups.setup_vadcop_final_compressed.as_ref().unwrap().prover_buffer_size);
+        .max(if gpu {
+            setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size_gpu
+        } else {
+            setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size_cpu
+        })
+        .max(if gpu {
+            setups.setup_vadcop_final_compressed.as_ref().unwrap().prover_buffer_size_gpu
+        } else {
+            setups.setup_vadcop_final_compressed.as_ref().unwrap().prover_buffer_size_cpu
+        });
 
     Ok(max_prover_size as usize)
 }

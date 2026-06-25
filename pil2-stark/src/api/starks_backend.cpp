@@ -12,6 +12,7 @@
 void calculate_const_tree_cpu(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
 void write_custom_commit_cpu(void *root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 uint64_t commit_witness_cpu(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
+void unpack_trace_cpu(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId);
 void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath);
 void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
@@ -86,6 +87,7 @@ StarksBackend cpu_backend = []() {
     backend.calculate_const_tree = calculate_const_tree_cpu;
     backend.write_custom_commit = write_custom_commit_cpu;
     backend.commit_witness = commit_witness_cpu;
+    backend.unpack_trace = unpack_trace_cpu;
     backend.initialize_instance = nullptr;               // default: 0
     backend.calculate_trace_instance = nullptr;
     backend.verify_constraints = verify_constraints_cpu;
@@ -228,6 +230,11 @@ void write_custom_commit(void *root, uint64_t arity, uint64_t nBits, uint64_t nB
 uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->commit_witness(pSetupCtx, params, instanceId, airgroupId, airId, root, d_buffers, customCommitsFixedPath);
+}
+
+void unpack_trace(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->unpack_trace) backend->unpack_trace(pSetupCtx, stepsParams, d_buffers_, airgroupId, airId);
 }
 
 // Constraints

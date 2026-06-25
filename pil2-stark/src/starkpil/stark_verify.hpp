@@ -264,14 +264,14 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
-    Goldilocks::Element *aux_trace = new Goldilocks::Element[starkInfo.mapTotalN];
+    Goldilocks::Element *aux_trace = new Goldilocks::Element[starkInfo.mapTotalNCPU];
     Goldilocks::Element *trace_custom_commits_fixed = new Goldilocks::Element[starkInfo.mapTotalNCustomCommitsFixed];
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.cmPolsMap.size(); ++i) {
             uint64_t stage = starkInfo.cmPolsMap[i].stage;
             uint64_t stagePos = starkInfo.cmPolsMap[i].stagePos;
-            uint64_t offset = starkInfo.mapOffsets[std::make_pair("cm" + to_string(stage), false)];
+            uint64_t offset = starkInfo.mapOffsetsCPU[std::make_pair("cm" + to_string(stage), false)];
             uint64_t nPols = starkInfo.mapSectionsN["cm" + to_string(stage)];
             Goldilocks::Element *pols = stage == 1 ? trace : aux_trace;
             if(starkInfo.cmPolsMap[i].dim == 1) {
@@ -289,7 +289,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
             for(uint64_t i = 0; i < starkInfo.customCommitsMap[c].size(); ++i) {
                 uint64_t stagePos = starkInfo.customCommitsMap[c][i].stagePos;
-                uint64_t offset = starkInfo.mapOffsets[std::make_pair(starkInfo.customCommits[c].name + "0", false)];
+                uint64_t offset = starkInfo.mapOffsetsCPU[std::make_pair(starkInfo.customCommits[c].name + "0", false)];
                 uint64_t nPols = starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"];
                 trace_custom_commits_fixed[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
             }

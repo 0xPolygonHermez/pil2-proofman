@@ -100,7 +100,7 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
     
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
-    Goldilocks::Element* pBuffer = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    Goldilocks::Element* pBuffer = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("q", true)]];
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);

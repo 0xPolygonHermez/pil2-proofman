@@ -66,11 +66,11 @@ pub fn hash_vals<F: PrimeField64>(norm_vals: &[HintFieldOutput<F>]) -> u64 {
     hasher.finish()
 }
 
-/// Parse debug_values from JSON and compute their hashes for filtering
+/// Parse `bus.values_filter` from JSON and compute their hashes for filtering
 /// Each inner Vec<String> represents one complete bus value with all field components
 /// Example: [["123"], ["1", "2", "3"]] -> two bus values, first with 1 field, second with 3 fields
 pub fn parse_debug_values_to_hashes<F: PrimeField64>(pctx: &Arc<ProofCtx<F>>) -> ProofmanResult<Vec<u64>> {
-    let debug_values = &pctx.debug_info.read().unwrap().std_mode.debug_values;
+    let debug_values = pctx.debug_info.read().unwrap().bus_mode.values_filter.clone();
 
     if debug_values.is_empty() {
         return Ok(Vec::new());
@@ -83,7 +83,7 @@ pub fn parse_debug_values_to_hashes<F: PrimeField64>(pctx: &Arc<ProofCtx<F>>) ->
 
     let mut hashes = Vec::with_capacity(debug_values.len());
 
-    for values in debug_values {
+    for values in &debug_values {
         let mut parsed_values: Vec<HintFieldOutput<F>> = Vec::with_capacity(values.len());
 
         for val_str in values {

@@ -12,8 +12,8 @@ use std::io::Read;
 use std::fs;
 use fields::{new_transcript, PrimeField64};
 use crate::{
-    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    initialize_logger, format_bytes, AirInstance, DebugInfo, DebugReport, DistributionCtx, GlobalInfo, InstanceInfo,
+    PolMap, SetupCtx, PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
@@ -40,20 +40,6 @@ impl<F> Default for Values<F> {
         Self { values: RwLock::new(Vec::new()) }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct InstancesInfo {
-    pub constraints: Vec<usize>,
-    pub hint_ids: Vec<usize>,
-    pub rows: Vec<usize>,
-    pub store_row_info: bool,
-}
-
-pub type AirGroupMap = HashMap<usize, AirIdMap>;
-pub type AirIdMap = HashMap<usize, (bool, InstanceMap)>;
-pub type InstanceMap = HashMap<usize, InstancesInfo>;
-
-pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 #[derive(Clone)]
 pub struct ProofOptions {
@@ -90,41 +76,6 @@ impl BorshDeserialize for ProofOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DebugInfo {
-    pub debug_instances: AirGroupMap,
-    pub debug_global_instances: Vec<usize>,
-    pub std_mode: StdMode,
-    pub n_print_constraints: usize,
-    pub skip_prover_instances: bool,
-    pub store_row_info: bool,
-}
-
-impl Default for DebugInfo {
-    fn default() -> Self {
-        Self {
-            debug_instances: Default::default(),
-            debug_global_instances: Default::default(),
-            std_mode: Default::default(),
-            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
-            skip_prover_instances: false,
-            store_row_info: false,
-        }
-    }
-}
-
-impl DebugInfo {
-    pub fn new_debug() -> Self {
-        Self {
-            debug_instances: HashMap::new(),
-            debug_global_instances: Vec::new(),
-            std_mode: StdMode::new_debug(),
-            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
-            skip_prover_instances: false,
-            store_row_info: false,
-        }
-    }
-}
 impl Default for ProofOptions {
     fn default() -> Self {
         Self {
@@ -248,6 +199,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
+    pub debug_report: RwLock<DebugReport>,
     pub aggregation: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
@@ -298,6 +250,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             air_instances,
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
+            debug_report: RwLock::new(DebugReport::new()),
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             aggregation,
@@ -894,6 +847,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].write().unwrap().set_stream_id(stream_id);
     }
 
+    pub fn get_instance_stream_id(&self, instance_id: usize) -> u64 {
+        self.air_instances[instance_id].read().unwrap().get_stream_id()
+    }
+
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
     pub fn set_device_buffers(
@@ -948,7 +905,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
 
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
-        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+        let max_prover_buffer_size = sctx.max_prover_buffer_size_gpu.max(setups_vadcop.max_prover_buffer_size_gpu);
 
         let n_streams_per_gpu = match gpu {
             true => {
@@ -963,18 +920,18 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         let max_prover_buffer_size =
-            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+            sctx.max_prover_buffer_size_gpu.max(setups_vadcop.max_prover_recursive_buffer_size_gpu) as u64;
 
-        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size_gpu as u64;
 
         tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size_gpu as f64 * 8.0)
         );
         tracing::info!(
             "Max prover recursive1/recursive2 buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size_gpu as f64 * 8.0)
         );
 
         let mut gpu_available_memory = match gpu {

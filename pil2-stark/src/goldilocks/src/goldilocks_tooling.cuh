@@ -17,6 +17,7 @@
 #include "expressions_gpu.cuh"
 #include <limits.h>
 #include "fr.hpp"
+#include "starks_api_internal.hpp"
 #endif
 #include "gl64_t.cuh"
 
@@ -133,7 +134,7 @@ struct AirInstanceInfo {
                                                                         : 2;
                 std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
                 evalsInfoHost[nEvals].stagePos = polInfo.stagePos;
-                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair(stage, true)];
                 evalsInfoHost[nEvals].stageCols = setupCtx->starkInfo.mapSectionsN[stage];
                 evalsInfoHost[nEvals].dim = polInfo.dim;
                 evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
@@ -182,7 +183,7 @@ struct AirInstanceInfo {
             evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
             std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
             evInfo->stagePos = polInfo.stagePos;
-            evInfo->offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+            evInfo->offset = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair(stage, true)];
             evInfo->stageCols = setupCtx->starkInfo.mapSectionsN[stage];
             evInfo->dim = polInfo.dim;
             evInfo->evalPos = i;
@@ -441,7 +442,7 @@ struct DeviceRecursiveFBuffers
         if (d_verkey) cudaFree(d_verkey);
     }
 };
-struct DeviceCommitBuffers
+struct DeviceCommitBuffers : public DeviceCommitBuffersCPU
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
@@ -462,14 +463,12 @@ struct DeviceCommitBuffers
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
-    uint32_t* gpus_g2l; 
+    uint32_t* gpus_g2l;
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
-
-    bool packedTrace = false;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };

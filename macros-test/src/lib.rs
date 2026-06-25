@@ -185,8 +185,8 @@ mod tests {
         assert_eq!(got, values, "get_all_flags did not return what set_all_flags wrote");
 
         // Also agree with the per-element getter
-        for i in 0usize..64 {
-            assert_eq!(row.get_flags(i), values[i], "per-element get_flags({i}) disagrees with set_all_flags");
+        for (i, &value) in values.iter().enumerate() {
+            assert_eq!(row.get_flags(i), value, "per-element get_flags({i}) disagrees with set_all_flags");
         }
     }
 
@@ -222,9 +222,9 @@ mod tests {
         assert_eq!(got, values, "get_all_nibbles did not return what set_all_nibbles wrote");
 
         // Agree with per-element getter
-        for i in 0usize..4 {
-            for j in 0usize..8 {
-                assert_eq!(row.get_nibbles(i, j), values[i][j], "per-element get_nibbles({i},{j}) disagrees");
+        for (i, row_vals) in values.iter().enumerate() {
+            for (j, &value) in row_vals.iter().enumerate() {
+                assert_eq!(row.get_nibbles(i, j), value, "per-element get_nibbles({i},{j}) disagrees");
             }
         }
     }
@@ -259,14 +259,10 @@ mod tests {
         let got = row.get_all_matrix();
         assert_eq!(got, values, "get_all_matrix did not return what set_all_matrix wrote");
 
-        for i in 0usize..3 {
-            for j in 0usize..2 {
-                for k in 0usize..4 {
-                    assert_eq!(
-                        row.get_matrix(i, j, k),
-                        values[i][j][k],
-                        "per-element get_matrix({i},{j},{k}) disagrees"
-                    );
+        for (i, plane) in values.iter().enumerate() {
+            for (j, row_vals) in plane.iter().enumerate() {
+                for (k, &value) in row_vals.iter().enumerate() {
+                    assert_eq!(row.get_matrix(i, j, k), value, "per-element get_matrix({i},{j},{k}) disagrees");
                 }
             }
         }
@@ -305,8 +301,8 @@ mod tests {
         let got = row.get_all_flags();
         assert_eq!(got, values, "unpacked get_all_flags did not return what set_all_flags wrote");
 
-        for i in 0usize..64 {
-            assert_eq!(row.get_flags(i), values[i], "unpacked per-element get_flags({i}) disagrees with set_all_flags");
+        for (i, &value) in values.iter().enumerate() {
+            assert_eq!(row.get_flags(i), value, "unpacked per-element get_flags({i}) disagrees with set_all_flags");
         }
     }
 
@@ -321,9 +317,9 @@ mod tests {
         let got = row.get_all_nibbles();
         assert_eq!(got, values, "unpacked get_all_nibbles did not return what set_all_nibbles wrote");
 
-        for i in 0usize..4 {
-            for j in 0usize..8 {
-                assert_eq!(row.get_nibbles(i, j), values[i][j], "unpacked per-element get_nibbles({i},{j}) disagrees");
+        for (i, row_vals) in values.iter().enumerate() {
+            for (j, &value) in row_vals.iter().enumerate() {
+                assert_eq!(row.get_nibbles(i, j), value, "unpacked per-element get_nibbles({i},{j}) disagrees");
             }
         }
     }
@@ -340,12 +336,12 @@ mod tests {
         let got = row.get_all_matrix();
         assert_eq!(got, values, "unpacked get_all_matrix did not return what set_all_matrix wrote");
 
-        for i in 0usize..3 {
-            for j in 0usize..2 {
-                for k in 0usize..4 {
+        for (i, plane) in values.iter().enumerate() {
+            for (j, row_vals) in plane.iter().enumerate() {
+                for (k, &value) in row_vals.iter().enumerate() {
                     assert_eq!(
                         row.get_matrix(i, j, k),
-                        values[i][j][k],
+                        value,
                         "unpacked per-element get_matrix({i},{j},{k}) disagrees"
                     );
                 }

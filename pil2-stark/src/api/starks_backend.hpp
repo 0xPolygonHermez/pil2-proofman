@@ -18,6 +18,7 @@ struct StarksBackend {
     // Witness
     void (*write_custom_commit)(void *root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
     uint64_t (*commit_witness)(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
+    void (*unpack_trace)(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId);
 
     // Constraints
     uint64_t (*initialize_instance)(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath);

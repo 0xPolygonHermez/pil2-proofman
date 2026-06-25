@@ -519,7 +519,7 @@ void free_device_buffers_gpu(void *d_buffers_)
 
 
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info) {
-    
+
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     Goldilocks::Element *verkeyRoot = (Goldilocks::Element *)verkeyRoot_;
@@ -535,6 +535,11 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
+    }
+
+    if (packedInfo != nullptr) {
+        uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info);
     }
 }
 
@@ -621,12 +626,12 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = "basic";
 
-    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
 
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
-        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)];
         uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
         // Skip the 32-byte Merkle-root header at the start of the file (assumes 1 custom commit per AIR).
         load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId, 32);
@@ -670,7 +675,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     if (air_instance_info->stored_tree) {
         d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
     } else {
-        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
 
         if (!reuse_constants && !setupCtx->starkInfo.calculateFixedExtended) {
@@ -716,11 +721,11 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     d_buffers->streamsData[streamId].proofType = "basic";
     d_buffers->streamsData[streamId].instanceId = instanceId;
 
-    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
 
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
-        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)];
         uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
         load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId, 32);
     }
@@ -758,14 +763,14 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     
     gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
     
-    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
     if(!reuse_constants) {
         unpack_fixed((uint64_t*)d_const_pols, (uint64_t*)(d_const_pols + 1), (uint64_t*)(d_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
         CHECKCUDAERR(cudaGetLastError());
     }
 
-    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
     if (d_buffers->packedTrace && air_instance_info->is_packed) {
         unpack_trace(air_instance_info, (uint64_t*)(d_aux_trace + offsetCm1 + N * nCols), (uint64_t*)(d_aux_trace + offsetCm1), nCols, N, stream, timer); 
     } else {
@@ -928,10 +933,10 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = string(proofType);
 
-    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
     copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer);
     
-    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
     copy_to_device_in_chunks(d_buffers, pPublicInputs, (uint8_t*)(d_aux_trace + offsetPublicInputs), setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), streamId, timer);
 
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
@@ -939,7 +944,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     if (air_instance_info->stored_tree) {
         d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
     } else {        
-        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
 
         if (!reuse_constants) {
@@ -981,8 +986,8 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
         : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
     uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
-    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-    uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
+    uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", true)];
     Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
     uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
@@ -1201,8 +1206,8 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     dim3 blockSize(32,32,1);
 
     // Copy and tile witness
-    uint64_t offsetCm1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetCm1Extended = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
     gl64_t * d_witness_temp = d_aux_trace + offsetCm1Extended;
     gl64_t * d_witness = d_aux_trace + offsetCm1;
     copy_to_device_in_chunks((const uint8_t*)witness, (uint8_t*)d_witness_temp, sizeWitness, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
@@ -1211,13 +1216,13 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     CHECKCUDAERR(cudaGetLastError());
 
     // Copy public inputs
-    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetPublicInputs, (const gl64_t*)pPublicInputs, sizePublicInputs, cudaMemcpyHostToDevice, d_buffers->stream));
 
     uint64_t nConst = setupCtx->starkInfo.nConstants;
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
     // Copy const pols to device
-    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
     copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)(d_aux_trace + offsetConstPols), sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
     CHECKCUDAERR(cudaGetLastError());
 
@@ -1259,16 +1264,16 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
-    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     
     uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
 
-    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)];
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsetsGPU[make_pair("mt1", true)];
 
     Goldilocks::Element *pNodes = (Goldilocks::Element*)d_aux_trace + offset_mt;
     NTTGoldilocksGPU ntt;
@@ -1282,13 +1287,13 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
         uint64_t countId = 0;
-        uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-        uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-        uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-        uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-        uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
+        uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+        uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
+        uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("airgroupvalues", false)];
+        uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("airvalues", false)];
+        uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("proofvalues", false)];
 
-        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
         gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
         gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
         Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
@@ -1298,7 +1303,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         CHECKCUDAERR(cudaGetLastError());
 
         if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
-            Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)];
             uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
             load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixedDst, customCommitsSize, streamId, 32);
         }
@@ -1341,7 +1346,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             pConstPolsAddress: d_const_pols_unpacked,
             pConstPolsExtendedTreeAddress: nullptr,
             pCustomCommitsFixed: setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0
-                ? (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)]
+                ? (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)]
                 : nullptr,
         };
 
