@@ -271,7 +271,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn generate_final_snark_proof(&self, vadcop_proof: &VadcopFinalProof) -> ProofmanResult<SnarkProof> {
+    pub fn generate_final_snark_proof(
+        &self,
+        vadcop_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         if let Some(d_buffer) = self.d_buffers {
@@ -285,6 +289,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         }
         let proof = vadcop_proof.proof_with_publics();
 
+        // The RecursiveF verifier checks the proof against this verkey (stamped
+        // into the leading 4 slots of the publics). Default is the vadcop_final
+        // verkey; a recurser/aggregated proof committed under its own verkey, so
+        // the caller passes it here — using vadcop_final's would diverge the
+        // wrapper transcript (VerifyPoW aborts).
+        let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -292,7 +303,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.aux_trace,
             &self.recursivef_const_pols,
             &self.recursivef_const_tree,
-            &self.vadcop_final_verkey,
+            verkey,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             self.d_buffers_recursivef,
         )?;

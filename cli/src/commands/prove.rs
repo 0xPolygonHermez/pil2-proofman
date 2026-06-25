@@ -173,7 +173,7 @@ impl ProveCmd {
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof)?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
                 }
             }
         }
