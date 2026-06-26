@@ -80,8 +80,12 @@ echo "[build_exps] linking $NK per-AIR .exps.so (archs: $ARCH_LIST) — parallel
 while IFS=$'\t' read -r reldir base sym slots; do
   [ -n "${sym:-}" ] || continue
   dest="$PK/$reldir/${base}.exps.so"
-  if [ -f "$WORK/gen_$sym.o" ]; then printf '%s\0' "nvcc -shared $GENCODE $WORK/gen_$sym.o -lcudart -o $dest"
-  else printf '%s\0' "nvcc -shared $CCFLAGS $WORK/gen_$sym.cu -lcudart -o $dest"; fi
+  objs=""; for o in "$WORK/gen_$sym.o" "$WORK"/gen_${sym}_c*.o; do [ -f "$o" ] && objs="$objs $o"; done
+  if [ -n "$objs" ]; then printf '%s\0' "nvcc -shared $GENCODE $objs -lcudart -o $dest"
+  else
+    cus=""; for c in "$WORK/gen_$sym.cu" "$WORK"/gen_${sym}_c*.cu; do [ -f "$c" ] && cus="$cus $c"; done
+    printf '%s\0' "nvcc -shared $CCFLAGS $cus -lcudart -o $dest"
+  fi
 done < "$LOG" | xargs -0 -P "$NJ" -I{} bash -c '{}' 2>"$WORK/cc.err" || {
   echo "[build_exps] LINK/COMPILE ERRORS:"; cat "$WORK/cc.err"; exit 1; }
 
