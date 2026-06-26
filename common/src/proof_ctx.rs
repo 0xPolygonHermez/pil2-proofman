@@ -651,6 +651,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
+    pub fn assign_table_to(&self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.assign_table_to(airgroup_id, air_id, gid)
+    }
+
+    pub fn dctx_is_assigned_table(&self, instance_id: usize) -> ProofmanResult<bool> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_assigned_table(instance_id)
+    }
+
     pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.add_instance_no_assign(airgroup_id, air_id, weight)

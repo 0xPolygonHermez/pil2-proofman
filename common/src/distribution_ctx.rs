@@ -42,21 +42,23 @@ pub struct DistributionCtx {
     // DYNAMIC PARAMETERS
 
     // Instances
-    pub n_instances: usize,                    // Total number of instances
-    pub instances: Vec<InstanceInfo>,          // Instances info
-    pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
-    pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
-    pub n_tables: usize,                       // Number of table instances
-    pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
-    pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
+    pub n_instances: usize,                               // Total number of instances
+    pub instances: Vec<InstanceInfo>,                     // Instances info
+    pub instances_chunks: Vec<InstanceChunks>,            // Chunks info per instance
+    pub instances_calculated: Vec<AtomicBool>,            // Whether the witness has been calculated for each instance
+    pub n_tables: usize,                                  // Number of table instances
+    pub aux_tables: Vec<InstanceInfo>,                    // Table instances info (lately appended to instances)
+    pub aux_table_map: Vec<i32>,                          // Map from aux tables to original instances
+    pub table_assignment: HashMap<(usize, usize), usize>, // (airgroup_id, air_id) -> reference gid the table is forced onto
 
     // Worker-level distribution
-    pub partition_set: bool,                  // Whether the partition assignation is done
+    pub partition_set: bool,                      // Whether the partition assignation is done
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
-    pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
-    pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
-    pub partition_weight: Vec<u64>,   // Total computational weight per partition (does not include tables)
-    pub partition_compressor_count: Vec<u32>, // #compressor instances assigned to each partition
+    pub assigned_table_instances: HashSet<usize>, // Global indices of assigned tables (forced onto a reference instance's node)
+    pub worker_instances: Vec<usize>,             // Indexes of instances assigned to this worker
+    pub partition_count: Vec<u32>,                // #instances in each partition (does not include tables)
+    pub partition_weight: Vec<u64>,               // Total computational weight per partition (does not include tables)
+    pub partition_compressor_count: Vec<u32>,     // #compressor instances assigned to each partition
 
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
@@ -118,7 +120,9 @@ impl DistributionCtx {
             n_tables: 0,
             aux_tables: Vec::new(),
             aux_table_map: Vec::new(),
+            table_assignment: HashMap::new(),
             instance_partition: Vec::new(),
+            assigned_table_instances: HashSet::new(),
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
             partition_weight: Vec::new(),
@@ -194,6 +198,8 @@ impl DistributionCtx {
         self.n_tables = 0;
         self.aux_tables.clear();
         self.aux_table_map.clear();
+        self.table_assignment.clear();
+        self.assigned_table_instances.clear();
 
         // Worker-level
         self.instance_partition.clear();
@@ -762,7 +768,39 @@ impl DistributionCtx {
         // Add tables that
         self.n_tables = 0;
         for (table_idx, table) in self.aux_tables.iter().enumerate() {
-            if table.shared {
+            if let Some(&ref_gid) = self.table_assignment.get(&(table.airgroup_id, table.air_id)) {
+                // Assigned table: single instance forced onto ref_gid's node.
+                if ref_gid >= self.instance_partition.len() {
+                    return Err(ProofmanError::InvalidAssignation(format!(
+                        "Table assignment reference gid {ref_gid} out of bounds"
+                    )));
+                }
+                let ref_partition = self.instance_partition[ref_gid];
+                let ref_process = self.instance_process[ref_gid].0;
+                if ref_partition < 0 || ref_process < 0 {
+                    return Err(ProofmanError::InvalidAssignation(format!(
+                        "Table assignment reference gid {ref_gid} is not assigned to a worker/process"
+                    )));
+                }
+                let ref_process = ref_process as usize;
+                let gid = self.instances.len();
+                self.instances.push(*table);
+                self.instances_calculated.push(AtomicBool::new(false));
+                self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                self.n_instances += 1;
+                self.n_tables += 1;
+                self.instance_partition.push(ref_partition); // REAL partition, not -2
+                self.worker_instances.push(gid);
+                let lid = self.process_count[ref_process];
+                self.process_count[ref_process] += 1;
+                self.process_weight[ref_process] += table.weight;
+                if ref_process == self.process_id {
+                    self.process_instances.push(gid);
+                }
+                self.aux_table_map[table_idx] = gid as i32;
+                self.instance_process.push((ref_process as i32, lid));
+                self.assigned_table_instances.insert(gid);
+            } else if table.shared {
                 let mut min_weight = u64::MAX;
                 let mut process_id = 0;
                 for (i, &weight) in self.process_weight.iter().enumerate() {
@@ -809,10 +847,42 @@ impl DistributionCtx {
                 }
             }
         }
+        for (key, _) in self.table_assignment.iter() {
+            let matched = (0..self.aux_tables.len())
+                .any(|i| self.aux_tables[i].airgroup_id == key.0 && self.aux_tables[i].air_id == key.1);
+            if !matched {
+                return Err(ProofmanError::InvalidAssignation(format!(
+                    "Table assignment for airgroup_id: {}, air_id: {} has no registered table",
+                    key.0, key.1
+                )));
+            }
+        }
         self.aux_tables.clear();
         self.assignation_done = true;
 
         Ok(())
+    }
+
+    /// Record that the table for (airgroup_id, air_id) must be assigned to the
+    /// SAME worker (partition) and SAME process as instance `gid`. Recording only;
+    /// the actual placement happens in assign_instances(). Must be called before
+    /// assignation is done. Reference validity is checked in assign_instances().
+    pub fn assign_table_to(&mut self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
+        if self.assignation_done {
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
+        }
+        if self.table_assignment.insert((airgroup_id, air_id), gid).is_some() {
+            return Err(ProofmanError::InvalidAssignation(format!(
+                "Table assignment already set for airgroup_id: {airgroup_id}, air_id: {air_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// True if instance_id is an assigned table (single owner, no cross-rank
+    /// multiplicity reduction). Valid post-assignment.
+    pub fn is_assigned_table(&self, instance_id: usize) -> ProofmanResult<bool> {
+        Ok(self.assigned_table_instances.contains(&instance_id))
     }
 
     ///  Load balance info for partitions
@@ -853,5 +923,153 @@ impl DistributionCtx {
         average_process_weight /= self.n_processes as f64;
         let max_deviation = max_process_weight as f64 / average_process_weight;
         (average_process_weight, max_process_weight, min_process_weight, max_deviation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dctx_1w_2p() -> DistributionCtx {
+        // 1 partition (this worker owns it), 2 processes, we are process 0
+        let mut dctx = DistributionCtx::new();
+        dctx.setup_partitions(1, vec![0]).expect("setup_partitions");
+        dctx.setup_processes(2, 0).expect("setup_processes");
+        dctx
+    }
+
+    #[test]
+    fn assign_table_to_records_intent() {
+        let mut dctx = dctx_1w_2p();
+        // add a regular instance to act as the reference (immediate path sets coords)
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance");
+        // register the table normally
+        dctx.add_table(7, 1, 50).expect("add_table");
+        // record the assignment intent
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        assert_eq!(dctx.table_assignment.get(&(7, 1)), Some(&rom));
+    }
+
+    #[test]
+    fn assign_table_to_rejects_after_assignation_done() {
+        let mut dctx = dctx_1w_2p();
+        dctx.assignation_done = true;
+        let err = dctx.assign_table_to(7, 1, 0);
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn assign_table_to_rejects_duplicate_key() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
+        let err = dctx.assign_table_to(7, 1, rom);
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn is_assigned_table_false_for_unknown_id() {
+        let dctx = dctx_1w_2p();
+        assert!(!dctx.is_assigned_table(999).expect("is_assigned_table"));
+    }
+
+    #[test]
+    fn assigned_table_copies_reference_coords_and_weight() {
+        let mut dctx = dctx_1w_2p();
+        // Two regular instances so process weights differ; ROM is the reference.
+        let _other = dctx.add_instance(7, 0, 100, false).expect("add_instance other");
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance rom");
+        let rom_partition = dctx.instance_partition[rom];
+        let rom_process = dctx.instance_process[rom].0;
+        let weight_before = dctx.process_weight[rom_process as usize];
+
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances(&std::collections::HashSet::new()).expect("assign_instances");
+
+        // The table instance is the last instance pushed.
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid], rom_partition, "real partition, not -2");
+        assert_eq!(dctx.instance_process[table_gid].0, rom_process, "same process as ROM");
+        assert!(dctx.is_assigned_table(table_gid).expect("is_assigned_table"));
+        assert_eq!(
+            dctx.process_weight[rom_process as usize],
+            weight_before + 50,
+            "table weight lands on ROM's process"
+        );
+    }
+
+    #[test]
+    fn assigned_table_overrides_all_ranks_to_single_instance() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance rom");
+        let instances_before = dctx.instances.len();
+        // Register as ALL-RANKS (shared=false) but then assign it.
+        dctx.add_table_all(7, 1, 50).expect("add_table_all");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances(&std::collections::HashSet::new()).expect("assign_instances");
+        // All-ranks would have added n_processes (2) instances; assignment collapses to 1.
+        assert_eq!(dctx.instances.len(), instances_before + 1, "single instance, not replicated");
+    }
+
+    #[test]
+    fn assigned_table_with_out_of_range_reference_errors() {
+        let mut dctx = dctx_1w_2p();
+        let _rom = dctx.add_instance(7, 0, 100, false).expect("add_instance rom");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        // reference a gid that does not exist
+        dctx.assign_table_to(7, 1, 999).expect("assign_table_to");
+        let err = dctx.assign_instances(&std::collections::HashSet::new());
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn assigned_table_with_unknown_key_errors() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance rom");
+        // assignment for a table that was never registered in aux_tables
+        dctx.assign_table_to(7, 99, rom).expect("assign_table_to");
+        let err = dctx.assign_instances(&std::collections::HashSet::new());
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn ordinary_shared_table_is_not_assigned() {
+        let mut dctx = dctx_1w_2p();
+        let _rom = dctx.add_instance(7, 0, 100, false).expect("add_instance");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_instances(&std::collections::HashSet::new()).expect("assign_instances");
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert!(!dctx.is_assigned_table(table_gid).expect("is_assigned_table"));
+    }
+
+    #[test]
+    fn reset_clears_assignment_state_across_cycles() {
+        let mut dctx = dctx_1w_2p();
+        // Cycle 1: assign a table to a reference, then run assignment.
+        let rom = dctx.add_instance(7, 0, 100, false).expect("add_instance rom");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to cycle1");
+        dctx.assign_instances(&std::collections::HashSet::new()).expect("assign cycle1");
+        let table_gid_c1 = dctx.get_table_instance_idx(0).expect("table idx c1");
+        assert!(dctx.is_assigned_table(table_gid_c1).expect("assigned c1"));
+
+        // Reset for the next proof cycle.
+        dctx.reset_instances();
+
+        // table_assignment must be empty so the same key can be re-registered
+        // without a duplicate-key error.
+        assert!(dctx.table_assignment.is_empty(), "table_assignment not cleared on reset");
+        // assigned_table_instances must be empty so stale gids don't misclassify.
+        assert!(dctx.assigned_table_instances.is_empty(), "assigned_table_instances not cleared on reset");
+
+        // Cycle 2: re-registering the same (ag, air) assignment must succeed.
+        let rom2 = dctx.add_instance(7, 0, 100, false).expect("add_instance rom cycle2");
+        dctx.add_table(7, 1, 50).expect("add_table cycle2");
+        dctx.assign_table_to(7, 1, rom2).expect("assign_table_to cycle2 must not be duplicate");
+        dctx.assign_instances(&std::collections::HashSet::new()).expect("assign cycle2");
+        let table_gid_c2 = dctx.get_table_instance_idx(0).expect("table idx c2");
+        assert!(dctx.is_assigned_table(table_gid_c2).expect("assigned c2"));
     }
 }
