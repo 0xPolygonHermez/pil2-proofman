@@ -16,6 +16,7 @@
 #include "sppark_lde.cuh"                // extern "C" prototypes (decl/def check)
 
 #include <mutex>
+#include <unordered_map>
 
 // =============================================================================
 // sppark NTT access (subclass to reach protected primitives; no submodule edit)
@@ -132,28 +133,57 @@ static void ensure_prover_coset(const gpu_t &gpu)
 }
 
 // =============================================================================
-// Per-device persistent sppark state (stream + scratch + coset), serialized per device
+// Per-device one-time init + per-caller-stream sppark contexts
 // =============================================================================
 
-// One per sppark device, created lazily and owned for the process lifetime (sppark's twiddle tables
-// persist across calls). Each entry point holds `lock` for its whole duration, so the stream and the
-// grow-only scratch are reused safely across concurrent host threads on the same GPU.
+// One-time per-device init flag for the SHIFT=7 coset table override (sppark's twiddle tables
+// persist for the process lifetime). All per-call state now lives in SpparkStreamCtx below; this
+// only guards the lazy coset re-seed.
 struct SpparkDevice {
-    std::mutex lock;
-    stream_t  *stream = nullptr;
-    gl64_t    *scratch = nullptr;      // grow-only per-column iNTT workspace (preserve_src fallback)
-    size_t     scratch_bytes = 0;
-    bool       coset_done = false;     // SHIFT=7 coset override applied to this device's tables
+    bool coset_done = false;     // SHIFT=7 coset override applied to this device's tables
 };
+
+// Per-caller-stream sppark context: a private sppark stream + scratch + handoff events, keyed by
+// the caller's cudaStream_t so concurrent proof streams run their NTTs without serializing on a
+// shared stream/mutex. Each caller stream is driven by a single host thread, so the per-ctx events
+// are used serially.
+struct SpparkStreamCtx {
+    stream_t    *stream = nullptr;     // private sppark stream for this caller stream
+    gl64_t      *scratch = nullptr;    // grow-only per-column iNTT workspace (preserve_src fallback)
+    size_t       scratch_bytes = 0;
+    cudaEvent_t  ev_in = nullptr;      // caller_stream -> sppark_stream ordering (input ready)
+    cudaEvent_t  ev_out = nullptr;     // sppark_stream -> caller_stream ordering (output ready)
+};
+
+
+static void handoff_begin(SpparkStreamCtx &ctx, cudaStream_t caller)
+{
+    if (!ctx.ev_in)  CUDA_OK(cudaEventCreateWithFlags(&ctx.ev_in,  cudaEventDisableTiming));
+    if (!ctx.ev_out) CUDA_OK(cudaEventCreateWithFlags(&ctx.ev_out, cudaEventDisableTiming));
+    if (caller) {
+        CUDA_OK(cudaEventRecord(ctx.ev_in, caller));
+        CUDA_OK(cudaStreamWaitEvent(*ctx.stream, ctx.ev_in, 0));
+    }
+}
+static void handoff_end(SpparkStreamCtx &ctx, cudaStream_t caller)
+{
+    CUDA_OK(cudaEventRecord(ctx.ev_out, *ctx.stream));
+    if (caller)
+        CUDA_OK(cudaStreamWaitEvent(caller, ctx.ev_out, 0));
+    else
+        CUDA_OK(cudaStreamSynchronize(*ctx.stream));
+}
 
 #ifndef SPPARK_MAX_GPUS
 #define SPPARK_MAX_GPUS 32
 #endif
 static SpparkDevice  g_dev[SPPARK_MAX_GPUS];
-static std::mutex    g_dev_init_mutex;   // guards lazy stream creation
+static std::mutex    g_dev_init_mutex;   // guards the one-time coset re-seed
 
-// SpparkDevice for the caller's current GPU, inited on first use. Does NOT take dev.lock (callers do).
-static SpparkDevice &sp_device()
+// Resolve the caller's current CUDA device to sppark's LOGICAL gpu id (and cudaSetDevice it), do
+// the one-time coset/twiddle init for that device, and return the logical id. Replaces the old
+// sp_device() + dev_id_current() pair (which resolved the GPU twice).
+static int sp_device_id()
 {
     // select_gpu(-1) resolves the current cuda device to sppark's LOGICAL gpu id (and cudaSetDevice's it).
     // We key on that id because sppark indexes NTTParameters::all()[id] / stream_t(id) by logical id,
@@ -173,19 +203,16 @@ static SpparkDevice &sp_device()
         abort();
     }
     SpparkDevice &d = g_dev[dev];
-    if (d.stream == nullptr) {
+    if (!d.coset_done) {
         std::lock_guard<std::mutex> g(g_dev_init_mutex);
-        if (d.stream == nullptr) {
+        if (!d.coset_done) {
             (void)NTTParameters::all(false);
             (void)NTTParameters::all(true);
-            if (!d.coset_done) {
-                ensure_prover_coset(gpu);   // align this device's LDE coset with SHIFT=7
-                d.coset_done = true;
-            }
-            d.stream = new stream_t(dev);   // stream on this (logical) device
+            ensure_prover_coset(gpu);   // align this device's LDE coset with SHIFT=7
+            d.coset_done = true;
         }
     }
-    return d;
+    return dev;
 }
 
 static gl64_t *ensure_scratch(gl64_t *&buf, size_t &cap, size_t need)
@@ -199,20 +226,40 @@ static gl64_t *ensure_scratch(gl64_t *&buf, size_t &cap, size_t need)
     return buf;
 }
 
+// Per-(device, caller-stream) context registry. Entries live for the process lifetime (like
+// sppark's twiddle tables); the small private stream/events/scratch they hold are intentionally
+// not freed. The mutex guards only the lookup/insert, never the NTT work.
+static std::mutex g_ctx_mutex;
+static std::unordered_map<cudaStream_t, SpparkStreamCtx *> g_ctx[SPPARK_MAX_GPUS];
+
+static SpparkStreamCtx &sp_stream_ctx(int dev_id, cudaStream_t caller)
+{
+    std::lock_guard<std::mutex> g(g_ctx_mutex);
+    auto &m = g_ctx[dev_id];
+    auto it = m.find(caller);
+    if (it != m.end())
+        return *it->second;
+    SpparkStreamCtx *ctx = new SpparkStreamCtx();
+    ctx->stream = new stream_t(dev_id);   // private sppark stream on this logical device
+    m.emplace(caller, ctx);
+    return *ctx;
+}
+
 // =============================================================================
 // Entry points (declared in sppark_lde.cuh; see there for the full contracts)
 // =============================================================================
 
 // Per column c: iNTT(N) -> spk_ldeSpread (coset) into dst[c]. To keep src intact when preserve_src
 // (callers reread cm1/const/custom commits), the iNTT runs on a COPY in col_scratch: preserve_scratch if
-// given (a free arena N-slice, e.g. the mt region -> no alloc), else this device's grow-only dev.scratch.
+// given (a free arena N-slice, e.g. the mt region -> no alloc), else this stream's grow-only ctx.scratch.
 extern "C" void sppark_lde_flat(void *d_dst_v, void *d_src_v,
                                 uint32_t lg_n, uint32_t lg_next, uint32_t nCols,
-                                bool preserve_src, void *preserve_scratch)
+                                bool preserve_src, void *preserve_scratch, void *caller_stream)
 {
-    SpparkDevice &dev = sp_device();
-    std::lock_guard<std::mutex> g(dev.lock);   // serialize sppark on this device (stream + scratch reuse)
-    stream_t &s = *dev.stream;
+    int dev_id = sp_device_id();  // resolve+init device, returns logical id
+    SpparkStreamCtx &ctx = sp_stream_ctx(dev_id, (cudaStream_t)caller_stream);
+    stream_t &s = *ctx.stream;
+    handoff_begin(ctx, (cudaStream_t)caller_stream);
     gl64_t *d_dst = reinterpret_cast<gl64_t *>(d_dst_v);
     gl64_t *d_src = reinterpret_cast<gl64_t *>(d_src_v);
     uint32_t lg_blowup = lg_next - lg_n;
@@ -223,7 +270,7 @@ extern "C" void sppark_lde_flat(void *d_dst_v, void *d_src_v,
     if (preserve_src) {
         col_scratch = preserve_scratch
             ? reinterpret_cast<gl64_t *>(preserve_scratch)
-            : ensure_scratch(dev.scratch, dev.scratch_bytes, (size_t)N * sizeof(gl64_t));
+            : ensure_scratch(ctx.scratch, ctx.scratch_bytes, (size_t)N * sizeof(gl64_t));
     }
 
     for (uint32_t c = 0; c < nCols; c++) {
@@ -237,7 +284,7 @@ extern "C" void sppark_lde_flat(void *d_dst_v, void *d_src_v,
         }
         SpparkLDE::run(s, (fr_t *)(d_dst + (uint64_t)c * Next), lg_n, lg_blowup, spread_in);
     }
-    s.sync();
+    handoff_end(ctx, (cudaStream_t)caller_stream);
 }
 
 // Flat coset + spread for computeQ. Reads qDim flat columns of q-coefficients (length Next, only the
@@ -270,11 +317,13 @@ __global__ void spk_cosetFlat(const gl64_t *q, gl64_t *cmQ, uint32_t N, uint32_t
 // disjoint flat regions (q at off_q, cmQ at off_cmQ).
 extern "C" void sppark_computeq_flat(void *d_aux_v, uint64_t off_cmQ, uint64_t off_q,
                                      uint32_t qDeg, uint32_t qDim, uint64_t shiftIn,
-                                     uint32_t lg_n, uint32_t lg_next, uint32_t nCols)
+                                     uint32_t lg_n, uint32_t lg_next, uint32_t nCols,
+                                     void *caller_stream)
 {
-    SpparkDevice &dev = sp_device();
-    std::lock_guard<std::mutex> g(dev.lock);
-    stream_t &s = *dev.stream;
+    int dev_id = sp_device_id();  // resolve+init device, returns logical id
+    SpparkStreamCtx &ctx = sp_stream_ctx(dev_id, (cudaStream_t)caller_stream);
+    stream_t &s = *ctx.stream;
+    handoff_begin(ctx, (cudaStream_t)caller_stream);
     gl64_t *d_aux = reinterpret_cast<gl64_t *>(d_aux_v);
     gl64_t *d_q = d_aux + off_q;       // flat, qDim cols, Next rows
     gl64_t *d_cmQ = d_aux + off_cmQ;   // flat, nCols cols, Next rows
@@ -292,18 +341,19 @@ extern "C" void sppark_computeq_flat(void *d_aux_v, uint64_t off_cmQ, uint64_t o
     // 3. NTT each cmQ column over the ext domain, in place.
     for (uint32_t c = 0; c < nCols; c++)
         SpparkLDE::ntt_inplace(s, (fr_t *)(d_cmQ + (uint64_t)c * Next), lg_next, /*inverse=*/false);
-    s.sync();
+    handoff_end(ctx, (cudaStream_t)caller_stream);
 }
 
 // Per-column in-place INTT of nCols flat columns of N rows (used for the LEv vector).
-extern "C" void sppark_intt_flat(void *d_data_v, uint32_t lg_n, uint32_t nCols)
+extern "C" void sppark_intt_flat(void *d_data_v, uint32_t lg_n, uint32_t nCols, void *caller_stream)
 {
-    SpparkDevice &dev = sp_device();
-    std::lock_guard<std::mutex> g(dev.lock);
-    stream_t &s = *dev.stream;
+    int dev_id = sp_device_id();  // resolve+init device, returns logical id
+    SpparkStreamCtx &ctx = sp_stream_ctx(dev_id, (cudaStream_t)caller_stream);
+    stream_t &s = *ctx.stream;
+    handoff_begin(ctx, (cudaStream_t)caller_stream);
     gl64_t *d_data = reinterpret_cast<gl64_t *>(d_data_v);
     uint64_t N = 1ull << lg_n;
     for (uint32_t c = 0; c < nCols; c++)
         SpparkLDE::ntt_inplace(s, (fr_t *)(d_data + (uint64_t)c * N), lg_n, /*inverse=*/true);
-    s.sync();
+    handoff_end(ctx, (cudaStream_t)caller_stream);
 }

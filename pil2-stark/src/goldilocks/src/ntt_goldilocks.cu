@@ -632,10 +632,9 @@ void NTTGoldilocksGPU::computeQSppark(uint64_t offset_cmQ, uint64_t offset_q, ui
                                       Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                       uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
 {
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
     sppark_computeq_flat((void *)d_aux_trace, offset_cmQ, offset_q,
                          (uint32_t)qDeg, (uint32_t)qDim, Goldilocks::toU64(shiftIn),
-                         (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols);
+                         (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, (void *)stream);
 }
 
 // Native tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
@@ -702,8 +701,7 @@ void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
                                  uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                                  cudaStream_t stream, bool preserve_src, gl64_t* preserve_scratch)
 {
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-    sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch);
+    sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
 }
 
 // Native tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
@@ -784,8 +782,7 @@ void NTTGoldilocksGPU::NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStre
 // sppark flat-layout INTT backend (ColMajor in-place). Host-syncs -> not graph-capturable.
 void NTTGoldilocksGPU::inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-    sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols);
+    sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols, (void *)stream);
 }
 
 // Native tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
