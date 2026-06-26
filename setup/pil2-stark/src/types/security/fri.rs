@@ -1,211 +1,9 @@
-use std::ops::Neg;
-
 use rug::float::Round;
 use rug::ops::Pow;
 use rug::Float;
 
-/// Precision for all high-precision arithmetic (matches Decimal.js precision: 200 digits).
-/// 200 decimal digits ~ 665 binary bits; use 700 for safety.
-const PREC: u32 = 700;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Construct a high-precision Float from an integer-like value.
-fn hpf(v: u64) -> Float {
-    Float::with_val(PREC, v)
-}
-
-fn hpf_from_f64(v: f64) -> Float {
-    Float::with_val(PREC, v)
-}
-
-/// `floor(-log2(error))` -- equivalent to JS `get_security_from_error`.
-fn security_bits_from_error(error: &Float) -> i64 {
-    let log2_val = Float::with_val(PREC, error.log2_ref());
-    let neg_log2 = log2_val.neg();
-    let floored = neg_log2.floor();
-    floored.to_f64() as i64
-}
-
-/// Truncate a Float to `n` decimal places (round-down), matching
-/// `Decimal.toDecimalPlaces(n, ROUND_DOWN)`.
-fn truncate_decimal_places(val: &Float, n: u32) -> Float {
-    // Multiply by 10^n, floor, then divide by 10^n.
-    let scale = Float::with_val(PREC, Float::i_pow_u(10, n));
-    let scaled = Float::with_val(PREC, val * &scale);
-    let floored = scaled.floor();
-    Float::with_val(PREC, floored / scale)
-}
-
-// ---------------------------------------------------------------------------
-// Decoding regimes
-// ---------------------------------------------------------------------------
-
-struct RegimeParams {
-    field_size: Float,
-    dimension: Float,
-    rate: Float,
-    codeword_length: Float,
-    augmented_rate: Float,
-    alpha: f64,
-}
-
-impl RegimeParams {
-    fn new(field_size: Float, dimension: u64, rate: f64, alpha: f64, n_opening_points: u64) -> Self {
-        let dim_f = hpf(dimension);
-        let rate_f = hpf_from_f64(rate);
-        let codeword_length = Float::with_val(PREC, &dim_f / &rate_f);
-        let augmented_rate = {
-            let dim_plus_open = Float::with_val(PREC, &dim_f + n_opening_points);
-            let numer = Float::with_val(PREC, &rate_f * &dim_plus_open);
-            Float::with_val(PREC, numer / &dim_f)
-        };
-        RegimeParams { field_size, dimension: dim_f, rate: rate_f, codeword_length, augmented_rate, alpha }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// JBR (Johnson Bound Regime)
-// ---------------------------------------------------------------------------
-
-#[allow(clippy::upper_case_acronyms)]
-struct JBR<'a> {
-    params: &'a RegimeParams,
-}
-
-impl<'a> JBR<'a> {
-    fn new(params: &'a RegimeParams) -> Self {
-        JBR { params }
-    }
-
-    fn sqrt_rate(&self) -> Float {
-        self.params.rate.clone().sqrt()
-    }
-
-    fn max_decoding_radius(&self) -> Float {
-        let sr = self.sqrt_rate();
-        Float::with_val(PREC, hpf(1) - &sr)
-    }
-
-    fn min_decoding_radius(&self) -> Float {
-        let one_minus_rate = Float::with_val(PREC, hpf(1) - &self.params.rate);
-        Float::with_val(PREC, one_minus_rate / hpf(2))
-    }
-
-    fn gap(&self) -> Float {
-        let base_correction = Float::with_val(PREC, hpf(1) / hpf(300));
-        // Match JS Decimal.js behavior: convert alpha via string repr to avoid
-        // f64 binary approximation errors (e.g. 1.6_f64 is not exactly 1.6).
-        let alpha_plus_one = {
-            let alpha_str = format!("{}", 1.0 + self.params.alpha);
-            Float::with_val(PREC, Float::parse(&alpha_str).unwrap())
-        };
-        let raw = Float::with_val(PREC, &base_correction * &alpha_plus_one);
-        let gap = truncate_decimal_places(&raw, 20);
-        // Assert: minDecodingRadius < maxDecodingRadius - gap
-        let max_minus_gap = Float::with_val(PREC, &self.max_decoding_radius() - &gap);
-        assert!(
-            self.min_decoding_radius() < max_minus_gap,
-            "Gap must keep minDecodingRadius < maxDecodingRadius - gap in JBR"
-        );
-        gap
-    }
-
-    fn proximity_parameter(&self) -> Float {
-        Float::with_val(PREC, &self.max_decoding_radius() - &self.gap())
-    }
-
-    #[allow(dead_code)]
-    fn max_list_size(&self) -> Float {
-        let sqrt_aug_rate = self.params.augmented_rate.clone().sqrt();
-        let two_gap = Float::with_val(PREC, hpf(2) * &self.gap());
-        let denom = Float::with_val(PREC, &two_gap * &sqrt_aug_rate);
-        Float::with_val(PREC, hpf(1) / denom)
-    }
-
-    fn multiplicity(&self) -> Float {
-        let m_raw = Float::with_val(PREC, &self.sqrt_rate() / &self.gap());
-        let m_ceil = m_raw.ceil();
-        let three = hpf(3);
-        if m_ceil > three {
-            m_ceil
-        } else {
-            three
-        }
-    }
-
-    fn calculate_linear_error(&self) -> Float {
-        let n = Float::with_val(PREC, &self.params.dimension / &self.params.rate);
-        let m = self.multiplicity();
-
-        let m_shifted = Float::with_val(PREC, &m + 0.5_f64);
-        let m5 = Float::with_val(PREC, m_shifted.clone().pow(5));
-        let term1 = Float::with_val(PREC, &m5 * hpf(2));
-        let m_times_3 = Float::with_val(PREC, &m_shifted * hpf(3));
-        let term2 = Float::with_val(PREC, &m_times_3 * &self.params.rate);
-        let sum_terms = Float::with_val(PREC, &term1 + &term2);
-        let numerator = Float::with_val(PREC, &sum_terms * &n);
-
-        let three_rate = Float::with_val(PREC, hpf(3) * &self.params.rate);
-        let three_rate_sqrt = Float::with_val(PREC, &three_rate * &self.sqrt_rate());
-        let denominator = Float::with_val(PREC, &three_rate_sqrt * &self.params.field_size);
-
-        Float::with_val(PREC, numerator / denominator)
-    }
-
-    fn calculate_powers_error(&self, n_functions: u64) -> Float {
-        let linear = self.calculate_linear_error();
-        Float::with_val(PREC, &linear * (n_functions - 1))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// UDR (Unique Decoding Regime)
-// ---------------------------------------------------------------------------
-
-#[allow(clippy::upper_case_acronyms)]
-struct UDR<'a> {
-    params: &'a RegimeParams,
-}
-
-impl<'a> UDR<'a> {
-    fn new(params: &'a RegimeParams) -> Self {
-        UDR { params }
-    }
-
-    fn max_decoding_radius(&self) -> Float {
-        let one_minus_rate = Float::with_val(PREC, hpf(1) - &self.params.rate);
-        Float::with_val(PREC, one_minus_rate / hpf(2))
-    }
-
-    fn gap(&self) -> Float {
-        // In the JS source, getOptimalFRIQueryParams wraps fieldSize as a
-        // Decimal before passing it into the UDR constructor.  The UDR
-        // proximity-parameter getter then compares `this.fieldSize >= 1n << 150n`
-        // (Decimal vs BigInt), which always evaluates to false in JS.
-        // The correction therefore always takes the `rate / 20` branch.
-        // We replicate this exact behavior for output-identical results.
-        Float::with_val(PREC, &self.params.rate / hpf(20))
-    }
-
-    fn proximity_parameter(&self) -> Float {
-        let correction = self.gap();
-        let pp = Float::with_val(PREC, &self.max_decoding_radius() - &correction);
-        assert!(pp > 0.0, "Proximity parameter must be positive in UDR");
-        pp
-    }
-
-    fn calculate_linear_error(&self) -> Float {
-        Float::with_val(PREC, &self.params.codeword_length / &self.params.field_size)
-    }
-
-    fn calculate_powers_error(&self, n_functions: u64) -> Float {
-        let linear = self.calculate_linear_error();
-        Float::with_val(PREC, &linear * (n_functions - 1))
-    }
-}
+use super::regime::{DecodingRegime, RegimeParams, JBR, UDR};
+use super::{calculate_query_num_hashes, hpf, security_bits_from_error, PREC};
 
 // ---------------------------------------------------------------------------
 // FRI Security Calculator
@@ -231,57 +29,6 @@ pub struct FRISecurityParams {
     pub use_max_grinding_bits: bool,
     pub tree_arity: u64,
     pub target_security_bits: u64,
-}
-
-fn calculate_mtp_hashes(tree_arity: u64, n_leafs: f64) -> f64 {
-    (tree_arity as f64 - 1.0) * (n_leafs.log2() / (tree_arity as f64).log2()).ceil()
-}
-
-fn calculate_query_num_hashes(tree_arity: u64, codeword_length: f64, folding_factors: &[u64]) -> f64 {
-    if folding_factors.is_empty() {
-        return 0.0;
-    }
-    let mut acc_folding_factor: f64 = 1.0;
-    let mut total_hashes: f64 = 0.0;
-    for &ff in &folding_factors[..folding_factors.len() - 1] {
-        let n_leafs = codeword_length / acc_folding_factor;
-        total_hashes += ff as f64 * calculate_mtp_hashes(tree_arity, n_leafs);
-        acc_folding_factor *= ff as f64;
-    }
-    let n_leafs_input = codeword_length;
-    total_hashes += folding_factors[0] as f64 * calculate_mtp_hashes(tree_arity, n_leafs_input);
-    total_hashes
-}
-
-/// Trait to abstract over JBR and UDR for FRI calculation.
-trait DecodingRegime {
-    fn proximity_parameter(&self) -> Float;
-    fn gap(&self) -> Float;
-    fn calculate_powers_error(&self, n_functions: u64) -> Float;
-}
-
-impl<'a> DecodingRegime for JBR<'a> {
-    fn proximity_parameter(&self) -> Float {
-        self.proximity_parameter()
-    }
-    fn gap(&self) -> Float {
-        self.gap()
-    }
-    fn calculate_powers_error(&self, n_functions: u64) -> Float {
-        self.calculate_powers_error(n_functions)
-    }
-}
-
-impl<'a> DecodingRegime for UDR<'a> {
-    fn proximity_parameter(&self) -> Float {
-        self.proximity_parameter()
-    }
-    fn gap(&self) -> Float {
-        self.gap()
-    }
-    fn calculate_powers_error(&self, n_functions: u64) -> Float {
-        self.calculate_powers_error(n_functions)
-    }
 }
 
 fn calculate_optimal_query_params(
@@ -456,21 +203,10 @@ pub fn get_optimal_fri_query_params(regime_name: &str, params: &FRISecurityParam
     }
 }
 
-pub fn goldilocks_cube_field_size() -> Float {
-    // (2^64 - 2^32 + 1)^3
-    let two_64 = Float::with_val(PREC, Float::i_pow_u(2, 64));
-    let two_32 = Float::with_val(PREC, Float::i_pow_u(2, 32));
-    let p = Float::with_val(PREC, &two_64 - &two_32) + hpf(1);
-    Float::with_val(PREC, p.pow(3))
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::security::goldilocks_cube_field_size;
 
     /// recursivef (GL→BN128 bridge) query count as a function of grinding bits.
     /// Real recursivef params from a generated recursivef.starkinfo.json:
@@ -573,15 +309,6 @@ mod tests {
 
         assert_eq!(result.n_queries, 289, "UDR nQueries mismatch");
         assert_eq!(result.n_grinding_bits, 22, "UDR nGrindingBits mismatch");
-    }
-
-    /// Verify that the field-size helper produces ~2^191 (matches JS fieldSize).
-    #[test]
-    fn test_goldilocks_cube_field_size() {
-        let fs = goldilocks_cube_field_size();
-        let log2_fs = Float::with_val(PREC, fs.log2_ref()).to_f64_round(Round::Nearest);
-        // JS reports "Field Size: 2^191"
-        assert!((191.0..192.0).contains(&log2_fs), "log2(fieldSize) should be ~191, got {log2_fs}");
     }
 
     /// Test with different folding factors (foldingFactors: [4, 3, 3]).
