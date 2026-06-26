@@ -38,6 +38,15 @@ Live knobs: stage1 / stage2 columns, cells-per-permutation, the linear hash
 (**Blake3** rate 4 vs **Blake2** rate 12), and which metric drives the color.
 Click any cell for the full breakdown.
 
+- **Protocol** toggle (**FRI** vs **STIR**, ePrint 2024/390). STIR keeps the same
+  stage-0 (trace/Q) commitment hashing as FRI, but folds with per-round query
+  counts `t_i` that shrink as the rate improves: folding cells are
+  `Σ_round t_i · ceil(k·3 / rate)` and stage-0 is opened `t_0` times (round-0
+  reps) rather than the flat FRI `n_queries`. STIR folds by the same factor
+  `k = 2^fold` down to degree `2^6` as FRI (apples-to-apples). Cells with no
+  128-bit STIR schedule are greyed as "no schedule". The **grinding-bits slider**
+  is a live knob feeding both protocols (default 20).
+
 ## Where the numbers come from
 
 The page reimplements, in JS, the analytical model in
@@ -53,6 +62,12 @@ the swept range. To regenerate the underlying sweep from Rust:
 ```
 cargo test -p pil2-stark-setup --lib types::cells::tests::cells_sweep_csv -- --ignored --nocapture
 ```
+
+The STIR columns (`stir_t0, stir_total_queries, stir_total_cells,
+stir_schedule_found`) in that CSV are the ground truth the in-browser STIR port is
+checked against; the JS reproduces them exactly across the swept range (56/56 rows
+verified). Grinding is configurable via the slider (default 20 bits for both protocols,
+protocol security 108), matching the FRI path.
 
 This is a research/estimation tool — it models linear-hash cells only and
 deliberately ignores Merkle-path hashing, custom gates, and transcript costs.

@@ -152,6 +152,17 @@
         <option value="blake2">Blake2 · rate 12</option>
       </select>
     </div>
+    <div class="ctrl" style="flex:0 0 auto; min-width:140px;">
+      <label>Protocol</label>
+      <select id="protocol">
+        <option value="fri" selected>FRI</option>
+        <option value="stir">STIR</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>Grinding bits <b id="grindingVal">20</b></label>
+      <input type="range" id="grinding" min="0" max="32" step="1" value="20">
+    </div>
     <div class="ctrl">
       <label>cells / permutation <b id="cpbv">5000</b></label>
       <input type="range" id="cpb" min="500" max="12000" step="100" value="5000">
@@ -202,13 +213,91 @@
   </div>
 
   <footer>
-    Model ported from <b>pil2-stark types::cells</b> + <b>pil::info::get_prover_memory</b> · grinding 20 bits · arity 4 · target 128-bit (JBR) · extension degree 3 · Main: nBits 22, blowup 1, fixed 3 / stageQ 6 / stage2 24 / stage1 38, 3 opening points, 61 functions.
+    Model ported from <b>pil2-stark types::cells</b> + <b>pil::info::get_prover_memory</b> · grinding configurable (slider, default 20) · arity 4 · target 128-bit (JBR) · extension degree 3 · Main: nBits 22, blowup 1, fixed 3 / stageQ 6 / stage2 24 / stage1 38, 3 opening points, 61 functions.
   </footer>
 </div>
 
 <script>
 // ---- model ported from cells.rs ----
-const TARGET = 128, GRIND = 20, ARITY = 4, FE = 3;
+const TARGET = 128, ARITY = 4, FE = 3;
+
+// --- STIR port (mirrors setup/pil2-stark/src/types/security/stir.rs) ---
+const STIR_DEFAULT_GRINDING_BITS = 20;  // default seed; the live value comes from getGrinding()
+const STIR_TARGET_BITS  = 128;
+const STIR_STOPPING_DEG = 64;           // 2^6
+const STIR_MAX_ROUNDS   = 24;
+const EXT_DEG = FE;                     // same constant; alias to avoid duplicate (both = 3)
+
+function logInvRate(rate) { return -Math.log2(rate); }
+
+function stirNumRounds(dimension, k) {
+  if (k < 2 || dimension <= STIR_STOPPING_DEG) return null;
+  let d = dimension, m = 0;
+  while (d > STIR_STOPPING_DEG) { d = Math.floor(d / k); m++; if (m > STIR_MAX_ROUNDS) return null; }
+  return m;
+}
+
+function stirRoundSchedule(d, rho0, k, m) {
+  const out = [[d, rho0]];
+  let dim = d, rate = rho0;
+  for (let i = 0; i < m; i++) { dim = Math.floor(dim / k); rate = rate * 2 / k; out.push([dim, rate]); }
+  return out;
+}
+
+function stirRepetitions(protocolSecurity, lir) {
+  return Math.max(1, Math.ceil((2 * protocolSecurity) / lir));
+}
+
+// Returns { rounds:[{rate,dimension,fold,repetitions,fullyOpened}], achievedBits } or null.
+// `grindingBits` is the live slider value (getGrinding()); defaults to STIR_DEFAULT_GRINDING_BITS.
+function buildStirSchedule(n, blowupBits, foldBits, grindingBits = STIR_DEFAULT_GRINDING_BITS) {
+  const k = 1 << foldBits;
+  const dimension = 2 ** n;
+  const rho0 = 1 / (2 ** blowupBits);
+  const m = stirNumRounds(dimension, k);
+  if (m === null) return null;
+  const sched = stirRoundSchedule(dimension, rho0, k, m);
+  for (const [dim, rate] of sched) if (dim < 1 || rate >= 1 || rate <= 0) return null;
+
+  const protocolSecurity = STIR_TARGET_BITS - grindingBits; // e.g. 128-20 = 108
+  const last = sched.length - 1;
+  const rounds = [];
+  for (let i = 0; i < sched.length; i++) {
+    const [dim, rate] = sched[i];
+    const lir = logInvRate(rate);
+    if (!isFinite(lir) || lir <= 0) return null;
+    const wanted = stirRepetitions(protocolSecurity, lir);
+    const domainSize = Math.floor(dim / rate);
+    let reps, fullyOpened;
+    if (i !== last && wanted >= domainSize) { reps = Math.max(1, domainSize); fullyOpened = true; }
+    else { reps = Math.max(1, wanted); fullyOpened = false; }
+    rounds.push({ rate, dimension: dim, fold: k, repetitions: reps, fullyOpened });
+  }
+  // Achieved bits: weakest non-fully-opened round's (lir/2)*t + grinding.
+  let weakest = Infinity;
+  for (const r of rounds) {
+    if (r.fullyOpened) continue;
+    const bits = (logInvRate(r.rate) / 2) * r.repetitions + grindingBits;
+    if (bits < weakest) weakest = bits;
+  }
+  const achievedBits = Math.floor(weakest);
+  if (achievedBits < STIR_TARGET_BITS) return null;   // no 128-bit schedule for this cell
+  return { rounds, achievedBits };
+}
+
+// STIR cells for one cell. `spongeRate` = 4 (Blake3) | 12 (Blake2).
+// Returns { scheduleFound, t0, totalQueries, foldTotal, totalCells, rounds } using the
+// SAME trace-hash count the FRI path computes (stage-0 invariant).
+function stirCellTotals(n, blowupBits, foldBits, traceHashesPerQuery, nProofs, spongeRate, cellsPerPerm, grindingBits) {
+  const sched = buildStirSchedule(n, blowupBits, foldBits, grindingBits);
+  if (!sched) return { scheduleFound: false, t0: 0, totalQueries: 0, foldTotal: 0, totalCells: 0, rounds: [] };
+  const t0 = sched.rounds[0].repetitions;
+  let foldTotal = 0, totalQueries = 0;
+  const leafHashes = Math.ceil((sched.rounds[0].fold * EXT_DEG) / spongeRate); // k same every round
+  for (const r of sched.rounds) { foldTotal += r.repetitions * leafHashes; totalQueries += r.repetitions; }
+  const totalHashes = (traceHashesPerQuery * t0 + foldTotal) * nProofs;
+  return { scheduleFound: true, t0, totalQueries, foldTotal, totalCells: totalHashes * cellsPerPerm, rounds: sched.rounds };
+}
 
 // Hash families under investigation: sponge rate (elems absorbed/permutation),
 // with a free per-permutation cell cost.
@@ -225,8 +314,9 @@ function deriveFolding(n, blowup, fold) {
   return f;
 }
 
-// queries: JBR with 20 grinding bits. We approximate security.rs's JBR query
-// count via its closed form at rate 1/2^blowup, target 128, grind 20.
+// queries: JBR with configurable grinding (getGrinding(), default 20). We
+// approximate security.rs's JBR query count via its closed form at rate
+// 1/2^blowup, target 128, grinding = getGrinding().
 // bits/query ≈ -log2(1 - proximityParam); proximityParam = (1-sqrt(rate)) - gap.
 // gap from JBR at alpha=0 = (1/300). This reproduces security.rs to ±1 query
 // across the swept range (validated against the Rust sweep table).
@@ -237,7 +327,7 @@ function nQueries(n, blowup) {
   const pp = (1 - sqrtRate) - gap;
   const singleErr = 1 - pp;
   const bitsPerQuery = -Math.log2(singleErr);
-  const needed = TARGET - GRIND;
+  const needed = TARGET - getGrinding();
   return Math.max(1, Math.ceil(needed / bitsPerQuery));
 }
 
@@ -275,10 +365,45 @@ function proverMemoryElems(p, folding) {
 }
 
 function estimate(p) {
-  const rate = p.rate, cpb = p.cpb;
+  const rate = p.rate, cpb = p.cpb;   // rate = SPONGE rate (4 or 12), NOT FRI domain rate
   const folding = deriveFolding(p.n, p.blowup, p.fold);
-  const q = nQueries(p.n, p.blowup);
+  // trace hashes per query: identical for both FRI and STIR (stage-0 invariant)
   const trace = ceilDiv(p.fixed, rate) + ceilDiv(p.stageQ, rate) + ceilDiv(p.stage2, rate) + ceilDiv(p.stage1, rate);
+
+  if (getProtocol() === 'stir') {
+    // STIR path: call stirCellTotals with the sponge rate (p.rate) — not the FRI domain rate
+    const s = stirCellTotals(p.n, p.blowup, p.fold, trace, p.proofs, rate, cpb, getGrinding());
+    if (!s.scheduleFound) {
+      // No valid 128-bit STIR schedule for this cell: mark as noSchedule so render() can grey it out.
+      // We still compute memGb (FRI approximation) and return sentinel totalCells=Infinity.
+      const memElems = proverMemoryElems(p, folding);
+      const memGb = memElems * 8 / (1024 ** 3);
+      return {
+        folding,
+        q: 0, hpq: 0,
+        totalCells: Infinity, needed: Infinity, fits: false,
+        memGb, noSchedule: true,
+      };
+    }
+    // q = t0 (first-round STIR repetitions) — shown in detail panel as "queries"
+    // hpq = total hashes per proof (summed across all rounds, not per-query since STIR
+    //        has per-round repetitions; dual meaning documented here, mirrors Rust side)
+    const q = s.t0;
+    const hpq = Math.round(s.totalCells / cpb / p.proofs); // total hashes per proof (STIR: summed)
+    const totalCells = s.totalCells;
+    const rows = 2 ** p.n;
+    const needed = Math.ceil(totalCells / rows);
+    const fits = needed <= p.stage1;
+    // memGb: FRI-style prover-memory approximation is fine for STIR (mirrors Rust side)
+    const memElems = proverMemoryElems(p, folding);
+    const memGb = memElems * 8 / (1024 ** 3);
+    // folding for detail panel: one entry per STIR round (foldBits = p.fold repeated)
+    const stirFolding = s.rounds.map(() => p.fold);
+    return { folding: stirFolding, q, hpq, totalCells, needed, fits, memGb, stirRounds: s.rounds };
+  }
+
+  // FRI path: unchanged
+  const q = nQueries(p.n, p.blowup);
   let fri = 0;
   for (let i = 0; i + 1 < folding.length; i++) fri += ceilDiv((2 ** folding[i]) * FE, rate);
   const hpq = trace + fri;
@@ -347,18 +472,19 @@ function render() {
   document.getElementById('metricName').textContent =
     metric==='mem' ? 'prover memory (GB)' : metric==='cells' ? 'total cells' : 'n_queries';
 
-  // compute all cells + metric range (over-budget cells excluded from the ramp)
+  // compute all cells + metric range (over-budget and no-schedule cells excluded from the ramp)
   const data = {};
   let vals = [];
   for (const n of N_RANGE) for (const b of B_RANGE) {
     const e = estimate({ ...base, n, blowup: b });
     const main = mainEstimate(base.fold, base.rate, base.cpb);
     const mainFits = main.totalCells <= e.totalCells;
-    const over = e.memGb >= MEM_BUDGET_GB;
-    const feasible = e.fits && mainFits && !over;
+    const noSchedule = !!e.noSchedule;  // STIR: no valid 128-bit schedule for this cell
+    const over = !noSchedule && e.memGb >= MEM_BUDGET_GB;
+    const feasible = e.fits && mainFits && !over && !noSchedule;
     const metricVal = metric==='mem' ? e.memGb : metric==='cells' ? e.totalCells : e.q;
-    data[n+'_'+b] = { e, mainFits, feasible, over, metricVal, mainCells: main.totalCells };
-    if (!over) vals.push(metricVal);
+    data[n+'_'+b] = { e, mainFits, feasible, over, noSchedule, metricVal, mainCells: main.totalCells };
+    if (!over && !noSchedule) vals.push(metricVal);
   }
   if (vals.length === 0) vals = [0, 1];
   const lo = Math.min(...vals), hi = Math.max(...vals);
@@ -380,12 +506,14 @@ function render() {
     html += `<tr><th class="rowhdr">N=${n}</th>`;
     for (const b of B_RANGE) {
       const d = data[n+'_'+b];
-      const c = d.over ? 'transparent' : rampColor(norm(d.metricVal));
-      // over-budget cells always show their memory so you see how far over they are
-      const label = d.over ? Math.round(d.e.memGb)
+      const greyCell = d.over || d.noSchedule;
+      const c = greyCell ? 'transparent' : rampColor(norm(d.metricVal));
+      // over-budget cells always show memory; no-schedule cells show "—" (no valid STIR schedule)
+      const label = d.noSchedule ? '—'
+                  : d.over ? Math.round(d.e.memGb)
                   : metric==='mem' ? (d.e.memGb<10? d.e.memGb.toFixed(1): Math.round(d.e.memGb))
                   : metric==='cells' ? fmt(d.e.totalCells) : d.e.q;
-      const klass = 'cell' + (d.over?' over':'') + (d.feasible?' feasible':'') + (sel.n===n&&sel.blowup===b?' sel':'');
+      const klass = 'cell' + (greyCell?' over':'') + (d.feasible?' feasible':'') + (sel.n===n&&sel.blowup===b?' sel':'');
       html += `<td><div class="${klass}" style="background:${c}" data-n="${n}" data-b="${b}"><span class="gb">${label}</span></div></td>`;
     }
     html += '</tr>';
@@ -401,25 +529,47 @@ function render() {
 function renderDetail(data, base) {
   const d = data[sel.n+'_'+sel.blowup];
   const e = d.e;
+  const isStir = getProtocol() === 'stir';
   document.getElementById('dTitle').textContent = `N=${sel.n} · blowup=2^${sel.blowup}`;
   const ps = document.getElementById('pSelf'), pm = document.getElementById('pMain');
   ps.textContent = e.fits ? 'self-fit ✓' : 'self-fit ✗';
   ps.className = 'pill ' + (e.fits?'ok':'no');
   pm.textContent = d.mainFits ? 'main-fit ✓' : 'main-fit ✗';
   pm.className = 'pill ' + (d.mainFits?'ok':'no');
-  const pmem = document.getElementById('pMem'), under = e.memGb < MEM_BUDGET_GB;
-  pmem.textContent = under ? '<32GB ✓' : '<32GB ✗';
+  const pmem = document.getElementById('pMem'), under = !d.noSchedule && e.memGb < MEM_BUDGET_GB;
+  pmem.textContent = d.noSchedule ? 'no sched ✗' : under ? '<32GB ✓' : '<32GB ✗';
   pmem.className = 'pill ' + (under?'ok':'no');
   const hdef = HASHES[document.getElementById('hash').value];
   document.getElementById('dHash').textContent = `${hdef.label} · rate ${base.rate} · ${base.cpb} cells`;
-  document.getElementById('dQ').textContent = e.q;
-  document.getElementById('dHpq').textContent = e.hpq;
-  document.getElementById('dCells').textContent = e.totalCells.toLocaleString();
-  document.getElementById('dNeed').textContent = e.needed.toLocaleString() + ' / ' + base.stage1;
+  // n_queries label: FRI = JBR queries; STIR = t0 (first-round repetitions)
+  document.getElementById('dQ').textContent = d.noSchedule ? '— (no schedule)' : (isStir ? e.q + ' (t₀)' : e.q);
+  // hpq label: FRI = hashes/query; STIR = total hashes/proof (summed, not per-query)
+  document.getElementById('dHpq').textContent = d.noSchedule ? '—' : (isStir ? e.hpq + ' (total/proof)' : e.hpq);
+  document.getElementById('dCells').textContent = d.noSchedule ? '—' : e.totalCells.toLocaleString();
+  document.getElementById('dNeed').textContent = d.noSchedule ? '— / ' + base.stage1 : e.needed.toLocaleString() + ' / ' + base.stage1;
   document.getElementById('dMem').textContent = e.memGb.toFixed(2) + ' GB';
-  document.getElementById('dMain').textContent = d.mainCells.toLocaleString();
-  document.getElementById('dFold').textContent = '[' + e.folding.join(',') + ']';
+  document.getElementById('dMain').textContent = d.mainCells === Infinity ? '—' : d.mainCells.toLocaleString();
+  if (isStir && !d.noSchedule && e.stirRounds) {
+    // STIR: show per-round breakdown: [round: reps×leafHashes, ...] (foldBits repeated per round)
+    const roundInfo = e.stirRounds.map((r, i) =>
+      `r${i}:${r.repetitions}q${r.fullyOpened ? '*' : ''}`).join(' ');
+    document.getElementById('dFold').textContent = `[${e.folding.join(',')}] ${roundInfo}`;
+  } else if (d.noSchedule) {
+    document.getElementById('dFold').textContent = '— no valid STIR schedule';
+  } else {
+    document.getElementById('dFold').textContent = '[' + e.folding.join(',') + ']';
+  }
 }
+
+// ---- protocol + grinding readers ----
+const protocolSel = document.getElementById('protocol');
+function getProtocol() { return protocolSel.value; } // 'fri' | 'stir'
+protocolSel.addEventListener('change', render);
+
+const grindingInput = document.getElementById('grinding');
+const grindingValEl = document.getElementById('grindingVal');
+function getGrinding() { return parseInt(grindingInput.value, 10); } // 0..32
+grindingInput.addEventListener('input', () => { grindingValEl.textContent = grindingInput.value; render(); });
 
 ['stage1','cpb','hash','metric'].forEach(id =>
   document.getElementById(id).addEventListener('input', render));

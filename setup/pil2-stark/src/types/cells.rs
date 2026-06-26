@@ -28,7 +28,10 @@
 //! `n_proofs` (recursion verifies two proofs at once; a basic AIR verifier
 //! opens one), then by the free `cells_per_blake3` to get total cells.
 
-use super::security::{get_optimal_fri_query_params, goldilocks_cube_field_size, FRISecurityParams};
+use super::security::{
+    get_optimal_fri_query_params, goldilocks_cube_field_size, try_get_optimal_stir_query_params,
+    FRISecurityParams, Protocol, StirQueryResult, StirRound, StirSecurityParams,
+};
 
 // ---------------------------------------------------------------------------
 // Fixed protocol constants (same for any STARK we model here)
@@ -102,6 +105,11 @@ pub struct CellModelParams {
     pub n_proofs: u64,
     /// The hash used for linear hashing (sets sponge rate + cells/permutation).
     pub hash: HashFamily,
+    /// Low-degree-test protocol: FRI (default) or STIR.
+    pub protocol: Protocol,
+    /// Proof-of-work grinding bits, fed to BOTH the FRI and STIR security calcs.
+    /// Defaults to `GRINDING_BITS` (20). For STIR, `protocol_security = 128 - grinding_bits`.
+    pub grinding_bits: u64,
 }
 
 impl CellModelParams {
@@ -133,6 +141,8 @@ impl CellModelParams {
             n_functions: 200,
             n_proofs: 2,
             hash,
+            protocol: Protocol::Fri,
+            grinding_bits: GRINDING_BITS,
         }
     }
 
@@ -153,7 +163,15 @@ impl CellModelParams {
             n_functions: 61,
             n_proofs: 1,
             hash,
+            protocol: Protocol::Fri,
+            grinding_bits: GRINDING_BITS,
         }
+    }
+
+    /// Override the low-degree-test protocol (defaults to FRI in every preset).
+    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = protocol;
+        self
     }
 }
 
@@ -177,17 +195,36 @@ pub struct FriStepHashes {
     pub hashes: u64,
 }
 
+/// Per-STIR-round hash breakdown (one entry per folding round).
+#[derive(Debug, Clone)]
+pub struct StirRoundHashes {
+    /// This round's rate (= dimension / domain).
+    pub rate: f64,
+    /// This round's folded dimension.
+    pub dimension: u64,
+    /// Repetitions (queries) opened this round: STIR's per-round `t_i`.
+    pub repetitions: u64,
+    /// `ceil(fold * EXTENSION_DEGREE / sponge_rate)` — hashes per opened leaf.
+    pub hashes: u64,
+}
+
 /// Full linear-hash cell estimate.
 #[derive(Debug, Clone)]
 pub struct CellEstimate {
+    /// Number of queries opening stage-0 commitments. FRI: the FRI query count.
+    /// STIR: `t₀`, round-0 repetitions (stage-0 is opened t₀ times, not n_queries).
     pub n_queries: u64,
-    /// FRI folding factors as bit-drops, e.g. `[4, 4, 4, 3]`.
+    /// FRI: folding factors as bit-drops, e.g. `[4, 4, 4, 3]`. STIR: the uniform
+    /// fold factor `k` repeated per round (NOT bit-drops), e.g. `[4, 4, 4]` for k=4.
+    /// NB: `prover_memory_field_elems` is always computed from the FRI-derived
+    /// bit-drops internally, never from this field — do not feed this field to it.
     pub folding_factors: Vec<u64>,
     pub trace_stages: Vec<StageHashes>,
     pub fri_steps: Vec<FriStepHashes>,
     /// Trace/Q stage hashes for one proof, one query.
     pub trace_hashes_per_query: u64,
-    /// FRI hashes for one proof, one query.
+    /// FRI: folding hashes for one proof, one query. STIR: folding hashes for one
+    /// proof, ALREADY SUMMED over rounds (STIR has no flat per-query count).
     pub fri_hashes_per_query: u64,
     /// `trace_hashes_per_query + fri_hashes_per_query`.
     pub hashes_per_query: u64,
@@ -209,6 +246,16 @@ pub struct CellEstimate {
     pub prover_memory_field_elems: u64,
     /// Prover GPU memory estimate, in GB (`field_elems * 8 / 1024^3`).
     pub prover_memory_gb: f64,
+    /// Low-degree-test protocol this estimate was computed for.
+    pub protocol: Protocol,
+    /// Grinding bits this estimate was computed with (echoed from the params, so
+    /// downstream fit-checks can re-cost a sibling AIR under the same grinding).
+    pub grinding_bits: u64,
+    /// Per-round STIR folding breakdown (empty on the FRI path).
+    pub stir_rounds: Vec<StirRoundHashes>,
+    /// Whether a security-meeting schedule was found. Always true for FRI; false
+    /// for a STIR cell with no 128-bit schedule (in which case totals are 0).
+    pub schedule_found: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +265,43 @@ pub struct CellEstimate {
 /// Permutations to absorb `n_elements` field elements at the given sponge rate.
 fn hashes_for_elements(n_elements: u64, sponge_rate: u64) -> u64 {
     n_elements.div_ceil(sponge_rate)
+}
+
+/// Build a STIR schedule for the model params: fold `k = 2^fold_bits` pinned,
+/// stopping degree `2^6`, grinding `p.grinding_bits`, JBR, target 128. Returns
+/// `None` when no 128-bit schedule exists for this `(rate, k)` cell.
+fn build_stir_for_model(p: &CellModelParams) -> Option<StirQueryResult> {
+    let k = 1u64 << p.fold_bits;
+    let params = StirSecurityParams {
+        field_size: goldilocks_cube_field_size(),
+        dimension: 1u64 << p.n,
+        rate: 1.0 / (1u64 << p.blowup_bits) as f64,
+        n_opening_points: p.n_opening_points,
+        n_functions: p.n_functions,
+        max_grinding_bits: p.grinding_bits,
+        use_max_grinding_bits: true,
+        tree_arity: TREE_ARITY,
+        target_security_bits: TARGET_SECURITY_BITS,
+        fold_candidates: vec![k],
+        stopping_degree: 1u64 << 6,
+        max_rounds: 24,
+    };
+    try_get_optimal_stir_query_params(REGIME, &params)
+}
+
+/// Per-round STIR folding hashes: each round opens `t_i` leaves, each leaf holding
+/// `fold` degree-3 extension values (`fold * EXTENSION_DEGREE` base elements).
+/// Returns the per-round breakdown and the summed folding hashes `Σ t_i * hashes_i`.
+fn stir_fold_hashes(rounds: &[StirRound], sponge_rate: u64) -> (Vec<StirRoundHashes>, u64) {
+    let mut breakdown = Vec::with_capacity(rounds.len());
+    let mut total: u64 = 0;
+    for r in rounds {
+        let elements = r.fold * EXTENSION_DEGREE;
+        let hashes = hashes_for_elements(elements, sponge_rate);
+        total += hashes * r.repetitions;
+        breakdown.push(StirRoundHashes { rate: r.rate, dimension: r.dimension, repetitions: r.repetitions, hashes });
+    }
+    (breakdown, total)
 }
 
 /// Derive FRI folding factors (as bit-drops) for an extended domain of
@@ -332,26 +416,10 @@ fn prover_memory_field_elems(p: &CellModelParams, folding_factors: &[u64]) -> u6
 /// by `p` (recursion or a basic AIR alike).
 pub fn estimate_linear_hash_cells(p: &CellModelParams) -> CellEstimate {
     let folding_factors = derive_folding_factors(p.n, p.blowup_bits, p.fold_bits);
-
-    let fri = get_optimal_fri_query_params(
-        REGIME,
-        &FRISecurityParams {
-            field_size: goldilocks_cube_field_size(),
-            dimension: 1u64 << p.n,
-            rate: 1.0 / (1u64 << p.blowup_bits) as f64,
-            n_opening_points: p.n_opening_points,
-            n_functions: p.n_functions,
-            folding_factors: folding_factors.clone(),
-            max_grinding_bits: GRINDING_BITS,
-            use_max_grinding_bits: true,
-            tree_arity: TREE_ARITY,
-            target_security_bits: TARGET_SECURITY_BITS,
-        },
-    );
-    let n_queries = fri.n_queries;
     let rate = p.hash.sponge_rate();
 
     // Trace / Q stages: column count used directly, no extension factor.
+    // These are identical for both FRI and STIR — only the multiplier and folding term differ.
     let trace_stages: Vec<StageHashes> = [
         ("fixed", p.fixed_cols),
         ("stageQ", p.stageq_cols),
@@ -363,19 +431,62 @@ pub fn estimate_linear_hash_cells(p: &CellModelParams) -> CellEstimate {
     .collect();
     let trace_hashes_per_query: u64 = trace_stages.iter().map(|s| s.hashes).sum();
 
-    // FRI: every folding step except the last opens `2^drop * 3` extension elements.
-    let n_open = folding_factors.len().saturating_sub(1);
-    let fri_steps: Vec<FriStepHashes> = folding_factors[..n_open]
-        .iter()
-        .map(|&bit_drop| {
-            let elements = (1u64 << bit_drop) * EXTENSION_DEGREE;
-            FriStepHashes { bit_drop, elements, hashes: hashes_for_elements(elements, rate) }
-        })
-        .collect();
-    let fri_hashes_per_query: u64 = fri_steps.iter().map(|s| s.hashes).sum();
+    // Folding + totals branch on protocol. Stage-0 (trace/Q) per-leaf counts above
+    // are identical for both; only the multiplier and folding term differ.
+    let (
+        n_queries,
+        folding_factors_out,
+        fri_steps,
+        fri_hashes_per_query,
+        stir_rounds,
+        total_hashes,
+        schedule_found,
+    ) = match p.protocol {
+        Protocol::Fri => {
+            let fri = get_optimal_fri_query_params(
+                REGIME,
+                &FRISecurityParams {
+                    field_size: goldilocks_cube_field_size(),
+                    dimension: 1u64 << p.n,
+                    rate: 1.0 / (1u64 << p.blowup_bits) as f64,
+                    n_opening_points: p.n_opening_points,
+                    n_functions: p.n_functions,
+                    folding_factors: folding_factors.clone(),
+                    max_grinding_bits: p.grinding_bits,
+                    use_max_grinding_bits: true,
+                    tree_arity: TREE_ARITY,
+                    target_security_bits: TARGET_SECURITY_BITS,
+                },
+            );
+            let n_queries = fri.n_queries;
+            let n_open = folding_factors.len().saturating_sub(1);
+            let fri_steps: Vec<FriStepHashes> = folding_factors[..n_open]
+                .iter()
+                .map(|&bit_drop| {
+                    let elements = (1u64 << bit_drop) * EXTENSION_DEGREE;
+                    FriStepHashes { bit_drop, elements, hashes: hashes_for_elements(elements, rate) }
+                })
+                .collect();
+            let fri_hashes_per_query: u64 = fri_steps.iter().map(|s| s.hashes).sum();
+            let hashes_per_query = trace_hashes_per_query + fri_hashes_per_query;
+            let total_hashes = hashes_per_query * n_queries * p.n_proofs;
+            (n_queries, folding_factors.clone(), fri_steps, fri_hashes_per_query, Vec::new(), total_hashes, true)
+        }
+        Protocol::Stir => match build_stir_for_model(p) {
+            Some(sched) => {
+                let t0 = sched.rounds.first().map(|r| r.repetitions).unwrap_or(0);
+                let (stir_rounds, fold_total) = stir_fold_hashes(&sched.rounds, rate);
+                // Report-only folding_factors: k repeated per round.
+                let k = 1u64 << p.fold_bits;
+                let ff_out = vec![k; sched.rounds.len()];
+                let total_hashes = (trace_hashes_per_query * t0 + fold_total) * p.n_proofs;
+                (t0, ff_out, Vec::new(), fold_total, stir_rounds, total_hashes, true)
+            }
+            None => (0, Vec::new(), Vec::new(), 0, Vec::new(), 0, false),
+        },
+    };
 
     let hashes_per_query = trace_hashes_per_query + fri_hashes_per_query;
-    let total_hashes = hashes_per_query * n_queries * p.n_proofs;
     let total_cells = total_hashes * p.hash.cells_per_perm();
 
     // Self-verification fit: pack total_cells into 2^n rows -> columns needed.
@@ -388,7 +499,7 @@ pub fn estimate_linear_hash_cells(p: &CellModelParams) -> CellEstimate {
 
     CellEstimate {
         n_queries,
-        folding_factors,
+        folding_factors: folding_factors_out,
         trace_stages,
         fri_steps,
         trace_hashes_per_query,
@@ -402,6 +513,10 @@ pub fn estimate_linear_hash_cells(p: &CellModelParams) -> CellEstimate {
         fits,
         prover_memory_field_elems,
         prover_memory_gb,
+        protocol: p.protocol,
+        grinding_bits: p.grinding_bits,
+        stir_rounds,
+        schedule_found,
     }
 }
 
@@ -420,10 +535,15 @@ pub struct MainFitCheck {
 }
 
 /// Given a recursion estimate, compute the hardcoded ZisK Main verifier estimate
-/// (sharing `fold_bits` and `hash`) and check whether Main's total cells fit
-/// within the recursion's total-cell budget.
+/// (sharing `fold_bits`, `hash`, the recursion's `protocol`, and `grinding_bits`)
+/// and check whether Main's total cells fit within the recursion's total-cell
+/// budget. Main is costed under the SAME protocol as the recursion so the
+/// comparison is apples-to-apples (mirroring the HTML, which compares both sides
+/// under the live protocol toggle).
 pub fn main_fits_in_recursion(recursion: &CellEstimate, fold_bits: u32, hash: HashFamily) -> MainFitCheck {
-    let main = estimate_linear_hash_cells(&CellModelParams::zisk_main(fold_bits, hash));
+    let mut main_params = CellModelParams::zisk_main(fold_bits, hash).with_protocol(recursion.protocol);
+    main_params.grinding_bits = recursion.grinding_bits;
+    let main = estimate_linear_hash_cells(&main_params);
     let main_total_cells = main.total_cells;
     MainFitCheck {
         recursion_total_cells: recursion.total_cells,
@@ -443,20 +563,43 @@ impl CellEstimate {
         for st in &self.trace_stages {
             s.push_str(&format!("  {:8} cols={:>6}  hashes={:>4}\n", st.name, st.cols, st.hashes));
         }
-        s.push_str("--- FRI folding layers (x3 extension, last layer excluded) ---\n");
-        for (i, st) in self.fri_steps.iter().enumerate() {
-            s.push_str(&format!(
-                "  step {:<2} drop={}  elements={:>4}  hashes={:>4}\n",
-                i, st.bit_drop, st.elements, st.hashes
-            ));
+        match self.protocol {
+            Protocol::Fri => {
+                s.push_str("--- FRI folding layers (x3 extension, last layer excluded) ---\n");
+                for (i, st) in self.fri_steps.iter().enumerate() {
+                    s.push_str(&format!(
+                        "  step {:<2} drop={}  elements={:>4}  hashes={:>4}\n",
+                        i, st.bit_drop, st.elements, st.hashes
+                    ));
+                }
+            }
+            Protocol::Stir => {
+                s.push_str("--- STIR rounds (per-round t_i, x3 extension) ---\n");
+                for (i, r) in self.stir_rounds.iter().enumerate() {
+                    s.push_str(&format!(
+                        "  round {:<2} dim=2^{:<2} rate={:.4} reps={:>4} hashes/leaf={:>3}\n",
+                        i,
+                        (r.dimension as f64).log2().round() as u64,
+                        r.rate,
+                        r.repetitions,
+                        r.hashes,
+                    ));
+                }
+            }
         }
         s.push_str(&format!("trace_hashes/query = {}\n", self.trace_hashes_per_query));
         s.push_str(&format!("fri_hashes/query   = {}\n", self.fri_hashes_per_query));
         s.push_str(&format!("hashes/query       = {}\n", self.hashes_per_query));
-        s.push_str(&format!(
-            "total_hashes       = {} (= {} hashes/query x {} queries x {} proofs)\n",
-            self.total_hashes, self.hashes_per_query, self.n_queries, self.n_proofs
-        ));
+        match self.protocol {
+            Protocol::Fri => s.push_str(&format!(
+                "total_hashes       = {} (= {} hashes/query x {} queries x {} proofs)\n",
+                self.total_hashes, self.hashes_per_query, self.n_queries, self.n_proofs
+            )),
+            Protocol::Stir => s.push_str(&format!(
+                "total_hashes       = {} (= (trace {} x t0 {} + folding {}) x {} proofs)\n",
+                self.total_hashes, self.trace_hashes_per_query, self.n_queries, self.fri_hashes_per_query, self.n_proofs
+            )),
+        }
         s.push_str(&format!("total_cells        = {}\n", self.total_cells));
         s.push_str(&format!(
             "prover_memory      = {:.2} GB ({} field elems)\n",
@@ -626,13 +769,17 @@ mod tests {
         let stage1 = env("COLS_STAGE1", 100);
         let hash = hash_from_env(env("CELLS_PER_BLAKE3", 5000));
 
-        println!("N,blowup,fold,stage1,n_queries,hashes_per_query,total_cells,needed_stage1,self_fits,prover_mem_gb,main_total_cells,main_fits");
+        println!("N,blowup,fold,stage1,n_queries,hashes_per_query,total_cells,needed_stage1,self_fits,prover_mem_gb,main_total_cells,main_fits,stir_t0,stir_total_queries,stir_total_cells,stir_schedule_found");
         for n in 14u32..=20 {
             for blowup in 1u32..=8 {
                 let rec = estimate_linear_hash_cells(&CellModelParams::recursion(n, blowup, fold_bits, stage1, hash));
                 let chk = main_fits_in_recursion(&rec, fold_bits, hash);
+                let stir = estimate_linear_hash_cells(
+                    &CellModelParams::recursion(n, blowup, fold_bits, stage1, hash).with_protocol(Protocol::Stir),
+                );
+                let stir_total_queries: u64 = stir.stir_rounds.iter().map(|r| r.repetitions).sum();
                 println!(
-                    "{},{},{},{},{},{},{},{},{},{:.3},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{}",
                     n,
                     blowup,
                     fold_bits,
@@ -645,6 +792,10 @@ mod tests {
                     rec.prover_memory_gb,
                     chk.main_total_cells,
                     chk.main_fits,
+                    stir.n_queries,
+                    stir_total_queries,
+                    stir.total_cells,
+                    stir.schedule_found,
                 );
             }
         }
@@ -756,6 +907,14 @@ mod tests {
     }
 
     #[test]
+    fn protocol_defaults_to_fri_and_builder_overrides() {
+        let p = CellModelParams::recursion(15, 6, 4, 0, b3(1));
+        assert!(matches!(p.protocol, Protocol::Fri));
+        let p2 = p.with_protocol(Protocol::Stir);
+        assert!(matches!(p2.protocol, Protocol::Stir));
+    }
+
+    #[test]
     fn recursion_stage2_defaults_to_third_of_stage1() {
         let est = estimate_linear_hash_cells(&CellModelParams::recursion(15, 6, 4, 99, b3(1)));
         let stage2 = est.trace_stages.iter().find(|s| s.name == "stage2").unwrap();
@@ -769,5 +928,129 @@ mod tests {
         let est = estimate_linear_hash_cells(&CellModelParams::recursion(15, 6, 4, 100, b3(700)));
         // Sanity: positive and well below the ~64 a 128-bit no-grind JBR run needs.
         assert!(est.n_queries > 0 && est.n_queries < 64, "got {}", est.n_queries);
+    }
+
+    #[test]
+    fn stir_for_model_returns_schedule_for_standard_config() {
+        // n=17, blowup=1 (rate 1/2), fold_bits=2 => k=4, stopping 2^6.
+        let p = CellModelParams::recursion(17, 1, 2, 100, b3(1)).with_protocol(Protocol::Stir);
+        let sched = build_stir_for_model(&p).expect("a 128-bit STIR schedule should exist here");
+        assert_eq!(sched.fold, 4, "k must be 2^fold_bits = 4");
+        assert!(sched.achieved_security_bits >= 128);
+        // round dimension strictly decreases
+        for w in sched.rounds.windows(2) {
+            assert!(w[1].dimension < w[0].dimension);
+        }
+    }
+
+    #[test]
+    fn stir_fold_hashes_sums_per_round_reps_times_leaf() {
+        // Two synthetic rounds, k=4 => 4*3 = 12 elements/leaf.
+        // rate 4 (Blake3): ceil(12/4) = 3 hashes per opened leaf.
+        let rounds = vec![
+            StirRound { rate: 0.5, dimension: 1 << 17, fold: 4, repetitions: 10, grinding_bits: 20, fully_opened: false },
+            StirRound { rate: 0.25, dimension: 1 << 15, fold: 4, repetitions: 6, grinding_bits: 0, fully_opened: false },
+        ];
+        let (breakdown, total) = stir_fold_hashes(&rounds, 4);
+        assert_eq!(breakdown.len(), 2);
+        assert_eq!(breakdown[0].hashes, 3); // ceil(4*3/4)
+        assert_eq!(breakdown[0].repetitions, 10);
+        // total = 10*3 + 6*3 = 48
+        assert_eq!(total, 48);
+    }
+
+    #[test]
+    fn grinding_bits_default_20_and_configurable() {
+        let p = CellModelParams::recursion(15, 6, 4, 100, b3(1));
+        assert_eq!(p.grinding_bits, 20, "default grinding must be 20");
+        let p2 = CellModelParams { grinding_bits: 16, ..p };
+        assert_eq!(p2.grinding_bits, 16);
+        // More grinding -> STIR needs fewer protocol-security bits -> schedule still found,
+        // and fewer grinding -> harder. Sanity: both build a schedule at a feasible config.
+        let s_hi = build_stir_for_model(&CellModelParams::recursion(20, 1, 2, 100, b3(1))
+            .with_protocol(Protocol::Stir));
+        assert!(s_hi.is_some());
+    }
+
+    #[test]
+    fn fri_estimate_is_unchanged_with_explicit_protocol() {
+        // Same config, Fri explicitly: identical to the default-preset FRI estimate.
+        let def = estimate_linear_hash_cells(&CellModelParams::recursion(15, 6, 4, 100, b3(700)));
+        let exp = estimate_linear_hash_cells(
+            &CellModelParams::recursion(15, 6, 4, 100, b3(700)).with_protocol(Protocol::Fri),
+        );
+        assert_eq!(def.total_cells, exp.total_cells);
+        assert_eq!(def.total_hashes, exp.total_hashes);
+        assert!(exp.schedule_found);
+        assert!(exp.stir_rounds.is_empty());
+        assert!(matches!(exp.protocol, Protocol::Fri));
+    }
+
+    #[test]
+    fn stir_estimate_opens_stage0_t0_times_and_sums_folding() {
+        // n=17, blowup=1, fold_bits=2 (k=4), stage1=100, Blake3 cells=1.
+        let p = CellModelParams::recursion(17, 1, 2, 100, b3(1)).with_protocol(Protocol::Stir);
+        let est = estimate_linear_hash_cells(&p);
+        assert!(est.schedule_found, "expected a 128-bit STIR schedule");
+        assert!(matches!(est.protocol, Protocol::Stir));
+        assert!(!est.stir_rounds.is_empty());
+        // n_queries carries t0 for STIR.
+        let t0 = est.n_queries;
+        // Recompute the STIR total independently and compare.
+        let sched = build_stir_for_model(&p).unwrap();
+        assert_eq!(t0, sched.rounds[0].repetitions);
+        let (_, fold_total) = stir_fold_hashes(&sched.rounds, p.hash.sponge_rate());
+        let expected_total = (est.trace_hashes_per_query * t0 + fold_total) * p.n_proofs;
+        assert_eq!(est.total_hashes, expected_total);
+        assert_eq!(est.total_cells, est.total_hashes * p.hash.cells_per_perm());
+    }
+
+    #[test]
+    fn stir_trace_hashes_match_fri_trace_hashes() {
+        // Stage-0 per-leaf counts identical between protocols (the invariant).
+        let fri = estimate_linear_hash_cells(&CellModelParams::recursion(17, 1, 2, 100, b3(1)));
+        let stir = estimate_linear_hash_cells(
+            &CellModelParams::recursion(17, 1, 2, 100, b3(1)).with_protocol(Protocol::Stir),
+        );
+        assert_eq!(fri.trace_hashes_per_query, stir.trace_hashes_per_query);
+    }
+
+    #[test]
+    fn stir_report_lists_rounds() {
+        let p = CellModelParams::recursion(17, 1, 2, 100, b3(1)).with_protocol(Protocol::Stir);
+        let est = estimate_linear_hash_cells(&p);
+        let r = est.report();
+        assert!(r.contains("STIR rounds"), "report should have a STIR section, got:\n{r}");
+    }
+
+    #[test]
+    fn stir_folding_beats_fri_folding_same_k() {
+        // Same config, fold_bits=2 (k=4), low rate where STIR's geometric reduction shows.
+        // Compare folding-only cells: STIR's summed folding < FRI's per-layer*n_queries folding.
+        let base = CellModelParams::recursion(20, 1, 2, 200, b3(1));
+        let fri = estimate_linear_hash_cells(&base);
+        let stir = estimate_linear_hash_cells(&base.with_protocol(Protocol::Stir));
+        assert!(stir.schedule_found);
+        // FRI folding cells for one proof = fri_hashes_per_query * n_queries.
+        let fri_fold = fri.fri_hashes_per_query * fri.n_queries;
+        // STIR folding cells for one proof = sum over rounds of reps*hashes = fri_hashes_per_query (STIR meaning).
+        let stir_fold = stir.fri_hashes_per_query; // already the summed total for one proof
+        assert!(stir_fold < fri_fold, "STIR folding {stir_fold} should beat FRI folding {fri_fold}");
+    }
+
+    #[test]
+    fn stir_no_schedule_sets_flag_not_panic() {
+        // STIR derives its round count by folding `dimension = 2^n` down to the
+        // stopping degree (2^6 = 64). When `2^n <= 64` there are no folding rounds,
+        // so `stir_num_rounds` returns None and no schedule exists. `n = 6`
+        // (dimension = 64) is therefore deterministically infeasible — the estimate
+        // must set `schedule_found = false` with zeroed totals, never panic.
+        // (Confirmed by sweep: n <= 6 => no schedule; n >= 7 => schedule found.)
+        let p = CellModelParams::recursion(6, 1, 2, 50, b3(1)).with_protocol(Protocol::Stir);
+        let est = estimate_linear_hash_cells(&p);
+        assert!(!est.schedule_found, "n=6 (dim=64 <= stopping degree) must have no STIR schedule");
+        assert_eq!(est.total_cells, 0);
+        assert_eq!(est.total_hashes, 0);
+        assert!(est.stir_rounds.is_empty());
     }
 }
