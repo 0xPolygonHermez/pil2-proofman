@@ -194,12 +194,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for U8Air<F> {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            if self.shared_tables {
+            // An assigned table is computed only on its single owner node; its
+            // multiplicities are produced there, so there is no cross-rank reduction.
+            let assigned = pctx.dctx_is_assigned_table(instance_id)?;
+
+            if self.shared_tables && !assigned {
                 let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, self.num_cols, self.num_rows, owner_idx);
             }
 
-            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
+            if (!self.shared_tables && !assigned) || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
                 // The slot is pre-populated by `new` and refilled by the reclaim hook
                 // on every prior iteration's clear_traces / Drop. If it's empty here,
