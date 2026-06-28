@@ -5,9 +5,8 @@ Generalized Q codegen with AUTOMATIC register-bounded chunking.
 For each AIR's Q (cExp) expression: if it is small it becomes one straight-line
 kernel; if it is large it is split into register-bounded chunks (the chunk size
 is auto-tuned per AIR to compile with no register spill). Temps that cross a chunk boundary
-(the DAG "cut") are materialized to a global scratch buffer (interval-colored to
-keep it small); everything else stays in registers. Chunks run in sequence on
-the stream.
+are materialized to a global scratch buffer (interval-colored to keep it small); everything 
+else stays in registers. Chunks run in sequence on the stream.
 
 AIRS_DIR is a provingKey dir, globbed recursively. Each AIR's kernel is
 compiled into its own <base>.exps.so next to that AIR's .bin and loaded by path
@@ -15,29 +14,32 @@ at runtime.
 """
 import json, sys, os, glob, subprocess, tempfile, re, shutil, argparse, atexit
 
-# ---- internal constants (not CLI flags; edit here to tune) ----
-GEN_BLK       = 256   # CUDA threads/block of the generated kernels. Single source of truth: baked into each
-                      # launcher AND exported via exps_min_scratch() so the loader never hardcodes the block size.
+# ---- internal constants  ----
+GEN_BLK       = 256   # CUDA threads/block of the generated kernels. Single source of truth: baked into each launcher.
 DEFAULT_CHUNK = 512   # fixed ops/chunk used when the autotuner is off and --chunk wasn't given
-# No-spill autotuner bisection bounds: start at min(n, CHUNK_MAX), halve until cuobjdump reports STACK=0; if it
-# still spills at CHUNK_MIN, skip the AIR (-> interpreter, never a silent per-thread local-memory OOM).
+
+# No-spill autotuner bisection bounds: start at min(n, CHUNK_MAX) (or BIG_START_CHUNK for >BIG_OPS AIRs),
+# halve until cuobjdump reports STACK=0; if it still spills at CHUNK_MIN, skip the AIR (-> interpreter).
 CHUNK_MAX     = 512   # start chunk
 CHUNK_MIN     = 64    # give-up floor
+CAP           = 40000 # skip an AIR whose Q has more ops than this (i.e. will be run by the interpreter) 
 SLOTS_CAP     = 1000  # skip an AIR whose cross-chunk cut (slots) exceeds this
-# For large expressions, with > BIG_OPS ops, the autotuner starts at a smaller chunk size (BIG_START_CHUNK) because we observe that generally spill with CHUNK_MAX
+
+# Large expressions (> BIG_OPS ops) almost always spill at CHUNK_MAX, so the autotuner starts them at a
+# smaller chunk size (BIG_START_CHUNK) to skip that wasted first probe.
 BIG_OPS         = 20000  # ops threshold for "large expressions"
 BIG_START_CHUNK = 250    # autotuner start chunk for AIRs with > BIG_OPS ops
 
-#Chunks per TU granulairty at compile time
+# chunk kernels bundled per .cu (batch size) -- amortizes the gen_common.cuh header parse across the batch
 CHUNKS_PER_TU   = 8
 
-# All configuration is via CLI flags (no environment variables) — run with -h for the list.
+# The rest of the configuration is via CLI flags — run with -h for the list.
 _ap = argparse.ArgumentParser(description="Per-AIR Q-expression -> straight-line CUDA kernel codegen.")
 _ap.add_argument("airs_dir", help="provingKey build dir (globbed for *.starkinfo.json + *.expressionsinfo.json)")
 _ap.add_argument("outdir", nargs="?", default=None, help="output dir for gen_*.cu / gen_common.cuh / gen.log; "
                  "omit => a temp dir deleted on exit")
-_ap.add_argument("--cap", type=int, default=40000, help="skip an AIR whose Q has more ops than this")
-_ap.add_argument("--nvcc-cmd", default="", help="nvcc compile command (flags only); turns ON the no-spill "
+_ap.add_argument("--cap", type=int, default=CAP, help="skip an AIR whose Q has more ops than this")
+_ap.add_argument("--nvcc-cmd", default="", help="nvcc compile command; turns ON the no-spill "
                  "autotuner (per-AIR chunk compile-verified to zero register spill). Empty => autotuner off.")
 _ap.add_argument("--chunk", type=int, default=None, help="fixed ops/chunk for every AIR; setting it forces the "
                  f"autotuner OFF (manual chunking).")
@@ -54,6 +56,7 @@ NVCC_CMD = _args.nvcc_cmd
 AUTOTUNE    = (_args.chunk is None) and bool(NVCC_CMD)
 CHUNK_FIXED = _args.chunk if _args.chunk is not None else DEFAULT_CHUNK
 
+# ---------- compile helpers  ----------
 def _max_stack(obj):
     try:
         out = subprocess.run(["cuobjdump", "-res-usage", obj], capture_output=True, text=True).stdout
@@ -66,20 +69,21 @@ def _compile_one(cuf, obj, incdir):
     r = subprocess.run(NVCC_CMD.split() + [cuf, "-o", obj, f"-I{incdir}"], capture_output=True, text=True)
     return r.returncode, r.stderr
 
-# Returns the largest chunk (halving from the start size) that compiles with STACK=0, or None if it
-# still spills at CHUNK_MIN.
+# ---------- no-spill autotuner ----------
+# Returns the largest chunk (halving from the start size) that compiles with STACK=0, 
+# or None if it still spills at CHUNK_MIN.
 def tune_chunk(stark_info, expr_info, sym, n, common_cuh, cc_pool):
-    probe = tempfile.mkdtemp(prefix="genqtune_")
-    open(os.path.join(probe, "gen_common.cuh"), "w").write(common_cuh)
+    probe_dir = tempfile.mkdtemp(prefix="genqtune_")
+    open(os.path.join(probe_dir, "gen_common.cuh"), "w").write(common_cuh)
     try:
         chunk = min(n, BIG_START_CHUNK if n > BIG_OPS else CHUNK_MAX)
         while chunk >= CHUNK_MIN:
             files, slots = emit_air(stark_info, expr_info, sym, force_chunk=chunk)
-            futs = []
+            futs = [] #futures for the parallel compilation of each TU
             for fn, txt in files:
-                cuf = os.path.join(probe, fn); open(cuf, "w").write(txt)
-                obj = os.path.join(probe, fn[:-3] + ".o")
-                futs.append((obj, cc_pool.submit(_compile_one, cuf, obj, probe)))
+                cuf = os.path.join(probe_dir, fn); open(cuf, "w").write(txt)
+                obj = os.path.join(probe_dir, fn[:-3] + ".o")
+                futs.append((obj, cc_pool.submit(_compile_one, cuf, obj, probe_dir)))
             results = [(obj, fut.result()) for obj, fut in futs]   # wait for every TU to compile
             fail = next((err for obj, (rc, err) in results if rc != 0), None)
             if fail is not None:
@@ -96,14 +100,18 @@ def tune_chunk(stark_info, expr_info, sym, n, common_cuh, cc_pool):
             chunk //= 2
         return None
     finally:
-        shutil.rmtree(probe, ignore_errors=True)
+        shutil.rmtree(probe_dir, ignore_errors=True)
 
 # ---------- operand resolution ----------
 def build_ir(stark_info, expr_info):
-    opening = stark_info["openingPoints"]; nBits = stark_info["starkStruct"]["nBits"]
+    opening = stark_info["openingPoints"] 
+    nBits = stark_info["starkStruct"]["nBits"]
     blowup = 1 << (stark_info["starkStruct"]["nBitsExt"] - nBits)
-    nConstants = stark_info["nConstants"]; map_sections_n = stark_info["mapSectionsN"]; cm_pols_map = stark_info["cmPolsMap"]
-    air_values_map = stark_info["airValuesMap"]; airgroup_values_map = stark_info.get("airgroupValuesMap", [])
+    nConstants = stark_info["nConstants"] 
+    map_sections_n = stark_info["mapSectionsN"] 
+    cm_pols_map = stark_info["cmPolsMap"]
+    air_values_map = stark_info["airValuesMap"] 
+    airgroup_values_map = stark_info.get("airgroupValuesMap", [])
     ncols = {stage: map_sections_n.get("cm" + str(stage), 0) for stage in range(1, stark_info["nStages"] + 2)}
     code = {e["expId"]: e for e in expr_info["expressionsCode"]}[stark_info["cExpId"]]["code"]
 
@@ -112,7 +120,8 @@ def build_ir(stark_info, expr_info):
     def agv_pos(idx): return sum(3 if airgroup_values_map[j].get("stage", 1) != 1 else 1 for j in range(idx))
 
     def operand(src):
-        op_type = src["type"]; dim = src.get("dim", 1)
+        op_type = src["type"] 
+        dim = src.get("dim", 1)
         if op_type == "tmp": return ("tmp", src["id"], dim)
         if op_type == "number": return ("num", int(src["value"]), 1)
         if op_type == "cm":
@@ -130,6 +139,7 @@ def build_ir(stark_info, expr_info):
     return ir, ncols, nConstants
 
 def rowexpr(stride): return "row" if stride == 0 else f"((row+({stride}ll))&MASK)"
+
 def load_lines(opnd, name, ncols, nConstants):
     kind = opnd[0]
     if kind == "num": return [f"  gl64_t {name}(uint64_t({opnd[1]}ull));"], 1
@@ -165,7 +175,7 @@ def emit_op(instr, ncols, nConstants, declared):
         lines.append(f"  {decl}{dst} = {a_val} {op_symbol} {b_val};")
     else:
         lines.append(f"  {decl}{dst} = cg_{instr['op']}{a_dim}{b_dim}({a_val},{b_val});")
-    return lines, dst_dim, is_out
+    return lines, is_out
 
 # ---------- per-AIR emission (with chunking) ----------
 def emit_air(stark_info, expr_info, sym, force_chunk=None):
@@ -177,6 +187,10 @@ def emit_air(stark_info, expr_info, sym, force_chunk=None):
     def_idx, dim_of, last_use = {}, {}, {}
     for i, instr in enumerate(ir):
         if instr["dst_kind"] == "tmp":
+            # the chunk liveness (def_idx/cut/coloring) assumes SSA: each temp is written exactly once.
+            # if that ever breaks, fail loud here instead of silently emitting a wrong kernel.
+            assert instr["dst_id"] not in def_idx, \
+                f"{sym}: temp t{instr['dst_id']} written twice -- IR is not SSA, chunk liveness would be wrong"
             def_idx[instr["dst_id"]] = i; dim_of[instr["dst_id"]] = instr["ddim"]
         for opnd in (instr["a"], instr["b"]):
             if opnd[0] == "tmp":
@@ -199,7 +213,7 @@ def emit_air(stark_info, expr_info, sym, force_chunk=None):
         body = []
         declared = set()
         for instr in ir:
-            op_lines, dst_dim, is_out = emit_op(instr, ncols, nConstants, declared)
+            op_lines, is_out = emit_op(instr, ncols, nConstants, declared)
             body += op_lines
             if not is_out: declared.add(instr["dst_id"])
         store = ("    q[OFF(row,0,NExt,3)]=qq.a; q[OFF(row,1,NExt,3)]=qq.b; q[OFF(row,2,NExt,3)]=qq.c;"
@@ -224,14 +238,27 @@ def emit_air(stark_info, expr_info, sym, force_chunk=None):
     #      (= grid*block). Temps crossing chunk boundaries are materialized to a small per-wave
     #      scratch (cutWidth*WAVE), reused across waves -> fits the existing tmp buffer. ----
     cut_temps = set(t for t in def_idx if t in last_use and chunk_of(last_use[t]) > chunk_of(def_idx[t]))
+    
+    # Linear-scan slot allocation for the cut temps: assign each a scratch base offset, REUSING an
+    # offset between temps whose chunk live-ranges don't overlap, so total scratch stays minimal.
+    # A temp occupies its slot over the chunk interval [def_chunk .. last-use chunk]. `width` is the
+    # slot size in elements (1 for base-field temps, 3 for cubic), so offsets move in `width` units.
+    # Returns (slot_of: temp id -> base offset, total width used).
     def color(temps, width):
-        slot_of = {}; active = []; next_base = 0; free_bases = []
-        for t in sorted(temps, key=lambda t: chunk_of(def_idx[t])):
-            def_chunk, end_chunk = chunk_of(def_idx[t]), chunk_of(last_use[t])
+        slot_of = {}        # temp id -> assigned scratch base offset (in elements)
+        active = []         # (end_chunk, base) for temps currently occupying a slot
+        free_bases = []     # offsets vacated by expired temps, available to reuse
+        next_base = 0       # high-water mark: next never-used offset (final value == total width)
+        for t in sorted(temps, key=lambda t: chunk_of(def_idx[t])):           # scan by def (start) chunk
+            def_chunk, end_chunk = chunk_of(def_idx[t]), chunk_of(last_use[t])  # t's live interval (chunks)
+            # expire: any active temp whose interval ended before t starts frees its slot for reuse
+            # (strict '<' is conservative at a shared chunk boundary -- safe, may use one extra slot)
             for (end, base) in [entry for entry in active if entry[0] < def_chunk]: free_bases.append(base)
             active = [entry for entry in active if entry[0] >= def_chunk]
+            # reuse a freed offset if any, else carve a fresh one: the tuple returns the OLD next_base
+            # while the walrus post-increments it by width.
             base = free_bases.pop() if free_bases else (next_base, next_base := next_base + width)[0]
-            slot_of[t] = base; active.append((end_chunk, base))
+            slot_of[t] = base; active.append((end_chunk, base))   # t holds `base` until end_chunk
         return slot_of, next_base
     slot1, n_slots1 = color([t for t in cut_temps if dim_of[t] == 1], 1)
     slot3, n_slots3 = color([t for t in cut_temps if dim_of[t] == 3], 3)
@@ -253,7 +280,7 @@ def emit_air(stark_info, expr_info, sym, force_chunk=None):
             else: lines.append(f"  g3 t{t}; t{t}.a=scratch[{slot_base}ull*WAVE+lo_]; t{t}.b=scratch[{slot_base+1}ull*WAVE+lo_]; t{t}.c=scratch[{slot_base+2}ull*WAVE+lo_];")
             declared.add(t)
         for instr in chunk_ops:
-            op_lines, dst_dim, is_out = emit_op(instr, ncols, nConstants, declared)
+            op_lines, is_out = emit_op(instr, ncols, nConstants, declared)
             lines += op_lines
             if not is_out: declared.add(instr["dst_id"])
         for t in live_out:
@@ -273,9 +300,9 @@ def emit_air(stark_info, expr_info, sym, force_chunk=None):
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
 {chr(10).join(lines)}
 }}""")
-    # Split into one TU per chunk kernel + a thin launcher TU, so the (often 100+) chunk kernels
-    # compile in PARALLEL (separate .o) instead of one giant serial nvcc. The kernel bodies are
-    # byte-identical to the monolithic form, so the computed result is unchanged.
+    # Bundle the chunk kernels into TUs of CHUNKS_PER_TU each + a thin launcher TU, so they compile in
+    # PARALLEL (separate .o) instead of one giant serial nvcc, each TU amortizing the header parse over
+    # its batch. The kernel bodies are byte-identical to the monolithic form, so results are unchanged.
     files = [(f"gen_{sym}.cu", launcher_tu(sym, n_chunks, total_slots))]
     for tu, lo in enumerate(range(0, n_chunks, CHUNKS_PER_TU)):
         idxs = range(lo, min(lo + CHUNKS_PER_TU, n_chunks))
@@ -355,6 +382,14 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
 
 # ---------- driver ----------
 def main():
+
+    # ---- Phase 0: setup --------------------------------------------------------------------------------
+    # Create the output dir and write gen_common.cuh -- the header EVERY generated TU #includes.
+    # NOTE on `sym` (used throughout the phases below) -- an AIR's kernel identity string:
+    #   "a<airgroupId>_<airId>_b<nBits>_e<cExpId>"   (e.g. a0_0_b22_e2977 = Main).
+    # It plays three roles: the dedup key (AIRs sharing a circuit collapse to one sym), the generated
+    # file stem (gen_<sym>.cu / gen_<sym>_c<i>.cu / .o), and the C/CUDA symbol stem (gen_<sym>_c<i>,
+    # launch_gen_<sym>, run_<sym>_c<i>) -- so one AIR's symbols never clash with another's.
     os.makedirs(OUTDIR, exist_ok=True)
     common = """#pragma once
 #include "goldilocks_tooling.cuh"
@@ -375,7 +410,7 @@ __device__ __forceinline__ g3 cg_sub31(g3 x, gl64_t s){ g3 r; r.a=x.a-s; r.b=x.b
 __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.b; r.c=-y.c; return r; }
 """
     open(os.path.join(OUTDIR, "gen_common.cuh"), "w").write(common)
-
+    
     generated, skipped = [], []
     slots_by_sym = {}   # sym -> slots, for the syms whose .cu was generated OK
     max_scratch = 0
@@ -388,7 +423,7 @@ __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.
     # Why they differ: one circuit can live in several AIR dirs (the shared compressors; recursive1
     # reuses recursive2's setup). We want to *generate* each kernel once but still drop a `.so` into
     # *every* dir that uses it, so each AIR loads its own sibling `.so`. So we dedup candidates by
-    # `sym` (via `seen`) while leaving placements un-deduped. An AIR is dropped here -- i.e. it stays
+    # `sym` (via the `seen` set) while leaving placements un-deduped. An AIR is dropped here -- i.e. it stays
     # on the bytecode interpreter -- if it lacks an expressionsinfo file, has unparseable JSON, has no
     # cExpId, or its Q has more than CAP ops. Phases 2-3 below consume `candidates`; `placements`
     # is only used at the end to write gen.log (one line per .so destination).
@@ -420,20 +455,23 @@ __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.
     #   * an int      -- the largest chunk size (#ops) that compiled with zero register spill,
     #   * None        -- still spills even at CHUNK_MIN (give up; Phase 3 drops it -> interpreter),
     #   * "UNHANDLED" -- tune_chunk hit an operand type the generator doesn't support.
-    # Each candidate is probed by tune_chunk (emit per-chunk TUs -> nvcc -> cuobjdump STACK, bisecting
+    # Each candidate is probe_dir by tune_chunk (emit per-chunk TUs -> nvcc -> cuobjdump STACK, bisecting
     # the chunk down until STACK=0; huge AIRs start at BIG_START_CHUNK). Parallelism is via the GIL-free
     # `nvcc` SUBPROCESSes, on TWO pools: the orchestration pool runs one _tune per AIR, and each _tune
     # submits its TUs' compiles to the shared, nproc-bounded cc_pool -- so every chunk of every AIR
     # compiles concurrently with total nvcc <= nproc (no oversubscription; separate pools => no deadlock).
     # If AUTOTUNE is off this whole block is skipped: chunk_map stays empty and Phase 3 emits every
-    # kernel at the fixed CHUNK_FIXED size instead (a guess, not spill-verified -- only CAP guards it).
+    # kernel at the fixed CHUNK_FIXED size instead.
     chunk_map = {}
     if AUTOTUNE:
         from concurrent.futures import ThreadPoolExecutor
         nproc = os.cpu_count() or 4
-        # Two pools. cc_pool (bounded at nproc) runs ALL the nvcc compiles across every AIR's chunk TUs,
-        # so total concurrent nvcc <= nproc (no oversubscription). The orch threads just drive each AIR's
-        # bisection and block on cc_pool futures -- a SEPARATE pool, so the nested submits can't deadlock.
+        # Two pools = drivers + workers. cc_pool's nproc threads are the ONLY ones that run nvcc; orch
+        # runs one driver per AIR. Each driver enqueues ALL its AIR's TUs into cc_pool at once (submit is
+        # non-blocking) then waits for the results. Because every AIR enqueues up front, cc_pool's queue
+        # stays deeper than nproc -> its workers never idle (cores stay busy) and never exceed nproc.
+        # Drivers only wait, never compile, so keeping them in a SEPARATE pool means they can't occupy
+        # the worker slots they're waiting on -> no deadlock.
         cc_pool = ThreadPoolExecutor(max_workers=nproc)
         def _tune(cand):
             stark_info, expr_info, sym, nBits, c_exp_id, name, n_ops, base = cand
@@ -479,8 +517,7 @@ __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.
     # placements down to syms that actually generated (dropping anything Phase 3 skipped -> those AIRs
     # stay on the interpreter), then re-expands each deduped kernel back across every placement, so a
     # duplicate-sym AIR gets its own line. build_exps.sh links each into <provingKey>/<reldir>/
-    # <base>.exps.so (next to that AIR's .bin) -- hence the "N kernels -> M .exps.so" header (M >= N,
-    # M-N = duplicate placements). The rest is just the human-readable summary: generated, then skipped.
+    # <base>.exps.so (next to that AIR's .bin).
     placed = [(name, base, sym) for (name, base, sym) in placements if sym in slots_by_sym]
     log = "".join(f"{name}\t{base}\t{sym}\t{slots_by_sym[sym]}\n" for (name, base, sym) in placed)
     open(os.path.join(OUTDIR, "gen.log"), "w").write(log)
