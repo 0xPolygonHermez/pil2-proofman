@@ -34,7 +34,7 @@ use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixe
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
-    calculate_trace_instance_c,
+    calculate_trace_instance_c, wait_stream_commit_done_c,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -584,6 +584,11 @@ where
             return Ok(());
         }
 
+        // Cancellation confirmed: unblock any worker parked in a buffer-pool take()
+        // before we join/reset, so a failed proof tears down instead of hanging.
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
+
         let error = {
             let mut info = self.cancellation_info.write().unwrap();
             if !info.token.is_cancelled() {
@@ -608,6 +613,10 @@ where
     pub fn cancel(&self) {
         let mut cancellation_info = self.cancellation_info.write().unwrap();
         cancellation_info.cancel(None);
+        // Unblock any worker parked in a buffer-pool take() so teardown doesn't hang
+        // on a buffer that will never be released.
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
     }
 
     /// Acquire `computing`. Warns if the wait exceeded 50ms.
@@ -1983,7 +1992,7 @@ where
                             let const_pols_local: &mut [F] = unsafe {
                                 std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
                             };
-                            if let Err(e) = Self::get_contribution_air(
+                            let commit_stream_id = match Self::get_contribution_air(
                                 &pctx_clone,
                                 &sctx_clone,
                                 &roots_contributions_clone,
@@ -1992,12 +2001,22 @@ where
                                 aux_trace_local,
                                 const_pols_local,
                             ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
+                                Ok(stream_id) => stream_id,
+                                Err(e) => {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    break;
+                                }
+                            };
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
                             if is_shared_buffer {
+                                // Trace H2D is now async, so the shared buffer must not be
+                                // recycled until the commit completes. Wait on the stream the
+                                // commit ran on (returned by commit_witness) — the air_instance
+                                // stream_id is unset on the contributions path.
+                                if pctx_clone.gpu {
+                                    wait_stream_commit_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
+                                }
                                 memory_handler_clone.to_be_released_buffer(instance_id, false);
                             }
                         }
@@ -4284,7 +4303,7 @@ where
         instance_id: usize,
         aux_trace: &mut [F],
         const_pols: &mut [F],
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
@@ -4313,7 +4332,10 @@ where
             None => String::new(),
         };
 
-        commit_witness_c(
+        // The commit (incl. the now-async trace H2D) runs on this stream; the root
+        // is collected later when the stream's end_event is polled. Return the
+        // streamId so the caller can gate trace-buffer reuse on its completion.
+        let stream_id = commit_witness_c(
             p_setup,
             p_steps_params,
             instance_id as u64,
@@ -4360,6 +4382,6 @@ where
             airgroup_id,
             air_id
         );
-        Ok(())
+        Ok(stream_id)
     }
 }

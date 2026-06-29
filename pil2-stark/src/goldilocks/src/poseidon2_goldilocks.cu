@@ -56,22 +56,14 @@ __global__ void merkleNodeKernel(uint32_t nextN, uint32_t nextIndex, uint32_t pe
     gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
     gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
 
-    const gl64_t *GPU_C_GL  = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
-    const gl64_t *GPU_D_GL  = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
-    const uint64_t N_VALS_C = Pos2ConstGPU<SPONGE_WIDTH_T>::N_VALS_C;
-
-    __shared__ gl64_t GPU_C_SM[150];
-    __shared__ gl64_t GPU_D_SM[16];
-
-    if (threadIdx.x == 0)
-    {
-        mymemcpy((uint64_t *)GPU_C_SM, (uint64_t *)GPU_C_GL, N_VALS_C);
-        mymemcpy((uint64_t *)GPU_D_SM, (uint64_t *)GPU_D_GL, SPONGE_WIDTH_T);
-    }
-    __syncthreads();
+    // Read round constants straight from __constant__ memory: it's already cached
+    // and broadcast-friendly for this single-input-per-thread kernel, so the
+    // previous per-block __shared__ staging (+ __syncthreads) was redundant.
+    const gl64_t *GPU_C_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
+    const gl64_t *GPU_D_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
 
     gl64_t aux[SPONGE_WIDTH_T];
-    poseidon2PermuteReg<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, pol_input, GPU_C_SM, GPU_D_SM);
+    poseidon2PermuteReg<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, pol_input, GPU_C_GL, GPU_D_GL);
     mymemcpy((uint64_t *)pol_output, (uint64_t *)aux, CAPACITY_T);
 }
 

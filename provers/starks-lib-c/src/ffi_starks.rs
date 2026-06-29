@@ -167,6 +167,26 @@ pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_pinned_size(p_stark_info) }
 }
 
+pub fn register_host_memory_c(ptr: *mut c_void, size: u64) -> bool {
+    unsafe { register_host_memory(ptr, size) != 0 }
+}
+
+pub fn unregister_host_memory_c(ptr: *mut c_void) {
+    unsafe {
+        unregister_host_memory(ptr);
+    }
+}
+
+/// Block until the commit work on `stream_id` has completed on the GPU, so a
+/// shared trace buffer whose async H2D copy rode that stream can be safely
+/// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
+/// `pctx.gpu`).
+pub fn wait_stream_commit_done_c(d_buffers: *mut c_void, stream_id: u64) {
+    unsafe {
+        wait_stream_commit_done(d_buffers, stream_id);
+    }
+}
+
 pub fn set_memory_expressions_c(p_stark_info: *mut c_void, n_tmp1: u64, n_tmp3: u64) {
     unsafe {
         set_memory_expressions(p_stark_info, n_tmp1, n_tmp3);
