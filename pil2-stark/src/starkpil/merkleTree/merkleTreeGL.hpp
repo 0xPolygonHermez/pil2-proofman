@@ -5,6 +5,7 @@
 #include "starks_api_internal.hpp"
 #include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
+#include "blake3_goldilocks.hpp"
 #include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
 #include <math.h>
@@ -101,6 +102,9 @@ public:
                     zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (Poseidon2 supports 2, 3, 4)");
                     exitProcess(); exit(-1);
             }
+            break;
+        case HashFamily::Blake3:
+            Blake3Goldilocks::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
             break;
         }
 

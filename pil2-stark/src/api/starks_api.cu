@@ -22,6 +22,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "gen_proof.cuh"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "blake3_goldilocks.cuh"
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
@@ -40,7 +41,10 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
-    if (get_hash_family() == HashFamily::Poseidon1) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        // BLAKE3 nodes hash arity*CAPACITY elements -> any arity is supported.
+        Blake3GoldilocksGPU::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+    } else if (get_hash_family() == HashFamily::Poseidon1) {
         switch (arity) {
         case 2: PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
         case 3: PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
@@ -66,7 +70,9 @@ void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
 void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
                     uint32_t n_bits, cudaStream_t stream)
 {
-    if (get_hash_family() == HashFamily::Poseidon1) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        Blake3GoldilocksGPU::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    } else if (get_hash_family() == HashFamily::Poseidon1) {
         PoseidonGoldilocksGPU<8>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
     } else {
         Poseidon2GoldilocksGPUGrinding::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);

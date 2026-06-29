@@ -58,7 +58,12 @@ pub(crate) fn build_global_info_json(
     let proof_values_map = build_global_proof_values_map(&pilout.symbols);
     let publics_map = build_global_publics_map(&pilout.symbols);
 
-    let transcript_arity: u64 = GOLDILOCKS_MERKLE_TREE_ARITY;
+    // The device buffers and the prover's per-air stream transcript are built
+    // from this value (proof_ctx::gen_device_buffers/streams), and it must match
+    // the per-air starkinfo transcriptArity the verifier uses. BLAKE3 forces
+    // arity 2 (binary tree); Poseidon uses the Goldilocks default.
+    let transcript_arity: u64 =
+        if hash == "blake3" || hash == "Blake3" { 2 } else { GOLDILOCKS_MERKLE_TREE_ARITY };
 
     json!({
         "name": pilout_name,

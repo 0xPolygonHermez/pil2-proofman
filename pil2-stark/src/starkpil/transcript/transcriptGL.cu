@@ -2,6 +2,7 @@
 #include "starks_api_internal.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "blake3_core.hpp"
 #include "goldilocks_tooling.cuh"
 
 #include "math.h"
@@ -40,7 +41,10 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + transcriptPendingSize] = state[i];
     }
-    if (hashFamily == 1) {
+    if (hashFamily == 3) {
+        // Blake3 transcript permutation, width = 4*arity (8/12/16).
+        blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
+    } else if (hashFamily == 1) {
         switch(arity) {
             case 2:
                 poseidon1PermuteReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
