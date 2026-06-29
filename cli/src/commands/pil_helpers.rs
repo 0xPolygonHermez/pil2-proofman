@@ -348,73 +348,90 @@ impl PilHelpersCmd {
                             && symbol.r#type == SymbolType::WitnessCol as i32
                             && symbol.stage.unwrap() == 1
                         {
-                            let hint = pilout
-                                .hints
-                                .iter()
-                                .find(|h| {
-                                    h.air_group_id == Some(airgroup_id as u32)
-                                        && h.air_id == Some(air_id as u32)
-                                        && h.name == "witness_bits"
-                                        && h.hint_fields.iter().any(|field| {
-                                            if let Some(HintFieldArray(ref array)) = &field.value {
-                                                array.hint_fields.iter().any(|inner_field| {
-                                                    if let (Some(inner_name), Some(StringValue(ref string_val))) =
-                                                        (&inner_field.name, &inner_field.value)
-                                                    {
-                                                        inner_name == "name" && string_val == name
-                                                    } else {
-                                                        false
-                                                    }
-                                                })
-                                            } else {
-                                                false
-                                            }
-                                        })
-                                })
-                                .unwrap_or_else(|| panic!("hint not found for name {name}"));
+                            let hint = pilout.hints.iter().find(|h| {
+                                h.air_group_id == Some(airgroup_id as u32)
+                                    && h.air_id == Some(air_id as u32)
+                                    && h.name == "witness_bits"
+                                    && h.hint_fields.iter().any(|field| {
+                                        if let Some(HintFieldArray(ref array)) = &field.value {
+                                            array.hint_fields.iter().any(|inner_field| {
+                                                if let (Some(inner_name), Some(StringValue(ref string_val))) =
+                                                    (&inner_field.name, &inner_field.value)
+                                                {
+                                                    inner_name == "name" && string_val == name
+                                                } else {
+                                                    false
+                                                }
+                                            })
+                                        } else {
+                                            false
+                                        }
+                                    })
+                            });
 
-                            let bits = hint
-                                .hint_fields
-                                .iter()
-                                .find_map(|field| {
-                                    if let Some(HintFieldArray(ref array)) = &field.value {
-                                        for inner_field in array.hint_fields.iter() {
-                                            if let (Some(inner_name), Some(Operand(operand))) =
-                                                (&inner_field.name, &inner_field.value)
-                                            {
-                                                if inner_name == "bits" {
-                                                    if let Some(Constant(constant)) = &operand.operand {
-                                                        if !constant.value.is_empty() {
-                                                            return Some(constant.value[0]);
+                            // A column may live in a packed air without itself being packed
+                            // (e.g. std range-check multiplicity columns like `mul_range`).
+                            // Such columns have no `witness_bits` hint; emit them as unpacked.
+                            if let Some(hint) = hint {
+                                let bits = hint
+                                    .hint_fields
+                                    .iter()
+                                    .find_map(|field| {
+                                        if let Some(HintFieldArray(ref array)) = &field.value {
+                                            for inner_field in array.hint_fields.iter() {
+                                                if let (Some(inner_name), Some(Operand(operand))) =
+                                                    (&inner_field.name, &inner_field.value)
+                                                {
+                                                    if inner_name == "bits" {
+                                                        if let Some(Constant(constant)) = &operand.operand {
+                                                            if !constant.value.is_empty() {
+                                                                return Some(constant.value[0]);
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    None
-                                })
-                                .expect("bits not found");
+                                        None
+                                    })
+                                    .expect("bits not found");
 
-                            let type_bits = match bits {
-                                1 => "bit".to_string(),
-                                8 => "u8".to_string(),
-                                16 => "u16".to_string(),
-                                32 => "u32".to_string(),
-                                64 => "u64".to_string(),
-                                _ => format!("ubit({bits})"), // dynamically include bits
-                            };
+                                let type_bits = match bits {
+                                    1 => "bit".to_string(),
+                                    8 => "u8".to_string(),
+                                    16 => "u16".to_string(),
+                                    32 => "u32".to_string(),
+                                    64 => "u64".to_string(),
+                                    _ => format!("ubit({bits})"), // dynamically include bits
+                                };
 
-                            let total_lengths = symbol.lengths.iter().product::<u32>();
-                            vec_bits.extend(vec![bits as u64; total_lengths as usize]);
-                            if symbol.lengths.is_empty() {
-                                type_bits.to_string()
+                                let total_lengths = symbol.lengths.iter().product::<u32>();
+                                vec_bits.extend(vec![bits as u64; total_lengths as usize]);
+                                if symbol.lengths.is_empty() {
+                                    type_bits.to_string()
+                                } else {
+                                    symbol
+                                        .lengths
+                                        .iter()
+                                        .rev()
+                                        .fold(type_bits.to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                                }
                             } else {
-                                symbol
-                                    .lengths
-                                    .iter()
-                                    .rev()
-                                    .fold(type_bits.to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                                // Column in a packed air with no `witness_bits` hint
+                                // (e.g. std range-check columns like `mul_range`):
+                                // pack it as a full 64-bit word.
+                                let bits = 64u64;
+                                let total_lengths = symbol.lengths.iter().product::<u32>();
+                                vec_bits.extend(vec![bits; total_lengths as usize]);
+                                if symbol.lengths.is_empty() {
+                                    "u64".to_string()
+                                } else {
+                                    symbol
+                                        .lengths
+                                        .iter()
+                                        .rev()
+                                        .fold("u64".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                                }
                             }
                         } else {
                             String::new()
