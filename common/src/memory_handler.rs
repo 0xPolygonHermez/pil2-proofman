@@ -148,6 +148,15 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
                 self.buffer_size
             )));
         }
+        // On the abort path take() may hand out freshly-allocated buffers without
+        // drawing from the channel, so the live buffer count can exceed the channel
+        // capacity. A blocking send would then park forever on a full channel,
+        // reintroducing the teardown hang. Release best-effort when cancelled: the
+        // dropped buffer is freed normally and the pool is about to be torn down.
+        if self.cancelled.load(Ordering::SeqCst) {
+            let _ = self.sender.try_send(buffer);
+            return Ok(());
+        }
         self.sender.send(buffer).expect("Pool channel closed");
         Ok(())
     }
@@ -158,7 +167,18 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     /// and leave a stale registration that Drop later unregisters against freed
     /// memory. A short count or unknown address means a buffer escaped, so we
     /// surface it rather than paper over it.
+    ///
+    /// Caller must have joined all workers that took buffers first (the drain below
+    /// races a live worker and trips the `recovered N of M` error).
     fn reset(&self) -> ProofmanResult<()> {
+        // On the abort path take() hands out a fresh (unregistered) buffer to
+        // unblock workers, which may then be released back into the pool. Skip the
+        // integrity checks when cancelled — they would mask the real cancellation
+        // error with a spurious invariant violation (mirrors MemoryHandler::reset).
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
         let mut valid_buffers: Vec<Vec<F>> = Vec::with_capacity(self.n_buffers);
         while let Ok(buf) = self.receiver.try_recv() {
             if buf.len() != self.buffer_size {
@@ -191,6 +211,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
 
 impl<F: PrimeField64 + Send + Sync + 'static> Drop for Pool<F> {
     fn drop(&mut self) {
+        // Only runs once the last Arc holding this pool is gone, i.e. after all
+        // worker threads have released their clones; on the abort path `cancel()`
+        // unblocks the pooled take() so those threads can exit and be joined. See
+        // the longer note on `Drop for MemoryHandler`.
+        //
         // Runs before fields drop, so the pooled Vecs (held by the channel) are
         // alive while we unregister their pages.
         for ptr in &self.registered_buffers {
@@ -258,6 +283,12 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 
     /// Recover-only reset; see `Pool::reset` for the no-reallocate rationale.
+    ///
+    /// Sequencing requirement: all worker threads that took buffers must already be
+    /// joined (so every buffer is back in the channel). Calling this while a worker
+    /// is still running races the `try_recv` drain below and trips the
+    /// `recovered N of M` error. Callers join workers — or `cancel()` then join —
+    /// before resetting.
     pub fn reset(&self) -> ProofmanResult<()> {
         self.empty_queue_to_be_released();
 
@@ -334,6 +365,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 self.buffer_size
             )));
         }
+        // On the abort path take_buffer may hand out freshly-allocated buffers
+        // without drawing from the channel, so the live buffer count can exceed the
+        // channel capacity. A blocking send would then park forever on a full
+        // channel, reintroducing the teardown hang. Release best-effort when
+        // cancelled: the dropped buffer is freed normally and the pool is about to
+        // be torn down.
+        if self.cancelled.load(Ordering::SeqCst) {
+            let _ = self.sender.try_send(buffer);
+            return Ok(());
+        }
         self.sender.send(buffer).expect("Failed to send buffer back to pool");
         Ok(())
     }
@@ -355,6 +396,15 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
 
 impl<F: PrimeField64 + Send + Sync + 'static> Drop for MemoryHandler<F> {
     fn drop(&mut self) {
+        // Unregistration hinges on this Drop running, which only happens once the
+        // LAST Arc<MemoryHandler> is gone. Worker threads each hold a clone moved
+        // into their closure, so they must terminate and be joined first. A worker
+        // parked in take_buffer would never release its Arc — that is exactly what
+        // `cancel()` prevents on the abort path (it unblocks take_buffer so the
+        // thread exits and is joined). If you stop calling `cancel()` before
+        // joining, pinned pages may leak. (Under panic=abort no Drop runs at all;
+        // the OS reclaims the pages on process exit.)
+        //
         // Runs before fields drop, so the pooled Vecs (still held by the channel)
         // are alive while we unregister their pages.
         for ptr in &self.registered_buffers {

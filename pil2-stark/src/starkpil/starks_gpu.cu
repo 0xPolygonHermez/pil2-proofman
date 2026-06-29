@@ -1344,11 +1344,12 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    // Enforce a 256-thread floor per block (small nrowsPack from slow FRI
-    // instances underpopulates blocks), but cap at domainSize: the kernel strides
-    // by nchunks = domainSize/blockDim.x, so blockDim.x > domainSize gives
-    // nchunks==0 and silently skips all rows. domainSize is a power of two, so the
-    // cap keeps domainSize % blockDim.x == 0.
+    // computeFRIExpression strides by domainSize/blockDim.x with no remainder handling,
+    // so blockDim.x must divide domainSize or leftover rows are silently dropped. We
+    // floor nrowsPack to 256 (slow FRI instances underpopulate blocks) and cap at
+    // domainSize; this stays a power-of-two divisor because the prover's nrowsPack is a
+    // power of two <= 256. A non-power-of-two nrowsPack > 256 (e.g. verify's nQueries)
+    // would break it.
     uint32_t nthreads_ = std::min<uint32_t>(std::max<uint32_t>(setupCtx.starkInfo.nrowsPack, 256), (uint32_t)domainSize);
     uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);

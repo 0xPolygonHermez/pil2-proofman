@@ -98,7 +98,12 @@ void unregister_host_memory_gpu(void *ptr) {
 // from the buffer pool before reusing a shared trace buffer. No-op if the stream
 // has no outstanding commit (status != 2).
 void wait_stream_commit_done_gpu(void *d_buffers_, uint64_t streamId) {
+    if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // Guard the C-ABI surface: an out-of-range streamId (e.g. from a future caller
+    // or an error path) would index streamsData OOB and segfault before any CUDA
+    // error handling could run.
+    if (streamId >= d_buffers->n_total_streams) return;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     if (d_buffers->streamsData[streamId].status == 2) {
         CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].end_event));
