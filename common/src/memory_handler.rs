@@ -51,14 +51,21 @@ fn register_pool<F: PrimeField64>(buffers: &mut [Vec<F>]) -> Vec<usize> {
             registered.push(base);
         }
     }
-    assert!(
-        registered.is_empty() || registered.len() == buffers.len(),
-        "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of {} buffers pinned. \
-         The GPU backend is active and a cudaHostRegister failed — refusing to run with a \
-         partially-pinned pool.",
-        registered.len(),
-        buffers.len()
-    );
+    // Partial pinning is fatal (all-or-nothing), but before we abort, unregister
+    // the buffers we did pin — otherwise those pages stay locked for the rest of
+    // the process (and, under panic=abort, Drop never runs to release them).
+    if !registered.is_empty() && registered.len() != buffers.len() {
+        for ptr in &registered {
+            unregister_host_memory_c(*ptr as *mut c_void);
+        }
+        panic!(
+            "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of {} buffers pinned. \
+             The GPU backend is active and a cudaHostRegister failed — refusing to run with a \
+             partially-pinned pool.",
+            registered.len(),
+            buffers.len()
+        );
+    }
     registered
 }
 
@@ -121,10 +128,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         loop {
             match self.receiver.recv_timeout(Duration::from_micros(100)) {
                 Ok(buffer) => return buffer,
-                Err(_) => {
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     if self.cancelled.load(Ordering::SeqCst) {
                         return vec![F::ZERO; self.buffer_size];
                     }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    panic!("Pool channel closed");
                 }
             }
         }
@@ -250,6 +260,14 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     /// Recover-only reset; see `Pool::reset` for the no-reallocate rationale.
     pub fn reset(&self) -> ProofmanResult<()> {
         self.empty_queue_to_be_released();
+
+        // On the abort path take_buffer hands out a fresh (unregistered) buffer to
+        // unblock workers, which may then be released back into the pool. The pool
+        // is about to be dropped, so don't run the integrity checks — they would
+        // mask the real cancellation error with a spurious invariant violation.
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
 
         let mut valid_buffers: Vec<Vec<F>> = Vec::with_capacity(self.n_buffers);
         while let Ok(buf) = self.receiver.try_recv() {
