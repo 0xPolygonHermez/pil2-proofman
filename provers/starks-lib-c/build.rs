@@ -372,6 +372,22 @@ fn is_writable(dir: &Path) -> bool {
     fs::OpenOptions::new().write(true).open(dir.join("Makefile")).is_ok()
 }
 
+/// Grant the owner write permission without making the file world-writable
+/// (`set_readonly(false)` would set every write bit on Unix).
+#[cfg(unix)]
+fn make_writable(mut perms: fs::Permissions) -> fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(perms.mode() | 0o200);
+    perms
+}
+
+#[cfg(not(unix))]
+fn make_writable(mut perms: fs::Permissions) -> fs::Permissions {
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    perms
+}
+
 /// Recursively mirror `src` into `dst`, copying a file only when the source is
 /// newer (preserving mtime) so the Makefile's incremental rebuilds keep working
 /// across cargo invocations. Used only for read-only (published) source trees.
@@ -393,13 +409,12 @@ fn sync_tree(src: &Path, dst: &Path) {
                 fs::copy(&from, &to).expect("copy vendored source file");
                 // fs::copy preserves source permissions; a published source is a
                 // read-only registry checkout, but the build must rewrite this
-                // mirror (configure.sh codegen, make objects, stamps), so clear
-                // the read-only bit on the copy.
+                // mirror (configure.sh codegen, make objects, stamps), so add the
+                // owner write bit to the copy.
                 if let Ok(meta) = fs::metadata(&to) {
-                    let mut perms = meta.permissions();
+                    let perms = meta.permissions();
                     if perms.readonly() {
-                        perms.set_readonly(false);
-                        let _ = fs::set_permissions(&to, perms);
+                        let _ = fs::set_permissions(&to, make_writable(perms));
                     }
                 }
                 if let (Some(s), Ok(f)) = (src_mtime, fs::File::options().write(true).open(&to)) {
