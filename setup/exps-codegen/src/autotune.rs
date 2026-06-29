@@ -16,7 +16,7 @@ const BIG_OPS: usize = 20000; // ops threshold for "large expressions"
 const BIG_START_CHUNK: usize = 250; // autotuner start chunk for AIRs with > BIG_OPS ops
 
 /// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
-/// -1 = cuobjdump could not be read (treated as "not zero" -> keep shrinking).
+/// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
 fn max_stack(obj: &Path) -> i64 {
     let out = match std::process::Command::new("cuobjdump").arg("-res-usage").arg(obj).output() {
         Ok(o) => o,
@@ -74,7 +74,15 @@ fn tune_inner(
             return Ok(None);
         }
 
-        let st = objs.iter().map(|o| max_stack(o)).max().unwrap_or(0);
+        let stacks: Vec<i64> = objs.iter().map(|o| max_stack(o)).collect();
+        if stacks.iter().any(|&s| s < 0) {
+            anyhow::bail!(
+                "cuobjdump could not read register usage for {sym} (not found or failed to run). \
+                 Install CUDA binutils so the no-spill autotuner can verify STACK=0, \
+                 or pass --chunk <N> to skip autotuning."
+            );
+        }
+        let st = stacks.into_iter().max().unwrap_or(0);
         eprintln!("  [tune] {sym} chunk={chunk} ({} TUs) -> STACK={st}", files.len());
         if st == 0 {
             for obj in &objs {

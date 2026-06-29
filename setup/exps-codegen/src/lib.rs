@@ -442,7 +442,10 @@ impl WorkDir {
                 Ok(WorkDir { path: p, temp: false })
             }
             None => {
-                let p = std::env::temp_dir().join(format!("genexps_{}", std::process::id()));
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static SEQ: AtomicU64 = AtomicU64::new(0);
+                let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+                let p = std::env::temp_dir().join(format!("genexps_{}_{}", std::process::id(), seq));
                 let _ = std::fs::remove_dir_all(&p);
                 std::fs::create_dir_all(&p)?;
                 Ok(WorkDir { path: p, temp: true })
