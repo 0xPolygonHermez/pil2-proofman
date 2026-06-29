@@ -24,6 +24,7 @@ members = [
     "soundness",
     "setup/stark-recurser",
     "setup/pil2-stark",
+    "setup/exps-codegen",
 
     # PIL2 components library
     "pil2-components/lib/std/rs",
@@ -63,6 +64,7 @@ default-members = [
     "soundness",
     "setup/stark-recurser",
     "setup/pil2-stark",
+    "setup/exps-codegen",
 ]
 
 resolver = "2"
@@ -77,6 +79,7 @@ proofman-soundness = { path = "soundness" }
 proofman-verifier = { path = "verifier" }
 proofman-util = { path = "util" }
 proofman-cli = { path = "cli" }
+exps-codegen = { path = "setup/exps-codegen" }
 pil-std-lib = { path = "pil2-components/lib/std/rs" }
 witness = { path = "witness" }
 pilout = { path = "pilout" }

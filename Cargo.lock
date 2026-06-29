@@ -614,6 +614,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exps-codegen"
+version = "1.0.0-beta"
+dependencies = [
+ "anyhow",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1375,6 +1387,7 @@ version = "1.0.0-beta"
 dependencies = [
  "anyhow",
  "clap",
+ "exps-codegen",
  "fields",
  "indexmap",
  "mpi",
@@ -1494,6 +1507,7 @@ dependencies = [
  "clap",
  "colored",
  "convert_case",
+ "exps-codegen",
  "fields",
  "libloading",
  "pilout",

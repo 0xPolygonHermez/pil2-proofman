@@ -676,6 +676,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
@@ -716,6 +721,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
@@ -759,6 +769,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         let result = run_recursive_setup(&pilout, "test", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());

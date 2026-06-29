@@ -88,6 +88,8 @@ public:
 
     bool write = false;
 
+    std::string binFile;
+
     std::map<uint64_t, ParserParams> expressionsInfo;
 
     std::vector<ParserParams> constraintsInfoDebug;
