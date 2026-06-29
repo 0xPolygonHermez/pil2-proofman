@@ -43,7 +43,14 @@ pub fn tune_chunk(tc: &Toolchain, ir: &Ir, sym: &str, n_ops: usize, out_dir: &Pa
     result
 }
 
-fn tune_inner(tc: &Toolchain, ir: &Ir, sym: &str, n_ops: usize, probe: &Path, out_dir: &Path) -> anyhow::Result<Option<usize>> {
+fn tune_inner(
+    tc: &Toolchain,
+    ir: &Ir,
+    sym: &str,
+    n_ops: usize,
+    probe: &Path,
+    out_dir: &Path,
+) -> anyhow::Result<Option<usize>> {
     let mut chunk = n_ops.min(if n_ops > BIG_OPS { BIG_START_CHUNK } else { CHUNK_MAX });
     while chunk >= CHUNK_MIN {
         let plan = plan_chunks(ir, chunk, sym)?;

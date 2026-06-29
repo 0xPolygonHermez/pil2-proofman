@@ -45,11 +45,7 @@ fn resolve_archs(archspec: &str) -> Vec<u32> {
         return MAJOR_ARCHS.to_vec();
     }
     // explicit list: "89,120" / "sm_120" / "120"
-    let mut archs: Vec<u32> = spec
-        .replace("sm_", "")
-        .split(',')
-        .filter_map(|s| s.trim().parse::<u32>().ok())
-        .collect();
+    let mut archs: Vec<u32> = spec.replace("sm_", "").split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
     archs.sort_unstable();
     archs.dedup();
     archs
@@ -79,7 +75,10 @@ impl Toolchain {
             gencode.push(format!("arch=compute_{a},code=sm_{a}"));
         }
         // Blackwell datacenter lineage = arch whose decimal starts with 10 or 11 (e.g. 100, 110).
-        let is_dc = |a: &u32| { let s = a.to_string(); s.starts_with("10") || s.starts_with("11") };
+        let is_dc = |a: &u32| {
+            let s = a.to_string();
+            s.starts_with("10") || s.starts_with("11")
+        };
         let ptx_dc = arch_list.iter().filter(|a| is_dc(a)).max().copied();
         let ptx_rest = arch_list.iter().filter(|a| !is_dc(a)).max().copied();
         for p in [ptx_dc, ptx_rest].into_iter().flatten() {
@@ -146,8 +145,10 @@ impl Toolchain {
         .map(|s| s.to_string())
         .collect();
 
-        let mut compile_flags: Vec<String> =
-            ["-Xcompiler", "-fPIC", "-Xcompiler", "-mavx2", "-std=c++17", "-O3"].iter().map(|s| s.to_string()).collect();
+        let mut compile_flags: Vec<String> = ["-Xcompiler", "-fPIC", "-Xcompiler", "-mavx2", "-std=c++17", "-O3"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         compile_flags.extend(gencode.iter().cloned());
         compile_flags.extend(defs);
         compile_flags.append(&mut incs);

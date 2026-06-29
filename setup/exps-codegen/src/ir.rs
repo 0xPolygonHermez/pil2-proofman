@@ -25,7 +25,9 @@ pub enum Operand {
 impl Operand {
     pub fn dim(&self) -> u64 {
         match self {
-            Operand::Tmp { dim, .. } | Operand::Cm { dim, .. } | Operand::Av { dim, .. } | Operand::Agv { dim, .. } => *dim,
+            Operand::Tmp { dim, .. } | Operand::Cm { dim, .. } | Operand::Av { dim, .. } | Operand::Agv { dim, .. } => {
+                *dim
+            }
             Operand::Ch { .. } => 3,
             Operand::Num(_) | Operand::Const { .. } | Operand::Zi | Operand::Pub { .. } => 1,
         }

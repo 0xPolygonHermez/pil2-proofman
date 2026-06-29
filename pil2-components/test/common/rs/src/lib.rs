@@ -57,6 +57,11 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         setup_jobs: 1,
         stats_output_path: None,
         hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        gen_exps: false,
+        exps_arch: "auto".to_string(),
+        exps_cap: 40000,
+        exps_chunk: None,
+        exps_stark_src: None,
     })
     .map_err(|e| format!("setup: {e}"))
 }

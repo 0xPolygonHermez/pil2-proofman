@@ -55,11 +55,7 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
             if *dim == 1 {
                 vec![format!("  gl64_t {name} = {arr}[{i}];")]
             } else {
-                vec![format!(
-                    "  g3 {name}; {name}.a={arr}[{i}]; {name}.b={arr}[{}]; {name}.c={arr}[{}];",
-                    i + 1,
-                    i + 2
-                )]
+                vec![format!("  g3 {name}; {name}.a={arr}[{i}]; {name}.b={arr}[{}]; {name}.c={arr}[{}];", i + 1, i + 2)]
             }
         }
         Operand::Const { id, stride } => {
@@ -286,12 +282,8 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
             .filter(|t| plan.cut_temps.contains(t) && plan.chunk_of(plan.def_idx[t]) < chunk_idx)
             .collect();
         live_in.sort_unstable();
-        let mut live_out: Vec<u64> = plan
-            .cut_temps
-            .iter()
-            .copied()
-            .filter(|t| plan.chunk_of(plan.def_idx[t]) == chunk_idx)
-            .collect();
+        let mut live_out: Vec<u64> =
+            plan.cut_temps.iter().copied().filter(|t| plan.chunk_of(plan.def_idx[t]) == chunk_idx).collect();
         live_out.sort_unstable();
 
         let mut declared: HashSet<u64> = HashSet::new();
@@ -346,7 +338,8 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
         ));
     }
 
-    let mut files: Vec<(String, String)> = vec![(format!("gen_{sym}.cu"), launcher_tu(sym, plan.n_chunks, plan.total_slots))];
+    let mut files: Vec<(String, String)> =
+        vec![(format!("gen_{sym}.cu"), launcher_tu(sym, plan.n_chunks, plan.total_slots))];
     let mut tu = 0usize;
     let mut lo = 0usize;
     while lo < plan.n_chunks {

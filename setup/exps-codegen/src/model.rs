@@ -115,9 +115,9 @@ impl Src {
     pub fn number_value(&self) -> anyhow::Result<u64> {
         match &self.value {
             Some(serde_json::Value::String(s)) => Ok(s.parse::<u64>()?),
-            Some(serde_json::Value::Number(n)) => n
-                .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("number operand value not a u64: {n}")),
+            Some(serde_json::Value::Number(n)) => {
+                n.as_u64().ok_or_else(|| anyhow::anyhow!("number operand value not a u64: {n}"))
+            }
             other => Err(anyhow::anyhow!("number operand missing/invalid value: {other:?}")),
         }
     }

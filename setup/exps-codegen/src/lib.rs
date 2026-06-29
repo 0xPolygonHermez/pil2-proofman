@@ -48,7 +48,14 @@ pub struct GenConfig {
 
 impl Default for GenConfig {
     fn default() -> Self {
-        GenConfig { cap: DEFAULT_CAP, chunk: None, archspec: "auto".into(), stark_src: None, keep_dir: None, dry_run: false }
+        GenConfig {
+            cap: DEFAULT_CAP,
+            chunk: None,
+            archspec: "auto".into(),
+            stark_src: None,
+            keep_dir: None,
+            dry_run: false,
+        }
     }
 }
 
@@ -136,7 +143,11 @@ fn make_sym(si: &StarkInfo, phase: &str) -> String {
 
 /// Parse one starkinfo + sibling expressionsinfo into a Candidate, or return a
 /// skip reason (string), or `None` if the file pair isn't a codegen target.
-fn load_candidate(stark_info_path: &Path, root: &Path, cap: usize) -> Result<Option<Candidate>, Option<(String, String)>> {
+fn load_candidate(
+    stark_info_path: &Path,
+    root: &Path,
+    cap: usize,
+) -> Result<Option<Candidate>, Option<(String, String)>> {
     let air_dir = stark_info_path.parent().unwrap();
     let fname = stark_info_path.file_name().unwrap().to_string_lossy();
     let base = fname.strip_suffix(".starkinfo.json").unwrap().to_string();
@@ -146,14 +157,16 @@ fn load_candidate(stark_info_path: &Path, root: &Path, cap: usize) -> Result<Opt
     }
     let name = air_dir.strip_prefix(root).unwrap_or(air_dir).to_string_lossy().to_string();
 
-    let stark_info: StarkInfo = match std::fs::read(stark_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+    let stark_info: StarkInfo = match std::fs::read(stark_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    {
         Some(si) => si,
         None => return Err(None), // unparseable / not a full AIR starkinfo
     };
-    let expr_info: ExpressionsInfo = match std::fs::read(&expr_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-        Some(ei) => ei,
-        None => return Err(None),
-    };
+    let expr_info: ExpressionsInfo =
+        match std::fs::read(&expr_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+            Some(ei) => ei,
+            None => return Err(None),
+        };
 
     let cexp = stark_info.c_exp_id;
     let Some(code) = expr_info.expressions_code.iter().find(|e| e.exp_id == cexp) else {
@@ -238,7 +251,8 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
     };
     let dest = air_dir.join(format!("{}.exps.so", candidate.base));
 
-    let summary = run_pipeline(&tc, work.path(), std::slice::from_ref(&candidate), std::slice::from_ref(&placement), cfg)?;
+    let summary =
+        run_pipeline(&tc, work.path(), std::slice::from_ref(&candidate), std::slice::from_ref(&placement), cfg)?;
     if summary.placed == 1 {
         Ok(dest)
     } else {
@@ -248,7 +262,13 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
 }
 
 /// Phases 2-4: autotune -> emit -> compile/link, shared by both entry points.
-fn run_pipeline(tc: &Toolchain, work: &Path, candidates: &[Candidate], placements: &[Placement], cfg: &GenConfig) -> Result<GenSummary> {
+fn run_pipeline(
+    tc: &Toolchain,
+    work: &Path,
+    candidates: &[Candidate],
+    placements: &[Placement],
+    cfg: &GenConfig,
+) -> Result<GenSummary> {
     let autotune = cfg.chunk.is_none();
 
     // Build IR for every candidate (catches unhandled operands here). Each entry
@@ -270,7 +290,9 @@ fn run_pipeline(tc: &Toolchain, work: &Path, candidates: &[Candidate], placement
         built
             .par_iter()
             .filter_map(|(c, r)| {
-                r.as_ref().ok().map(|ir| autotune::tune_chunk(tc, ir, &c.sym, c.n_ops, work).map(|ck| (c.sym.clone(), ck)))
+                r.as_ref()
+                    .ok()
+                    .map(|ir| autotune::tune_chunk(tc, ir, &c.sym, c.n_ops, work).map(|ck| (c.sym.clone(), ck)))
             })
             .collect::<Result<std::collections::HashMap<_, _>>>()?
     } else {
@@ -373,7 +395,11 @@ fn collect_artifacts(work: &Path, sym: &str, ext: &str) -> Vec<PathBuf> {
 
 /// gen.log: one TAB-separated line per placement, written into the work dir as
 /// an inspection aid (useful with `--keep-dir`); nothing reads it back.
-fn write_gen_log(work: &Path, placed: &[&Placement], slots_by_sym: &std::collections::HashMap<String, u64>) -> Result<()> {
+fn write_gen_log(
+    work: &Path,
+    placed: &[&Placement],
+    slots_by_sym: &std::collections::HashMap<String, u64>,
+) -> Result<()> {
     let mut log = String::new();
     for p in placed {
         log.push_str(&format!("{}\t{}\t{}\t{}\n", p.name, p.base, p.sym, slots_by_sym[&p.sym]));
@@ -383,7 +409,7 @@ fn write_gen_log(work: &Path, placed: &[&Placement], slots_by_sym: &std::collect
 }
 
 fn print_summary(s: &GenSummary, cfg: &GenConfig) {
-    let chunk_info = if cfg.chunk.is_some() { format!(", chunk={}", cfg.chunk.unwrap()) } else { String::new() };
+    let chunk_info = if let Some(chunk) = cfg.chunk { format!(", chunk={}", chunk) } else { String::new() };
     eprintln!(
         "generated {} kernels -> {} per-AIR .exps.so (CAP={}{}, max scratch {:.0}MB):",
         s.generated.len(),
