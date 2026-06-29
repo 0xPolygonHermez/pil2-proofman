@@ -779,7 +779,6 @@ dependencies = [
  "pil-std-lib",
  "proofman",
  "proofman-common",
- "proofman-starks-lib-c",
  "witness",
 ]
 
