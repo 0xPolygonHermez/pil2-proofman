@@ -51,7 +51,8 @@ __global__ void unpack(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t* d_words_per_row,
-    const uint64_t *d_unpack_info
+    const uint64_t *d_unpack_info,
+    Layout layout
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
@@ -71,9 +72,8 @@ __global__ void unpack(
     uint64_t word_idx = 0;
     uint64_t bit_offset = 0;
 
-    // cm1 unpack: same storage layout as fromRowMajorToColMajor (resolveLayout on the small domain).
-    // Loop-invariant -> compute once, not per column.
-    const Layout layout = resolveLayout(63 - __clzll(nRows), nCols);
+    // Storage layout passed by the caller: unpack_trace (cm1) passes resolveLayout(nBits,nCols);
+    // unpack_fixed (const) passes fixedLayout(). Loop-invariant.
 
     #pragma unroll
     for (uint64_t c = 0; c < nCols; c++) {
@@ -116,13 +116,15 @@ void unpack_fixed(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_FIXED);
+    // Const pols are stored fixedLayout() (ColMajorTiled) -- uniform-native prover.
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
         d_num_packed_words,
-        d_unpack_info
+        d_unpack_info,
+        fixedLayout()
     );
     TimerStopCategoryGPU(timer, UNPACK_FIXED);
     CHECKCUDAERR(cudaGetLastError());
@@ -142,13 +144,15 @@ void unpack_trace(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_TRACE);
+    // cm1 unpack: same storage layout the commit/LDE uses (resolveLayout on the small domain).
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
         air_instance_info->d_num_packed_words,
-        air_instance_info->unpack_info
+        air_instance_info->unpack_info,
+        resolveLayout(63 - __builtin_clzll(nRows), nCols)
     );
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());
@@ -316,12 +320,16 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // preserve_src: the small-domain const pols (src) are reread by EVERY expression (const operand);
-    // flat's in-place iNTT must not corrupt them. preserve_scratch = the merkle region (pNodes): reused
-    // as the per-column iNTT buffer (no new allocation; written by the merkle build that follows).
-    ntt.LDE((gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, /*preserve_src=*/true, /*preserve_scratch=*/(gl64_t*)pNodes);
+    // Const sections are stored fixedLayout() (ColMajorTiled) -- uniform-native prover. Call the native
+    // tiled LDE directly: it is out-of-place (reads src, writes dst), so the small-domain const pols
+    // (reread by every expression as const operands) stay intact -- no preserve_src/preserve_scratch dance
+    // needed. Merkle build reads dst in the same layout the LDE wrote. (resolveLayout would pick sppark for
+    // const's nBits/nCols, so we bypass it.)
+    TimerStartCategoryGPU(timer, NTT);
+    ntt.ldeNativeTiled((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream);
+    TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, Layout::ColMajor, stream);
+    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -547,7 +555,7 @@ __global__ void computeEvals_v2(
         EvalInfo evalInfo = d_evalInfo[evalIdx];
         gl64_t *pol;
         // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
-        // (1) and fixed/const (2) are always ColMajor. d_LEv is always ColMajor.
+        // (1) and fixed/const (2) follow fixedLayout(). d_LEv is always ColMajor.
         Layout polLayout = Layout::ColMajor;
         if (evalInfo.type == 0)
         {
@@ -557,10 +565,12 @@ __global__ void computeEvals_v2(
         else if (evalInfo.type == 1)
         {
             pol = d_customComits;
+            polLayout = fixedLayout();
         }
         else
         {
             pol = d_fixedPols;
+            polLayout = fixedLayout();
         }
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
@@ -935,14 +945,14 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         }
         else if (k == nStages + 1)
         {
-            // Const tree: always ColMajor.
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, Layout::ColMajor);
+            // Const tree leaves were written fixedLayout() (ColMajorTiled) by extendAndMerkelizeFixed.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            // Custom commits: always ColMajor.
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, Layout::ColMajor);
+            // Custom commit tree leaves were written fixedLayout() (ColMajorTiled) by write_custom_commit_gpu.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         }
     }
     CHECKCUDAERR(cudaGetLastError());
@@ -1309,7 +1319,7 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint6
                 gl64_t* eval = d_evals + evalInfo.evalPos * FIELD_EXTENSION;
                 gl64_t *pol;
                 // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
-                // commits (1) and fixed/const (2) are always ColMajor.
+                // commits (1) and fixed/const (2) follow fixedLayout().
                 Layout polLayout = Layout::ColMajor;
                 if (evalInfo.type == 0)
                 {
@@ -1319,10 +1329,12 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint6
                 else if (evalInfo.type == 1)
                 {
                     pol = d_customComits;
+                    polLayout = fixedLayout();
                 }
                 else
                 {
                     pol = d_fixedPols;
+                    polLayout = fixedLayout();
                 }
 
                 gl64_t *out = (j == 0) ? accum : res;

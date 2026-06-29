@@ -353,9 +353,11 @@ __device__ __forceinline__ void load__(
             : dParams->pConstPolsAddress;
 
         const uint64_t nCols0 = dArgs->mapSectionsN[0];
+        // Const sections are stored fixedLayout() (ColMajorTiled) -- match the const-tree build's layout.
+        const Layout lytC = fixedLayout();
         const uint64_t pos = usePack256
-            ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0)
-            : getBufferOffset(logicalRow, argIdx, domainSize, nCols0);
+            ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0, lytC)
+            : getBufferOffset(logicalRow, argIdx, domainSize, nCols0, lytC);
         out0 = (gl64_t*)&basePtr[pos];
         out1 = nullptr;
         out2 = nullptr;
@@ -423,11 +425,11 @@ __device__ __forceinline__ void load__(
         out2 = nullptr;
         return;
     }
-    // Custom commits
+    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajorTiled).
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
-    const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+    const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols, fixedLayout());
 
     out0 = (gl64_t*)&dParams->pCustomCommitsFixed[offset + pos];
     out1 = nullptr;
@@ -516,7 +518,8 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         Goldilocks::Element *slot = &destVals[k * FIELD_EXTENSION * blockDim.x];
         if (d_destParams[k].op == opType::const_)
         {
-            uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols);
+            // Const stored fixedLayout() (ColMajorTiled) -- match the const-tree build.
+            uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, fixedLayout());
             slot[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
         else

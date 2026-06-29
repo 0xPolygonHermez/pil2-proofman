@@ -32,6 +32,12 @@ __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_
     return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
 }
 
+// Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
+// source of truth so every producer and consumer agrees. ColMajorTiled matches pre-1.0.0-beta behavior.
+__host__ __device__ __forceinline__ Layout fixedLayout() {
+    return Layout::ColMajorTiled;
+}
+
 // (row,col) offset for the given layout. Default ColMajor (flat): col*nRows + row.
 __device__ __forceinline__ uint64_t getBufferOffset(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout = Layout::ColMajor) {
     if (layout == Layout::ColMajor) {
