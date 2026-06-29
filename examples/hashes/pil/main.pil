@@ -1,0 +1,8 @@
+// require "blake2b.ts.pil"
+require "blake3.pil"
+
+airgroup Blake3 {
+    // Blake2b();
+
+    Blake3();
+}

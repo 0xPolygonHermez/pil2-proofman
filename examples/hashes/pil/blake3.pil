@@ -1,0 +1,484 @@
+require "std_constants.pil"
+require "std_lookup.pil"
+require "std_connection.pil"
+
+require "common.pil"
+
+// Precompile in charge of performing the Blake3 permutation
+// For reference: https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html or https://github.com/BLAKE3-team/BLAKE3
+
+airtemplate Blake3(const int N = 2**21) {
+    /*
+       ═══════════════════════════════════════════════════════════════════════════
+       BLAKE3 ROUND FUNCTION SPECIFICATION
+       ═══════════════════════════════════════════════════════════════════════════
+
+       BLAKE3(v: [u32; 16], m: [u32; 16]) -> [u32; 16]
+
+        Each round consists of 8 G function calls and a permutation:
+
+            • 4 Column steps: Mix columns independently
+                v := G(v, 0, 4,  8, 12, m[ 0], m[ 1])
+                v := G(v, 1, 5,  9, 13, m[ 2], m[ 3])
+                v := G(v, 2, 6, 10, 14, m[ 4], m[ 5])
+                v := G(v, 3, 7, 11, 15, m[ 6], m[ 7])
+
+            • 4 Diagonal steps: Mix diagonals independently
+                v := G(v, 0, 5, 10, 15, m[ 8], m[ 9])
+                v := G(v, 1, 6, 11, 12, m[10], m[11])
+                v := G(v, 2, 7,  8, 13, m[12], m[13])
+                v := G(v, 3, 4,  9, 14, m[14], m[15])
+
+            • Message word selection permutation for round i:
+                m := PERMUTE(m)
+
+        Each G function performs 8 sequential operations on two input 
+        words x and y into four words indexed by a, b, c, and d in v:
+            G(v, a, b, c, d, x, y):
+                v[a] := (v[a] + v[b] + x) mod 2³²
+                v[d] := (v[d] ^ v[a]) >>> 16
+                v[c] := (v[c] + v[d]) mod 2³²
+                v[b] := (v[b] ^ v[c]) >>> 12
+                v[a] := (v[a] + v[b] + y) mod 2³²
+                v[d] := (v[d] ^ v[a]) >>> 8
+                v[c] := (v[c] + v[d]) mod 2³²
+                v[b] := (v[b] ^ v[c]) >>> 7
+
+       ═══════════════════════════════════════════════════════════════════════════
+       EXECUTION TRACE LAYOUT (24 clocks per round)
+       ═══════════════════════════════════════════════════════════════════════════
+
+           ROW      va        vb          vc         vd         x          y        ROUND         STAGE      
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  0   |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    1    |  G1 - COL MIX  | <-- V/M IN
+        |  1   |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    1    |  G2 - COL MIX  | <-- V/M IN
+        |  2   |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    1    |  G3 - COL MIX  | <-- V/M IN
+        |  3   |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    1    |  G4 - COL MIX  | <-- V/M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  4   |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    1    |  G1 - DIA MIX  | <-- M IN
+        |  5   |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    1    |  G2 - DIA MIX  | <-- M IN
+        |  6   |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    1    |  G3 - DIA MIX  | <-- M IN
+        |  7   |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    1    |  G4 - DIA MIX  | <-- M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+    */
+
+    const int CLOCKS_PER_G = 1;
+    const int NUM_G_FUNCTIONS = 8;
+    const int ROUNDS = 7;
+    const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_FUNCTIONS;
+    const int CLOCKS = CLOCKS_PER_ROUND * ROUNDS;
+
+    // Calculate usable capacity
+    const int NUM_NON_USABLE_ROWS = N % CLOCKS;
+    const int NUM_OPS;
+    if (NUM_NON_USABLE_ROWS == 0) {
+        // N is perfectly divisible by CLOCKS
+        if (N < CLOCKS) {
+            error(`N must be at least ${CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
+        }
+
+        NUM_OPS = N / CLOCKS;
+    } else {
+        // N is not divisible by CLOCKS
+        if (N < 2*CLOCKS) {
+            error(`N must be at least ${2*CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
+        }
+
+        // Subtract 1 because we can't fit a complete cycle in the remaining rows
+        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    }
+
+    const int NUM_BLAKE3 = NUM_OPS;
+    println(`The total number of Blake3's with N = ${N} is ${NUM_BLAKE3}`);
+
+    // Message word permutation schedule
+    const int SIGMA[7][16];
+    SIGMA[0] = [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15];
+    SIGMA[1] = [ 2,  6,  3, 10,  7,  0,  4, 13,  1, 11, 12,  5,  9, 14, 15,  8];
+    SIGMA[2] = [ 3,  4, 10, 12, 13,  2,  7, 14,  6,  5,  9,  0, 11, 15,  8,  1];
+    SIGMA[3] = [10,  7, 12,  9, 14,  3, 13, 15,  4,  0, 11,  2,  5,  8,  1,  6];
+    SIGMA[4] = [12, 13,  9, 11, 15, 10, 14,  8,  7,  2,  5,  3,  0,  1,  6,  4];
+    SIGMA[5] = [ 9, 14, 11,  5,  8, 12, 15,  1, 13,  3,  0, 10,  2,  6,  4,  7];
+    SIGMA[6] = [11, 15,  5,  0,  1,  9,  8,  6, 14, 10,  2, 12,  3,  4,  7, 13];
+
+    // Argument identifiers
+    const int RANGE_CHECKER_ID = 250;
+    const int BLAKE3_CONNECTION_ID = 500;
+    const int BLAKE3_TABLE1_ID = 1000;
+    const int BLAKE3_TABLE2_ID = 2000;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CLOCK SELECTORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Base clock: 1 at row 0, 0 elsewhere within each 24-row cycle
+    col fixed CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
+
+    // Clock selectors for each row in the cycle
+    const expr CLK[CLOCKS];
+    for (int i = 0; i < CLOCKS; i++) {
+        CLK[i] = (i)'CLK_0;
+    }
+
+    col witness bits(1) in_use;
+
+    in_use * (1 - in_use) === 0;
+
+    // Selector latching: once activated, stays active for full cycle
+    const expr in_use_latched = clock_set(start: 1, end: CLOCKS);
+    in_use_latched * (in_use - 'in_use) === 0;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // G-FUNCTION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    col witness bits(8) va[4];
+    col witness bits(8) vb[4];
+    col witness bits(8) vc[4];
+    col witness bits(8) vd[4];
+    col witness bits(8) x[4];
+    col witness bits(8) y[4];
+
+    // Range check va,vc,x and y
+    // vb and vd are range-checked in the upcoming lookups
+    for (int i = 0; i < 4; i++) {
+        lookup_assumes(RANGE_CHECKER_ID, [va[i], vc[i]]);
+        lookup_assumes(RANGE_CHECKER_ID, [x[i], y[i]]);
+    }
+
+    // We should prove:
+    //  · va' === (va + vb + x) mod 2³²
+    //  · vd' === (vd ^ va') >>> 16
+    //
+    // Note that the ROTR 16 is a byte-aligned rotation.
+    col witness bits(2) carry1[4];
+    col witness bits(8) va_prime[4];
+    col witness bits(8) vd_prime[4];
+    for (int i = 0; i < 4; i++) {
+        const expr cin = (i == 0) ? 0 : carry1[i-1];
+        const expr cout = carry1[i];
+        lookup_assumes(BLAKE3_TABLE1_ID, [vd[i], va[i] + vb[i] + x[i], cin, va_prime[i], vd_prime[(i + 2) % 4], cout]);
+    }
+
+    // ROTR 12
+    // x    in[x]         out[x]           out[x][0..3]
+    // ----------------------------------------------------
+    // 0    0x11      0x01_10_00_00     0x01 0x10 XXXX XXXX
+    // 1    0x22      0x20_00_00_02     0x20 XXXX XXXX 0x02
+    // 2    0x33      0x00_00_03_30     XXXX XXXX 0x03 0x30
+    // 3    0x44      0x00_04_40_00     XXXX 0x04 0x40 XXXX
+    // ----------------------------------------------------
+    // Result:        0x21_14_43_32     0x21 0x14 0x43 0x32
+
+    // We should prove:
+    //      · vc' === (vc + vd') mod 2³²
+    //      · vb' === (vb ^ vc') >>> 12
+    col witness bits(1) carry2[4];
+    col witness bits(8) vc_prime[4];
+    col witness bits(8) vb_prime_s[4][2];
+    for (int i = 0; i < 4; i++) {
+        const expr cin = (i == 0) ? 0 : carry2[i-1];
+        const expr cout = carry2[i];
+        lookup_assumes(BLAKE3_TABLE2_ID, [i, vb[i], vc[i] + vd_prime[i], cin, vc_prime[i], vb_prime_s[i][0], vb_prime_s[i][1], cout]);
+    }
+    const expr vb_prime[4];
+    vb_prime[0] = vb_prime_s[0][0] + vb_prime_s[1][0];
+    vb_prime[1] = vb_prime_s[0][1] + vb_prime_s[3][0];
+    vb_prime[2] = vb_prime_s[2][0] + vb_prime_s[3][1];
+    vb_prime[3] = vb_prime_s[1][1] + vb_prime_s[2][1];
+
+    // We should prove:
+    //      · va'' === (va' + vb' + y) mod 2³²
+    //      · vd'' === (vd' ^ va'') >>> 8
+    col witness bits(2) carry3[4];
+    col witness bits(8) va_prime_prime[4];
+    col witness bits(8) vd_prime_prime[4];
+    for (int i = 0; i < 4; i++) {
+        const expr cin = (i == 0) ? 0 : carry3[i-1];
+        const expr cout = carry3[i];
+        lookup_assumes(BLAKE3_TABLE1_ID, [vd_prime[i], va_prime[i] + vb_prime[i] + y[i], cin, va_prime_prime[i], vd_prime_prime[(i + 1) % 4], cout]);
+    }
+
+    // ROTR 7
+    // x    in[x]         out[x]           out[x][0..3]
+    // ----------------------------------------------------
+    // 0    0x88      0x10_00_00_01     0x10 XXXX XXXX 0x01
+    // 1    0x99      0x00_00_01_32     XXXX XXXX 0x01 0x32
+    // 2    0xAA      0x00_01_54_00     XXXX 0x01 0x54 XXXX
+    // 3    0xBB      0x01_76_00_00     0x01 0x76 XXXX XXXX
+    // ----------------------------------------------------
+    // Result:        0x11_77_55_33     0x11 0x77 0x55 0x33
+
+    // We should prove:
+    //      · vc'' === (vc' + vd'') mod 2³²
+    //      · vb'' === (vb' ^ vc'') >>> 7
+    col witness bits(1) carry4[4];
+    col witness bits(8) vc_prime_prime[4];
+    col witness bits(8) vb_prime_prime_s[4][2];
+    for (int i = 0; i < 4; i++) {
+        const expr cin = (i == 0) ? 0 : carry4[i-1];
+        const expr cout = carry4[i];
+        lookup_assumes(BLAKE3_TABLE2_ID, [i, vb_prime[i], vc_prime[i] + vd_prime_prime[i], cin, vc_prime_prime[i], vb_prime_prime_s[i][0], vb_prime_prime_s[i][1], cout]);
+    }
+    const expr vb_prime_prime[4];
+    vb_prime_prime[0] = vb_prime_prime_s[0][0] + vb_prime_prime_s[1][0];
+    vb_prime_prime[1] = vb_prime_prime_s[0][1] + vb_prime_prime_s[3][0];
+    vb_prime_prime[2] = vb_prime_prime_s[2][0] + vb_prime_prime_s[3][1];
+    vb_prime_prime[3] = vb_prime_prime_s[1][1] + vb_prime_prime_s[2][1];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // COLUMN-TO-DIAGONAL TRANSITION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
+    const expr va_pack = pack_bytes(va);
+    const expr vb_pack = pack_bytes(vb);
+    const expr vc_pack = pack_bytes(vc);
+    const expr vd_pack = pack_bytes(vd);
+
+    const expr va_pp_pack = pack_bytes(va_prime_prime);
+    const expr vb_pp_pack = pack_bytes(vb_prime_prime);
+    const expr vc_pp_pack = pack_bytes(vc_prime_prime);
+    const expr vd_pp_pack = pack_bytes(vd_prime_prime);
+    
+    CLK[4] * (va_pack - (4)'va_pp_pack) +
+    CLK[5] * (va_pack - (4)'va_pp_pack) +
+    CLK[6] * (va_pack - (4)'va_pp_pack) +
+    CLK[7] * (va_pack - (4)'va_pp_pack) === 0;
+
+    CLK[4] * (vb_pack - (3)'vb_pp_pack) +
+    CLK[5] * (vb_pack - (3)'vb_pp_pack) +
+    CLK[6] * (vb_pack - (3)'vb_pp_pack) +
+    CLK[7] * (vb_pack - (7)'vb_pp_pack) === 0;
+
+    CLK[4] * (vc_pack - (2)'vc_pp_pack) +
+    CLK[5] * (vc_pack - (2)'vc_pp_pack) +
+    CLK[6] * (vc_pack - (6)'vc_pp_pack) +
+    CLK[7] * (vc_pack - (6)'vc_pp_pack) === 0;
+
+    CLK[4] * (vd_pack - (1)'vd_pp_pack) +
+    CLK[5] * (vd_pack - (5)'vd_pp_pack) +
+    CLK[6] * (vd_pack - (5)'vd_pp_pack) +
+    CLK[7] * (vd_pack - (5)'vd_pp_pack) === 0;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ROUND-BY-ROUND TRANSITION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    CLK[0] * (va_pack - (4)'va_pp_pack) +
+    CLK[1] * (va_pack - (4)'va_pp_pack) +
+    CLK[2] * (va_pack - (4)'va_pp_pack) +
+    CLK[3] * (va_pack - (4)'va_pp_pack) === 0;
+
+    CLK[0] * (vb_pack - (1)'vb_pp_pack) +
+    CLK[1] * (vb_pack - (5)'vb_pp_pack) +
+    CLK[2] * (vb_pack - (5)'vb_pp_pack) +
+    CLK[3] * (vb_pack - (5)'vb_pp_pack) === 0;
+
+    CLK[0] * (vc_pack - (2)'vc_pp_pack) +
+    CLK[1] * (vc_pack - (2)'vc_pp_pack) +
+    CLK[2] * (vc_pack - (6)'vc_pp_pack) +
+    CLK[3] * (vc_pack - (6)'vc_pp_pack) === 0;
+
+    CLK[0] * (vd_pack - (3)'vd_pp_pack) +
+    CLK[1] * (vd_pack - (3)'vd_pp_pack) +
+    CLK[2] * (vd_pack - (7)'vd_pp_pack) +
+    CLK[3] * (vd_pack - (7)'vd_pp_pack) === 0;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MESSAGE PERMUTATION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const expr x_packed = pack_bytes(x);
+    const expr y_packed = pack_bytes(y);
+
+    #pragma extern_fixed_file "examples/hashes/src/blake3_connection_fixed.bin"
+    col fixed CONN[2];
+
+    connection(BLAKE3_CONNECTION_ID, [x_packed, y_packed], [CONN[0], CONN[1]]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+    const int RANGE_CHECKER_SIZE = P2_8;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range (8 bits)
+    col fixed RANGE1 = [0..MASK_8]...;
+
+    // Range (8 bits)
+    col fixed RANGE2 = [0:P2_8..MASK_8:P2_8]...;
+
+    col witness mul_range;
+    lookup_proves(RANGE_CHECKER_ID, [RANGE1, RANGE2], mul_range);
+
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 OPERATION TABLE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int TABLE1_SIZE = P2_20;
+    if (N < TABLE1_SIZE) {
+        error(`N must be at least ${TABLE1_SIZE}, but N=${N} was provided`);
+    }
+
+    // Inputs A (8 bits)
+    col fixed A1 = [0..MASK_8]...;
+
+    // Input B (10 bits)
+    col fixed B1 = [0:P2_8..MASK_10:P2_8]...;
+
+    // Input carry (2 bits)
+    col fixed CIN1 = [0:P2_18..MASK_2:P2_18]...;
+
+    // Output C1 (8 bits)
+    col fixed C_SUM1;
+    col fixed C_XOR1;
+
+    // Output carry (2 bits)
+    col fixed COUT1;
+
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        const int [a, b, cin] = [A1[i], B1[i], CIN1[i]];
+
+        const int sum = b + cin;
+        const int c_sum = sum & MASK_8;
+        const int cout = (sum >> 8) & MASK_2;
+
+        const int c_xor = a ^ c_sum;
+
+        C_SUM1[i] = c_sum;
+        C_XOR1[i] = c_xor;
+        COUT1[i] = cout;
+        log(`T[${i}] = [${a}, ${b}, ${cin}, ${c_sum}, ${c_xor}, ${cout}]`);
+    }
+
+    col witness mul1;
+    lookup_proves(BLAKE3_TABLE1_ID, [A1, B1, CIN1, C_SUM1, C_XOR1, COUT1], mul1);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 OPERATION TABLE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int TABLE2_SIZE = P2_21;
+    if (N < TABLE2_SIZE) {
+        error(`N must be at least ${TABLE2_SIZE}, but N=${N} was provided`);
+    }
+
+    // Inputs A (8 bits)
+    col fixed A2 = [0..MASK_8]...;
+
+    // Input B (9 bits)
+    col fixed B2 = [0:P2_8..MASK_9:P2_8]...;
+
+    // Input carry (1 bit)
+    col fixed CIN2 = [0:P2_17..MASK_1:P2_17]...;
+
+    // Offset (2 bits)
+    col fixed OFFSET2 = [0:P2_18..MASK_2:P2_18]...;
+
+    // Rotation (1 bit)
+    col fixed ROTATION2 = [12:P2_20, 7:P2_20]...;
+
+    // Output C2 (8 bits)
+    col fixed C_SUM2;
+    col fixed C_ROT2[2];
+
+    // Output carry (2 bits)
+    col fixed COUT2;
+
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        const int [rot, offset, a, b, cin] = [ROTATION2[i], OFFSET2[i], A2[i], B2[i], CIN2[i]];
+
+        // Compute the xor and the relevant bytes
+        const int sum = b + cin;
+        const int c_sum = sum & MASK_8;
+        const int cout = (sum >> 8) & MASK_2;
+
+        // Position the byte correctly and compute the rotation
+        const int byte = a ^ c_sum;
+        const int byte_pos = byte << (8 * offset);
+        const int c = ((byte_pos >> rot) | (byte_pos << (32 - rot))) & MASK_32;
+
+        const int s   = ((8 * offset - rot) % 32 + 32) % 32;  // normalized bit shift
+        const int L   = (s / 8) % 4;
+        const int Lp1 = (L + 1) % 4;
+
+        const int c_rot0 = (c >> (8 * L))     & MASK_8;
+        const int c_rot1 = (c >> (8 * (L+1))) & MASK_8;
+
+        C_SUM2[i] = c_sum;
+        C_ROT2[0][i] = c_rot0;
+        C_ROT2[1][i] = c_rot1;
+        COUT2[i] = cout;
+        log(`T[${i}] = [${offset}, ${a}, ${b}, ${cin}, ${c_sum}, ${c_rot0}, ${c_rot1}, ${cout}]`);
+    }
+
+    col witness mul2;
+    lookup_proves(BLAKE3_TABLE2_ID, [OFFSET2, A2, B2, CIN2, C_SUM2, C_ROT2[0], C_ROT2[1], COUT2], mul2);
+
+    // // ═══════════════════════════════════════════════════════════════════════════
+    // // SIGMA PERMUTATION
+    // // ═══════════════════════════════════════════════════════════════════════════
+    // const int BLAKE3_PERMUTATION_ID = 1;
+
+    // // Message index
+    // col fixed MSG_IDX = [0, 1, 0, 2, 3, 0, 4, 5, 0, 6, 7, 0,
+    //                      8, 9, 0, 10, 11, 0, 12, 13, 0, 14, 15, 0]...;
+
+    // // SIGMA index
+    // expr sigma_idx = 0;
+    // for (int round = 0; round < ROUNDS; round++) {
+    //     const int round_base = round * CLOCKS_PER_G * NUM_G_FUNCTIONS;
+    //     int pos = 0;
+    //     for (int g = 0; g < NUM_G_FUNCTIONS; g++) {
+    //         const int g_base = round_base + g * CLOCKS_PER_G;
+    //         // Row 0 of G: first message word (x)
+    //         sigma_idx += CLK[g_base] * SIGMA[round][pos];
+    //         pos++;
+
+    //         // Row 1 of G: second message word (y)
+    //         sigma_idx += CLK[g_base + 1] * SIGMA[round][pos];
+    //         pos++;
+
+    //         // Row 2: output row, no message word needed (skipped by perm_active)
+    //     }
+    // }
+
+    // // Permutation: map message index -> permuted message
+    // const expr perm_active = clock_set(start: 0, end: CLOCKS - NUM_G_FUNCTIONS * ROUNDS, step: 2, skip: 1);
+
+    // permutation_assumes(opid: BLAKE3_PERMUTATION_ID, expressions: [MSG_IDX, m], sel: perm_active);
+    // permutation_proves(opid: BLAKE3_PERMUTATION_ID, expressions: [sigma_idx, ms], sel: perm_active);
+
+    // // ═══════════════════════════════════════════════════════════════════════════
+    // // G-FUNCTION STATE VARIABLES
+    // // ═══════════════════════════════════════════════════════════════════════════
+
+    // // G-function active selector (every 3 rows, skipping output rows)
+    // col witness bits(1) g_active;
+    // const expr g_active_expr = clock_set(in_use, start: 0, end: CLOCKS / CLOCKS_PER_G, step: 1, skip: 2);
+    // g_active <== g_active_expr;
+
+    // Given a,b,c,d ∈ [0, 2³²), it checks a == (b + c + d) mod 2³². It assumes that p > 2·2³²
+    function add3_check(const expr a, const expr b, const expr c, const expr d) {
+        // a == (b + c + d) mod 2³² iff a - b - c - d ∈ {0, -2³², -2·2³²} (over the integers)
+        // Since p > 2·2³², all values in the set {0, -2³², -2·2³²} are distinct mod p,
+        // so we can check that a - b - c - d = 0, -2³², -2·2³² (mod p)
+        const expr sum = a - b - c - d;
+        air.g_active * (sum * (sum + P2_32) * (sum + 2*P2_32)) === 0;
+    }
+
+    // Given a,b,c ∈ [0, 2³²), it checks a == (b + c) mod 2³². It assumes that p > 2³²
+    function add2_check(const expr a, const expr b, const expr c) {
+        // a == (b + c) mod 2³² iff a - b - c ∈ {0, -2³²} (over the integers)
+        // Since p > 2³², all values in the set {0, -2³²} are distinct mod p,
+        // so we can check that a - b - c = 0, -2³² (mod p)
+        const expr sum = a - b - c;
+        air.g_active * (sum * (sum + P2_32)) === 0;
+    }
+}
