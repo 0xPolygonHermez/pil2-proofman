@@ -21,6 +21,7 @@ fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
 proofman-util = { workspace = true }
 stark-recurser = { path = "../stark-recurser" }
+exps-codegen = { path = "../exps-codegen" }
 pilout = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }

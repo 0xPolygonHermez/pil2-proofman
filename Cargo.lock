@@ -1417,6 +1417,7 @@ version = "1.0.0-beta"
 dependencies = [
  "anyhow",
  "clap",
+ "exps-codegen",
  "fields",
  "indexmap",
  "mpi",
