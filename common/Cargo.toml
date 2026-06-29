@@ -10,8 +10,8 @@ categories = { workspace = true }
 build = "build.rs"
 
 [dependencies]
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-util = { path = "../util" }
+proofman-starks-lib-c = { workspace = true }
+proofman-util = { workspace = true }
 
 libloading.workspace = true
 serde.workspace = true

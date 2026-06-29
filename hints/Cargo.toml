@@ -9,9 +9,9 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-common = { path = "../common" }
-proofman-fields = { path = "../fields" }
+proofman-starks-lib-c = { workspace = true }
+proofman-common = { workspace = true }
+proofman-fields = { workspace = true }
 itoa.workspace = true
 
 tracing.workspace = true

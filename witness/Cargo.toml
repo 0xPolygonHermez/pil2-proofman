@@ -9,7 +9,7 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-common = { path = "../common" }
+proofman-common = { workspace = true }
 
 proofman-fields.workspace = true
 libloading.workspace = true

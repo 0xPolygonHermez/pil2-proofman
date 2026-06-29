@@ -9,12 +9,12 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-common = { path = "../common" }
-proofman-macros = { path = "../macros" }
-proofman-hints = { path = "../hints" }
-proofman-util = { path = "../util" }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-verifier = { path = "../verifier", features = ["parallel"] }
+proofman-common = { workspace = true }
+proofman-macros = { workspace = true }
+proofman-hints = { workspace = true }
+proofman-util = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
+proofman-verifier = { workspace = true, features = ["parallel"] }
 pil-std-lib = { workspace = true }
 
 tracing.workspace = true

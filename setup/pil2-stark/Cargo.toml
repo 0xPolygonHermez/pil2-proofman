@@ -17,10 +17,10 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
-proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
+proofman-starks-lib-c = { workspace = true }
 proofman-fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
-stark-recurser = { path = "../stark-recurser" }
+stark-recurser = { workspace = true }
 pilout = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }

@@ -9,9 +9,9 @@ categories.workspace = true
 publish = false
 
 [dependencies]
-proofman-macros = { path = "../macros" }
+proofman-macros = { workspace = true }
 rayon = { workspace = true }
-proofman-common = { path = "../common" }
+proofman-common = { workspace = true }
 proofman-fields = { workspace = true }
 
 
