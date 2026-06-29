@@ -104,8 +104,7 @@ airtemplate Blake3(const int N = 2**21) {
     // Argument identifiers
     const int RANGE_CHECKER_ID = 250;
     const int BLAKE3_CONNECTION_ID = 500;
-    const int BLAKE3_TABLE1_ID = 1000;
-    const int BLAKE3_TABLE2_ID = 2000;
+    const int BLAKE3_TABLE_ID = 1000;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CLOCK SELECTORS
@@ -139,11 +138,17 @@ airtemplate Blake3(const int N = 2**21) {
     col witness bits(8) x[4];
     col witness bits(8) y[4];
 
+    // Packed expressions: x_pack = x[0] + 2⁸·x[1] + 2¹⁶·x[2] + 2²⁴·x[3]
+    const expr va_pack = pack_bytes(va);
+    const expr vb_pack = pack_bytes(vb);
+    const expr vc_pack = pack_bytes(vc);
+    const expr vd_pack = pack_bytes(vd);
+
     // Range check va,vc,x and y
     // vb and vd are range-checked in the upcoming lookups
     for (int i = 0; i < 4; i++) {
-        lookup_assumes(RANGE_CHECKER_ID, [va[i], vc[i]]);
-        lookup_assumes(RANGE_CHECKER_ID, [x[i], y[i]]);
+        range_check_dual(va[i], vc[i]);
+        range_check_dual(x[i], y[i]);
     }
 
     // We should prove:
@@ -151,13 +156,14 @@ airtemplate Blake3(const int N = 2**21) {
     //  · vd' === (vd ^ va') >>> 16
     //
     // Note that the ROTR 16 is a byte-aligned rotation.
-    col witness bits(2) carry1[4];
     col witness bits(8) va_prime[4];
+    const expr va_prime_packed = pack_bytes(va_prime);
+    const expr x_packed = pack_bytes(x);
+    add3_check(va_pack, vb_pack, x_packed, va_prime_packed);
+
     col witness bits(8) vd_prime[4];
     for (int i = 0; i < 4; i++) {
-        const expr cin = (i == 0) ? 0 : carry1[i-1];
-        const expr cout = carry1[i];
-        lookup_assumes(BLAKE3_TABLE1_ID, [vd[i], va[i] + vb[i] + x[i], cin, va_prime[i], vd_prime[(i + 2) % 4], cout]);
+        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 16, c0: vd_prime[(i + 3) % 4], c1: vd_prime[(i + 2) % 4]);
     }
 
     // ROTR 12
@@ -173,13 +179,15 @@ airtemplate Blake3(const int N = 2**21) {
     // We should prove:
     //      · vc' === (vc + vd') mod 2³²
     //      · vb' === (vb ^ vc') >>> 12
-    col witness bits(1) carry2[4];
     col witness bits(8) vc_prime[4];
+    const expr vc_prime_packed = pack_bytes(vc_prime);
+    const expr vc_packed = pack_bytes(vc);
+    const expr vd_prime_packed = pack_bytes(vd_prime);
+    add2_check(vc_packed, vd_prime_packed, vc_prime_packed);
+
     col witness bits(8) vb_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
-        const expr cin = (i == 0) ? 0 : carry2[i-1];
-        const expr cout = carry2[i];
-        lookup_assumes(BLAKE3_TABLE2_ID, [i, vb[i], vc[i] + vd_prime[i], cin, vc_prime[i], vb_prime_s[i][0], vb_prime_s[i][1], cout]);
+        xor_rotr_check(offset: i, a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
     }
     const expr vb_prime[4];
     vb_prime[0] = vb_prime_s[0][0] + vb_prime_s[1][0];
@@ -190,13 +198,15 @@ airtemplate Blake3(const int N = 2**21) {
     // We should prove:
     //      · va'' === (va' + vb' + y) mod 2³²
     //      · vd'' === (vd' ^ va'') >>> 8
-    col witness bits(2) carry3[4];
     col witness bits(8) va_prime_prime[4];
+    const expr va_prime_prime_packed = pack_bytes(va_prime_prime);
+    const expr vb_prime_packed = pack_bytes(vb_prime);
+    const expr y_packed = pack_bytes(y);
+    add3_check(va_prime_packed, vb_prime_packed, y_packed, va_prime_prime_packed);
+
     col witness bits(8) vd_prime_prime[4];
     for (int i = 0; i < 4; i++) {
-        const expr cin = (i == 0) ? 0 : carry3[i-1];
-        const expr cout = carry3[i];
-        lookup_assumes(BLAKE3_TABLE1_ID, [vd_prime[i], va_prime[i] + vb_prime[i] + y[i], cin, va_prime_prime[i], vd_prime_prime[(i + 1) % 4], cout]);
+        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 2) % 4], c1: 0);
     }
 
     // ROTR 7
@@ -212,13 +222,14 @@ airtemplate Blake3(const int N = 2**21) {
     // We should prove:
     //      · vc'' === (vc' + vd'') mod 2³²
     //      · vb'' === (vb' ^ vc'') >>> 7
-    col witness bits(1) carry4[4];
     col witness bits(8) vc_prime_prime[4];
+    const expr vc_prime_prime_packed = pack_bytes(vc_prime_prime);
+    const expr vd_prime_prime_packed = pack_bytes(vd_prime_prime);
+    add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
+
     col witness bits(8) vb_prime_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
-        const expr cin = (i == 0) ? 0 : carry4[i-1];
-        const expr cout = carry4[i];
-        lookup_assumes(BLAKE3_TABLE2_ID, [i, vb_prime[i], vc_prime[i] + vd_prime_prime[i], cin, vc_prime_prime[i], vb_prime_prime_s[i][0], vb_prime_prime_s[i][1], cout]);
+        xor_rotr_check(offset: i, a: vb_prime[i], b: vc_prime_prime[i], rot: 7, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
     }
     const expr vb_prime_prime[4];
     vb_prime_prime[0] = vb_prime_prime_s[0][0] + vb_prime_prime_s[1][0];
@@ -231,66 +242,54 @@ airtemplate Blake3(const int N = 2**21) {
     // ═══════════════════════════════════════════════════════════════════════════
 
     // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
-    const expr va_pack = pack_bytes(va);
-    const expr vb_pack = pack_bytes(vb);
-    const expr vc_pack = pack_bytes(vc);
-    const expr vd_pack = pack_bytes(vd);
-
     const expr va_pp_pack = pack_bytes(va_prime_prime);
     const expr vb_pp_pack = pack_bytes(vb_prime_prime);
     const expr vc_pp_pack = pack_bytes(vc_prime_prime);
     const expr vd_pp_pack = pack_bytes(vd_prime_prime);
+
+    const expr dia1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
+    const expr dia2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
+    const expr dia3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
+    const expr dia4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
+    const expr dia12_clocks = dia1_clocks + dia2_clocks;
+    const expr dia34_clocks = dia3_clocks + dia4_clocks;
+    const expr dia123_clocks = dia12_clocks + dia3_clocks;
+    const expr dia234_clocks = dia2_clocks + dia34_clocks;
+    const expr dia_clocks = dia12_clocks + dia34_clocks;
     
-    CLK[4] * (va_pack - (4)'va_pp_pack) +
-    CLK[5] * (va_pack - (4)'va_pp_pack) +
-    CLK[6] * (va_pack - (4)'va_pp_pack) +
-    CLK[7] * (va_pack - (4)'va_pp_pack) === 0;
+    dia_clocks * (va_pack - (4)'va_pp_pack) === 0;
 
-    CLK[4] * (vb_pack - (3)'vb_pp_pack) +
-    CLK[5] * (vb_pack - (3)'vb_pp_pack) +
-    CLK[6] * (vb_pack - (3)'vb_pp_pack) +
-    CLK[7] * (vb_pack - (7)'vb_pp_pack) === 0;
+    dia123_clocks * (vb_pack - (3)'vb_pp_pack) + dia4_clocks * (vb_pack - (7)'vb_pp_pack) === 0;
 
-    CLK[4] * (vc_pack - (2)'vc_pp_pack) +
-    CLK[5] * (vc_pack - (2)'vc_pp_pack) +
-    CLK[6] * (vc_pack - (6)'vc_pp_pack) +
-    CLK[7] * (vc_pack - (6)'vc_pp_pack) === 0;
+    dia12_clocks * (vc_pack - (2)'vc_pp_pack) + dia34_clocks * (vc_pack - (6)'vc_pp_pack) === 0;
 
-    CLK[4] * (vd_pack - (1)'vd_pp_pack) +
-    CLK[5] * (vd_pack - (5)'vd_pp_pack) +
-    CLK[6] * (vd_pack - (5)'vd_pp_pack) +
-    CLK[7] * (vd_pack - (5)'vd_pp_pack) === 0;
+    dia1_clocks * (vd_pack - (1)'vd_pp_pack) + dia234_clocks * (vd_pack - (5)'vd_pp_pack) === 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ROUND-BY-ROUND TRANSITION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    CLK[0] * (va_pack - (4)'va_pp_pack) +
-    CLK[1] * (va_pack - (4)'va_pp_pack) +
-    CLK[2] * (va_pack - (4)'va_pp_pack) +
-    CLK[3] * (va_pack - (4)'va_pp_pack) === 0;
+    const expr rbr1_clocks = clock_set(start: 8, end: 8 + ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr2_clocks = clock_set(start: 9, end: 9 + ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr3_clocks = clock_set(start: 10, end: 10 + ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr4_clocks = clock_set(start: 11, end: 11 + ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr12_clocks = rbr1_clocks + rbr2_clocks;
+    const expr rbr34_clocks = rbr3_clocks + rbr4_clocks;
+    const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;
+    const expr rbr234_clocks = rbr2_clocks + rbr3_clocks + rbr4_clocks;
+    const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
 
-    CLK[0] * (vb_pack - (1)'vb_pp_pack) +
-    CLK[1] * (vb_pack - (5)'vb_pp_pack) +
-    CLK[2] * (vb_pack - (5)'vb_pp_pack) +
-    CLK[3] * (vb_pack - (5)'vb_pp_pack) === 0;
+    rbr_clocks * (va_pack - (4)'va_pp_pack) === 0;
 
-    CLK[0] * (vc_pack - (2)'vc_pp_pack) +
-    CLK[1] * (vc_pack - (2)'vc_pp_pack) +
-    CLK[2] * (vc_pack - (6)'vc_pp_pack) +
-    CLK[3] * (vc_pack - (6)'vc_pp_pack) === 0;
+    rbr1_clocks * (vb_pack - (1)'vb_pp_pack) + rbr234_clocks * (vb_pack - (5)'vb_pp_pack) === 0;
 
-    CLK[0] * (vd_pack - (3)'vd_pp_pack) +
-    CLK[1] * (vd_pack - (3)'vd_pp_pack) +
-    CLK[2] * (vd_pack - (7)'vd_pp_pack) +
-    CLK[3] * (vd_pack - (7)'vd_pp_pack) === 0;
+    rbr12_clocks * (vc_pack - (2)'vc_pp_pack) + rbr34_clocks * (vc_pack - (6)'vc_pp_pack) === 0;
+
+    rbr123_clocks * (vd_pack - (3)'vd_pp_pack) + rbr4_clocks * (vd_pack - (7)'vd_pp_pack) === 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MESSAGE PERMUTATION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
-
-    const expr x_packed = pack_bytes(x);
-    const expr y_packed = pack_bytes(y);
 
     #pragma extern_fixed_file "examples/hashes/src/blake3_connection_fixed.bin"
     col fixed CONN[2];
@@ -314,93 +313,40 @@ airtemplate Blake3(const int N = 2**21) {
     col witness mul_range;
     lookup_proves(RANGE_CHECKER_ID, [RANGE1, RANGE2], mul_range);
 
+    function range_check_dual(const expr a, const expr b) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a, b]);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE3 OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const int TABLE1_SIZE = P2_20;
-    if (N < TABLE1_SIZE) {
-        error(`N must be at least ${TABLE1_SIZE}, but N=${N} was provided`);
+    const int TABLE_SIZE = P2_19 + P2_18;
+    if (N < TABLE_SIZE) {
+        error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
     }
 
     // Inputs A (8 bits)
-    col fixed A1 = [0..MASK_8]...;
+    col fixed A = [0..MASK_8]...;
 
-    // Input B (10 bits)
-    col fixed B1 = [0:P2_8..MASK_10:P2_8]...;
-
-    // Input carry (2 bits)
-    col fixed CIN1 = [0:P2_18..MASK_2:P2_18]...;
-
-    // Output C1 (8 bits)
-    col fixed C_SUM1;
-    col fixed C_XOR1;
-
-    // Output carry (2 bits)
-    col fixed COUT1;
-
-    #pragma transpile
-    for (int i = 0; i < N; i++) {
-        const int [a, b, cin] = [A1[i], B1[i], CIN1[i]];
-
-        const int sum = b + cin;
-        const int c_sum = sum & MASK_8;
-        const int cout = (sum >> 8) & MASK_2;
-
-        const int c_xor = a ^ c_sum;
-
-        C_SUM1[i] = c_sum;
-        C_XOR1[i] = c_xor;
-        COUT1[i] = cout;
-        log(`T[${i}] = [${a}, ${b}, ${cin}, ${c_sum}, ${c_xor}, ${cout}]`);
-    }
-
-    col witness mul1;
-    lookup_proves(BLAKE3_TABLE1_ID, [A1, B1, CIN1, C_SUM1, C_XOR1, COUT1], mul1);
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // BLAKE3 OPERATION TABLE
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const int TABLE2_SIZE = P2_21;
-    if (N < TABLE2_SIZE) {
-        error(`N must be at least ${TABLE2_SIZE}, but N=${N} was provided`);
-    }
-
-    // Inputs A (8 bits)
-    col fixed A2 = [0..MASK_8]...;
-
-    // Input B (9 bits)
-    col fixed B2 = [0:P2_8..MASK_9:P2_8]...;
-
-    // Input carry (1 bit)
-    col fixed CIN2 = [0:P2_17..MASK_1:P2_17]...;
+    // Input B (8 bits)
+    col fixed B = [0:P2_8..MASK_8:P2_8]...;
 
     // Offset (2 bits)
-    col fixed OFFSET2 = [0:P2_18..MASK_2:P2_18]...;
+    col fixed OFFSET = [0:P2_16..MASK_2:P2_16]...;
 
-    // Rotation (1 bit)
-    col fixed ROTATION2 = [12:P2_20, 7:P2_20]...;
+    // Rotation (1,5 bits)
+    col fixed ROTATION = [0:P2_18, 12:P2_18, 7:P2_18]...;
 
     // Output C2 (8 bits)
-    col fixed C_SUM2;
-    col fixed C_ROT2[2];
-
-    // Output carry (2 bits)
-    col fixed COUT2;
+    col fixed C_ROT[2];
 
     #pragma transpile
     for (int i = 0; i < N; i++) {
-        const int [rot, offset, a, b, cin] = [ROTATION2[i], OFFSET2[i], A2[i], B2[i], CIN2[i]];
-
-        // Compute the xor and the relevant bytes
-        const int sum = b + cin;
-        const int c_sum = sum & MASK_8;
-        const int cout = (sum >> 8) & MASK_2;
+        const int [rot, offset, a, b] = [ROTATION[i], OFFSET[i], A[i], B[i]];
 
         // Position the byte correctly and compute the rotation
-        const int byte = a ^ c_sum;
+        const int byte = a ^ b;
         const int byte_pos = byte << (8 * offset);
         const int c = ((byte_pos >> rot) | (byte_pos << (32 - rot))) & MASK_32;
 
@@ -411,74 +357,36 @@ airtemplate Blake3(const int N = 2**21) {
         const int c_rot0 = (c >> (8 * L))     & MASK_8;
         const int c_rot1 = (c >> (8 * (L+1))) & MASK_8;
 
-        C_SUM2[i] = c_sum;
-        C_ROT2[0][i] = c_rot0;
-        C_ROT2[1][i] = c_rot1;
-        COUT2[i] = cout;
-        log(`T[${i}] = [${offset}, ${a}, ${b}, ${cin}, ${c_sum}, ${c_rot0}, ${c_rot1}, ${cout}]`);
+        C_ROT[0][i] = c_rot0;
+        C_ROT[1][i] = c_rot1;
+
+        log(`T[${i}] = [${offset}, ${a}, ${b}, ${rot}, ${c_rot0}, ${c_rot1}]`);
     }
 
-    col witness mul2;
-    lookup_proves(BLAKE3_TABLE2_ID, [OFFSET2, A2, B2, CIN2, C_SUM2, C_ROT2[0], C_ROT2[1], COUT2], mul2);
+    col witness mul_table;
+    lookup_proves(BLAKE3_TABLE_ID, [OFFSET, A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
 
-    // // ═══════════════════════════════════════════════════════════════════════════
-    // // SIGMA PERMUTATION
-    // // ═══════════════════════════════════════════════════════════════════════════
-    // const int BLAKE3_PERMUTATION_ID = 1;
-
-    // // Message index
-    // col fixed MSG_IDX = [0, 1, 0, 2, 3, 0, 4, 5, 0, 6, 7, 0,
-    //                      8, 9, 0, 10, 11, 0, 12, 13, 0, 14, 15, 0]...;
-
-    // // SIGMA index
-    // expr sigma_idx = 0;
-    // for (int round = 0; round < ROUNDS; round++) {
-    //     const int round_base = round * CLOCKS_PER_G * NUM_G_FUNCTIONS;
-    //     int pos = 0;
-    //     for (int g = 0; g < NUM_G_FUNCTIONS; g++) {
-    //         const int g_base = round_base + g * CLOCKS_PER_G;
-    //         // Row 0 of G: first message word (x)
-    //         sigma_idx += CLK[g_base] * SIGMA[round][pos];
-    //         pos++;
-
-    //         // Row 1 of G: second message word (y)
-    //         sigma_idx += CLK[g_base + 1] * SIGMA[round][pos];
-    //         pos++;
-
-    //         // Row 2: output row, no message word needed (skipped by perm_active)
-    //     }
-    // }
-
-    // // Permutation: map message index -> permuted message
-    // const expr perm_active = clock_set(start: 0, end: CLOCKS - NUM_G_FUNCTIONS * ROUNDS, step: 2, skip: 1);
-
-    // permutation_assumes(opid: BLAKE3_PERMUTATION_ID, expressions: [MSG_IDX, m], sel: perm_active);
-    // permutation_proves(opid: BLAKE3_PERMUTATION_ID, expressions: [sigma_idx, ms], sel: perm_active);
-
-    // // ═══════════════════════════════════════════════════════════════════════════
-    // // G-FUNCTION STATE VARIABLES
-    // // ═══════════════════════════════════════════════════════════════════════════
-
-    // // G-function active selector (every 3 rows, skipping output rows)
-    // col witness bits(1) g_active;
-    // const expr g_active_expr = clock_set(in_use, start: 0, end: CLOCKS / CLOCKS_PER_G, step: 1, skip: 2);
-    // g_active <== g_active_expr;
-
-    // Given a,b,c,d ∈ [0, 2³²), it checks a == (b + c + d) mod 2³². It assumes that p > 2·2³²
-    function add3_check(const expr a, const expr b, const expr c, const expr d) {
-        // a == (b + c + d) mod 2³² iff a - b - c - d ∈ {0, -2³², -2·2³²} (over the integers)
-        // Since p > 2·2³², all values in the set {0, -2³², -2·2³²} are distinct mod p,
-        // so we can check that a - b - c - d = 0, -2³², -2·2³² (mod p)
-        const expr sum = a - b - c - d;
-        air.g_active * (sum * (sum + P2_32) * (sum + 2*P2_32)) === 0;
+    function xor_rotr_check(const int offset, const expr a, const expr b, const int rot, const expr c0, const expr c1) {
+        lookup_assumes(air.BLAKE3_TABLE_ID, [offset, a, b, rot, c0, c1]);
     }
 
-    // Given a,b,c ∈ [0, 2³²), it checks a == (b + c) mod 2³². It assumes that p > 2³²
-    function add2_check(const expr a, const expr b, const expr c) {
-        // a == (b + c) mod 2³² iff a - b - c ∈ {0, -2³²} (over the integers)
+    // Given a,b,c,active it checks c == (a + b) mod 2³² when active == 1
+    // Assumes that a,b,c ∈ [0, 2³²), active ∈ {0,1} and that p > 2³²
+    function add2_check(const expr a, const expr b, const expr c, const expr active = 1) {
+        // c == (a + b) mod 2³² iff c - a - b ∈ {0, -2³²} (over the integers)
         // Since p > 2³², all values in the set {0, -2³²} are distinct mod p,
-        // so we can check that a - b - c = 0, -2³² (mod p)
-        const expr sum = a - b - c;
-        air.g_active * (sum * (sum + P2_32)) === 0;
+        // so we can check that c - a - b = 0, -2³² (mod p)
+        const expr sum = c - a - b;
+        active * (sum * (sum + P2_32)) === 0;
+    }
+
+    // Given a,b,c,d,active, it checks d == (a + b + c) mod 2³² when active == 1
+    // Assumes that a,b,c,d ∈ [0, 2³²), active ∈ {0,1} and that p > 2·2³²
+    function add3_check(const expr a, const expr b, const expr c, const expr d, const expr active = 1) {
+        // d == (a + b + c) mod 2³² iff d - a - b - c ∈ {0, -2³², -2·2³²} (over the integers)
+        // Since p > 2·2³², all values in the set {0, -2³², -2·2³²} are distinct mod p,
+        // so we can check that d - a - b - c = 0, -2³², -2·2³² (mod p)
+        const expr sum = d - a - b - c;
+        active * (sum * (sum + P2_32) * (sum + 2*P2_32)) === 0;
     }
 }
