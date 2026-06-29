@@ -13,7 +13,8 @@
 #include <cstdlib>
 #include <cstdio>
 
-// Must match the launcher signature emitted by gen_exps.py (extern "C" exps_launch).
+// Must match the launcher signature emitted by the codegen
+// (extern "C" exps_launch in setup/exps-codegen/src/emit.rs).
 typedef void (*ExpsKernelFn)(StepsParams*, gl64_t*, gl64_t*, uint64_t, uint64_t,
                              uint64_t, uint64_t, uint64_t, uint64_t, cudaStream_t);
 // One AIR's resolved expression kernel:

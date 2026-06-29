@@ -3,6 +3,7 @@ use std::process::exit;
 use clap::{Parser, Subcommand};
 mod commands;
 use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
+use commands::gen_exps::GenExpsCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
@@ -46,6 +47,7 @@ pub enum Commands {
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
     GenWitness(GenWitnessCmd),
+    GenExps(GenExpsCmd),
 }
 
 fn main() {
@@ -77,6 +79,7 @@ fn main() {
             Commands::Stats(args) => args.run(),
             Commands::Execute(args) => args.run(),
             Commands::GenWitness(args) => args.run(),
+            Commands::GenExps(args) => args.run(),
         })
         .expect("failed to spawn main thread")
         .join()
