@@ -31,6 +31,22 @@ __device__ __forceinline__ g3 cg_sub31(g3 x, gl64_t s){ g3 r; r.a=x.a-s; r.b=x.b
 __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.b; r.c=-y.c; return r; }
 "#;
 
+/// The C++ `Layout` enum value a committed section of `n_cols` columns is stored
+/// in, mirroring `resolveLayout(nBits, nCols)` in goldilocks_trace_layout.cuh.
+/// Keyed on the SMALL-domain nBits (not extended), exactly as the built-in
+/// expression evaluator does (expressions_gpu.cu: `nBits = 63 - clz(N)`).
+fn cm_layout(n_bits: u64, n_cols: u64) -> &'static str {
+    if n_bits <= 17 && n_cols > 500 {
+        "Layout::ColMajorTiled"
+    } else {
+        "Layout::ColMajor"
+    }
+}
+
+/// Storage layout of the fixed (const) section: always ColMajorTiled, matching
+/// `fixedLayout()` and the const-tree build.
+const CONST_LAYOUT: &str = "Layout::ColMajorTiled";
+
 fn rowexpr(stride: i64) -> String {
     if stride == 0 {
         "row".to_string()
@@ -59,16 +75,24 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
             }
         }
         Operand::Const { id, stride } => {
-            vec![format!("  gl64_t {name} = cst[OFF({},{id},NExt,{})];", rowexpr(*stride), ir.n_constants)]
+            // const sections are stored fixedLayout() (ColMajorTiled), like the const-tree build.
+            vec![format!(
+                "  gl64_t {name} = cst[OFF({},{id},NExt,{},{CONST_LAYOUT})];",
+                rowexpr(*stride),
+                ir.n_constants
+            )]
         }
         Operand::Cm { stage, pos, dim, stride } => {
             let row = rowexpr(*stride);
             let n_cols = ir.ncols[stage];
+            // committed section layout = resolveLayout(small nBits, sectionNCols), matching the
+            // commit/LDE writer and the built-in evaluator (expressions_gpu.cu).
+            let lyt = cm_layout(ir.n_bits, n_cols);
             if *dim == 1 {
-                vec![format!("  gl64_t {name} = aux[off_cm{stage} + OFF({row},{pos},NExt,{n_cols})];")]
+                vec![format!("  gl64_t {name} = aux[off_cm{stage} + OFF({row},{pos},NExt,{n_cols},{lyt})];")]
             } else {
                 vec![format!(
-                    "  g3 {name}; {name}.a=aux[off_cm{stage}+OFF({row},{pos},NExt,{n_cols})]; {name}.b=aux[off_cm{stage}+OFF({row},{},NExt,{n_cols})]; {name}.c=aux[off_cm{stage}+OFF({row},{},NExt,{n_cols})];",
+                    "  g3 {name}; {name}.a=aux[off_cm{stage}+OFF({row},{pos},NExt,{n_cols},{lyt})]; {name}.b=aux[off_cm{stage}+OFF({row},{},NExt,{n_cols},{lyt})]; {name}.c=aux[off_cm{stage}+OFF({row},{},NExt,{n_cols},{lyt})];",
                     pos + 1,
                     pos + 2
                 )]
@@ -124,10 +148,12 @@ fn emit_op(instr: &Instr, ir: &Ir, declared: &HashSet<u64>) -> (Vec<String>, boo
 
 /// The final write of `qq` into the q buffer (out_dim 3 vs base-field padded to 3).
 fn store_qq(out_dim: u64) -> &'static str {
+    // q (the cmQ output) has 3 cols, so resolveLayout(nBits,3) is always ColMajor
+    // (nCols <= 500) — matches how the cmQ commit/Merkle reads it back.
     if out_dim == 3 {
-        "    q[OFF(row,0,NExt,3)]=qq.a; q[OFF(row,1,NExt,3)]=qq.b; q[OFF(row,2,NExt,3)]=qq.c;"
+        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajor)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajor)]=qq.c;"
     } else {
-        "    q[OFF(row,0,NExt,3)]=qq; q[OFF(row,1,NExt,3)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3)]=gl64_t(uint64_t(0));"
+        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
     }
 }
 
@@ -147,7 +173,7 @@ fn single_kernel_tu(sym: &str, kernel: &str, launcher_body: &str, n_slots: u64) 
     format!(
         r#"// AUTO-GENERATED Q kernel for {sym} (single kernel, no scratch)
 #include "gen_common.cuh"
-#define OFF(r,c,nr,nc) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc))
+#define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
 {kernel}
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
@@ -177,7 +203,7 @@ fn chunk_tu(sym: &str, lo: usize, hi: usize, kernels: &[String]) -> String {
     format!(
         r#"// AUTO-GENERATED Q chunk kernels {lo}..{} for {sym}
 #include "gen_common.cuh"
-#define OFF(r,c,nr,nc) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc))
+#define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
 {}
 #undef OFF
 "#,
