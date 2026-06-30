@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "db446d94b3f76c68c67875d800e4d128c5556ab8b4b725907c6827e35561f901";
+pub const PILOUT_HASH: &str = "6d1adcf68ddae8575280961d219b971a91d6fadd10fbdfeb26a615e728f48554";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -32,15 +32,15 @@ pub const BLAKE_3_AIR_IDS: &[usize] = &[1];
 
   
 trace_row!(Blake2bFixedRow<F> {
- CLK_0: F, RANGE1: F, RANGE2: F, A: F, B: F, OFFSET: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
+ CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
 });
-pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 1048576, 0, 0>;
+pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 131072, 0, 0>;
 
 trace_row!(Blake2bTraceRow<F> {
- va:[u8; 8], vb:[u8; 8], vc:[u8; 8], vd:[u8; 8], x:[u8; 8], y:[u8; 8], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_prime_prime_s:[[u8; 2]; 8], mul_range:u64, mul_table:u64,
+ va:[u16; 4], vb:[u8; 8], vc:[u16; 4], vd:[u8; 8], x:[u16; 4], y:[u16; 4], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_prime_prime_s:[[u8; 2]; 8], mul_range:u64, mul_table:u64,
 });
 
-pub type Blake2bTrace<R> = GenericTrace<R, 1048576, 0, 0>;
+pub type Blake2bTrace<R> = GenericTrace<R, 131072, 0, 0>;
 
 trace_row!(Blake3FixedRow<F> {
  CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
@@ -65,7 +65,7 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     (0, 0, PackedInfoConst {
         is_packed: true,
         num_packed_words: 17,
-        unpack_info: &[8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 64, 64],
+        unpack_info: &[16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 16, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 64, 64],
     }),
     (0, 1, PackedInfoConst {
         is_packed: true,

@@ -1,6 +1,5 @@
 require "std_constants.pil"
 require "std_lookup.pil"
-require "std_connection.pil"
 
 require "common.pil"
 
@@ -147,8 +146,7 @@ airtemplate Blake3(const int N = 2**20) {
     col witness bits(16) x[2];
     col witness bits(16) y[2];
 
-    // Range check va,vc,x,y
-    // vb and vd are range-checked in the upcoming lookups
+    // Range-check the limbs of va, vc, x, y (vb, vd are range-checked by the XOR table)
     for (int i = 0; i < 2; i++) {
         range_check_16(va[i]);
         range_check_16(vc[i]);
@@ -333,6 +331,7 @@ airtemplate Blake3(const int N = 2**20) {
     // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE3 RANGE CHECKER
     // ═══════════════════════════════════════════════════════════════════════════
+
     const int RANGE_CHECKER_SIZE = P2_16;
     if (N < RANGE_CHECKER_SIZE) {
         error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);

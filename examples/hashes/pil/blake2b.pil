@@ -1,6 +1,5 @@
 require "std_constants.pil"
 require "std_lookup.pil"
-require "std_connection.pil"
 
 require "common.pil"
 
@@ -118,7 +117,7 @@ airtemplate Blake2b(const int N = 2**20) {
 
     // Argument identifiers
     const int RANGE_CHECKER_ID = 251;
-    const int BLAKE2B_CONNECTION_ID = 501;
+    const int BLAKE2B_MSG_ID = 501;
     const int BLAKE2B_TABLE_ID = 1001;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -142,62 +141,63 @@ airtemplate Blake2b(const int N = 2**20) {
     // G-FUNCTION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    col witness bits(8) va[8];
+    col witness bits(16) va[4];
     col witness bits(8) vb[8];
-    col witness bits(8) vc[8];
+    col witness bits(16) vc[4];
     col witness bits(8) vd[8];
-    col witness bits(8) x[8];
-    col witness bits(8) y[8];
+    col witness bits(16) x[4];
+    col witness bits(16) y[4];
+
+    // Range-check the limbs of va, vc, x, y (vb, vd are range-checked by the XOR table)
+    for (int i = 0; i < 4; i++) {
+        range_check_16(va[i]);
+        range_check_16(vc[i]);
+        range_check_16(x[i]);
+        range_check_16(y[i]);
+    }
 
     // Each 64-bit operand as two 32-bit limbs [lo, hi]
-    const expr va_pack[2] = pack_u64(va);
-    const expr vb_pack[2] = pack_u64(vb);
-    const expr vc_pack[2] = pack_u64(vc);
-    const expr vd_pack[2] = pack_u64(vd);
+    const expr va_packed[2] = pack_u64_limbs16(va);
+    const expr vb_packed[2] = pack_u64(vb);
+    const expr vc_packed[2] = pack_u64_limbs16(vc);
+    const expr vd_packed[2] = pack_u64(vd);
 
-    // Range check va,vc,x and y
-    // vb and vd are range-checked in the upcoming lookups
-    for (int i = 0; i < 8; i++) {
-        range_check_dual(va[i], vc[i]);
-        range_check_dual(x[i], y[i]);
-    }
+    const expr x_packed[2] = pack_u64_limbs16(x);
+    const expr y_packed[2] = pack_u64_limbs16(y);
 
     // va' === (va + vb + x) mod 2⁶⁴
     col witness bits(8) va_prime[8];
     const expr va_prime_packed[2] = pack_u64(va_prime);
-    const expr x_packed[2] = pack_u64(x);
-    add3_check(va_pack, vb_pack, x_packed, va_prime_packed);
+    add3_check(va_packed, vb_packed, x_packed, va_prime_packed);
 
     // vd' === (vd ^ va') >>> 32 (Note that ROTR 32 is a byte-aligned rotation)
     col witness bits(8) vd_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 4) % 8], c1: 0);
+        xor_rotr_check(a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 4) % 8], c1: 0);
     }
 
     // vc' === (vc + vd') mod 2⁶⁴
     col witness bits(8) vc_prime[8];
     const expr vc_prime_packed[2] = pack_u64(vc_prime);
-    const expr vc_packed[2] = pack_u64(vc);
     const expr vd_prime_packed[2] = pack_u64(vd_prime);
     add2_check(vc_packed, vd_prime_packed, vc_prime_packed);
 
     // vb' === (vb ^ vc') >>> 24 (Note that ROTR 24 is a byte-aligned rotation)
     col witness bits(8) vb_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(offset: 0, a: vb[i], b: vc_prime[i], rot: 0, c0: vb_prime[(i + 5) % 8], c1: 0);
+        xor_rotr_check(a: vb[i], b: vc_prime[i], rot: 0, c0: vb_prime[(i + 5) % 8], c1: 0);
     }
 
     // va'' === (va' + vb' + y) mod 2⁶⁴
     col witness bits(8) va_prime_prime[8];
     const expr va_prime_prime_packed[2] = pack_u64(va_prime_prime);
     const expr vb_prime_packed[2] = pack_u64(vb_prime);
-    const expr y_packed[2] = pack_u64(y);
     add3_check(va_prime_packed, vb_prime_packed, y_packed, va_prime_prime_packed);
 
     // vd'' === (vd' ^ va'') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
     col witness bits(8) vd_prime_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 6) % 8], c1: 0);
+        xor_rotr_check(a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 6) % 8], c1: 0);
     }
 
     // vc'' === (vc' + vd'') mod 2⁶⁴
@@ -209,14 +209,11 @@ airtemplate Blake2b(const int N = 2**20) {
     // vb'' === (vb' ^ vc'') >>> 63
     col witness bits(8) vb_prime_prime_s[8][2];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(offset: i, a: vb_prime[i], b: vc_prime_prime[i], rot: 63, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
+        xor_rotr_check(a: vb_prime[i], b: vc_prime_prime[i], rot: 63, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
     }
 
     /*
-        ROTR 63 (= ROTL 1) over 64 bits. Each byte i keeps its low 7 bits in limb i
-        (shifted up by 1 -> c0) and spills its top bit into limb (i+1)%8 (-> c1).
-        So output limb k = c0 of byte k  +  c1 (spill) of byte (k-1)%8.
-
+        ROTR 63 = ROTL 1
         i    in[i]    c0 (limb i)    c1 (limb (i+1)%8)
         ------------------------------------------------
         0    0x88       0x10              0x01
@@ -241,10 +238,10 @@ airtemplate Blake2b(const int N = 2**20) {
     // ═══════════════════════════════════════════════════════════════════════════
 
     // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
-    const expr va_pp_pack[2] = pack_u64(va_prime_prime);
-    const expr vb_pp_pack[2] = pack_u64(vb_prime_prime);
-    const expr vc_pp_pack[2] = pack_u64(vc_prime_prime);
-    const expr vd_pp_pack[2] = pack_u64(vd_prime_prime);
+    const expr va_pp_packed[2] = pack_u64(va_prime_prime);
+    const expr vb_pp_packed[2] = pack_u64(vb_prime_prime);
+    const expr vc_pp_packed[2] = pack_u64(vc_prime_prime);
+    const expr vd_pp_packed[2] = pack_u64(vd_prime_prime);
 
     const expr dia1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
     const expr dia2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
@@ -257,13 +254,13 @@ airtemplate Blake2b(const int N = 2**20) {
     const expr dia_clocks = dia12_clocks + dia34_clocks;
     
     for (int j = 0; j < 2; j++) {
-        dia_clocks * (va_pack[j] - (4)'va_pp_pack[j]) === 0;
+        dia_clocks * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
 
-        dia123_clocks * (vb_pack[j] - (3)'vb_pp_pack[j]) + dia4_clocks * (vb_pack[j] - (7)'vb_pp_pack[j]) === 0;
+        dia123_clocks * (vb_packed[j] - (3)'vb_pp_packed[j]) + dia4_clocks * (vb_packed[j] - (7)'vb_pp_packed[j]) === 0;
 
-        dia12_clocks * (vc_pack[j] - (2)'vc_pp_pack[j]) + dia34_clocks * (vc_pack[j] - (6)'vc_pp_pack[j]) === 0;
+        dia12_clocks * (vc_packed[j] - (2)'vc_pp_packed[j]) + dia34_clocks * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
 
-        dia1_clocks * (vd_pack[j] - (1)'vd_pp_pack[j]) + dia234_clocks * (vd_pack[j] - (5)'vd_pp_pack[j]) === 0;
+        dia1_clocks * (vd_packed[j] - (1)'vd_pp_packed[j]) + dia234_clocks * (vd_packed[j] - (5)'vd_pp_packed[j]) === 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -281,52 +278,73 @@ airtemplate Blake2b(const int N = 2**20) {
     const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
 
     for (int j = 0; j < 2; j++) {
-        rbr_clocks * (va_pack[j] - (4)'va_pp_pack[j]) === 0;
+        rbr_clocks * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
 
-        rbr1_clocks * (vb_pack[j] - (1)'vb_pp_pack[j]) + rbr234_clocks * (vb_pack[j] - (5)'vb_pp_pack[j]) === 0;
+        rbr1_clocks * (vb_packed[j] - (1)'vb_pp_packed[j]) + rbr234_clocks * (vb_packed[j] - (5)'vb_pp_packed[j]) === 0;
 
-        rbr12_clocks * (vc_pack[j] - (2)'vc_pp_pack[j]) + rbr34_clocks * (vc_pack[j] - (6)'vc_pp_pack[j]) === 0;
+        rbr12_clocks * (vc_packed[j] - (2)'vc_pp_packed[j]) + rbr34_clocks * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
 
-        rbr123_clocks * (vd_pack[j] - (3)'vd_pp_pack[j]) + rbr4_clocks * (vd_pack[j] - (7)'vd_pp_pack[j]) === 0;
+        rbr123_clocks * (vd_packed[j] - (3)'vd_pp_packed[j]) + rbr4_clocks * (vd_packed[j] - (7)'vd_pp_packed[j]) === 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MESSAGE PERMUTATION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // TODO(step 5): connect the message words across rounds. Now that x_packed/y_packed are
-    // two 32-bit limbs each, the connection needs 4 columns [x_lo, x_hi, y_lo, y_hi] -> CONN[4],
-    // fed by a BLAKE2b-specific connection bin (SIGMA, 8 rounds, N=2²⁰). Deferred for now.
-    // #pragma extern_fixed_file "examples/hashes/src/blake2b_connection_fixed.bin"
-    // col fixed CONN[4];
-    // connection(BLAKE2B_CONNECTION_ID, [x_packed, y_packed], [CONN[0], CONN[1], CONN[2], CONN[3]]);
+    col fixed BLOCK_ID;
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        BLOCK_ID[i] = i / CLOCKS;
+    }
+
+    expr msg_idx_x = 0;
+    expr msg_idx_y = 0;
+    for (int p = 0; p < CLOCKS; p++) {
+        const int r = (p / CLOCKS_PER_ROUND);
+        const int g = (p % CLOCKS_PER_ROUND);
+
+        msg_idx_x += CLK[p] * SIGMA[r][2 * g];
+        msg_idx_y += CLK[p] * SIGMA[r][2 * g + 1];
+    }
+
+    // unique key per (invocation, word): 16 indices per block, no collisions
+    const expr key_x = msg_idx_x + 16 * BLOCK_ID;
+    const expr key_y = msg_idx_y + 16 * BLOCK_ID;
+
+    // Selectors for round 0 and rounds 1..7
+    const expr round0_sel   = clock_set(start: 0, end: CLOCKS_PER_ROUND);
+    const expr rounds17_sel = clock_set(start: CLOCKS_PER_ROUND, end: CLOCKS);
+
+    // Round 0 writes the message; rounds 1..7 read it
+    lookup_proves(BLAKE2B_MSG_ID, [key_x, x_packed[0], x_packed[1]], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_proves(BLAKE2B_MSG_ID, [key_y, y_packed[0], y_packed[1]], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_assumes(BLAKE2B_MSG_ID, [key_x, x_packed[0], x_packed[1]], sel: rounds17_sel, sel_is_binary: 1);
+    lookup_assumes(BLAKE2B_MSG_ID, [key_y, y_packed[0], y_packed[1]], sel: rounds17_sel, sel_is_binary: 1);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE2B RANGE CHECKER
     // ═══════════════════════════════════════════════════════════════════════════
-    const int RANGE_CHECKER_SIZE = P2_8;
+
+    const int RANGE_CHECKER_SIZE = P2_16;
     if (N < RANGE_CHECKER_SIZE) {
         error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
     }
 
-    // Range (8 bits)
-    col fixed RANGE1 = [0..MASK_8]...;
-
-    // Range (8 bits)
-    col fixed RANGE2 = [0:P2_8..MASK_8:P2_8]...;
+    // Range (16 bits)
+    col fixed RANGE = [0..MASK_16]...;
 
     col witness mul_range;
-    lookup_proves(RANGE_CHECKER_ID, [RANGE1, RANGE2], mul_range);
+    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
 
-    function range_check_dual(const expr a, const expr b) {
-        lookup_assumes(air.RANGE_CHECKER_ID, [a, b]);
+    function range_check_16(const expr a) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE2B OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const int TABLE_SIZE = P2_20;
+    const int TABLE_SIZE = P2_17;
     if (N < TABLE_SIZE) {
         error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
     }
@@ -337,25 +355,21 @@ airtemplate Blake2b(const int N = 2**20) {
     // Input B (8 bits)
     col fixed B = [0:P2_8..MASK_8:P2_8]...;
 
-    // Offset (3 bits)
-    col fixed OFFSET = [0:P2_16..MASK_3:P2_16]...;
-
     // Rotation (1 bit)
-    col fixed ROTATION = [0:P2_19, 63:P2_19]...;
+    col fixed ROTATION = [0:P2_16, 63:P2_16]...;
 
     // Output C2 (8 bits)
     col fixed C_ROT[2];
 
     #pragma transpile
     for (int i = 0; i < N; i++) {
-        const int [rot, offset, a, b] = [ROTATION[i], OFFSET[i], A[i], B[i]];
+        const int [rot, a, b] = [ROTATION[i], A[i], B[i]];
 
-        // Position the byte correctly and compute the rotation
+        // ROTR the XOR byte
         const int byte = a ^ b;
-        const int byte_pos = byte << (8 * offset);
-        const int c = ((byte_pos >> rot) | (byte_pos << ((64 - rot) % 64))) & MASK_64;
+        const int c = ((byte >> rot) | (byte << ((64 - rot) % 64))) & MASK_64;
 
-        const int s   = ((8 * offset - rot) % 64 + 64) % 64;  // normalized bit shift
+        const int s   = (64 - rot) % 64;  // normalized bit shift
         const int l   = (s / 8) % 8;
         const int lp1 = (l + 1) % 8;
 
@@ -364,15 +378,13 @@ airtemplate Blake2b(const int N = 2**20) {
 
         C_ROT[0][i] = c_rot0;
         C_ROT[1][i] = c_rot1;
-
-        log(`T[${i}] = [${offset}, ${a}, ${b}, ${rot}, ${c_rot0}, ${c_rot1}]`);
     }
 
     col witness mul_table;
-    lookup_proves(BLAKE2B_TABLE_ID, [OFFSET, A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
+    lookup_proves(BLAKE2B_TABLE_ID, [A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
 
-    function xor_rotr_check(const int offset, const expr a, const expr b, const int rot, const expr c0, const expr c1) {
-        lookup_assumes(air.BLAKE2B_TABLE_ID, [offset, a, b, rot, c0, c1]);
+    function xor_rotr_check(const expr a, const expr b, const int rot, const expr c0, const expr c1) {
+        lookup_assumes(air.BLAKE2B_TABLE_ID, [a, b, rot, c0, c1]);
     }
 
     // Pack a 64-bit word into two 32-bit limbs [lo, hi]
@@ -380,6 +392,15 @@ airtemplate Blake2b(const int N = 2**20) {
         assert(length(w) == 8);
         const expr lo = pack_bytes([w[0], w[1], w[2], w[3]]);
         const expr hi = pack_bytes([w[4], w[5], w[6], w[7]]);
+        const expr result[2] = [lo, hi];
+        return result;
+    }
+
+    // Pack a 64-bit word given as 4 16-bit limbs into two 32-bit limbs [lo, hi]
+    function pack_u64_limbs16(const expr w[]): const expr[] {
+        assert(length(w) == 4);
+        const expr lo = pack([w[0], w[1]], 16);
+        const expr hi = pack([w[2], w[3]], 16);
         const expr result[2] = [lo, hi];
         return result;
     }
