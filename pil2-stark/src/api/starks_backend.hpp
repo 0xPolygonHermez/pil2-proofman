@@ -35,6 +35,13 @@ struct StarksBackend {
     void *(*gen_recursive_proof_final)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
     void (*calculate_const_tree_fixed)(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
 
+    // Host-memory pinning for direct H2D (GPU backend pins; CPU backend no-ops)
+    uint32_t (*register_host_memory)(void *ptr, uint64_t size);
+    void (*unregister_host_memory)(void *ptr);
+    // Wait for a stream's async commit (incl. the now-unsynced trace H2D) to
+    // finish, so the shared trace buffer can be reused. GPU backend only.
+    void (*wait_stream_commit_done)(void *d_buffers, uint64_t stream_id);
+
     // Device management
     void *(*gen_device_buffers)(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
     void (*use_packed_trace)(void *d_buffers, bool packed);

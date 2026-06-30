@@ -29,6 +29,9 @@ void gen_final_snark_proof_cpu(void *snark_prover, void *circomWitnessFinal, uin
 // ============================================================================
 
 #ifdef __USE_CUDA__
+uint32_t register_host_memory_gpu(void *ptr, uint64_t size);
+void unregister_host_memory_gpu(void *ptr);
+void wait_stream_commit_done_gpu(void *d_buffers, uint64_t stream_id);
 void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity);
 void tile_const_pols_gpu(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
 void prepare_blocks_gpu(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
@@ -96,6 +99,9 @@ StarksBackend cpu_backend = []() {
     backend.gen_recursive_proof = gen_recursive_proof_cpu;
     backend.gen_recursive_proof_final = gen_recursive_proof_final_cpu;
     backend.calculate_const_tree_fixed = nullptr;
+    backend.register_host_memory = nullptr;               // CPU: no GPU to pin for
+    backend.unregister_host_memory = nullptr;
+    backend.wait_stream_commit_done = nullptr;            // CPU: no async stream to wait on
     backend.gen_device_buffers = gen_device_buffers_cpu;
     backend.use_packed_trace = use_packed_trace_cpu;
     backend.free_device_buffers = free_device_buffers_cpu;
@@ -144,6 +150,9 @@ StarksBackend gpu_backend = []() {
     backend.gen_recursive_proof = gen_recursive_proof_gpu;
     backend.gen_recursive_proof_final = gen_recursive_proof_final_gpu;
     backend.calculate_const_tree_fixed = calculate_const_tree_fixed_gpu;
+    backend.register_host_memory = register_host_memory_gpu;
+    backend.unregister_host_memory = unregister_host_memory_gpu;
+    backend.wait_stream_commit_done = wait_stream_commit_done_gpu;
     backend.gen_device_buffers = gen_device_buffers_gpu;
     backend.use_packed_trace = use_packed_trace_gpu;
     backend.free_device_buffers = free_device_buffers_gpu;
@@ -291,6 +300,21 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
 void use_packed_trace(void *d_buffers, bool packed) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->use_packed_trace) backend->use_packed_trace(d_buffers, packed);
+}
+
+uint32_t register_host_memory(void *ptr, uint64_t size) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->register_host_memory ? backend->register_host_memory(ptr, size) : 0;
+}
+
+void unregister_host_memory(void *ptr) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->unregister_host_memory) backend->unregister_host_memory(ptr);
+}
+
+void wait_stream_commit_done(void *d_buffers, uint64_t stream_id) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->wait_stream_commit_done) backend->wait_stream_commit_done(d_buffers, stream_id);
 }
 
 void free_device_buffers(void *d_buffers) {

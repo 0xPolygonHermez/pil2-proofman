@@ -175,6 +175,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     d_transcript->reset(stream);
     if (recursive) {
         d_transcript->put(air_instance_info->verkeyRoot, HASH_SIZE, stream);
@@ -191,17 +192,18 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             }
         }
     } else {
-       d_transcript->put(d_challenge, FIELD_EXTENSION, stream); 
+       d_transcript->put(d_challenge, FIELD_EXTENSION, stream);
     }
-    
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
+
     if (!skipRecalculation) {
         uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
         if (d_buffers->packedTrace && air_instance_info->is_packed) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
-            unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer); 
+            unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer);
         } else {
             fromRowMajorToTiled(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetCm1Extended, (gl64_t*)h_params.trace, stream);
-        } 
+        }
     }
     TimerStopGPU(timer, STARK_STEP_0);
     
@@ -215,11 +217,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
 
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
@@ -233,6 +237,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
 
     uint64_t a = 0;
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); i++) {
         if(setupCtx.starkInfo.airValuesMap[i].stage == 1) a++;
         if(setupCtx.starkInfo.airValuesMap[i].stage == 2) {
@@ -240,14 +245,17 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             a += 3;
         }
     }
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
     TimerStartGPU(timer, STARK_STEP_Q);
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
@@ -265,6 +273,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, STARK_STEP_EVALS);
     
     uint64_t xiChallengeIndex = 0;
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
@@ -272,6 +281,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
 
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
@@ -290,6 +300,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
     }
     
+    TimerStartCategoryGPU(timer, TRANSCRIPT);
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript->put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
     } else {
@@ -304,12 +315,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
+    TimerStopCategoryGPU(timer, TRANSCRIPT);
     TimerStopGPU(timer, STARK_STEP_EVALS);
     //--------------------------------
     // 6. Compute FRI
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
-    calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
+    calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);

@@ -163,6 +163,9 @@ impl ProofOptions {
 #[derive(Clone)]
 pub struct ProofmanOptions {
     pub max_number_streams: usize,
+    /// Upper bound on per-GPU recursive (aggregation) streams. The actual count is
+    /// also memory-bounded; this caps it. Defaults to 10 (the prior hardcoded cap).
+    pub max_number_recursive_streams: usize,
     pub number_threads_pools_witness: usize,
     pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
@@ -178,6 +181,7 @@ impl Default for ProofmanOptions {
     fn default() -> Self {
         Self {
             max_number_streams: 20,
+            max_number_recursive_streams: 10,
             number_threads_pools_witness: 4,
             max_witness_stored: 10,
             are_threads_per_witness_set: false,
@@ -198,6 +202,10 @@ impl ProofmanOptions {
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
         self.max_number_streams = max_number_streams;
+    }
+
+    pub fn with_max_number_recursive_streams(&mut self, max_number_recursive_streams: usize) {
+        self.max_number_recursive_streams = max_number_recursive_streams;
     }
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
@@ -903,6 +911,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         gpu: bool,
         max_number_streams_gpu: usize,
+        max_number_recursive_streams_gpu: usize,
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
@@ -983,7 +992,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < 10 {
+            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < max_number_recursive_streams_gpu {
                 gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;

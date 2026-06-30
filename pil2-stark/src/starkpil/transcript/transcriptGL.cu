@@ -178,7 +178,9 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
     uint64_t totalBits = n * nBits;
 
     uint64_t NFields = (totalBits + 62) / 63;
-    Goldilocks::Element* fields = new Goldilocks::Element[NFields];
+
+    constexpr uint64_t MAX_FIELDS = 1024;
+    Goldilocks::Element fields[MAX_FIELDS];
 
     for (uint64_t i = 0; i < NFields; i++)
     {
@@ -205,7 +207,6 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
         }
         res[i] = a;
     }
-    delete[] fields;
 }
 
 
