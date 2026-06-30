@@ -7,7 +7,7 @@ require "common.pil"
 // Precompile in charge of performing the Blake3 permutation
 // For reference: https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html or https://github.com/BLAKE3-team/BLAKE3
 
-airtemplate Blake3(const int N = 2**21) {
+airtemplate Blake3(const int N = 2**20) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        BLAKE3 ROUND FUNCTION SPECIFICATION
@@ -63,9 +63,9 @@ airtemplate Blake3(const int N = 2**21) {
     */
 
     const int CLOCKS_PER_G = 1;
-    const int NUM_G_FUNCTIONS = 8;
+    const int NUM_G_PER_ROUND = 8;
     const int ROUNDS = 7;
-    const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_FUNCTIONS;
+    const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_PER_ROUND;
     const int CLOCKS = CLOCKS_PER_ROUND * ROUNDS;
 
     // Calculate usable capacity
@@ -151,91 +151,89 @@ airtemplate Blake3(const int N = 2**21) {
         range_check_dual(x[i], y[i]);
     }
 
-    // We should prove:
-    //  · va' === (va + vb + x) mod 2³²
-    //  · vd' === (vd ^ va') >>> 16
-    //
-    // Note that the ROTR 16 is a byte-aligned rotation.
+    // va' === (va + vb + x) mod 2³²
     col witness bits(8) va_prime[4];
     const expr va_prime_packed = pack_bytes(va_prime);
     const expr x_packed = pack_bytes(x);
     add3_check(va_pack, vb_pack, x_packed, va_prime_packed);
 
+    // vd' === (vd ^ va') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
     col witness bits(8) vd_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 16, c0: vd_prime[(i + 3) % 4], c1: vd_prime[(i + 2) % 4]);
+        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 2) % 4], c1: 0);
     }
 
-    // ROTR 12
-    // x    in[x]         out[x]           out[x][0..3]
-    // ----------------------------------------------------
-    // 0    0x11      0x01_10_00_00     0x01 0x10 XXXX XXXX
-    // 1    0x22      0x20_00_00_02     0x20 XXXX XXXX 0x02
-    // 2    0x33      0x00_00_03_30     XXXX XXXX 0x03 0x30
-    // 3    0x44      0x00_04_40_00     XXXX 0x04 0x40 XXXX
-    // ----------------------------------------------------
-    // Result:        0x21_14_43_32     0x21 0x14 0x43 0x32
-
-    // We should prove:
-    //      · vc' === (vc + vd') mod 2³²
-    //      · vb' === (vb ^ vc') >>> 12
+    // vc' === (vc + vd') mod 2³²
     col witness bits(8) vc_prime[4];
     const expr vc_prime_packed = pack_bytes(vc_prime);
     const expr vc_packed = pack_bytes(vc);
     const expr vd_prime_packed = pack_bytes(vd_prime);
     add2_check(vc_packed, vd_prime_packed, vc_prime_packed);
 
+    // vb' === (vb ^ vc') >>> 12
     col witness bits(8) vb_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
         xor_rotr_check(offset: i, a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
     }
-    const expr vb_prime[4];
-    vb_prime[0] = vb_prime_s[0][0] + vb_prime_s[1][0];
-    vb_prime[1] = vb_prime_s[0][1] + vb_prime_s[3][0];
-    vb_prime[2] = vb_prime_s[2][0] + vb_prime_s[3][1];
-    vb_prime[3] = vb_prime_s[1][1] + vb_prime_s[2][1];
 
-    // We should prove:
-    //      · va'' === (va' + vb' + y) mod 2³²
-    //      · vd'' === (vd' ^ va'') >>> 8
+    /*
+        ROTR 12
+        x    in[x]         out[x]           out[x][0..3]
+        ----------------------------------------------------
+        0    0x11      0x01_10_00_00     0x01 0x10 XXXX XXXX
+        1    0x22      0x20_00_00_02     0x20 XXXX XXXX 0x02
+        2    0x33      0x00_00_03_30     XXXX XXXX 0x03 0x30
+        3    0x44      0x00_04_40_00     XXXX 0x04 0x40 XXXX
+        ----------------------------------------------------
+        Result:        0x21_14_43_32     0x21 0x14 0x43 0x32
+    */
+    const expr vb_prime[4];
+    vb_prime[0] = vb_prime_s[1][1] + vb_prime_s[2][0];
+    vb_prime[1] = vb_prime_s[2][1] + vb_prime_s[3][0];
+    vb_prime[2] = vb_prime_s[0][0] + vb_prime_s[3][1];
+    vb_prime[3] = vb_prime_s[0][1] + vb_prime_s[1][0];
+
+    // va'' === (va' + vb' + y) mod 2³²
     col witness bits(8) va_prime_prime[4];
     const expr va_prime_prime_packed = pack_bytes(va_prime_prime);
     const expr vb_prime_packed = pack_bytes(vb_prime);
     const expr y_packed = pack_bytes(y);
     add3_check(va_prime_packed, vb_prime_packed, y_packed, va_prime_prime_packed);
 
+    // vd'' === (vd' ^ va'') >>> 8 (Note that ROTR 8 is a byte-aligned rotation)
     col witness bits(8) vd_prime_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 2) % 4], c1: 0);
+        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 3) % 4], c1: 0);
     }
 
-    // ROTR 7
-    // x    in[x]         out[x]           out[x][0..3]
-    // ----------------------------------------------------
-    // 0    0x88      0x10_00_00_01     0x10 XXXX XXXX 0x01
-    // 1    0x99      0x00_00_01_32     XXXX XXXX 0x01 0x32
-    // 2    0xAA      0x00_01_54_00     XXXX 0x01 0x54 XXXX
-    // 3    0xBB      0x01_76_00_00     0x01 0x76 XXXX XXXX
-    // ----------------------------------------------------
-    // Result:        0x11_77_55_33     0x11 0x77 0x55 0x33
-
-    // We should prove:
-    //      · vc'' === (vc' + vd'') mod 2³²
-    //      · vb'' === (vb' ^ vc'') >>> 7
+    // vc'' === (vc' + vd'') mod 2³²
     col witness bits(8) vc_prime_prime[4];
     const expr vc_prime_prime_packed = pack_bytes(vc_prime_prime);
     const expr vd_prime_prime_packed = pack_bytes(vd_prime_prime);
     add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
 
+    // vb'' === (vb' ^ vc'') >>> 7
     col witness bits(8) vb_prime_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
         xor_rotr_check(offset: i, a: vb_prime[i], b: vc_prime_prime[i], rot: 7, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
     }
+
+    /*
+        ROTR 7
+        x    in[x]         out[x]           out[x][0..3]
+        ----------------------------------------------------
+        0    0x88      0x10_00_00_01     0x10 XXXX XXXX 0x01
+        1    0x99      0x00_00_01_32     XXXX XXXX 0x01 0x32
+        2    0xAA      0x00_01_54_00     XXXX 0x01 0x54 XXXX
+        3    0xBB      0x01_76_00_00     0x01 0x76 XXXX XXXX
+        ----------------------------------------------------
+        Result:        0x11_77_55_33     0x11 0x77 0x55 0x33
+    */
     const expr vb_prime_prime[4];
-    vb_prime_prime[0] = vb_prime_prime_s[0][0] + vb_prime_prime_s[1][0];
-    vb_prime_prime[1] = vb_prime_prime_s[0][1] + vb_prime_prime_s[3][0];
-    vb_prime_prime[2] = vb_prime_prime_s[2][0] + vb_prime_prime_s[3][1];
-    vb_prime_prime[3] = vb_prime_prime_s[1][1] + vb_prime_prime_s[2][1];
+    vb_prime_prime[0] = vb_prime_prime_s[0][1] + vb_prime_prime_s[1][0];
+    vb_prime_prime[1] = vb_prime_prime_s[1][1] + vb_prime_prime_s[2][0];
+    vb_prime_prime[2] = vb_prime_prime_s[2][1] + vb_prime_prime_s[3][0];
+    vb_prime_prime[3] = vb_prime_prime_s[0][0] + vb_prime_prime_s[3][1];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // COLUMN-TO-DIAGONAL TRANSITION CONSTRAINTS
@@ -351,11 +349,11 @@ airtemplate Blake3(const int N = 2**21) {
         const int c = ((byte_pos >> rot) | (byte_pos << (32 - rot))) & MASK_32;
 
         const int s   = ((8 * offset - rot) % 32 + 32) % 32;  // normalized bit shift
-        const int L   = (s / 8) % 4;
-        const int Lp1 = (L + 1) % 4;
+        const int l   = (s / 8) % 4;
+        const int lp1 = (l + 1) % 4;
 
-        const int c_rot0 = (c >> (8 * L))     & MASK_8;
-        const int c_rot1 = (c >> (8 * (L+1))) & MASK_8;
+        const int c_rot0 = (c >> (8 * l))   & MASK_8;
+        const int c_rot1 = (c >> (8 * lp1)) & MASK_8;
 
         C_ROT[0][i] = c_rot0;
         C_ROT[1][i] = c_rot1;

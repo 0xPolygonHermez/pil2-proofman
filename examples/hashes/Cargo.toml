@@ -16,7 +16,9 @@ crate-type = ["dylib"]
 
 [dependencies]
 proofman-common.workspace = true
+proofman-macros.workspace = true
 proofman.workspace = true
 witness.workspace = true
 pil-std-lib.workspace = true
 fields.workspace = true
+tracing.workspace = true

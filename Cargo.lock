@@ -779,6 +779,8 @@ dependencies = [
  "pil-std-lib",
  "proofman",
  "proofman-common",
+ "proofman-macros",
+ "tracing",
  "witness",
 ]
 

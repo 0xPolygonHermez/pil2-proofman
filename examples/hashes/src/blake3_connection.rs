@@ -377,9 +377,11 @@ impl Blake3Connection {
 // ════════════════════════════════════════════════════════════════════════════════
 
 // Defaults for `build`. Adjust to match your PIL instantiation / desired output path.
-const DEFAULT_AIRGROUP: &str = "Zisk";
+const DEFAULT_AIRGROUP: &str = "Hashes";
 const DEFAULT_AIR: &str = "Blake3";
 const DEFAULT_OUT: &str = "src/blake3_connection_fixed.bin";
+
+const BITS: usize = 20;
 
 fn parse_col(s: &str) -> usize {
     match s {
@@ -396,7 +398,7 @@ fn flag<'a>(args: &'a [String], name: &str, default: &'a str) -> &'a str {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut bits = 21usize;
+    let mut bits = BITS;
     let mut rest = &args[1..];
     if rest.len() >= 2 && rest[0] == "--bits" {
         bits = rest[1].parse().expect("bad --bits value");
