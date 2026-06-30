@@ -59,7 +59,6 @@ impl Blake3Air {
                 let b2 = (b1 ^ c2).rotate_right(7);
 
                 // ── inputs ──
-                row.set_in_use(true);
                 row.set_all_va(&va.to_le_bytes());
                 row.set_all_vb(&vb.to_le_bytes());
                 row.set_all_vc(&vc.to_le_bytes());

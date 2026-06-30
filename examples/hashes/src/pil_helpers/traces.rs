@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "919523ecee72727007b4a88e8574634c84686025f6edc668957733d0afc3c425";
+pub const PILOUT_HASH: &str = "e3eb1fd2dc5206ca2504122e06213d55c17c886403febe545ac5a9d49581e864";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -26,19 +26,36 @@ pub const HASHES_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
-pub const BLAKE_3_AIR_IDS: &[usize] = &[0];
+pub const BLAKE_2_B_AIR_IDS: &[usize] = &[0];
+
+pub const BLAKE_3_AIR_IDS: &[usize] = &[1];
 
   
+trace_row!(Blake2bFixedRow<F> {
+ CLK_0: F, RANGE1: F, RANGE2: F, A: F, B: F, OFFSET: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
+});
+pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 1048576, 0, 0>;
+
+trace_row!(Blake2bTraceRow<F> {
+ va:[u8; 8], vb:[u8; 8], vc:[u8; 8], vd:[u8; 8], x:[u8; 8], y:[u8; 8], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_prime_prime_s:[[u8; 2]; 8], mul_range:u64, mul_table:u64,
+});
+
+pub type Blake2bTrace<R> = GenericTrace<R, 1048576, 0, 0>;
+
 trace_row!(Blake3FixedRow<F> {
  CLK_0: F, CONN: [F; 2], ID: F, RANGE1: F, RANGE2: F, A: F, B: F, OFFSET: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
 });
-pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 1048576, 0, 0>;
+pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 1048576, 0, 1>;
 
 trace_row!(Blake3TraceRow<F> {
- in_use:bit, va:[u8; 4], vb:[u8; 4], vc:[u8; 4], vd:[u8; 4], x:[u8; 4], y:[u8; 4], va_prime:[u8; 4], vd_prime:[u8; 4], vc_prime:[u8; 4], vb_prime_s:[[u8; 2]; 4], va_prime_prime:[u8; 4], vd_prime_prime:[u8; 4], vc_prime_prime:[u8; 4], vb_prime_prime_s:[[u8; 2]; 4], mul_range:u64, mul_table:u64,
+ va:[u8; 4], vb:[u8; 4], vc:[u8; 4], vd:[u8; 4], x:[u8; 4], y:[u8; 4], va_prime:[u8; 4], vd_prime:[u8; 4], vc_prime:[u8; 4], vb_prime_s:[[u8; 2]; 4], va_prime_prime:[u8; 4], vd_prime_prime:[u8; 4], vc_prime_prime:[u8; 4], vb_prime_prime_s:[[u8; 2]; 4], mul_range:u64, mul_table:u64,
 });
 
-pub type Blake3Trace<R> = GenericTrace<R, 1048576, 0, 0>;
+pub type Blake3Trace<R> = GenericTrace<R, 1048576, 0, 1>;
+
+values!(Blake2bAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
 
 values!(Blake3AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -47,7 +64,12 @@ values!(Blake3AirGroupValues<F> {
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     (0, 0, PackedInfoConst {
         is_packed: true,
-        num_packed_words: 11,
-        unpack_info: &[1, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 64, 64],
+        num_packed_words: 17,
+        unpack_info: &[8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 64, 64],
+    }),
+    (0, 1, PackedInfoConst {
+        is_packed: true,
+        num_packed_words: 10,
+        unpack_info: &[8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 64, 64],
     }),
 ];

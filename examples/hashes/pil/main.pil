@@ -1,8 +1,7 @@
-// require "blake2b.ts.pil"
+require "blake2b.pil"
 require "blake3.pil"
 
 airgroup Hashes {
-    // Blake2b();
-
-    Blake3();
+    Blake2b(2**20);
+    Blake3(2**20);
 }

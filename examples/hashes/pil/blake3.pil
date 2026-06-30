@@ -45,7 +45,7 @@ airtemplate Blake3(const int N = 2**20) {
                 v[b] := (v[b] ^ v[c]) >>> 7
 
        ═══════════════════════════════════════════════════════════════════════════
-       EXECUTION TRACE LAYOUT (24 clocks per round)
+       EXECUTION TRACE LAYOUT
        ═══════════════════════════════════════════════════════════════════════════
 
            ROW      va        vb          vc         vd         x          y        ROUND         STAGE      
@@ -64,9 +64,9 @@ airtemplate Blake3(const int N = 2**20) {
 
     const int CLOCKS_PER_G = 1;
     const int NUM_G_PER_ROUND = 8;
-    const int ROUNDS = 7;
+    const int NUM_ROUNDS = 7;
     const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_PER_ROUND;
-    const int CLOCKS = CLOCKS_PER_ROUND * ROUNDS;
+    const int CLOCKS = CLOCKS_PER_ROUND * NUM_ROUNDS;
 
     // Calculate usable capacity
     const int NUM_NON_USABLE_ROWS = N % CLOCKS;
@@ -118,14 +118,6 @@ airtemplate Blake3(const int N = 2**20) {
     for (int i = 0; i < CLOCKS; i++) {
         CLK[i] = (i)'CLK_0;
     }
-
-    col witness bits(1) in_use;
-
-    in_use * (1 - in_use) === 0;
-
-    // Selector latching: once activated, stays active for full cycle
-    const expr in_use_latched = clock_set(start: 1, end: CLOCKS);
-    in_use_latched * (in_use - 'in_use) === 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // G-FUNCTION CONSTRAINTS
@@ -267,10 +259,10 @@ airtemplate Blake3(const int N = 2**20) {
     // ROUND-BY-ROUND TRANSITION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const expr rbr1_clocks = clock_set(start: 8, end: 8 + ROUNDS - 1, step: 1, skip: 7);
-    const expr rbr2_clocks = clock_set(start: 9, end: 9 + ROUNDS - 1, step: 1, skip: 7);
-    const expr rbr3_clocks = clock_set(start: 10, end: 10 + ROUNDS - 1, step: 1, skip: 7);
-    const expr rbr4_clocks = clock_set(start: 11, end: 11 + ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr1_clocks = clock_set(start: 8, end: 8 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr2_clocks = clock_set(start: 9, end: 9 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr3_clocks = clock_set(start: 10, end: 10 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr4_clocks = clock_set(start: 11, end: 11 + NUM_ROUNDS - 1, step: 1, skip: 7);
     const expr rbr12_clocks = rbr1_clocks + rbr2_clocks;
     const expr rbr34_clocks = rbr3_clocks + rbr4_clocks;
     const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;

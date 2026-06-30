@@ -68,9 +68,9 @@ Cost is measured in clocks per column; lower **cost / byte** is better.
 | Hash       | Full-op cost            | Msg bytes/block | Cost / byte | Relative |  BF |
 | :--------- | :---------------------- | :-------------- | ----------: | -------: | --: |
 | Poseidon2  | 14 × 392 = 5,488        | 96 (*)          |        57.2 |     1.0× |   1 |
-| Blake3     | 56 × 121 = 6,776        | 64              |       105.9 |     1.8× |   1 |
+| Blake2b    | 56 × 206 = 11,536       | 128             |       90.1  |     1.6× |   1 |
+| Blake3     | 56 × 120 = 6,720        | 64              |       105.0 |     1.8× |   1 |
 | SHA2-256   | 72 × 122 = 8,784        | 64              |       137.3 |     2.4× |   1 |
-| Blake2b    | 12 × 24 × 209 = 60,192  | 128             |       470.3 |     8.2× |   1 |
 | Keccak-256 | 25 × 3,023 = 75,575     | 136             |       555.7 |     9.7× |   1 |
 
 (*) Poseidon2 bytes are nominal (12 Goldilocks elements × 8 bytes); a Goldilocks element holds ~63.99 bits, so the truly absorbable payload is slightly under 96 bytes.
