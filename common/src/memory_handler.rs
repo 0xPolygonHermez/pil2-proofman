@@ -16,8 +16,20 @@ fn aligned_host_range(ptr: usize, bytes: usize) -> Option<(usize, usize)> {
     if ptr == 0 || bytes == 0 {
         return None;
     }
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let page_size = if page_size > 0 { page_size as usize } else { 4096 };
+    // `libc` is only a dependency on Linux (the only target with the GPU backend
+    // whose `cudaHostRegister` this range feeds). Elsewhere host pinning is a no-op,
+    // so a plain default page size is fine.
+    #[cfg(target_os = "linux")]
+    let page_size = {
+        let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if ps > 0 {
+            ps as usize
+        } else {
+            4096
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let page_size = 4096usize;
     let base = ptr & !(page_size - 1);
     let offset = ptr - base;
     let size = (bytes + offset + page_size - 1) & !(page_size - 1);
