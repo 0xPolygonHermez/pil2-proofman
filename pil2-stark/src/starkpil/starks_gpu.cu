@@ -720,12 +720,12 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
 
         while (exponent > 0)
         {
-            if (exponent & 1)
+            if (exponent % 2 == 1)
             {
                 sinv *= base;
             }
             base *= base;
-            exponent >>= 1;
+            exponent /= 2;
         }
 
         gl64_t *ppar = (gl64_t *)d_ppar + id * ratio * FIELD_EXTENSION;
