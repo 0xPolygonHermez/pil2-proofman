@@ -5,11 +5,7 @@
 // blake3_core.hpp -- shared scalar BLAKE3 core, used by BOTH the CPU
 // (Blake3Goldilocks, g++) and GPU (Blake3GoldilocksGPU, nvcc) paths so the
 // prover and verifier are bit-identical by construction.
-//
-// All outputs are reduced to canonical Goldilocks elements (in [0, p)), so a
-// BLAKE3 digest / transcript squeeze behaves exactly like a Poseidon output
-// (a valid field element). The reduction collapses at most 2^32 of the 2^64
-// u64 values, leaving ~255-bit collision resistance for a 4-word digest.
+// All outputs are reduced to canonical Goldilocks elements (in [0, p)).
 //
 // Conventions (match the bench-validated implementation):
 //   * Inputs are whole Goldilocks u64 words, little-endian.

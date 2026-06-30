@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Blake3GoldilocksGPU -- GPU BLAKE3 (arity 2), bit-identical to the CPU path.
+// Blake3GoldilocksGPU -- GPU BLAKE3 (arity 2)
 // ---------------------------------------------------------------------------
 
 #include "blake3_goldilocks.cuh"
