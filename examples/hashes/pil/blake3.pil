@@ -3,10 +3,10 @@ require "std_lookup.pil"
 
 require "common.pil"
 
-// Precompile in charge of performing the Blake3 permutation
+// Precompile in charge of performing the BLAKE3 permutation
 // For reference: https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html or https://github.com/BLAKE3-team/BLAKE3
 
-airtemplate Blake3(const int N = 2**20) {
+airtemplate Blake3(const int N = 2**18) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        BLAKE3 ROUND FUNCTION SPECIFICATION

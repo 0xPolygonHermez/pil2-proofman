@@ -6,7 +6,7 @@ require "common.pil"
 // Precompile in charge of performing the BLAKE2b permutation
 // For reference: https://www.rfc-editor.org/rfc/rfc7693.html or https://www.blake2.net/
 
-airtemplate Blake2b(const int N = 2**20) {
+airtemplate Blake2b(const int N = 2**17) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        BLAKE2B ROUND FUNCTION SPECIFICATION
