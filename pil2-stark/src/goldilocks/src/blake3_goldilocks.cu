@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 #include "blake3_goldilocks.cuh"
-#include "goldilocks_trace_layout.cuh"   // getBufferOffset (Tiles layout)
+#include "goldilocks_trace_layout.cuh"   // getBufferOffset (layout-aware), Layout enum
 #include "poseidon2_goldilocks.hpp"      // NONCES_LAUNCH_* grinding geometry
 #include "cuda_utils.cuh"                // CHECKCUDAERR
 
@@ -14,7 +14,7 @@
 // it (single chunk for <=128 cols, else the standard BLAKE3 chunk tree).
 // ---------------------------------------------------------------------------
 __device__ __forceinline__ void b3_gather_block(const uint64_t *in, uint32_t base_col, uint32_t in_block,
-                                                 uint64_t row, uint64_t nRows, uint32_t nCols, bool tiles,
+                                                 uint64_t row, uint64_t nRows, uint32_t nCols, Layout layout,
                                                  uint32_t block[16])
 {
 #pragma unroll
@@ -24,8 +24,9 @@ __device__ __forceinline__ void b3_gather_block(const uint64_t *in, uint32_t bas
         if ((uint32_t)k < in_block)
         {
             uint32_t col = base_col + (uint32_t)k;
-            uint64_t off = tiles ? getBufferOffset(row, col, nRows, nCols)
-                                 : (row * (uint64_t)nCols + col);
+            // getBufferOffset handles RowMajor / ColMajor / ColMajorTiled per the
+            // runtime layout (resolveLayout / fixedLayout), same as the Poseidon path.
+            uint64_t off = getBufferOffset(row, col, nRows, nCols, layout);
             // Canonicalize: the LDE trace cells live in [0, 2^64); the verifier
             // re-hashes the mod-p value from the proof, so BLAKE3 must too.
             v = blake3core::to_canonical(in[off]);
@@ -37,7 +38,7 @@ __device__ __forceinline__ void b3_gather_block(const uint64_t *in, uint32_t bas
 
 __device__ __forceinline__ void b3_chunk_gathered(const uint64_t *in, uint32_t base_col, uint32_t cu,
                                                    uint64_t counter, bool root, uint64_t row, uint64_t nRows,
-                                                   uint32_t nCols, bool tiles, uint32_t cv[8])
+                                                   uint32_t nCols, Layout layout, uint32_t cv[8])
 {
 #pragma unroll
     for (int i = 0; i < 8; ++i) cv[i] = blake3core::b3_iv(i);
@@ -48,7 +49,7 @@ __device__ __forceinline__ void b3_chunk_gathered(const uint64_t *in, uint32_t b
     {
         uint32_t in_block = (rem >= 8u) ? 8u : rem;
         uint32_t block[16];
-        b3_gather_block(in, base_col + idx, in_block, row, nRows, nCols, tiles, block);
+        b3_gather_block(in, base_col + idx, in_block, row, nRows, nCols, layout, block);
         uint8_t flags = 0;
         if (b == 0)           flags |= blake3core::FLAG_CHUNK_START;
         if (b == nblocks - 1) { flags |= blake3core::FLAG_CHUNK_END; if (root) flags |= blake3core::FLAG_ROOT; }
@@ -58,13 +59,13 @@ __device__ __forceinline__ void b3_chunk_gathered(const uint64_t *in, uint32_t b
 }
 
 __device__ void b3_hash_row(const uint64_t *in, uint32_t nCols, uint64_t row, uint64_t nRows,
-                            bool tiles, uint64_t out[4])
+                            Layout layout, uint64_t out[4])
 {
     uint32_t nchunks = (nCols + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64;
     if (nchunks <= 1)
     {
         uint32_t cv[8];
-        b3_chunk_gathered(in, 0, nCols, 0ull, true, row, nRows, nCols, tiles, cv);
+        b3_chunk_gathered(in, 0, nCols, 0ull, true, row, nRows, nCols, layout, cv);
         blake3core::pack4(cv, out);
         return;
     }
@@ -75,7 +76,7 @@ __device__ void b3_hash_row(const uint64_t *in, uint32_t nCols, uint64_t row, ui
     for (uint32_t ci = 0; ci < nchunks; ++ci)
     {
         uint32_t cu = (rem >= blake3core::CHUNK_U64) ? blake3core::CHUNK_U64 : rem;
-        b3_chunk_gathered(in, base, cu, (uint64_t)ci, false, row, nRows, nCols, tiles, node);
+        b3_chunk_gathered(in, base, cu, (uint64_t)ci, false, row, nRows, nCols, layout, node);
         base += cu; rem -= cu;
         if (ci != nchunks - 1)
         {
@@ -105,12 +106,12 @@ __device__ void b3_hash_row(const uint64_t *in, uint32_t nCols, uint64_t row, ui
 }
 
 __global__ void b3_linearHashKernel(uint64_t *__restrict__ out, const uint64_t *__restrict__ in,
-                                    uint32_t num_cols, uint32_t num_rows, int tiles)
+                                    uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
     uint64_t dig[4];
-    b3_hash_row(in, num_cols, row, num_rows, tiles != 0, dig);
+    b3_hash_row(in, num_cols, row, num_rows, layout, dig);
     uint64_t *o = out + row * 4ull;
 #pragma unroll
     for (int i = 0; i < 4; ++i) o[i] = dig[i];
@@ -196,7 +197,7 @@ void Blake3GoldilocksGPU::linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
     uint32_t tpb = (num_rows < TPB_B3) ? (uint32_t)num_rows : TPB_B3;
     uint32_t blks = (uint32_t)((num_rows + TPB_B3 - 1) / TPB_B3);
     b3_linearHashKernel<<<blks, tpb, 0, stream>>>(
-        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout == Layout::Tiles ? 1 : 0);
+        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
     CHECKCUDAERR(cudaGetLastError());
 }
 

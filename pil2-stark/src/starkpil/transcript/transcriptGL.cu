@@ -231,6 +231,17 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
     }
     __syncwarp();
 
+    if (hashFamily == 3) {
+        if (lane == 0) {
+            const uint32_t transcriptStateSize = HASH_SIZE;
+            Goldilocks::Element inputs[16];
+            for (uint32_t i = 0; i < transcriptPendingSize; i++) inputs[i] = pending[i];
+            for (uint32_t i = 0; i < transcriptStateSize; i++) inputs[i + transcriptPendingSize] = state[i];
+            blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
+            for (uint32_t i = 0; i < transcriptOutSize; i++) state[i] = out[i];
+        }
+        __syncwarp();
+    } else {
     // Each active lane keeps its sponge element [pending | state] in a register.
     gl64_t v;
     if (lane < transcriptPendingSize)
@@ -286,6 +297,7 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
         // v now holds this lane's permutation output; write back state and out.
         ((gl64_t*)out)[lane]   = v;
         ((gl64_t*)state)[lane] = v;
+    }
     }
 
     if (lane == 0) {

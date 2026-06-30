@@ -95,9 +95,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
         init_gpu_setup(setup.stark_info.stark_struct.n_bits_ext, pctx.gpu)?;
-        // Use the consuming air's actual Merkle arity (from the proving key) rather
-        // than the compile-time default, so the custom-commit tree matches the tree
-        // the prover/verifier expect (e.g. arity 2 for the blake3 setup).
         let merkle_tree_arity = setup.stark_info.stark_struct.merkle_tree_arity as u64;
         write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, merkle_tree_arity, &file_name)?;
         Ok(())
