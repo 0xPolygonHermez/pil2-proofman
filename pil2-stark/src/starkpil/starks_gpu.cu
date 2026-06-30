@@ -401,9 +401,9 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 
 __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
-    uint64_t i  = blockIdx.x;                  // opening point index
-    uint64_t k0 = blockIdx.y * blockDim.y;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.y;          // this thread's exponent index
+    uint64_t i  = blockIdx.y;                  // opening point index
+    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
+    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
     if (i >= nOpeningPoints || row >= N) return;
 
     Goldilocks3GPU::Element xi;
@@ -413,13 +413,13 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
 
     __shared__ Goldilocks3GPU::Element basePow;
 
-    if (threadIdx.y == 0) {
+    if (threadIdx.x == 0) {
         Goldilocks3GPU::pow(xi, k0, basePow);
     }
     __syncthreads();
 
     Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.y, xi_t);
+    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
 
     Goldilocks3GPU::Element res;
     Goldilocks3GPU::mul(res, basePow, xi_t);
@@ -467,8 +467,8 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
 
-    dim3 nThreads(1, 512);
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
+    dim3 nThreads(512, 1);
+    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
     fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
@@ -554,10 +554,11 @@ __global__ void computeEvals_v2(
         while (tid < N)
         {
             uint64_t row = (tid << extendBits);
+            uint64_t chunkBase = tid - threadIdx.x;
             Goldilocks3GPU::Element LEv;
-            LEv[0] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
-            LEv[1] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
-            LEv[2] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
+            LEv[0] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
+            LEv[1] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
+            LEv[2] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
@@ -719,12 +720,12 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
 
         while (exponent > 0)
         {
-            if (exponent % 2 == 1)
+            if (exponent & 1)
             {
                 sinv *= base;
             }
             base *= base;
-            exponent /= 2;
+            exponent >>= 1;
         }
 
         gl64_t *ppar = (gl64_t *)d_ppar + id * ratio * FIELD_EXTENSION;
@@ -1345,11 +1346,13 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
     // computeFRIExpression strides by domainSize/blockDim.x with no remainder handling,
-    // so blockDim.x must divide domainSize or leftover rows are silently dropped. We
-    // floor nrowsPack to 256 (slow FRI instances underpopulate blocks) and cap at
-    // domainSize; this stays a power-of-two divisor because the prover's nrowsPack is a
-    // power of two <= 256. A non-power-of-two nrowsPack > 256 (e.g. verify's nQueries)
-    // would break it.
+    // so blockDim.x must divide domainSize or leftover rows are silently dropped.
+    // Raise nrowsPack up to a 256-thread minimum (memory-constrained instances halve
+    // nrowsPack below 256 and would otherwise underpopulate blocks), then cap at
+    // domainSize. This is only reached on the prover path (gen_proof / gen_recursivef),
+    // where nrowsPack is a power of two <= 256, so blockDim.x stays a power-of-two
+    // divisor of the power-of-two domainSize. It is NOT called on the verify path, whose
+    // nrowsPack = nQueries can be a non-power-of-two > 256 and would break the invariant.
     uint32_t nthreads_ = std::min<uint32_t>(std::max<uint32_t>(setupCtx.starkInfo.nrowsPack, 256), (uint32_t)domainSize);
     uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);

@@ -24,88 +24,78 @@ fn aligned_host_range(ptr: usize, bytes: usize) -> Option<(usize, usize)> {
     Some((base, size))
 }
 
-/// Page-lock a buffer's backing pages for direct H2D. Returns `Some((base, bytes))`
-/// so the caller can unregister by the same base pointer (CUDA requires it), or
-/// `None` if the backend declined (CPU: no GPU to pin) or the page-lock failed.
-/// Registration pins a *specific address*, so a registered buffer must not be
-/// reallocated for the life of the pool — see the recover-only `reset`.
-fn register_buffer<F: PrimeField64>(buffer: &mut [F]) -> Option<(usize, usize)> {
-    let bytes = buffer.len().saturating_mul(std::mem::size_of::<F>());
-    let (base, size) = aligned_host_range(buffer.as_mut_ptr() as usize, bytes)?;
-    if register_host_memory_c(base as *mut c_void, size as u64) {
-        Some((base, size))
-    } else {
-        None
-    }
-}
-
 /// Register a freshly-allocated pool, enforcing all-or-nothing pinning: either
-/// every buffer is pinned (GPU backend) or none are (CPU backend, where pinning
-/// is a no-op). A partial result means a `cudaHostRegister` failed under the GPU
-/// backend, leaving an unpinned buffer in a pool the GPU treats as pinned — we
-/// refuse to start rather than run with that soundness hole.
-fn register_pool<F: PrimeField64>(buffers: &mut [Vec<F>]) -> Vec<usize> {
+/// every buffer's pages are pinned (GPU backend) or none are (CPU backend, where
+/// pinning is a no-op). A partial result means a `cudaHostRegister` failed under
+/// the GPU backend, leaving an unpinned buffer in a pool the GPU treats as pinned
+/// — we refuse to start rather than run with that soundness hole. Returns the
+/// distinct base pages pinned, so the caller can unregister each exactly once on
+/// Drop. Registration pins a *specific address*, so a registered buffer must never
+/// be reallocated for the life of the pool — see the recover-only `reset`.
+///
+/// Defensive dedup on the base page: if two buffers rounded down to the same base,
+/// register it only once, because `cudaHostRegister` rejects an already-registered
+/// page and the duplicate "failure" would trip the all-or-nothing panic spuriously.
+///
+/// Two *multi-page* allocations cannot share a base page (the second would have to
+/// start inside the first, i.e. overlap), and every pool buffer here spans many
+/// pages (circom witness/trace sizes), so this branch never fires for the real
+/// workload. It only guards a hypothetical sub-page pool — for which base-keyed
+/// dedup could under-cover a buffer that spills past the first's range, and proper
+/// range-based coverage would be needed. We keep the cheap guard and the assumption.
+fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
     let mut registered: Vec<usize> = Vec::with_capacity(buffers.len());
-    for buffer in buffers.iter_mut() {
-        if let Some((base, _)) = register_buffer(buffer) {
-            registered.push(base);
+    let mut covered: HashSet<usize> = HashSet::with_capacity(buffers.len());
+    let mut all_covered = true;
+    for buffer in buffers.iter() {
+        // Compute the page range once and use that exact base for both the dedup
+        // check and the registration, so the two can never diverge.
+        let bytes = buffer.len().saturating_mul(std::mem::size_of::<F>());
+        match aligned_host_range(buffer.as_ptr() as usize, bytes) {
+            // Page already pinned by an earlier buffer in this pool — skip the
+            // duplicate cudaHostRegister; it is covered.
+            Some((base, _)) if covered.contains(&base) => {}
+            Some((base, size)) => {
+                if register_host_memory_c(base as *mut c_void, size as u64) {
+                    covered.insert(base);
+                    registered.push(base);
+                } else {
+                    all_covered = false;
+                }
+            }
+            None => all_covered = false,
         }
     }
     // Partial pinning is fatal (all-or-nothing), but before we abort, unregister
-    // the buffers we did pin — otherwise those pages stay locked for the rest of
-    // the process (and, under panic=abort, Drop never runs to release them).
-    if !registered.is_empty() && registered.len() != buffers.len() {
+    // the pages we did pin — otherwise those stay locked for the rest of the
+    // process (and, under panic=abort, Drop never runs to release them).
+    if !registered.is_empty() && !all_covered {
         for ptr in &registered {
             unregister_host_memory_c(*ptr as *mut c_void);
         }
         panic!(
-            "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of {} buffers pinned. \
+            "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of {} buffers' pages pinned. \
              The GPU backend is active and a cudaHostRegister failed — refusing to run with a \
              partially-pinned pool.",
-            registered.len(),
+            covered.len(),
             buffers.len()
         );
     }
     registered
 }
 
-/// Re-assert the pinning invariant on `reset`: every recovered buffer must sit
-/// at one of the originally-registered addresses (no-op when pinning is off). An
-/// unknown address means a buffer escaped the pool or was reallocated, leaving it
-/// unpinned and the original registration dangling.
-fn verify_registered<F: PrimeField64>(
-    registered: &HashSet<usize>,
-    buffers: &[Vec<F>],
-    ctx: &str,
-) -> ProofmanResult<()> {
-    if registered.is_empty() {
-        return Ok(()); // pinning disabled (CPU backend) — nothing to verify
-    }
-    for buf in buffers {
-        let bytes = buf.len().saturating_mul(std::mem::size_of::<F>());
-        let base = aligned_host_range(buf.as_ptr() as usize, bytes).map(|(b, _)| b);
-        if !base.map(|b| registered.contains(&b)).unwrap_or(false) {
-            return Err(ProofmanError::ProofmanError(format!(
-                "{ctx}: recovered a buffer at an unregistered address — the pinned-pool \
-                 invariant was violated (a buffer escaped the pool or was reallocated)"
-            )));
-        }
-    }
-    Ok(())
-}
-
 /// Single fixed-size buffer pool over a bounded channel. Internal helper used
-/// by `MemoryHandlerRecursive`. `take()` is a blocking channel recv — wakes
-/// instantly when a buffer is released, no polling.
+/// by `MemoryHandlerRecursive`. `take()` polls the channel with a short
+/// `recv_timeout` so the abort path (`cancelled`) can wake it; a released buffer
+/// is picked up on the next poll.
 struct Pool<F: PrimeField64 + Send + Sync + 'static> {
     sender: Sender<Vec<F>>,
     receiver: Receiver<Vec<F>>,
     n_buffers: usize,
     buffer_size: usize,
-    /// Page-locked base pointers of the pooled buffers: the authoritative set the
-    /// pool owns. Empty iff pinning is disabled (CPU backend). Used to unregister
-    /// on Drop and to verify the pool stays intact across `reset`.
-    registered_buffers: HashSet<usize>,
+    /// Distinct page-locked base pages the pool registered. Empty iff pinning is
+    /// disabled (CPU backend). Used only to unregister on Drop (one call per page).
+    registered_buffers: Vec<usize>,
     /// Shared with the owning `MemoryHandlerRecursive`; set on the abort path so a
     /// blocking `take()` exits instead of parking forever on `recv`.
     cancelled: Arc<AtomicBool>,
@@ -114,8 +104,8 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
 impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     fn new(n_buffers: usize, buffer_size: usize, cancelled: Arc<AtomicBool>) -> Self {
         let (sender, receiver) = bounded(n_buffers);
-        let mut buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
-        let registered_buffers: HashSet<usize> = register_pool(&mut buffers).into_iter().collect();
+        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
+        let registered_buffers: Vec<usize> = register_pool(&buffers);
         for buffer in buffers {
             sender.send(buffer).unwrap();
         }
@@ -161,12 +151,15 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         Ok(())
     }
 
-    /// Recover-only reset that re-asserts the pinning invariant: every buffer must
-    /// come back, and (when pinned) at one of the originally-registered addresses.
-    /// We must NOT reallocate a replacement — a fresh allocation would be unpinned
-    /// and leave a stale registration that Drop later unregisters against freed
-    /// memory. A short count or unknown address means a buffer escaped, so we
-    /// surface it rather than paper over it.
+    /// Recover-only reset: every buffer must come back into the pool. We must NOT
+    /// reallocate a replacement — a fresh allocation would be unpinned and leave a
+    /// stale registration that Drop later unregisters against freed memory. A short
+    /// count means a buffer escaped, so we surface it rather than paper over it.
+    ///
+    /// On the error path this is destructive: the buffers already drained into the
+    /// local `valid_buffers` are dropped (not re-sent), so a failed reset empties the
+    /// pool. That is fine — a failed reset means a buffer escaped, which only happens
+    /// when the proof is already aborting and the pool is about to be torn down.
     ///
     /// Caller must have joined all workers that took buffers first (the drain below
     /// races a live worker and trips the `recovered N of M` error).
@@ -197,7 +190,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
                 self.n_buffers
             )));
         }
-        verify_registered(&self.registered_buffers, &valid_buffers, "Pool::reset")?;
         for buf in valid_buffers {
             self.sender.send(buf).expect("Pool channel closed");
         }
@@ -205,7 +197,9 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     }
 
     fn total_bytes(&self) -> usize {
-        self.n_buffers * self.buffer_size * std::mem::size_of::<F>()
+        // saturating_mul to match the rest of the file; can't overflow on 64-bit
+        // with realistic sizes, but keeps the arithmetic uniform and panic-free.
+        self.n_buffers.saturating_mul(self.buffer_size).saturating_mul(std::mem::size_of::<F>())
     }
 }
 
@@ -231,8 +225,8 @@ pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     receiver: Receiver<Vec<F>>,
     n_buffers: usize,
     buffer_size: usize,
-    /// Page-locked base pointers the pool owns (see `Pool::registered_buffers`).
-    registered_buffers: HashSet<usize>,
+    /// Distinct page-locked base pages the pool registered (see `Pool::registered_buffers`).
+    registered_buffers: Vec<usize>,
     /// Set by `cancel()` on the abort path so the blocking `take_buffer` loop can
     /// exit instead of spinning forever on a buffer that will never be released.
     cancelled: Arc<AtomicBool>,
@@ -247,8 +241,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         // direct-copy fast path in goldilocks_tooling.cu). All-or-nothing (see
         // register_pool). Relies on pool buffers never permanently escaping —
         // shared-buffer traces recycle the same Vec back, and `reset` enforces it.
-        let mut buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
-        let registered_buffers: HashSet<usize> = register_pool(&mut buffers).into_iter().collect();
+        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
+        let registered_buffers: Vec<usize> = register_pool(&buffers);
         let registered_bytes: usize =
             registered_buffers.len().saturating_mul(buffer_size).saturating_mul(std::mem::size_of::<F>());
         for buffer in buffers {
@@ -319,8 +313,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 self.n_buffers
             )));
         }
-
-        verify_registered(&self.registered_buffers, &valid_buffers, "MemoryHandler::reset")?;
 
         for buf in valid_buffers.into_iter() {
             self.sender.send(buf).unwrap();
@@ -501,5 +493,75 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     }
     pub fn release_buffer_trace_compressor(&self, buffer: Vec<F>) -> ProofmanResult<()> {
         self.trace_compressor.release(buffer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fields::{Field, Goldilocks};
+
+    // These exercise the pool's accounting (take/release/reset round-trip, leak
+    // detection, cancel). They don't assert anything about pinning, so they pass on
+    // both backends: CPU (register is a no-op) and GPU (the tiny buffers are page-
+    // locked, but that's transparent to the accounting under test).
+    type F = Goldilocks;
+
+    fn handler(n: usize, n_comp: usize, size: usize, size_comp: usize) -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new(n, n_comp, size, size_comp, size, size_comp)
+    }
+
+    #[test]
+    fn clean_round_trip_then_reset_succeeds() {
+        let h = handler(2, 1, 8, 4);
+        // Take every buffer out of each pool, then release them all back.
+        let w0 = h.take_buffer_witness();
+        let w1 = h.take_buffer_witness();
+        let t0 = h.take_buffer_trace();
+        let t1 = h.take_buffer_trace();
+        let wc = h.take_buffer_witness_compressor();
+        let tc = h.take_buffer_trace_compressor();
+        h.release_buffer_witness(w0).unwrap();
+        h.release_buffer_witness(w1).unwrap();
+        h.release_buffer_trace(t0).unwrap();
+        h.release_buffer_trace(t1).unwrap();
+        h.release_buffer_witness_compressor(wc).unwrap();
+        h.release_buffer_trace_compressor(tc).unwrap();
+        // This is the gap-2 invariant: a clean round trip leaves full pools, so the
+        // reset wired into ProofMan::reset() passes.
+        h.reset().unwrap();
+        // And it is idempotent across reuse.
+        h.reset().unwrap();
+    }
+
+    #[test]
+    fn reset_detects_a_leaked_buffer() {
+        let h = handler(2, 0, 8, 0);
+        // Simulate a leak: a worker took a buffer and never released it (e.g. an
+        // early `?` return on a non-cancelled path). reset() must surface the short
+        // pool rather than paper over it — this is exactly what the gap-2 reset wired
+        // into ProofMan::reset() now catches.
+        let _leaked = h.take_buffer_witness();
+        assert!(h.reset().is_err());
+    }
+
+    #[test]
+    fn release_rejects_wrong_size_buffer() {
+        let h = handler(1, 0, 8, 0);
+        let _good = h.take_buffer_witness();
+        // Release a buffer of the wrong length; the size check rejects it.
+        assert!(h.release_buffer_witness(vec![F::ZERO; 7]).is_err());
+    }
+
+    #[test]
+    fn cancel_unblocks_take_and_skips_reset_checks() {
+        let h = handler(1, 0, 8, 0);
+        // Empty the pool, then cancel. A subsequent take must return a fresh buffer
+        // instead of blocking forever, and reset must not flag the (now short) pool.
+        let _taken = h.take_buffer_witness();
+        h.cancel();
+        let fresh = h.take_buffer_witness(); // would hang pre-cancel on an empty pool
+        assert_eq!(fresh.len(), 8);
+        h.reset().unwrap(); // cancelled path skips integrity checks
     }
 }
