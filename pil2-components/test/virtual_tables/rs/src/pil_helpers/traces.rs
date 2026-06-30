@@ -250,3 +250,21 @@ values!(VirtualTableVirtualTables2AirGroupValues<F> {
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "Component1"),
+    (0, 1, "Component2"),
+    (0, 2, "Component3"),
+    (0, 3, "Component4"),
+    (0, 4, "Component5"),
+    (0, 5, "Component6"),
+    (0, 6, "Component7"),
+    (0, 7, "Table7"),
+    (0, 8, "Component8"),
+    (0, 9, "SpecifiedRanges"),
+    (0, 10, "VirtualTableVirtualTables0"),
+    (0, 11, "VirtualTableVirtualTables1"),
+    (0, 12, "VirtualTableVirtualTables2"),
+];

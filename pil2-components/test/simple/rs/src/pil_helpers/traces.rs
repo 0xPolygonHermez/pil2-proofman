@@ -114,3 +114,13 @@ values!(SpecifiedRangesAirGroupValues<F> {
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "SimpleLeft"),
+    (0, 1, "SimpleRight"),
+    (0, 2, "U8Air"),
+    (0, 3, "U16Air"),
+    (0, 4, "SpecifiedRanges"),
+];
