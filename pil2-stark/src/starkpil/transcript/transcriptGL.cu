@@ -212,7 +212,6 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
 __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
 {
     const uint32_t lane = threadIdx.x;
-    const uint32_t transcriptStateSize   = HASH_SIZE;
     const uint32_t transcriptPendingSize = TRX_PENDING_SIZE(arity);
     const uint32_t transcriptOutSize     = TRX_OUT_SIZE(arity);  // = SPONGE_WIDTH
     const uint32_t W = transcriptOutSize;
@@ -273,6 +272,9 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
                     break;
                 case 4:
                     v = poseidon2PermuteWarpReg<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>(v, mask, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+                    break;
+                default:
+                    assert(false && "Poseidon2 supports arity 2, 3 or 4");
                     break;
             }
         }
