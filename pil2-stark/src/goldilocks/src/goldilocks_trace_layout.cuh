@@ -20,7 +20,8 @@
 //                     (non-sppark) NTT path operates on.
 // A committed section is stored ColMajor (flat, sppark) by default and ColMajorTiled (native NTT) only
 // for small high-column AIRs where the native path is faster -- see resolveLayout. Const and custom
-// commits are always ColMajor. getBufferOffset defaults to ColMajor so the flat call sites are unchanged.
+// commits are stored ColMajorTiled -- see fixedLayout(). getBufferOffset defaults to ColMajor so the
+// flat call sites are unchanged.
 enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 
 // The storage layout of a committed section, a pure function of its small-domain size (nBits) and
