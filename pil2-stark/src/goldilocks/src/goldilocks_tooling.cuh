@@ -9,6 +9,7 @@
 #include "cuda_graph_cache.cuh"
 #endif
 #include "goldilocks_base_field.hpp"
+#include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset (fromRowMajorToColMajor)
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
@@ -512,19 +513,24 @@ void load_and_copy_to_device_in_chunks(
 
 #endif
 
-// --- Data layout utilities 
-__global__ void fromRowMajorToTiled(
+// --- Data layout utilities
+// Transpose row-major input -> the committed-section storage layout `layout` (the destination layout
+// passed to getBufferOffset). Callers pass resolveLayout(nBits, nCols): ColMajor (flat) for most AIRs,
+// ColMajorTiled for small high-column ones. Readers (expressions / Merkle) use the SAME layout.
+__global__ void fromRowMajorToColMajor(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,
-    uint64_t* __restrict__ output
+    uint64_t* __restrict__ output,
+    Layout layout
 );
 
-void fromRowMajorToTiled(
+void fromRowMajorToColMajor(
     uint64_t nRows,
     uint64_t nCols,
     gl64_t* src,
     gl64_t* dst,
+    Layout layout,
     cudaStream_t stream
 );
 

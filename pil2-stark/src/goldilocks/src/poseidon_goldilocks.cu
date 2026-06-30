@@ -12,9 +12,10 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+#include "poseidon2_goldilocks.hpp"  // NONCES_LAUNCH_* grinding launch params (shared with Poseidon2)
 
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
-// (full pil2-stark build). 
+// (full pil2-stark build).
 #if __has_include("starks_api_internal.hpp")
 #include "starks_api_internal.hpp"
 #endif
@@ -184,7 +185,7 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
-                                           uint32_t num_cols, uint32_t num_rows)
+                                           uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     const uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
@@ -223,7 +224,7 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
         uint32_t col0 = num_cols - remaining;
         for (uint32_t i = 0; i < n; ++i)
         {
-            uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols);
+            uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols, layout);
             scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)input)[idx];
         }
         for (uint32_t i = n; i < RATE_T; ++i)
@@ -447,15 +448,17 @@ void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_t
 
     const size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-    if (layout == Layout::Tiles)
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor)
     {
-        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
             <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
-        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
+        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -484,15 +487,17 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
 
     size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-    if (layout == Layout::Tiles)
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor)
     {
-        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
             <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
-        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
+        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 

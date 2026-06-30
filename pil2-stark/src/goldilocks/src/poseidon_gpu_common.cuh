@@ -4,15 +4,10 @@
 
 #include <cstdint>
 #include "gl64_t.cuh"
+#include "goldilocks_trace_layout.cuh"
 
 
 extern __shared__ gl64_t scratchpad[];
-
-
-enum class Layout : uint8_t {
-    RowMajor,
-    Tiles,
-};
 
 
 __device__ __forceinline__ void pow7(gl64_t &x)

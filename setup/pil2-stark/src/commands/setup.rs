@@ -320,32 +320,17 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     }
 
     if opts.gen_exps {
-        if nvcc_present() {
-            let proving_key = std::path::PathBuf::from(&opts.build_dir).join("provingKey");
-            tracing::info!("Generating expression kernels (.exps.so) under {}", proving_key.display());
-            let cfg = exps_codegen::GenConfig {
-                cap: opts.exps_cap,
-                chunk: opts.exps_chunk,
-                archspec: opts.exps_arch.clone(),
-                stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
-                keep_dir: None,
-                dry_run: false,
-            };
-            match exps_codegen::generate_all(&proving_key, &cfg) {
-                Ok(summary) => tracing::info!(
-                    "Expression kernels: {} generated -> {} .exps.so ({} skipped)",
-                    summary.generated.len(),
-                    summary.placed,
-                    summary.skipped.len()
-                ),
-                // Non-fatal: setup itself succeeded and the provingKey is valid; the
-                // prover falls back to the interpreter for any AIR without a .so.
-                Err(e) => tracing::error!("Expression kernel codegen failed (continuing): {:#}", e),
-            }
-        } else {
-            tracing::warn!(
-                "--gen-exps requested but nvcc not found on PATH; skipping expression kernel codegen (AIRs use the interpreter)"
-            );
+        let gen_opts = crate::commands::gen_exps::GenExpsOptions {
+            proving_key: std::path::PathBuf::from(&opts.build_dir).join("provingKey"),
+            arch: opts.exps_arch.clone(),
+            cap: opts.exps_cap,
+            chunk: opts.exps_chunk,
+            stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
+        };
+        // Non-fatal: setup itself succeeded and the provingKey is valid; the
+        // prover falls back to the interpreter for any AIR without a .so.
+        if let Err(e) = crate::commands::gen_exps::run_gen_exps(&gen_opts) {
+            tracing::error!("Expression kernel codegen failed (continuing): {:#}", e);
         }
     }
 

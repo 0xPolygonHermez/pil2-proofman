@@ -61,6 +61,7 @@ pub struct Ir {
     pub instrs: Vec<Instr>,
     pub ncols: HashMap<u64, u64>,
     pub n_constants: u64,
+    pub n_bits: u64,
 }
 
 /// Operand type the generator does not support (e.g. `custom`). The driver
@@ -141,7 +142,7 @@ pub fn build_ir(stark_info: &StarkInfo, expr_info: &ExpressionsInfo) -> anyhow::
             idx,
         });
     }
-    Ok(Ir { instrs, ncols, n_constants })
+    Ok(Ir { instrs, ncols, n_constants, n_bits: stark_info.stark_struct.n_bits })
 }
 
 /// Liveness + chunking + scratch-slot coloring for one chunk size.
