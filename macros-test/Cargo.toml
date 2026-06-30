@@ -10,14 +10,9 @@ publish = false
 
 [dependencies]
 proofman-macros = { workspace = true }
-rayon = { workspace = true }
 proofman-common = { workspace = true }
 proofman-fields = { workspace = true }
-
-
 proofman = { workspace = true }
-serde = { workspace = true }
-serde_arrays = "0.2"
 
 [features]
 default = []

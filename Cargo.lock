@@ -970,9 +970,6 @@ dependencies = [
  "proofman-common",
  "proofman-fields",
  "proofman-macros",
- "rayon",
- "serde",
- "serde_arrays",
 ]
 
 [[package]]
@@ -1452,7 +1449,6 @@ dependencies = [
  "proofman-witness",
  "regex",
  "serde",
- "serde_json",
  "tinytemplate",
  "toml",
  "tracing",
@@ -1530,14 +1526,12 @@ dependencies = [
 name = "proofman-soundness"
 version = "1.0.0-beta"
 dependencies = [
- "itoa",
  "pil2-std-lib",
  "proofman-common",
  "proofman-fields",
  "proofman-hints",
  "serde",
  "tabled",
- "tracing",
 ]
 
 [[package]]

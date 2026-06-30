@@ -12,7 +12,7 @@ categories = { workspace = true }
 proofman-starks-lib-c = { workspace = true }
 proofman-common = { workspace = true }
 proofman-fields = { workspace = true }
-itoa.workspace = true
+itoa = "1.0.17"
 
 tracing.workspace = true
 
