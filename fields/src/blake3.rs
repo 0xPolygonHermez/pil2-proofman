@@ -64,13 +64,6 @@ fn compress_pre(cv: &[u32; 8], block: &[u32; 16], blen: u32, counter: u64, flags
     s
 }
 
-fn compress_in_place(cv: &mut [u32; 8], block: &[u32; 16], blen: u32, counter: u64, flags: u32) {
-    let s = compress_pre(cv, block, blen, counter, flags);
-    for i in 0..8 {
-        cv[i] = s[i] ^ s[i + 8];
-    }
-}
-
 fn compress_xof(cv: &[u32; 8], block: &[u32; 16], blen: u32, counter: u64, flags: u32) -> [u32; 16] {
     let s = compress_pre(cv, block, blen, counter, flags);
     let mut o = [0u32; 16];
@@ -87,34 +80,6 @@ fn canon(x: u64) -> u64 {
         x - GL_P
     } else {
         x
-    }
-}
-
-/// 16-element Goldilocks BLAKE3 permutation: the 16 little-endian u64 words are
-/// a 128-byte (single-chunk, 2-block) input; the 128-byte XOF output gives 16
-/// canonical field elements.
-pub fn blake3_permute16<F: PrimeField64>(state: &mut [F; 16]) {
-    let mut w = [0u64; 16];
-    for i in 0..16 {
-        w[i] = state[i].as_canonical_u64();
-    }
-    let mut b0 = [0u32; 16];
-    let mut b1 = [0u32; 16];
-    for k in 0..8 {
-        b0[2 * k] = w[k] as u32;
-        b0[2 * k + 1] = (w[k] >> 32) as u32;
-        b1[2 * k] = w[8 + k] as u32;
-        b1[2 * k + 1] = (w[8 + k] >> 32) as u32;
-    }
-    let mut cv = IV;
-    compress_in_place(&mut cv, &b0, 64, 0, CHUNK_START);
-    let o0 = compress_xof(&cv, &b1, 64, 0, CHUNK_END | ROOT);
-    let o1 = compress_xof(&cv, &b1, 64, 1, CHUNK_END | ROOT);
-    for k in 0..8 {
-        let v0 = (o0[2 * k] as u64) | ((o0[2 * k + 1] as u64) << 32);
-        let v1 = (o1[2 * k] as u64) | ((o1[2 * k + 1] as u64) << 32);
-        state[k] = F::from_u64(canon(v0));
-        state[8 + k] = F::from_u64(canon(v1));
     }
 }
 
@@ -151,18 +116,5 @@ impl<F: PrimeField64> Hash<F> for Blake3_8 {
     type State = [F; 8];
     fn hash(state: &mut [F; 8]) {
         blake3_permute8::<F>(state);
-    }
-}
-
-/// 16-wide BLAKE3 hash marker for `Transcript<F, Blake3_16>`.
-pub struct Blake3_16;
-
-impl<F: PrimeField64> Hash<F> for Blake3_16 {
-    const WIDTH: usize = 16;
-    const RATE: usize = 12;
-    const CAPACITY: usize = 4;
-    type State = [F; 16];
-    fn hash(state: &mut [F; 16]) {
-        blake3_permute16::<F>(state);
     }
 }

@@ -128,10 +128,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let mut stark_struct = generate_stark_struct(&air_settings, n_bits);
                 // BLAKE3: binary Merkle tree (one 64-byte compression per node).
                 // Force arity 2 for both the tree and the Fiat-Shamir transcript
-                // (the prover builds its transcript from merkle_tree_arity and the
-                // verifier from transcript_arity, so they must match), and disable
-                // the Poseidon-specific custom leaf packing.
-                if opts.hash == "blake3" || opts.hash == "Blake3" {
+                if opts.hash == "blake3" {
                     stark_struct.merkle_tree_arity = 2;
                     stark_struct.transcript_arity = 2;
                     stark_struct.merkle_tree_custom = false;

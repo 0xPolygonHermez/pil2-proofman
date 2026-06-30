@@ -311,8 +311,8 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
         }
         break;
     case HashFamily::Blake3: {
-        // arity child digests (arity*CAPACITY elements) hashed into a 4-word node.
-        Goldilocks::Element inputs[16];  // max arity 4 * CAPACITY 4
+       
+        Goldilocks::Element inputs[8]; 
         for (uint64_t i = 0; i < arity * nFieldElements; ++i) inputs[i] = Goldilocks::zero();
         uint64_t p = 0;
         for (uint64_t i = 0; i < arity; ++i) {

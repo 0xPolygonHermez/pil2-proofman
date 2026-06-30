@@ -15,7 +15,7 @@ enum class HashFamily : uint8_t {
 inline HashFamily parseHashFamily(const std::string &id) {
     if (id == "Poseidon1") return HashFamily::Poseidon1;
     if (id == "Poseidon2") return HashFamily::Poseidon2;
-    if (id == "Blake3") return HashFamily::Blake3;
+    if (id == "blake3") return HashFamily::Blake3;
     throw std::runtime_error("unknown hash family: " + id);
 }
 
@@ -23,7 +23,7 @@ inline const char *toString(HashFamily h) {
     switch (h) {
         case HashFamily::Poseidon1: return "Poseidon1";
         case HashFamily::Poseidon2: return "Poseidon2";
-        case HashFamily::Blake3:    return "Blake3";
+        case HashFamily::Blake3:    return "blake3";
         case HashFamily::Undefined: return "Undefined";
     }
     return "Unknown";

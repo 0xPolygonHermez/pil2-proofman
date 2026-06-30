@@ -42,7 +42,6 @@ void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
     if (get_hash_family() == HashFamily::Blake3) {
-        // BLAKE3 nodes hash arity*CAPACITY elements -> any arity is supported.
         Blake3GoldilocksGPU::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
     } else if (get_hash_family() == HashFamily::Poseidon1) {
         switch (arity) {
