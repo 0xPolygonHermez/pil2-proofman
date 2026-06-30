@@ -281,7 +281,7 @@ airtemplate Blake3(const int N = 2**20) {
     // MESSAGE PERMUTATION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    #pragma extern_fixed_file "examples/hashes/src/blake3_connection_fixed.bin"
+    #pragma extern_fixed_file "examples/hashes/src/blake3/blake3_connection_fixed.bin"
     col fixed CONN[2];
 
     connection(BLAKE3_CONNECTION_ID, [x_packed, y_packed], [CONN[0], CONN[1]]);

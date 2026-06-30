@@ -9,7 +9,7 @@ categories.workspace = true
 
 [[bin]]
 name = "blake3-connection"
-path = "src/blake3_connection.rs"
+path = "src/blake3/blake3_connection.rs"
 
 [lib]
 crate-type = ["dylib"]

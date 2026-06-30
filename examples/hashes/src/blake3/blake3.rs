@@ -4,8 +4,9 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use witness::WitnessComponent;
 use fields::PrimeField64;
 
-use crate::{
-    pil_helpers::{Blake3Trace, Blake3TraceRow},
+use crate::pil_helpers::{Blake3Trace, Blake3TraceRow};
+
+use super::{
     blake3_constants::{CLOCKS, CLOCKS_PER_ROUND, G_INDICES, NUM_G_PER_ROUND, RANGE_SIZE, ROUNDS, SIGMA, TABLE_SIZE},
     blake3_helpers::{random_blake3_input, range_row, table_row, xor_rotr_split},
 };

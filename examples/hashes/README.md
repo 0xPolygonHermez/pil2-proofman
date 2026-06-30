@@ -10,7 +10,7 @@ To generate the connections, run the following command:
 
 ```bash
 cargo run --package hashes --bin blake3-connection -- \
-  build -o ./examples/hashes/src/blake3_connection_fixed.bin
+  build -o ./examples/hashes/src/blake3/blake3_connection_fixed.bin
 ```
 
 ### 2 Compile PIL

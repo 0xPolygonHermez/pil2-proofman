@@ -5,7 +5,7 @@ use pil_std_lib::Std;
 use fields::PrimeField64;
 use fields::Goldilocks;
 
-use crate::Blake3Air;
+use crate::blake3::Blake3Air;
 
 witness_library!(WitnessLib, Goldilocks);
 
