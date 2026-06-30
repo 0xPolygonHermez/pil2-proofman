@@ -8,7 +8,7 @@ use crate::pil_helpers::{Blake3Trace, Blake3TraceRow};
 
 use super::{
     blake3_constants::{CLOCKS, CLOCKS_PER_ROUND, G_INDICES, NUM_G_PER_ROUND, RANGE_SIZE, ROUNDS, SIGMA, TABLE_SIZE},
-    blake3_helpers::{random_blake3_input, range_row, table_row, xor_rotr_split},
+    blake3_helpers::{limbs16, random_blake3_input, range_row, table_row, xor_rotr_split},
 };
 
 pub struct Blake3Air {
@@ -60,12 +60,12 @@ impl Blake3Air {
                 let b2 = (b1 ^ c2).rotate_right(7);
 
                 // ── inputs ──
-                row.set_all_va(&va.to_le_bytes());
+                row.set_all_va(&limbs16(va));
                 row.set_all_vb(&vb.to_le_bytes());
-                row.set_all_vc(&vc.to_le_bytes());
+                row.set_all_vc(&limbs16(vc));
                 row.set_all_vd(&vd.to_le_bytes());
-                row.set_all_x(&x.to_le_bytes());
-                row.set_all_y(&y.to_le_bytes());
+                row.set_all_x(&limbs16(x));
+                row.set_all_y(&limbs16(y));
 
                 // ── intermediates ──
                 row.set_all_va_prime(&a1.to_le_bytes());
@@ -75,7 +75,7 @@ impl Blake3Air {
                 row.set_all_vd_prime_prime(&d2.to_le_bytes());
                 row.set_all_vc_prime_prime(&c2.to_le_bytes());
 
-                // ── ROTR-by-12 and ROTR-by-7 split pieces (b' and b'') ──
+                // ── ROTR-by-12 and ROTR-by-7 split pieces ──
                 let vb_b = vb.to_le_bytes();
                 let c1_b = c1.to_le_bytes();
                 let b1_b = b1.to_le_bytes();
@@ -83,33 +83,33 @@ impl Blake3Air {
                 let mut vb_prime_s = [[0u8; 2]; 4];
                 let mut vb_prime_prime_s = [[0u8; 2]; 4];
                 for i in 0..4 {
-                    let (s0, s1) = xor_rotr_split(i, vb_b[i], c1_b[i], 12);
+                    let (s0, s1) = xor_rotr_split(vb_b[i], c1_b[i], 12);
                     vb_prime_s[i] = [s0, s1];
-                    let (t0, t1) = xor_rotr_split(i, b1_b[i], c2_b[i], 7);
+                    let (t0, t1) = xor_rotr_split(b1_b[i], c2_b[i], 7);
                     vb_prime_prime_s[i] = [t0, t1];
                 }
                 row.set_all_vb_prime_s(&vb_prime_s);
                 row.set_all_vb_prime_prime_s(&vb_prime_prime_s);
 
                 // ── lookup multiplicities ──
-                let va_b = va.to_le_bytes();
-                let vc_b = vc.to_le_bytes();
+
+                // 16-bit range checks
+                for w in [va, vc, x, y] {
+                    let [lo, hi] = limbs16(w);
+                    range_counts[range_row(lo)] += 1;
+                    range_counts[range_row(hi)] += 1;
+                }
+
+                // XOR-rotate table
                 let vd_b = vd.to_le_bytes();
                 let a1_b = a1.to_le_bytes();
                 let a2_b = a2.to_le_bytes();
                 let d1_b = d1.to_le_bytes();
-                let x_b = x.to_le_bytes();
-                let y_b = y.to_le_bytes();
                 for i in 0..4 {
-                    // explicit range checks on the primary inputs
-                    range_counts[range_row(va_b[i], vc_b[i])] += 1;
-                    range_counts[range_row(x_b[i], y_b[i])] += 1;
-
-                    // XOR-rotate table
-                    table_counts[table_row(0, vd_b[i], a1_b[i], 0)] += 1; // (vd ^ a')  >>> 16
-                    table_counts[table_row(i, vb_b[i], c1_b[i], 12)] += 1; // (vb ^ c')  >>> 12
-                    table_counts[table_row(0, d1_b[i], a2_b[i], 0)] += 1; // (d' ^ a'') >>> 8
-                    table_counts[table_row(i, b1_b[i], c2_b[i], 7)] += 1; // (b' ^ c'') >>> 7
+                    table_counts[table_row(vd_b[i], a1_b[i], 0)] += 1; // (vd ^ a')  >>> 16
+                    table_counts[table_row(vb_b[i], c1_b[i], 12)] += 1; // (vb ^ c')  >>> 12
+                    table_counts[table_row(d1_b[i], a2_b[i], 0)] += 1; // (d' ^ a'') >>> 8
+                    table_counts[table_row(b1_b[i], c2_b[i], 7)] += 1; // (b' ^ c'') >>> 7
                 }
 
                 // advance the working state
@@ -196,21 +196,17 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake3Air {
         // Padding
         let num_padding_rows = num_rows - num_rows_needed;
 
-        // Perform the padding table checks
-        // For each row, there are:
-        //      · 8 - xor_rotr_check(offset: 0, a: 0, b: 0, rot: 0,  c0: 0, c1: 0)
-        //      · 4 - xor_rotr_check(offset: i, a: 0, b: 0, rot: 12, c0: 0, c1: 0)
-        //      · 4 - xor_rotr_check(offset: i, a: 0, b: 0, rot: 7,  c0: 0, c1: 0)
-        table_counts[table_row(0, 0, 0, 0)] += (num_padding_rows * 8) as u64;
-        for i in 0..4 {
-            table_counts[table_row(i, 0, 0, 12)] += num_padding_rows as u64;
-            table_counts[table_row(i, 0, 0, 7)] += num_padding_rows as u64;
-        }
+        // Perform the padding table checks. Each padding row does:
+        //      · 8 - xor_rotr_check(a: 0, b: 0, rot: 0,  c0: 0, c1: 0)
+        //      · 4 - xor_rotr_check(a: 0, b: 0, rot: 12, c0: 0, c1: 0)
+        //      · 4 - xor_rotr_check(a: 0, b: 0, rot: 7,  c0: 0, c1: 0)
+        table_counts[table_row(0, 0, 0)] += (num_padding_rows * 8) as u64;
+        table_counts[table_row(0, 0, 12)] += (num_padding_rows * 4) as u64;
+        table_counts[table_row(0, 0, 7)] += (num_padding_rows * 4) as u64;
 
-        // Perform the padding range checks
-        // For each row, there are 8 range_check_dual of (0, 0)
+        // Perform the padding range checks: 8 zero limbs
         let count_zeros = num_padding_rows * 8;
-        range_counts[range_row(0, 0)] += count_zeros as u64;
+        range_counts[range_row(0)] += count_zeros as u64;
 
         // Write the multiplicity columns
         for (t, &m) in table_counts.iter().enumerate() {

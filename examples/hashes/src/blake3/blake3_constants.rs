@@ -40,4 +40,4 @@ pub const SIGMA: [[usize; 16]; ROUNDS] = [
 pub const RANGE_SIZE: usize = 1 << 16;
 
 /// XOR-rotate table size
-pub const TABLE_SIZE: usize = (1 << 19) + (1 << 18);
+pub const TABLE_SIZE: usize = (1 << 17) + (1 << 16);

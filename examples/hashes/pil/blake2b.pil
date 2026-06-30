@@ -127,7 +127,7 @@ airtemplate Blake2b(const int N = 2**20) {
 
     // Base clock: 1 at row 0, 0 elsewhere within each cycle
     if (NUM_NON_USABLE_ROWS == 0) {
-        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS]...;
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
     } else {
         col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
     }

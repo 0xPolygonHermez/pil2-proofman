@@ -13,32 +13,36 @@ pub(crate) fn random_blake3_input(seed: u64) -> ([u32; 16], [u32; 16]) {
     (state, message)
 }
 
-/// Row index of a range-checker tuple (a, b)
+/// Split a 32-bit word into two little-endian 16-bit limbs [lo, hi]
 #[inline]
-pub(crate) fn range_row(a: u8, b: u8) -> usize {
-    (b as usize) * 256 + a as usize
+pub(crate) fn limbs16(w: u32) -> [u16; 2] {
+    [(w & 0xffff) as u16, (w >> 16) as u16]
 }
 
-/// Row index of an XOR-rotate table tuple (offset, a, b, rot), rot in {0, 12, 7}
+/// Row index of a range-checker
 #[inline]
-pub(crate) fn table_row(offset: usize, a: u8, b: u8, rot: u32) -> usize {
+pub(crate) fn range_row(v: u16) -> usize {
+    v as usize
+}
+
+/// Row index of an XOR-rotate table tuple (a, b, rot), rot in {0, 12, 7}
+#[inline]
+pub(crate) fn table_row(a: u8, b: u8, rot: u32) -> usize {
     let rot_block = match rot {
         0 => 0,
         12 => 1,
         7 => 2,
         _ => panic!("rotation {rot} is not in the table (expected 0, 12 or 7)"),
     };
-    rot_block * (1 << 18) + offset * (1 << 16) + (b as usize) * 256 + a as usize
+    rot_block * (1 << 16) + (b as usize) * 256 + a as usize
 }
 
-/// Split the XOR-rotate operation into two bytes, given the offset of the byte in the 32-bit word
-pub(crate) fn xor_rotr_split(offset: usize, a: u8, b: u8, rot: u32) -> (u8, u8) {
-    // Position the byte correctly and compute the rotation
+/// Split the XOR-rotate output into its two limb pieces
+pub(crate) fn xor_rotr_split(a: u8, b: u8, rot: u32) -> (u8, u8) {
     let byte = (a ^ b) as u32;
-    let byte_pos = byte << (8 * offset as u32);
-    let c = byte_pos.rotate_right(rot);
+    let c = byte.rotate_right(rot);
 
-    let s = (8 * offset as i32 - rot as i32).rem_euclid(32) as u32; // normalized bit shift
+    let s = (32 - rot) % 32; // normalized bit shift
     let l = (s / 8) % 4;
     let lp1 = (l + 1) % 4;
 
