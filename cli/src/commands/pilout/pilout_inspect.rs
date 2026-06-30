@@ -1,5 +1,5 @@
 use clap::Args;
-use pilout::pilout_proxy::PilOutProxy;
+use pil2_pilout::pilout_proxy::PilOutProxy;
 use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;

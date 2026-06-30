@@ -20,8 +20,8 @@ default = []
 proofman-starks-lib-c = { workspace = true }
 proofman-fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
-stark-recurser = { workspace = true }
-pilout = { workspace = true }
+pil2-stark-recurser = { workspace = true }
+pil2-pilout = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

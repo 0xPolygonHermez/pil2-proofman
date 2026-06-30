@@ -1,5 +1,5 @@
 [package]
-name = "pil-std-lib"
+name = "pil2-std-lib"
 description = "PIL2 standard library: range checks, lookups, and sum/product arguments for proofman"
 version = { workspace = true }
 edition = { workspace = true }

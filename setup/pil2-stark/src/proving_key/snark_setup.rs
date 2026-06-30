@@ -9,13 +9,13 @@ use serde_json::Value;
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c};
 
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
-use stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
+use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
 use crate::proving_key::{bctree, recursive::compile_pil};
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
-use pilout::pilout_proxy::PilOutProxy;
-use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use stark_recurser::plonk2pil;
+use pil2_pilout::pilout_proxy::PilOutProxy;
+use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil;
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
 /// Configuration for the final SNARK setup.

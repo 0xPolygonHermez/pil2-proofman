@@ -139,16 +139,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'pilout'",
+            "name": "Debug unit tests in library 'pil2_pilout'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=pilout"
+                    "--package=pil2-pilout"
                 ],
                 "filter": {
-                    "name": "pilout",
+                    "name": "pil2_pilout",
                     "kind": "lib"
                 }
             },
@@ -310,16 +310,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'pil_std_lib'",
+            "name": "Debug unit tests in library 'pil2_std_lib'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=pil-std-lib"
+                    "--package=pil2-std-lib"
                 ],
                 "filter": {
-                    "name": "pil_std_lib",
+                    "name": "pil2_std_lib",
                     "kind": "lib"
                 }
             },

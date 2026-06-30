@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use pilout::pilout as pb;
+use pil2_pilout::pilout as pb;
 
 use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
 use crate::commands::setup::SetupOptions;

@@ -1,6 +1,6 @@
 //! Top-level orchestrator for computing pil info for a single air.
 
-use pilout::pilout as pb;
+use pil2_pilout::pilout as pb;
 
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};

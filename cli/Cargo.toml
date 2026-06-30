@@ -12,7 +12,7 @@ publish = false
 readme = "README.md"
 
 [dependencies]
-pilout = { workspace = true }
+pil2-pilout = { workspace = true }
 proofman-util = { workspace = true }
 proofman = { workspace = true }
 proofman-common = { workspace = true }

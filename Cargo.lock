@@ -374,8 +374,8 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -527,7 +527,7 @@ version = "1.0.0-beta"
 dependencies = [
  "num-bigint",
  "num-traits",
- "pil-std-lib",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -556,8 +556,8 @@ dependencies = [
  "common",
  "num-bigint",
  "num-traits",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -614,7 +614,7 @@ name = "fibonacci-square"
 version = "1.0.0-beta"
 dependencies = [
  "num-bigint",
- "pil-std-lib",
+ "pil2-std-lib",
  "proofman",
  "proofman-common",
  "proofman-fields",
@@ -949,8 +949,8 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1132,8 +1132,8 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1181,8 +1181,8 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1286,7 +1286,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "pil-std-lib"
+name = "pil2-pilout"
+version = "1.0.0-beta"
+dependencies = [
+ "bytes",
+ "prost",
+ "prost-build",
+ "tracing",
+]
+
+[[package]]
+name = "pil2-stark-recurser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "num-bigint",
+ "num-traits",
+ "proofman-common",
+ "proofman-fields",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "tera",
+ "tracing",
+]
+
+[[package]]
+name = "pil2-stark-setup"
+version = "1.0.0-beta"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indexmap",
+ "mpi",
+ "pil2-pilout",
+ "pil2-stark-recurser",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-starks-lib-c",
+ "prost",
+ "rayon",
+ "rug",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "which",
+]
+
+[[package]]
+name = "pil2-std-lib"
 version = "1.0.0-beta"
 dependencies = [
  "colored",
@@ -1299,40 +1349,6 @@ dependencies = [
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "pil2-stark-setup"
-version = "1.0.0-beta"
-dependencies = [
- "anyhow",
- "clap",
- "indexmap",
- "mpi",
- "pilout",
- "proofman-common",
- "proofman-fields",
- "proofman-starks-lib-c",
- "prost",
- "rayon",
- "rug",
- "serde",
- "serde_json",
- "stark-recurser",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "which",
-]
-
-[[package]]
-name = "pilout"
-version = "1.0.0-beta"
-dependencies = [
- "bytes",
- "prost",
- "prost-build",
  "tracing",
 ]
 
@@ -1399,7 +1415,7 @@ dependencies = [
  "libloading",
  "mpi",
  "num-traits",
- "pil-std-lib",
+ "pil2-std-lib",
  "proofman-common",
  "proofman-curves",
  "proofman-fields",
@@ -1425,7 +1441,7 @@ dependencies = [
  "colored",
  "convert_case",
  "libloading",
- "pilout",
+ "pil2-pilout",
  "proofman",
  "proofman-common",
  "proofman-fields",
@@ -1515,7 +1531,7 @@ name = "proofman-soundness"
 version = "1.0.0-beta"
 dependencies = [
  "itoa",
- "pil-std-lib",
+ "pil2-std-lib",
  "proofman-common",
  "proofman-fields",
  "proofman-hints",
@@ -1686,8 +1702,8 @@ dependencies = [
  "common",
  "num-bigint",
  "num-traits",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1925,9 +1941,9 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
+ "pil2-pilout",
  "pil2-stark-setup",
- "pilout",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1972,22 +1988,6 @@ name = "special"
 version = "1.0.0-beta"
 dependencies = [
  "common",
-]
-
-[[package]]
-name = "stark-recurser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "num-bigint",
- "num-traits",
- "proofman-common",
- "proofman-fields",
- "rand 0.10.1",
- "serde",
- "serde_json",
- "tera",
- "tracing",
 ]
 
 [[package]]
@@ -2094,7 +2094,7 @@ version = "1.0.0-beta"
 dependencies = [
  "libloading",
  "num-bigint",
- "pil-std-lib",
+ "pil2-std-lib",
  "proofman",
  "proofman-common",
  "proofman-fields",
@@ -2346,8 +2346,8 @@ version = "1.0.0-beta"
 dependencies = [
  "common",
  "num-bigint",
- "pil-std-lib",
  "pil2-stark-setup",
+ "pil2-std-lib",
  "proofman",
  "proofman-cli",
  "proofman-common",

@@ -12,13 +12,13 @@ publish = false
 crate-type = ["dylib"]
 
 [dependencies]
-pil-std-lib = { workspace = true }
+pil2-std-lib = { workspace = true }
 
 proofman.workspace = true
 proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
-pilout.workspace = true
+pil2-pilout.workspace = true
 proofman-witness.workspace = true
 tracing.workspace = true
 rand.workspace = true

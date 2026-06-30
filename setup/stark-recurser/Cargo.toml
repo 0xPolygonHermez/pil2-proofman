@@ -1,5 +1,5 @@
 [package]
-name = "stark-recurser"
+name = "pil2-stark-recurser"
 description = "STARK recursion setup tooling for the pil2-stark prover"
 version = "0.1.0"
 edition = "2021"

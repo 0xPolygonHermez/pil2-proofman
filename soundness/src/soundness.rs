@@ -5,7 +5,7 @@ use proofman_common::{
     format_bytes,
 };
 use proofman_hints::{get_hint_ids_by_name, get_hint_field_constant_a, HintFieldOptions};
-use pil_std_lib::{get_hint_field_constant_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as};
+use pil2_std_lib::{get_hint_field_constant_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as};
 use std::path::PathBuf;
 use std::sync::Arc;
 use proofman_fields::PrimeField64;

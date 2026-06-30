@@ -12,7 +12,7 @@ publish = false
 [dependencies]
 proofman-common = { workspace = true }
 proofman-hints = { workspace = true }
-pil-std-lib = { workspace = true }
+pil2-std-lib = { workspace = true }
 proofman-fields = { workspace = true }
 serde = { workspace = true }
 tabled = "0.7"

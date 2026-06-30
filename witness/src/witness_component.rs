@@ -98,7 +98,7 @@ macro_rules! define_wc {
 #[macro_export]
 macro_rules! define_wc_with_std {
     ($StructName:ident, $name:expr) => {
-        use pil_std_lib::Std;
+        use pil2_std_lib::Std;
         use std::sync::atomic::{AtomicU64, Ordering};
         pub struct $StructName<F: PrimeField64> {
             std_lib: Arc<Std<F>>,

@@ -1,13 +1,13 @@
 // extern crate env_logger;
 use clap::Parser;
-use pilout::{
+use pil2_pilout::{
     pilout::{SymbolType},
     pilout_proxy::PilOutProxy,
 };
-use pilout::pilout::hint_field::Value::HintFieldArray;
-use pilout::pilout::hint_field::Value::StringValue;
-use pilout::pilout::hint_field::Value::Operand;
-use pilout::pilout::operand::Operand::Constant;
+use pil2_pilout::pilout::hint_field::Value::HintFieldArray;
+use pil2_pilout::pilout::hint_field::Value::StringValue;
+use pil2_pilout::pilout::hint_field::Value::Operand;
+use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;

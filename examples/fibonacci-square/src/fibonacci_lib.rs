@@ -1,7 +1,7 @@
 use proofman_common::load_from_json;
 use proofman_common::ProofmanResult;
 use proofman_witness::{witness_library, WitnessLibrary, WitnessManager};
-use pil_std_lib::Std;
+use pil2_std_lib::Std;
 use proofman_fields::PrimeField64;
 use proofman_fields::Goldilocks;
 use proofman::register_std;

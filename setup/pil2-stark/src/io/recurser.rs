@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use stark_recurser::stark2circom::{
+use pil2_stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
 };
 

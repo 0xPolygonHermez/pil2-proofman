@@ -25,7 +25,7 @@ use proofman_starks_lib_c::{
 use proofman_util::create_buffer_fast;
 use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
-use pil_std_lib::Std;
+use pil2_std_lib::Std;
 use proofman_witness::WitnessManager;
 
 pub fn print_summary_info<F: PrimeField64>(
