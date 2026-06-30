@@ -116,7 +116,7 @@ airtemplate Blake3(const int N = 2**20) {
 
     // Argument identifiers
     const int RANGE_CHECKER_ID = 250;
-    const int BLAKE3_CONNECTION_ID = 500;
+    const int BLAKE3_MSG_ID = 500;
     const int BLAKE3_TABLE_ID = 1000;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -300,10 +300,35 @@ airtemplate Blake3(const int N = 2**20) {
     // MESSAGE PERMUTATION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    #pragma extern_fixed_file "examples/hashes/src/blake3/blake3_connection_fixed.bin"
-    col fixed CONN[2];
+    col fixed BLOCK_ID;
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        BLOCK_ID[i] = i / CLOCKS;
+    }
 
-    connection(BLAKE3_CONNECTION_ID, [x_packed, y_packed], [CONN[0], CONN[1]]);
+    expr msg_idx_x = 0;
+    expr msg_idx_y = 0;
+    for (int p = 0; p < CLOCKS; p++) {
+        const int r = (p / CLOCKS_PER_ROUND);
+        const int g = (p % CLOCKS_PER_ROUND);
+
+        msg_idx_x += CLK[p] * SIGMA[r][2 * g];
+        msg_idx_y += CLK[p] * SIGMA[r][2 * g + 1];
+    }
+
+    // unique key per (invocation, word): 16 indices per block, no collisions
+    const expr key_x = msg_idx_x + 16 * BLOCK_ID;
+    const expr key_y = msg_idx_y + 16 * BLOCK_ID;
+
+    // Selectors for round 0 and rounds 1..6
+    const expr round0_sel   = clock_set(start: 0, end: CLOCKS_PER_ROUND);
+    const expr rounds16_sel = clock_set(start: CLOCKS_PER_ROUND, end: CLOCKS);
+
+    // Round 0 writes the message; rounds 1..6 read it
+    lookup_proves(BLAKE3_MSG_ID, [key_x, x_packed], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_proves(BLAKE3_MSG_ID, [key_y, y_packed], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_assumes(BLAKE3_MSG_ID, [key_x, x_packed], sel: rounds16_sel, sel_is_binary: 1);
+    lookup_assumes(BLAKE3_MSG_ID, [key_y, y_packed], sel: rounds16_sel, sel_is_binary: 1);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE3 RANGE CHECKER
@@ -361,8 +386,6 @@ airtemplate Blake3(const int N = 2**20) {
 
         C_ROT[0][i] = c_rot0;
         C_ROT[1][i] = c_rot1;
-
-        log(`T[${i}] = [${a}, ${b}, ${rot}, ${c_rot0}, ${c_rot1}]`);
     }
 
     col witness mul_table;

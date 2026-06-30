@@ -3,5 +3,5 @@ require "blake3.pil"
 
 airgroup Hashes {
     Blake2b(2**20);
-    Blake3(2**20);
+    Blake3(2**18);
 }

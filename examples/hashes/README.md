@@ -4,16 +4,7 @@ This guide provides step-by-step instructions for setting up the necessary repos
 
 ## Execute the Hashes Example
 
-### 1 Generate the connections
-
-To generate the connections, run the following command:
-
-```bash
-cargo run --package hashes --bin blake3-connection -- \
-  build -o ./examples/hashes/src/blake3/blake3_connection_fixed.bin
-```
-
-### 2 Compile PIL
+### 1 Compile PIL
 
 To begin, compile the PIL files:
 
@@ -23,7 +14,7 @@ cargo run --bin proofman-setup -- compile-pil --pil ./examples/hashes/pil/main.p
      -o ./examples/hashes/pil/main.pilout -u ./examples/hashes/build/fixed --fixed-to-file
 ```
 
-### 3 Generate PIL Helpers
+### 2 Generate PIL Helpers
 
 Generate the corresponding PIL helpers by running the following command:
 
@@ -33,7 +24,7 @@ cargo run --bin proofman-cli pil-helpers \
      --path ./examples/hashes/src -o
 ```
 
-### 4 Generate Setup
+### 3 Generate Setup
 
 After compiling the PIL files, generate the setup:
 
@@ -43,7 +34,7 @@ cargo run --bin proofman-setup -- setup \
      -b ./examples/hashes/build -u ./examples/hashes/build/fixed
 ```
 
-### 5 Build the Project
+### 4 Build the Project
 
 Build the project with the following command:
 
@@ -51,7 +42,7 @@ Build the project with the following command:
 cargo build --workspace
 ```
 
-### 6 Verify Constraints
+### 5 Verify Constraints
 
 Verify the constraints by executing this command:
 

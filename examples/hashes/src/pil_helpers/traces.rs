@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "c25b789992a96ef294ba05d9f981a428af06ac4bc8fb33065d18264b02a01d8a";
+pub const PILOUT_HASH: &str = "db446d94b3f76c68c67875d800e4d128c5556ab8b4b725907c6827e35561f901";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -43,15 +43,15 @@ trace_row!(Blake2bTraceRow<F> {
 pub type Blake2bTrace<R> = GenericTrace<R, 1048576, 0, 0>;
 
 trace_row!(Blake3FixedRow<F> {
- CLK_0: F, CONN: [F; 2], ID: F, RANGE: F, A: F, B: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
+ CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
 });
-pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 1048576, 0, 1>;
+pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 262144, 0, 1>;
 
 trace_row!(Blake3TraceRow<F> {
  va:[u16; 2], vb:[u8; 4], vc:[u16; 2], vd:[u8; 4], x:[u16; 2], y:[u16; 2], va_prime:[u8; 4], vd_prime:[u8; 4], vc_prime:[u8; 4], vb_prime_s:[[u8; 2]; 4], va_prime_prime:[u8; 4], vd_prime_prime:[u8; 4], vc_prime_prime:[u8; 4], vb_prime_prime_s:[[u8; 2]; 4], mul_range:u64, mul_table:u64,
 });
 
-pub type Blake3Trace<R> = GenericTrace<R, 1048576, 0, 1>;
+pub type Blake3Trace<R> = GenericTrace<R, 262144, 0, 1>;
 
 values!(Blake2bAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
