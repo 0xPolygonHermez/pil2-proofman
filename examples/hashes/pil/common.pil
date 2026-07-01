@@ -86,3 +86,17 @@ function clock_set_with_seq(const expr mvcol = 1, const int seq[], const int per
     }
     return result * mvcol;
 }
+
+function clock_set_weighted(int start = 0, int end = -1, const int offset = 0, const int weights[]): const expr {
+    assert(length(weights) == end - start);
+    if (end == -1) {
+        end = start;
+    }
+    start += offset;
+    end += offset;
+    expr res = 0;
+    for (int i = start; i < end; i++) {
+        res += air.CLK[i] * weights[i - start];
+    }
+    return res;
+}
