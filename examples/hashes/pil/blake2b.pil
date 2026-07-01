@@ -234,39 +234,28 @@ airtemplate Blake2b(const int N = 2**17) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // COLUMN-TO-DIAGONAL TRANSITION CONSTRAINTS
+    // TRANSITION CONSTRAINTS
     // ═══════════════════════════════════════════════════════════════════════════
 
     // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
+    // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
     const expr va_pp_packed[2] = pack_u64(va_prime_prime);
     const expr vb_pp_packed[2] = pack_u64(vb_prime_prime);
     const expr vc_pp_packed[2] = pack_u64(vc_prime_prime);
     const expr vd_pp_packed[2] = pack_u64(vd_prime_prime);
 
-    const expr dia1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
-    const expr dia2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
-    const expr dia3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
-    const expr dia4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
-    const expr dia12_clocks = dia1_clocks + dia2_clocks;
-    const expr dia34_clocks = dia3_clocks + dia4_clocks;
-    const expr dia123_clocks = dia12_clocks + dia3_clocks;
-    const expr dia234_clocks = dia2_clocks + dia34_clocks;
-    const expr dia_clocks = dia12_clocks + dia34_clocks;
-    
-    for (int j = 0; j < 2; j++) {
-        dia_clocks * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
+    // Column-to-diagonal clock selectors
+    const expr ctd1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
+    const expr ctd2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
+    const expr ctd3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
+    const expr ctd4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
+    const expr ctd12_clocks = ctd1_clocks + ctd2_clocks;
+    const expr ctd34_clocks = ctd3_clocks + ctd4_clocks;
+    const expr ctd123_clocks = ctd12_clocks + ctd3_clocks;
+    const expr ctd234_clocks = ctd2_clocks + ctd34_clocks;
+    const expr ctd_clocks = ctd12_clocks + ctd34_clocks;
 
-        dia123_clocks * (vb_packed[j] - (3)'vb_pp_packed[j]) + dia4_clocks * (vb_packed[j] - (7)'vb_pp_packed[j]) === 0;
-
-        dia12_clocks * (vc_packed[j] - (2)'vc_pp_packed[j]) + dia34_clocks * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
-
-        dia1_clocks * (vd_packed[j] - (1)'vd_pp_packed[j]) + dia234_clocks * (vd_packed[j] - (5)'vd_pp_packed[j]) === 0;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ROUND-BY-ROUND TRANSITION CONSTRAINTS
-    // ═══════════════════════════════════════════════════════════════════════════
-
+    // Round-by-round clock selectors
     const expr rbr1_clocks = clock_set(start: 8, end: 8 + NUM_ROUNDS - 1, step: 1, skip: 7);
     const expr rbr2_clocks = clock_set(start: 9, end: 9 + NUM_ROUNDS - 1, step: 1, skip: 7);
     const expr rbr3_clocks = clock_set(start: 10, end: 10 + NUM_ROUNDS - 1, step: 1, skip: 7);
@@ -276,14 +265,17 @@ airtemplate Blake2b(const int N = 2**17) {
     const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;
     const expr rbr234_clocks = rbr2_clocks + rbr3_clocks + rbr4_clocks;
     const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
-
+    
     for (int j = 0; j < 2; j++) {
-        rbr_clocks * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
+        (ctd_clocks + rbr_clocks) * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
 
+        ctd123_clocks * (vb_packed[j] - (3)'vb_pp_packed[j]) + ctd4_clocks * (vb_packed[j] - (7)'vb_pp_packed[j]) +
         rbr1_clocks * (vb_packed[j] - (1)'vb_pp_packed[j]) + rbr234_clocks * (vb_packed[j] - (5)'vb_pp_packed[j]) === 0;
 
-        rbr12_clocks * (vc_packed[j] - (2)'vc_pp_packed[j]) + rbr34_clocks * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
+        (ctd12_clocks + rbr12_clocks) * (vc_packed[j] - (2)'vc_pp_packed[j]) + 
+        (ctd34_clocks + rbr34_clocks) * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
 
+        ctd1_clocks * (vd_packed[j] - (1)'vd_pp_packed[j]) + ctd234_clocks * (vd_packed[j] - (5)'vd_pp_packed[j]) +
         rbr123_clocks * (vd_packed[j] - (3)'vd_pp_packed[j]) + rbr4_clocks * (vd_packed[j] - (7)'vd_pp_packed[j]) === 0;
     }
 
