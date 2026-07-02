@@ -302,7 +302,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         // unblock workers, which may then be released back into the pool. The pool
         // is about to be dropped, so don't run the integrity checks — they would
         // mask the real cancellation error with a spurious invariant violation.
-        if self.cancelled.load(Ordering::SeqCst) {
+        //
+        // swap, not load: reset() must also re-arm the flag, which is otherwise
+        // sticky. The distributed worker cancels as housekeeping before every job;
+        // left set, the flag turns the next run's take_buffer into an unbounded
+        // fresh allocator (OOM on large blocks). Safe to clear here: workers are
+        // joined before reset() (see doc above), so nothing is parked on the flag.
+        if self.cancelled.swap(false, Ordering::SeqCst) {
             return Ok(());
         }
 
@@ -476,7 +482,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         self.witness.reset()?;
         self.witness_compressor.reset()?;
         self.trace.reset()?;
-        self.trace_compressor.reset()
+        self.trace_compressor.reset()?;
+        // Re-arm AFTER all four pool resets: the pools share this flag, and each
+        // Pool::reset relies on it (cancelled-aware early-out) — clearing earlier
+        // would re-enable the integrity checks mid-teardown. Left set, the flag
+        // turns take() into an unbounded fresh allocator on the next run.
+        self.cancelled.store(false, Ordering::SeqCst);
+        Ok(())
     }
 
     pub fn take_buffer_witness(&self) -> Vec<F> {

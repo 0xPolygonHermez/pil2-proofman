@@ -2712,6 +2712,11 @@ where
             self.recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
         }
 
+        if self.cancellation_info.read().unwrap().token.is_cancelled() {
+            self.memory_handler.cancel();
+            self.memory_handler_recursive_witness.cancel();
+        }
+
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
         for handle in handles {
             handle.join().unwrap();
