@@ -4,9 +4,19 @@ pragma custom_templates;
 {% for vf in verifier_filenames %}include "{{ vf }}";
 {% endfor %}
 template FinalCompressed() {
-{{ stark_signals }}
+{% if has_publics %}    // is_vadcop_final_proof is public @0 of the incoming vadcop_final proof.
+    // Declared first so the positional witness fill stays aligned, verified by the
+    // inner StarkVerifier, but kept OUT of `component main`'s public list below.
+    signal input is_vadcop_final_proof;
+    signal input publics[{{ n_publics_real }}];
+{% endif %}{{ stark_signals }}
 {{ stark_assign }}
-}
+{% if has_publics %}    // Rebuild the verifier's full public vector: flag @0, then the real publics.
+    sV.publics[0] <== is_vadcop_final_proof;
+    for (var i = 0; i < {{ n_publics_real }}; i++) {
+        sV.publics[i + 1] <== publics[i];
+    }
+{% endif %}}
 
 {% if has_publics %}component main {public [publics]} = FinalCompressed();
 {% else %}component main = FinalCompressed();

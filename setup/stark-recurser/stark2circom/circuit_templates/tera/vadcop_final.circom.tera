@@ -11,6 +11,7 @@ include "agg_values.circom";
 {{ verify_global_constraints }}
 
 template Final() {
+    signal output is_vadcop_final_proof <== 1;
 
 {% if has_publics %}    signal input publics[{{ n_publics }}];
 {% endif %}
