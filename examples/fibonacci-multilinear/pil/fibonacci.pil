@@ -1,0 +1,31 @@
+// Plain Fibonacci AIR with no std-library arguments: the milestone-1 target
+// for the multilinear (Basefold + sumcheck) prover.
+//
+//   a' = b
+//   b' = a + b
+//
+// with boundary conditions bound to publics through the L1 selector:
+// a(0) = in1, b(0) = in2, b(N-1) = out.
+
+public in1;
+public in2;
+public out;
+
+airtemplate FibonacciML(const int N = 2**10) {
+    col fixed L1 = [1,0...];
+    col witness a, b;
+
+    // Boundary constraints (selector-gated).
+    L1 * (a - in1) === 0;
+    L1 * (b - in2) === 0;
+    // L1' is 1 exactly at the last row.
+    L1' * (b - out) === 0;
+
+    // Transition constraints, disabled on the wrap-around row.
+    (a' - b) * (1 - L1') === 0;
+    (b' - (a + b)) * (1 - L1') === 0;
+}
+
+airgroup FibonacciML {
+    FibonacciML(N: 2**10);
+}
