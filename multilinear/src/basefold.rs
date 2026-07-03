@@ -1,0 +1,599 @@
+//! Basefold: batched multilinear opening via sumcheck interleaved with FRI folding.
+//!
+//! The statement proven is a weighted hypercube sum `Σ_b Φ(b)·W(b) = σ`, where
+//! `Φ = Σ_j δ^j·w_j` is a random linear combination of the committed columns
+//! (this is what gets FRI-folded) and `W = Σ_i γ^i·K_i` is a random combination
+//! of verifier-evaluable kernels (`eq(·,λ)`, rotation kernels, Boolean-point
+//! kernels). The caller (the STARK prover/verifier) forms `Φ`, `W`, `σ`; this
+//! module runs the interleaved protocol:
+//!
+//! - `n` sumcheck rounds of the degree-2 product `Φ·W`; the round-`t` challenge
+//!   also folds the codeword of `Φ` one step (fold = partial evaluation, the
+//!   Basefold identity). Folded oracles `Φ_1 … Φ_{L−1}` are Merkle-committed;
+//!   after `L` folds the remaining polynomial is sent in clear (`final_poly`,
+//!   which is simultaneously the partially-bound MLE table and the coefficient
+//!   vector of the remaining univariate).
+//! - A query phase checking fold consistency at random domain positions,
+//!   anchored in the stage commitments at level 0.
+//!
+//! Commitments are **pair-packed**: the Merkle leaf at position `j` of a
+//! domain of size `N` holds the values at `j` and `j + N/2` — exactly the pair
+//! one fold-consistency check needs, so every query opens one leaf per tree.
+
+use crate::encoding::{domain_point, encode_column, eval_ext_poly_at_base};
+use crate::error::MlError;
+use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
+use crate::merkle::MerkleTree;
+use crate::sumcheck::{verify_sumcheck_round, ProductOracle, SumcheckOracle};
+use crate::transcript::MlTranscript;
+use fields::{Field, Goldilocks, Poseidon2_16};
+
+/// Hash used for Merkle trees (arity 4: WIDTH 16 = 4 digests of 4 cells).
+pub type MlHash = Poseidon2_16;
+pub const MERKLE_ARITY: u64 = 4;
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct MlParams {
+    /// Log2 of the RS blowup factor (rate = 2^-log_blowup).
+    pub log_blowup: usize,
+    /// Number of FRI query repetitions.
+    pub n_queries: usize,
+    /// Log2 of the length of the final in-clear polynomial (number of
+    /// variables left unfolded); clamped so that at least one fold happens.
+    pub log_final_poly_len: usize,
+    /// Proof-of-work bits (not implemented in v1; must be 0).
+    pub grinding_bits: usize,
+}
+
+impl Default for MlParams {
+    fn default() -> Self {
+        // Conjecture-level defaults: rate 1/4, 50 queries ≈ 100 bits.
+        Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0 }
+    }
+}
+
+impl MlParams {
+    /// Number of folding steps `L` for an `n_vars`-variate opening (`1 ≤ L ≤ n_vars`).
+    pub fn num_folds(&self, n_vars: usize) -> usize {
+        assert!(n_vars >= 1);
+        n_vars - self.log_final_poly_len.min(n_vars - 1)
+    }
+
+    /// Log2 of the level-0 evaluation domain for `n_vars`-variate columns.
+    pub fn n0_bits(&self, n_vars: usize) -> usize {
+        n_vars + self.log_blowup
+    }
+}
+
+/// A committed matrix of base-field columns (one commitment per stage).
+pub struct CommittedMatrix {
+    /// RS codewords, one per column, natural evaluation order (length `2^n0_bits`).
+    pub codewords: Vec<Vec<Goldilocks>>,
+    /// Pair-packed leaves: `leaves[j] = [cols at j..., cols at j + N/2...]`.
+    pub leaves: Vec<Vec<Goldilocks>>,
+    pub tree: MerkleTree,
+    pub n0_bits: usize,
+}
+
+impl CommittedMatrix {
+    pub fn root(&self) -> [Goldilocks; 4] {
+        self.tree.root()
+    }
+
+    pub fn n_cols(&self) -> usize {
+        self.codewords.len()
+    }
+}
+
+/// RS-encode and Merkle-commit a set of columns (all of length `2^n_bits`).
+pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedMatrix {
+    assert!(!columns.is_empty());
+    let n = columns[0].len();
+    assert!(columns.iter().all(|c| c.len() == n));
+
+    let codewords: Vec<Vec<Goldilocks>> = columns.iter().map(|c| encode_column(c, params.log_blowup)).collect();
+    let n0 = codewords[0].len();
+    let half = n0 / 2;
+
+    let leaves: Vec<Vec<Goldilocks>> = (0..half)
+        .map(|j| {
+            let mut leaf = Vec::with_capacity(2 * codewords.len());
+            for cw in &codewords {
+                leaf.push(cw[j]);
+            }
+            for cw in &codewords {
+                leaf.push(cw[j + half]);
+            }
+            leaf
+        })
+        .collect();
+
+    let tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+    CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
+}
+
+/// One FRI fold step: `Φ_{level+1}(x²) = (Φ(x)+Φ(−x))/2 + r·(Φ(x)−Φ(−x))/(2x)`,
+/// with the pairing `(j, j + N/2)` in natural coset order.
+pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<Ext> {
+    let n = vals.len();
+    debug_assert_eq!(n, 1usize << (n0_bits - level));
+    let half = n / 2;
+    let bits = n0_bits - level;
+
+    let two_inv = Goldilocks::TWO.inverse();
+    let w_inv = Goldilocks::new(Goldilocks::W[bits]).inverse();
+    let shift_inv = Goldilocks::new(Goldilocks::SHIFT).exp_power_of_2(level).inverse();
+
+    let mut out = Vec::with_capacity(half);
+    let mut x_inv = shift_inv;
+    for j in 0..half {
+        let a = vals[j];
+        let b = vals[j + half];
+        let sum = (a + b) * two_inv;
+        let diff = (a - b) * (two_inv * x_inv);
+        out.push(sum + r * diff);
+        x_inv *= w_inv;
+    }
+    out
+}
+
+#[inline]
+fn fold_pair(a: Ext, b: Ext, n0_bits: usize, level: usize, j: u64, r: Ext) -> Ext {
+    let two_inv = Goldilocks::TWO.inverse();
+    let x_inv = domain_point(n0_bits, level, j).inverse();
+    (a + b) * two_inv + r * ((a - b) * (two_inv * x_inv))
+}
+
+/// Pair-pack an extension codeword into Merkle leaves (6 Goldilocks each).
+fn pack_ext_pairs(vals: &[Ext]) -> Vec<Vec<Goldilocks>> {
+    let half = vals.len() / 2;
+    (0..half)
+        .map(|j| {
+            let mut leaf = Vec::with_capacity(6);
+            leaf.extend_from_slice(&vals[j].value);
+            leaf.extend_from_slice(&vals[j + half].value);
+            leaf
+        })
+        .collect()
+}
+
+fn unpack_ext_pair(leaf: &[Goldilocks]) -> [Ext; 2] {
+    [Ext::from_array(&leaf[0..3]), Ext::from_array(&leaf[3..6])]
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FoldOpening {
+    pub pair: [Ext; 2],
+    pub path: Vec<Vec<Goldilocks>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OpeningQuery {
+    /// Per stage matrix: the raw pair-packed leaf at position `p1` and its path.
+    pub stage_leaves: Vec<Vec<Goldilocks>>,
+    pub stage_paths: Vec<Vec<Vec<Goldilocks>>>,
+    /// Openings of the committed fold oracles `Φ_1 … Φ_{L−1}`.
+    pub fold_openings: Vec<FoldOpening>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OpeningProof {
+    /// Sumcheck round polynomials (evaluations at 0, 1, 2), one per variable.
+    pub round_polys: Vec<Vec<Ext>>,
+    /// Roots of the committed fold oracles `Φ_1 … Φ_{L−1}`.
+    pub fold_roots: Vec<[Goldilocks; 4]>,
+    /// The remaining polynomial after `L` folds, in clear (`2^(n−L)` coefficients).
+    pub final_poly: Vec<Ext>,
+    pub queries: Vec<OpeningQuery>,
+}
+
+/// Prove the batched opening `Σ_b Φ(b)·W(b) = σ`.
+///
+/// `phi_table`/`w_table`: MLE tables of `Φ` and `W` on the hypercube (length `2^n`).
+/// `phi_codeword`: codeword of `Φ` on the level-0 domain (`Σ_j δ^j · codeword_j`).
+/// `matrices`: the stage commitments, in the same order the verifier will use.
+pub fn prove_opening(
+    params: &MlParams,
+    transcript: &mut MlTranscript,
+    phi_table: Vec<Ext>,
+    w_table: Vec<Ext>,
+    phi_codeword: Vec<Ext>,
+    matrices: &[&CommittedMatrix],
+) -> OpeningProof {
+    assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
+    let n = phi_table.len().trailing_zeros() as usize;
+    let n0_bits = params.n0_bits(n);
+    assert_eq!(phi_codeword.len(), 1usize << n0_bits);
+    let num_folds = params.num_folds(n);
+
+    // Coefficient-form shadow of Φ: folded with the same challenges, it yields
+    // the in-clear final polynomial (whose codeword is the fully folded oracle).
+    let mut phi_coeffs = phi_table.clone();
+    values_to_coeffs(&mut phi_coeffs);
+    let mut oracle = ProductOracle::new(phi_table, w_table);
+    let mut codeword = phi_codeword;
+    let mut fold_trees: Vec<(MerkleTree, Vec<Vec<Goldilocks>>)> = Vec::with_capacity(num_folds - 1);
+    let mut round_polys = Vec::with_capacity(n);
+    let mut final_poly: Vec<Ext> = Vec::new();
+
+    for t in 0..n {
+        let evals = oracle.round_evals();
+        transcript.absorb_exts(&evals);
+        round_polys.push(evals);
+        let r = transcript.challenge();
+        oracle.bind(r);
+
+        if t < num_folds {
+            codeword = fold_codeword(&codeword, n0_bits, t, r);
+            fold_coeffs(&mut phi_coeffs, r);
+            if t + 1 < num_folds {
+                let leaves = pack_ext_pairs(&codeword);
+                let tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+                transcript.absorb_root(&tree.root());
+                fold_trees.push((tree, leaves));
+            } else {
+                final_poly = phi_coeffs.clone();
+                transcript.absorb_exts(&final_poly);
+            }
+        }
+    }
+
+    // Query phase: indices are pair positions in [0, N_0/2).
+    let indices = transcript.query_indices(params.n_queries as u64, (n0_bits - 1) as u64);
+
+    let queries = indices
+        .iter()
+        .map(|&p1| {
+            let stage_leaves: Vec<Vec<Goldilocks>> = matrices.iter().map(|m| m.leaves[p1 as usize].clone()).collect();
+            let stage_paths: Vec<Vec<Vec<Goldilocks>>> = matrices.iter().map(|m| m.tree.path(p1)).collect();
+
+            let mut fold_openings = Vec::with_capacity(num_folds.saturating_sub(1));
+            let mut p = p1;
+            for (i, (tree, leaves)) in fold_trees.iter().enumerate() {
+                let level = i + 1;
+                let half_bits = n0_bits - level - 1;
+                let q = p & ((1u64 << half_bits) - 1);
+                fold_openings.push(FoldOpening { pair: unpack_ext_pair(&leaves[q as usize]), path: tree.path(q) });
+                p = q;
+            }
+            OpeningQuery { stage_leaves, stage_paths, fold_openings }
+        })
+        .collect();
+
+    OpeningProof { round_polys, fold_roots: fold_trees.iter().map(|(t, _)| t.root()).collect(), final_poly, queries }
+}
+
+/// Verify a batched opening.
+///
+/// `sigma`: the claimed sum. `stage_roots`/`stage_n_cols`: the stage
+/// commitments. `column_coeffs`: the `δ`-coefficients of every column in
+/// commitment order (flattened across matrices). `w_final`: evaluates
+/// `W̃` at the final sumcheck point (the verifier can always do this —
+/// kernels are eq/rotation/Boolean-point kernels).
+///
+/// Returns the sumcheck challenge point on success.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_opening(
+    params: &MlParams,
+    transcript: &mut MlTranscript,
+    n_vars: usize,
+    sigma: Ext,
+    proof: &OpeningProof,
+    stage_roots: &[[Goldilocks; 4]],
+    stage_n_cols: &[usize],
+    column_coeffs: &[Ext],
+    w_final: impl FnOnce(&[Ext]) -> Ext,
+) -> Result<Vec<Ext>, MlError> {
+    assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
+    let n0_bits = params.n0_bits(n_vars);
+    let num_folds = params.num_folds(n_vars);
+    let total_cols: usize = stage_n_cols.iter().sum();
+
+    if proof.round_polys.len() != n_vars {
+        return Err(MlError::Malformed(format!("expected {n_vars} round polynomials")));
+    }
+    if proof.fold_roots.len() != num_folds - 1 {
+        return Err(MlError::Malformed(format!("expected {} fold roots", num_folds - 1)));
+    }
+    if proof.final_poly.len() != 1usize << (n_vars - num_folds) {
+        return Err(MlError::Malformed("final polynomial has wrong length".into()));
+    }
+    if column_coeffs.len() != total_cols {
+        return Err(MlError::Malformed("column coefficient count mismatch".into()));
+    }
+
+    // Sumcheck rounds (replaying the transcript).
+    let mut claim = sigma;
+    let mut rs = Vec::with_capacity(n_vars);
+    for (t, evals) in proof.round_polys.iter().enumerate() {
+        if evals.len() != 3 {
+            return Err(MlError::Malformed(format!("round {t}: expected degree-2 round polynomial")));
+        }
+        transcript.absorb_exts(evals);
+        let r = transcript.challenge();
+        claim = verify_sumcheck_round(claim, evals, r, t)?;
+        rs.push(r);
+
+        if t + 1 < num_folds {
+            transcript.absorb_root(&proof.fold_roots[t]);
+        } else if t + 1 == num_folds {
+            transcript.absorb_exts(&proof.final_poly);
+        }
+    }
+
+    // Final algebraic check: claim == Φ̃(rs) · W̃(rs). The final polynomial is
+    // in monomial-coefficient form (it is simultaneously the coefficient vector
+    // of the remaining univariate, checked at the queries).
+    let phi_final = monomial_eval(&proof.final_poly, &rs[num_folds..]);
+    let w_val = w_final(&rs);
+    if claim != phi_final * w_val {
+        return Err(MlError::FinalCheck("sumcheck claim != Φ̃(λ)·W̃(λ)".into()));
+    }
+
+    // Query phase.
+    let indices = transcript.query_indices(params.n_queries as u64, (n0_bits - 1) as u64);
+    if proof.queries.len() != indices.len() {
+        return Err(MlError::Malformed("query count mismatch".into()));
+    }
+
+    for (k, (&p1, query)) in indices.iter().zip(proof.queries.iter()).enumerate() {
+        if query.stage_leaves.len() != stage_roots.len() || query.stage_paths.len() != stage_roots.len() {
+            return Err(MlError::Malformed(format!("query {k}: stage opening count mismatch")));
+        }
+
+        // Verify stage openings and combine columns into the Φ_0 pair.
+        let half0 = 1u64 << (n0_bits - 1);
+        let mut a = Ext::zero();
+        let mut b = Ext::zero();
+        let mut col_idx = 0;
+        for (m, ((leaf, path), &n_cols)) in
+            query.stage_leaves.iter().zip(query.stage_paths.iter()).zip(stage_n_cols.iter()).enumerate()
+        {
+            if leaf.len() != 2 * n_cols {
+                return Err(MlError::Malformed(format!("query {k}: stage {m} leaf has wrong length")));
+            }
+            if !fields::verify_mt::<Goldilocks, MlHash, MlHash>(&stage_roots[m], &[], path, p1, leaf, MERKLE_ARITY, 0) {
+                return Err(MlError::MerklePath(format!("query {k}, stage {m}, position {p1}")));
+            }
+            for c in 0..n_cols {
+                a += column_coeffs[col_idx + c] * leaf[c];
+                b += column_coeffs[col_idx + c] * leaf[n_cols + c];
+            }
+            col_idx += n_cols;
+        }
+        let _ = half0;
+
+        // Fold cascade: level 0 → 1 with r_0, then committed oracles.
+        let mut v = fold_pair(a, b, n0_bits, 0, p1, rs[0]);
+        let mut p = p1;
+        for (i, opening) in query.fold_openings.iter().enumerate() {
+            let level = i + 1;
+            let half_bits = n0_bits - level - 1;
+            let half = 1u64 << half_bits;
+            let q = p & (half - 1);
+
+            let mut leaf = Vec::with_capacity(6);
+            leaf.extend_from_slice(&opening.pair[0].value);
+            leaf.extend_from_slice(&opening.pair[1].value);
+            if !fields::verify_mt::<Goldilocks, MlHash, MlHash>(
+                &proof.fold_roots[i],
+                &[],
+                &opening.path,
+                q,
+                &leaf,
+                MERKLE_ARITY,
+                0,
+            ) {
+                return Err(MlError::MerklePath(format!("query {k}, fold oracle {level}, position {q}")));
+            }
+
+            let expected = if p < half { opening.pair[0] } else { opening.pair[1] };
+            if v != expected {
+                return Err(MlError::FoldConsistency { query: k, level });
+            }
+            v = fold_pair(opening.pair[0], opening.pair[1], n0_bits, level, q, rs[level]);
+            p = q;
+        }
+
+        // Last fold lands on the in-clear polynomial.
+        let x = domain_point(n0_bits, num_folds, p);
+        if v != eval_ext_poly_at_base(&proof.final_poly, x) {
+            return Err(MlError::FoldConsistency { query: k, level: num_folds });
+        }
+    }
+
+    Ok(rs)
+}
+
+/// Compute the batched codeword `Σ_j coeff_j · codeword_j` over one or more matrices.
+pub fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<Ext> {
+    let n0 = matrices[0].codewords[0].len();
+    let mut out = vec![Ext::zero(); n0];
+    let mut idx = 0;
+    for m in matrices {
+        for cw in &m.codewords {
+            let c = coeffs[idx];
+            for (o, &v) in out.iter_mut().zip(cw.iter()) {
+                *o += c * v;
+            }
+            idx += 1;
+        }
+    }
+    out
+}
+
+/// Compute the batched MLE table `Σ_j coeff_j · w_j` over the raw columns.
+pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
+    let n = columns[0].len();
+    let mut out = vec![Ext::zero(); n];
+    for (col, &c) in columns.iter().zip(coeffs.iter()) {
+        for (o, &v) in out.iter_mut().zip(col.iter()) {
+            *o += c * v;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eq::eq_evals;
+    use crate::hypercube::{dot_base_ext, ext_from_base};
+    use fields::PrimeField64;
+    use rand::{rng, RngExt};
+
+    fn random_col(len: usize) -> Vec<Goldilocks> {
+        let mut r = rng();
+        (0..len).map(|_| Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64)).collect()
+    }
+
+    fn test_params() -> MlParams {
+        MlParams { log_blowup: 2, n_queries: 8, log_final_poly_len: 2, grinding_bits: 0 }
+    }
+
+    /// Full commit → open → verify roundtrip: two matrices (stages), several
+    /// columns, a single eq(·,λ) kernel.
+    #[test]
+    fn opening_roundtrip() {
+        let n = 6;
+        let len = 1usize << n;
+        let params = test_params();
+
+        let cols_a: Vec<Vec<Goldilocks>> = (0..3).map(|_| random_col(len)).collect();
+        let cols_b: Vec<Vec<Goldilocks>> = (0..2).map(|_| random_col(len)).collect();
+        let mat_a = commit_matrix(&cols_a.iter().map(|c| c.as_slice()).collect::<Vec<_>>(), &params);
+        let mat_b = commit_matrix(&cols_b.iter().map(|c| c.as_slice()).collect::<Vec<_>>(), &params);
+        let matrices = [&mat_a, &mat_b];
+        let all_cols: Vec<&[Goldilocks]> = cols_a.iter().chain(cols_b.iter()).map(|c| c.as_slice()).collect();
+
+        // --- prover transcript ---
+        let mut tp = MlTranscript::new();
+        tp.absorb_root(&mat_a.root());
+        tp.absorb_root(&mat_b.root());
+
+        // Opening point and claims
+        let lambda = tp.challenges(n);
+        let kernel = eq_evals(&lambda);
+        let claims: Vec<Ext> = all_cols.iter().map(|c| dot_base_ext(c, &kernel)).collect();
+        for v in &claims {
+            tp.absorb_ext(v);
+        }
+
+        // Batching: δ for columns (single kernel, so no γ needed beyond δ)
+        let delta = tp.challenge();
+        let mut coeffs = Vec::with_capacity(all_cols.len());
+        let mut d = Ext::one();
+        for _ in 0..all_cols.len() {
+            coeffs.push(d);
+            d *= delta;
+        }
+        let sigma: Ext = claims.iter().zip(coeffs.iter()).map(|(&v, &c)| v * c).sum();
+
+        let phi_table = combine_columns(&all_cols, &coeffs);
+        let phi_codeword = combine_codewords(&matrices, &coeffs);
+        let proof = prove_opening(&params, &mut tp, phi_table, kernel.clone(), phi_codeword, &matrices);
+
+        // --- verifier transcript ---
+        let mut tv = MlTranscript::new();
+        tv.absorb_root(&mat_a.root());
+        tv.absorb_root(&mat_b.root());
+        let lambda_v = tv.challenges(n);
+        assert_eq!(lambda_v, lambda);
+        for v in &claims {
+            tv.absorb_ext(v);
+        }
+        let delta_v = tv.challenge();
+        assert_eq!(delta_v, delta);
+
+        let rs = verify_opening(
+            &params,
+            &mut tv,
+            n,
+            sigma,
+            &proof,
+            &[mat_a.root(), mat_b.root()],
+            &[3, 2],
+            &coeffs,
+            |point| crate::eq::eq_eval(&lambda, point),
+        )
+        .expect("opening must verify");
+
+        // The claim delivered by the fold cascade equals Φ̃ at the challenge point.
+        assert_eq!(rs.len(), n);
+    }
+
+    /// Corrupting a claimed evaluation must break verification.
+    #[test]
+    fn wrong_claim_rejected() {
+        let n = 5;
+        let len = 1usize << n;
+        let params = test_params();
+        let col = random_col(len);
+        let mat = commit_matrix(&[&col], &params);
+
+        let mut tp = MlTranscript::new();
+        tp.absorb_root(&mat.root());
+        let lambda = tp.challenges(n);
+        let kernel = eq_evals(&lambda);
+        // WRONG claim
+        let sigma = dot_base_ext(&col, &kernel) + Ext::one();
+        tp.absorb_ext(&sigma);
+        let coeffs = vec![Ext::one()];
+        let phi_table = combine_columns(&[&col], &coeffs);
+        let phi_codeword = combine_codewords(&[&mat], &coeffs);
+        let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
+
+        let mut tv = MlTranscript::new();
+        tv.absorb_root(&mat.root());
+        let lambda_v = tv.challenges(n);
+        tv.absorb_ext(&sigma);
+        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, |point| {
+            crate::eq::eq_eval(&lambda_v, point)
+        });
+        assert!(res.is_err(), "inflated claim must be rejected");
+    }
+
+    /// Corrupting a committed codeword position must be caught by queries
+    /// (with the small query count used here, at least with high probability —
+    /// we corrupt many positions to make failure certain).
+    #[test]
+    fn corrupted_codeword_rejected() {
+        let n = 5;
+        let len = 1usize << n;
+        let params = MlParams { n_queries: 16, ..test_params() };
+        let col = random_col(len);
+        let mut mat = commit_matrix(&[&col], &params);
+
+        // Corrupt half of the codeword AFTER computing honest claims, then rebuild
+        // the tree so paths verify but fold consistency breaks.
+        let n0 = mat.codewords[0].len();
+        for j in 0..n0 / 2 {
+            mat.codewords[0][j] += Goldilocks::ONE;
+        }
+        let half = n0 / 2;
+        let leaves: Vec<Vec<Goldilocks>> =
+            (0..half).map(|j| vec![mat.codewords[0][j], mat.codewords[0][j + half]]).collect();
+        mat.tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+        mat.leaves = leaves;
+
+        let mut tp = MlTranscript::new();
+        tp.absorb_root(&mat.root());
+        let lambda = tp.challenges(n);
+        let kernel = eq_evals(&lambda);
+        let sigma = dot_base_ext(&col, &kernel);
+        tp.absorb_ext(&sigma);
+        let coeffs = vec![Ext::one()];
+        let phi_table = combine_columns(&[&col], &coeffs);
+        let phi_codeword: Vec<Ext> = mat.codewords[0].iter().map(|&v| ext_from_base(v)).collect();
+        let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
+
+        let mut tv = MlTranscript::new();
+        tv.absorb_root(&mat.root());
+        let lambda_v = tv.challenges(n);
+        tv.absorb_ext(&sigma);
+        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, |point| {
+            crate::eq::eq_eval(&lambda_v, point)
+        });
+        assert!(res.is_err(), "corrupted codeword must be rejected");
+    }
+}

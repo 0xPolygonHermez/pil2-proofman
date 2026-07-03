@@ -1,0 +1,19 @@
+[package]
+name = "proofman-multilinear"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+# `verify` selects the pure-Rust Goldilocks arithmetic so this crate builds
+# standalone (without it, `fields` needs the C++ FFI backend on x86_64).
+fields = { workspace = true, features = ["verify"] }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+rand = { workspace = true }
