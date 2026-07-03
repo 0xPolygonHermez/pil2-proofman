@@ -193,9 +193,8 @@ dependencies = [
 
 [[package]]
 name = "build-probe-mpi"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abee715b93fb80cbca8602265e0c2acd40b60df81fab1f3fd29a734babd697e7"
+version = "0.1.5"
+source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
 dependencies = [
  "pkg-config",
  "shell-words",
@@ -1035,9 +1034,8 @@ dependencies = [
 
 [[package]]
 name = "mpi"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "302522157fd9f0ae43eb9792db89932045a29ae57b15a525724c2b3d0981c338"
+version = "0.8.1"
+source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
 dependencies = [
  "build-probe-mpi",
  "conv",
@@ -1050,9 +1048,8 @@ dependencies = [
 
 [[package]]
 name = "mpi-sys"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b828192ea0f41740b6c2a40beaa140c63e8ae51aef58b6edf5d23c0340c4f2b"
+version = "0.2.3"
+source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
 dependencies = [
  "bindgen",
  "build-probe-mpi",
