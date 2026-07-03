@@ -632,6 +632,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
+name = "fibonacci-multilinear"
+version = "1.0.0-beta"
+dependencies = [
+ "fields",
+ "proofman",
+ "proofman-common",
+ "proofman-macros",
+ "serde",
+ "serde_arrays",
+ "serde_json",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "fibonacci-square"
 version = "1.0.0-beta"
 dependencies = [
@@ -1393,6 +1408,7 @@ dependencies = [
  "mpi",
  "pilout",
  "proofman-common",
+ "proofman-multilinear",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1487,6 +1503,7 @@ dependencies = [
  "proofman-common",
  "proofman-hints",
  "proofman-macros",
+ "proofman-multilinear",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
@@ -1513,6 +1530,7 @@ dependencies = [
  "pilout",
  "proofman",
  "proofman-common",
+ "proofman-multilinear",
  "proofman-soundness",
  "proofman-starks-lib-c",
  "proofman-util",
@@ -1575,6 +1593,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "proofman-multilinear"
+version = "1.0.0-beta"
+dependencies = [
+ "bincode",
+ "fields",
+ "rand 0.10.1",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
+use commands::verify_multilinear::VerifyMultilinearCmd;
 use commands::verify_stark::VerifyStark;
 use commands::verify_snark::VerifySnark;
 use commands::prove_recursive::ProveRecursiveCmd;
@@ -43,6 +44,7 @@ pub enum Commands {
     Stats(StatsCmd),
     Execute(ExecuteCmd),
     VerifyStark(VerifyStark),
+    VerifyMultilinear(VerifyMultilinearCmd),
     VerifySnark(VerifySnark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
@@ -75,6 +77,7 @@ fn main() {
             Commands::GenCustomCommitsFixed(args) => args.run(),
             Commands::GetConstraints(args) => args.run(),
             Commands::VerifyStark(args) => args.run(),
+            Commands::VerifyMultilinear(args) => args.run(),
             Commands::VerifySnark(args) => args.run(),
             Commands::Stats(args) => args.run(),
             Commands::Execute(args) => args.run(),

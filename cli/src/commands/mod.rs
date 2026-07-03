@@ -9,6 +9,7 @@ pub mod setup;
 pub mod setup_snark;
 pub mod soundness;
 pub mod get_constraints;
+pub mod verify_multilinear;
 pub mod verify_stark;
 pub mod verify_snark;
 pub mod gen_custom_commits_fixed;

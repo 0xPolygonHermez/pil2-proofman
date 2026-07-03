@@ -184,7 +184,10 @@ impl PilHelpersCmd {
                             has_packed: has_witness_bits,
                             columns: Vec::new(),
                             fixed: Vec::new(),
-                            stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
+                            stages_columns: vec![
+                                StageColumnCtx::default();
+                                pilout.num_challenges.len().saturating_sub(1)
+                            ],
                             custom_columns: Vec::new(),
                             air_values: Vec::new(),
                             airgroup_values: Vec::new(),

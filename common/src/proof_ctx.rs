@@ -731,7 +731,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut challenges_guard = self.challenges.values.write().unwrap();
 
         let initial_pos = self.global_info.n_challenges.iter().take(stage - 1).sum::<usize>();
-        let num_challenges = self.global_info.n_challenges[stage - 1];
+        let num_challenges = self.global_info.n_challenges.get(stage - 1).copied().unwrap_or(0);
         for i in 0..num_challenges {
             transcript.get_field(&mut challenges_guard[(initial_pos + i) * 3..(initial_pos + i) * 3 + 3]);
         }
