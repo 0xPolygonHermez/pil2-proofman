@@ -224,6 +224,25 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
                 fs::write(&starkinfo_path, &starkinfo_json)?;
 
+                // Multilinear (Basefold) prover artifact. Not every AIR is
+                // supported yet (std arguments, custom commits, …): skip with a
+                // note instead of failing the setup.
+                match crate::output::mlinfo::build_air_ir(
+                    setup_result,
+                    n_bits as u32,
+                    proofman_multilinear::MlParams::default(),
+                ) {
+                    Ok(air_ir) => {
+                        let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
+                        air_ir
+                            .save(&mlinfo_path)
+                            .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
+                    }
+                    Err(e) => {
+                        tracing::debug!("Air '{}': mlinfo not generated ({e})", item.air_name);
+                    }
+                }
+
                 fs::write(
                     files_dir.join(format!("{}.expressionsinfo.json", item.air_name)),
                     &crate::output::json::to_json_string(&pil_code.expressions_info)?,

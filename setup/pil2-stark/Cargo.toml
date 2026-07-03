@@ -18,6 +18,7 @@ default = []
 [dependencies]
 proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
 fields = { workspace = true, features = ["verify"] }
+proofman-multilinear = { workspace = true }
 proofman-common = { workspace = true }
 proofman-util = { workspace = true }
 stark-recurser = { path = "../stark-recurser" }

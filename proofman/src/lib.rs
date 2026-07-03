@@ -1,3 +1,4 @@
+mod multilinear;
 mod proofman;
 mod recursion;
 mod utils;
@@ -7,6 +8,7 @@ mod verify;
 mod challenge_accumulation;
 mod snark_wrapper;
 
+pub use multilinear::*;
 pub use proofman::*;
 pub use recursion::*;
 pub use utils::*;

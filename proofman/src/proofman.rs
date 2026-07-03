@@ -54,6 +54,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
+use crate::multilinear::{load_const_columns, to_goldilocks, trace_to_columns, AirIrCache};
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
 
@@ -4390,5 +4391,275 @@ where
             air_id
         );
         Ok(stream_id)
+    }
+
+    // ------------------------------------------------------------------------
+    // Multilinear (Basefold + sumcheck) proving path — milestone 1.
+    //
+    // Reuses the standard witness pipeline (same skeleton as
+    // `_verify_proof_constraints`: witness workers feed finished instances
+    // through the contributions channel), then proves each instance with the
+    // pure-Rust multilinear prover instead of crossing the FFI into the
+    // univariate C++ prover. CPU-only, basic proofs only (no aggregation).
+    // ------------------------------------------------------------------------
+
+    /// Generate one multilinear (Basefold) STARK proof per AIR instance.
+    ///
+    /// Proofs are written to `output_dir` as `<air>_<instance>.mlproof.bin`;
+    /// the returned paths are sorted. Requires the proving key to contain the
+    /// `.mlinfo.bin` artifacts emitted by `proofman-setup`.
+    pub fn generate_multilinear_proof(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
+        verbose_mode: VerboseMode,
+        output_dir: PathBuf,
+    ) -> ProofmanResult<Vec<PathBuf>> {
+        if self.pctx.gpu {
+            return Err(ProofmanError::InvalidParameters(
+                "the multilinear prover is CPU-only in milestone 1 (do not enable GPU)".into(),
+            ));
+        }
+        if !witness_lib_path.exists() {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
+            )));
+        }
+        if let Some(ref input_data_path) = input_data_path {
+            if !input_data_path.exists() {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Input data file not found at path: {input_data_path:?}"
+                )));
+            }
+        }
+        if let Some(ref publics_path) = public_inputs_path {
+            if !publics_path.exists() {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Public inputs file not found at path: {publics_path:?}"
+                )));
+            }
+        }
+        std::fs::create_dir_all(&output_dir)
+            .map_err(|e| ProofmanError::InvalidParameters(format!("creating {}: {e}", output_dir.display())))?;
+
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.register_witness(&mut *witness_lib, library)?;
+
+        self._generate_multilinear_proof(output_dir)
+    }
+
+    fn _generate_multilinear_proof(&self, output_dir: PathBuf) -> ProofmanResult<Vec<PathBuf>> {
+        timer_start_info!(GENERATING_MULTILINEAR_PROOFS);
+
+        let _computing = self.acquire_computing("_generate_multilinear_proof");
+
+        self.set_partition(1, vec![0], 0)?;
+
+        self.pctx.set_debug_info(&DebugInfo::default());
+        self.cancellation_info.write().unwrap().reset();
+        self.reset()?;
+        self.pctx.dctx_reset();
+
+        let _ = self.exec()?;
+
+        // Same dummy global challenge as the verify-constraints flow — witness
+        // libraries may read it during stage-1 computation. The multilinear
+        // transcript derives its own challenges from its own commitments.
+        // Challenge-free pilouts have no stage-2 challenge slots to fill.
+        if self.pctx.global_info.n_challenges.len() > 1 {
+            let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
+            let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
+            transcript.put(&dummy_element);
+            let mut global_challenge = [F::ZERO; 3];
+            transcript.get_field(&mut global_challenge);
+            self.pctx.set_global_challenge(2, &mut global_challenge);
+        }
+
+        let witness_done = Arc::new(Counter::new());
+
+        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
+
+        let minimal_memory = true;
+
+        let my_instances = self.pctx.dctx_get_process_instances();
+        let proof_paths: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+        let ir_cache = Arc::new(AirIrCache::default());
+
+        let _contributions_guard = WorkerPoolGuard {
+            sentinel: usize::MAX,
+            n_streams: self.n_streams,
+            tx: self.contributions_tx.clone(),
+            handles: self.handle_contributions.clone(),
+        };
+
+        for _ in 0..self.n_streams {
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let memory_handler_clone = self.memory_handler.clone();
+            let contributions_rx_clone = self.contributions_rx.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
+            let proof_paths_clone = proof_paths.clone();
+            let ir_cache_clone = ir_cache.clone();
+            let output_dir_clone = output_dir.clone();
+            let handle = std::thread::spawn(move || loop {
+                match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                    Ok(instance_id) => {
+                        if instance_id == usize::MAX {
+                            break;
+                        }
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+                        if let Err(e) = Self::process_multilinear_instance(
+                            &pctx_clone,
+                            &sctx_clone,
+                            memory_handler_clone.clone(),
+                            instance_id,
+                            &ir_cache_clone,
+                            &output_dir_clone,
+                            &proof_paths_clone,
+                        ) {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                }
+            });
+
+            self.handle_contributions.lock().unwrap().push(handle);
+        }
+
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, None, false);
+
+        let _witness_guard = WitnessGuard {
+            witness_tx: self.witness_tx.clone(),
+            handler: witness_handler.clone(),
+            handles: witness_handles.clone(),
+        };
+
+        let my_instances_no_tables = my_instances
+            .iter()
+            .filter(|idx| {
+                !self.pctx.dctx_is_table(**idx)
+                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+
+        self.calculate_witness(
+            &my_instances_no_tables,
+            self.memory_handler.clone(),
+            witness_done.clone(),
+            minimal_memory,
+            false,
+        )?;
+
+        if let Some(h) = witness_handler.lock().unwrap().take() {
+            h.join().unwrap();
+        }
+        drop(witness_handles);
+
+        let my_instances_tables = self
+            .pctx
+            .dctx_get_my_tables()
+            .into_iter()
+            .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
+            .collect::<Vec<_>>();
+
+        for instance_id in my_instances_tables.iter() {
+            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        }
+
+        self.pctx.set_proof_tx(None);
+
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
+        }
+
+        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        self.check_cancel(true)?;
+
+        self.wcm.end(&DebugInfo::default())?;
+
+        timer_stop_and_log_info!(GENERATING_MULTILINEAR_PROOFS);
+
+        let mut paths = proof_paths.lock().unwrap().clone();
+        paths.sort();
+        Ok(paths)
+    }
+
+    fn process_multilinear_instance(
+        pctx: &Arc<ProofCtx<F>>,
+        sctx: &Arc<SetupCtx<F>>,
+        memory_handler: Arc<MemoryHandler<F>>,
+        instance_id: usize,
+        ir_cache: &AirIrCache,
+        output_dir: &std::path::Path,
+        proof_paths: &Arc<Mutex<Vec<PathBuf>>>,
+    ) -> ProofmanResult<()> {
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let ir = ir_cache.get(setup)?;
+
+        let n_rows = 1usize << ir.n_bits;
+        let witness_cols = {
+            let air_instance = pctx.air_instances[instance_id].read().unwrap();
+            if air_instance.num_rows != n_rows {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "instance {instance_id} ({}): trace has {} rows, mlinfo expects {n_rows}",
+                    ir.name, air_instance.num_rows
+                )));
+            }
+            if ir.cols_per_stage.len() != 1 || ir.cols_per_stage[0] as usize != air_instance.n_cols_trace {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "instance {instance_id} ({}): {} trace columns but mlinfo expects stage layout {:?} \
+                     (multi-stage AIRs are milestone 2)",
+                    ir.name, air_instance.n_cols_trace, ir.cols_per_stage
+                )));
+            }
+            trace_to_columns(&air_instance.trace, n_rows, air_instance.n_cols_trace)
+        };
+        let witness = vec![witness_cols];
+
+        let consts =
+            load_const_columns(std::path::Path::new(&setup.const_pols_path), ir.n_const_cols as usize, n_rows)?;
+        let publics = to_goldilocks(&pctx.get_publics());
+
+        // Fail with a per-row diagnostic instead of an opaque proof failure if
+        // the trace does not satisfy the compiled constraints.
+        proofman_multilinear::check_constraints_on_trace(&ir, &witness, &consts, &publics, &[])
+            .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
+
+        let proof = proofman_multilinear::prove_air(&ir, &witness, &consts, &publics)
+            .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
+
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+        let path = output_dir.join(format!("{}_{}.mlproof.bin", ir.name, air_instance_id));
+        proof.save(&path).map_err(|e| ProofmanError::InvalidParameters(format!("saving multilinear proof: {e}")))?;
+        tracing::info!("Multilinear proof for instance {instance_id} ({}) written to {}", ir.name, path.display());
+        proof_paths.lock().unwrap().push(path);
+
+        let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+        if is_shared_buffer {
+            memory_handler.release_buffer(witness_buffer)?;
+        }
+        Ok(())
     }
 }
