@@ -85,12 +85,6 @@ pub struct ProveCmd {
 
     #[clap(short = 'g', long, default_value_t = false)]
     pub gpu: bool,
-
-    /// Prove with the multilinear (Basefold + sumcheck) prover instead of the
-    /// univariate STARK prover. CPU-only; produces one `.mlproof.bin` per
-    /// instance (verify with `verify-multilinear`). No aggregation.
-    #[clap(long, default_value_t = false)]
-    pub multilinear: bool,
 }
 
 impl ProveCmd {
@@ -106,13 +100,6 @@ impl ProveCmd {
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
-        if self.multilinear && self.gpu {
-            return Err("--multilinear is CPU-only in milestone 1 (drop --gpu)".into());
-        }
-        if self.multilinear && self.aggregation {
-            return Err("--multilinear does not support aggregation yet (drop --aggregation)".into());
-        }
-
         let mut options = ProofmanOptions::new();
 
         if let Some(max_streams) = self.max_streams {
@@ -127,9 +114,7 @@ impl ProveCmd {
         if let Some(max_witness_stored) = self.max_witness_stored {
             options.with_max_witness_stored(max_witness_stored);
         }
-        if verify_constraints || self.multilinear {
-            // The multilinear path reuses the lighter (no-aggregation-setups)
-            // context that the verify-constraints flow uses.
+        if verify_constraints {
             options.verify_constraints();
         } else if !self.aggregation {
             options.no_aggregation();
@@ -159,22 +144,7 @@ impl ProveCmd {
             self.verify_proofs,
             self.minimal_memory,
         );
-        if self.multilinear {
-            let paths = match self.field {
-                Field::Goldilocks => proofman.generate_multilinear_proof(
-                    self.witness_lib.clone(),
-                    self.public_inputs.clone(),
-                    None,
-                    self.verbose.into(),
-                    self.output_dir.clone(),
-                )?,
-            };
-            println!(
-                "{} {} multilinear proof(s) generated",
-                format!("{: >12}", "Done").bright_green().bold(),
-                paths.len()
-            );
-        } else if debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),

@@ -1,0 +1,87 @@
+use clap::Parser;
+use colored::Colorize;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use crate::commands::field::Field;
+use fields::Goldilocks;
+use proofman::ProofMan;
+use proofman_common::ProofmanOptions;
+
+/// Generate the **base** multilinear (Basefold + sumcheck) proofs — one
+/// `.mlproof.bin` per AIR instance.
+///
+/// This mirrors the univariate convention where base proofs are ephemeral:
+/// the main `prove` command never writes them, it aggregates and writes only
+/// the final proof. The multilinear prover has no aggregation yet (that is a
+/// later milestone), so base proofs are exposed through this dedicated command
+/// and consumed by `verify-multilinear`. Omit `--output-dir` to prove without
+/// writing anything (a timing run).
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
+pub struct ProveMultilinearCmd {
+    /// Witness computation dynamic library path
+    #[clap(short = 'w', long)]
+    pub witness_lib: PathBuf,
+
+    /// Public inputs path
+    #[clap(short = 'i', long)]
+    pub public_inputs: Option<PathBuf>,
+
+    /// Proving key folder path
+    #[clap(short = 'k', long)]
+    pub proving_key: PathBuf,
+
+    /// Output dir path. Omit to prove without writing the base proofs to disk
+    /// (a timing run); pass it to write one `.mlproof.bin` per instance.
+    #[clap(short = 'o', long)]
+    pub output_dir: Option<PathBuf>,
+
+    #[clap(long, default_value_t = Field::Goldilocks)]
+    pub field: Field,
+
+    #[clap(short = 'c', long, value_name = "KEY=VALUE", num_args(1..))]
+    pub custom_commits: Vec<String>,
+
+    /// Verbosity (-v, -vv)
+    #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
+    pub verbose: u8,
+}
+
+impl ProveMultilinearCmd {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        println!("{} ProveMultilinear", format!("{: >12}", "Command").bright_green().bold());
+        println!();
+
+        // The multilinear prover reuses the lighter (no aggregation setups)
+        // context that the verify-constraints flow uses, and is CPU-only.
+        let mut options = ProofmanOptions::new();
+        options.verify_constraints();
+        options.verbose_mode(self.verbose.into());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
+
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {commit:?}");
+            }
+        }
+        proofman.register_custom_commits(custom_commits_map)?;
+
+        match self.field {
+            Field::Goldilocks => proofman.generate_multilinear_proof(
+                self.witness_lib.clone(),
+                self.public_inputs.clone(),
+                None,
+                self.verbose.into(),
+                self.output_dir.clone(),
+            )?,
+        };
+
+        Ok(())
+    }
+}

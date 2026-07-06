@@ -2213,12 +2213,6 @@ where
         }
 
         let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
-        tracing::info!(
-            "··· Global challenge: [{}, {}, {}]",
-            global_challenge[0],
-            global_challenge[1],
-            global_challenge[2]
-        );
         self.pctx.set_global_challenge(2, &mut global_challenge);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -4407,18 +4401,14 @@ where
     // ------------------------------------------------------------------------
 
     /// Generate one multilinear (Basefold) STARK proof per AIR instance.
-    ///
-    /// Proofs are written to `output_dir` as `<air>_<instance>.mlproof.bin`;
-    /// the returned paths are sorted. Requires the proving key to contain the
-    /// `.mlinfo.bin` artifacts emitted by `proofman-setup`.
     pub fn generate_multilinear_proof(
         &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
-        output_dir: PathBuf,
-    ) -> ProofmanResult<Vec<PathBuf>> {
+        output_dir: Option<PathBuf>,
+    ) -> ProofmanResult<ProvePhaseResult> {
         if self.pctx.gpu {
             return Err(ProofmanError::InvalidParameters(
                 "the multilinear prover is CPU-only in milestone 1 (do not enable GPU)".into(),
@@ -4443,12 +4433,16 @@ where
                 )));
             }
         }
-        std::fs::create_dir_all(&output_dir)
-            .map_err(|e| ProofmanError::InvalidParameters(format!("creating {}: {e}", output_dir.display())))?;
+        if let Some(dir) = &output_dir {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| ProofmanError::InvalidParameters(format!("creating {}: {e}", dir.display())))?;
+        }
 
+        timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
         self.register_witness(&mut *witness_lib, library)?;
@@ -4456,9 +4450,7 @@ where
         self._generate_multilinear_proof(output_dir)
     }
 
-    fn _generate_multilinear_proof(&self, output_dir: PathBuf) -> ProofmanResult<Vec<PathBuf>> {
-        timer_start_info!(GENERATING_MULTILINEAR_PROOFS);
-
+    fn _generate_multilinear_proof(&self, output_dir: Option<PathBuf>) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_multilinear_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -4482,6 +4474,13 @@ where
             transcript.get_field(&mut global_challenge);
             self.pctx.set_global_challenge(2, &mut global_challenge);
         }
+
+        // Pass 1: witness computation + stage-1 Basefold commitment (streamed by
+        // the witness workers). This is the multilinear analogue of the
+        // univariate contributions phase — commit every instance's stage 1 so
+        // the global stage challenges can be derived from all the roots — so it
+        // shares the timer name to keep the two provers' logs comparable.
+        timer_start_info!(CALCULATING_CONTRIBUTIONS);
 
         let witness_done = Arc::new(Counter::new());
 
@@ -4628,6 +4627,8 @@ where
 
         self.check_cancel(true)?;
 
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
+
         // ------------------------------------------------------------------
         // Sequential multilinear pipeline (two passes, mirroring the
         // univariate contributions/proof architecture: the CPU trace-buffer
@@ -4685,14 +4686,16 @@ where
 
         // Pass 2: recompute the witness (deterministic per run — the same
         // property the univariate minimal-memory flow relies on), run stage 2,
-        // prove.
-        let mut proof_paths: Vec<PathBuf> = Vec::with_capacity(instances.len());
+        // prove. Timer names mirror the univariate prover for comparable logs.
+        timer_start_info!(GENERATING_PROOFS);
+        timer_start_info!(GENERATING_INNER_PROOFS);
         for (idx, &instance_id) in instances.iter().enumerate() {
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
             let setup = self.sctx.get_setup(airgroup_id, air_id)?;
             let ir = irs[idx].clone();
             let n_rows = 1usize << ir.n_bits;
 
+            timer_start_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
             self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
             self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
@@ -4726,6 +4729,7 @@ where
                     witness.push(Self::extract_stage_columns(&self.pctx, setup, instance_id, stage, &ir, n_rows)?);
                 }
             }
+            timer_stop_and_log_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
 
             // Instance value messages, reassembled as extension elements.
             let air_instance_id = self.pctx.dctx_find_air_instance_id(instance_id)?;
@@ -4766,6 +4770,7 @@ where
             )
             .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
 
+            timer_start_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
             let mut proof = proofman_multilinear::prove_air(
                 &ir,
                 &witness,
@@ -4778,13 +4783,20 @@ where
             )
             .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
             proof.global_instance_id = instance_id as u32;
+            timer_stop_and_log_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
 
-            let path = output_dir.join(format!("{}_{}.mlproof.bin", ir.name, air_instance_id));
-            proof
-                .save(&path)
-                .map_err(|e| ProofmanError::InvalidParameters(format!("saving multilinear proof: {e}")))?;
-            tracing::info!("Multilinear proof for instance {instance_id} ({}) written to {}", ir.name, path.display());
-            proof_paths.push(path);
+            if let Some(dir) = &output_dir {
+                let path = dir.join(format!("{}_{}.mlproof.bin", ir.name, air_instance_id));
+                proof
+                    .save(&path)
+                    .map_err(|e| ProofmanError::InvalidParameters(format!("saving multilinear proof: {e}")))?;
+
+                tracing::info!(
+                    "Multilinear proof for instance {instance_id} ({}) written to {}",
+                    ir.name,
+                    path.display()
+                );
+            }
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
             if is_shared_buffer {
@@ -4792,12 +4804,14 @@ where
             }
         }
 
+        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
+        timer_stop_and_log_info!(GENERATING_PROOFS);
+
         self.wcm.end(&DebugInfo::default())?;
 
-        timer_stop_and_log_info!(GENERATING_MULTILINEAR_PROOFS);
-
-        proof_paths.sort();
-        Ok(proof_paths)
+        // The multilinear prover has no aggregation yet: like the univariate
+        // no-aggregation path, there is no final proof to return.
+        Ok(ProvePhaseResult::Full(None, None))
     }
 
     /// Complete stage 1 for one instance (aux buffers, C++ instance init,

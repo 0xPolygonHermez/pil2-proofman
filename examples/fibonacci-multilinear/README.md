@@ -37,15 +37,18 @@ cargo run --bin proofman-cli verify-constraints \
      --public-inputs examples/fibonacci-multilinear/src/inputs.json \
      --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin
 
-# 7. Prove
-cargo run --bin proofman-cli -- prove --multilinear \
+# 7. Prove the base proofs
+cargo run --bin proofman-cli -- prove-multilinear \
     --witness-lib ./target/debug/libfibonacci_multilinear.so \
     --proving-key examples/fibonacci-multilinear/build/provingKey \
     --public-inputs examples/fibonacci-multilinear/src/inputs.json \
-    --output-dir examples/fibonacci-multilinear/build/proofs \
-    --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin
+    --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin \
+    --output-dir examples/fibonacci-multilinear/build/proofs
 
-# 8. Verify (available when recursion gets activated)
+# 8. Verify the base-proof set
+cargo run --bin proofman-cli -- verify-multilinear \
+    --proof examples/fibonacci-multilinear/build/proofs/*.mlproof.bin \
+    --proving-key examples/fibonacci-multilinear/build/provingKey
 ```
 
 With the proving key generated, `cargo test -p proofman-multilinear --test setup_artifact` runs an end-to-end prove+verify against the real setup artifacts (it skips when the proving key is absent).
