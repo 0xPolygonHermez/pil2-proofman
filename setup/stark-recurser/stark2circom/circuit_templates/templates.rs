@@ -204,6 +204,7 @@ pub fn gen_final_compressed(
     ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
     ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
     ctx.insert("has_publics", &has_publics);
+    ctx.insert("n_publics", &n_publics);
     ctx.insert("n_publics_real", &n_publics_real);
 
     render(FINAL_COMPRESSED_TMPL, &ctx)
