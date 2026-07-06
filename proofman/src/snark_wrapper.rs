@@ -23,6 +23,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
 use serde::{Deserialize, Serialize};
 
+/// Sets GPU mode and verifies that a usable GPU is available when `gpu` is requested.
+/// Returns an error if the library was built without CUDA support, or if GPU mode was
+/// requested but no GPUs were found.
+pub fn ensure_gpu_available(gpu: bool) -> ProofmanResult<()> {
+    if !set_gpu_mode_c(gpu) {
+        return Err(ProofmanError::InvalidConfiguration(
+            "GPU mode requested but library was built without CUDA support".into(),
+        ));
+    }
+    if gpu && get_num_gpus_c() == 0 {
+        return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
+    }
+    Ok(())
+}
+
 pub enum SnarkProtocol {
     Fflonk,
     Plonk,
@@ -153,14 +168,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<Self> {
         initialize_logger(verbose_mode, None);
 
-        if !set_gpu_mode_c(gpu) {
-            return Err(ProofmanError::InvalidConfiguration(
-                "GPU mode requested but library was built without CUDA support".into(),
-            ));
-        }
-        if gpu && get_num_gpus_c() == 0 {
-            return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-        }
+        ensure_gpu_available(gpu)?;
 
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
@@ -423,14 +431,7 @@ pub fn check_setup_snark<F: PrimeField64>(
 ) -> ProofmanResult<()> {
     initialize_logger(verbose_mode, None);
 
-    if !set_gpu_mode_c(gpu) {
-        return Err(ProofmanError::InvalidConfiguration(
-            "GPU mode requested but library was built without CUDA support".into(),
-        ));
-    }
-    if gpu && get_num_gpus_c() == 0 {
-        return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-    }
+    ensure_gpu_available(gpu)?;
 
     let setup_recursivef_path =
         PathBuf::from(format!("{}/{}/{}", proving_key_snark_path.display(), "recursivef", "recursivef"));
@@ -460,14 +461,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 ) -> ProofmanResult<bool> {
     initialize_logger(verbose_mode, None);
 
-    if !set_gpu_mode_c(gpu) {
-        return Err(ProofmanError::InvalidConfiguration(
-            "GPU mode requested but library was built without CUDA support".into(),
-        ));
-    }
-    if gpu && get_num_gpus_c() == 0 {
-        return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-    }
+    ensure_gpu_available(gpu)?;
 
     if vadcop_proof.compressed {
         return Err(ProofmanError::InvalidConfiguration(
@@ -493,16 +487,8 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         None,
     )?;
 
-    if !set_gpu_mode_c(gpu) {
-        return Err(ProofmanError::InvalidConfiguration(
-            "GPU mode requested but library was built without CUDA support".into(),
-        ));
-    }
+    ensure_gpu_available(gpu)?;
     if gpu {
-        let n_gpus = get_num_gpus_c();
-        if n_gpus == 0 {
-            return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-        }
         init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
     }
 

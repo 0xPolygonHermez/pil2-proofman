@@ -24,7 +24,7 @@ impl ProofType {
             ProofType::VadcopFinal => 4,
             ProofType::VadcopFinalCompressed => 5,
             ProofType::RecursiveF => 6,
-            ProofType::RecurserAggregator => 4,
+            ProofType::RecurserAggregator => 7,
         }
     }
 }

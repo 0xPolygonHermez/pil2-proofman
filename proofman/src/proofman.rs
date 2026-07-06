@@ -8,7 +8,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
 use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
@@ -57,6 +57,7 @@ use crate::{
 };
 use crate::total_recursive_proofs;
 use crate::check_const_pols_gpu;
+use crate::ensure_gpu_available;
 use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
@@ -674,17 +675,8 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
 
-        if !set_gpu_mode_c(gpu) {
-            return Err(ProofmanError::InvalidConfiguration(
-                "GPU mode requested but library was built without CUDA support".into(),
-            ));
-        }
+        ensure_gpu_available(gpu)?;
         if gpu {
-            let n_gpus = get_num_gpus_c();
-            if n_gpus == 0 {
-                return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-            }
-
             init_gpu_setup_c(sctx.max_n_bits_ext as u64, GOLDILOCKS_MERKLE_TREE_ARITY);
         }
 
