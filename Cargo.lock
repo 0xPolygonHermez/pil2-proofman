@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "pil2-stark-setup",
  "proofman",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "connection"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -523,7 +523,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diff-buses"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "direct-update"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -611,7 +611,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fibonacci-square"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "num-bigint",
  "pil2-std-lib",
@@ -945,7 +945,7 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lookup"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "macros-test"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "proofman",
  "proofman-common",
@@ -1125,7 +1125,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-instance"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -1174,7 +1174,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permutation"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-pilout"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "bytes",
  "prost",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-stark-setup"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "anyhow",
  "clap",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-std-lib"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "colored",
  "proofman-common",
@@ -1400,7 +1400,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "bincode",
  "blake3",
@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "blake3",
  "clap",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "borsh",
  "colored",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-curves"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "proofman-fields",
  "rand 0.10.1",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-fields"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "cfg-if",
  "num-bigint",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "itoa",
  "proofman-common",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-soundness"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "pil2-std-lib",
  "proofman-common",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "crossbeam-channel",
  "proofman-starks-src",
@@ -1544,11 +1544,11 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-src"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 
 [[package]]
 name = "proofman-util"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "colored",
  "sysinfo",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "bincode",
  "num-traits",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-witness"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "libloading",
  "proofman-common",
@@ -1691,7 +1691,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "range-check"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -1931,7 +1931,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "simple"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
@@ -1979,7 +1979,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "special"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
 ]
@@ -2084,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "test-recursive"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "libloading",
  "num-bigint",
@@ -2336,7 +2336,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "virtual-tables"
-version = "1.0.0-beta"
+version = "1.0.1-alpha"
 dependencies = [
  "common",
  "num-bigint",
