@@ -13,8 +13,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// Repo-root manifest, embedded at compile time so it travels with the binary.
-const EMBEDDED_PACKAGE_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../package.json"));
+/// Vendored copy of the repo-root Node manifest, embedded at compile time so it
+/// travels with the binary and the crate is self-contained for publishing. Kept
+/// in sync with the repo-root `package.json` by `vendored_package_json_in_sync`.
+const EMBEDDED_PACKAGE_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/package.json"));
 
 /// Return the first root whose `node_modules/<probe>` exists, canonicalized.
 fn find_in_roots(roots: &[PathBuf], probe: &str) -> Option<PathBuf> {
@@ -127,6 +129,21 @@ mod tests {
 
     fn npm_runs(root: &Path) -> usize {
         std::fs::read_to_string(root.join("runs.log")).map(|s| s.lines().count()).unwrap_or(0)
+    }
+
+    /// The embedded manifest is a vendored copy of the repo-root `package.json`
+    /// (so the crate is self-contained when published). When building inside the
+    /// repo, enforce the copy has not drifted; off-tree (published) the root file
+    /// is absent and the check is skipped.
+    #[test]
+    fn vendored_package_json_in_sync() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../package.json");
+        if let Ok(root_content) = std::fs::read_to_string(root) {
+            assert_eq!(
+                root_content, EMBEDDED_PACKAGE_JSON,
+                "setup/pil2-stark/package.json drifted from the repo-root package.json; re-copy it"
+            );
+        }
     }
 
     #[test]
