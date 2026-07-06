@@ -19,13 +19,13 @@ use crate::expr::expression::{ExprChild, Expression};
 use crate::types::pilout_info::SetupResult;
 
 struct Compiler<'a> {
+    setup: &'a SetupResult,
     exprs: &'a [Expression],
     instrs: Vec<Instr>,
     numbers: Vec<u64>,
     /// Memoized lowering of arena entries: arena id → (operand, degree, offsets used).
     memo: HashMap<usize, (Operand, u32, BTreeSet<i32>)>,
     offsets: BTreeSet<i32>,
-    uses_challenges: bool,
 }
 
 impl Compiler<'_> {
@@ -38,13 +38,13 @@ impl Compiler<'_> {
             self.numbers.push(v);
             self.numbers.len() - 1
         });
-        Ok(Operand { kind: SrcKind::Number, idx: idx as u32, row_offset: 0 })
+        Ok(Operand { kind: SrcKind::Number, idx: idx as u32, row_offset: 0, dim: 1 })
     }
 
     fn emit(&mut self, op: Op, a: Operand, b: Operand) -> Operand {
         let dst = self.instrs.len() as u32;
         self.instrs.push(Instr { op, dst, a, b });
-        Operand { kind: SrcKind::Temp, idx: dst, row_offset: 0 }
+        Operand { kind: SrcKind::Temp, idx: dst, row_offset: 0, dim: 1 }
     }
 
     /// Lower an arena entry (memoized).
@@ -69,29 +69,49 @@ impl Compiler<'_> {
         let leaf_offset = |e: &Expression| e.row_offset.unwrap_or(0) as i32;
         match e.op.as_str() {
             "cm" => {
-                let stage = e.stage as u8;
-                if stage != 1 {
-                    bail!("witness column of stage {stage} (multi-stage is milestone 2)");
+                // `id` is the global pol id: index into cm_pols_map, which
+                // carries the stage, base-slot offset (stage_pos = sum of
+                // earlier same-stage dims) and dimension.
+                let pol_id = e.id.ok_or_else(|| anyhow!("cm operand without id"))?;
+                let info =
+                    self.setup.cm_pols_map.get(pol_id).ok_or_else(|| anyhow!("cm pol id {pol_id} out of range"))?;
+                let stage = info.stage.ok_or_else(|| anyhow!("cm pol {pol_id} without stage"))? as u8;
+                if stage as usize > self.setup.n_stages || stage == 0 {
+                    bail!("witness column of stage {stage} (quotient stage is univariate-only)");
                 }
+                let base_slot = info.stage_pos.ok_or_else(|| anyhow!("cm pol {pol_id} without stage_pos"))? as u32;
+                let dim = info.dim as u8;
                 let s = leaf_offset(e);
                 self.offsets.insert(s);
-                let col = e.stage_id.ok_or_else(|| anyhow!("cm operand without stage_id"))? as u32;
-                Ok((Operand { kind: SrcKind::Witness { stage }, idx: col, row_offset: s }, 1, BTreeSet::from([s])))
+                Ok((
+                    Operand { kind: SrcKind::Witness { stage }, idx: base_slot, row_offset: s, dim },
+                    1,
+                    BTreeSet::from([s]),
+                ))
             }
             "const" => {
                 let s = leaf_offset(e);
                 self.offsets.insert(s);
                 let col = e.id.ok_or_else(|| anyhow!("const operand without id"))? as u32;
-                Ok((Operand { kind: SrcKind::Const, idx: col, row_offset: s }, 1, BTreeSet::from([s])))
+                Ok((Operand { kind: SrcKind::Const, idx: col, row_offset: s, dim: 1 }, 1, BTreeSet::from([s])))
             }
             "public" => {
                 let idx = e.id.ok_or_else(|| anyhow!("public operand without id"))? as u32;
-                Ok((Operand { kind: SrcKind::Public, idx, row_offset: 0 }, 0, BTreeSet::new()))
+                Ok((Operand { kind: SrcKind::Public, idx, row_offset: 0, dim: 1 }, 0, BTreeSet::new()))
             }
             "challenge" => {
                 let idx = e.id.ok_or_else(|| anyhow!("challenge operand without id"))? as u32;
-                self.uses_challenges = true;
-                Ok((Operand { kind: SrcKind::Challenge, idx, row_offset: 0 }, 0, BTreeSet::new()))
+                Ok((Operand { kind: SrcKind::Challenge, idx, row_offset: 0, dim: 3 }, 0, BTreeSet::new()))
+            }
+            "airvalue" => {
+                let idx = e.id.ok_or_else(|| anyhow!("airvalue operand without id"))?;
+                let dim = self.setup.air_values_map.get(idx).map(|v| v.dim as u8).unwrap_or(e.dim.max(1) as u8);
+                Ok((Operand { kind: SrcKind::AirValue, idx: idx as u32, row_offset: 0, dim }, 0, BTreeSet::new()))
+            }
+            "airgroupvalue" => {
+                let idx = e.id.ok_or_else(|| anyhow!("airgroupvalue operand without id"))?;
+                let dim = self.setup.airgroup_values_map.get(idx).map(|v| v.dim as u8).unwrap_or(e.dim.max(1) as u8);
+                Ok((Operand { kind: SrcKind::AirGroupValue, idx: idx as u32, row_offset: 0, dim }, 0, BTreeSet::new()))
             }
             "number" => {
                 let value = e.value.as_deref().ok_or_else(|| anyhow!("number operand without value"))?;
@@ -137,12 +157,12 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
     }
 
     let mut compiler = Compiler {
+        setup,
         exprs: &setup.expressions,
         instrs: Vec::new(),
         numbers: Vec::new(),
         memo: HashMap::new(),
         offsets: BTreeSet::from([0]),
-        uses_challenges: false,
     };
 
     let mut constraints = Vec::with_capacity(setup.constraints.len());
@@ -164,14 +184,12 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         constraints.push(ConstraintIr { boundary, root, degree });
     }
 
-    // Protocol-level challenge symbols exist in every pilout (the univariate
-    // pipeline declares them); only surface them if a constraint actually
-    // reads a challenge — that is what gates multi-stage (milestone 2) support.
-    let challenge_stages: Vec<u8> = if compiler.uses_challenges {
-        setup.challenges_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect()
-    } else {
-        Vec::new()
-    };
+    // Full global challenge map: the multilinear protocol derives only the
+    // challenges of stages 2..=n_stages (the later ones belong to the
+    // univariate quotient/evals/FRI machinery and stay zero).
+    let challenge_stages: Vec<u8> = setup.challenges_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
+    let airvalue_stages: Vec<u8> = setup.air_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
+    let airgroupvalue_stages: Vec<u8> = setup.airgroup_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
 
     Ok(AirIr {
         name: setup.name.clone(),
@@ -182,6 +200,8 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         n_const_cols: setup.n_constants as u32,
         n_publics: setup.n_publics as u32,
         challenge_stages,
+        airvalue_stages,
+        airgroupvalue_stages,
         numbers: compiler.numbers,
         n_temps: compiler.instrs.len() as u32,
         instrs: compiler.instrs,
@@ -190,4 +210,78 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         opening_offsets: compiler.offsets.into_iter().collect(),
         params,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pil::prepare::PrepareOptions;
+    use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+    use pilout::pilout as pb;
+    use prost::Message;
+    use proofman_multilinear::SrcKind;
+
+    /// Compile SimpleLeft (std lookups: stage-2 gsum + im-pols, challenges,
+    /// airgroup values) from the checked-in pilout and pin the AirIr shape.
+    #[test]
+    fn simple_left_compiles_to_multistage_ir() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pil2-components/test/simple/build/simple.pilout");
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("skipping: {path} not found");
+                return;
+            }
+        };
+        let pilout = pb::PilOut::decode(data.as_slice()).expect("decode pilout");
+
+        // Locate SimpleLeft.
+        let (ag_idx, air_idx, n_bits) = pilout
+            .air_groups
+            .iter()
+            .enumerate()
+            .find_map(|(g, ag)| {
+                ag.airs.iter().enumerate().find_map(|(a, air)| {
+                    (air.name.as_deref() == Some("SimpleLeft"))
+                        .then(|| (g, a, (air.num_rows.unwrap() as usize).trailing_zeros()))
+                })
+            })
+            .expect("SimpleLeft in pilout");
+
+        let stark_struct = generate_stark_struct(&StarkSettings::default(), n_bits as usize);
+        let opts = PrepareOptions { debug: false, im_pols_stages: false };
+        let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &opts);
+
+        let ir = build_air_ir(&pil_result.setup, n_bits, MlParams::default()).expect("build AirIr");
+
+        // Two stages: 16 base columns in stage 1, 21 (7 ext columns) in stage 2.
+        assert_eq!(ir.cols_per_stage, vec![16, 21]);
+        // std_alpha/std_gamma (stage 2) + the univariate-only vc (3) / xi (4);
+        // the FRI folding challenges are not part of the setup challenge map.
+        assert_eq!(ir.challenge_stages, vec![2, 2, 3, 4]);
+        assert_eq!(ir.airgroupvalue_stages, vec![2]);
+        assert!(ir.airvalue_stages.is_empty());
+
+        // Constraints must reference ext-valued stage-2 columns and challenges.
+        let has_ext_witness = ir
+            .instrs
+            .iter()
+            .any(|i| [i.a, i.b].iter().any(|o| matches!(o.kind, SrcKind::Witness { stage: 2 }) && o.dim == 3));
+        let has_challenge = ir.instrs.iter().any(|i| [i.a, i.b].iter().any(|o| o.kind == SrcKind::Challenge));
+        let has_agv = ir.instrs.iter().any(|i| [i.a, i.b].iter().any(|o| o.kind == SrcKind::AirGroupValue));
+        assert!(has_ext_witness, "expected dim-3 stage-2 witness operands");
+        assert!(has_challenge, "expected challenge operands");
+        assert!(has_agv, "expected airgroup-value operands");
+
+        // Base-slot layout: stage-2 operands must address slots 0..21 in steps
+        // compatible with dim 3 and never run past the section width.
+        for instr in &ir.instrs {
+            for o in [&instr.a, &instr.b] {
+                if let SrcKind::Witness { stage } = o.kind {
+                    let width = ir.cols_per_stage[stage as usize - 1];
+                    assert!(o.idx + o.dim as u32 <= width, "operand past section: {o:?}");
+                }
+            }
+        }
+    }
 }

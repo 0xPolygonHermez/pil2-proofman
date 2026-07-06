@@ -1,0 +1,7 @@
+require "fibonacci.pil"
+require "module.pil"
+
+airgroup FiboCPU {
+    Fibonacci(N: 2**10);
+    Module(N: 2**8);
+}

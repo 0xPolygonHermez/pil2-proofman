@@ -9,24 +9,57 @@
 use crate::error::MlError;
 use crate::hypercube::{ext_from_base, Ext};
 use crate::ir::{AirIr, Op, Operand, SrcKind};
-use fields::Goldilocks;
+use fields::{Field, Goldilocks};
 
-/// Supplies leaf values for one evaluation point.
+/// Supplies leaf values for one evaluation point. Witness/const leaves are
+/// addressed by *base* column slot; extension-valued columns are reassembled
+/// by the evaluator from their `dim` consecutive base slots.
 pub trait LeafSource {
-    /// Value of witness column `col` of `stage` (1-based), shifted by `row_offset`.
+    /// Value of witness base column `col` of `stage` (1-based), shifted by `row_offset`.
     fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext;
     /// Value of fixed column `col`, shifted by `row_offset`.
     fn constant(&self, col: u32, row_offset: i32) -> Ext;
     fn public(&self, idx: u32) -> Ext;
     fn challenge(&self, idx: u32) -> Ext;
+    fn air_value(&self, _idx: u32) -> Ext {
+        unimplemented!("air values not available in this context")
+    }
+    fn airgroup_value(&self, _idx: u32) -> Ext {
+        unimplemented!("airgroup values not available in this context")
+    }
+}
+
+/// The extension-basis element `u` (coordinates `[0, 1, 0]`): an ext-valued
+/// column with coordinate base columns `(c0, c1, c2)` has value
+/// `c0 + c1·u + c2·u²`. MLE is linear over the extension, so reassembling
+/// coordinate MLEs commutes with folding/evaluation.
+#[inline]
+fn ext_u() -> Ext {
+    Ext::from_array(&[Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::ZERO])
+}
+
+fn assemble_dim<S: LeafSource>(src: &S, stage: u8, base: u32, row_offset: i32, dim: u8) -> Ext {
+    if dim == 1 {
+        return src.witness(stage, base, row_offset);
+    }
+    let u = ext_u();
+    let mut acc = Ext::zero();
+    let mut basis = Ext::one();
+    for k in 0..dim as u32 {
+        acc += src.witness(stage, base + k, row_offset) * basis;
+        basis *= u;
+    }
+    acc
 }
 
 fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand) -> Ext {
     match op.kind {
-        SrcKind::Witness { stage } => src.witness(stage, op.idx, op.row_offset),
+        SrcKind::Witness { stage } => assemble_dim(src, stage, op.idx, op.row_offset, op.dim),
         SrcKind::Const => src.constant(op.idx, op.row_offset),
         SrcKind::Public => src.public(op.idx),
         SrcKind::Challenge => src.challenge(op.idx),
+        SrcKind::AirValue => src.air_value(op.idx),
+        SrcKind::AirGroupValue => src.airgroup_value(op.idx),
         SrcKind::Number => ext_from_base(Goldilocks::new(ir.numbers[op.idx as usize])),
         SrcKind::Temp => temps[op.idx as usize],
     }
@@ -100,12 +133,15 @@ pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<
 /// constraint at every row of a base-field trace and report offending rows.
 /// `witness[stage−1]` are the stage's columns, `consts` the fixed columns; all
 /// column-major (`col[row]`).
+#[allow(clippy::too_many_arguments)]
 pub fn check_constraints_on_trace(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
     publics: &[Goldilocks],
     challenges: &[Ext],
+    air_values: &[Ext],
+    airgroup_values: &[Ext],
 ) -> Result<(), MlError> {
     let n_rows = 1usize << ir.n_bits;
 
@@ -114,6 +150,8 @@ pub fn check_constraints_on_trace(
         consts: &'a [Vec<Goldilocks>],
         publics: &'a [Goldilocks],
         challenges: &'a [Ext],
+        air_values: &'a [Ext],
+        airgroup_values: &'a [Ext],
         row: usize,
         n_rows: usize,
     }
@@ -132,6 +170,12 @@ pub fn check_constraints_on_trace(
         fn challenge(&self, idx: u32) -> Ext {
             self.challenges[idx as usize]
         }
+        fn air_value(&self, idx: u32) -> Ext {
+            self.air_values[idx as usize]
+        }
+        fn airgroup_value(&self, idx: u32) -> Ext {
+            self.airgroup_values[idx as usize]
+        }
     }
 
     let mut temps = Vec::new();
@@ -142,7 +186,7 @@ pub fn check_constraints_on_trace(
             crate::ir::Boundary::LastRow => Box::new(core::iter::once(n_rows - 1)),
         };
         for row in rows {
-            let src = RowSource { witness, consts, publics, challenges, row, n_rows };
+            let src = RowSource { witness, consts, publics, challenges, air_values, airgroup_values, row, n_rows };
             eval_instrs(ir, &src, &mut temps);
             let v = constraint_value(ir, &src, &temps, c_idx);
             if !v.is_zero() {
@@ -195,6 +239,8 @@ pub(crate) mod test_air {
             n_const_cols: 1,
             n_publics: 2,
             challenge_stages: vec![],
+            airvalue_stages: vec![],
+            airgroupvalue_stages: vec![],
             numbers: b.numbers.clone(),
             n_temps: b.n_temps(),
             instrs: b.instrs,
@@ -238,7 +284,7 @@ mod tests {
     fn fib_trace_satisfies_ir() {
         let ir = fib_ir(4, MlParams::default());
         let (witness, consts, publics) = fib_trace(4);
-        check_constraints_on_trace(&ir, &witness, &consts, &publics, &[]).expect("valid trace");
+        check_constraints_on_trace(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("valid trace");
     }
 
     #[test]
@@ -246,7 +292,7 @@ mod tests {
         let ir = fib_ir(4, MlParams::default());
         let (mut witness, consts, publics) = fib_trace(4);
         witness[0][0][5] += Goldilocks::ONE;
-        assert!(check_constraints_on_trace(&ir, &witness, &consts, &publics, &[]).is_err());
+        assert!(check_constraints_on_trace(&ir, &witness, &consts, &publics, &[], &[], &[]).is_err());
     }
 
     #[test]

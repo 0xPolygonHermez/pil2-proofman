@@ -44,7 +44,11 @@ impl AirIrCache {
 
 /// Split a row-major trace buffer into base-field columns.
 pub fn trace_to_columns<F: PrimeField64>(trace: &[F], num_rows: usize, n_cols: usize) -> Vec<Vec<Goldilocks>> {
-    debug_assert!(trace.len() >= num_rows * n_cols);
+    assert!(
+        trace.len() >= num_rows * n_cols,
+        "trace buffer too small: {} < {num_rows} rows x {n_cols} cols",
+        trace.len()
+    );
     let mut cols = vec![Vec::with_capacity(num_rows); n_cols];
     for row in 0..num_rows {
         for (c, col) in cols.iter_mut().enumerate() {
@@ -82,4 +86,57 @@ pub fn load_const_columns(path: &Path, n_cols: usize, n_rows: usize) -> Proofman
 /// Convert a slice of generic field elements to Goldilocks.
 pub fn to_goldilocks<F: PrimeField64>(vals: &[F]) -> Vec<Goldilocks> {
     vals.iter().map(|v| Goldilocks::new(v.as_canonical_u64())).collect()
+}
+
+/// Reassemble a flat value buffer into `count` extension elements.
+/// With `stride3`, every value occupies 3 slots (the airgroup-value layout);
+/// otherwise the buffer must be exactly `3 * count` as well.
+pub fn values_to_ext<F: PrimeField64>(
+    vals: &[F],
+    count: usize,
+    _stride3: bool,
+) -> ProofmanResult<Vec<proofman_multilinear::Ext>> {
+    if vals.len() < 3 * count {
+        return Err(ProofmanError::InvalidParameters(format!(
+            "value buffer too small: {} < {}",
+            vals.len(),
+            3 * count
+        )));
+    }
+    Ok((0..count)
+        .map(|k| {
+            proofman_multilinear::Ext::from_array(&[
+                Goldilocks::new(vals[3 * k].as_canonical_u64()),
+                Goldilocks::new(vals[3 * k + 1].as_canonical_u64()),
+                Goldilocks::new(vals[3 * k + 2].as_canonical_u64()),
+            ])
+        })
+        .collect())
+}
+
+/// Reassemble air values, whose buffer layout depends on the value's stage:
+/// stage-1 values occupy one slot, stage ≥ 2 values three.
+pub fn ext_values_by_stage<F: PrimeField64>(
+    vals: &[F],
+    stages: &[u8],
+) -> ProofmanResult<Vec<proofman_multilinear::Ext>> {
+    let mut out = Vec::with_capacity(stages.len());
+    let mut off = 0usize;
+    for &st in stages {
+        let dim = if st <= 1 { 1 } else { 3 };
+        if vals.len() < off + dim {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "air value buffer too small: {} < {}",
+                vals.len(),
+                off + dim
+            )));
+        }
+        let mut coords = [Goldilocks::ZERO; 3];
+        for (k, c) in coords.iter_mut().enumerate().take(dim) {
+            *c = Goldilocks::new(vals[off + k].as_canonical_u64());
+        }
+        out.push(proofman_multilinear::Ext::from_array(&coords));
+        off += dim;
+    }
+    Ok(out)
 }

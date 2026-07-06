@@ -23,6 +23,9 @@ pub enum Op {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SrcKind {
     /// Committed witness column of a stage (1-based stage as in pilout).
+    /// `idx` is the *base-slot* offset within the stage; extension-valued
+    /// columns (`dim == 3`) occupy `dim` consecutive base slots whose
+    /// coordinates the evaluator reassembles.
     Witness { stage: u8 },
     /// Fixed (constant) column.
     Const,
@@ -30,6 +33,10 @@ pub enum SrcKind {
     Public,
     /// Transcript challenge (global index into `AirIr::challenge_stages`).
     Challenge,
+    /// Air value (per-instance scalar, prover message); global index.
+    AirValue,
+    /// Airgroup value (per-instance scalar entering global constraints); global index.
+    AirGroupValue,
     /// Constant from the `numbers` pool.
     Number,
     /// Result of a previous instruction.
@@ -42,11 +49,14 @@ pub struct Operand {
     pub idx: u32,
     /// Row offset for column operands (`x'` = +1, `x'(2)` = +2, …), 0 otherwise.
     pub row_offset: i32,
+    /// Number of base-field slots this operand spans (1 for base-field
+    /// columns, 3 for extension-valued stage ≥ 2 columns).
+    pub dim: u8,
 }
 
 impl Operand {
     pub fn temp(idx: u32) -> Self {
-        Self { kind: SrcKind::Temp, idx, row_offset: 0 }
+        Self { kind: SrcKind::Temp, idx, row_offset: 0, dim: 1 }
     }
 }
 
@@ -85,12 +95,19 @@ pub struct AirIr {
     pub air_id: u32,
     /// log2 of the number of rows.
     pub n_bits: u32,
-    /// Committed witness columns per stage (index 0 = stage 1).
+    /// Committed witness *base* columns per stage (index 0 = stage 1);
+    /// an extension-valued column counts as 3.
     pub cols_per_stage: Vec<u32>,
     pub n_const_cols: u32,
     pub n_publics: u32,
-    /// Stage of each challenge, in global challenge order (empty in M1).
+    /// Stage of each challenge, in global challenge order. Only challenges
+    /// with `stage <= n_stages` are ever derived/used — later stages belong
+    /// to the univariate protocol (quotient/evals/FRI batching).
     pub challenge_stages: Vec<u8>,
+    /// Stage of each air value, in global order.
+    pub airvalue_stages: Vec<u8>,
+    /// Stage of each airgroup value, in global order.
+    pub airgroupvalue_stages: Vec<u8>,
     /// Pool of literal constants.
     pub numbers: Vec<u64>,
     pub instrs: Vec<Instr>,
@@ -149,19 +166,36 @@ impl IrBuilder {
             self.numbers.push(v);
             self.numbers.len() - 1
         });
-        Operand { kind: SrcKind::Number, idx: idx as u32, row_offset: 0 }
+        Operand { kind: SrcKind::Number, idx: idx as u32, row_offset: 0, dim: 1 }
     }
 
     pub fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Operand {
-        Operand { kind: SrcKind::Witness { stage }, idx: col, row_offset }
+        Operand { kind: SrcKind::Witness { stage }, idx: col, row_offset, dim: 1 }
+    }
+
+    /// Extension-valued witness column occupying `base_slot .. base_slot + 3`.
+    pub fn witness_ext(&self, stage: u8, base_slot: u32, row_offset: i32) -> Operand {
+        Operand { kind: SrcKind::Witness { stage }, idx: base_slot, row_offset, dim: 3 }
     }
 
     pub fn constant(&self, col: u32, row_offset: i32) -> Operand {
-        Operand { kind: SrcKind::Const, idx: col, row_offset }
+        Operand { kind: SrcKind::Const, idx: col, row_offset, dim: 1 }
     }
 
     pub fn public(&self, idx: u32) -> Operand {
-        Operand { kind: SrcKind::Public, idx, row_offset: 0 }
+        Operand { kind: SrcKind::Public, idx, row_offset: 0, dim: 1 }
+    }
+
+    pub fn challenge(&self, idx: u32) -> Operand {
+        Operand { kind: SrcKind::Challenge, idx, row_offset: 0, dim: 3 }
+    }
+
+    pub fn air_value(&self, idx: u32, dim: u8) -> Operand {
+        Operand { kind: SrcKind::AirValue, idx, row_offset: 0, dim }
+    }
+
+    pub fn airgroup_value(&self, idx: u32, dim: u8) -> Operand {
+        Operand { kind: SrcKind::AirGroupValue, idx, row_offset: 0, dim }
     }
 
     pub fn op(&mut self, op: Op, a: Operand, b: Operand) -> Operand {

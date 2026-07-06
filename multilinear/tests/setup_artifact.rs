@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use fields::{Field, Goldilocks, PrimeField64};
-use proofman_multilinear::{check_constraints_on_trace, prove_air, verify_air, AirIr};
+use proofman_multilinear::{check_constraints_on_trace, prove_air, verify_air, AirIr, Ext};
 
 fn air_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -68,13 +68,20 @@ fn prove_verify_from_setup_artifact() {
     let witness = vec![vec![a, b]];
     let publics = vec![in1, in2, out];
 
-    // The compiled IR must agree row-by-row with the trace.
-    check_constraints_on_trace(&ir, &witness, &consts, &publics, &[]).expect("constraints hold on the trace");
+    // Single-stage AIR: no challenges are derived; the vectors still need the
+    // full global shape (protocol-level symbols exist in every pilout).
+    let challenges = vec![Ext::zero(); ir.challenge_stages.len()];
+    let air_values = vec![Ext::zero(); ir.airvalue_stages.len()];
+    let airgroup_values = vec![Ext::zero(); ir.airgroupvalue_stages.len()];
 
-    let proof = prove_air(&ir, &witness, &consts, &publics).expect("prove");
-    verify_air(&ir, &proof, &publics, None).expect("verify");
+    // The compiled IR must agree row-by-row with the trace.
+    check_constraints_on_trace(&ir, &witness, &consts, &publics, &challenges, &air_values, &airgroup_values)
+        .expect("constraints hold on the trace");
+
+    let proof = prove_air(&ir, &witness, &consts, &publics, &challenges, &air_values, &airgroup_values).expect("prove");
+    verify_air(&ir, &proof, &publics, None, None).expect("verify");
 
     // Wrong publics must fail.
     let bad = vec![in1, in2, out + Goldilocks::ONE];
-    assert!(verify_air(&ir, &proof, &bad, None).is_err());
+    assert!(verify_air(&ir, &proof, &bad, None, None).is_err());
 }

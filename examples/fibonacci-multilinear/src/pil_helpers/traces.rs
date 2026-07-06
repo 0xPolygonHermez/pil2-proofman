@@ -16,29 +16,34 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "33bfb3f4fdc39db28423bfdd46bc31f85049e0fd141f67a39cc96021f2194c4a";
+pub const PILOUT_HASH: &str = "ceaaa80f3bf5c95185d12e41a83042c68ef05af4701455fda8a723b49912ab7a";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
 //AIRGROUP CONSTANTS
 
-pub const FIBONACCI_ML_AIRGROUP_ID: usize = 0;
+pub const FIBO_CPU_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
-pub const FIBONACCI_ML_AIR_IDS: &[usize] = &[0];
+pub const FIBONACCI_AIR_IDS: &[usize] = &[0];
+
+pub const MODULE_AIR_IDS: &[usize] = &[1];
+
+pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[2];
 
 
 //PUBLICS
 use serde::Deserialize;
 use serde::Serialize;
-#[allow(unused_imports)]
 use serde_arrays;
 
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FibonacciPublics {
+pub struct BuildPublics {
+    #[serde(default)]
+    pub module: u64,
     #[serde(default)]
     pub in1: u64,
     #[serde(default)]
@@ -48,9 +53,10 @@ pub struct FibonacciPublics {
     
 }
 
-impl Default for FibonacciPublics {
+impl Default for BuildPublics {
     fn default() -> Self {
         Self {  
+            module: 0,  
             in1: 0,  
             in2: 0,  
             out: 0, 
@@ -58,20 +64,58 @@ impl Default for FibonacciPublics {
     }
 }
 
-values!(FibonacciPublicValues<F> {
- in1: F, in2: F, out: F,
+values!(BuildPublicValues<F> {
+ module: F, in1: F, in2: F, out: F,
 });
   
-trace_row!(FibonacciMLFixedRow<F> {
- L1: F,
+trace_row!(FibonacciFixedRow<F> {
+ L1: F, __L1__: F,
 });
-pub type FibonacciMLFixed<F> = GenericTrace<FibonacciMLFixedRow<F>, 1024, 0, 0>;
+pub type FibonacciFixed<F> = GenericTrace<FibonacciFixedRow<F>, 1024, 0, 0>;
 
-trace_row!(FibonacciMLTraceRow<F> {
+trace_row!(FibonacciTraceRow<F> {
  a:F, b:F,
 });
 
-pub type FibonacciMLTrace<F> = GenericTrace<FibonacciMLTraceRow<F>, 1024, 0, 0>;
+pub type FibonacciTrace<F> = GenericTrace<FibonacciTraceRow<F>, 1024, 0, 0>;
+
+trace_row!(ModuleFixedRow<F> {
+ SEGMENT_LN: F, __L1__: F,
+});
+pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 256, 0, 1>;
+
+trace_row!(ModuleTraceRow<F> {
+ x:F, q:F, x_mod:F,
+});
+
+pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 256, 0, 1>;
+
+trace_row!(SpecifiedRangesFixedRow<F> {
+ OPID: [F; 1], VALS: [F; 1], __L1__: F,
+});
+pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
+
+trace_row!(SpecifiedRangesTraceRow<F> {
+ mul:[F; 1],
+});
+
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
+
+values!(ModuleAirValues<F> {
+ last_segment: F,
+});
+
+values!(FibonacciAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(ModuleAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(SpecifiedRangesAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
@@ -79,5 +123,7 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 /// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
 /// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
 pub const AIR_NAMES: &[(usize, usize, &str)] = &[
-    (0, 0, "FibonacciML"),
+    (0, 0, "Fibonacci"),
+    (0, 1, "Module"),
+    (0, 2, "SpecifiedRanges"),
 ];

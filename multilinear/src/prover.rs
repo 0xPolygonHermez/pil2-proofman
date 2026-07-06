@@ -27,6 +27,18 @@ pub struct MlProof {
     pub claims: Vec<Vec<Ext>>,
     pub opening: OpeningProof,
     pub publics: Vec<Goldilocks>,
+    /// Global transcript challenges used by the constraints (full global
+    /// challenge vector; entries for stages the multilinear protocol does not
+    /// derive are zero). Re-derived and checked at proof-set level.
+    pub challenges: Vec<Ext>,
+    /// Air values (per-instance prover messages), in global order.
+    pub air_values: Vec<Ext>,
+    /// Airgroup values (enter cross-instance global constraints), in global order.
+    pub airgroup_values: Vec<Ext>,
+    /// Global instance id assigned by the proving orchestrator; defines the
+    /// root order for the global challenge derivation (a wrong or permuted id
+    /// changes the derived challenges, so the set verifier rejects).
+    pub global_instance_id: u32,
 }
 
 impl MlProof {
@@ -73,21 +85,71 @@ pub(crate) fn kernel_table(spec: &KernelSpec, lambda: &[Ext], eq_lambda: &[Ext])
     }
 }
 
-/// Generate a proof that `witness` (per-stage, column-major) satisfies `ir`'s
-/// constraints, with fixed columns `consts` and public inputs `publics`.
+/// Indices of the challenges the multilinear protocol actually derives:
+/// those of stages `2..=n_stages`. Later stages (quotient/evals/FRI batching)
+/// belong to the univariate protocol and stay zero.
+pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
+    let n_stages = ir.n_stages() as u8;
+    ir.challenge_stages.iter().enumerate().filter(|(_, &st)| st >= 2 && st <= n_stages).map(|(i, _)| i).collect()
+}
+
+/// Derive the global stage challenges from every instance's stage-1
+/// commitment, in instance order. Used by the proving orchestrator and re-run
+/// by the proof-set verifier: with a shared bus (std lookups/permutations
+/// across instances), all instances must see the SAME challenges, so they
+/// bind all stage-1 commitments together.
 ///
-/// Multi-stage AIRs with challenges are not supported yet (milestone 2).
+/// Returns the full global challenge vector (underived entries zero).
+pub fn derive_global_challenges(ir: &AirIr, stage1_roots: &[[Goldilocks; 4]]) -> Vec<Ext> {
+    derive_global_challenges_for(&ir.challenge_stages, ir.n_stages(), stage1_roots)
+}
+
+/// [`derive_global_challenges`] for a heterogeneous instance set: pass the
+/// global challenge-stage list and the maximum number of witness stages among
+/// the participating AIRs.
+pub fn derive_global_challenges_for(
+    challenge_stages: &[u8],
+    n_stages: usize,
+    stage1_roots: &[[Goldilocks; 4]],
+) -> Vec<Ext> {
+    let mut transcript = MlTranscript::new();
+    for root in stage1_roots {
+        transcript.absorb_root(root);
+    }
+    let mut challenges = vec![Ext::zero(); challenge_stages.len()];
+    for (id, &st) in challenge_stages.iter().enumerate() {
+        if st >= 2 && st as usize <= n_stages {
+            challenges[id] = transcript.challenge();
+        }
+    }
+    challenges
+}
+
+/// Generate a proof that `witness` (per-stage, column-major base columns)
+/// satisfies `ir`'s constraints.
+///
+/// `challenges` is the full global challenge vector (see
+/// [`derive_global_challenges`]); `air_values` / `airgroup_values` are the
+/// instance's value messages (already assembled as extension elements, global
+/// order). All three may be empty for single-stage AIRs.
+#[allow(clippy::too_many_arguments)]
 pub fn prove_air(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
     publics: &[Goldilocks],
+    challenges: &[Ext],
+    air_values: &[Ext],
+    airgroup_values: &[Ext],
 ) -> Result<MlProof, MlError> {
-    if !ir.challenge_stages.is_empty() {
-        return Err(MlError::Unsupported("multi-stage AIRs with challenges (milestone 2)".into()));
-    }
     if witness.len() != ir.n_stages() {
         return Err(MlError::Malformed(format!("expected {} witness stages", ir.n_stages())));
+    }
+    if challenges.len() != ir.challenge_stages.len() {
+        return Err(MlError::Malformed(format!("expected {} challenges", ir.challenge_stages.len())));
+    }
+    if air_values.len() != ir.airvalue_stages.len() || airgroup_values.len() != ir.airgroupvalue_stages.len() {
+        return Err(MlError::Malformed("air/airgroup value count mismatch".into()));
     }
     let n = ir.n_bits as usize;
     let n_rows = 1usize << n;
@@ -103,19 +165,29 @@ pub fn prove_air(
     transcript.absorb_root(&const_matrix.root());
 
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
-    for stage_cols in witness {
+    for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
         let matrix = commit_matrix(&refs, params);
         transcript.absorb_root(&matrix.root());
         stage_matrices.push(matrix);
+        if stage_idx == 0 {
+            // Bind the (globally derived) stage challenges right where the
+            // protocol produces them: after the stage-1 commitment.
+            for id in derived_challenge_ids(ir) {
+                transcript.absorb_ext(&challenges[id]);
+            }
+        }
     }
+    // Value messages are stage outputs: bind them before any zerocheck randomness.
+    transcript.absorb_exts(air_values);
+    transcript.absorb_exts(airgroup_values);
 
     // --- Zerocheck: one sumcheck for all EveryRow constraints.
     let r = transcript.challenges(n);
     let alpha = transcript.challenge();
-    let challenges: Vec<Ext> = Vec::new(); // populated in milestone 2
 
-    let mut oracle = ZerocheckOracle::new(ir, witness, consts, publics, &challenges, &r, alpha);
+    let mut oracle =
+        ZerocheckOracle::new(ir, witness, consts, publics, challenges, air_values, airgroup_values, &r, alpha);
     let mut zerocheck_round_polys = Vec::with_capacity(n);
     let mut lambda = Vec::with_capacity(n);
     for _ in 0..n {
@@ -194,6 +266,10 @@ pub fn prove_air(
         claims,
         opening,
         publics: publics.to_vec(),
+        challenges: challenges.to_vec(),
+        air_values: air_values.to_vec(),
+        airgroup_values: airgroup_values.to_vec(),
+        global_instance_id: 0,
     })
 }
 

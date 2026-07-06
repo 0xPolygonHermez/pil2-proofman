@@ -105,6 +105,8 @@ pub struct ZerocheckOracle<'a> {
     eq_table: Vec<Ext>,
     publics: Vec<Ext>,
     challenges: Vec<Ext>,
+    air_values: Vec<Ext>,
+    airgroup_values: Vec<Ext>,
     weights: Vec<Ext>,
     rounds_left: usize,
 }
@@ -116,6 +118,8 @@ struct TablePoint<'o> {
     vals: &'o [Ext],
     publics: &'o [Ext],
     challenges: &'o [Ext],
+    air_values: &'o [Ext],
+    airgroup_values: &'o [Ext],
 }
 
 impl LeafSource for TablePoint<'_> {
@@ -133,16 +137,25 @@ impl LeafSource for TablePoint<'_> {
     fn challenge(&self, idx: u32) -> Ext {
         self.challenges[idx as usize]
     }
+    fn air_value(&self, idx: u32) -> Ext {
+        self.air_values[idx as usize]
+    }
+    fn airgroup_value(&self, idx: u32) -> Ext {
+        self.airgroup_values[idx as usize]
+    }
 }
 
 impl<'a> ZerocheckOracle<'a> {
     /// `witness[stage-1]`/`consts`: column-major base-field columns.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ir: &'a AirIr,
         witness: &[Vec<Vec<Goldilocks>>],
         consts: &[Vec<Goldilocks>],
         publics: &[Goldilocks],
         challenges: &[Ext],
+        air_values: &[Ext],
+        airgroup_values: &[Ext],
         r: &[Ext],
         alpha: Ext,
     ) -> Self {
@@ -174,6 +187,8 @@ impl<'a> ZerocheckOracle<'a> {
             eq_table: eq_evals(r),
             publics: to_ext_vec(publics),
             challenges: challenges.to_vec(),
+            air_values: air_values.to_vec(),
+            airgroup_values: airgroup_values.to_vec(),
             weights: constraint_weights(ir, alpha),
             rounds_left: ir.n_bits as usize,
         }
@@ -228,6 +243,8 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                     vals: &vals,
                     publics: &self.publics,
                     challenges: &self.challenges,
+                    air_values: &self.air_values,
+                    airgroup_values: &self.airgroup_values,
                 };
                 eval_instrs(self.ir, &src, &mut temps);
                 let mut c = Ext::zero();
@@ -259,6 +276,8 @@ pub struct ClaimsAtPoint<'a> {
     pub claims: &'a [Vec<Ext>],
     pub publics: &'a [Ext],
     pub challenges: &'a [Ext],
+    pub air_values: &'a [Ext],
+    pub airgroup_values: &'a [Ext],
 }
 
 impl LeafSource for ClaimsAtPoint<'_> {
@@ -274,6 +293,12 @@ impl LeafSource for ClaimsAtPoint<'_> {
     fn challenge(&self, idx: u32) -> Ext {
         self.challenges[idx as usize]
     }
+    fn air_value(&self, idx: u32) -> Ext {
+        self.air_values[idx as usize]
+    }
+    fn airgroup_value(&self, idx: u32) -> Ext {
+        self.airgroup_values[idx as usize]
+    }
 }
 
 /// Verifier-side leaf source for boundary (corner) checks: every column
@@ -284,6 +309,8 @@ pub struct ClaimsAtCorner<'a> {
     pub claims: &'a [Vec<Ext>],
     pub publics: &'a [Ext],
     pub challenges: &'a [Ext],
+    pub air_values: &'a [Ext],
+    pub airgroup_values: &'a [Ext],
     pub kernel: usize,
 }
 
@@ -301,6 +328,12 @@ impl LeafSource for ClaimsAtCorner<'_> {
     }
     fn challenge(&self, idx: u32) -> Ext {
         self.challenges[idx as usize]
+    }
+    fn air_value(&self, idx: u32) -> Ext {
+        self.air_values[idx as usize]
+    }
+    fn airgroup_value(&self, idx: u32) -> Ext {
+        self.airgroup_values[idx as usize]
     }
 }
 
@@ -334,7 +367,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &r, alpha);
+        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &[], &[], &r, alpha);
 
         let mut claim = Ext::zero();
         let mut lambda = Vec::new();
@@ -373,7 +406,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &r, alpha);
+        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &[], &[], &r, alpha);
         let evals = oracle.round_evals();
         // g(0) + g(1) = total sum over the hypercube ≠ 0 w.h.p.
         assert_ne!(evals[0] + evals[1], Ext::zero());

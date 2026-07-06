@@ -14,7 +14,9 @@
 mod fibonacci;
 mod fibonacci_lib;
 mod pil_helpers;
+mod module;
 
 pub use fibonacci::*;
 pub use fibonacci_lib::*;
 pub use pil_helpers::*;
+pub use module::*;

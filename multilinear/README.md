@@ -214,7 +214,9 @@ is a wire-format diagram):
 
 ```
 absorb (airgroup_id, air_id, n_bits), publics
-absorb const root, stage-1 root [, stage-i roots — milestone 2]
+absorb const root, stage-1 root
+absorb stage challenges (derived globally, see below)
+absorb stage-2.. roots, air values, airgroup values
 sample r ∈ E^n, α                          ┐
 n zerocheck rounds: absorb g_t, sample λ_t │ zerocheck
 absorb claims matrix v_{j,i}               ┘
@@ -224,6 +226,19 @@ n opening rounds: absorb round poly,       │
   (t < L−1) / final_poly (t = L−1)         │
 absorb-derive query indices, check folds   ┘
 ```
+
+**Global challenges (multi-stage / std).** With a shared bus (std
+lookups/permutations across instances) every instance must use the *same*
+stage challenges, so they are derived from **all** instances' stage-1 roots
+(`derive_global_challenges[_for]`), ordered by global instance id. A single
+proof carries its challenges; the **proof-set verifier** re-derives them from
+the set's roots and enforces equality — a missing or tampered proof changes
+the derivation and the whole set is rejected. Extension-valued stage-2
+columns are committed as 3 base columns and reassembled by the IR evaluator;
+air/airgroup values are prover messages bound before the zerocheck randomness,
+and the airgroup values additionally enter the cross-instance *global
+constraints* (bus balance), checked by `verify-multilinear` over the
+aggregated set.
 
 `MlProof` contains exactly the prover messages: stage/const roots, zerocheck
 round polynomials, the claims matrix, and the `OpeningProof` (round polys,
@@ -271,9 +286,14 @@ $\rho = 1/4$), `n_queries` (default 50, **conjecture-level** ≈100 bits — no
 formal analysis yet), `log_final_poly_len` (default 4), `grinding_bits` (must
 be 0, not implemented).
 
-Milestone-1 scope: single-stage AIRs, no std arguments/challenges, no
-air/proof values or custom commits, no `everyFrame`, boundary constraints must
-not reference shifted columns, CPU-only, no aggregation. The prover is
-deliberately naive (scalar, unparallelized, all-extension tables) — see the
-performance notes in `docs/multilinear-implementation.md` for the optimization
-roadmap.
+Current scope (milestone 2): multi-stage AIRs with std arguments (lookups,
+permutations, range checks), challenges, air/airgroup values — validated on
+`pil2-components/test/simple`. Still out of scope: proof values, custom
+commits (stage-0 `rom`), `everyFrame` boundaries, grinding; boundary
+constraints must not reference shifted columns; CPU-only; no aggregation.
+Im-pols are committed as-is (they are pure prover economics here — no rate
+constraint forces them, see the discussion in
+`docs/multilinear-implementation.md`); inlining them is a milestone-3
+measurement. The prover is deliberately naive (scalar, unparallelized,
+all-extension tables) — see the performance notes in
+`docs/multilinear-implementation.md` for the optimization roadmap.
