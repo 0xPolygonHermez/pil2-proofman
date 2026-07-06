@@ -55,6 +55,9 @@ pub fn verify_air(
             return Err(MlError::Malformed("const-column commitment does not match the verifying key".into()));
         }
     }
+    if proof.custom_roots.len() != ir.custom_commits.len() {
+        return Err(MlError::Malformed("custom commit root count mismatch".into()));
+    }
     if proof.challenges.len() != ir.challenge_stages.len()
         || proof.air_values.len() != ir.airvalue_stages.len()
         || proof.airgroup_values.len() != ir.airgroupvalue_stages.len()
@@ -83,6 +86,9 @@ pub fn verify_air(
     let mut transcript = MlTranscript::new();
     seed_transcript(&mut transcript, ir, publics);
     transcript.absorb_root(&proof.const_root);
+    for root in &proof.custom_roots {
+        transcript.absorb_root(root);
+    }
     for (stage_idx, root) in proof.stage_roots.iter().enumerate() {
         transcript.absorb_root(root);
         if stage_idx == 0 {
@@ -174,8 +180,10 @@ pub fn verify_air(
 
     let mut roots: Vec<[Goldilocks; 4]> = proof.stage_roots.clone();
     roots.push(proof.const_root);
+    roots.extend(proof.custom_roots.iter().copied());
     let mut stage_n_cols: Vec<usize> = ir.cols_per_stage.iter().map(|&c| c as usize).collect();
     stage_n_cols.push(ir.n_const_cols as usize);
+    stage_n_cols.extend(ir.custom_commits.iter().map(|c| c.n_cols as usize));
 
     verify_opening(params, &mut transcript, n, sigma, &proof.opening, &roots, &stage_n_cols, &col_coeffs, |z| {
         kernels.iter().zip(kernel_weights.iter()).map(|(spec, w)| *w * kernel_mle_eval(spec, n, &lambda, z)).sum()
@@ -201,7 +209,7 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
         verify_air(&ir, &proof, &publics, None, None).expect("verify");
     }
 
@@ -211,7 +219,7 @@ mod tests {
         let ir = fib_ir(n_bits, test_params());
         let (mut witness, consts, publics) = fib_trace(n_bits);
         witness[0][0][7] += Goldilocks::ONE;
-        let proof = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove runs");
+        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove runs");
         assert!(verify_air(&ir, &proof, &publics, None, None).is_err(), "invalid trace must not verify");
     }
 
@@ -220,7 +228,7 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
 
         // Different publics break both the transcript binding and the
         // first-row constraints.
@@ -235,17 +243,17 @@ mod tests {
         let (witness, consts, publics) = fib_trace(n_bits);
 
         // Tamper with a claimed opening.
-        let mut proof = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let mut proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
         proof.claims[0][0] += Ext::one();
         assert!(verify_air(&ir, &proof, &publics, None, None).is_err());
 
         // Tamper with a zerocheck round polynomial.
-        let mut proof2 = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let mut proof2 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
         proof2.zerocheck_round_polys[0][0] += Ext::one();
         assert!(verify_air(&ir, &proof2, &publics, None, None).is_err());
 
         // Tamper with the final polynomial.
-        let mut proof3 = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let mut proof3 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
         proof3.opening.final_poly[0] += Ext::one();
         assert!(verify_air(&ir, &proof3, &publics, None, None).is_err());
     }
@@ -255,7 +263,7 @@ mod tests {
         let n_bits = 4;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
 
         let dir = std::env::temp_dir().join("ml_proof_test");
         std::fs::create_dir_all(&dir).unwrap();

@@ -55,7 +55,8 @@ use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
 use crate::multilinear::{
-    ext_values_by_stage, load_const_columns, to_goldilocks, trace_to_columns, values_to_ext, AirIrCache,
+    ext_values_by_stage, load_const_columns, load_custom_columns, to_goldilocks, trace_to_columns, values_to_ext,
+    AirIrCache,
 };
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
@@ -4737,6 +4738,14 @@ where
                 ext_values_by_stage(&air_instance.airvalues, &ir.airvalue_stages)?
             };
 
+            // Custom (fixed) commitments, e.g. ROMs: columns come from the
+            // buffer registered via --custom-commits.
+            let mut customs: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(ir.custom_commits.len());
+            for cc in &ir.custom_commits {
+                let path = self.pctx.get_custom_commits_fixed_buffer(&cc.name, true)?;
+                customs.push(load_custom_columns(&path, cc.n_cols as usize, n_rows)?);
+            }
+
             let air_challenges = if ir.challenge_stages.len() == challenges.len() {
                 challenges.clone()
             } else {
@@ -4749,6 +4758,7 @@ where
                 &ir,
                 &witness,
                 &consts,
+                &customs,
                 &publics,
                 &air_challenges,
                 &air_values,
@@ -4760,6 +4770,7 @@ where
                 &ir,
                 &witness,
                 &consts,
+                &customs,
                 &publics,
                 &air_challenges,
                 &air_values,

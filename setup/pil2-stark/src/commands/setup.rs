@@ -227,19 +227,25 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 // Multilinear (Basefold) prover artifact. Not every AIR is
                 // supported yet (std arguments, custom commits, …): skip with a
                 // note instead of failing the setup.
+                let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
                 match crate::output::mlinfo::build_air_ir(
                     setup_result,
                     n_bits as u32,
                     proofman_multilinear::MlParams::default(),
                 ) {
                     Ok(air_ir) => {
-                        let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
                         air_ir
                             .save(&mlinfo_path)
                             .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
                     }
                     Err(e) => {
-                        tracing::debug!("Air '{}': mlinfo not generated ({e})", item.air_name);
+                        tracing::info!("Air '{}': not provable with the multilinear prover ({e})", item.air_name);
+                        // Never leave a stale artifact from a previous setup:
+                        // an outdated IR silently mismatches the new trace
+                        // layout and produces baffling constraint failures.
+                        if mlinfo_path.exists() {
+                            fs::remove_file(&mlinfo_path)?;
+                        }
                     }
                 }
 

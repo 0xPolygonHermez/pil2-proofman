@@ -59,6 +59,7 @@ fn logup_ir(n_bits: u32, params: MlParams) -> AirIr {
         n_bits,
         cols_per_stage: vec![3, 3], // stage 1: a,k,mul; stage 2: gsum (dim 3)
         n_const_cols: 1,
+        custom_commits: vec![],
         n_publics: 0,
         challenge_stages: vec![2],
         airvalue_stages: vec![],
@@ -139,10 +140,11 @@ fn two_stage_logup_roundtrip() {
     // A matching multiset must balance the bus: gsum_result = 0.
     assert!(s.airgroup_values[0].is_zero(), "valid lookup must have zero bus balance");
 
-    check_constraints_on_trace(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values)
+    check_constraints_on_trace(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values)
         .expect("constraints hold row-by-row");
 
-    let proof = prove_air(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+    let proof =
+        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).expect("verify with enforced challenges");
 }
 
@@ -160,7 +162,8 @@ fn unbalanced_bus_shows_in_airgroup_value() {
     s.airgroup_values = vec![gsum_result];
 
     assert!(!s.airgroup_values[0].is_zero(), "unbalanced bus must have nonzero balance");
-    let proof = prove_air(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+    let proof =
+        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).expect("per-instance proof still verifies");
 }
 
@@ -169,14 +172,15 @@ fn corrupted_stage2_rejected() {
     let mut s = build(4);
     s.witness[1][1][5] += Goldilocks::ONE; // corrupt one gsum coordinate
     let proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values).expect("prove runs");
+        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove runs");
     assert!(verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).is_err());
 }
 
 #[test]
 fn wrong_challenges_rejected() {
     let s = build(4);
-    let proof = prove_air(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+    let proof =
+        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
 
     // Set-level verification with different globally-derived challenges must fail.
     let mut bad = s.challenges.clone();
@@ -188,9 +192,118 @@ fn wrong_challenges_rejected() {
 fn tampered_airgroup_value_rejected() {
     let s = build(4);
     let mut proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     // Claiming a different bus balance must break the LastRow corner check
     // (and the transcript binding).
     proof.airgroup_values[0] += ext_from(1);
     assert!(verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Custom-commit variant: the lookup table `k` lives in a custom commit (the
+// ROM pattern) instead of a witness column. Same protocol, one more fixed
+// commitment whose root is bound in the transcript and opened alongside
+// everything else.
+// ---------------------------------------------------------------------------
+
+fn logup_rom_ir(n_bits: u32, params: MlParams) -> AirIr {
+    let mut b = IrBuilder::default();
+    let a = b.witness(1, 0, 0);
+    let mul_col = b.witness(1, 1, 0);
+    let k = b.custom(0, 0, 0); // the table, from custom commit "rom"
+    let gsum = b.witness_ext(2, 0, 0);
+    let gsum_prev = b.witness_ext(2, 0, -1);
+    let l1 = b.constant(0, 0);
+    let alpha = b.challenge(0);
+    let gsum_result = b.airgroup_value(0, 3);
+    let one = b.number(1);
+
+    let apa = b.add(alpha, a);
+    let apk = b.add(alpha, k);
+    let denom = b.mul(apa, apk);
+    let mul_apa = b.mul(mul_col, apa);
+    let numer = b.sub(apk, mul_apa);
+    let one_minus_l1 = b.sub(one, l1);
+    let prev_gated = b.mul(one_minus_l1, gsum_prev);
+    let diff = b.sub(gsum, prev_gated);
+    let lhs = b.mul(diff, denom);
+    let c_every = b.sub(lhs, numer);
+    let c_last = b.sub(gsum, gsum_result);
+
+    AirIr {
+        name: "LogupRomTest".into(),
+        airgroup_id: 0,
+        air_id: 0,
+        n_bits,
+        cols_per_stage: vec![2, 3], // stage 1: a, mul; stage 2: gsum (dim 3)
+        n_const_cols: 1,
+        custom_commits: vec![proofman_multilinear::MlCustomCommit { name: "rom".into(), n_cols: 1 }],
+        n_publics: 0,
+        challenge_stages: vec![2],
+        airvalue_stages: vec![],
+        airgroupvalue_stages: vec![2],
+        numbers: b.numbers.clone(),
+        n_temps: b.n_temps(),
+        instrs: b.instrs,
+        constraints: vec![
+            ConstraintIr { boundary: Boundary::EveryRow, root: c_every, degree: 4 },
+            ConstraintIr { boundary: Boundary::LastRow, root: c_last, degree: 1 },
+        ],
+        max_constraint_degree: 4,
+        opening_offsets: vec![-1, 0],
+        params,
+    }
+}
+
+#[test]
+fn custom_commit_logup_roundtrip() {
+    let params = MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0 };
+    let n_bits = 4u32;
+    let n_rows = 1usize << n_bits;
+    let ir = logup_rom_ir(n_bits, params);
+
+    // Stage 1: lookups + multiplicities; ROM: the table k = 0..N.
+    let a: Vec<Goldilocks> = (0..n_rows).map(|i| Goldilocks::from_u64((i % (n_rows / 2)) as u64)).collect();
+    let mul: Vec<Goldilocks> =
+        (0..n_rows).map(|i| if i < n_rows / 2 { Goldilocks::TWO } else { Goldilocks::ZERO }).collect();
+    let rom_k: Vec<Goldilocks> = (0..n_rows).map(|i| Goldilocks::from_u64(i as u64)).collect();
+    let customs = vec![vec![rom_k.clone()]];
+
+    let mut l1 = vec![Goldilocks::ZERO; n_rows];
+    l1[0] = Goldilocks::ONE;
+    let consts = vec![l1];
+
+    let stage1 = vec![a.clone(), mul.clone()];
+    let refs: Vec<&[Goldilocks]> = stage1.iter().map(|c| c.as_slice()).collect();
+    let stage1_root = commit_matrix(&refs, &ir.params).root();
+    let challenges = derive_global_challenges(&ir, &[stage1_root]);
+    let alpha = challenges[0];
+
+    // gsum over (a, rom_k, mul)
+    let joined = vec![a.clone(), rom_k.clone(), mul.clone()];
+    let (stage2, gsum_result) = stage2_trace(&joined, alpha);
+    assert!(gsum_result.is_zero(), "matching multiset over the ROM must balance");
+    let witness = vec![stage1, stage2];
+    let agv = vec![gsum_result];
+
+    check_constraints_on_trace(&ir, &witness, &consts, &customs, &[], &challenges, &[], &agv)
+        .expect("constraints hold");
+
+    let proof = prove_air(&ir, &witness, &consts, &customs, &[], &challenges, &[], &agv).expect("prove");
+    assert_eq!(proof.custom_roots.len(), 1);
+    verify_air(&ir, &proof, &[], None, Some(&challenges)).expect("verify");
+
+    // Tampering with the custom-commit root must break the transcript binding.
+    let mut bad = proof.clone();
+    bad.custom_roots[0][0] += Goldilocks::ONE;
+    assert!(verify_air(&ir, &bad, &[], None, Some(&challenges)).is_err());
+
+    // Proving with a different ROM must yield a different custom root (the
+    // fixed data is bound by the commitment).
+    let mut other_rom = customs.clone();
+    other_rom[0][0][3] += Goldilocks::ONE;
+    // gsum no longer balances against the modified table, so just check the
+    // commitment differs (constraint failure is covered elsewhere).
+    let other_refs: Vec<&[Goldilocks]> = other_rom[0].iter().map(|c| c.as_slice()).collect();
+    assert_ne!(commit_matrix(&other_refs, &ir.params).root(), proof.custom_roots[0]);
 }

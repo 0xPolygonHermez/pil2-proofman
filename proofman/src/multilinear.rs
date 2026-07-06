@@ -83,6 +83,36 @@ pub fn load_const_columns(path: &Path, n_cols: usize, n_rows: usize) -> Proofman
     Ok(cols)
 }
 
+/// Load the stage-0 columns of a custom commit from its registered buffer
+/// file. The file layout (written by `gen-custom-commits-fixed` /
+/// `write_custom_commit_trace`) is `[univariate merkle root: 4 words]
+/// [N rows][extended rows][merkle tree]`; only the `n_rows × n_cols`
+/// little-endian words after the root are the raw columns (row-major).
+pub fn load_custom_columns(path: &Path, n_cols: usize, n_rows: usize) -> ProofmanResult<Vec<Vec<Goldilocks>>> {
+    const ROOT_WORDS: usize = 4;
+    if n_cols == 0 {
+        return Ok(Vec::new());
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|e| ProofmanError::InvalidParameters(format!("reading {}: {e}", path.display())))?;
+    let needed = (ROOT_WORDS + n_cols * n_rows) * 8;
+    if bytes.len() < needed {
+        return Err(ProofmanError::InvalidParameters(format!(
+            "{}: expected at least {needed} bytes (root + {n_cols} cols × {n_rows} rows), found {}",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    let mut cols = vec![vec![Goldilocks::ZERO; n_rows]; n_cols];
+    for row in 0..n_rows {
+        for (c, col) in cols.iter_mut().enumerate() {
+            let off = (ROOT_WORDS + row * n_cols + c) * 8;
+            col[row] = Goldilocks::new(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+        }
+    }
+    Ok(cols)
+}
+
 /// Convert a slice of generic field elements to Goldilocks.
 pub fn to_goldilocks<F: PrimeField64>(vals: &[F]) -> Vec<Goldilocks> {
     vals.iter().map(|v| Goldilocks::new(v.as_canonical_u64())).collect()

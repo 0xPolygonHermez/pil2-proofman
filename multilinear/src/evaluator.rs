@@ -24,6 +24,10 @@ pub trait LeafSource {
     fn air_value(&self, _idx: u32) -> Ext {
         unimplemented!("air values not available in this context")
     }
+    /// Value of column `col` of custom commit `commit`, shifted by `row_offset`.
+    fn custom(&self, _commit: u8, _col: u32, _row_offset: i32) -> Ext {
+        unimplemented!("custom commits not available in this context")
+    }
     fn airgroup_value(&self, _idx: u32) -> Ext {
         unimplemented!("airgroup values not available in this context")
     }
@@ -56,6 +60,7 @@ fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand
     match op.kind {
         SrcKind::Witness { stage } => assemble_dim(src, stage, op.idx, op.row_offset, op.dim),
         SrcKind::Const => src.constant(op.idx, op.row_offset),
+        SrcKind::Custom { commit } => src.custom(commit, op.idx, op.row_offset),
         SrcKind::Public => src.public(op.idx),
         SrcKind::Challenge => src.challenge(op.idx),
         SrcKind::AirValue => src.air_value(op.idx),
@@ -138,6 +143,7 @@ pub fn check_constraints_on_trace(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
+    customs: &[Vec<Vec<Goldilocks>>],
     publics: &[Goldilocks],
     challenges: &[Ext],
     air_values: &[Ext],
@@ -148,6 +154,7 @@ pub fn check_constraints_on_trace(
     struct RowSource<'a> {
         witness: &'a [Vec<Vec<Goldilocks>>],
         consts: &'a [Vec<Goldilocks>],
+        customs: &'a [Vec<Vec<Goldilocks>>],
         publics: &'a [Goldilocks],
         challenges: &'a [Ext],
         air_values: &'a [Ext],
@@ -176,6 +183,10 @@ pub fn check_constraints_on_trace(
         fn airgroup_value(&self, idx: u32) -> Ext {
             self.airgroup_values[idx as usize]
         }
+        fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+            let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+            ext_from_base(self.customs[commit as usize][col as usize][r])
+        }
     }
 
     let mut temps = Vec::new();
@@ -186,7 +197,8 @@ pub fn check_constraints_on_trace(
             crate::ir::Boundary::LastRow => Box::new(core::iter::once(n_rows - 1)),
         };
         for row in rows {
-            let src = RowSource { witness, consts, publics, challenges, air_values, airgroup_values, row, n_rows };
+            let src =
+                RowSource { witness, consts, customs, publics, challenges, air_values, airgroup_values, row, n_rows };
             eval_instrs(ir, &src, &mut temps);
             let v = constraint_value(ir, &src, &temps, c_idx);
             if !v.is_zero() {
@@ -237,6 +249,7 @@ pub(crate) mod test_air {
             n_bits,
             cols_per_stage: vec![2],
             n_const_cols: 1,
+            custom_commits: vec![],
             n_publics: 2,
             challenge_stages: vec![],
             airvalue_stages: vec![],
@@ -284,7 +297,7 @@ mod tests {
     fn fib_trace_satisfies_ir() {
         let ir = fib_ir(4, MlParams::default());
         let (witness, consts, publics) = fib_trace(4);
-        check_constraints_on_trace(&ir, &witness, &consts, &publics, &[], &[], &[]).expect("valid trace");
+        check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("valid trace");
     }
 
     #[test]
@@ -292,7 +305,7 @@ mod tests {
         let ir = fib_ir(4, MlParams::default());
         let (mut witness, consts, publics) = fib_trace(4);
         witness[0][0][5] += Goldilocks::ONE;
-        assert!(check_constraints_on_trace(&ir, &witness, &consts, &publics, &[], &[], &[]).is_err());
+        assert!(check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).is_err());
     }
 
     #[test]

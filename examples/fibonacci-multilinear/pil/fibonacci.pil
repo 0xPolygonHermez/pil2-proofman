@@ -44,10 +44,10 @@ airtemplate Fibonacci(const int N = 2**10) {
     col witness test2;
     col witness test3;
 
-    test <== 2*a + b + fibo1[0];
+    test <== 2*a + b + fibo1[0] + 54*line + L1 * in1;
 
     test2 <== 2*a + b;
-    test3 <== test2 + fibo1[0];
+    test3 <== test2 + fibo1[0] + 54*line + L1 * in1;
 
     test === test3;
 }

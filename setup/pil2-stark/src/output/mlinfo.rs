@@ -13,7 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 use fields::{Goldilocks, PrimeField64};
-use proofman_multilinear::{AirIr, Boundary, ConstraintIr, Instr, MlParams, Op, Operand, SrcKind};
+use proofman_multilinear::{AirIr, Boundary, ConstraintIr, Instr, MlCustomCommit, MlParams, Op, Operand, SrcKind};
 
 use crate::expr::expression::{ExprChild, Expression};
 use crate::types::pilout_info::SetupResult;
@@ -117,6 +117,38 @@ impl Compiler<'_> {
                 let value = e.value.as_deref().ok_or_else(|| anyhow!("number operand without value"))?;
                 Ok((self.number(value)?, 0, BTreeSet::new()))
             }
+            "custom" => {
+                // Custom-commit column (e.g. a ROM). Only stage-0 (fixed)
+                // custom commits are supported: they are committed like the
+                // const columns, with their own root.
+                let commit_id = e.commit_id.ok_or_else(|| anyhow!("custom operand without commit_id"))?;
+                let pol_id = e.id.ok_or_else(|| anyhow!("custom operand without id"))?;
+                let info = self
+                    .setup
+                    .custom_commits_map
+                    .get(commit_id)
+                    .and_then(|m| m.get(pol_id))
+                    .ok_or_else(|| anyhow!("custom pol ({commit_id},{pol_id}) out of range"))?;
+                let stage = info.stage.unwrap_or(0);
+                if stage != 0 {
+                    bail!("custom commit column of stage {stage} (only stage-0 custom commits supported)");
+                }
+                let base_slot =
+                    info.stage_pos.ok_or_else(|| anyhow!("custom pol ({commit_id},{pol_id}) without stage_pos"))?
+                        as u32;
+                let s_off = leaf_offset(e);
+                self.offsets.insert(s_off);
+                Ok((
+                    Operand {
+                        kind: SrcKind::Custom { commit: commit_id as u8 },
+                        idx: base_slot,
+                        row_offset: s_off,
+                        dim: info.dim.max(1) as u8,
+                    },
+                    1,
+                    BTreeSet::from([s_off]),
+                ))
+            }
             "exp" => self.lower_id(e.id.ok_or_else(|| anyhow!("exp operand without id"))?),
             "add" | "sub" | "mul" => {
                 if e.values.len() != 2 {
@@ -188,6 +220,16 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
     // challenges of stages 2..=n_stages (the later ones belong to the
     // univariate quotient/evals/FRI machinery and stay zero).
     let challenge_stages: Vec<u8> = setup.challenges_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
+
+    // Custom commits: stage-0 (fixed) only.
+    let mut custom_commits_ir = Vec::with_capacity(setup.custom_commits.len());
+    for cc in &setup.custom_commits {
+        if cc.stage_widths.iter().skip(1).any(|&w| w > 0) {
+            bail!("custom commit '{}' has columns beyond stage 0 (unsupported)", cc.name);
+        }
+        custom_commits_ir
+            .push(MlCustomCommit { name: cc.name.clone(), n_cols: cc.stage_widths.first().copied().unwrap_or(0) });
+    }
     let airvalue_stages: Vec<u8> = setup.air_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
     let airgroupvalue_stages: Vec<u8> = setup.airgroup_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
 
@@ -198,6 +240,7 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         n_bits,
         cols_per_stage,
         n_const_cols: setup.n_constants as u32,
+        custom_commits: custom_commits_ir,
         n_publics: setup.n_publics as u32,
         challenge_stages,
         airvalue_stages,

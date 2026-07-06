@@ -287,9 +287,11 @@ formal analysis yet), `log_final_poly_len` (default 4), `grinding_bits` (must
 be 0, not implemented).
 
 Current scope (milestone 2): multi-stage AIRs with std arguments (lookups,
-permutations, range checks), challenges, air/airgroup values — validated on
-`pil2-components/test/simple`. Still out of scope: proof values, custom
-commits (stage-0 `rom`), `everyFrame` boundaries, grinding; boundary
+permutations, range checks), challenges, air/airgroup values, and stage-0
+custom commits (ROMs — one extra fixed Basefold matrix each) — validated on
+`pil2-components/test/simple` and `examples/fibonacci-multilinear`. Still out
+of scope: proof values, custom commits beyond stage 0, `everyFrame`
+boundaries, grinding; boundary
 constraints must not reference shifted columns; CPU-only; no aggregation.
 Im-pols are committed as-is (they are pure prover economics here — no rate
 constraint forces them, see the discussion in

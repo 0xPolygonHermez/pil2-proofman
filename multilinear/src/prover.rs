@@ -21,6 +21,8 @@ pub struct MlProof {
     pub stage_roots: Vec<[Goldilocks; 4]>,
     /// Merkle root of the fixed-column commitment.
     pub const_root: [Goldilocks; 4],
+    /// Merkle roots of the custom (fixed) commitments, in `AirIr::custom_commits` order.
+    pub custom_roots: Vec<[Goldilocks; 4]>,
     /// Zerocheck round polynomials (evaluations at `0..=max_degree+1`).
     pub zerocheck_round_polys: Vec<Vec<Ext>>,
     /// Claimed weighted-sum openings: `claims[global_col][kernel]`.
@@ -137,6 +139,7 @@ pub fn prove_air(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
+    customs: &[Vec<Vec<Goldilocks>>],
     publics: &[Goldilocks],
     challenges: &[Ext],
     air_values: &[Ext],
@@ -151,6 +154,11 @@ pub fn prove_air(
     if air_values.len() != ir.airvalue_stages.len() || airgroup_values.len() != ir.airgroupvalue_stages.len() {
         return Err(MlError::Malformed("air/airgroup value count mismatch".into()));
     }
+    if customs.len() != ir.custom_commits.len()
+        || customs.iter().zip(ir.custom_commits.iter()).any(|(cols, cc)| cols.len() != cc.n_cols as usize)
+    {
+        return Err(MlError::Malformed("custom commit shape mismatch".into()));
+    }
     let n = ir.n_bits as usize;
     let n_rows = 1usize << n;
     let params = &ir.params;
@@ -163,6 +171,16 @@ pub fn prove_air(
     let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
     let const_matrix = commit_matrix(&const_refs, params);
     transcript.absorb_root(&const_matrix.root());
+
+    let custom_matrices: Vec<CommittedMatrix> = customs
+        .iter()
+        .map(|cols| {
+            let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+            let matrix = commit_matrix(&refs, params);
+            transcript.absorb_root(&matrix.root());
+            matrix
+        })
+        .collect();
 
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
@@ -187,7 +205,7 @@ pub fn prove_air(
     let alpha = transcript.challenge();
 
     let mut oracle =
-        ZerocheckOracle::new(ir, witness, consts, publics, challenges, air_values, airgroup_values, &r, alpha);
+        ZerocheckOracle::new(ir, witness, consts, customs, publics, challenges, air_values, airgroup_values, &r, alpha);
     let mut zerocheck_round_polys = Vec::with_capacity(n);
     let mut lambda = Vec::with_capacity(n);
     for _ in 0..n {
@@ -208,6 +226,7 @@ pub fn prove_air(
         .iter()
         .flat_map(|stage| stage.iter().map(|c| c.as_slice()))
         .chain(consts.iter().map(|c| c.as_slice()))
+        .chain(customs.iter().flat_map(|cols| cols.iter().map(|c| c.as_slice())))
         .collect();
 
     let claims: Vec<Vec<Ext>> = all_cols
@@ -251,6 +270,7 @@ pub fn prove_air(
 
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
     matrices.push(&const_matrix);
+    matrices.extend(custom_matrices.iter());
     let phi_codeword = combine_codewords(&matrices, &col_coeffs);
 
     let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
@@ -262,6 +282,7 @@ pub fn prove_air(
         n_bits: ir.n_bits,
         stage_roots: stage_matrices.iter().map(|m| m.root()).collect(),
         const_root: const_matrix.root(),
+        custom_roots: custom_matrices.iter().map(|m| m.root()).collect(),
         zerocheck_round_polys,
         claims,
         opening,

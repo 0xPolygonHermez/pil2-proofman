@@ -35,6 +35,14 @@ pub fn global_const_col(ir: &AirIr, col: u32) -> usize {
     ir.total_witness_cols() + col as usize
 }
 
+pub fn global_custom_col(ir: &AirIr, commit: u8, col: u32) -> usize {
+    let mut base = ir.total_witness_cols() + ir.n_const_cols as usize;
+    for c in 0..commit as usize {
+        base += ir.custom_commits[c].n_cols as usize;
+    }
+    base + col as usize
+}
+
 /// The kernels of the batched opening, in canonical order: one rotation kernel
 /// per opening offset (offset 0 degenerates to `eq(·, λ)`), then one
 /// Boolean-point kernel per hypercube corner referenced by boundary constraints.
@@ -102,6 +110,8 @@ pub struct ZerocheckOracle<'a> {
     wit_index: Vec<Vec<Vec<usize>>>,
     /// `[col][offset_idx]` → index into `tables`.
     const_index: Vec<Vec<usize>>,
+    /// `[commit][col][offset_idx]` → index into `tables`.
+    custom_index: Vec<Vec<Vec<usize>>>,
     eq_table: Vec<Ext>,
     publics: Vec<Ext>,
     challenges: Vec<Ext>,
@@ -115,6 +125,7 @@ struct TablePoint<'o> {
     ir: &'o AirIr,
     wit_index: &'o [Vec<Vec<usize>>],
     const_index: &'o [Vec<usize>],
+    custom_index: &'o [Vec<Vec<usize>>],
     vals: &'o [Ext],
     publics: &'o [Ext],
     challenges: &'o [Ext],
@@ -143,6 +154,10 @@ impl LeafSource for TablePoint<'_> {
     fn airgroup_value(&self, idx: u32) -> Ext {
         self.airgroup_values[idx as usize]
     }
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+        let o = self.ir.offset_index(row_offset).expect("unknown offset");
+        self.vals[self.custom_index[commit as usize][col as usize][o]]
+    }
 }
 
 impl<'a> ZerocheckOracle<'a> {
@@ -152,6 +167,7 @@ impl<'a> ZerocheckOracle<'a> {
         ir: &'a AirIr,
         witness: &[Vec<Vec<Goldilocks>>],
         consts: &[Vec<Goldilocks>],
+        customs: &[Vec<Vec<Goldilocks>>],
         publics: &[Goldilocks],
         challenges: &[Ext],
         air_values: &[Ext],
@@ -178,12 +194,15 @@ impl<'a> ZerocheckOracle<'a> {
             wit_index.push(stage_cols.iter().map(|c| make_tables(c)).collect::<Vec<_>>());
         }
         let const_index: Vec<Vec<usize>> = consts.iter().map(|c| make_tables(c)).collect();
+        let custom_index: Vec<Vec<Vec<usize>>> =
+            customs.iter().map(|commit| commit.iter().map(|c| make_tables(c)).collect()).collect();
 
         Self {
             ir,
             tables,
             wit_index,
             const_index,
+            custom_index,
             eq_table: eq_evals(r),
             publics: to_ext_vec(publics),
             challenges: challenges.to_vec(),
@@ -240,6 +259,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                     ir: self.ir,
                     wit_index: &self.wit_index,
                     const_index: &self.const_index,
+                    custom_index: &self.custom_index,
                     vals: &vals,
                     publics: &self.publics,
                     challenges: &self.challenges,
@@ -299,6 +319,9 @@ impl LeafSource for ClaimsAtPoint<'_> {
     fn airgroup_value(&self, idx: u32) -> Ext {
         self.airgroup_values[idx as usize]
     }
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+        self.claims[global_custom_col(self.ir, commit, col)][kernel_index_of_offset(self.ir, row_offset)]
+    }
 }
 
 /// Verifier-side leaf source for boundary (corner) checks: every column
@@ -335,6 +358,10 @@ impl LeafSource for ClaimsAtCorner<'_> {
     fn airgroup_value(&self, idx: u32) -> Ext {
         self.airgroup_values[idx as usize]
     }
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+        assert_eq!(row_offset, 0, "boundary constraints must not reference shifted columns");
+        self.claims[global_custom_col(self.ir, commit, col)][self.kernel]
+    }
 }
 
 #[cfg(test)]
@@ -367,7 +394,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &[], &[], &r, alpha);
+        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
 
         let mut claim = Ext::zero();
         let mut lambda = Vec::new();
@@ -406,7 +433,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &publics, &[], &[], &[], &r, alpha);
+        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
         let evals = oracle.round_evals();
         // g(0) + g(1) = total sum over the hypercube ≠ 0 w.h.p.
         assert_ne!(evals[0] + evals[1], Ext::zero());

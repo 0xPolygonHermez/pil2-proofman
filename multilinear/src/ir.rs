@@ -29,6 +29,9 @@ pub enum SrcKind {
     Witness { stage: u8 },
     /// Fixed (constant) column.
     Const,
+    /// Column of a custom commit (fixed data committed separately, e.g. a ROM;
+    /// stage 0 only). `idx` is the base slot within the commit.
+    Custom { commit: u8 },
     /// Public input.
     Public,
     /// Transcript challenge (global index into `AirIr::challenge_stages`).
@@ -87,6 +90,13 @@ pub struct ConstraintIr {
     pub degree: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MlCustomCommit {
+    pub name: String,
+    /// Stage-0 base columns of this commit.
+    pub n_cols: u32,
+}
+
 /// Everything the multilinear prover/verifier needs to know about one AIR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirIr {
@@ -99,6 +109,9 @@ pub struct AirIr {
     /// an extension-valued column counts as 3.
     pub cols_per_stage: Vec<u32>,
     pub n_const_cols: u32,
+    /// Custom (fixed) commitments, e.g. ROMs: committed separately from the
+    /// const columns, with their own Merkle roots carried in the proof.
+    pub custom_commits: Vec<MlCustomCommit>,
     pub n_publics: u32,
     /// Stage of each challenge, in global challenge order. Only challenges
     /// with `stage <= n_stages` are ever derived/used — later stages belong
@@ -128,9 +141,11 @@ impl AirIr {
         self.cols_per_stage.iter().map(|&c| c as usize).sum()
     }
 
-    /// Total number of committed columns (witness + const).
+    /// Total number of committed columns (witness + const + custom).
     pub fn total_cols(&self) -> usize {
-        self.total_witness_cols() + self.n_const_cols as usize
+        self.total_witness_cols()
+            + self.n_const_cols as usize
+            + self.custom_commits.iter().map(|c| c.n_cols as usize).sum::<usize>()
     }
 
     /// Index of `offset` in `opening_offsets`.
@@ -184,6 +199,10 @@ impl IrBuilder {
 
     pub fn public(&self, idx: u32) -> Operand {
         Operand { kind: SrcKind::Public, idx, row_offset: 0, dim: 1 }
+    }
+
+    pub fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Operand {
+        Operand { kind: SrcKind::Custom { commit }, idx: col, row_offset, dim: 1 }
     }
 
     pub fn challenge(&self, idx: u32) -> Operand {
