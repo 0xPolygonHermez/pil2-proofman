@@ -51,7 +51,8 @@ __global__ void unpack(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t* d_words_per_row,
-    const uint64_t *d_unpack_info
+    const uint64_t *d_unpack_info,
+    Layout layout
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
@@ -70,6 +71,9 @@ __global__ void unpack(
     uint64_t word = packed_row[0];
     uint64_t word_idx = 0;
     uint64_t bit_offset = 0;
+
+    // Storage layout passed by the caller: unpack_trace (cm1) passes resolveLayout(nBits,nCols);
+    // unpack_fixed (const) passes fixedLayout(). Loop-invariant.
 
     #pragma unroll
     for (uint64_t c = 0; c < nCols; c++) {
@@ -93,7 +97,7 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        dst[getBufferOffset(row, c, nRows, nCols)] = val;
+        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
     }
 }
 
@@ -112,13 +116,15 @@ void unpack_fixed(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_FIXED);
+    // Const pols are stored fixedLayout() (ColMajorTiled) -- uniform-native prover.
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
         d_num_packed_words,
-        d_unpack_info
+        d_unpack_info,
+        fixedLayout()
     );
     TimerStopCategoryGPU(timer, UNPACK_FIXED);
     CHECKCUDAERR(cudaGetLastError());
@@ -138,13 +144,15 @@ void unpack_trace(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_TRACE);
+    // cm1 unpack: same storage layout the commit/LDE uses (resolveLayout on the small domain).
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
         air_instance_info->d_num_packed_words,
-        air_instance_info->unpack_info
+        air_instance_info->unpack_info,
+        resolveLayout(63 - __builtin_clzll(nRows), nCols)
     );
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());
@@ -243,7 +251,11 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
 #ifdef USE_CUDA_GRAPH
     CudaGraphCache *graphCache = cudagraph::current();
-    if (graphCache && !skipRecalculation && nCols > 0) {
+    // Only the native (ColMajorTiled) LDE is graph-capturable: the flat (ColMajor) path delegates to
+    // sppark, which does a host cudaStreamSynchronize and runs on its own stream -- both illegal mid
+    // graph-capture. Skip the capture path entirely for flat commits.
+    bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+    if (graphCache && capturable && !skipRecalculation && nCols > 0) {
         uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
         uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
@@ -264,8 +276,8 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         if (graphCache->shouldCapture(key)) {
             if (graphCache->beginCapture(key, stream)) {
                 NTTGoldilocksGPU ntt;
-                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
-                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
+                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream,true, (gl64_t*)pNodes);
+                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(nBits, nCols), stream);
                 bool launched = graphCache->endCaptureAndLaunch(stream);
                 if (launched) {
                     if (d_transcript != nullptr) {
@@ -284,9 +296,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
         if (nCols > 0)
         {
-            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
+            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
             TimerStopCategoryGPU(timer, MERKLE_TREE);
         }
     }
@@ -308,9 +320,16 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    ntt.LDE((gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+    // Const sections are stored fixedLayout() (ColMajorTiled) -- uniform-native prover. Call the native
+    // tiled LDE directly: it is out-of-place (reads src, writes dst), so the small-domain const pols
+    // (reread by every expression as const operands) stay intact -- no preserve_src/preserve_scratch dance
+    // needed. Merkle build reads dst in the same layout the LDE wrote. (resolveLayout would pick sppark for
+    // const's nBits/nCols, so we bypass it.)
+    TimerStartCategoryGPU(timer, NTT);
+    ntt.ldeNativeTiled((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream);
+    TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, Layout::Tiles, stream);
+    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -340,7 +359,10 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
         NTTGoldilocksGPU nttExtended;
 
 #ifdef USE_CUDA_GRAPH
-        if (cudagraph::aggressive()) {
+        // Only the native (ColMajorTiled) computeQ is graph-capturable; the flat (ColMajor) path uses
+        // sppark (host sync + own stream), illegal mid-capture. Skip capture for flat cmQ.
+        bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+        if (cudagraph::aggressive() && capturable) {
             CudaGraphCache *graphCache = cudagraph::current();
             if (graphCache) {
                 uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
@@ -358,7 +380,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
                 if (graphCache->shouldCapture(key)) {
                     if (graphCache->beginCapture(key, stream)) {
                         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
+                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(nBits, nCols), stream);
                         if (graphCache->endCaptureAndLaunch(stream)) {
                             uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
                             if (d_transcript != nullptr) {
@@ -374,7 +396,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
 
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
+        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
@@ -401,9 +423,9 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 
 __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
-    uint64_t i  = blockIdx.x;                  // opening point index
-    uint64_t k0 = blockIdx.y * blockDim.y;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.y;          // this thread's exponent index
+    uint64_t i  = blockIdx.y;                  // opening point index
+    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
+    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
     if (i >= nOpeningPoints || row >= N) return;
 
     Goldilocks3GPU::Element xi;
@@ -413,13 +435,13 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
 
     __shared__ Goldilocks3GPU::Element basePow;
 
-    if (threadIdx.y == 0) {
+    if (threadIdx.x == 0) {
         Goldilocks3GPU::pow(xi, k0, basePow);
     }
     __syncthreads();
 
     Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.y, xi_t);
+    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
 
     Goldilocks3GPU::Element res;
     Goldilocks3GPU::mul(res, basePow, xi_t);
@@ -467,8 +489,8 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
 
-    dim3 nThreads(1, 512);
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
+    dim3 nThreads(512, 1);
+    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
     fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
@@ -477,7 +499,6 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     NTTGoldilocksGPU ntt;
     ntt.INTT(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
     TimerStopCategoryGPU(timer, NTT);
-   
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
@@ -533,42 +554,49 @@ __global__ void computeEvals_v2(
     {
         EvalInfo evalInfo = d_evalInfo[evalIdx];
         gl64_t *pol;
+        // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
+        // (1) and fixed/const (2) follow fixedLayout(). d_LEv is always ColMajor.
+        Layout polLayout = Layout::ColMajor;
         if (evalInfo.type == 0)
         {
             pol = d_cmPols;
+            polLayout = resolveLayout(63 - __clzll(N), evalInfo.stageCols);
         }
         else if (evalInfo.type == 1)
         {
             pol = d_customComits;
+            polLayout = fixedLayout();
         }
         else
         {
             pol = d_fixedPols;
+            polLayout = fixedLayout();
         }
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
         {
-            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0)); 
+            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0));
         }
         uint64_t tid = chunkIdx * blockDim.x + threadIdx.x;
         while (tid < N)
         {
             uint64_t row = (tid << extendBits);
+            uint64_t chunkBase = tid - threadIdx.x;
             Goldilocks3GPU::Element LEv;
-            LEv[0] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
-            LEv[1] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
-            LEv[2] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
+            LEv[0] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
+            LEv[1] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
+            LEv[2] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
-                Goldilocks3GPU::mul(res, LEv, pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)]);
+                Goldilocks3GPU::mul(res, LEv, pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols, polLayout)]);
             }
             else
             {
                 Goldilocks3GPU::Element val;
-                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)];
-                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, NExtended, evalInfo.stageCols)];
-                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols)];
+                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols, polLayout)];
+                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, NExtended, evalInfo.stageCols, polLayout)];
+                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols, polLayout)];
                 Goldilocks3GPU::mul(res, LEv, val);
             }
             Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
@@ -850,7 +878,7 @@ __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint6
     }
 }
 
-__global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
+__global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, Layout layout)
 {
 
     uint64_t idx_x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -859,7 +887,7 @@ __global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * bufferWidth + idx_x;
-        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
+        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, layout);
         d_buffer[idx_buffer] = d_treeTrace[idx_trace];
     }
 }
@@ -911,17 +939,20 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         {
             std::string section = "cm" + to_string(k+1);
             uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-            uint64_t nCols = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // cm section: same storage layout the commit used (resolveLayout on the small domain).
+            Layout layout = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, trees[k]->getMerkleTreeWidth());
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, layout);
         }
         else if (k == nStages + 1)
         {
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // Const tree leaves were written fixedLayout() (ColMajorTiled) by extendAndMerkelizeFixed.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // Custom commit tree leaves were written fixedLayout() (ColMajorTiled) by write_custom_commit_gpu.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         }
     }
     CHECKCUDAERR(cudaGetLastError());
@@ -1268,7 +1299,7 @@ void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, Se
     d_transcript->getState(hash, stream);
 };
 
-__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits, bool debug)
+__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits, bool debug)
 {
     int chunk_idx = blockIdx.x;
     uint64_t nchunks = domainSize / blockDim.x;
@@ -1287,27 +1318,33 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
                 EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
                 gl64_t* eval = d_evals + evalInfo.evalPos * FIELD_EXTENSION;
                 gl64_t *pol;
+                // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
+                // commits (1) and fixed/const (2) follow fixedLayout().
+                Layout polLayout = Layout::ColMajor;
                 if (evalInfo.type == 0)
                 {
                     pol = d_cmPols;
+                    polLayout = resolveLayout(nBits, evalInfo.stageCols);
                 }
                 else if (evalInfo.type == 1)
                 {
                     pol = d_customComits;
+                    polLayout = fixedLayout();
                 }
                 else
                 {
                     pol = d_fixedPols;
+                    polLayout = fixedLayout();
                 }
-    
+
                 gl64_t *out = (j == 0) ? accum : res;
                 if(evalInfo.dim == 1) {
-                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
                     Goldilocks3GPU::sub_13_gpu_b_const(out, out, eval);
                 } else {
-                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + 2*blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
+                    out[threadIdx.x + blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
+                    out[threadIdx.x + 2*blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
                     Goldilocks3GPU::sub_gpu_b_const(out, out, eval);
                 }
                 if(j != 0) {
@@ -1344,14 +1381,23 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    uint32_t nthreads_ = setupCtx.starkInfo.nrowsPack;
+    // computeFRIExpression strides by domainSize/blockDim.x with no remainder handling,
+    // so blockDim.x must divide domainSize or leftover rows are silently dropped.
+    // Raise nrowsPack up to a 256-thread minimum (memory-constrained instances halve
+    // nrowsPack below 256 and would otherwise underpopulate blocks), then cap at
+    // domainSize. This is only reached on the prover path (gen_proof / gen_recursivef),
+    // where nrowsPack is a power of two <= 256, so blockDim.x stays a power-of-two
+    // divisor of the power-of-two domainSize. It is NOT called on the verify path, whose
+    // nrowsPack = nQueries can be a non-power-of-two > 256 and would break the invariant.
+    uint32_t nthreads_ = std::min<uint32_t>(std::max<uint32_t>(setupCtx.starkInfo.nrowsPack, 256), (uint32_t)domainSize);
     uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);
     dim3 nThreads(nthreads_);    
     dim3 nBlocks(nblocks_);
     computeFRIExpression<<<nBlocks, nThreads, sharedMem, stream>>>(
-        domainSize, 
-        setupCtx.starkInfo.openingPoints.size(), 
+        domainSize,
+        setupCtx.starkInfo.starkStruct.nBits,
+        setupCtx.starkInfo.openingPoints.size(),
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)],
         air_instance_info->evalsInfoFRISizes,
         air_instance_info->evalsInfoFRI,

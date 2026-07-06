@@ -57,3 +57,10 @@ pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "AirProd"),
+    (1, 0, "AirSum"),
+];

@@ -35,6 +35,25 @@ pub struct SetupOptions {
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
     pub hash: String,
+    /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
+    /// end of setup. No-op (logged) if `nvcc` is not on PATH.
+    pub gen_exps: bool,
+    /// CUDA arch spec for `--gen-exps`: `auto` | `major` | e.g. `89,120` / `sm_120`.
+    pub exps_arch: String,
+    /// Skip an AIR whose Q has more than this many ops (stays on the interpreter).
+    pub exps_cap: usize,
+    /// Fixed ops/chunk for every AIR; `None` => the no-spill autotuner.
+    pub exps_chunk: Option<usize>,
+    /// pil2-stark source root for the nvcc includes; `None` resolves relative to
+    /// the exps-codegen crate.
+    pub exps_stark_src: Option<String>,
+}
+
+/// True if the CUDA `nvcc` compiler is resolvable on PATH. Used to gate
+/// `--gen-exps` so a setup run on a machine without the CUDA toolchain skips
+/// expression-kernel codegen cleanly instead of erroring mid-compile.
+pub(crate) fn nvcc_present() -> bool {
+    which::which("nvcc").is_ok()
 }
 
 /// Run the non-recursive setup pipeline.
@@ -300,6 +319,21 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 
+    if opts.gen_exps {
+        let gen_opts = crate::commands::gen_exps::GenExpsOptions {
+            proving_key: std::path::PathBuf::from(&opts.build_dir).join("provingKey"),
+            arch: opts.exps_arch.clone(),
+            cap: opts.exps_cap,
+            chunk: opts.exps_chunk,
+            stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
+        };
+        // Non-fatal: setup itself succeeded and the provingKey is valid; the
+        // prover falls back to the interpreter for any AIR without a .so.
+        if let Err(e) = crate::commands::gen_exps::run_gen_exps(&gen_opts) {
+            tracing::error!("Expression kernel codegen failed (continuing): {:#}", e);
+        }
+    }
+
     tracing::info!("Setup complete");
     Ok(())
 }
@@ -343,6 +377,40 @@ mod tests {
     use prost::Message;
 
     #[test]
+    fn setup_options_has_gen_exps_fields() {
+        // Compile-level guard: the new gen-exps fields exist with the expected types.
+        let o = SetupOptions {
+            airout_path: String::new(),
+            build_dir: String::new(),
+            fixed_dir: None,
+            stark_structs_path: None,
+            recursive: false,
+            recursive_jobs: 1,
+            setup_jobs: 1,
+            stats_output_path: None,
+            hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
+        };
+        assert!(!o.gen_exps);
+        assert_eq!(o.exps_arch, "auto");
+        assert_eq!(o.exps_cap, 40000);
+        assert!(o.exps_chunk.is_none());
+    }
+
+    #[test]
+    fn nvcc_present_returns_bool_without_panicking() {
+        // Can't assert true/false (host-dependent), but it must not panic and
+        // must agree with whether `nvcc` is actually resolvable on PATH.
+        let got = nvcc_present();
+        let actual = which::which("nvcc").is_ok();
+        assert_eq!(got, actual);
+    }
+
+    #[test]
     fn test_run_setup_writes_global_files_before_airs() {
         let pilout_proto = pb::PilOut {
             name: Some("globaltest".to_string()),
@@ -372,6 +440,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         let result = run_setup(&opts);
         assert!(result.is_ok(), "run_setup should succeed: {:#}", result.unwrap_err());
@@ -412,6 +485,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         assert!(run_setup(&opts).is_err());
         let pk = build_dir.join("provingKey");

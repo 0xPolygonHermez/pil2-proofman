@@ -34,7 +34,9 @@ public:
     uint *pending_cursor;
     uint *out_cursor;
 
-    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream);
+    bool parallel;
+
+    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream, bool parallel = true);
     ~TranscriptGL_GPU()
     {
         CHECKCUDAERR(cudaFree(state));

@@ -268,7 +268,7 @@ endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
-SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions_bin.cpp ./src/starkpil/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions/expressions_bin.cpp ./src/starkpil/expressions/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 
@@ -375,6 +375,16 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
+NVCCFLAGS_GL := $(filter-out -DFEATURE_BN254,$(NVCCFLAGS)) -DFEATURE_GOLDILOCKS -DGOLDILOCKS_PLONKY2
+
+$(BUILD_DIR_GPU)/./src/goldilocks/src/sppark_lde.cu.o: ./src/goldilocks/src/sppark_lde.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS_GL) $(CPPFLAGS) -c $< -o $@
+
+$(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
+
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@

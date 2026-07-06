@@ -79,6 +79,27 @@ struct SetupArgs {
 
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
+
+    /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end
+    /// of setup. No-op if nvcc is not on PATH.
+    #[arg(long, default_value_t = false)]
+    gen_exps: bool,
+
+    /// CUDA arch spec for --gen-exps: auto | major | "89,120" | sm_120.
+    #[arg(long, default_value = "auto")]
+    exps_arch: String,
+
+    /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
+    #[arg(long, default_value_t = 40000)]
+    exps_cap: usize,
+
+    /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.
+    #[arg(long)]
+    exps_chunk: Option<usize>,
+
+    /// pil2-stark source root for the nvcc includes (default: resolved automatically).
+    #[arg(long)]
+    exps_stark_src: Option<String>,
 }
 
 #[derive(Parser)]
@@ -249,6 +270,11 @@ fn main() -> anyhow::Result<()> {
                 setup_jobs,
                 stats_output_path: args.output,
                 hash: args.hash,
+                gen_exps: args.gen_exps,
+                exps_arch: args.exps_arch,
+                exps_cap: args.exps_cap,
+                exps_chunk: args.exps_chunk,
+                exps_stark_src: args.exps_stark_src,
             };
 
             let result = setup::run_setup(&opts);

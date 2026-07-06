@@ -25,6 +25,7 @@ members = [
     "soundness",
     "setup/stark-recurser",
     "setup/pil2-stark",
+    "setup/exps-codegen",
 
     # PIL2 components library
     "pil2-components/lib/std/rs",
@@ -65,6 +66,7 @@ default-members = [
     "soundness",
     "setup/stark-recurser",
     "setup/pil2-stark",
+    "setup/exps-codegen",
 ]
 
 resolver = "2"
@@ -86,6 +88,7 @@ proofman-curves = { path = "curves", version = "1.0.1-alpha" }
 pil2-pilout = { path = "pilout", version = "1.0.1-alpha" }
 pil2-stark-setup = { path = "setup/pil2-stark", version = "1.0.1-alpha" }
 pil2-stark-recurser = { path = "setup/stark-recurser", version = "1.0.1-alpha" }
+proofman-exps-codegen = { path = "setup/exps-codegen", version = "1.0.1-alpha" }
 common = { path = "pil2-components/test/common/rs", version = "1.0.1-alpha" }
 proofman-fields = { path = "fields", version = "1.0.1-alpha" }
 
@@ -118,3 +121,6 @@ rustc-hash = "2.1.1"
 thiserror = { version = "2" }
 rand = "0.10"
 anyhow = "1"
+
+[patch.crates-io]
+mpi = { git = "https://github.com/rsmpi/rsmpi", rev = "fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6" }

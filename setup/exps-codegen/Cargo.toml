@@ -1,0 +1,21 @@
+[package]
+name = "proofman-exps-codegen"
+description = "Expression code generation for the PIL2 proofman framework"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+rayon = { workspace = true }
+anyhow = { workspace = true }
+regex = "1.12.2"
+tracing = { workspace = true }

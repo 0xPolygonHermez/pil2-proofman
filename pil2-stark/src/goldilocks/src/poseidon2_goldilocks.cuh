@@ -6,8 +6,8 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
-#include "goldilocks_trace_layout.cuh"
-#include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
+#include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset
+#include "poseidon_gpu_common.cuh"      // pow7(gl64_t&), scratchpad
 
 
 
@@ -242,6 +242,84 @@ __device__ __forceinline__ void poseidon2PermuteReg(gl64_t *state, const gl64_t 
 
 }
 
+// Register-resident warp-cooperative permutation (one thread per state lane).
+// Each lane keeps its state element in a register; peer lanes' values are
+// pulled with __shfl_sync. No shared memory, no __syncwarp. `mask` must name
+// exactly the active lanes (0..W-1). Entered only by active lanes; returns this
+// lane's output.
+// ---------------------------------------------------------------------------
+
+// External MDS on register-resident state: 4x4 mix per block, then (W>4) the
+// cross-block fold. All reads gathered via shuffle.
+template<uint32_t W>
+__device__ __forceinline__ gl64_t mdsExternalWarpReg(gl64_t v, uint32_t lane, uint32_t mask)
+{
+    uint32_t b = lane & ~3u, k = lane & 3u;
+    gl64_t x0 = shfl_gl(mask, v, b);
+    gl64_t x1 = shfl_gl(mask, v, b + 1);
+    gl64_t x2 = shfl_gl(mask, v, b + 2);
+    gl64_t x3 = shfl_gl(mask, v, b + 3);
+    gl64_t t0 = x0 + x1;
+    gl64_t t1 = x2 + x3;
+    gl64_t t2 = x1 + x1 + t1;
+    gl64_t t3 = x3 + x3 + t0;
+    gl64_t t1_2 = t1 + t1;
+    gl64_t t0_2 = t0 + t0;
+    gl64_t t4 = t1_2 + t1_2 + t3;
+    gl64_t t5 = t0_2 + t0_2 + t2;
+    gl64_t t6 = t3 + t5;
+    gl64_t t7 = t2 + t4;
+    gl64_t r = (k == 0) ? t6 : (k == 1) ? t5 : (k == 2) ? t7 : t4;
+
+    if (W > 4)
+    {
+        gl64_t acc = gl64_t(uint64_t(0));
+#pragma unroll
+        for (uint32_t blk = 0; blk < W; blk += 4)
+            acc = acc + shfl_gl(mask, r, blk + k);
+        r = r + acc;
+    }
+    return r;
+}
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__device__ gl64_t poseidon2PermuteWarpReg(gl64_t v, uint32_t mask, const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
+{
+    constexpr uint32_t W = SPONGE_WIDTH_T;
+    constexpr uint32_t HALF_F = N_FULL_ROUNDS_TOTAL_T >> 1;
+    const uint32_t lane = threadIdx.x;
+
+    v = mdsExternalWarpReg<W>(v, lane, mask);
+
+    for (uint32_t r = 0; r < HALF_F; ++r)
+    {
+        gl64_t xi = v + GPU_C_GL[r * W + lane];
+        gl64_t x2 = xi * xi, x3 = xi * x2, x4 = x2 * x2;
+        v = x3 * x4;
+        v = mdsExternalWarpReg<W>(v, lane, mask);
+    }
+
+    for (uint32_t r = 0; r < N_PARTIAL_ROUNDS_T; ++r)
+    {
+        if (lane == 0)
+        {
+            v = v + GPU_C_GL[HALF_F * W + r];
+            pow7(v);
+        }
+        gl64_t sum = warp_allreduce_add<W>(v, mask);   // Σ over all lanes, to all
+        v = v * GPU_D_GL[lane] + sum;
+    }
+
+    for (uint32_t r = 0; r < HALF_F; ++r)
+    {
+        gl64_t xi = v + GPU_C_GL[HALF_F * W + N_PARTIAL_ROUNDS_T + r * W + lane];
+        gl64_t x2 = xi * xi, x3 = xi * x2, x4 = x2 * x2;
+        v = x3 * x4;
+        v = mdsExternalWarpReg<W>(v, lane, mask);
+    }
+    return v;
+}
+
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {
@@ -297,7 +375,7 @@ __device__ __forceinline__ void spongeLoad(const uint64_t *in, uint32_t initial_
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols)
+__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols, Layout layout)
 {
     gl64_t r[RATE_T];
 
@@ -307,7 +385,7 @@ __device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t 
     for (uint32_t i = 0; i < RATE_T; i++) {
         if (i < ncols){
             uint32_t col = initial_col + i;
-            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols);
+            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols, layout);
             r[i] = in[idx];
         }
     }
@@ -379,12 +457,12 @@ __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, ui
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows)
+__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(num_cols - col, RATE_T);
-        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta);
+        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta, layout);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -459,7 +537,7 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     if (num_cols == 0)
     {
@@ -475,7 +553,7 @@ __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *_
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows);
+    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows, layout);
     spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1);
 }
 

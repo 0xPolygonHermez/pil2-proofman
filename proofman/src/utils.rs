@@ -409,6 +409,17 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
         needs_regeneration = true;
     }
 
+    if setup.gpu && setup.setup_type == ProofType::RecursiveF && !needs_regeneration {
+        let expected_const_gpu_size = setup.const_pols_size * 8;
+        let const_gpu_valid = PathBuf::from(&setup.const_pols_path).exists()
+            && fs::metadata(&setup.const_pols_path)
+                .map(|m| m.len() as usize == expected_const_gpu_size)
+                .unwrap_or(false);
+        if !const_gpu_valid {
+            needs_regeneration = true;
+        }
+    }
+
     // Regenerate the const tree if needed
     if needs_regeneration {
         let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;

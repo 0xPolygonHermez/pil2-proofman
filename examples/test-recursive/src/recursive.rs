@@ -56,13 +56,13 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")
                 .join(&hash_family);
-            let proof_path = current_dir.join("proof.bin");
+            let proof_path = current_dir.join("ag0_air0_tCompressor.bin");
 
             let mut file = File::open(proof_path).unwrap();
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).unwrap();
 
-            assert!(buffer.len().is_multiple_of(8), "proof.bin length is not a multiple of 8");
+            assert!(buffer.len().is_multiple_of(8), "proof file length is not a multiple of 8");
             let proof: Vec<u64> = buffer.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
             let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };

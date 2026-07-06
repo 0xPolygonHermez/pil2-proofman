@@ -97,3 +97,12 @@ values!(Permutation2_6AirGroupValues<F> {
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "Permutation1_6"),
+    (0, 1, "Permutation1_7"),
+    (0, 2, "Permutation1_8"),
+    (0, 3, "Permutation2_6"),
+];

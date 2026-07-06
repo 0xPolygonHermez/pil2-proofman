@@ -311,6 +311,90 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 }
 
 // ---------------------------------------------------------------------------
+// Register-resident warp-cooperative permutation (one thread per state lane).
+//
+// A single sponge state is spread across lanes 0..W-1 of one warp: each lane
+// keeps its state element in a register and pulls peer lanes' values with
+// __shfl_sync. No shared memory, no __syncwarp (the shuffle's mask provides the
+// ordering). `mask` must name exactly the active lanes (0..W-1). Entered only
+// by active lanes; returns this lane's output.
+// ---------------------------------------------------------------------------
+
+// MVP: out_lane = sum_j mat[W*j + lane] * v_j, gathering v_j over the warp.
+template<uint32_t W>
+__device__ __forceinline__ gl64_t pos1_mvp_warp(gl64_t v, const gl64_t *mat, uint32_t lane, uint32_t mask)
+{
+    gl64_t acc = mat[lane] * shfl_gl(mask, v, 0);
+#pragma unroll
+    for (uint32_t j = 1; j < W; ++j)
+        acc = acc + mat[W * j + lane] * shfl_gl(mask, v, j);
+    return acc;
+}
+
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
+__device__ gl64_t poseidon1PermuteWarpReg(gl64_t v,
+                                          uint32_t mask,
+                                          const gl64_t *GPU_C_GL,
+                                          const gl64_t *GPU_S_GL,
+                                          const gl64_t *GPU_M_GL,
+                                          const gl64_t *GPU_P_GL)
+{
+    const uint32_t lane = threadIdx.x;
+
+    // ARK.
+    v = v + GPU_C_GL[lane];
+
+    // First half full rounds.
+    for (uint32_t r = 0; r < HALF_F - 1; ++r)
+    {
+        gl64_t x2 = v * v, x3 = v * x2, x4 = x2 * x2;
+        v = (x3 * x4) + GPU_C_GL[(r + 1) * W + lane];
+        v = pos1_mvp_warp<W>(v, GPU_M_GL, lane, mask);
+    }
+
+    // Transition full round → MVP(P).
+    {
+        gl64_t x2 = v * v, x3 = v * x2, x4 = x2 * x2;
+        v = (x3 * x4) + GPU_C_GL[HALF_F * W + lane];
+        v = pos1_mvp_warp<W>(v, GPU_P_GL, lane, mask);
+    }
+
+    // Partial rounds. Lane 0 owns the S-box; `a` (post-pow7 state[0]) drives the
+    // sparse rank-1 update. The dot product s0 = Σ_j v_j·S_row[j] is formed as a
+    // per-lane term then butterfly-reduced over the warp (log2(W) shuffles).
+    for (uint32_t r = 0; r < N_PART; ++r)
+    {
+        if (lane == 0)
+        {
+            pow7(v);
+            v = v + GPU_C_GL[(HALF_F + 1) * W + r];
+        }
+        gl64_t a = shfl_gl(mask, v, 0);   // post-pow7 state[0], broadcast to all
+
+        const gl64_t *S_row = &GPU_S_GL[(W * 2 - 1) * r];
+        gl64_t term = v * S_row[lane];    // this lane's contribution (lane 0: a·S_row[0])
+        gl64_t s0 = warp_allreduce_add<W>(term, mask);
+
+        v = (lane == 0) ? s0 : (v + a * S_row[W - 1 + lane]);
+    }
+
+    // Second half full rounds.
+    for (uint32_t r = 0; r < HALF_F - 1; ++r)
+    {
+        gl64_t x2 = v * v, x3 = v * x2, x4 = x2 * x2;
+        v = (x3 * x4) + GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W + lane];
+        v = pos1_mvp_warp<W>(v, GPU_M_GL, lane, mask);
+    }
+    // Final pow7 (no ARK) + MVP(M).
+    {
+        gl64_t x2 = v * v, x3 = v * x2, x4 = x2 * x2;
+        v = x3 * x4;
+        v = pos1_mvp_warp<W>(v, GPU_M_GL, lane, mask);
+    }
+    return v;
+}
+
+// ---------------------------------------------------------------------------
 // Kernels
 // ---------------------------------------------------------------------------
 
@@ -328,7 +412,7 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
-                                           uint32_t num_cols, uint32_t num_rows);
+                                           uint32_t num_cols, uint32_t num_rows, Layout layout);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
