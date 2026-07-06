@@ -1,6 +1,6 @@
 use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    load_const_pols, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
@@ -16,7 +16,8 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
-    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
+    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c, set_gpu_mode_c,
+    get_num_gpus_c, init_gpu_setup_c, GOLDILOCKS_MERKLE_TREE_ARITY,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -181,7 +182,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         check_const_tree(&setup_recursivef, &d_buffers)?;
 
         let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
-        load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+        load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
         let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
         let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
         load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
@@ -449,10 +450,23 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         None,
     )?;
 
+    if !set_gpu_mode_c(gpu) {
+        return Err(ProofmanError::InvalidConfiguration(
+            "GPU mode requested but library was built without CUDA support".into(),
+        ));
+    }
+    if gpu {
+        let n_gpus = get_num_gpus_c();
+        if n_gpus == 0 {
+            return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
+        }
+        init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
+    }
+
     check_const_tree(&setup_recursivef, &None)?;
 
     let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
-    load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+    load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
     let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
     let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
     load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);

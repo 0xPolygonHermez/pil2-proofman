@@ -36,7 +36,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 csv.workspace = true
 chrono = "0.4.42"
-mpi = { version = "0.8.0", optional = true }
+mpi = { workspace = true, optional = true }
 
 [features]
 default = ["mpi"]

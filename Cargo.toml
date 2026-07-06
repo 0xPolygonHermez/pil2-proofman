@@ -117,3 +117,8 @@ itoa = "1.0.17"
 thiserror = { version = "2" }
 rand = "0.10"
 anyhow = "1"
+# Pinned to git: the released mpi-sys 0.2.3 pins bindgen 0.69, which cannot parse
+# the OpenMPI headers with libclang >= 22; this rev is mpi 0.8.1 + bindgen 0.72
+# (rsmpi/rsmpi#223). Switch back to a plain version requirement once a release
+# newer than mpi-sys 0.2.3 is published.
+mpi = { git = "https://github.com/rsmpi/rsmpi", rev = "fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6" }

@@ -30,9 +30,6 @@ pub struct ProveSnarkCmd {
     #[clap(short = 'r', long, default_value_t = false)]
     pub only_recursivef: bool,
 
-    #[clap(short = 'j', long, default_value_t = false)]
-    pub save_json: bool,
-
     #[clap(short = 'g', long, default_value_t = false)]
     pub gpu: bool,
 }
