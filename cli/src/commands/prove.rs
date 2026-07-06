@@ -54,6 +54,11 @@ pub struct ProveCmd {
     #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
 
+    /// Save the generated basic proofs to the output dir (only without aggregation).
+    /// One file per instance is written as `proof_<instance>_<airgroup>_<air>.bin`.
+    #[clap(short = 'p', long, default_value_t = false)]
+    pub save_proofs: bool,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
@@ -136,6 +141,13 @@ impl ProveCmd {
         }
         proofman.register_custom_commits(custom_commits_map)?;
 
+        let save_proofs_dir =
+            if self.save_proofs { Some(self.output_dir.to_string_lossy().into_owned()) } else { None };
+
+        if self.save_proofs && self.aggregation {
+            tracing::warn!("--save-proofs has no effect with aggregation (-a); basic proofs are only saved without aggregation");
+        }
+
         let proof_options = ProofOptions::new(
             false,
             self.aggregation,
@@ -143,6 +155,7 @@ impl ProveCmd {
             self.compressed,
             self.verify_proofs,
             self.minimal_memory,
+            save_proofs_dir,
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {

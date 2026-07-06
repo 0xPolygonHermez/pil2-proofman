@@ -2867,6 +2867,12 @@ where
             }
         }
 
+        if !options.aggregation {
+            if let Some(save_proofs_dir) = options.save_proofs_dir.as_ref() {
+                self.save_basic_proofs(save_proofs_dir)?;
+            }
+        }
+
         if options.verify_proofs {
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
@@ -3362,6 +3368,43 @@ where
             });
             self.handle_recursives.lock().unwrap().push(handle);
         }
+    }
+
+    /// Persist the basic (non-aggregated) proofs held in `self.proofs` to disk.
+    ///
+    /// One file is written per instance owned by this process. When running with
+    /// more than one MPI process, filenames are prefixed with the rank so that
+    /// proofs from different processes do not collide in a shared directory.
+    fn save_basic_proofs(&self, output_dir: &str) -> ProofmanResult<()> {
+        timer_start_info!(SAVING_PROOFS);
+
+        let output_dir = PathBuf::from(output_dir);
+        let rank_prefix = self.rank().map(|rank| format!("rank{rank}_")).unwrap_or_default();
+
+        let my_instances_sorted = self.pctx.dctx_get_process_instances();
+        for instance_id in my_instances_sorted.iter() {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(*instance_id)?;
+
+            let lock = self.proofs[*instance_id].read().unwrap();
+            let proof = lock.as_ref().ok_or_else(|| {
+                ProofmanError::ProofmanError(format!("Basic proof for instance {instance_id} is not available to save"))
+            })?;
+
+            let file_name = format!("{rank_prefix}proof_{instance_id}_{airgroup_id}_{air_id}.bin");
+            proof.save(output_dir.join(&file_name)).map_err(|e| {
+                ProofmanError::ProofmanError(format!("Failed to save basic proof {file_name}: {e}"))
+            })?;
+        }
+
+        tracing::info!(
+            "··· {}",
+            format!("Saved {} basic proofs to {}", my_instances_sorted.len(), output_dir.display())
+                .bright_green()
+                .bold()
+        );
+        timer_stop_and_log_info!(SAVING_PROOFS);
+
+        Ok(())
     }
 
     fn verify_proofs(&self) -> ProofmanResult<ProvePhaseResult> {

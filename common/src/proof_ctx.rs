@@ -63,6 +63,9 @@ pub struct ProofOptions {
     pub compressed: bool,
     pub verify_proofs: bool,
     pub minimal_memory: bool,
+    /// When set, the generated basic proofs are serialized to this directory
+    /// (one file per instance). Only applies in the non-aggregation path.
+    pub save_proofs_dir: Option<String>,
 }
 
 impl BorshSerialize for ProofOptions {
@@ -73,6 +76,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        BorshSerialize::serialize(&self.save_proofs_dir, writer)?;
         Ok(())
     }
 }
@@ -85,8 +89,9 @@ impl BorshDeserialize for ProofOptions {
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
+        let save_proofs_dir = Option::<String>::deserialize_reader(reader)?;
 
-        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory })
+        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, save_proofs_dir })
     }
 }
 
@@ -134,6 +139,7 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
+            save_proofs_dir: None,
         }
     }
 }
@@ -147,8 +153,9 @@ impl ProofOptions {
         compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
+        save_proofs_dir: Option<String>,
     ) -> Self {
-        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory }
+        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, save_proofs_dir }
     }
 
     pub fn minimal_memory(&mut self) {

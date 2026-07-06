@@ -1,7 +1,9 @@
 use std::str::FromStr;
 use fields::PrimeField64;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum ProofType {
     #[default]
     Basic = 0,
@@ -58,14 +60,16 @@ impl FromStr for ProofType {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Proof<F: PrimeField64> {
     pub proof_type: ProofType,
     pub airgroup_id: usize,
     pub air_id: usize,
     pub global_idx: Option<usize>,
     pub proof: Vec<u64>,
+    #[serde(skip)]
     pub circom_witness: Vec<F>,
+    #[serde(skip)]
     pub n_cols: usize,
 }
 
@@ -89,6 +93,34 @@ impl<F: PrimeField64> Proof<F> {
         n_cols: usize,
     ) -> Self {
         Self { proof_type, global_idx, airgroup_id, air_id, circom_witness, proof: Vec::new(), n_cols }
+    }
+
+    /// Serialize the proof to disk (bincode). The transient `circom_witness`
+    /// buffer is skipped (see the `#[serde(skip)]` fields above).
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let path = path.as_ref();
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut file = std::fs::File::create(path).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("Failed to create file for saving proof: {}: {}", path.display(), e))
+        })?;
+
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
+        Ok(())
+    }
+
+    /// Load a proof previously written by [`Proof::save`].
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let mut file = std::fs::File::open(path.as_ref()).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
+            )
+        })?;
+        Ok(bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?)
     }
 }
 
