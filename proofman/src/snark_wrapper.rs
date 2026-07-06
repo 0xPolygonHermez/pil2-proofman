@@ -380,6 +380,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 }
 
 pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
+    let vadcop_public_inputs = if vadcop_public_inputs.len() == publics_info.n_publics + 1 {
+        &vadcop_public_inputs[1..]
+    } else {
+        vadcop_public_inputs
+    };
     if vadcop_public_inputs.len() != publics_info.n_publics {
         return Err(ProofmanError::InvalidConfiguration(format!(
             "Number of vadcop public inputs ({}) does not match expected number of publics ({})",

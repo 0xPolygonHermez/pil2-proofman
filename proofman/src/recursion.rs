@@ -269,6 +269,18 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
 }
 
+/// Writes a vadcop-final proof's public section `[n_publics | publics(n_publics)]`.
+///
+/// `publics` are the circuit's OUTPUT publics produced by `generate_recursive_proof`
+/// (from the witness), which for vadcop_final include the `is_vadcop_final_proof` flag
+/// at index 0. `gen_recursive_proof_size` sized `proof.proof` to hold `1 + n_publics`.
+fn write_vadcop_final_publics<F: PrimeField64>(proof: &mut Proof<F>, n_publics: u64, publics: &[F]) {
+    proof.proof[0] = n_publics;
+    for (i, p) in publics.iter().take(n_publics as usize).enumerate() {
+        proof.proof[1 + i] = p.as_canonical_u64();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
@@ -281,7 +293,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_pols: &[F],
     force_recursive_stream: bool,
     calculate_fixed_tree_handle: Option<std::thread::JoinHandle<()>>,
-) -> ProofmanResult<u64> {
+) -> ProofmanResult<(u64, Vec<F>)> {
     timer_start_debug!(
         GEN_RECURSIVE_PROOF,
         "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
@@ -343,6 +355,12 @@ pub fn generate_recursive_proof<F: PrimeField64>(
             publics_aggregation as u64,
         );
     }
+    // For VadcopFinal / VadcopFinalCompressed the proof's public section
+    // (`[n_publics | publics(n_publics)]`, with the `is_vadcop_final_proof` flag at
+    // index 0) is written by the caller from the `publics` returned below. These are
+    // the circuit's OUTPUT publics read from the witness above (`get_committed_pols_c`),
+    // NOT `pctx.get_publics()` — that buffer holds only the flag-free INPUT publics
+    // (`global_info.n_publics`), so it is missing the flag and one element too short.
 
     let (const_pols_ptr, const_tree_ptr) = if pctx.gpu {
         (std::ptr::null_mut(), std::ptr::null_mut())
@@ -386,7 +404,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.airgroup_id,
         witness.air_id
     );
-    Ok(stream_id)
+    Ok((stream_id, publics))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -500,7 +518,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
                         let recursive2_proof = gen_recursive_proof_size::<F>(pctx, setups, &circom_witness)?;
 
-                        let stream_id = generate_recursive_proof::<F>(
+                        let (stream_id, _) = generate_recursive_proof::<F>(
                             pctx,
                             memory_handler_recursive_witness,
                             setups,
@@ -633,7 +651,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
 
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
-    let stream_id = generate_recursive_proof::<F>(
+    let (stream_id, publics) = generate_recursive_proof::<F>(
         pctx,
         memory_handler_recursive_witness,
         setups,
@@ -647,12 +665,11 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
-    // Set publics for vadcop final proof
-    let publics = pctx.get_publics();
-    final_proof.proof[0] = setup.stark_info.n_publics;
-    for p in 0..setup.stark_info.n_publics as usize {
-        final_proof.proof[1 + p] = publics[p].as_canonical_u64();
-    }
+    // Write the vadcop_final proof's public section (`[n_publics | publics]`, including
+    // the `is_vadcop_final_proof` flag @0) from the circuit's OUTPUT publics returned by
+    // `generate_recursive_proof` — NOT `pctx.get_publics()`, which holds only the
+    // flag-free input publics.
+    write_vadcop_final_publics(&mut final_proof, setup.stark_info.n_publics, &publics);
 
     timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_PROOF);
 
@@ -702,7 +719,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     );
 
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
-    let stream_id = generate_recursive_proof::<F>(
+    let (stream_id, publics) = generate_recursive_proof::<F>(
         pctx,
         memory_handler_recursive_witness,
         setups,
@@ -716,12 +733,9 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
-    // Set publics for vadcop final proof
-    let publics = pctx.get_publics();
-    final_proof.proof[0] = setup.stark_info.n_publics;
-    for p in 0..setup.stark_info.n_publics as usize {
-        final_proof.proof[1 + p] = publics[p].as_canonical_u64();
-    }
+    // Write the compressed proof's public section from the circuit's OUTPUT publics
+    // returned by `generate_recursive_proof`, not from `pctx.get_publics()`.
+    write_vadcop_final_publics(&mut final_proof, setup.stark_info.n_publics, &publics);
 
     timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
 

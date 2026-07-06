@@ -348,9 +348,7 @@ pub fn assign_stark_inputs(
             out.push_str(&format!("    {component_name}.s0_siblings{s} <== {prefix_}s0_siblings{s};\n"));
             if llv > 0 {
                 if is_bn128 {
-                    out.push_str(&format!(
-                        "    {component_name}.s0_last_levels{s} <== {prefix_}s0_last_levels{s};\n"
-                    ));
+                    out.push_str(&format!("    {component_name}.s0_last_levels{s} <== {prefix_}s0_last_levels{s};\n"));
                 } else {
                     out.push_str(&format!(
                         "    {component_name}.s0_last_mt_levels{s} <== {prefix_}s0_last_mt_levels{s};\n"
@@ -365,9 +363,9 @@ pub fn assign_stark_inputs(
         out.push_str(&format!("    {component_name}.s{s}_root <== {prefix_}s{s}_root;\n"));
     }
     // FRI step vals/siblings
-    for s in 1..steps.len() {
+    for (s, step) in steps.iter().enumerate().skip(1) {
         out.push_str(&format!("    {component_name}.s{s}_vals <== {prefix_}s{s}_vals;\n"));
-        let skip_siblings = is_bn128 && siblings_depth_bn128(steps[s] as usize, arity, llv) == 0;
+        let skip_siblings = is_bn128 && siblings_depth_bn128(*step as usize, arity, llv) == 0;
         if !skip_siblings {
             out.push_str(&format!("    {component_name}.s{s}_siblings <== {prefix_}s{s}_siblings;\n"));
         }
@@ -436,11 +434,8 @@ mod tests {
     #[test]
     fn bn128_define_emits_last_levels() {
         let si = bn128_stark_info(2);
-        let out = define_stark_inputs(
-            &si,
-            "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false },
-        );
+        let out =
+            define_stark_inputs(&si, "", &StarkInputOptions { add_publics: false, is_final: true, parallel: false });
         assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levels1[16];"), "out:\n{out}");
@@ -450,11 +445,8 @@ mod tests {
     #[test]
     fn bn128_define_llv_zero_unchanged() {
         let si = bn128_stark_info(0);
-        let out = define_stark_inputs(
-            &si,
-            "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false },
-        );
+        let out =
+            define_stark_inputs(&si, "", &StarkInputOptions { add_publics: false, is_final: true, parallel: false });
         assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
         assert!(!out.contains("last_levels"), "out:\n{out}");
     }

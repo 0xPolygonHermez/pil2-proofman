@@ -71,8 +71,7 @@ fn build_tera_context_bn128(
              merkleTreeCustom (circuits.bn128/custom/merklehash.circom lacks the templates)"
         );
     }
-    let s0_last_mt_size =
-        if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
+    let s0_last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
     let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
@@ -259,8 +258,7 @@ fn build_tera_context_bn128(
             let full_ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
             let ml = full_ml.saturating_sub(last_level_verification);
             let is_empty = last_level_verification > 0 && full_ml <= last_level_verification;
-            let last_mt_size =
-                if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
+            let last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
             let mt_size = if n_bits_s == 0 { 1usize } else { 1 << n_bits_s };
 
             // e0 = inv(shift^(1 << (nBitsExt - prevStepBits)))

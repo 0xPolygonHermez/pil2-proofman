@@ -19,6 +19,7 @@ template Main() {
     // committed publics).
     signal is_vadcop_final_proof;
     is_vadcop_final_proof <== publics[4];
+    is_vadcop_final_proof * (1 - is_vadcop_final_proof) === 0;
 
     signal publicsProof[{{ n_publics_proof }}];
     for (var i = 0; i < {{ n_publics_proof }}; i++) {
