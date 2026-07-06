@@ -24,20 +24,28 @@ cargo run --bin proofman-cli pil-helpers \
 # 4. Build the witness library
 cargo build -p fibonacci-multilinear
 
-# 5. Verify the constraints
+# 5. Generate custom commits
+cargo run --bin proofman-cli gen-custom-commits-fixed \
+     --witness-lib ./target/debug/libfibonacci_multilinear.so \
+     --proving-key examples/fibonacci-multilinear/build/provingKey/ \
+     --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin
+
+# 6. Verify the constraints
 cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_multilinear.so \
      --proving-key examples/fibonacci-multilinear/build/provingKey/ \
-     --public-inputs examples/fibonacci-multilinear/src/inputs.json
+     --public-inputs examples/fibonacci-multilinear/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin
 
-# 6. Prove
+# 7. Prove
 cargo run --bin proofman-cli -- prove --multilinear \
     --witness-lib ./target/debug/libfibonacci_multilinear.so \
     --proving-key examples/fibonacci-multilinear/build/provingKey \
     --public-inputs examples/fibonacci-multilinear/src/inputs.json \
-    --output-dir examples/fibonacci-multilinear/build/proofs
+    --output-dir examples/fibonacci-multilinear/build/proofs \
+    --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin
 
-# 7. Verify (available when recursion gets activated)
+# 8. Verify (available when recursion gets activated)
 ```
 
 With the proving key generated, `cargo test -p proofman-multilinear --test setup_artifact` runs an end-to-end prove+verify against the real setup artifacts (it skips when the proving key is absent).

@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "ceaaa80f3bf5c95185d12e41a83042c68ef05af4701455fda8a723b49912ab7a";
+pub const PILOUT_HASH: &str = "8950ee2fdad1715a3dd0287d510a9b2ad43ba55cb5870732eafa9a312638d883";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -39,6 +39,10 @@ use serde::Serialize;
 use serde_arrays;
 
 
+fn default_array_rom_root() -> [u64; 4] {
+    [0; 4]
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildPublics {
@@ -50,6 +54,8 @@ pub struct BuildPublics {
     pub in2: u64,
     #[serde(default)]
     pub out: u64,
+    #[serde(default = "default_array_rom_root", with = "serde_arrays")]
+    pub rom_root: [u64; 4],
     
 }
 
@@ -59,13 +65,14 @@ impl Default for BuildPublics {
             module: 0,  
             in1: 0,  
             in2: 0,  
-            out: 0, 
+            out: 0,  
+            rom_root: [0; 4], 
         }
     }
 }
 
 values!(BuildPublicValues<F> {
- module: F, in1: F, in2: F, out: F,
+ module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
 });
   
 trace_row!(FibonacciFixedRow<F> {
@@ -74,7 +81,7 @@ trace_row!(FibonacciFixedRow<F> {
 pub type FibonacciFixed<F> = GenericTrace<FibonacciFixedRow<F>, 1024, 0, 0>;
 
 trace_row!(FibonacciTraceRow<F> {
- a:F, b:F,
+ a:F, b:F, test:F, test2:F, test3:F,
 });
 
 pub type FibonacciTrace<F> = GenericTrace<FibonacciTraceRow<F>, 1024, 0, 0>;
@@ -100,6 +107,16 @@ trace_row!(SpecifiedRangesTraceRow<F> {
 });
 
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
+
+trace_row!(FibonacciRomTraceRow<F> {
+ line: F, flags: F,
+});
+pub type FibonacciRomTrace<F> = GenericTrace<FibonacciRomTraceRow<F>, 1024, 0, 0, 0>;
+
+
+values!(FibonacciAirValues<F> {
+ fibo1: [F; 2], fibo3: FieldExtension<F>,
+});
 
 values!(ModuleAirValues<F> {
  last_segment: F,
