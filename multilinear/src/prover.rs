@@ -10,6 +10,7 @@ use crate::transcript::MlTranscript;
 use crate::zerocheck::{build_kernels, KernelSpec, ZerocheckOracle};
 use fields::{Goldilocks, PrimeField64};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 /// A multilinear STARK proof for one AIR instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +166,7 @@ pub fn prove_air(
 
     // --- Commitments: const columns first (their root doubles as a verifying
     // key), then the witness stages.
+    let t_commit = Instant::now();
     let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
     let const_matrix = commit_matrix(&const_refs, params);
     transcript.absorb_root(&const_matrix.root());
@@ -196,8 +198,10 @@ pub fn prove_air(
     // Value messages are stage outputs: bind them before any zerocheck randomness.
     transcript.absorb_exts(air_values);
     transcript.absorb_exts(airgroup_values);
+    let t_commit = t_commit.elapsed();
 
     // --- Zerocheck: one sumcheck for all EveryRow constraints.
+    let t_zerocheck = Instant::now();
     let r = transcript.challenges(n);
     let alpha = transcript.challenge();
 
@@ -213,8 +217,10 @@ pub fn prove_air(
         zerocheck_round_polys.push(evals);
         lambda.push(ch);
     }
+    let t_zerocheck = t_zerocheck.elapsed();
 
     // --- Claimed openings: full (column × kernel) matrix.
+    let t_claims = Instant::now();
     let kernels = build_kernels(ir);
     let eq_lambda = eq_evals(&lambda);
     let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, &lambda, &eq_lambda)).collect();
@@ -243,8 +249,10 @@ pub fn prove_air(
     for row in &claims {
         transcript.absorb_exts(row);
     }
+    let t_claims = t_claims.elapsed();
 
     // --- Two-level batching and the Basefold opening.
+    let t_opening = Instant::now();
     let delta = transcript.challenge();
     let gamma = transcript.challenge();
     let col_coeffs = powers(delta, all_cols.len());
@@ -272,6 +280,12 @@ pub fn prove_air(
 
     let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
     let opening = prove_opening(params, &mut transcript, phi_table, w_table, phi_codeword, &matrices);
+    let t_opening = t_opening.elapsed();
+
+    log::debug!(
+        "ml prove_air[{}] n={n}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
+        ir.name,
+    );
 
     Ok(MlProof {
         airgroup_id: ir.airgroup_id,

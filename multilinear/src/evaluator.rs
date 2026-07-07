@@ -209,8 +209,8 @@ pub fn check_constraints_on_trace(
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) mod test_air {
+#[cfg(any(test, feature = "testutil"))]
+pub mod test_air {
     //! A hand-built Fibonacci AIR used across the crate's tests:
     //! columns `a`, `b` (stage 1); constraints
     //!   EveryRow: b' − (a + b) = 0, a' − b = 0   (cyclic wrap on the last row

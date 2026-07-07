@@ -1184,3 +1184,13 @@ int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey
     }
 }
 
+void poseidon2_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim)
+{
+    // Width 16 == arity(4) * capacity(4); the multilinear prover always uses arity 4.
+    Poseidon2Goldilocks<16>::merkletree(
+        (Goldilocks::Element *)tree,
+        (Goldilocks::Element *)input,
+        num_cols, num_rows, arity,
+        Poseidon2Mode::Auto, 0, dim);
+}
+

@@ -22,11 +22,24 @@ use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
 use crate::merkle::MerkleTree;
 use crate::sumcheck::{verify_sumcheck_round, ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
-use fields::{Field, Goldilocks, Poseidon1_16};
+use fields::{Field, Goldilocks, Poseidon2_16};
 
 /// Hash used for Merkle trees.
-pub type MlHash = Poseidon1_16;
+pub type MlHash = Poseidon2_16;
 pub const MERKLE_ARITY: u64 = 4;
+
+/// Build a Merkle tree over `leaves`.
+#[inline]
+fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64) -> MerkleTree {
+    #[cfg(feature = "ffi-poseidon2")]
+    {
+        MerkleTree::from_ffi(leaves, arity)
+    }
+    #[cfg(not(feature = "ffi-poseidon2"))]
+    {
+        MerkleTree::new::<MlHash>(leaves, arity)
+    }
+}
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct MlParams {
@@ -104,7 +117,7 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
         })
         .collect();
 
-    let tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+    let tree = build_merkle(&leaves, MERKLE_ARITY);
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
 
@@ -223,7 +236,7 @@ pub fn prove_opening(
             fold_coeffs(&mut phi_coeffs, r);
             if t + 1 < num_folds {
                 let leaves = pack_ext_pairs(&codeword);
-                let tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+                let tree = build_merkle(&leaves, MERKLE_ARITY);
                 transcript.absorb_root(&tree.root());
                 fold_trees.push((tree, leaves));
             } else {

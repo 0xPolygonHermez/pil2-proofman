@@ -308,6 +308,20 @@ pub fn calculate_const_tree_c(
     }
 }
 
+/// Build a Goldilocks Poseidon2 Merkle tree over a row-major matrix
+/// (`num_rows` × `num_cols*dim` elements) into the caller-allocated `tree` node
+/// buffer, using the C++ AVX/AVX512/threaded backend. `tree` must hold
+/// `getTreeNumElements(num_rows, arity)` `u64` elements. Used by the multilinear
+/// prover's commit path.
+///
+/// # Safety
+/// `tree` and `input` must point to valid buffers of the sizes described above.
+pub fn poseidon2_merkletree_c(tree: *mut u64, input: *const u64, num_cols: u64, num_rows: u64, arity: u64, dim: u64) {
+    unsafe {
+        poseidon2_merkletree_gl(tree as *mut c_void, input as *mut c_void, num_cols, num_rows, arity, dim);
+    }
+}
+
 pub fn calculate_const_tree_bn128_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
     unsafe {
         calculate_const_tree_bn128(

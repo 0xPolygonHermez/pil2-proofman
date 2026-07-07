@@ -1593,6 +1593,8 @@ version = "1.0.0-beta"
 dependencies = [
  "bincode",
  "fields",
+ "log",
+ "proofman-starks-lib-c",
  "rand 0.10.1",
  "serde",
  "thiserror",

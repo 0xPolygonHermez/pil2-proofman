@@ -46,6 +46,57 @@ impl MerkleTree {
         Self { arity, levels }
     }
 
+    /// Build the tree by offloading the (Poseidon2) hashing to the C++
+    /// AVX/AVX512/threaded kernel, then slicing its flat node buffer into the
+    /// same per-level digest layout `new` produces. Byte-compatible with
+    /// `new::<Poseidon2_16>` (guarded by `ffi_tree_matches_pure_rust`), so the
+    /// pure-Rust verifier validates the resulting roots and paths unchanged.
+    #[cfg(feature = "ffi-poseidon2")]
+    pub fn from_ffi(leaves: &[Vec<Goldilocks>], arity: u64) -> Self {
+        use fields::PrimeField64;
+        assert!(!leaves.is_empty());
+        debug_assert_eq!(arity, 4, "C++ Poseidon2 GL merkletree uses sponge width 16 == arity 4");
+        let num_rows = leaves.len() as u64;
+        let width = leaves[0].len();
+        assert!(leaves.iter().all(|l| l.len() == width), "leaves must have uniform width");
+
+        // Row-major, canonical-u64 input for the C++ kernel.
+        let mut input = Vec::with_capacity(leaves.len() * width);
+        for leaf in leaves {
+            input.extend(leaf.iter().map(|v| v.as_canonical_u64()));
+        }
+
+        // Full node buffer (all levels including per-level padding).
+        let num_nodes = tree_num_nodes(num_rows, arity);
+        let mut nodes = vec![0u64; (num_nodes * DIGEST_CELLS as u64) as usize];
+        proofman_starks_lib_c::poseidon2_merkletree_c(
+            nodes.as_mut_ptr(),
+            input.as_ptr(),
+            width as u64,
+            num_rows,
+            arity,
+            1,
+        );
+
+        // Slice the flat buffer into per-level (unpadded) digests — the layout
+        // `path`/`root` expect. Mirrors `fields::partial_merkle_tree`'s walk.
+        let flat: Vec<Goldilocks> = nodes.into_iter().map(Goldilocks::new).collect();
+        let cells = |n: u64| (n * DIGEST_CELLS as u64) as usize;
+        let mut levels: Vec<Vec<Goldilocks>> = Vec::new();
+        let mut pending = num_rows;
+        let mut start = 0usize;
+        levels.push(flat[start..start + cells(pending)].to_vec());
+        while pending > 1 {
+            let extra = (arity - (pending % arity)) % arity;
+            let next_n = pending.div_ceil(arity);
+            start += cells(pending + extra);
+            levels.push(flat[start..start + cells(next_n)].to_vec());
+            pending = next_n;
+        }
+
+        Self { arity, levels }
+    }
+
     pub fn root(&self) -> [Goldilocks; 4] {
         let top = self.levels.last().unwrap();
         [top[0], top[1], top[2], top[3]]
@@ -81,6 +132,22 @@ impl MerkleTree {
     pub fn num_leaves(&self) -> usize {
         self.levels[0].len() / DIGEST_CELLS
     }
+}
+
+/// Total node count (all levels incl. per-level arity padding) for a tree of
+/// `num_leaves` leaves — matches the C++ `getTreeNumElements/HASH_SIZE` and
+/// `fields::partial_merkle_tree` formulas.
+#[cfg(feature = "ffi-poseidon2")]
+fn tree_num_nodes(num_leaves: u64, arity: u64) -> u64 {
+    let mut num_nodes = num_leaves;
+    let mut level = num_leaves;
+    while level > 1 {
+        num_nodes += (arity - (level % arity)) % arity;
+        let next = level.div_ceil(arity);
+        num_nodes += next;
+        level = next;
+    }
+    num_nodes
 }
 
 #[cfg(test)]
