@@ -375,6 +375,8 @@ enum OuterAggregationState {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
         if let Err(e) = self.reset() {
             eprintln!("Error during ProofMan cleanup: {:?}", e);
         }
@@ -2992,9 +2994,8 @@ where
 
             let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
             publics_extended[0..publics.len()].copy_from_slice(publics);
-            let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
-            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
+            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
 
             let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
             recursive2_proof[0] = publics_extended.len() as u64;
@@ -3998,7 +3999,7 @@ where
             None => (false, 0),
         };
 
-        let proof = vec![0; setup.proof_size as usize];
+        let proof = create_buffer_fast(setup.proof_size as usize);
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
