@@ -185,7 +185,8 @@ dependencies = [
 [[package]]
 name = "build-probe-mpi"
 version = "0.1.5"
-source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d78ace2bb02fc18ad937f1599a853fcf3da2327bc1eb3c8e62b1f2fe4573bfd6"
 dependencies = [
  "pkg-config",
  "shell-words",
@@ -928,30 +929,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "mpi"
-version = "0.8.1"
-source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
-dependencies = [
- "build-probe-mpi",
- "conv",
- "libffi",
- "mpi-sys",
- "once_cell",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
-name = "mpi-sys"
-version = "0.2.3"
-source = "git+https://github.com/rsmpi/rsmpi?rev=fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6#fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6"
-dependencies = [
- "bindgen",
- "build-probe-mpi",
- "cc",
-]
-
-[[package]]
 name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1255,12 +1232,12 @@ dependencies = [
  "anyhow",
  "clap",
  "indexmap",
- "mpi",
  "pil2-pilout",
  "pil2-stark-recurser",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
+ "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1352,7 +1329,6 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "libloading",
- "mpi",
  "num-traits",
  "pil2-std-lib",
  "proofman-common",
@@ -1360,6 +1336,7 @@ dependencies = [
  "proofman-fields",
  "proofman-hints",
  "proofman-macros",
+ "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
@@ -1409,10 +1386,10 @@ dependencies = [
  "env",
  "libc",
  "libloading",
- "mpi",
  "num_cpus",
  "proofman-fields",
  "proofman-macros",
+ "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "rayon",
@@ -1475,6 +1452,32 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "proofman-mpi"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67aa20a9f9545231a3f3a625c0da7c9c9cf25ae26e7453bdf0b08da6f4514aa8"
+dependencies = [
+ "build-probe-mpi",
+ "conv",
+ "libffi",
+ "once_cell",
+ "proofman-mpi-sys",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
+name = "proofman-mpi-sys"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5f4fbc97ddd5516e2f38bc80ca5b64092aab5eb920a780e2606e570dafc9948"
+dependencies = [
+ "bindgen",
+ "build-probe-mpi",
+ "cc",
 ]
 
 [[package]]

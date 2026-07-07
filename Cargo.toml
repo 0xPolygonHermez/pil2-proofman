@@ -99,7 +99,7 @@ prost = "0.13"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
-mpi = "0.8.0"
+mpi = { package = "proofman-mpi", version = "0.8.1" }
 crossbeam-channel = "0.5.15"
 rayon = "1"
 serde = { version = "1.0.130", features = ["derive"] }
@@ -121,6 +121,3 @@ rustc-hash = "2.1.1"
 thiserror = { version = "2" }
 rand = "0.10"
 anyhow = "1"
-
-[patch.crates-io]
-mpi = { git = "https://github.com/rsmpi/rsmpi", rev = "fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6" }
