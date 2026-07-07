@@ -15,7 +15,9 @@ use proofman_common::{
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
+use proofman_util::{
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
+};
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
@@ -95,7 +97,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
-        add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+        add_publics_circom(&mut updated_proof, 0, pctx, None);
         let circom_witness =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
         timer_stop_and_log_debug!(
@@ -123,12 +125,9 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         );
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
-        let recursive2_verkey =
-            pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2).display().to_string()
-                + ".verkey.json";
-
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
+        let recursive2_setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
 
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
 
@@ -137,12 +136,12 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             let publics_aggregation: Vec<F> =
                 proof.proof.iter().take(n_publics_aggregation).map(|&x| F::from_u64(x)).collect();
             add_publics_aggregation(&mut updated_proof, 0, &publics_aggregation, n_publics_aggregation);
-            add_publics_circom(&mut updated_proof, n_publics_aggregation, pctx, &recursive2_verkey, true);
+            add_publics_circom(&mut updated_proof, n_publics_aggregation, pctx, Some(&recursive2_setup.verkey));
             updated_proof[(publics_circom_size + n_publics_aggregation)..]
                 .copy_from_slice(&proof.proof[n_publics_aggregation..]);
         } else {
             updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
-            add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
+            add_publics_circom(&mut updated_proof, 0, pctx, Some(&recursive2_setup.verkey));
         }
 
         let circom_witness =
@@ -206,11 +205,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
         .copy_from_slice(&proof2.proof);
     updated_proof_recursive2[publics_circom_size + 2 * proof_len..].copy_from_slice(&proof3.proof);
 
-    let recursive2_verkey =
-        pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2).display().to_string()
-            + ".verkey.json";
-
-    add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
+    add_publics_circom(&mut updated_proof_recursive2, 0, pctx, Some(&setup_recursive2.verkey));
     let circom_witness =
         generate_witness::<F>(setup_recursive2, memory_handler_recursive_witness, 0, &updated_proof_recursive2)?;
 
@@ -265,7 +260,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
         new_proof_size += 1 + setup.stark_info.n_publics;
     }
 
-    let new_proof = vec![0; new_proof_size as usize];
+    let new_proof = create_buffer_fast(new_proof_size as usize);
     Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
 }
 
@@ -601,7 +596,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     }
 
     let mut updated_proof = vec![0; updated_proof_size];
-    add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+    add_publics_circom(&mut updated_proof, 0, pctx, None);
 
     let mut offset = publics_circom_size;
     for airgroup_id in 0..n_airgroups {
