@@ -9,26 +9,117 @@
 use crate::error::MlError;
 use crate::hypercube::Ext;
 use crate::ir::{AirIr, Op, Operand, SrcKind};
+use core::ops::{Add, Mul, Neg, Sub};
 use fields::{Field, Goldilocks};
+
+/// A leaf/temporary value kept **lazily in the base field** until it must be
+/// promoted to the extension. A `base × base` multiply is one Goldilocks mult
+/// vs. twelve for `Ext × Ext`, and a mixed `Ext × base` is three — so evaluating
+/// constraints over the raw (base-field) trace, as the zerocheck's first round
+/// does, is far cheaper. Promotion to `Ext` happens transparently the moment a
+/// challenge or an already-bound value enters the expression.
+#[derive(Clone, Copy, Debug)]
+pub enum Val {
+    B(Goldilocks),
+    E(Ext),
+}
+
+impl Val {
+    #[inline]
+    pub fn from_base(x: Goldilocks) -> Self {
+        Val::B(x)
+    }
+    #[inline]
+    pub fn from_ext(x: Ext) -> Self {
+        Val::E(x)
+    }
+    #[inline]
+    pub fn to_ext(self) -> Ext {
+        match self {
+            Val::B(x) => Ext::from_base(x),
+            Val::E(x) => x,
+        }
+    }
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Val::B(x) => x.is_zero(),
+            Val::E(x) => x.is_zero(),
+        }
+    }
+    #[inline]
+    pub fn zero() -> Self {
+        Val::B(Goldilocks::ZERO)
+    }
+}
+
+impl Add for Val {
+    type Output = Val;
+    #[inline]
+    fn add(self, o: Val) -> Val {
+        match (self, o) {
+            (Val::B(a), Val::B(b)) => Val::B(a + b),
+            (Val::E(e), Val::B(b)) | (Val::B(b), Val::E(e)) => Val::E(e + b),
+            (Val::E(a), Val::E(b)) => Val::E(a + b),
+        }
+    }
+}
+
+impl Sub for Val {
+    type Output = Val;
+    #[inline]
+    fn sub(self, o: Val) -> Val {
+        match (self, o) {
+            (Val::B(a), Val::B(b)) => Val::B(a - b),
+            (Val::E(a), Val::B(b)) => Val::E(a - b),
+            (Val::B(a), Val::E(b)) => Val::E(Ext::from_base(a) - b),
+            (Val::E(a), Val::E(b)) => Val::E(a - b),
+        }
+    }
+}
+
+impl Mul for Val {
+    type Output = Val;
+    #[inline]
+    fn mul(self, o: Val) -> Val {
+        match (self, o) {
+            (Val::B(a), Val::B(b)) => Val::B(a * b),
+            (Val::E(e), Val::B(b)) | (Val::B(b), Val::E(e)) => Val::E(e * b),
+            (Val::E(a), Val::E(b)) => Val::E(a * b),
+        }
+    }
+}
+
+impl Neg for Val {
+    type Output = Val;
+    #[inline]
+    fn neg(self) -> Val {
+        match self {
+            Val::B(x) => Val::B(-x),
+            Val::E(x) => Val::E(-x),
+        }
+    }
+}
 
 /// Supplies leaf values for one evaluation point. Witness/const leaves are
 /// addressed by *base* column slot; extension-valued columns are reassembled
-/// by the evaluator from their `dim` consecutive base slots.
+/// by the evaluator from their `dim` consecutive base slots. Base-field leaves
+/// return [`Val::B`] so base-only subexpressions stay in the base field.
 pub trait LeafSource {
     /// Value of witness base column `col` of `stage` (1-based), shifted by `row_offset`.
-    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext;
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val;
     /// Value of fixed column `col`, shifted by `row_offset`.
-    fn constant(&self, col: u32, row_offset: i32) -> Ext;
-    fn public(&self, idx: u32) -> Ext;
-    fn challenge(&self, idx: u32) -> Ext;
-    fn air_value(&self, _idx: u32) -> Ext {
+    fn constant(&self, col: u32, row_offset: i32) -> Val;
+    fn public(&self, idx: u32) -> Val;
+    fn challenge(&self, idx: u32) -> Val;
+    fn air_value(&self, _idx: u32) -> Val {
         unimplemented!("air values not available in this context")
     }
     /// Value of column `col` of custom commit `commit`, shifted by `row_offset`.
-    fn custom(&self, _commit: u8, _col: u32, _row_offset: i32) -> Ext {
+    fn custom(&self, _commit: u8, _col: u32, _row_offset: i32) -> Val {
         unimplemented!("custom commits not available in this context")
     }
-    fn airgroup_value(&self, _idx: u32) -> Ext {
+    fn airgroup_value(&self, _idx: u32) -> Val {
         unimplemented!("airgroup values not available in this context")
     }
 }
@@ -42,21 +133,21 @@ fn ext_u() -> Ext {
     Ext::from_array(&[Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::ZERO])
 }
 
-fn assemble_dim<S: LeafSource>(src: &S, stage: u8, base: u32, row_offset: i32, dim: u8) -> Ext {
+fn assemble_dim<S: LeafSource>(src: &S, stage: u8, base: u32, row_offset: i32, dim: u8) -> Val {
     if dim == 1 {
         return src.witness(stage, base, row_offset);
     }
     let u = ext_u();
-    let mut acc = Ext::ZERO;
+    let mut acc = Val::zero();
     let mut basis = Ext::ONE;
     for k in 0..dim as u32 {
-        acc += src.witness(stage, base + k, row_offset) * basis;
+        acc = acc + src.witness(stage, base + k, row_offset) * Val::E(basis);
         basis *= u;
     }
     acc
 }
 
-fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand) -> Ext {
+fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], op: &Operand) -> Val {
     match op.kind {
         SrcKind::Witness { stage } => assemble_dim(src, stage, op.idx, op.row_offset, op.dim),
         SrcKind::Const => src.constant(op.idx, op.row_offset),
@@ -65,15 +156,15 @@ fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand
         SrcKind::Challenge => src.challenge(op.idx),
         SrcKind::AirValue => src.air_value(op.idx),
         SrcKind::AirGroupValue => src.airgroup_value(op.idx),
-        SrcKind::Number => Ext::from_base(Goldilocks::new(ir.numbers[op.idx as usize])),
+        SrcKind::Number => Val::B(Goldilocks::new(ir.numbers[op.idx as usize])),
         SrcKind::Temp => temps[op.idx as usize],
     }
 }
 
 /// Run the instruction list once. `temps` is a scratch buffer of length
 /// `ir.n_temps` (reused across calls to avoid allocation).
-pub fn eval_instrs<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Ext>) {
-    temps.resize(ir.n_temps as usize, Ext::ZERO);
+pub fn eval_instrs<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Val>) {
+    temps.resize(ir.n_temps as usize, Val::zero());
     for instr in &ir.instrs {
         let a = operand_value(ir, src, temps, &instr.a);
         let v = match instr.op {
@@ -87,7 +178,7 @@ pub fn eval_instrs<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Ext>) {
 }
 
 /// Value of constraint `c_idx` after [`eval_instrs`] has run.
-pub fn constraint_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], c_idx: usize) -> Ext {
+pub fn constraint_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], c_idx: usize) -> Val {
     operand_value(ir, src, temps, &ir.constraints[c_idx].root)
 }
 
@@ -95,9 +186,9 @@ pub fn constraint_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], c_idx
 /// `c_idx` (instructions have `dst == index`, so the cone is found by a
 /// reverse DFS over temp references). Used for boundary constraints, whose
 /// leaf source is only defined for the leaves the constraint actually reads.
-pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Ext>, c_idx: usize) -> Ext {
+pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Val>, c_idx: usize) -> Val {
     debug_assert!(ir.instrs.iter().enumerate().all(|(i, ins)| ins.dst as usize == i));
-    temps.resize(ir.n_temps as usize, Ext::ZERO);
+    temps.resize(ir.n_temps as usize, Val::zero());
 
     let root = &ir.constraints[c_idx].root;
     let mut needed = vec![false; ir.instrs.len()];
@@ -163,29 +254,29 @@ pub fn check_constraints_on_trace(
         n_rows: usize,
     }
     impl LeafSource for RowSource<'_> {
-        fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext {
+        fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Ext::from_base(self.witness[(stage - 1) as usize][col as usize][r])
+            Val::B(self.witness[(stage - 1) as usize][col as usize][r])
         }
-        fn constant(&self, col: u32, row_offset: i32) -> Ext {
+        fn constant(&self, col: u32, row_offset: i32) -> Val {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Ext::from_base(self.consts[col as usize][r])
+            Val::B(self.consts[col as usize][r])
         }
-        fn public(&self, idx: u32) -> Ext {
-            Ext::from_base(self.publics[idx as usize])
+        fn public(&self, idx: u32) -> Val {
+            Val::B(self.publics[idx as usize])
         }
-        fn challenge(&self, idx: u32) -> Ext {
-            self.challenges[idx as usize]
+        fn challenge(&self, idx: u32) -> Val {
+            Val::E(self.challenges[idx as usize])
         }
-        fn air_value(&self, idx: u32) -> Ext {
-            self.air_values[idx as usize]
+        fn air_value(&self, idx: u32) -> Val {
+            Val::E(self.air_values[idx as usize])
         }
-        fn airgroup_value(&self, idx: u32) -> Ext {
-            self.airgroup_values[idx as usize]
+        fn airgroup_value(&self, idx: u32) -> Val {
+            Val::E(self.airgroup_values[idx as usize])
         }
-        fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+        fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Ext::from_base(self.customs[commit as usize][col as usize][r])
+            Val::B(self.customs[commit as usize][col as usize][r])
         }
     }
 
@@ -200,7 +291,7 @@ pub fn check_constraints_on_trace(
             let src =
                 RowSource { witness, consts, customs, publics, challenges, air_values, airgroup_values, row, n_rows };
             eval_instrs(ir, &src, &mut temps);
-            let v = constraint_value(ir, &src, &temps, c_idx);
+            let v = constraint_value(ir, &src, &temps, c_idx).to_ext();
             if !v.is_zero() {
                 return Err(MlError::Constraint(format!("row {row}, value {v}"), c_idx));
             }

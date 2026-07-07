@@ -8,8 +8,8 @@
 //! columns at the challenge point.
 
 use crate::eq::{eq_evals, rotate_table};
-use crate::evaluator::{constraint_value, eval_instrs, LeafSource};
-use crate::hypercube::{fold_mle, to_ext_vec, Ext};
+use crate::evaluator::{constraint_value, eval_instrs, LeafSource, Val};
+use crate::hypercube::{fold_mle, Ext};
 use crate::ir::{AirIr, Boundary};
 use crate::sumcheck::SumcheckOracle;
 use fields::Goldilocks;
@@ -97,7 +97,9 @@ pub fn constraint_weights(ir: &AirIr, alpha: Ext) -> Vec<Ext> {
 /// All tables fold together each round.
 pub struct ZerocheckOracle<'a> {
     ir: &'a AirIr,
-    tables: Vec<Vec<Ext>>,
+    /// One table per `(column, offset)` leaf. Base-field until the first `bind`,
+    /// then extension-field — so the dominant first round runs over `Goldilocks`.
+    tables: Tables,
     /// `[stage-1][col][offset_idx]` → index into `tables`.
     wit_index: Vec<Vec<Vec<usize>>>,
     /// `[col][offset_idx]` → index into `tables`.
@@ -105,7 +107,7 @@ pub struct ZerocheckOracle<'a> {
     /// `[commit][col][offset_idx]` → index into `tables`.
     custom_index: Vec<Vec<Vec<usize>>>,
     eq_table: Vec<Ext>,
-    publics: Vec<Ext>,
+    publics: Vec<Goldilocks>,
     challenges: Vec<Ext>,
     air_values: Vec<Ext>,
     airgroup_values: Vec<Ext>,
@@ -113,40 +115,65 @@ pub struct ZerocheckOracle<'a> {
     rounds_left: usize,
 }
 
+/// The `(column, offset)` leaf tables, base-field before the first `bind` and
+/// extension-field after (folding by an extension challenge promotes them).
+enum Tables {
+    Base(Vec<Vec<Goldilocks>>),
+    Ext(Vec<Vec<Ext>>),
+}
+
+impl Tables {
+    #[inline]
+    fn n_tables(&self) -> usize {
+        match self {
+            Tables::Base(t) => t.len(),
+            Tables::Ext(t) => t.len(),
+        }
+    }
+    /// Leaf value of table `k` at hypercube index `i`.
+    #[inline]
+    fn val(&self, k: usize, i: usize) -> Val {
+        match self {
+            Tables::Base(t) => Val::B(t[k][i]),
+            Tables::Ext(t) => Val::E(t[k][i]),
+        }
+    }
+}
+
 struct TablePoint<'o> {
     ir: &'o AirIr,
     wit_index: &'o [Vec<Vec<usize>>],
     const_index: &'o [Vec<usize>],
     custom_index: &'o [Vec<Vec<usize>>],
-    vals: &'o [Ext],
-    publics: &'o [Ext],
+    vals: &'o [Val],
+    publics: &'o [Goldilocks],
     challenges: &'o [Ext],
     air_values: &'o [Ext],
     airgroup_values: &'o [Ext],
 }
 
 impl LeafSource for TablePoint<'_> {
-    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext {
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
         self.vals[self.wit_index[stage as usize - 1][col as usize][o]]
     }
-    fn constant(&self, col: u32, row_offset: i32) -> Ext {
+    fn constant(&self, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
         self.vals[self.const_index[col as usize][o]]
     }
-    fn public(&self, idx: u32) -> Ext {
-        self.publics[idx as usize]
+    fn public(&self, idx: u32) -> Val {
+        Val::B(self.publics[idx as usize])
     }
-    fn challenge(&self, idx: u32) -> Ext {
-        self.challenges[idx as usize]
+    fn challenge(&self, idx: u32) -> Val {
+        Val::E(self.challenges[idx as usize])
     }
-    fn air_value(&self, idx: u32) -> Ext {
-        self.air_values[idx as usize]
+    fn air_value(&self, idx: u32) -> Val {
+        Val::E(self.air_values[idx as usize])
     }
-    fn airgroup_value(&self, idx: u32) -> Ext {
-        self.airgroup_values[idx as usize]
+    fn airgroup_value(&self, idx: u32) -> Val {
+        Val::E(self.airgroup_values[idx as usize])
     }
-    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
         self.vals[self.custom_index[commit as usize][col as usize][o]]
     }
@@ -168,13 +195,14 @@ impl<'a> ZerocheckOracle<'a> {
         alpha: Ext,
     ) -> Self {
         let _n_rows = 1usize << ir.n_bits;
-        let mut tables = Vec::new();
+        // Base-field tables: the first round runs entirely over `Goldilocks`.
+        let mut tables: Vec<Vec<Goldilocks>> = Vec::new();
 
         let mut make_tables = |col: &[Goldilocks]| -> Vec<usize> {
             ir.opening_offsets
                 .iter()
                 .map(|&s| {
-                    let table: Vec<Ext> = if s == 0 { to_ext_vec(col) } else { to_ext_vec(&rotate_shifted(col, s)) };
+                    let table = if s == 0 { col.to_vec() } else { rotate_shifted(col, s) };
                     tables.push(table);
                     tables.len() - 1
                 })
@@ -191,12 +219,12 @@ impl<'a> ZerocheckOracle<'a> {
 
         Self {
             ir,
-            tables,
+            tables: Tables::Base(tables),
             wit_index,
             const_index,
             custom_index,
             eq_table: eq_evals(r),
-            publics: to_ext_vec(publics),
+            publics: publics.to_vec(),
             challenges: challenges.to_vec(),
             air_values: air_values.to_vec(),
             airgroup_values: airgroup_values.to_vec(),
@@ -224,17 +252,18 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
     fn round_evals(&self) -> Vec<Ext> {
         let n_evals = self.round_degree() + 1;
         let half = self.eq_table.len() / 2;
-        let n_tables = self.tables.len();
+        let n_tables = self.tables.n_tables();
 
         let mut g = vec![Ext::ZERO; n_evals];
-        let mut vals = vec![Ext::ZERO; n_tables];
-        let mut diffs = vec![Ext::ZERO; n_tables];
-        let mut temps: Vec<Ext> = Vec::new();
+        let mut vals = vec![Val::zero(); n_tables];
+        let mut diffs = vec![Val::zero(); n_tables];
+        let mut temps: Vec<Val> = Vec::new();
 
         for i in 0..half {
-            for (k, t) in self.tables.iter().enumerate() {
-                vals[k] = t[2 * i];
-                diffs[k] = t[2 * i + 1] - t[2 * i];
+            for k in 0..n_tables {
+                let v0 = self.tables.val(k, 2 * i);
+                vals[k] = v0;
+                diffs[k] = self.tables.val(k, 2 * i + 1) - v0;
             }
             let eq0 = self.eq_table[2 * i];
             let eq_diff = self.eq_table[2 * i + 1] - eq0;
@@ -243,7 +272,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
             for (x, gx) in g.iter_mut().enumerate() {
                 if x > 0 {
                     for (v, d) in vals.iter_mut().zip(diffs.iter()) {
-                        *v += *d;
+                        *v = *v + *d;
                     }
                     eq_x += eq_diff;
                 }
@@ -259,21 +288,37 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                     airgroup_values: &self.airgroup_values,
                 };
                 eval_instrs(self.ir, &src, &mut temps);
-                let mut c = Ext::ZERO;
+                let mut c = Val::zero();
                 for (t, w) in self.weights.iter().enumerate() {
                     if !w.is_zero() {
-                        c += *w * constraint_value(self.ir, &src, &temps, t);
+                        c = c + Val::E(*w) * constraint_value(self.ir, &src, &temps, t);
                     }
                 }
-                *gx += eq_x * c;
+                *gx += eq_x * c.to_ext();
             }
         }
         g
     }
 
     fn bind(&mut self, r: Ext) {
-        for t in self.tables.iter_mut() {
-            fold_mle(t, r);
+        match &mut self.tables {
+            // First bind: folding base tables by an extension challenge yields
+            // extension tables (`e0 + r·(e1−e0)`), so subsequent rounds run in `Ext`.
+            Tables::Base(base) => {
+                let ext: Vec<Vec<Ext>> = base
+                    .iter()
+                    .map(|t| {
+                        let half = t.len() / 2;
+                        (0..half).map(|i| Ext::from_base(t[2 * i]) + r * (t[2 * i + 1] - t[2 * i])).collect()
+                    })
+                    .collect();
+                self.tables = Tables::Ext(ext);
+            }
+            Tables::Ext(ext) => {
+                for t in ext.iter_mut() {
+                    fold_mle(t, r);
+                }
+            }
         }
         fold_mle(&mut self.eq_table, r);
         self.rounds_left -= 1;
@@ -293,26 +338,26 @@ pub struct ClaimsAtPoint<'a> {
 }
 
 impl LeafSource for ClaimsAtPoint<'_> {
-    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext {
-        self.claims[global_col(self.ir, stage, col)][kernel_index_of_offset(self.ir, row_offset)]
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
+        Val::E(self.claims[global_col(self.ir, stage, col)][kernel_index_of_offset(self.ir, row_offset)])
     }
-    fn constant(&self, col: u32, row_offset: i32) -> Ext {
-        self.claims[global_const_col(self.ir, col)][kernel_index_of_offset(self.ir, row_offset)]
+    fn constant(&self, col: u32, row_offset: i32) -> Val {
+        Val::E(self.claims[global_const_col(self.ir, col)][kernel_index_of_offset(self.ir, row_offset)])
     }
-    fn public(&self, idx: u32) -> Ext {
-        self.publics[idx as usize]
+    fn public(&self, idx: u32) -> Val {
+        Val::E(self.publics[idx as usize])
     }
-    fn challenge(&self, idx: u32) -> Ext {
-        self.challenges[idx as usize]
+    fn challenge(&self, idx: u32) -> Val {
+        Val::E(self.challenges[idx as usize])
     }
-    fn air_value(&self, idx: u32) -> Ext {
-        self.air_values[idx as usize]
+    fn air_value(&self, idx: u32) -> Val {
+        Val::E(self.air_values[idx as usize])
     }
-    fn airgroup_value(&self, idx: u32) -> Ext {
-        self.airgroup_values[idx as usize]
+    fn airgroup_value(&self, idx: u32) -> Val {
+        Val::E(self.airgroup_values[idx as usize])
     }
-    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
-        self.claims[global_custom_col(self.ir, commit, col)][kernel_index_of_offset(self.ir, row_offset)]
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
+        Val::E(self.claims[global_custom_col(self.ir, commit, col)][kernel_index_of_offset(self.ir, row_offset)])
     }
 }
 
@@ -330,29 +375,29 @@ pub struct ClaimsAtCorner<'a> {
 }
 
 impl LeafSource for ClaimsAtCorner<'_> {
-    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext {
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
         assert_eq!(row_offset, 0, "boundary constraints must not reference shifted columns");
-        self.claims[global_col(self.ir, stage, col)][self.kernel]
+        Val::E(self.claims[global_col(self.ir, stage, col)][self.kernel])
     }
-    fn constant(&self, col: u32, row_offset: i32) -> Ext {
+    fn constant(&self, col: u32, row_offset: i32) -> Val {
         assert_eq!(row_offset, 0, "boundary constraints must not reference shifted columns");
-        self.claims[global_const_col(self.ir, col)][self.kernel]
+        Val::E(self.claims[global_const_col(self.ir, col)][self.kernel])
     }
-    fn public(&self, idx: u32) -> Ext {
-        self.publics[idx as usize]
+    fn public(&self, idx: u32) -> Val {
+        Val::E(self.publics[idx as usize])
     }
-    fn challenge(&self, idx: u32) -> Ext {
-        self.challenges[idx as usize]
+    fn challenge(&self, idx: u32) -> Val {
+        Val::E(self.challenges[idx as usize])
     }
-    fn air_value(&self, idx: u32) -> Ext {
-        self.air_values[idx as usize]
+    fn air_value(&self, idx: u32) -> Val {
+        Val::E(self.air_values[idx as usize])
     }
-    fn airgroup_value(&self, idx: u32) -> Ext {
-        self.airgroup_values[idx as usize]
+    fn airgroup_value(&self, idx: u32) -> Val {
+        Val::E(self.airgroup_values[idx as usize])
     }
-    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         assert_eq!(row_offset, 0, "boundary constraints must not reference shifted columns");
-        self.claims[global_custom_col(self.ir, commit, col)][self.kernel]
+        Val::E(self.claims[global_custom_col(self.ir, commit, col)][self.kernel])
     }
 }
 
@@ -360,7 +405,7 @@ impl LeafSource for ClaimsAtCorner<'_> {
 mod tests {
     use super::*;
     use crate::evaluator::test_air::{fib_ir, fib_trace};
-    use crate::hypercube::mle_eval;
+    use crate::hypercube::{mle_eval, to_ext_vec};
     use crate::sumcheck::verify_sumcheck_round;
     use crate::basefold::MlParams;
     use fields::{Field, PrimeField64};

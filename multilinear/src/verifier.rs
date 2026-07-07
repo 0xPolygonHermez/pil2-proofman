@@ -139,7 +139,7 @@ pub fn verify_air(
     let mut batched = Ext::ZERO;
     for (t, w) in weights.iter().enumerate() {
         if !w.is_zero() {
-            batched += *w * constraint_value(ir, &src, &temps, t);
+            batched += *w * constraint_value(ir, &src, &temps, t).to_ext();
         }
     }
     if claim != eq_eval(&r, &lambda) * batched {
@@ -161,7 +161,7 @@ pub fn verify_air(
             airgroup_values: &proof.airgroup_values,
             kernel,
         };
-        let v = eval_constraint_cone(ir, &src, &mut temps, t);
+        let v = eval_constraint_cone(ir, &src, &mut temps, t).to_ext();
         if !v.is_zero() {
             return Err(MlError::Constraint(format!("boundary value {v}"), t));
         }
