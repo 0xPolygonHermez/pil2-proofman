@@ -1,9 +1,4 @@
 //! Generic sumcheck: prover-side round oracles and verifier-side round checks.
-//!
-//! Round polynomials are exchanged as their evaluations at the integer nodes
-//! `0, 1, …, d` (for round degree `d`); the verifier interpolates with Lagrange
-//! weights to evaluate at the challenge. Round `t` binds variable `X_t`
-//! (LSB-first, matching [`fold_mle`](crate::fold_mle) and the FRI fold).
 
 use crate::error::MlError;
 use crate::hypercube::{fold_mle, Ext};
@@ -11,7 +6,7 @@ use fields::{Field, Goldilocks, PrimeField64};
 
 /// A prover-side oracle producing sumcheck round polynomials.
 pub trait SumcheckOracle {
-    /// Number of remaining rounds (variables not yet bound).
+    /// Number of remaining rounds.
     fn num_rounds(&self) -> usize;
     /// Degree bound `d` of every round polynomial.
     fn round_degree(&self) -> usize;
@@ -21,8 +16,7 @@ pub trait SumcheckOracle {
     fn bind(&mut self, r: Ext);
 }
 
-/// Oracle for `Σ_b a(b)·b'(b)` with `a`, `b'` multilinear — degree-2 rounds.
-/// This is the shape of the Basefold opening sumcheck (`Φ·W`).
+/// Oracle for `Σ_b a(b)·b'(b)` with `a`, `b'` multilinear.
 pub struct ProductOracle {
     pub a: Vec<Ext>,
     pub b: Vec<Ext>,
@@ -51,7 +45,7 @@ impl SumcheckOracle for ProductOracle {
 
     fn round_evals(&self) -> Vec<Ext> {
         let half = self.a.len() / 2;
-        let (mut g0, mut g1, mut g2) = (Ext::zero(), Ext::zero(), Ext::zero());
+        let (mut g0, mut g1, mut g2) = (Ext::ZERO, Ext::ZERO, Ext::ZERO);
         for i in 0..half {
             let a0 = self.a[2 * i];
             let a1 = self.a[2 * i + 1];
@@ -60,8 +54,8 @@ impl SumcheckOracle for ProductOracle {
             g0 += a0 * b0;
             g1 += a1 * b1;
             // value at X = 2 by linearity: v(2) = 2·v(1) − v(0)
-            let a2 = a1 + a1 - a0;
-            let b2 = b1 + b1 - b0;
+            let a2 = a1.double() - a0;
+            let b2 = b1.double() - b0;
             g2 += a2 * b2;
         }
         vec![g0, g1, g2]
@@ -73,23 +67,23 @@ impl SumcheckOracle for ProductOracle {
     }
 }
 
-/// Evaluate at `x` the polynomial of degree `≤ d` given by its evaluations at
+/// Evaluate at `x` the univariate polynomial of degree `≤ d` given by its evaluations at
 /// the integer nodes `0, 1, …, d` (Lagrange interpolation).
 pub fn interpolate_at(evals: &[Ext], x: Ext) -> Ext {
     let d = evals.len() - 1;
 
     // prefix[i] = Π_{j<i} (x − j), suffix[i] = Π_{j>i} (x − j)
-    let mut prefix = vec![Ext::one(); d + 2];
+    let mut prefix = vec![Ext::ONE; d + 2];
     for j in 0..=d {
         prefix[j + 1] = prefix[j] * (x - Goldilocks::from_u64(j as u64));
     }
-    let mut suffix = vec![Ext::one(); d + 2];
+    let mut suffix = vec![Ext::ONE; d + 2];
     for j in (0..=d).rev() {
         suffix[j] = suffix[j + 1] * (x - Goldilocks::from_u64(j as u64));
     }
 
     // den_i = Π_{j≠i} (i − j) = (−1)^(d−i) · i! · (d−i)!
-    let mut result = Ext::zero();
+    let mut result = Ext::ZERO;
     for i in 0..=d {
         let mut den = Goldilocks::ONE;
         for j in 1..=i {
@@ -175,7 +169,7 @@ mod tests {
         let oracle = ProductOracle::new(a, b);
         let claim = oracle.current_sum();
         let mut evals = oracle.round_evals();
-        evals[0] += Ext::one();
+        evals[0] += Ext::ONE;
         assert!(verify_sumcheck_round(claim, &evals, random_ext(), 0).is_err());
     }
 }

@@ -1,5 +1,4 @@
 use crate::Field;
-use core::array;
 use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -33,21 +32,20 @@ impl<F: Display> Display for CubicExtensionField<F> {
 }
 
 impl<F: Field> CubicExtensionField<F> {
-    pub fn zero() -> Self {
-        Self { value: field_to_array(F::ZERO) }
-    }
-    pub fn one() -> Self {
-        Self { value: field_to_array(F::ONE) }
-    }
-    pub fn two() -> Self {
-        Self { value: field_to_array(F::TWO) }
-    }
-    pub fn neg_one() -> Self {
-        Self { value: field_to_array(F::NEG_ONE) }
-    }
+    pub const ZERO: Self = Self { value: [F::ZERO, F::ZERO, F::ZERO] };
+
+    pub const ONE: Self = Self { value: [F::ONE, F::ZERO, F::ZERO] };
+
+    pub const TWO: Self = Self { value: [F::TWO, F::ZERO, F::ZERO] };
+
+    pub const NEG_ONE: Self = Self { value: [F::NEG_ONE, F::ZERO, F::ZERO] };
 
     pub fn is_zero(&self) -> bool {
         self.value.iter().all(|&x| x.is_zero())
+    }
+
+    pub fn double(&self) -> Self {
+        *self + *self
     }
 
     #[inline(always)]
@@ -58,7 +56,7 @@ impl<F: Field> CubicExtensionField<F> {
     #[inline]
     pub fn pow(&self, mut exp: u64) -> Self {
         // result = 1
-        let mut result = Self::one();
+        let mut result = Self::ONE;
         // temp = self
         let mut base = *self;
         // while there are bits left in exp
@@ -77,6 +75,10 @@ impl<F: Field> CubicExtensionField<F> {
 
     pub fn inverse(&self) -> Self {
         Self { value: cubic_inv(&self.value).to_vec().try_into().unwrap() }
+    }
+
+    pub fn from_base(x: F) -> Self {
+        Self { value: [x, F::ZERO, F::ZERO] }
     }
 
     pub fn from_array(arr: &[F]) -> Self {
@@ -136,7 +138,7 @@ impl<F: Field> AddAssign<F> for CubicExtensionField<F> {
 
 impl<F: Field> Sum for CubicExtensionField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let zero = Self { value: field_to_array(F::ZERO) };
+        let zero = Self::ZERO;
         iter.fold(zero, |acc, x| acc + x)
     }
 }
@@ -201,7 +203,7 @@ impl<F: Field> Mul<F> for CubicExtensionField<F> {
 
 impl<F: Field> Product for CubicExtensionField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let one = Self { value: field_to_array(F::ONE) };
+        let one = Self::ONE;
         iter.fold(one, |acc, x| acc * x)
     }
 }
@@ -243,14 +245,6 @@ impl<F: Field> DivAssign for CubicExtensionField<F> {
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
     }
-}
-
-/// Extend a field `F` element `x` to an array of length 3
-/// by filling zeros.
-pub fn field_to_array<F: Field>(x: F) -> [F; 3] {
-    let mut arr = array::from_fn(|_| F::ZERO);
-    arr[0] = x;
-    arr
 }
 
 #[inline]

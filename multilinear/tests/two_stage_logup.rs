@@ -92,7 +92,7 @@ fn stage1_trace(n_rows: usize) -> Vec<Vec<Goldilocks>> {
 fn stage2_trace(stage1: &[Vec<Goldilocks>], alpha: Ext) -> (Vec<Vec<Goldilocks>>, Ext) {
     let n_rows = stage1[0].len();
     let mut cols = vec![vec![Goldilocks::ZERO; n_rows]; 3];
-    let mut acc = Ext::zero();
+    let mut acc = Ext::ZERO;
     for i in 0..n_rows {
         let term = (alpha + stage1[0][i]).inverse() - (alpha + stage1[1][i]).inverse() * stage1[2][i];
         acc += term;
@@ -184,7 +184,7 @@ fn wrong_challenges_rejected() {
 
     // Set-level verification with different globally-derived challenges must fail.
     let mut bad = s.challenges.clone();
-    bad[0] += Ext::one();
+    bad[0] += Ext::ONE;
     assert!(verify_air(&s.ir, &proof, &[], None, Some(&bad)).is_err());
 }
 

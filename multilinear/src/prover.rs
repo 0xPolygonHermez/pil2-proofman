@@ -1,9 +1,9 @@
-//! The multilinear STARK prover: commit → zerocheck → batched Basefold opening.
+//! The multilinear STARK prover: commit → zerocheck → batched PCS opening.
 
 use crate::basefold::{combine_codewords, combine_columns, commit_matrix, prove_opening, CommittedMatrix, OpeningProof};
 use crate::eq::{eq_evals, rotate_table};
 use crate::error::MlError;
-use crate::hypercube::{dot_base_ext, ext_from_base, Ext};
+use crate::hypercube::{dot_base_ext, Ext};
 use crate::ir::AirIr;
 use crate::sumcheck::SumcheckOracle;
 use crate::transcript::MlTranscript;
@@ -80,8 +80,8 @@ pub(crate) fn kernel_table(spec: &KernelSpec, lambda: &[Ext], eq_lambda: &[Ext])
             }
         }
         KernelSpec::Point(row) => {
-            let mut t = vec![Ext::zero(); eq_lambda.len()];
-            t[*row as usize] = Ext::one();
+            let mut t = vec![Ext::ZERO; eq_lambda.len()];
+            t[*row as usize] = Ext::ONE;
             t
         }
     }
@@ -96,12 +96,9 @@ pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
 }
 
 /// Derive the global stage challenges from every instance's stage-1
-/// commitment, in instance order. Used by the proving orchestrator and re-run
-/// by the proof-set verifier: with a shared bus (std lookups/permutations
-/// across instances), all instances must see the SAME challenges, so they
-/// bind all stage-1 commitments together.
+/// commitment, in instance order.
 ///
-/// Returns the full global challenge vector (underived entries zero).
+/// Returns the full global challenge vector.
 pub fn derive_global_challenges(ir: &AirIr, stage1_roots: &[[Goldilocks; 4]]) -> Vec<Ext> {
     derive_global_challenges_for(&ir.challenge_stages, ir.n_stages(), stage1_roots)
 }
@@ -118,7 +115,7 @@ pub fn derive_global_challenges_for(
     for root in stage1_roots {
         transcript.absorb_root(root);
     }
-    let mut challenges = vec![Ext::zero(); challenge_stages.len()];
+    let mut challenges = vec![Ext::ZERO; challenge_stages.len()];
     for (id, &st) in challenge_stages.iter().enumerate() {
         if st >= 2 && st as usize <= n_stages {
             challenges[id] = transcript.challenge();
@@ -237,7 +234,7 @@ pub fn prove_air(
                 .zip(kernel_tables.iter())
                 .map(|(spec, table)| match spec {
                     // Corner claims are plain trace reads; no need for the dot product.
-                    KernelSpec::Point(row) => ext_from_base(col[*row as usize]),
+                    KernelSpec::Point(row) => Ext::from_base(col[*row as usize]),
                     KernelSpec::Rot(_) => dot_base_ext(col, table),
                 })
                 .collect()
@@ -253,7 +250,7 @@ pub fn prove_air(
     let col_coeffs = powers(delta, all_cols.len());
     let kernel_weights = powers(gamma, kernels.len());
 
-    let mut sigma = Ext::zero();
+    let mut sigma = Ext::ZERO;
     for (j, row) in claims.iter().enumerate() {
         for (i, v) in row.iter().enumerate() {
             sigma += col_coeffs[j] * kernel_weights[i] * *v;
@@ -261,7 +258,7 @@ pub fn prove_air(
     }
 
     let phi_table = combine_columns(&all_cols, &col_coeffs);
-    let mut w_table = vec![Ext::zero(); n_rows];
+    let mut w_table = vec![Ext::ZERO; n_rows];
     for (wt, table) in kernel_weights.iter().zip(kernel_tables.iter()) {
         for (o, v) in w_table.iter_mut().zip(table.iter()) {
             *o += *wt * *v;
@@ -296,7 +293,7 @@ pub fn prove_air(
 
 pub(crate) fn powers(base: Ext, n: usize) -> Vec<Ext> {
     let mut out = Vec::with_capacity(n);
-    let mut cur = Ext::one();
+    let mut cur = Ext::ONE;
     for _ in 0..n {
         out.push(cur);
         cur *= base;

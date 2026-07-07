@@ -15,10 +15,6 @@
 //!   vector of the remaining univariate).
 //! - A query phase checking fold consistency at random domain positions,
 //!   anchored in the stage commitments at level 0.
-//!
-//! Commitments are **pair-packed**: the Merkle leaf at position `j` of a
-//! domain of size `N` holds the values at `j` and `j + N/2` — exactly the pair
-//! one fold-consistency check needs, so every query opens one leaf per tree.
 
 use crate::encoding::{domain_point, encode_column, eval_ext_poly_at_base};
 use crate::error::MlError;
@@ -26,10 +22,10 @@ use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
 use crate::merkle::MerkleTree;
 use crate::sumcheck::{verify_sumcheck_round, ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
-use fields::{Field, Goldilocks, Poseidon2_16};
+use fields::{Field, Goldilocks, Poseidon1_16};
 
-/// Hash used for Merkle trees (arity 4: WIDTH 16 = 4 digests of 4 cells).
-pub type MlHash = Poseidon2_16;
+/// Hash used for Merkle trees.
+pub type MlHash = Poseidon1_16;
 pub const MERKLE_ARITY: u64 = 4;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -47,7 +43,7 @@ pub struct MlParams {
 
 impl Default for MlParams {
     fn default() -> Self {
-        // Conjecture-level defaults: rate 1/4, 50 queries ≈ 100 bits.
+        // TODO: We should find correct numbers for this!!!
         Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0 }
     }
 }
@@ -85,7 +81,7 @@ impl CommittedMatrix {
     }
 }
 
-/// RS-encode and Merkle-commit a set of columns (all of length `2^n_bits`).
+/// RS-encode and Merkle-commit a set of columns.
 pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedMatrix {
     assert!(!columns.is_empty());
     let n = columns[0].len();
@@ -112,17 +108,16 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
 
-/// One FRI fold step: `Φ_{level+1}(x²) = (Φ(x)+Φ(−x))/2 + r·(Φ(x)−Φ(−x))/(2x)`,
-/// with the pairing `(j, j + N/2)` in natural coset order.
+/// One FRI fold step: `Φ_{level+1}(x²) = (Φ(x)+Φ(−x))/2 + r·(Φ(x)−Φ(−x))/(2x)`.
 pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<Ext> {
     let n = vals.len();
     debug_assert_eq!(n, 1usize << (n0_bits - level));
     let half = n / 2;
     let bits = n0_bits - level;
 
-    let two_inv = Goldilocks::TWO.inverse();
-    let w_inv = Goldilocks::new(Goldilocks::W[bits]).inverse();
-    let shift_inv = Goldilocks::new(Goldilocks::SHIFT).exp_power_of_2(level).inverse();
+    let two_inv = Goldilocks::ONE_HALF;
+    let w_inv = Goldilocks::new(Goldilocks::W_INV[bits]);
+    let shift_inv = Goldilocks::new(Goldilocks::SHIFT_INV).exp_power_of_2(level);
 
     let mut out = Vec::with_capacity(half);
     let mut x_inv = shift_inv;
@@ -343,8 +338,8 @@ pub fn verify_opening(
 
         // Verify stage openings and combine columns into the Φ_0 pair.
         let half0 = 1u64 << (n0_bits - 1);
-        let mut a = Ext::zero();
-        let mut b = Ext::zero();
+        let mut a = Ext::ZERO;
+        let mut b = Ext::ZERO;
         let mut col_idx = 0;
         for (m, ((leaf, path), &n_cols)) in
             query.stage_leaves.iter().zip(query.stage_paths.iter()).zip(stage_n_cols.iter()).enumerate()
@@ -408,7 +403,7 @@ pub fn verify_opening(
 /// Compute the batched codeword `Σ_j coeff_j · codeword_j` over one or more matrices.
 pub fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<Ext> {
     let n0 = matrices[0].codewords[0].len();
-    let mut out = vec![Ext::zero(); n0];
+    let mut out = vec![Ext::ZERO; n0];
     let mut idx = 0;
     for m in matrices {
         for cw in &m.codewords {
@@ -425,7 +420,7 @@ pub fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<E
 /// Compute the batched MLE table `Σ_j coeff_j · w_j` over the raw columns.
 pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
     let n = columns[0].len();
-    let mut out = vec![Ext::zero(); n];
+    let mut out = vec![Ext::ZERO; n];
     for (col, &c) in columns.iter().zip(coeffs.iter()) {
         for (o, &v) in out.iter_mut().zip(col.iter()) {
             *o += c * v;
@@ -438,7 +433,7 @@ pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
 mod tests {
     use super::*;
     use crate::eq::eq_evals;
-    use crate::hypercube::{dot_base_ext, ext_from_base};
+    use crate::hypercube::dot_base_ext;
     use fields::PrimeField64;
     use rand::{rng, RngExt};
 
@@ -482,7 +477,7 @@ mod tests {
         // Batching: δ for columns (single kernel, so no γ needed beyond δ)
         let delta = tp.challenge();
         let mut coeffs = Vec::with_capacity(all_cols.len());
-        let mut d = Ext::one();
+        let mut d = Ext::ONE;
         for _ in 0..all_cols.len() {
             coeffs.push(d);
             d *= delta;
@@ -536,9 +531,9 @@ mod tests {
         let lambda = tp.challenges(n);
         let kernel = eq_evals(&lambda);
         // WRONG claim
-        let sigma = dot_base_ext(&col, &kernel) + Ext::one();
+        let sigma = dot_base_ext(&col, &kernel) + Ext::ONE;
         tp.absorb_ext(&sigma);
-        let coeffs = vec![Ext::one()];
+        let coeffs = vec![Ext::ONE];
         let phi_table = combine_columns(&[&col], &coeffs);
         let phi_codeword = combine_codewords(&[&mat], &coeffs);
         let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
@@ -582,9 +577,9 @@ mod tests {
         let kernel = eq_evals(&lambda);
         let sigma = dot_base_ext(&col, &kernel);
         tp.absorb_ext(&sigma);
-        let coeffs = vec![Ext::one()];
+        let coeffs = vec![Ext::ONE];
         let phi_table = combine_columns(&[&col], &coeffs);
-        let phi_codeword: Vec<Ext> = mat.codewords[0].iter().map(|&v| ext_from_base(v)).collect();
+        let phi_codeword: Vec<Ext> = mat.codewords[0].iter().map(|&v| Ext::from_base(v)).collect();
         let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
 
         let mut tv = MlTranscript::new();

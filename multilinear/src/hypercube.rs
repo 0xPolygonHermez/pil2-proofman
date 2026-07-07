@@ -1,37 +1,52 @@
 //! Multilinear-extension (MLE) utilities over the Boolean hypercube.
-//!
-//! Convention used throughout the crate: a table `t` of length `2^n` represents
-//! the multilinear `t̃(X_1, …, X_n)` with `t̃(b) = t[index(b)]` where **variable
-//! `X_1` is the least-significant bit** of the index.
 
-use fields::{CubicExtensionField, Field, Goldilocks};
+// Convention used throughout the crate: a table `t` of length `2^n` represents
+// the multilinear `t̃(X_1, …, X_n)` with `t̃(b) = t[index(b)]` where **variable
+// `X_1` is the least-significant bit** of the index.
+
+use fields::{CubicExtensionField, Goldilocks};
 
 /// The challenge/folding field: cubic extension of Goldilocks (~192 bits).
 pub type Ext = CubicExtensionField<Goldilocks>;
 
-#[inline]
-pub fn ext_from_base(v: Goldilocks) -> Ext {
-    Ext { value: [v, Goldilocks::ZERO, Goldilocks::ZERO] }
-}
-
 pub fn to_ext_vec(vals: &[Goldilocks]) -> Vec<Ext> {
-    vals.iter().map(|&v| ext_from_base(v)).collect()
+    vals.iter().map(|&v| Ext::from_base(v)).collect()
 }
 
-/// Bind the first (least-significant) variable of an MLE table to `r`,
-/// halving it in place: `t'[i] = t[2i] + r·(t[2i+1] − t[2i])`.
+/// The Boolean point of the hypercube corresponding to row index `row`.
+pub fn boolean_point(row: u64, n: usize) -> Vec<Ext> {
+    (0..n).map(|j| if (row >> j) & 1 == 1 { Ext::ONE } else { Ext::ZERO }).collect()
+}
+
+/// Evaluate the first variable of a multilinear given in evaluations
+/// form at `r`, halving it in place.
+///
+/// The evaluation-side counterpart of [`fold_coeffs`].
 pub fn fold_mle(evals: &mut Vec<Ext>, r: Ext) {
     debug_assert!(evals.len().is_power_of_two() && evals.len() >= 2);
     let half = evals.len() / 2;
     for i in 0..half {
         let e0 = evals[2 * i];
         let e1 = evals[2 * i + 1];
-        evals[i] = e0 + (e1 - e0) * r;
+        evals[i] = e0 + (e1 - e0) * r; // (1 - r) * e0 + r * e1
     }
     evals.truncate(half);
 }
 
-/// Evaluate the MLE of `evals` at `point` (LSB-first variable order).
+/// Evaluate the first variable of a multilinear given in coefficients
+/// form at `r`, halving it in place.
+///
+/// The coefficient-side counterpart of [`fold_mle`].
+pub fn fold_coeffs(coeffs: &mut Vec<Ext>, r: Ext) {
+    debug_assert!(coeffs.len().is_power_of_two() && coeffs.len() >= 2);
+    let half = coeffs.len() / 2;
+    for i in 0..half {
+        coeffs[i] = coeffs[2 * i] + r * coeffs[2 * i + 1];
+    }
+    coeffs.truncate(half);
+}
+
+/// Evaluate a multilinear given in evaluations form at `point`.
 pub fn mle_eval(evals: &[Ext], point: &[Ext]) -> Ext {
     assert_eq!(evals.len(), 1usize << point.len());
     let mut t = evals.to_vec();
@@ -46,8 +61,19 @@ pub fn mle_eval_base(evals: &[Goldilocks], point: &[Ext]) -> Ext {
     mle_eval(&to_ext_vec(evals), point)
 }
 
-/// In-place Möbius transform: hypercube evaluations → multilinear monomial
-/// coefficients. After this, `t[i]` is the coefficient of `Π_{j: bit_j(i)=1} X_j`.
+/// Evaluate a multilinear given in coefficient form at `point`.
+pub fn monomial_eval(coeffs: &[Ext], point: &[Ext]) -> Ext {
+    assert_eq!(coeffs.len(), 1usize << point.len());
+    let mut t = coeffs.to_vec();
+    for &r in point {
+        fold_coeffs(&mut t, r);
+    }
+    t[0]
+}
+
+/// Möbius transform: hypercube evaluations → multilinear monomial coefficients.
+///
+/// Inverse of [`coeffs_to_values`].
 pub fn values_to_coeffs<T>(vals: &mut [T])
 where
     T: Copy + core::ops::SubAssign,
@@ -68,7 +94,9 @@ where
     }
 }
 
-/// Inverse of [`values_to_coeffs`]: monomial coefficients → hypercube evaluations.
+/// Zeta transform: multilinear monomial coefficients → hypercube evaluations.
+///
+/// Inverse of [`values_to_coeffs`].
 pub fn coeffs_to_values<T>(coeffs: &mut [T])
 where
     T: Copy + core::ops::AddAssign,
@@ -89,35 +117,11 @@ where
     }
 }
 
-/// Bind the first variable of a multilinear given in *coefficient* form:
-/// `c'[t] = c[2t] + r·c[2t+1]` (the coefficient-side counterpart of
-/// [`fold_mle`]; also exactly what one FRI fold does to the codeword).
-pub fn fold_coeffs(coeffs: &mut Vec<Ext>, r: Ext) {
-    debug_assert!(coeffs.len().is_power_of_two() && coeffs.len() >= 2);
-    let half = coeffs.len() / 2;
-    for i in 0..half {
-        coeffs[i] = coeffs[2 * i] + r * coeffs[2 * i + 1];
-    }
-    coeffs.truncate(half);
-}
-
-/// Evaluate a multilinear given in *coefficient* form at `point`
-/// (LSB-first): `Σ_i c[i] · Π_{j: bit_j(i)=1} point[j]`.
-pub fn monomial_eval(coeffs: &[Ext], point: &[Ext]) -> Ext {
-    assert_eq!(coeffs.len(), 1usize << point.len());
-    let mut t = coeffs.to_vec();
-    for &r in point {
-        fold_coeffs(&mut t, r);
-    }
-    t[0]
-}
-
 /// Inner product `Σ_i base[i] · table[i]` of a base-field column with an
-/// extension-field kernel table. This is how the prover computes claimed
-/// weighted-sum values `v = Σ_b w(b)·K(b)`.
+/// extension-field kernel table.
 pub fn dot_base_ext(base: &[Goldilocks], table: &[Ext]) -> Ext {
     debug_assert_eq!(base.len(), table.len());
-    let mut acc = Ext::zero();
+    let mut acc = Ext::ZERO;
     for (b, t) in base.iter().zip(table.iter()) {
         acc += *t * *b;
     }
@@ -187,7 +191,7 @@ mod tests {
         let n = 4;
         let evals: Vec<Ext> = (0..(1 << n)).map(|_| random_ext()).collect();
         for idx in [0usize, 1, 7, 15] {
-            let point: Vec<Ext> = (0..n).map(|j| if (idx >> j) & 1 == 1 { Ext::one() } else { Ext::zero() }).collect();
+            let point: Vec<Ext> = (0..n).map(|j| if (idx >> j) & 1 == 1 { Ext::ONE } else { Ext::ZERO }).collect();
             assert_eq!(mle_eval(&evals, &point), evals[idx]);
         }
     }

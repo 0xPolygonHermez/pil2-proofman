@@ -1,10 +1,10 @@
 //! The multilinear STARK verifier.
 
 use crate::basefold::verify_opening;
-use crate::eq::{boolean_point, eq_eval, rot_kernel_eval};
+use crate::eq::{eq_eval, rot_kernel_eval};
 use crate::error::MlError;
 use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
-use crate::hypercube::{to_ext_vec, Ext};
+use crate::hypercube::{to_ext_vec, boolean_point, Ext};
 use crate::ir::{AirIr, Boundary};
 use crate::prover::{powers, seed_transcript, MlProof};
 use crate::sumcheck::verify_sumcheck_round;
@@ -32,8 +32,7 @@ fn kernel_mle_eval(spec: &KernelSpec, n_bits: usize, lambda: &[Ext], z: &[Ext]) 
 /// globally from every instance's stage-1 root
 /// ([`derive_global_challenges`](crate::derive_global_challenges)); the
 /// proof-set verifier recomputes them and passes them here. `None` accepts the
-/// challenges carried in the proof — sound only for AIRs whose buses do not
-/// span instances.
+/// challenges carried in the proof.
 pub fn verify_air(
     ir: &AirIr,
     proof: &MlProof,
@@ -105,7 +104,7 @@ pub fn verify_air(
     let alpha = transcript.challenge();
     let n_evals = ir.max_constraint_degree as usize + 2;
 
-    let mut claim = Ext::zero();
+    let mut claim = Ext::ZERO;
     let mut lambda = Vec::with_capacity(n);
     for (round, evals) in proof.zerocheck_round_polys.iter().enumerate() {
         if evals.len() != n_evals {
@@ -137,7 +136,7 @@ pub fn verify_air(
     let mut temps = Vec::new();
     eval_instrs(ir, &src, &mut temps);
     let weights = constraint_weights(ir, alpha);
-    let mut batched = Ext::zero();
+    let mut batched = Ext::ZERO;
     for (t, w) in weights.iter().enumerate() {
         if !w.is_zero() {
             batched += *w * constraint_value(ir, &src, &temps, t);
@@ -171,7 +170,7 @@ pub fn verify_air(
     // --- Batched Basefold opening of all claims.
     let col_coeffs = powers(delta, total_cols);
     let kernel_weights = powers(gamma, kernels.len());
-    let mut sigma = Ext::zero();
+    let mut sigma = Ext::ZERO;
     for (j, row) in proof.claims.iter().enumerate() {
         for (i, v) in row.iter().enumerate() {
             sigma += col_coeffs[j] * kernel_weights[i] * *v;
@@ -244,17 +243,17 @@ mod tests {
 
         // Tamper with a claimed opening.
         let mut proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
-        proof.claims[0][0] += Ext::one();
+        proof.claims[0][0] += Ext::ONE;
         assert!(verify_air(&ir, &proof, &publics, None, None).is_err());
 
         // Tamper with a zerocheck round polynomial.
         let mut proof2 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
-        proof2.zerocheck_round_polys[0][0] += Ext::one();
+        proof2.zerocheck_round_polys[0][0] += Ext::ONE;
         assert!(verify_air(&ir, &proof2, &publics, None, None).is_err());
 
         // Tamper with the final polynomial.
         let mut proof3 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
-        proof3.opening.final_poly[0] += Ext::one();
+        proof3.opening.final_poly[0] += Ext::ONE;
         assert!(verify_air(&ir, &proof3, &publics, None, None).is_err());
     }
 

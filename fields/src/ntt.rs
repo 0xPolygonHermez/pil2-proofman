@@ -1,10 +1,4 @@
 //! Forward NTT, coset LDE and batch inversion over Goldilocks.
-//!
-//! These are scalar reference implementations used by the multilinear
-//! (Basefold) prover to Reed–Solomon-encode trace columns. They follow the
-//! same conventions as [`intt_tiny`](crate::intt_tiny): row-major data with
-//! `n_cols` interleaved columns, natural (not bit-reversed) input and output
-//! order, and the root-of-unity tables `Goldilocks::W` / `Goldilocks::SHIFT`.
 
 use alloc::vec;
 use alloc::vec::Vec;

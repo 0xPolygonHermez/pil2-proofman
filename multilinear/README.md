@@ -5,10 +5,6 @@ A multilinear STARK: constraints expressed in PIL are proven with a
 **Basefold** — a multilinear polynomial commitment scheme built from a sumcheck
 run in lockstep with a FRI folding cascade.
 
-The protocol background is in [`docs/multilinear-pcs.md`](../docs/multilinear-pcs.md)
-(Basefold/WHIR) and [`docs/multilinear-STARK.md`](../docs/multilinear-STARK.md)
-(the PIOP); the integration map is in
-[`docs/multilinear-implementation.md`](../docs/multilinear-implementation.md).
 This README is a guided tour of the code, bottom-up: read it next to the
 sources and you should be able to follow everything from a field element to a
 verified proof.
@@ -31,16 +27,12 @@ $$\hat{g}(x) = \tilde{w}\big(x, x^2, x^4, \dots, x^{2^{n-1}}\big).$$
 
 Expanding it, the coefficients of $\hat{g}$ are the *monomial coefficients* of
 $\tilde{w}$. In this basis the plain FRI fold $\hat{g}_e + \lambda\cdot\hat{g}_o$
-is exactly "bind $X_1 = \lambda$":
+is exactly "evaluate $X_1 = \lambda$":
 
-| representation | bind $X_1 = \lambda$ |
+| representation | evaluate $X_1 = \lambda$ |
 |---|---|
-| values (hypercube table) | $v'[t] = v[2t] + \lambda\cdot(v[2t+1] - v[2t])$ — `fold_mle` |
+| values | $v'[t] = v[2t] + \lambda\cdot(v[2t+1] - v[2t])$ — `fold_mle` |
 | monomial coefficients | $c'[t] = c[2t] + \lambda\cdot c[2t+1]$ — `fold_coeffs` = what one FRI fold does |
-
-The test `codeword_fold_is_coefficient_fold` (in `encoding.rs`) pins this
-identity — if you change any ordering convention and that test still passes,
-the protocol is still sound.
 
 **Merkle leaves are pair-packed.** A fold-consistency check at position $j$ of
 a domain of size $N$ needs the values at $j$ **and** $j + N/2$ (they map to $x$
@@ -51,35 +43,27 @@ values at $j$ and $j + N/2$. One query ⇒ one Merkle opening per tree.
 
 ### `hypercube.rs` — multilinears as tables
 `fold_mle` / `mle_eval` (value form), `values_to_coeffs` / `coeffs_to_values`
-(Möbius and inverse), `fold_coeffs` / `monomial_eval` (coefficient form), and
+(Möbius and Zeta), `fold_coeffs` / `monomial_eval` (coefficient form), and
 `dot_base_ext` — the weighted sum $\sum_{b} w(b)\cdot K(b)$, which is how every
 claim in the protocol is computed.
 
 ### `eq.rs` — the kernels
-- `eq_evals(r)`: the tensor-product table $t[i] = \mathrm{eq}(\mathrm{bits}(i), \vec{r})$
-  in $O(2^n)$, where
+- `eq_evals(r)`: the tensor-product table $t[i] = \mathrm{eq}(\mathrm{bits}(i), \vec{r})$, where
   $\mathrm{eq}(\vec{x},\vec{y}) = \prod_j \big(x_j y_j + (1-x_j)(1-y_j)\big)$.
 - `rotate_table`: the prover's *rotation kernel* — the shifted column
   $w^{\to s}(b) = w(b+s \bmod 2^n)$ satisfies
-
-$$\tilde{w}^{\to s}(\vec{\lambda}) = \sum_{y\in\{0,1\}^n} w(y)\cdot \mathrm{eq}(y-s,\ \vec{\lambda}),$$
-
+  $$\tilde{w}^{\to s}(\vec{\lambda}) = \sum_{y\in\{0,1\}^n} w(y)\cdot \mathrm{eq}(y-s,\ \vec{\lambda}),$$
   and the kernel $\mathrm{eq}(\cdot - s, \vec{\lambda})$ is just the
   $\mathrm{eq}(\cdot, \vec{\lambda})$ table cyclically rotated.
 - `rot_kernel_eval`: the verifier's side of the same kernel — the MLE of the
   rotated-eq table evaluated at an arbitrary point $\vec{z}$,
-
-$$\mathrm{rot}_s(\vec{z}, \vec{\lambda}) = \sum_{x\in\{0,1\}^n} \mathrm{eq}(x, \vec{\lambda})\cdot \mathrm{eq}(x+s \bmod 2^n,\ \vec{z}),$$
-
-  computed in $O(n)$ by a 2-state dynamic program over the carry chain of
-  $x + s$ (works for any offset, positive or negative; $s = 0$ degenerates to
-  $\mathrm{eq}(\vec{\lambda}, \vec{z})$).
-- `boolean_point`: hypercube corners, used by boundary constraints.
+  $$\mathrm{rot}_s(\vec{z}, \vec{\lambda}) = \sum_{x\in\{0,1\}^n} \mathrm{eq}(x, \vec{\lambda})\cdot \mathrm{eq}((x+s) \bmod 2^n,\ \vec{z}),$$
+  that works for any offset, positive or negative; $s = 0$ degenerates to $\mathrm{eq}(\vec{\lambda}, \vec{z})$.
 
 ### `sumcheck.rs` — the reduction engine
 The `SumcheckOracle` trait (`round_evals` → evaluations of the round polynomial
 at $0, 1, \dots, d$; `bind` → fix the current variable). `ProductOracle` is the
-degree-2 instance used by the Basefold opening ($\Phi\cdot W$). Verifier side:
+degree-2 instance used by the a product of two multilinears. Verifier side:
 `verify_sumcheck_round` checks $g_t(0) + g_t(1) = \text{claim}$ and returns
 $g_t(r)$ via Lagrange interpolation on the integer nodes (`interpolate_at`).
 
@@ -95,17 +79,14 @@ $$x_{\ell,j} = g^{2^{\ell}} \cdot \omega_{\ell}^{\,j}, \qquad \omega_{\ell} = \t
 final polynomial.
 
 ### `merkle.rs` — prover-side Merkle tree
-Same layout as `fields::merkle` (Poseidon2, arity 4, 4-cell digests, zero
-padding), but keeps all levels so it can produce sibling paths. Paths verify
-with the *existing* `fields::verify_mt` — the test
-`root_matches_partial_merkle_tree` pins compatibility with the rest of the
-repo's Merkle stack.
+Same layout as `fields::merkle`, but keeps all levels so it can produce sibling paths. Paths verify
+with the *existing* `fields::verify_mt`.
 
 ### `transcript.rs` — Fiat–Shamir
-Thin wrapper over `fields::Transcript` (Poseidon2 sponge): `absorb*`,
+Thin wrapper over `fields::Transcript`: `absorb*`,
 `challenge()` $\to \mathbb{E}$, `query_indices` (via `get_permutations`).
 
-## 2. Basefold (`basefold.rs`) — commit and open
+## 2. Polynomial Commitment Scheme (PCS) (`basefold.rs`) — commit and open
 
 **Commit** (`commit_matrix`): RS-encode each column, pair-pack all columns of a
 stage into one tree (leaf $j$ = all columns at $j$, then all at $j + N/2$).
@@ -258,44 +239,3 @@ Soundness intuition in one line: the zerocheck forces the claims to be
 consistent with "all constraints vanish", and the opening forces the claims to
 be consistent with the committed columns; the two share nothing but the
 claims matrix, so a cheating prover must break one of them.
-
-## 6. Tests as a map
-
-Each protocol fact is pinned by a test — they double as usage examples:
-
-| fact | test |
-|---|---|
-| Möbius/monomial ↔ value duality | `hypercube::mobius_roundtrip_and_monomial_eval` |
-| fold = partial evaluation on codewords | `encoding::codeword_fold_is_coefficient_fold` |
-| rotation kernel = shifted column (prover) | `eq::rotated_eq_table_evaluates_shifted_column` |
-| carry-DP = rotated-eq MLE (verifier) | `eq::rot_kernel_eval_matches_table_mle` |
-| Merkle compatibility with `fields` | `merkle::root_matches_partial_merkle_tree` |
-| sumcheck completeness/soundness | `sumcheck::product_sumcheck_roundtrip`, `tampered_round_poly_rejected` |
-| Basefold open/verify + negatives | `basefold::opening_roundtrip`, `wrong_claim_rejected`, `corrupted_codeword_rejected` |
-| zerocheck ↔ true MLEs | `zerocheck::zerocheck_roundtrip_on_fib` |
-| full STARK + negatives | `verifier::prove_verify_roundtrip`, `corrupted_trace_rejected`, `wrong_publics_rejected`, `tampered_proof_rejected` |
-| against a real proving key | `tests/setup_artifact.rs` (skips if not generated) |
-
-Run with `cargo test -p proofman-multilinear`. For the end-to-end CLI flow see
-[`examples/fibonacci-multilinear`](../examples/fibonacci-multilinear/README.md).
-
-## 7. Parameters and current limitations
-
-`MlParams` (stored per-AIR in the mlinfo): `log_blowup` (default 2 → rate
-$\rho = 1/4$), `n_queries` (default 50, **conjecture-level** ≈100 bits — no
-formal analysis yet), `log_final_poly_len` (default 4), `grinding_bits` (must
-be 0, not implemented).
-
-Current scope (milestone 2): multi-stage AIRs with std arguments (lookups,
-permutations, range checks), challenges, air/airgroup values, and stage-0
-custom commits (ROMs — one extra fixed Basefold matrix each) — validated on
-`pil2-components/test/simple` and `examples/fibonacci-multilinear`. Still out
-of scope: proof values, custom commits beyond stage 0, `everyFrame`
-boundaries, grinding; boundary
-constraints must not reference shifted columns; CPU-only; no aggregation.
-Im-pols are committed as-is (they are pure prover economics here — no rate
-constraint forces them, see the discussion in
-`docs/multilinear-implementation.md`); inlining them is a milestone-3
-measurement. The prover is deliberately naive (scalar, unparallelized,
-all-extension tables) — see the performance notes in
-`docs/multilinear-implementation.md` for the optimization roadmap.

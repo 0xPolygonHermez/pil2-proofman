@@ -1,5 +1,5 @@
 //! Fiat–Shamir transcript for the multilinear protocol: a thin wrapper over
-//! `fields::Transcript` (Poseidon2 sponge) with extension-field challenges.
+//! `fields::Transcript` with extension-field challenges.
 
 use crate::hypercube::Ext;
 use fields::{Field, Goldilocks, Poseidon2_16, Transcript};

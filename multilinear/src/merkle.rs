@@ -1,8 +1,5 @@
 //! Prover-side Merkle tree that keeps all levels so sibling paths can be
-//! produced. Layout-compatible with `fields::merkle` — paths produced here
-//! verify with [`fields::verify_mt`] (leaf digest = `linear_hash_seq` first 4
-//! cells, internal nodes = width-16 compression of `arity` child digests,
-//! levels zero-padded to a multiple of the arity).
+//! produced.
 
 use fields::{linear_hash_seq, Field, Goldilocks, Hash};
 
@@ -54,9 +51,7 @@ impl MerkleTree {
         [top[0], top[1], top[2], top[3]]
     }
 
-    /// Sibling path for leaf `idx`, in the format consumed by
-    /// `fields::calculate_root_from_proof` / `fields::verify_mt`:
-    /// per level, the `arity − 1` sibling digests in position order.
+    /// Sibling path for leaf `idx`: per level, the `arity − 1` sibling digests in position order.
     pub fn path(&self, mut idx: u64) -> Vec<Vec<Goldilocks>> {
         let arity = self.arity;
         let mut mp = Vec::with_capacity(self.levels.len().saturating_sub(1));
@@ -91,7 +86,7 @@ impl MerkleTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fields::{partial_merkle_tree, verify_mt, Poseidon2_16, PrimeField64};
+    use fields::{partial_merkle_tree, verify_mt, Poseidon1_16, PrimeField64};
     use rand::{rng, RngExt};
 
     fn random_leaves(n: usize, len: usize) -> Vec<Vec<Goldilocks>> {
@@ -103,15 +98,15 @@ mod tests {
     fn root_matches_partial_merkle_tree() {
         for n in [1usize, 3, 4, 16, 21] {
             let leaves = random_leaves(n, 7);
-            let tree = MerkleTree::new::<Poseidon2_16>(&leaves, 4);
+            let tree = MerkleTree::new::<Poseidon1_16>(&leaves, 4);
 
             // partial_merkle_tree consumes leaf *digests*
             let mut digests = Vec::with_capacity(n * 4);
             for leaf in &leaves {
-                let st = linear_hash_seq::<Goldilocks, Poseidon2_16>(leaf);
+                let st = linear_hash_seq::<Goldilocks, Poseidon1_16>(leaf);
                 digests.extend_from_slice(&st.as_ref()[..4]);
             }
-            let expected = partial_merkle_tree::<Goldilocks, Poseidon2_16>(&digests, n as u64, 4);
+            let expected = partial_merkle_tree::<Goldilocks, Poseidon1_16>(&digests, n as u64, 4);
             assert_eq!(tree.root(), expected, "n = {n}");
         }
     }
@@ -120,18 +115,18 @@ mod tests {
     fn paths_verify_with_verify_mt() {
         let n = 21;
         let leaves = random_leaves(n, 6);
-        let tree = MerkleTree::new::<Poseidon2_16>(&leaves, 4);
+        let tree = MerkleTree::new::<Poseidon1_16>(&leaves, 4);
         let root = tree.root();
         for idx in [0usize, 1, 5, 15, 20] {
             let mp = tree.path(idx as u64);
             assert!(
-                verify_mt::<Goldilocks, Poseidon2_16, Poseidon2_16>(&root, &[], &mp, idx as u64, &leaves[idx], 4, 0),
+                verify_mt::<Goldilocks, Poseidon1_16, Poseidon1_16>(&root, &[], &mp, idx as u64, &leaves[idx], 4, 0),
                 "path for leaf {idx} must verify"
             );
             // Wrong leaf data must fail
             let mut bad = leaves[idx].clone();
             bad[0] += Goldilocks::ONE;
-            assert!(!verify_mt::<Goldilocks, Poseidon2_16, Poseidon2_16>(&root, &[], &mp, idx as u64, &bad, 4, 0));
+            assert!(!verify_mt::<Goldilocks, Poseidon1_16, Poseidon1_16>(&root, &[], &mp, idx as u64, &bad, 4, 0));
         }
     }
 }

@@ -144,7 +144,7 @@ fn aggregate_airgroup_values<'a>(
     let mut agg: Vec<Vec<Ext>> = global_info
         .agg_types
         .iter()
-        .map(|group| group.iter().map(|t| if t.agg_type == 0 { Ext::zero() } else { Ext::one() }).collect::<Vec<_>>())
+        .map(|group| group.iter().map(|t| if t.agg_type == 0 { Ext::ZERO } else { Ext::ONE }).collect::<Vec<_>>())
         .collect();
 
     for (airgroup_id, vals) in values {
@@ -223,7 +223,7 @@ fn check_global_constraints(
 
     for (idx, c) in constraints.iter().enumerate() {
         let n_tmps = c.get("tmpUsed").and_then(|t| t.as_u64()).unwrap_or(0) as usize;
-        let mut tmps = vec![Ext::zero(); n_tmps.max(1)];
+        let mut tmps = vec![Ext::ZERO; n_tmps.max(1)];
         let mut last_dest = 0usize;
         for instr in c.get("code").and_then(|v| v.as_array()).unwrap_or(&Vec::new()) {
             let op = instr.get("op").and_then(|o| o.as_str()).unwrap_or("");
@@ -238,7 +238,7 @@ fn check_global_constraints(
             };
             let dest = instr["dest"]["id"].as_u64().unwrap_or(0) as usize;
             if dest >= tmps.len() {
-                tmps.resize(dest + 1, Ext::zero());
+                tmps.resize(dest + 1, Ext::ZERO);
             }
             tmps[dest] = value;
             last_dest = dest;

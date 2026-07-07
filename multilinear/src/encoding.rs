@@ -1,10 +1,4 @@
-//! Reed–Solomon encoding for Basefold commitments.
-//!
-//! A column of `2^n` hypercube values is first Möbius-transformed into the
-//! monomial coefficients of its MLE; those are the coefficients of the
-//! univariate `ĝ(X) = Σ_i c[i]·X^i` satisfying `ĝ(x) = w̃(x, x², x⁴, …)`.
-//! The univariate is evaluated over the coset `SHIFT · H` with
-//! `|H| = 2^(n + log_blowup)`, in natural order.
+//! Reed–Solomon encoding.
 
 use crate::hypercube::{values_to_coeffs, Ext};
 use fields::{coset_lde, Field, Goldilocks};
@@ -20,10 +14,10 @@ pub fn encode_column(col: &[Goldilocks], log_blowup: usize) -> Vec<Goldilocks> {
 }
 
 /// Evaluate the univariate polynomial with extension-field coefficients
-/// `coeffs` at a base-field point `x` (Horner). Used by the verifier to check
-/// query values against the final (in-clear) Basefold polynomial.
+/// `coeffs` at a base-field point `x`.
 pub fn eval_ext_poly_at_base(coeffs: &[Ext], x: Goldilocks) -> Ext {
-    let mut acc = Ext::zero();
+    // Use the Horner method
+    let mut acc = Ext::ZERO;
     for c in coeffs.iter().rev() {
         acc = acc * x + *c;
     }

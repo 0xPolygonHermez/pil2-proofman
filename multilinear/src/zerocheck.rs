@@ -4,15 +4,8 @@
 //! `G(X) = eq(r, X) · Σ_t α^t · C_t(X)`,
 //!
 //! where `r` and `α` are transcript challenges sampled after the trace
-//! commitments. Round polynomials have degree `max_constraint_degree + 1`
-//! (each column MLE is multilinear, `eq` adds one). The sumcheck terminates in
-//! evaluation claims on the committed columns at the challenge point —
-//! including *virtual shifted-column* claims for every row offset, which the
-//! Basefold opening later discharges through rotation kernels.
-//!
-//! `FirstRow`/`LastRow` constraints never enter the sumcheck: they reduce
-//! directly to evaluation claims at the corner points of the hypercube (the
-//! verifier evaluates the constraint on the claimed corner openings).
+//! commitments. The sumcheck terminates in evaluation claims on the committed
+//! columns at the challenge point.
 
 use crate::eq::{eq_evals, rotate_table};
 use crate::evaluator::{constraint_value, eval_instrs, LeafSource};
@@ -86,13 +79,13 @@ pub fn kernel_index_of_boundary(ir: &AirIr, kernels: &[KernelSpec], boundary: Bo
 /// zero for boundary constraints (they are checked at corners instead).
 pub fn constraint_weights(ir: &AirIr, alpha: Ext) -> Vec<Ext> {
     let mut w = Vec::with_capacity(ir.constraints.len());
-    let mut cur = Ext::one();
+    let mut cur = Ext::ONE;
     for c in &ir.constraints {
         if c.boundary == Boundary::EveryRow {
             w.push(cur);
             cur *= alpha;
         } else {
-            w.push(Ext::zero());
+            w.push(Ext::ZERO);
         }
     }
     w
@@ -100,9 +93,8 @@ pub fn constraint_weights(ir: &AirIr, alpha: Ext) -> Vec<Ext> {
 
 /// Prover-side sumcheck oracle for `G(X) = eq(r,X) · Σ_t α^t C_t(X)`.
 ///
-/// Keeps one extension-field table per `(column, offset)` leaf — a shifted
-/// column is just a rotated copy of its base table, and after the first bind
-/// the tables are independent anyway. All tables fold together each round.
+/// Keeps one extension-field table per `(column, offset)` leaf.
+/// All tables fold together each round.
 pub struct ZerocheckOracle<'a> {
     ir: &'a AirIr,
     tables: Vec<Vec<Ext>>,
@@ -234,9 +226,9 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
         let half = self.eq_table.len() / 2;
         let n_tables = self.tables.len();
 
-        let mut g = vec![Ext::zero(); n_evals];
-        let mut vals = vec![Ext::zero(); n_tables];
-        let mut diffs = vec![Ext::zero(); n_tables];
+        let mut g = vec![Ext::ZERO; n_evals];
+        let mut vals = vec![Ext::ZERO; n_tables];
+        let mut diffs = vec![Ext::ZERO; n_tables];
         let mut temps: Vec<Ext> = Vec::new();
 
         for i in 0..half {
@@ -267,7 +259,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                     airgroup_values: &self.airgroup_values,
                 };
                 eval_instrs(self.ir, &src, &mut temps);
-                let mut c = Ext::zero();
+                let mut c = Ext::ZERO;
                 for (t, w) in self.weights.iter().enumerate() {
                     if !w.is_zero() {
                         c += *w * constraint_value(self.ir, &src, &temps, t);
@@ -396,7 +388,7 @@ mod tests {
         let alpha = random_ext();
         let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
 
-        let mut claim = Ext::zero();
+        let mut claim = Ext::ZERO;
         let mut lambda = Vec::new();
         for round in 0..n_bits as usize {
             let evals = oracle.round_evals();
@@ -436,6 +428,6 @@ mod tests {
         let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
         let evals = oracle.round_evals();
         // g(0) + g(1) = total sum over the hypercube ≠ 0 w.h.p.
-        assert_ne!(evals[0] + evals[1], Ext::zero());
+        assert_ne!(evals[0] + evals[1], Ext::ZERO);
     }
 }

@@ -7,7 +7,7 @@
 //!   final sumcheck point.
 
 use crate::error::MlError;
-use crate::hypercube::{ext_from_base, Ext};
+use crate::hypercube::Ext;
 use crate::ir::{AirIr, Op, Operand, SrcKind};
 use fields::{Field, Goldilocks};
 
@@ -47,8 +47,8 @@ fn assemble_dim<S: LeafSource>(src: &S, stage: u8, base: u32, row_offset: i32, d
         return src.witness(stage, base, row_offset);
     }
     let u = ext_u();
-    let mut acc = Ext::zero();
-    let mut basis = Ext::one();
+    let mut acc = Ext::ZERO;
+    let mut basis = Ext::ONE;
     for k in 0..dim as u32 {
         acc += src.witness(stage, base + k, row_offset) * basis;
         basis *= u;
@@ -65,7 +65,7 @@ fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand
         SrcKind::Challenge => src.challenge(op.idx),
         SrcKind::AirValue => src.air_value(op.idx),
         SrcKind::AirGroupValue => src.airgroup_value(op.idx),
-        SrcKind::Number => ext_from_base(Goldilocks::new(ir.numbers[op.idx as usize])),
+        SrcKind::Number => Ext::from_base(Goldilocks::new(ir.numbers[op.idx as usize])),
         SrcKind::Temp => temps[op.idx as usize],
     }
 }
@@ -73,7 +73,7 @@ fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], op: &Operand
 /// Run the instruction list once. `temps` is a scratch buffer of length
 /// `ir.n_temps` (reused across calls to avoid allocation).
 pub fn eval_instrs<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Ext>) {
-    temps.resize(ir.n_temps as usize, Ext::zero());
+    temps.resize(ir.n_temps as usize, Ext::ZERO);
     for instr in &ir.instrs {
         let a = operand_value(ir, src, temps, &instr.a);
         let v = match instr.op {
@@ -97,7 +97,7 @@ pub fn constraint_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Ext], c_idx
 /// leaf source is only defined for the leaves the constraint actually reads.
 pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Ext>, c_idx: usize) -> Ext {
     debug_assert!(ir.instrs.iter().enumerate().all(|(i, ins)| ins.dst as usize == i));
-    temps.resize(ir.n_temps as usize, Ext::zero());
+    temps.resize(ir.n_temps as usize, Ext::ZERO);
 
     let root = &ir.constraints[c_idx].root;
     let mut needed = vec![false; ir.instrs.len()];
@@ -165,14 +165,14 @@ pub fn check_constraints_on_trace(
     impl LeafSource for RowSource<'_> {
         fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Ext {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            ext_from_base(self.witness[(stage - 1) as usize][col as usize][r])
+            Ext::from_base(self.witness[(stage - 1) as usize][col as usize][r])
         }
         fn constant(&self, col: u32, row_offset: i32) -> Ext {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            ext_from_base(self.consts[col as usize][r])
+            Ext::from_base(self.consts[col as usize][r])
         }
         fn public(&self, idx: u32) -> Ext {
-            ext_from_base(self.publics[idx as usize])
+            Ext::from_base(self.publics[idx as usize])
         }
         fn challenge(&self, idx: u32) -> Ext {
             self.challenges[idx as usize]
@@ -185,7 +185,7 @@ pub fn check_constraints_on_trace(
         }
         fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Ext {
             let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            ext_from_base(self.customs[commit as usize][col as usize][r])
+            Ext::from_base(self.customs[commit as usize][col as usize][r])
         }
     }
 

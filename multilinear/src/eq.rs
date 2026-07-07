@@ -1,28 +1,41 @@
 //! The equality kernel `eq` and the rotation kernel `rot_s`.
 //!
 //! `eq(x, y) = Π_j (x_j·y_j + (1−x_j)(1−y_j))` is the Lagrange kernel of the
-//! hypercube. The rotation kernel handles "next row" (and arbitrary-offset)
-//! accesses: the shifted column `w^{→s}(b) = w(b + s mod 2^n)` satisfies
+//! hypercube.
 //!
-//! `w̃^{→s}(λ) = Σ_y w(y) · K_s(y)` with `K_s(y) = eq((y − s) mod 2^n, λ)`,
+//! The rotation kernel handles "arbitrary offset" accesses, the
+//! shifted column `w^{→s}(b) = w((b + s) mod 2^n)` satisfies
 //!
+//! `w̃^{→s}(λ) = Σ_y w((y + s) mod 2^n) · eq(y, λ) = Σ_y w(y) · K_s(y)`,
+//!
+//! with `K_s(y) = eq((y − s) mod 2^n, λ)`,
 //! so a shifted-column evaluation claim is a weighted-sum claim on the *base*
-//! column with a kernel the verifier can evaluate itself (shifted columns are
-//! never committed). On the prover side `K_s` is just the `eq(·, λ)` table
-//! cyclically rotated; on the verifier side its MLE is evaluated at an
-//! arbitrary point in O(n) with a carry-chain DP over the index bits.
+//! column with the `eq(·, λ)` table cyclically rotated.
 
 use crate::hypercube::Ext;
 
+/// Evaluates the equality kernel on points `a` and `b`: `eq(a,b)`.
+pub fn eq_eval(a: &[Ext], b: &[Ext]) -> Ext {
+    debug_assert_eq!(a.len(), b.len());
+
+    // eq(a, b) = Π_j (a_j·b_j + (1−a_j)(1−b_j))
+    let one = Ext::ONE;
+    let mut acc = one;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        acc *= x * y + (one - x) * (one - y);
+    }
+    acc
+}
+
 /// Tensor expansion of the equality kernel: returns `t[i] = eq(bits(i), point)`
-/// for all `i ∈ [0, 2^n)`, LSB-first variable order. O(2^n).
+/// for all `i ∈ [0, 2^n)`.
 pub fn eq_evals(point: &[Ext]) -> Vec<Ext> {
     let n = point.len();
     let mut t = Vec::with_capacity(1 << n);
-    t.push(Ext::one());
+    t.push(Ext::ONE);
     for (j, &r) in point.iter().enumerate() {
         let len = 1 << j;
-        t.resize(2 * len, Ext::zero());
+        t.resize(2 * len, Ext::ZERO);
         for i in (0..len).rev() {
             let v = t[i];
             let hi = v * r;
@@ -33,48 +46,39 @@ pub fn eq_evals(point: &[Ext]) -> Vec<Ext> {
     t
 }
 
-/// `eq(a, b) = Π_j (a_j·b_j + (1−a_j)(1−b_j))`.
-pub fn eq_eval(a: &[Ext], b: &[Ext]) -> Ext {
-    debug_assert_eq!(a.len(), b.len());
-    let one = Ext::one();
-    let mut acc = one;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        acc *= x * y + (one - x) * (one - y);
-    }
-    acc
-}
-
-/// Cyclically rotate a kernel table by offset `s`: `out[y] = table[(y − s) mod len]`.
-///
-/// Applying this to the `eq(·, λ)` table yields the rotation-kernel table
-/// `K_s(y) = eq(y − s, λ)`, since `Σ_y w(y)·K_s(y) = Σ_x w(x + s)·eq(x, λ)`.
+/// Cyclically rotate a kernel table by offset `s`.
 pub fn rotate_table<T: Copy>(table: &[T], s: i64) -> Vec<T> {
     let n = table.len();
     debug_assert!(n.is_power_of_two());
+
+    // out[y] = table[(y − s) mod len]
     let sh = s.rem_euclid(n as i64) as usize;
     (0..n).map(|y| table[(y + n - sh) & (n - 1)]).collect()
 }
 
 /// Evaluate the MLE of the rotation kernel `y ↦ eq((y − s) mod 2^n, lambda)`
-/// at an arbitrary point `z`, in O(n).
+/// at an arbitrary point `z`.
 ///
-/// Writing `x = y − s`, this equals `Σ_x eq(x, lambda) · eq((x + s) mod 2^n, z)`.
-/// The sum factorizes bit-by-bit through the carry chain of `x + s`: process the
-/// bits LSB→MSB keeping one accumulator per carry state (`y_j = x_j ⊕ s_j ⊕ c`,
-/// `c' = maj(x_j, s_j, c)`); the wrap-around (mod 2^n) discards the final carry,
-/// so both end states are summed. Works for arbitrary offsets, positive or
-/// negative; `s = 0` degenerates to `eq(lambda, z)`.
+/// Works for arbitrary offsets, positive or negative; `s = 0` degenerates to
+/// `eq(y, lambda)`.
 pub fn rot_kernel_eval(s: i64, lambda: &[Ext], z: &[Ext]) -> Ext {
+    // Writing x = y − s, the output eq((y − s) mod 2^n, lambda) equals
+    //      Σ_x eq(x, lambda) · eq((x + s) mod 2^n, z).
+    // The sum factorizes bit-by-bit through the carry chain of x + s: process the
+    // bits LSB→MSB keeping one accumulator per carry state (y_j = x_j ⊕ s_j ⊕ c,
+    // c' = maj(x_j, s_j, c)); the wrap-around (mod 2^n) discards the final carry,
+    // so both end states are summed.
+
     let n = lambda.len();
     debug_assert_eq!(z.len(), n);
     let s_mod = (s.rem_euclid(1i64 << n)) as u64;
-    let one = Ext::one();
+    let one = Ext::ONE;
 
     // acc[c] = partial sum over the low bits, for carry `c` into the next bit.
-    let mut acc = [one, Ext::zero()];
+    let mut acc = [one, Ext::ZERO];
     for j in 0..n {
         let sj = (s_mod >> j) & 1;
-        let mut next = [Ext::zero(), Ext::zero()];
+        let mut next = [Ext::ZERO, Ext::ZERO];
         for (c, &a) in acc.iter().enumerate() {
             if a.is_zero() {
                 continue;
@@ -92,16 +96,10 @@ pub fn rot_kernel_eval(s: i64, lambda: &[Ext], z: &[Ext]) -> Ext {
     acc[0] + acc[1]
 }
 
-/// The Boolean point of the hypercube corresponding to row index `row`
-/// (LSB-first), as extension elements. Used for boundary-constraint kernels.
-pub fn boolean_point(row: u64, n: usize) -> Vec<Ext> {
-    (0..n).map(|j| if (row >> j) & 1 == 1 { Ext::one() } else { Ext::zero() }).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hypercube::{mle_eval, to_ext_vec};
+    use crate::hypercube::{mle_eval, to_ext_vec, boolean_point};
     use fields::{Goldilocks, PrimeField64};
     use rand::{rng, RngExt};
 
