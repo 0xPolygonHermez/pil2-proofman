@@ -146,7 +146,8 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize) -> StarkSt
             let mta = settings.merkle_tree_arity.unwrap_or(16);
             let mtc = settings.merkle_tree_custom.unwrap_or(false);
             let pb = settings.pow_bits.unwrap_or(0);
-            (mta, mta, mtc, false, 0usize, pb)
+            let llv = settings.last_level_verification.unwrap_or(0);
+            (mta, mta, mtc, false, llv, pb)
         } else {
             let mta = settings.merkle_tree_arity.unwrap_or(MERKLE_TREE_ARITY);
             let pb = settings.pow_bits.unwrap_or(20);

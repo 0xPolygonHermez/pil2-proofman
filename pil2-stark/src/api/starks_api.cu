@@ -16,6 +16,7 @@ extern void *initFinalSnarkProverGPU(char* zkeyFile, int gpuId);
 extern void freeFinalSnarkProverGPU(void *snark_prover);
 extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
 extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
+extern uint64_t getFinalSnarkProverRequiredGpuSizeGPU(void *snark_prover);
 extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #ifdef __USE_CUDA__
 #include "verify_constraints.cuh"
@@ -571,6 +572,9 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
 
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
+        if (d_buffers->air_instances[key][proofType][i] != nullptr) {
+            delete d_buffers->air_instances[key][proofType][i];
+        }
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
     }
 }
@@ -1138,6 +1142,7 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
         d_buffers->owns_const_tree = true;
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+        d_buffers->aux_trace_size = sizeAuxTrace;
     } else {
         DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
         gl64_t *d_unifiedBuffer = d_commit_buffer->gpuMemoryBuffer[d_commit_buffer->gpus_g2l[gpuId]];
@@ -1255,9 +1260,14 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
 
     uint64_t nConst = setupCtx->starkInfo.nConstants;
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
-    // Copy const pols to device
+    // Copy and tile const pols: pConstPols is row-major (.const file) but the
+    // expression kernels read the tiled layout at offsetConstPols (same layout
+    // unpack_fixed produces in the main flows). Stage through the witness
+    // scratch area, which the tiling above has already consumed (stream-ordered).
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)(d_aux_trace + offsetConstPols), sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
+    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)d_witness_temp, sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToColMajor<<<gridSize, blockSize, 0, d_buffers->stream>>>(N, nConst, (uint64_t*)d_witness_temp, (uint64_t*)(d_aux_trace + offsetConstPols), fixedLayout());
     CHECKCUDAERR(cudaGetLastError());
 
     void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
@@ -1961,6 +1971,17 @@ void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffe
     if (d_buffers_recursivef != nullptr) {
         DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
         cudaSetDevice(d_buffers->gpuId);
+        if (unified_buffer_gpu == nullptr && d_buffers->owns_aux_trace) {
+            uint64_t requiredSize = getFinalSnarkProverRequiredGpuSizeGPU(snark_prover);
+            if (requiredSize > 0) {
+                if (requiredSize > d_buffers->aux_trace_size) {
+                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+                    CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, requiredSize));
+                    d_buffers->aux_trace_size = requiredSize;
+                }
+                unified_buffer_gpu = d_buffers->d_aux_trace;
+            }
+        }
     }
     preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
 }

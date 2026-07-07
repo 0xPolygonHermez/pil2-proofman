@@ -167,6 +167,10 @@ namespace PlonkGPU {
 
         void preAllocate(void* unified_buffer_gpu);
 
+        // Total device bytes round0 carves out of the unified buffer.
+        // Valid after setZkey(); used to size an externally provided buffer.
+        uint64_t computeUnifiedBufferSize();
+
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 

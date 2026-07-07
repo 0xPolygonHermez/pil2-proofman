@@ -387,23 +387,28 @@ template parallel VerifySingleQuery() {
 
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_vals{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
     signal input s0_siblings{{ stage_info.stage }}[{{ merkle_levels_s0 }}][{{ arity }}];
-    signal input root{{ stage_info.stage }};
-{% endif %}{% endfor %}
+{% if last_level_verification_gt0 %}    signal input s0_last_levels{{ stage_info.stage }}[{{ s0_last_mt_size }}];
+{% else %}    signal input root{{ stage_info.stage }};
+{% endif %}{% endif %}{% endfor %}
     signal input s0_vals{{ q_stage }}[{{ q_stage_cm_section_len }}];
     signal input s0_siblings{{ q_stage }}[{{ merkle_levels_s0 }}][{{ arity }}];
-    signal input root{{ q_stage }};
-    signal input s0_valsC[{{ n_constants }}];
+{% if last_level_verification_gt0 %}    signal input s0_last_levels{{ q_stage }}[{{ s0_last_mt_size }}];
+{% else %}    signal input root{{ q_stage }};
+{% endif %}    signal input s0_valsC[{{ n_constants }}];
     signal input s0_siblingsC[{{ merkle_levels_s0 }}][{{ arity }}];
-    signal input rootC;
-
+{% if last_level_verification_gt0 %}    signal input s0_last_levelsC[{{ s0_last_mt_size }}];
+{% else %}    signal input rootC;
+{% endif %}
 {% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
     signal input s0_siblings_{{ cc.name }}_0[{{ merkle_levels_s0 }}][{{ arity }}];
-    signal input root_{{ cc.name }}_0;
-{% endfor %}
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ step.exponent * 3 }}];
-    signal input s{{ step.s }}_siblings[{{ step.merkle_levels }}][{{ arity }}];
-    signal input s{{ step.s }}_root;
+{% if last_level_verification_gt0 %}    signal input s0_last_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}];
+{% else %}    signal input root_{{ cc.name }}_0;
 {% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ step.exponent * 3 }}];
+{% if not step.is_empty %}    signal input s{{ step.s }}_siblings[{{ step.merkle_levels }}][{{ arity }}];
+{% endif %}{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_levels[{{ step.last_mt_size }}];
+{% else %}    signal input s{{ step.s }}_root;
+{% endif %}{% endif %}{% endfor %}
     signal input {maxNum} finalPol[{{ final_pol_size }}][3];
 
     // GL conversion and _p preprocessing for s0 vals
@@ -441,11 +446,15 @@ template parallel VerifySingleQuery() {
 {% endfor %}
 
     // Merkle verification for s0 vals
-{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    VerifyMerkleHash(1, {{ stage_info.cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ stage_info.stage }}_p, s0_siblings{{ stage_info.stage }}, queriesFRI, root{{ stage_info.stage }}, enable);
-{% endif %}{% endfor %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRI, root{{ q_stage }}, enable);
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ stage_info.cm_section_len }}, {{ step0_bits_size }}, {{ arity }}, {{ last_level_verification }})(s0_vals{{ stage_info.stage }}_p, s0_siblings{{ stage_info.stage }}, queriesFRI, s0_last_levels{{ stage_info.stage }}, enable);
+{% else %}    VerifyMerkleHash(1, {{ stage_info.cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ stage_info.stage }}_p, s0_siblings{{ stage_info.stage }}, queriesFRI, root{{ stage_info.stage }}, enable);
+{% endif %}{% endif %}{% endfor %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ q_stage_cm_section_len }}, {{ step0_bits_size }}, {{ arity }}, {{ last_level_verification }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRI, s0_last_levels{{ q_stage }}, enable);
+    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ step0_bits_size }}, {{ arity }}, {{ last_level_verification }})(s0_valsC_p, s0_siblingsC, queriesFRI, s0_last_levelsC, enable);
+{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRI, root{{ q_stage }}, enable);
     VerifyMerkleHash(1, {{ n_constants }}, {{ step0_bits_size }}, {{ arity }})(s0_valsC_p, s0_siblingsC, queriesFRI, rootC, enable);
-{% for cc in custom_commits %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ step0_bits_size }}, {{ arity }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRI, root_{{ cc.name }}_0, enable);
-{% endfor %}
+{% endif %}{% for cc in custom_commits %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ cc.section_len_0 }}, {{ step0_bits_size }}, {{ arity }}, {{ last_level_verification }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRI, s0_last_levels_{{ cc.name }}_0, enable);
+{% else %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ step0_bits_size }}, {{ arity }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRI, root_{{ cc.name }}_0, enable);
+{% endif %}{% endfor %}
 
     // FRI step GL conversion, reshaping, and Merkle verification
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal {maxNum} s{{ step.s }}_valsGL[{{ step.exponent * 3 }}];
@@ -459,8 +468,10 @@ template parallel VerifySingleQuery() {
     }
     signal {binary} s{{ step.s }}_keys_merkle[{{ step.n_bits }}];
     for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_keys_merkle[i] <== queriesFRI[i]; }
-    VerifyMerkleHash(3, {{ step.exponent }}, {{ step.val_size }}, {{ arity }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle, s{{ step.s }}_root, enable);
-{% endif %}{% endfor %}
+{% if last_level_verification_gt0 %}{% if step.is_empty %}    VerifyMerkleHashUntilLevelEmpty(3, {{ step.exponent }}, {{ step.val_size }}, {{ arity }}, {{ last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_keys_merkle, s{{ step.s }}_last_levels, enable);
+{% else %}    VerifyMerkleHashUntilLevel(3, {{ step.exponent }}, {{ step.val_size }}, {{ arity }}, {{ last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle, s{{ step.s }}_last_levels, enable);
+{% endif %}{% else %}    VerifyMerkleHash(3, {{ step.exponent }}, {{ step.val_size }}, {{ arity }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle, s{{ step.s }}_root, enable);
+{% endif %}{% endif %}{% endfor %}
 
     // Verify the initial FRI polynomial query
     VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, challengesFRI, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
@@ -495,12 +506,19 @@ template StarkVerifier() {
     signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
 {% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
 {% endfor %}
-    // Intermediate FRI roots and vals
+{% if last_level_verification_gt0 %}    // Last tree levels shared by all queries
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_last_levels{{ stage_info.stage }}[{{ s0_last_mt_size }}];
+{% endif %}{% endfor %}    signal input s0_last_levels{{ q_stage }}[{{ s0_last_mt_size }}];
+    signal input s0_last_levelsC[{{ s0_last_mt_size }}];
+{% for cc in custom_commits %}    signal input s0_last_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}];
+{% endfor %}
+{% endif %}    // Intermediate FRI roots and vals
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
 {% endif %}{% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
-    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
-{% endif %}{% endfor %}
+{% if not step.is_empty %}    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
+{% endif %}{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_levels[{{ step.last_mt_size }}];
+{% endif %}{% endif %}{% endfor %}
 
     signal input finalPol[{{ final_pol_size }}][3];
 {% if pow_bits > 0 %}    signal input nonce;
@@ -585,24 +603,39 @@ template StarkVerifier() {
             enabled,
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}            s0_vals{{ stage_info.stage }}[q],
             s0_siblings{{ stage_info.stage }}[q],
-            root{{ stage_info.stage }},
-{% endif %}{% endfor %}            s0_vals{{ q_stage }}[q],
+{% if last_level_verification_gt0 %}            s0_last_levels{{ stage_info.stage }},
+{% else %}            root{{ stage_info.stage }},
+{% endif %}{% endif %}{% endfor %}            s0_vals{{ q_stage }}[q],
             s0_siblings{{ q_stage }}[q],
-            root{{ q_stage }},
-            s0_valsC[q],
+{% if last_level_verification_gt0 %}            s0_last_levels{{ q_stage }},
+{% else %}            root{{ q_stage }},
+{% endif %}            s0_valsC[q],
             s0_siblingsC[q],
-            rootC,
-{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
+{% if last_level_verification_gt0 %}            s0_last_levelsC,
+{% else %}            rootC,
+{% endif %}{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
             s0_siblings_{{ cc.name }}_0[q],
-            root_{{ cc.name }}_0,
-{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals[q],
-            s{{ step.s }}_siblings[q],
-            s{{ step.s }}_root,
-{% endif %}{% endfor %}            finalPolGL
+{% if last_level_verification_gt0 %}            s0_last_levels_{{ cc.name }}_0,
+{% else %}            root_{{ cc.name }}_0,
+{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals[q],
+{% if not step.is_empty %}            s{{ step.s }}_siblings[q],
+{% endif %}{% if last_level_verification_gt0 %}            s{{ step.s }}_last_levels,
+{% else %}            s{{ step.s }}_root,
+{% endif %}{% endif %}{% endfor %}            finalPolGL
         );
     }
 
-    VerifyFinalPol()(finalPolGL, enabled);
+{% if last_level_verification_gt0 %}    ///////////
+    // Verify Merkle roots for optimized last levels (shared by all queries)
+    ///////////
+
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step0_bits_size }})(s0_last_levels{{ stage_info.stage }}, root{{ stage_info.stage }}, enabled);
+{% endif %}{% endfor %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step0_bits_size }})(s0_last_levels{{ q_stage }}, root{{ q_stage }}, enabled);
+    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step0_bits_size }})(s0_last_levelsC, rootC, enabled);
+{% for cc in custom_commits %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step0_bits_size }})(s0_last_levels_{{ cc.name }}_0, root_{{ cc.name }}_0, enabled);
+{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step.mt_size }})(s{{ step.s }}_last_levels, s{{ step.s }}_root, enabled);
+{% endif %}{% endfor %}
+{% endif %}    VerifyFinalPol()(finalPolGL, enabled);
 }
 
 {% if not skip_main %}
@@ -623,12 +656,16 @@ template Main() {
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_siblings{{ stage_info.stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
 {% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
     signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
-
+{% if last_level_verification_gt0 %}{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_last_levels{{ stage_info.stage }}[{{ s0_last_mt_size }}];
+{% endif %}{% endfor %}    signal input s0_last_levels{{ q_stage }}[{{ s0_last_mt_size }}];
+    signal input s0_last_levelsC[{{ s0_last_mt_size }}];
+{% endif %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
 {% endif %}{% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
-    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
-{% endif %}{% endfor %}
+{% if not step.is_empty %}    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
+{% endif %}{% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_levels[{{ step.last_mt_size }}];
+{% endif %}{% endif %}{% endfor %}
     signal input finalPol[{{ final_pol_size }}][3];
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}
@@ -646,12 +683,16 @@ template Main() {
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    sv.s0_siblings{{ stage_info.stage }} <== s0_siblings{{ stage_info.stage }};
 {% endif %}{% endfor %}    sv.s0_siblings{{ q_stage }} <== s0_siblings{{ q_stage }};
     sv.s0_siblingsC <== s0_siblingsC;
-
+{% if last_level_verification_gt0 %}{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    sv.s0_last_levels{{ stage_info.stage }} <== s0_last_levels{{ stage_info.stage }};
+{% endif %}{% endfor %}    sv.s0_last_levels{{ q_stage }} <== s0_last_levels{{ q_stage }};
+    sv.s0_last_levelsC <== s0_last_levelsC;
+{% endif %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_root <== s{{ step.s }}_root;
 {% endif %}{% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_vals <== s{{ step.s }}_vals;
-    sv.s{{ step.s }}_siblings <== s{{ step.s }}_siblings;
-{% endif %}{% endfor %}    sv.finalPol <== finalPol;
+{% if not step.is_empty %}    sv.s{{ step.s }}_siblings <== s{{ step.s }}_siblings;
+{% endif %}{% if last_level_verification_gt0 %}    sv.s{{ step.s }}_last_levels <== s{{ step.s }}_last_levels;
+{% endif %}{% endif %}{% endfor %}    sv.finalPol <== finalPol;
 {% if pow_bits > 0 %}    sv.nonce <== nonce;
 {% endif %}
 

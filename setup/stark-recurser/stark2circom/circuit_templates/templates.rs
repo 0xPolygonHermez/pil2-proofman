@@ -96,7 +96,11 @@ pub fn gen_recursion_final(
 
     let sha256_template = publics.map(gen_get_sha256_inputs).unwrap_or_default();
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let n_publics_proof = n_publics.saturating_sub(4);
+    // Incoming `publics` = [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics].
+    // rootC takes the first 4, the flag the next 1, and the remaining
+    // `n_publics - 5` are the real publics that get hashed. The flag is verified
+    // (it stays a public input) but is excluded from `publicsProof` / the hash.
+    let n_publics_proof = n_publics.saturating_sub(5);
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
@@ -182,16 +186,26 @@ pub fn gen_final_compressed(
     verifier_filenames: &[String],
     opts: &CircomGenOptions,
 ) -> Result<String> {
+    // The vadcop_final AIR carries the `is_vadcop_final_proof` flag as public @0,
+    // ahead of the real publics. So the StarkVerifier consumes `n_publics` values,
+    // but only the `n_publics - 1` after the flag are re-exposed by this circuit —
+    // the flag is verified but stripped from the public interface. The template
+    // hand-declares the publics (flag first, then `publics[n_real]`) and rebuilds
+    // the full array for the verifier, so we emit stark_signals/stark_assign WITHOUT
+    // their auto `publics` declaration/wiring.
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
+    let n_publics_real = n_publics.saturating_sub(1);
     let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
 
-    let def_opts = StarkInputOptions { add_publics: true, is_final: false, parallel: false };
+    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false };
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
     ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
     ctx.insert("has_publics", &has_publics);
+    ctx.insert("n_publics", &n_publics);
+    ctx.insert("n_publics_real", &n_publics_real);
 
     render(FINAL_COMPRESSED_TMPL, &ctx)
 }

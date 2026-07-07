@@ -517,7 +517,7 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
     Ok(false)
 }
 
-fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
+pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
     if !setup.gpu {
         return Ok(());
     }
@@ -959,7 +959,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<u64> {
     let d_buffers = pctx.get_device_buffers_ptr();
 
     // Phase 2: Load all constant polynomials
@@ -996,7 +996,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         }
     }
 
-    let mut _offset_aggregation = 0;
+    let mut offset_aggregation = 0;
     if aggregation {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -1014,7 +1014,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                         load_device_const_pols_c(
                             airgroup_id as u64,
                             air_id as u64,
-                            _offset_aggregation,
+                            offset_aggregation,
                             d_buffers,
                             const_pols_path,
                             setup.const_pols_size_packed as u64,
@@ -1023,9 +1023,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                             proof_type,
                             only_first_gpu,
                         );
-                        _offset_aggregation += setup.const_pols_size_packed as u64;
+                        offset_aggregation += setup.const_pols_size_packed as u64;
                         if load_tree {
-                            _offset_aggregation += setup.const_tree_size as u64;
+                            offset_aggregation += setup.const_tree_size as u64;
                         }
                     }
                 }
@@ -1047,7 +1047,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     load_device_const_pols_c(
                         airgroup_id as u64,
                         air_id as u64,
-                        _offset_aggregation,
+                        offset_aggregation,
                         d_buffers,
                         const_pols_path,
                         setup.const_pols_size_packed as u64,
@@ -1056,9 +1056,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                         proof_type,
                         only_first_gpu,
                     );
-                    _offset_aggregation += setup.const_pols_size_packed as u64;
+                    offset_aggregation += setup.const_pols_size_packed as u64;
                     if load_tree {
-                        _offset_aggregation += setup.const_tree_size as u64;
+                        offset_aggregation += setup.const_tree_size as u64;
                     }
                 }
             }
@@ -1079,7 +1079,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 load_device_const_pols_c(
                     airgroup_id as u64,
                     0_u64,
-                    _offset_aggregation,
+                    offset_aggregation,
                     d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
@@ -1088,9 +1088,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     proof_type,
                     only_first_gpu,
                 );
-                _offset_aggregation += setup.const_pols_size_packed as u64;
+                offset_aggregation += setup.const_pols_size_packed as u64;
                 if load_tree {
-                    _offset_aggregation += setup.const_tree_size as u64;
+                    offset_aggregation += setup.const_tree_size as u64;
                 }
             }
         }
@@ -1108,7 +1108,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             load_device_const_pols_c(
                 0_u64,
                 0_u64,
-                _offset_aggregation,
+                offset_aggregation,
                 d_buffers,
                 const_pols_path,
                 setup_vadcop_final.const_pols_size_packed as u64,
@@ -1117,9 +1117,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 proof_type,
                 only_first_gpu,
             );
-            _offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
+            offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
             if load_tree {
-                _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
+                offset_aggregation += setup_vadcop_final.const_tree_size as u64;
             }
         }
 
@@ -1136,7 +1136,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             load_device_const_pols_c(
                 0_u64,
                 0_u64,
-                _offset_aggregation,
+                offset_aggregation,
                 d_buffers,
                 const_pols_path,
                 setup_vadcop_final_compressed.const_pols_size_packed as u64,
@@ -1145,13 +1145,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 proof_type,
                 only_first_gpu,
             );
-            _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
+            offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
             if load_tree {
-                _offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
+                offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
             }
         }
     }
-    Ok(())
+    Ok(offset_aggregation)
 }
 
 pub fn add_publics_circom<F: PrimeField64>(
