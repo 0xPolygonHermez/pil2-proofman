@@ -7,7 +7,7 @@ use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
 use crate::hypercube::{to_ext_vec, boolean_point, Ext};
 use crate::ir::{AirIr, Boundary};
 use crate::prover::{powers, seed_transcript, MlProof};
-use crate::sumcheck::verify_sumcheck_round;
+use crate::sumcheck::interpolate_at;
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{
     build_kernels, constraint_weights, kernel_index_of_boundary, ClaimsAtCorner, ClaimsAtPoint, KernelSpec,
@@ -99,10 +99,10 @@ pub fn verify_air(
     transcript.absorb_exts(&proof.air_values);
     transcript.absorb_exts(&proof.airgroup_values);
 
-    // --- Zerocheck.
+    // --- Zerocheck ---
     let r = transcript.challenges(n);
     let alpha = transcript.challenge();
-    let n_evals = ir.max_constraint_degree as usize + 2;
+    let n_evals = ir.max_constraint_degree as usize + 1;
 
     let mut claim = Ext::ZERO;
     let mut lambda = Vec::with_capacity(n);
@@ -112,7 +112,11 @@ pub fn verify_air(
         }
         transcript.absorb_exts(evals);
         let ch = transcript.challenge();
-        claim = verify_sumcheck_round(claim, evals, ch, round)?;
+        let rk = r[round];
+        if (Ext::ONE - rk) * evals[0] + rk * evals[1] != claim {
+            return Err(MlError::SumcheckRound { round });
+        }
+        claim = interpolate_at(evals, ch);
         lambda.push(ch);
     }
 
@@ -142,7 +146,8 @@ pub fn verify_air(
             batched += *w * constraint_value(ir, &src, &temps, t).to_ext();
         }
     }
-    if claim != eq_eval(&r, &lambda) * batched {
+
+    if claim != batched {
         return Err(MlError::FinalCheck("zerocheck claim inconsistent with claimed openings".into()));
     }
 

@@ -106,7 +106,7 @@ pub struct ZerocheckOracle<'a> {
     const_index: Vec<Vec<usize>>,
     /// `[commit][col][offset_idx]` → index into `tables`.
     custom_index: Vec<Vec<Vec<usize>>>,
-    eq_table: Vec<Ext>,
+    eq_suffix: Vec<Ext>,
     publics: Vec<Goldilocks>,
     challenges: Vec<Ext>,
     air_values: Vec<Ext>,
@@ -223,7 +223,7 @@ impl<'a> ZerocheckOracle<'a> {
             wit_index,
             const_index,
             custom_index,
-            eq_table: eq_evals(r),
+            eq_suffix: eq_evals(&r[1..]),
             publics: publics.to_vec(),
             challenges: challenges.to_vec(),
             air_values: air_values.to_vec(),
@@ -246,12 +246,13 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
     }
 
     fn round_degree(&self) -> usize {
-        self.ir.max_constraint_degree as usize + 1
+        // The eq(.,.) polynomial does not count
+        self.ir.max_constraint_degree as usize
     }
 
     fn round_evals(&self) -> Vec<Ext> {
         let n_evals = self.round_degree() + 1;
-        let half = self.eq_table.len() / 2;
+        let half = self.eq_suffix.len();
         let n_tables = self.tables.n_tables();
 
         let mut g = vec![Ext::ZERO; n_evals];
@@ -259,22 +260,19 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
         let mut diffs = vec![Val::zero(); n_tables];
         let mut temps: Vec<Val> = Vec::new();
 
-        for i in 0..half {
+        for j in 0..half {
             for k in 0..n_tables {
-                let v0 = self.tables.val(k, 2 * i);
+                let v0 = self.tables.val(k, 2 * j);
                 vals[k] = v0;
-                diffs[k] = self.tables.val(k, 2 * i + 1) - v0;
+                diffs[k] = self.tables.val(k, 2 * j + 1) - v0;
             }
-            let eq0 = self.eq_table[2 * i];
-            let eq_diff = self.eq_table[2 * i + 1] - eq0;
 
-            let mut eq_x = eq0;
+            let w = self.eq_suffix[j];
             for (x, gx) in g.iter_mut().enumerate() {
                 if x > 0 {
                     for (v, d) in vals.iter_mut().zip(diffs.iter()) {
                         *v = *v + *d;
                     }
-                    eq_x += eq_diff;
                 }
                 let src = TablePoint {
                     ir: self.ir,
@@ -289,12 +287,12 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                 };
                 eval_instrs(self.ir, &src, &mut temps);
                 let mut c = Val::zero();
-                for (t, w) in self.weights.iter().enumerate() {
-                    if !w.is_zero() {
-                        c = c + Val::E(*w) * constraint_value(self.ir, &src, &temps, t);
+                for (t, wt) in self.weights.iter().enumerate() {
+                    if !wt.is_zero() {
+                        c = c + Val::E(*wt) * constraint_value(self.ir, &src, &temps, t);
                     }
                 }
-                *gx += eq_x * c.to_ext();
+                *gx += (Val::E(w) * c).to_ext();
             }
         }
         g
@@ -320,7 +318,12 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                 }
             }
         }
-        fold_mle(&mut self.eq_table, r);
+        // The suffix eq shrinks by one variable per round
+        let half = self.eq_suffix.len() / 2;
+        for j in 0..half {
+            self.eq_suffix[j] = self.eq_suffix[2 * j] + self.eq_suffix[2 * j + 1];
+        }
+        self.eq_suffix.truncate(half);
         self.rounds_left -= 1;
     }
 }
@@ -406,7 +409,7 @@ mod tests {
     use super::*;
     use crate::evaluator::test_air::{fib_ir, fib_trace};
     use crate::hypercube::{mle_eval, to_ext_vec};
-    use crate::sumcheck::verify_sumcheck_round;
+    use crate::sumcheck::interpolate_at;
     use crate::basefold::MlParams;
     use fields::{Field, PrimeField64};
     use rand::{rng, RngExt};
@@ -433,17 +436,22 @@ mod tests {
         let alpha = random_ext();
         let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
 
+        // Gruen inter-round check: (1−r_k)·g'(0) + r_k·g'(1) = prev.
         let mut claim = Ext::ZERO;
         let mut lambda = Vec::new();
         for round in 0..n_bits as usize {
             let evals = oracle.round_evals();
             let ch = random_ext();
-            claim = verify_sumcheck_round(claim, &evals, ch, round).expect("zerocheck round");
+            let rk = r[round];
+            assert_eq!((Ext::ONE - rk) * evals[0] + rk * evals[1], claim, "round {round}");
+            claim = interpolate_at(&evals, ch);
             oracle.bind(ch);
             lambda.push(ch);
         }
 
-        // Reconstruct G(λ) from the true MLEs.
+        // Reconstruct the batched constraint value at λ from the true MLEs. With
+        // Gruen the eq(r,λ) factor is absorbed into the per-round checks, so the
+        // final claim equals the batched value directly (no eq factor).
         let n_rows = 1usize << n_bits;
         let col_a = &witness[0][0];
         let col_b = &witness[0][1];
@@ -456,7 +464,7 @@ mod tests {
         let nl = ev(&consts[0]);
         let c1 = nl * (b_n - (a_l + b_l));
         let c2 = nl * (a_n - b_l);
-        let expected = crate::eq::eq_eval(&r, &lambda) * (c1 + alpha * c2);
+        let expected = c1 + alpha * c2;
         assert_eq!(claim, expected);
     }
 
@@ -472,7 +480,8 @@ mod tests {
         let alpha = random_ext();
         let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha);
         let evals = oracle.round_evals();
-        // g(0) + g(1) = total sum over the hypercube ≠ 0 w.h.p.
-        assert_ne!(evals[0] + evals[1], Ext::ZERO);
+        // The round-0 weighted combination equals Σ_X eq(r,X)·C(X) = C̃(r), which
+        // is nonzero w.h.p. when the trace violates a constraint.
+        assert_ne!((Ext::ONE - r[0]) * evals[0] + r[0] * evals[1], Ext::ZERO);
     }
 }
