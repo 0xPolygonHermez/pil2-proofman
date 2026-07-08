@@ -228,6 +228,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 // supported yet (std arguments, custom commits, …): skip with a
                 // note instead of failing the setup.
                 let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
+                let mlconst_path = files_dir.join(format!("{}.mlconst.bin", item.air_name));
                 match crate::output::mlinfo::build_air_ir(
                     setup_result,
                     n_bits as u32,
@@ -237,6 +238,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                         air_ir
                             .save(&mlinfo_path)
                             .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
+                        // Prebuild the fixed-column commitment so the multilinear
+                        // prover reuses it instead of re-encoding + re-hashing the
+                        // const tree on every proof (and every instance).
+                        let status = write_mlconst(&air_ir, &const_path, &mlconst_path)?;
+                        tracing::debug!("Air '{}': {status}", item.air_name);
                     }
                     Err(e) => {
                         tracing::info!("Air '{}': not provable with the multilinear prover ({e})", item.air_name);
@@ -245,6 +251,9 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                         // layout and produces baffling constraint failures.
                         if mlinfo_path.exists() {
                             fs::remove_file(&mlinfo_path)?;
+                        }
+                        if mlconst_path.exists() {
+                            fs::remove_file(&mlconst_path)?;
                         }
                     }
                 }
@@ -393,6 +402,55 @@ fn write_bin_files_from_pil_code(
 fn log2_usize(n: usize) -> usize {
     assert!(n > 0, "log2_usize: n must be positive");
     (usize::BITS - 1 - n.leading_zeros()) as usize
+}
+
+/// Build the multilinear prover's fixed-column commitment `<AIR>.mlconst.bin`
+/// from the just-written raw `.const` file, so the prover reuses it instead of
+/// re-encoding + re-hashing the const tree on every proof.
+///
+/// The univariate `.consttree` can't be reused: it commits a different object
+/// (row-major leaves, univariate FRI order, its own arity/hash) and the Basefold
+/// opening also needs the raw RS codewords. AIRs with no fixed columns (or no
+/// `.const`) produce no artifact; any stale one is removed.
+fn write_mlconst(
+    air_ir: &proofman_multilinear::AirIr,
+    const_path: &Path,
+    out_path: &Path,
+) -> Result<String> {
+    use fields::Goldilocks;
+
+    let n_const_cols = air_ir.n_const_cols as usize;
+    let n_rows = 1usize << air_ir.n_bits;
+
+    if n_const_cols == 0 || !const_path.exists() {
+        if out_path.exists() {
+            fs::remove_file(out_path)?;
+        }
+        return Ok("no fixed columns — no mlconst artifact".to_string());
+    }
+
+    // Raw `.const`: headerless little-endian u64s, row-major (n_rows × n_cols).
+    let bytes = fs::read(const_path).map_err(|e| anyhow::anyhow!("reading {}: {e}", const_path.display()))?;
+    let expected = n_const_cols * n_rows * 8;
+    anyhow::ensure!(
+        bytes.len() == expected,
+        "{}: expected {expected} bytes ({n_const_cols} cols × {n_rows} rows), found {}",
+        const_path.display(),
+        bytes.len()
+    );
+    let mut cols = vec![vec![Goldilocks::new(0); n_rows]; n_const_cols];
+    for row in 0..n_rows {
+        for (c, col) in cols.iter_mut().enumerate() {
+            let off = (row * n_const_cols + c) * 8;
+            col[row] = Goldilocks::new(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+        }
+    }
+
+    let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+    let matrix = proofman_multilinear::commit_matrix(&refs, &air_ir.params);
+    matrix.save(out_path).map_err(|e| anyhow::anyhow!("writing {}: {e}", out_path.display()))?;
+
+    Ok(format!("committed {n_const_cols} fixed columns ({n_rows} rows)"))
 }
 
 #[cfg(test)]

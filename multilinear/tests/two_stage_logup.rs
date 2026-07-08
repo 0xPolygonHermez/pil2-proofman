@@ -145,7 +145,7 @@ fn two_stage_logup_roundtrip() {
         .expect("constraints hold row-by-row");
 
     let proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+        prove_air(&s.ir, &s.witness, &s.consts, None, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).expect("verify with enforced challenges");
 }
 
@@ -164,7 +164,7 @@ fn unbalanced_bus_shows_in_airgroup_value() {
 
     assert!(!s.airgroup_values[0].is_zero(), "unbalanced bus must have nonzero balance");
     let proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+        prove_air(&s.ir, &s.witness, &s.consts, None, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).expect("per-instance proof still verifies");
 }
 
@@ -173,7 +173,7 @@ fn corrupted_stage2_rejected() {
     let mut s = build(4);
     s.witness[1][1][5] += Goldilocks::ONE; // corrupt one gsum coordinate
     let proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove runs");
+        prove_air(&s.ir, &s.witness, &s.consts, None, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove runs");
     assert!(verify_air(&s.ir, &proof, &[], None, Some(&s.challenges)).is_err());
 }
 
@@ -181,7 +181,7 @@ fn corrupted_stage2_rejected() {
 fn wrong_challenges_rejected() {
     let s = build(4);
     let proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+        prove_air(&s.ir, &s.witness, &s.consts, None, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
 
     // Set-level verification with different globally-derived challenges must fail.
     let mut bad = s.challenges.clone();
@@ -193,7 +193,7 @@ fn wrong_challenges_rejected() {
 fn tampered_airgroup_value_rejected() {
     let s = build(4);
     let mut proof =
-        prove_air(&s.ir, &s.witness, &s.consts, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
+        prove_air(&s.ir, &s.witness, &s.consts, None, &[], &[], &s.challenges, &[], &s.airgroup_values).expect("prove");
     // Claiming a different bus balance must break the LastRow corner check
     // (and the transcript binding).
     proof.airgroup_values[0] += ext_from(1);
@@ -291,7 +291,7 @@ fn custom_commit_logup_roundtrip() {
     check_constraints_on_trace(&ir, &witness, &consts, &customs, &[], &challenges, &[], &agv)
         .expect("constraints hold");
 
-    let proof = prove_air(&ir, &witness, &consts, &customs, &[], &challenges, &[], &agv).expect("prove");
+    let proof = prove_air(&ir, &witness, &consts, None, &customs, &[], &challenges, &[], &agv).expect("prove");
     assert_eq!(proof.custom_roots.len(), 1);
     verify_air(&ir, &proof, &[], None, Some(&challenges)).expect("verify");
 

@@ -59,84 +59,13 @@ impl MlProof {
     }
 }
 
-/// Seed the transcript with the statement: AIR identity and public inputs.
-pub(crate) fn seed_transcript(transcript: &mut MlTranscript, ir: &AirIr, publics: &[Goldilocks]) {
-    transcript.absorb(&[
-        Goldilocks::from_u64(ir.airgroup_id as u64),
-        Goldilocks::from_u64(ir.air_id as u64),
-        Goldilocks::from_u64(ir.n_bits as u64),
-    ]);
-    transcript.absorb(publics);
-}
-
-/// The kernel's table over the hypercube `{0,1}^m` (prover side).
-pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
-    match spec {
-        KernelSpec::Rot(s) => {
-            let base = skip_kernel_table(ell, gamma, lambda_x);
-            if *s == 0 {
-                base
-            } else {
-                rotate_table(&base, *s as i64)
-            }
-        }
-        KernelSpec::Point(row) => {
-            let mut t = vec![Ext::ZERO; 1 << (ell + lambda_x.len())];
-            t[*row as usize] = Ext::ONE;
-            t
-        }
-    }
-}
-
-/// Indices of the challenges the multilinear protocol actually derives:
-/// those of stages `2..=n_stages`. Later stages (quotient/evals/FRI batching)
-/// belong to the univariate protocol and stay zero.
-pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
-    let n_stages = ir.n_stages() as u8;
-    ir.challenge_stages.iter().enumerate().filter(|(_, &st)| st >= 2 && st <= n_stages).map(|(i, _)| i).collect()
-}
-
-/// Derive the global stage challenges from every instance's stage-1
-/// commitment, in instance order.
-///
-/// Returns the full global challenge vector.
-pub fn derive_global_challenges(ir: &AirIr, stage1_roots: &[[Goldilocks; 4]]) -> Vec<Ext> {
-    derive_global_challenges_for(&ir.challenge_stages, ir.n_stages(), stage1_roots)
-}
-
-/// [`derive_global_challenges`] for a heterogeneous instance set: pass the
-/// global challenge-stage list and the maximum number of witness stages among
-/// the participating AIRs.
-pub fn derive_global_challenges_for(
-    challenge_stages: &[u8],
-    n_stages: usize,
-    stage1_roots: &[[Goldilocks; 4]],
-) -> Vec<Ext> {
-    let mut transcript = MlTranscript::new();
-    for root in stage1_roots {
-        transcript.absorb_root(root);
-    }
-    let mut challenges = vec![Ext::ZERO; challenge_stages.len()];
-    for (id, &st) in challenge_stages.iter().enumerate() {
-        if st >= 2 && st as usize <= n_stages {
-            challenges[id] = transcript.challenge();
-        }
-    }
-    challenges
-}
-
-/// Generate a proof that `witness` (per-stage, column-major base columns)
-/// satisfies `ir`'s constraints.
-///
-/// `challenges` is the full global challenge vector (see
-/// [`derive_global_challenges`]); `air_values` / `airgroup_values` are the
-/// instance's value messages (already assembled as extension elements, global
-/// order). All three may be empty for single-stage AIRs.
+/// Generate a proof that `witness` satisfies `ir`'s constraints.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_air(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
+    const_matrix: Option<&CommittedMatrix>,
     customs: &[Vec<Vec<Goldilocks>>],
     publics: &[Goldilocks],
     challenges: &[Ext],
@@ -157,20 +86,31 @@ pub fn prove_air(
     {
         return Err(MlError::Malformed("custom commit shape mismatch".into()));
     }
+
     let n = ir.n_bits as usize;
     let n_rows = 1usize << n;
     let params = &ir.params;
 
+    // Start the transcript with the statement: AIR identity and public inputs.
     let mut transcript = MlTranscript::new();
     seed_transcript(&mut transcript, ir, publics);
 
-    // --- Commitments: const columns first (their root doubles as a verifying
-    // key), then the witness stages.
+    // --- Commitments ---
     let t_commit = Instant::now();
-    let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
-    let const_matrix = commit_matrix(&const_refs, params);
+    // Fixed columns are known at setup time; reuse the prebuilt commitment
+    // (loaded from the proving key) when supplied, otherwise build it here.
+    let owned_const_matrix;
+    let const_matrix: &CommittedMatrix = match const_matrix {
+        Some(m) => m,
+        None => {
+            let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
+            owned_const_matrix = commit_matrix(&const_refs, params);
+            &owned_const_matrix
+        }
+    };
     transcript.absorb_root(&const_matrix.root());
 
+    // Custom columns are computed once before the first proof and reused for all proofs of the same AIR instance.
     let custom_matrices: Vec<CommittedMatrix> = customs
         .iter()
         .map(|cols| {
@@ -181,6 +121,7 @@ pub fn prove_air(
         })
         .collect();
 
+    // Stage commitments: one Merkle root per witness stage, in stage order.
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
@@ -293,7 +234,7 @@ pub fn prove_air(
     }
 
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
-    matrices.push(&const_matrix);
+    matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
     let phi_codeword = combine_codewords(&matrices, &col_coeffs);
 
@@ -322,6 +263,72 @@ pub fn prove_air(
         airgroup_values: airgroup_values.to_vec(),
         global_instance_id: 0,
     })
+}
+
+/// Seed the transcript with the statement: AIR identity and public inputs.
+pub(crate) fn seed_transcript(transcript: &mut MlTranscript, ir: &AirIr, publics: &[Goldilocks]) {
+    transcript.absorb(&[
+        Goldilocks::from_u64(ir.airgroup_id as u64),
+        Goldilocks::from_u64(ir.air_id as u64),
+        Goldilocks::from_u64(ir.n_bits as u64),
+    ]);
+    transcript.absorb(publics);
+}
+
+/// The kernel's table over the hypercube `{0,1}^m` (prover side).
+pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
+    match spec {
+        KernelSpec::Rot(s) => {
+            let base = skip_kernel_table(ell, gamma, lambda_x);
+            if *s == 0 {
+                base
+            } else {
+                rotate_table(&base, *s as i64)
+            }
+        }
+        KernelSpec::Point(row) => {
+            let mut t = vec![Ext::ZERO; 1 << (ell + lambda_x.len())];
+            t[*row as usize] = Ext::ONE;
+            t
+        }
+    }
+}
+
+/// Indices of the challenges the multilinear protocol actually derives:
+/// those of stages `2..=n_stages`. Later stages (quotient/evals/FRI batching)
+/// belong to the univariate protocol and stay zero.
+pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
+    let n_stages = ir.n_stages() as u8;
+    ir.challenge_stages.iter().enumerate().filter(|(_, &st)| st >= 2 && st <= n_stages).map(|(i, _)| i).collect()
+}
+
+/// Derive the global stage challenges from every instance's stage-1
+/// commitment, in instance order.
+///
+/// Returns the full global challenge vector.
+pub fn derive_global_challenges(ir: &AirIr, stage1_roots: &[[Goldilocks; 4]]) -> Vec<Ext> {
+    derive_global_challenges_for(&ir.challenge_stages, ir.n_stages(), stage1_roots)
+}
+
+/// [`derive_global_challenges`] for a heterogeneous instance set: pass the
+/// global challenge-stage list and the maximum number of witness stages among
+/// the participating AIRs.
+pub fn derive_global_challenges_for(
+    challenge_stages: &[u8],
+    n_stages: usize,
+    stage1_roots: &[[Goldilocks; 4]],
+) -> Vec<Ext> {
+    let mut transcript = MlTranscript::new();
+    for root in stage1_roots {
+        transcript.absorb_root(root);
+    }
+    let mut challenges = vec![Ext::ZERO; challenge_stages.len()];
+    for (id, &st) in challenge_stages.iter().enumerate() {
+        if st >= 2 && st as usize <= n_stages {
+            challenges[id] = transcript.challenge();
+        }
+    }
+    challenges
 }
 
 pub(crate) fn powers(base: Ext, n: usize) -> Vec<Ext> {

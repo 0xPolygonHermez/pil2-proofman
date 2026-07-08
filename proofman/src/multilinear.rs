@@ -4,6 +4,13 @@
 //! by the normal witness pipeline, the raw `.const` file and the `.mlinfo.bin`
 //! artifact (the compiled [`AirIr`]) produced by `proofman-setup`, and never
 //! crosses the C++ FFI. See `ProofMan::generate_multilinear_proof`.
+//!
+//! When present, the prover also loads a `.mlconst.bin` artifact — the prebuilt
+//! Basefold commitment of the fixed columns, produced by `proofman-setup`
+//! alongside `.mlinfo.bin`. Reusing it skips re-encoding and re-hashing the
+//! const tree on every proof (and every instance of the same AIR). See
+//! [`ConstMatrixCache`]. Absent, the prover falls back to building the
+//! commitment itself, so older proving keys still work.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use fields::{Field, Goldilocks, PrimeField64};
 use proofman_common::{ProofmanError, ProofmanResult, Setup};
-use proofman_multilinear::AirIr;
+use proofman_multilinear::{AirIr, CommittedMatrix};
 
 /// Cache of loaded `.mlinfo.bin` artifacts, keyed by (airgroup_id, air_id).
 #[derive(Default)]
@@ -39,6 +46,36 @@ impl AirIrCache {
         );
         self.cache.lock().unwrap().insert(key, ir.clone());
         Ok(ir)
+    }
+}
+
+/// Cache of prebuilt fixed-column commitments (`.mlconst.bin`), keyed by
+/// (airgroup_id, air_id). The fixed columns are identical across all instances
+/// of an AIR, so building/loading the commitment once and sharing it avoids
+/// re-encoding + re-hashing the const tree on every proof. `None` for a key
+/// means the artifact is absent (older proving key), in which case the prover
+/// falls back to building the commitment itself.
+#[derive(Default)]
+pub struct ConstMatrixCache {
+    cache: Mutex<HashMap<(usize, usize), Option<Arc<CommittedMatrix>>>>,
+}
+
+impl ConstMatrixCache {
+    pub fn get<F: PrimeField64>(&self, setup: &Setup<F>) -> ProofmanResult<Option<Arc<CommittedMatrix>>> {
+        let key = (setup.airgroup_id, setup.air_id);
+        if let Some(entry) = self.cache.lock().unwrap().get(&key) {
+            return Ok(entry.clone());
+        }
+        let path = setup.setup_path.with_extension("mlconst.bin");
+        let entry = if path.exists() {
+            Some(Arc::new(CommittedMatrix::load(&path).map_err(|e| {
+                ProofmanError::InvalidParameters(format!("loading fixed-column commitment {}: {e}", path.display()))
+            })?))
+        } else {
+            None
+        };
+        self.cache.lock().unwrap().insert(key, entry.clone());
+        Ok(entry)
     }
 }
 

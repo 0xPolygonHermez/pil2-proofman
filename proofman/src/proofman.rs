@@ -56,7 +56,7 @@ use crate::check_tree_paths;
 use crate::Counter;
 use crate::multilinear::{
     ext_values_by_stage, load_const_columns, load_custom_columns, to_goldilocks, trace_to_columns, values_to_ext,
-    AirIrCache,
+    AirIrCache, ConstMatrixCache,
 };
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
@@ -4649,6 +4649,10 @@ where
         drop(roots_map);
 
         let ir_cache = ml_ir_cache;
+        // Prebuilt fixed-column commitments from the proving key (`.mlconst.bin`),
+        // shared across all instances of an AIR. Absent artifacts fall back to
+        // building the commitment inside `prove_air`.
+        let const_matrix_cache = ConstMatrixCache::default();
 
         // Allow pass 2 to recompute the witnesses: the manager skips instances
         // still flagged as calculated. (Deferred here — table instances are
@@ -4771,10 +4775,12 @@ where
             .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
 
             timer_start_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
+            let const_matrix = const_matrix_cache.get(setup)?;
             let mut proof = proofman_multilinear::prove_air(
                 &ir,
                 &witness,
                 &consts,
+                const_matrix.as_deref(),
                 &customs,
                 &publics,
                 &air_challenges,

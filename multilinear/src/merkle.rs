@@ -5,6 +5,7 @@ use fields::{linear_hash_seq, Field, Goldilocks, Hash};
 
 pub const DIGEST_CELLS: usize = 4;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MerkleTree {
     pub arity: u64,
     /// `levels[0]` = leaf digests, each level a flat vec of 4-cell digests;

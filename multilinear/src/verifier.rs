@@ -246,7 +246,7 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         verify_air(&ir, &proof, &publics, None, None).expect("verify");
     }
 
@@ -260,7 +260,7 @@ mod tests {
             let params = MlParams { univariate_skip_bits: ell, ..test_params() };
             let ir = fib_ir(n_bits, params);
             let (witness, consts, publics) = fib_trace(n_bits);
-            let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
             verify_air(&ir, &proof, &publics, None, None).unwrap_or_else(|e| panic!("verify ell={ell}: {e}"));
         }
     }
@@ -274,7 +274,7 @@ mod tests {
             let ir = fib_ir(n_bits, params);
             let (mut witness, consts, publics) = fib_trace(n_bits);
             witness[0][0][7] += Goldilocks::ONE;
-            let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove runs");
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove runs");
             assert!(
                 verify_air(&ir, &proof, &publics, None, None).is_err(),
                 "invalid trace must not verify (ell={ell})"
@@ -288,8 +288,43 @@ mod tests {
         let ir = fib_ir(n_bits, test_params());
         let (mut witness, consts, publics) = fib_trace(n_bits);
         witness[0][0][7] += Goldilocks::ONE;
-        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove runs");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove runs");
         assert!(verify_air(&ir, &proof, &publics, None, None).is_err(), "invalid trace must not verify");
+    }
+
+    /// A prebuilt fixed-column commitment, saved and reloaded as a proving-key
+    /// artifact, must yield a proof identical to the one built inline — and it
+    /// must verify. Locks in the `commit_matrix`/`CommittedMatrix::{save,load}`
+    /// reuse path that the setup `.mlconst.bin` artifact feeds into `prove_air`.
+    #[test]
+    fn reused_const_matrix_matches_inline() {
+        use crate::basefold::{commit_matrix, CommittedMatrix};
+
+        let n_bits = 5;
+        let ir = fib_ir(n_bits, test_params());
+        let (witness, consts, publics) = fib_trace(n_bits);
+
+        // Build, persist, and reload the fixed-column commitment.
+        let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
+        let built = commit_matrix(&const_refs, &ir.params);
+        let path = std::env::temp_dir().join(format!("ml_reused_const_{}.bin", std::process::id()));
+        built.save(&path).expect("save const matrix");
+        let loaded = CommittedMatrix::load(&path).expect("load const matrix");
+        let _ = std::fs::remove_file(&path);
+
+        // Reloaded root and leaves must match the freshly built ones.
+        assert_eq!(loaded.root(), built.root(), "reloaded root differs");
+        assert_eq!(loaded.leaves, built.leaves, "rebuilt leaves differ");
+
+        // A proof reusing the artifact must be byte-identical to one that builds
+        // the commitment inline (same transcript, same challenges).
+        let inline = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove inline");
+        let reused =
+            prove_air(&ir, &witness, &consts, Some(&loaded), &[], &publics, &[], &[], &[]).expect("prove reused");
+        assert_eq!(reused.const_root, inline.const_root, "const roots differ");
+        let enc = |p: &crate::MlProof| bincode::serde::encode_to_vec(p, bincode::config::standard()).expect("encode");
+        assert_eq!(enc(&reused), enc(&inline), "reused proof differs from inline proof");
+        verify_air(&ir, &reused, &publics, None, None).expect("reused proof must verify");
     }
 
     #[test]
@@ -297,7 +332,7 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
 
         // Different publics break both the transcript binding and the
         // first-row constraints.
@@ -312,17 +347,17 @@ mod tests {
         let (witness, consts, publics) = fib_trace(n_bits);
 
         // Tamper with a claimed opening.
-        let mut proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         proof.claims[0][0] += Ext::ONE;
         assert!(verify_air(&ir, &proof, &publics, None, None).is_err());
 
         // Tamper with a zerocheck round polynomial.
-        let mut proof2 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof2 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         proof2.zerocheck_round_polys[0][0] += Ext::ONE;
         assert!(verify_air(&ir, &proof2, &publics, None, None).is_err());
 
         // Tamper with the final polynomial.
-        let mut proof3 = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof3 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         proof3.opening.final_poly[0] += Ext::ONE;
         assert!(verify_air(&ir, &proof3, &publics, None, None).is_err());
     }
@@ -332,7 +367,7 @@ mod tests {
         let n_bits = 4;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
 
         let dir = std::env::temp_dir().join("ml_proof_test");
         std::fs::create_dir_all(&dir).unwrap();

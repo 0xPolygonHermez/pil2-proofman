@@ -96,6 +96,46 @@ impl CommittedMatrix {
     pub fn n_cols(&self) -> usize {
         self.codewords.len()
     }
+
+    /// Serialize the committed matrix as a proving-key artifact. Only the
+    /// codewords and the Merkle tree are stored — the `leaves` (a trivial
+    /// pair-packing of the codewords) are rebuilt on [`load`](Self::load), so
+    /// no NTT encode or Merkle hashing is repeated at prove time.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
+        let payload = (self.n0_bits, &self.codewords, &self.tree);
+        let bytes = bincode::serde::encode_to_vec(payload, bincode::config::standard())
+            .map_err(|e| MlError::Io(format!("serializing committed matrix: {e}")))?;
+        std::fs::write(path, bytes).map_err(|e| MlError::Io(format!("writing {}: {e}", path.display())))
+    }
+
+    /// Load a committed matrix written by [`save`](Self::save), rebuilding the
+    /// Merkle leaves from the stored codewords.
+    pub fn load(path: &std::path::Path) -> Result<Self, MlError> {
+        let bytes = std::fs::read(path).map_err(|e| MlError::Io(format!("reading {}: {e}", path.display())))?;
+        let ((n0_bits, codewords, tree), _): ((usize, Vec<Vec<Goldilocks>>, MerkleTree), _) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .map_err(|e| MlError::Io(format!("decoding committed matrix: {e}")))?;
+        let leaves = pack_base_pairs(&codewords);
+        Ok(CommittedMatrix { codewords, leaves, tree, n0_bits })
+    }
+}
+
+/// Pair-pack RS codewords into Merkle leaves: `leaves[j] = [cols @ j…, cols @ j+N/2…]`.
+/// Trivial (no NTT/hash), so it is cheap to rebuild on load.
+fn pack_base_pairs(codewords: &[Vec<Goldilocks>]) -> Vec<Vec<Goldilocks>> {
+    let half = codewords[0].len() / 2;
+    (0..half)
+        .map(|j| {
+            let mut leaf = Vec::with_capacity(2 * codewords.len());
+            for cw in codewords {
+                leaf.push(cw[j]);
+            }
+            for cw in codewords {
+                leaf.push(cw[j + half]);
+            }
+            leaf
+        })
+        .collect()
 }
 
 /// RS-encode and Merkle-commit a set of columns.
@@ -106,21 +146,8 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
 
     let codewords: Vec<Vec<Goldilocks>> = columns.iter().map(|c| encode_column(c, params.log_blowup)).collect();
     let n0 = codewords[0].len();
-    let half = n0 / 2;
 
-    let leaves: Vec<Vec<Goldilocks>> = (0..half)
-        .map(|j| {
-            let mut leaf = Vec::with_capacity(2 * codewords.len());
-            for cw in &codewords {
-                leaf.push(cw[j]);
-            }
-            for cw in &codewords {
-                leaf.push(cw[j + half]);
-            }
-            leaf
-        })
-        .collect();
-
+    let leaves = pack_base_pairs(&codewords);
     let tree = build_merkle(&leaves, MERKLE_ARITY);
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
