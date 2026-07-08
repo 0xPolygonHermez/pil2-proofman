@@ -100,6 +100,29 @@ pub fn interpolate_at(evals: &[Ext], x: Ext) -> Ext {
     result
 }
 
+/// Evaluate at `x` the polynomial of degree `< nodes.len()` interpolating the
+/// points `(nodes[i], values[i])`, via direct Lagrange. Nodes must be distinct;
+/// `x` may coincide with a node (returns that value, no division by zero).
+/// `O(n²)`; used to resample the univariate-skip round polynomial from cheap
+/// evaluation nodes onto the canonical `0..deg` grid.
+pub fn lagrange_eval(nodes: &[Ext], values: &[Ext], x: Ext) -> Ext {
+    let n = nodes.len();
+    let mut acc = Ext::ZERO;
+    for i in 0..n {
+        let mut num = values[i];
+        let mut den = Ext::ONE;
+        for (j, &nj) in nodes.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            num *= x - nj;
+            den *= nodes[i] - nj;
+        }
+        acc += num * den.inverse();
+    }
+    acc
+}
+
 /// One verifier-side sumcheck round: check `g(0) + g(1) == claim`, then return
 /// the next claim `g(r)`.
 pub fn verify_sumcheck_round(claim: Ext, round_evals: &[Ext], r: Ext, round: usize) -> Result<Ext, MlError> {

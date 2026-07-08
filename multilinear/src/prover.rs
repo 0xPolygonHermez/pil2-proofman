@@ -1,7 +1,7 @@
 //! The multilinear STARK prover: commit → zerocheck → batched PCS opening.
 
 use crate::basefold::{combine_codewords, combine_columns, commit_matrix, prove_opening, CommittedMatrix, OpeningProof};
-use crate::eq::{eq_evals, rotate_table};
+use crate::eq::{rotate_table, skip_kernel_table};
 use crate::error::MlError;
 use crate::hypercube::{dot_base_ext, Ext};
 use crate::ir::AirIr;
@@ -69,19 +69,19 @@ pub(crate) fn seed_transcript(transcript: &mut MlTranscript, ir: &AirIr, publics
     transcript.absorb(publics);
 }
 
-/// The kernel's MLE table over the hypercube (prover side).
-pub(crate) fn kernel_table(spec: &KernelSpec, lambda: &[Ext], eq_lambda: &[Ext]) -> Vec<Ext> {
-    let _ = lambda;
+/// The kernel's table over the hypercube `{0,1}^m` (prover side).
+pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
     match spec {
         KernelSpec::Rot(s) => {
+            let base = skip_kernel_table(ell, gamma, lambda_x);
             if *s == 0 {
-                eq_lambda.to_vec()
+                base
             } else {
-                rotate_table(eq_lambda, *s as i64)
+                rotate_table(&base, *s as i64)
             }
         }
         KernelSpec::Point(row) => {
-            let mut t = vec![Ext::ZERO; eq_lambda.len()];
+            let mut t = vec![Ext::ZERO; 1 << (ell + lambda_x.len())];
             t[*row as usize] = Ext::ONE;
             t
         }
@@ -202,28 +202,47 @@ pub fn prove_air(
 
     // --- Zerocheck: one sumcheck for all EveryRow constraints.
     let t_zerocheck = Instant::now();
+    let ell = ir.params.univariate_skip_bits.min(n);
     let r = transcript.challenges(n);
     let alpha = transcript.challenge();
 
-    let mut oracle =
-        ZerocheckOracle::new(ir, witness, consts, customs, publics, challenges, air_values, airgroup_values, &r, alpha);
-    let mut zerocheck_round_polys = Vec::with_capacity(n);
-    let mut lambda = Vec::with_capacity(n);
-    for _ in 0..n {
+    let mut oracle = ZerocheckOracle::new(
+        ir,
+        witness,
+        consts,
+        customs,
+        publics,
+        challenges,
+        air_values,
+        airgroup_values,
+        &r,
+        alpha,
+        ell,
+    );
+    let mut zerocheck_round_polys = Vec::with_capacity(n - ell + 1);
+    let mut skip_gamma = Ext::ZERO;
+    let mut lambda_x = Vec::with_capacity(n - ell);
+    if ell > 0 {
+        let v = oracle.skip_round_evals();
+        transcript.absorb_exts(&v);
+        skip_gamma = transcript.challenge();
+        oracle.skip_bind(skip_gamma);
+        zerocheck_round_polys.push(v);
+    }
+    for _ in 0..(n - ell) {
         let evals = oracle.round_evals();
         transcript.absorb_exts(&evals);
         let ch = transcript.challenge();
         oracle.bind(ch);
         zerocheck_round_polys.push(evals);
-        lambda.push(ch);
+        lambda_x.push(ch);
     }
     let t_zerocheck = t_zerocheck.elapsed();
 
-    // --- Claimed openings: full (column × kernel) matrix.
+    // --- Claimed openings: full (column × kernel) matrix, at the point `(γ, λ_X)`.
     let t_claims = Instant::now();
     let kernels = build_kernels(ir);
-    let eq_lambda = eq_evals(&lambda);
-    let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, &lambda, &eq_lambda)).collect();
+    let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, ell, skip_gamma, &lambda_x)).collect();
 
     let all_cols: Vec<&[Goldilocks]> = witness
         .iter()

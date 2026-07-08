@@ -112,7 +112,8 @@ struct Setup {
 }
 
 fn build(n_bits: u32) -> Setup {
-    let params = MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0 };
+    let params =
+        MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0, univariate_skip_bits: 0 };
     let ir = logup_ir(n_bits, params);
     let n_rows = 1usize << n_bits;
 
@@ -257,7 +258,8 @@ fn logup_rom_ir(n_bits: u32, params: MlParams) -> AirIr {
 
 #[test]
 fn custom_commit_logup_roundtrip() {
-    let params = MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0 };
+    let params =
+        MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0, univariate_skip_bits: 0 };
     let n_bits = 4u32;
     let n_rows = 1usize << n_bits;
     let ir = logup_rom_ir(n_bits, params);

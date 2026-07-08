@@ -52,12 +52,16 @@ pub struct MlParams {
     pub log_final_poly_len: usize,
     /// Proof-of-work bits (not implemented in v1; must be 0).
     pub grinding_bits: usize,
+    /// Univariate-skip length `ℓ`: the zerocheck collapses its first `ℓ`
+    /// rounds into one univariate round over a size-`2^ℓ` subgroup.
+    /// `0` disables the skip. Must be `≤ n_bits`.
+    pub univariate_skip_bits: usize,
 }
 
 impl Default for MlParams {
     fn default() -> Self {
         // TODO: We should find correct numbers for this!!!
-        Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0 }
+        Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0, univariate_skip_bits: 0 }
     }
 }
 
@@ -456,7 +460,7 @@ mod tests {
     }
 
     fn test_params() -> MlParams {
-        MlParams { log_blowup: 2, n_queries: 8, log_final_poly_len: 2, grinding_bits: 0 }
+        MlParams { log_blowup: 2, n_queries: 8, log_final_poly_len: 2, grinding_bits: 0, univariate_skip_bits: 0 }
     }
 
     /// Full commit → open → verify roundtrip: two matrices (stages), several
