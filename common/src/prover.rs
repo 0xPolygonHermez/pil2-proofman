@@ -11,6 +11,7 @@ pub enum ProofType {
     VadcopFinal,
     VadcopFinalCompressed,
     RecursiveF,
+    RecurserAggregator,
 }
 
 impl ProofType {
@@ -23,6 +24,7 @@ impl ProofType {
             ProofType::VadcopFinal => 4,
             ProofType::VadcopFinalCompressed => 5,
             ProofType::RecursiveF => 6,
+            ProofType::RecurserAggregator => 7,
         }
     }
 }
@@ -37,6 +39,7 @@ impl From<ProofType> for &'static str {
             ProofType::VadcopFinal => "vadcop_final",
             ProofType::VadcopFinalCompressed => "vadcop_final_compressed",
             ProofType::RecursiveF => "recursive_f",
+            ProofType::RecurserAggregator => "recurser_aggregator",
         }
     }
 }
@@ -53,6 +56,7 @@ impl FromStr for ProofType {
             "vadcop_final" => Ok(ProofType::VadcopFinal),
             "vadcop_final_compressed" => Ok(ProofType::VadcopFinalCompressed),
             "recursive_f" => Ok(ProofType::RecursiveF),
+            "recurser_aggregator" => Ok(ProofType::RecurserAggregator),
             _ => Err(()),
         }
     }

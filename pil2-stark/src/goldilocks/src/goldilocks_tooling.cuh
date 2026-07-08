@@ -409,6 +409,7 @@ struct DeviceRecursiveFBuffers
     uint8_t* pinnedBuffer;
     uint8_t* pinnedBufferConstTree;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
+    size_t aux_trace_size = 0;  // bytes of d_aux_trace when owned (standalone mode)
     bool owns_aux_trace;
     bool owns_const_tree;
     std::atomic<bool> const_tree_loaded{false};  // CPU flag: true when const tree copy is complete

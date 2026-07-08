@@ -3,12 +3,13 @@ use libloading::{Library, Symbol};
 use proofman_fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx,
-    ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
+    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
@@ -37,7 +38,10 @@ use proofman_starks_lib_c::{
     calculate_trace_instance_c, wait_stream_commit_done_c,
 };
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
@@ -52,6 +56,9 @@ use crate::{
     generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
 use crate::total_recursive_proofs;
+use crate::check_const_pols_gpu;
+use crate::ensure_gpu_available;
+use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
 use crate::{AggProofs, AggProofsRegister};
@@ -288,6 +295,12 @@ pub struct ProofMan<F: PrimeField64> {
     sctx: Arc<SetupCtx<F>>,
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
+    recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
+    recurser_const_offset: u64,
+    recurser_device_registered: Mutex<Option<String>>,
+    /// Folds write the instance-shared scratch buffers (`aux_trace`, const
+    /// slices) through FFI, so they must be single-flight per instance.
+    recurser_fold_lock: Mutex<()>,
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
@@ -375,6 +388,8 @@ enum OuterAggregationState {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
         if let Err(e) = self.reset() {
             eprintln!("Error during ProofMan cleanup: {:?}", e);
         }
@@ -662,17 +677,8 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
 
-        if !set_gpu_mode_c(gpu) {
-            return Err(ProofmanError::InvalidConfiguration(
-                "GPU mode requested but library was built without CUDA support".into(),
-            ));
-        }
+        ensure_gpu_available(gpu)?;
         if gpu {
-            let n_gpus = get_num_gpus_c();
-            if n_gpus == 0 {
-                return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-            }
-
             init_gpu_setup_c(sctx.max_n_bits_ext as u64, GOLDILOCKS_MERKLE_TREE_ARITY);
         }
 
@@ -1656,6 +1662,204 @@ where
         self._generate_proof(ProvePhaseInputs::Full(), proof_options, ProvePhase::Full)
     }
 
+    pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
+        let mut device_slot = self.recurser_device_registered.lock().unwrap();
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
+        let vadcop_final_stem = self.pctx.global_info.get_setup_path("vadcop_final");
+        let air_info = GlobalInfoAir::new(format!("recurser_aggregator_{recurser_id}"));
+        let setup = Setup::<F>::new(
+            recurser_path_stem,
+            0,
+            0,
+            &air_info,
+            &ProofType::RecurserAggregator,
+            false,
+            false,
+            self.options.gpu,
+            Some(&vadcop_final_stem),
+        )?;
+
+        tracing::info!(
+            "Preparing const-tree for recurser-aggregator setup '{recurser_id}' ({} mode)",
+            if self.options.gpu { "GPU" } else { "CPU" }
+        );
+
+        let d_buffers = if self.options.gpu { Some(self.pctx.get_device_buffers_ptr()) } else { None };
+        check_const_pols_gpu(&setup)?;
+        check_const_tree(&setup, &d_buffers)?;
+
+        let setup = Arc::new(setup);
+
+        if self.options.gpu {
+            match device_slot.as_deref() {
+                Some(existing) if existing != recurser_id => {
+                    tracing::info!(
+                        "recurser '{existing}' currently occupies the GPU const slot; \
+                         '{recurser_id}' will be swapped in on demand at prove time"
+                    );
+                }
+                Some(_) => {}
+                None => {
+                    self.load_recurser_setup_on_device(&setup)?;
+                    *device_slot = Some(recurser_id.to_string());
+                }
+            }
+        }
+
+        tracing::info!(
+            "Registered recurser-aggregator setup '{recurser_id}' (files at {:?}, starkinfo borrowed from {:?})",
+            recurser_path_stem,
+            vadcop_final_stem,
+        );
+
+        let mut cache = self.recurser_setups.write().unwrap();
+        cache.entry(recurser_id.to_string()).or_insert_with(|| setup);
+        drop(cache);
+        drop(device_slot);
+        Ok(())
+    }
+
+    fn load_recurser_setup_on_device(&self, setup: &Setup<F>) -> ProofmanResult<()> {
+        let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+            .map_err(|e| {
+                ProofmanError::InvalidSetup(format!(
+                    "recurser packed const pols missing at {}: {e}",
+                    setup.const_pols_path
+                ))
+            })?
+            .len();
+        let packed_len = packed_len_bytes / 8;
+        let slot = self.setups.recurser_const_slot_size as u64;
+        if packed_len > slot {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+            )));
+        }
+        let proof_type: &str = setup.setup_type.clone().into();
+        let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
+        load_device_setup_c(
+            0,
+            0,
+            proof_type,
+            (&setup.p_setup).into(),
+            d_buffers_ptr,
+            setup.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+        load_device_const_pols_c(
+            0,
+            0,
+            self.recurser_const_offset,
+            d_buffers_ptr,
+            &setup.const_pols_path,
+            packed_len,
+            "",
+            setup.const_tree_size as u64,
+            proof_type,
+            false,
+        );
+        Ok(())
+    }
+
+    pub fn prove_recurser_aggregator(
+        &self,
+        recurser_id: &str,
+        proof_a: &VadcopFinalProof,
+        proof_b: &VadcopFinalProof,
+        free_inputs_a: &[u64],
+        free_inputs_b: &[u64],
+        root_c_recurser_agg: &[u64; 4],
+    ) -> ProofmanResult<VadcopFinalProof> {
+        if proof_a.compressed || proof_b.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "prove_recurser_aggregator: compressed inputs are not supported".to_string(),
+            ));
+        }
+
+        if proof_a.hash != self.pctx.global_info.hash || proof_b.hash != self.pctx.global_info.hash {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "prove_recurser_aggregator: hash family mismatch: proofs are ({}, {}) but this \
+                 prover's proving key uses {}",
+                proof_a.hash, proof_b.hash, self.pctx.global_info.hash
+            )));
+        }
+
+        let setup = {
+            let cache = self.recurser_setups.read().unwrap();
+            cache.get(recurser_id).cloned().ok_or_else(|| {
+                ProofmanError::InvalidParameters(format!(
+                    "Recurser id '{recurser_id}' not registered. Call register_recurser_setup first."
+                ))
+            })?
+        };
+
+        let a = proof_a.proof_with_publics();
+        let b = proof_b.proof_with_publics();
+        let a_body = a.get(1..).unwrap_or(&[]);
+        let b_body = b.get(1..).unwrap_or(&[]);
+
+        let expected_body = (setup.stark_info.n_publics + setup.proof_size) as usize;
+        for (side, body) in [('a', a_body), ('b', b_body)] {
+            if body.len() != expected_body {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "prove_recurser_aggregator: proof_{side} body has {} words, expected \
+                     {expected_body} (vadcop_final n_publics + proof_size); the proof blob is \
+                     malformed or truncated",
+                    body.len()
+                )));
+            }
+        }
+
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
+
+        // The GPU const slot holds one recurser at a time; swap this one in if
+        // another is resident. Folds of the same recurser back-to-back (the
+        // common case — a whole tree) pay nothing. Safe under the fold lock:
+        // nothing reads the slot while we overwrite it.
+        if self.options.gpu {
+            let mut device_slot = self.recurser_device_registered.lock().unwrap();
+            if device_slot.as_deref() != Some(recurser_id) {
+                tracing::info!(
+                    "Swapping recurser '{recurser_id}' into the GPU const slot (was {:?})",
+                    device_slot.as_deref()
+                );
+                self.load_recurser_setup_on_device(&setup)?;
+                *device_slot = Some(recurser_id.to_string());
+            }
+        }
+
+        let raw_proof = crate::generate_recurser_aggregator_proof::<F>(
+            &setup,
+            &self.memory_handler_recursive_witness,
+            a_body,
+            b_body,
+            free_inputs_a,
+            free_inputs_b,
+            root_c_recurser_agg,
+            &self.aux_trace,
+            &self.const_pols,
+            &self.const_tree,
+            self.pctx.get_device_buffers_ptr(),
+        )?;
+
+        VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.clone()).map_err(|e| {
+            ProofmanError::InvalidConfiguration(format!("Failed to wrap recurser output as VadcopFinalProof: {e}"))
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn generate_proof_from_lib(
         &self,
@@ -1724,7 +1928,7 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
+        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, recurser_const_offset) =
             Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
@@ -1853,6 +2057,10 @@ where
             mpi_ctx,
             wcm,
             setups: setups_vadcop,
+            recurser_setups: RwLock::new(HashMap::new()),
+            recurser_const_offset,
+            recurser_device_registered: Mutex::new(None),
+            recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
@@ -2992,9 +3200,8 @@ where
 
             let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
             publics_extended[0..publics.len()].copy_from_slice(publics);
-            let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
-            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
+            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
 
             let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
             recursive2_proof[0] = publics_extended.len() as u64;
@@ -3427,7 +3634,7 @@ where
 
         if self.pctx.gpu && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
-            load_device_const_pols(
+            let _ = load_device_const_pols(
                 &self.pctx,
                 &self.sctx,
                 &self.setups,
@@ -3998,7 +4205,7 @@ where
             None => (false, 0),
         };
 
-        let proof = vec![0; setup.proof_size as usize];
+        let proof = create_buffer_fast(setup.proof_size as usize);
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
@@ -4033,7 +4240,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -4124,14 +4331,23 @@ where
         mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.verify_constraints, options.aggregation, false)?;
+        // End of the init-time aggregation const-pols uploads = start of the
+        // reserved recurser slot (see register_recurser_setup).
+        let aggregation_const_end = load_device_const_pols(
+            &pctx,
+            &sctx,
+            &setups_vadcop,
+            options.verify_constraints,
+            options.aggregation,
+            false,
+        )?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, aggregation_const_end))
     }
 
     #[allow(dead_code)]

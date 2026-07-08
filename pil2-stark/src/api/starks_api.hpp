@@ -213,6 +213,7 @@ extern "C" {
     // =================================================================================
     int fflonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
     int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
+    int plonk_circuit_stats_c(const char *r1cs_file, uint64_t *n_constraints, uint64_t *n_additions);
 
     // MPI calls
     // =================================================================================

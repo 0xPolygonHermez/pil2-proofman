@@ -78,6 +78,8 @@ public:
     ~PlonkSetup();
 
     void generateZkey(string r1csFilename, string pTauFilename, string zkeyFilename);
+
+    void computeConstraintCounts(string r1csFilename, uint64_t &nConstraints, uint64_t &nAdditions);
 };
 }  // namespace Plonk
 

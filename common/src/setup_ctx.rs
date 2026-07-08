@@ -54,6 +54,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
+    pub recurser_const_slot_size: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
@@ -98,11 +99,21 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 gpu,
                 None,
             )?;
+
+            let recurser_const_slot_size = if gpu {
+                let n_constants = setup_vadcop_final.stark_info.n_constants as usize;
+                let n_rows = 1usize << setup_vadcop_final.stark_info.stark_struct.n_bits;
+                1 + n_constants + n_rows * n_constants
+            } else {
+                0
+            };
+
             let total_const_pols_size = sctx_compressor.total_const_pols_size
                 + sctx_recursive1.total_const_pols_size
                 + sctx_recursive2.total_const_pols_size
                 + setup_vadcop_final.const_pols_size_packed
-                + setup_vadcop_final_compressed.const_pols_size_packed;
+                + setup_vadcop_final_compressed.const_pols_size_packed
+                + recurser_const_slot_size;
 
             let mut total_const_tree_size = sctx_compressor.total_const_tree_size
                 + sctx_recursive1.total_const_tree_size
@@ -201,6 +212,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_trace_size_compressor,
                 total_const_pols_size,
                 total_const_tree_size,
+                recurser_const_slot_size,
             })
         } else {
             Ok(SetupsVadcop {
@@ -211,6 +223,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 setup_vadcop_final_compressed: None,
                 total_const_pols_size: 0,
                 total_const_tree_size: 0,
+                recurser_const_slot_size: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_trace_size: 0,

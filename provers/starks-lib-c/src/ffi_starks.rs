@@ -74,6 +74,16 @@ pub fn generate_plonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) 
     unsafe { plonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
 }
 
+/// Plonkish gate counts (constraints, additions) for an r1cs file — no ptau
+/// needed. Returns `None` if the file could not be processed.
+pub fn get_plonk_circuit_stats_c(r1cs_file: &str) -> Option<(u64, u64)> {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let mut n_constraints: u64 = 0;
+    let mut n_additions: u64 = 0;
+    let ret = unsafe { plonk_circuit_stats_c(c_r1cs.as_ptr(), &mut n_constraints, &mut n_additions) };
+    (ret == 0).then_some((n_constraints, n_additions))
+}
+
 pub fn initialize_agg_readiness_tracker_c() {
     unsafe {
         initialize_agg_readiness_tracker();
