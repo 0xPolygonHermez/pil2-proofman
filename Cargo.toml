@@ -69,6 +69,7 @@ default-members = [
     "setup/stark-recurser",
     "setup/pil2-stark",
     "setup/exps-codegen",
+    "pil2-components/lib/std/rs",
 ]
 
 resolver = "2"
