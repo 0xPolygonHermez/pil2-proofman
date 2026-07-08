@@ -782,7 +782,7 @@ fn get_global_name(global_info: &Value) -> String {
 }
 
 /// Compile PIL source by spawning `pil2com` (JS compiler) as a subprocess.
-/// Install pil2com: `npm install` (reads package.json in the repo root).
+/// Install pil2com: `npm install` (reads package.json in the setup crate).
 ///
 /// Thin wrapper around [`crate::commands::compile_pil::run_compile_pil`] so
 /// that the recursive setup pipeline and the public CLI command share a
@@ -802,22 +802,22 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 
 /// Find the `pil2com` JS binary, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
-///   2. npm install in the proofman repo itself (compile-time baked root) — covers
+///   2. npm install in the setup crate itself (compile-time baked dir) — covers
 ///      consumers that use proofman as a path/git dependency from another workspace
 ///   3. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
 ///   4. Walk up from the executable's location to find `node_modules/.bin/pil2com`
 ///   5. Global install: `pil2com` on PATH
 ///
-/// Install via: `npm install`  (reads package.json in the repo root)
+/// Install via: `npm install`  (reads package.json in the setup crate)
 pub(crate) fn resolve_pil2com_exec() -> Option<String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
             return Some(path);
         }
     }
-    // npm install in the proofman repo root (this crate sits at <root>/setup/pil2-stark)
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let baked = Path::new(PROOFMAN_ROOT).join("node_modules/.bin/pil2com");
+    // npm install in the setup crate dir (this crate sits at <root>/setup/pil2-stark)
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let baked = Path::new(CRATE_ROOT).join("node_modules/.bin/pil2com");
     if baked.is_file() {
         if let Ok(abs) = baked.canonicalize() {
             return abs.to_str().map(|s| s.to_string());
@@ -848,15 +848,15 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// run `npm install` in the proofman repo root (where `package.json` lives)
+/// run `npm install` in the setup crate dir (where `package.json` lives)
 /// and resolve again. Setup owns making its own tooling available — callers
 /// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
     if let Some(path) = resolve_pil2com_exec() {
         return Some(path);
     }
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let root = Path::new(PROOFMAN_ROOT);
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let root = Path::new(CRATE_ROOT);
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     if !root.join("package.json").is_file() {
         return None;
@@ -878,7 +878,7 @@ pub(crate) fn ensure_pil2com_exec() -> Option<String> {
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Search order:
 ///   1. Env var override
-///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)
+///   2. `<setup-crate-dir>/node_modules/<package>/<sub_path>` (compile-time baked)
 ///   3. CWD-relative `node_modules/<package>/<sub_path>`
 ///   4. Walk up from the running executable
 fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Option<String> {
@@ -887,9 +887,9 @@ fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Opt
             return Some(v);
         }
     }
-    // Compile-time path to the proofman repo root.
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let baked = std::path::Path::new(PROOFMAN_ROOT).join("node_modules").join(package).join(sub_path);
+    // Compile-time path to the setup crate dir (where node_modules lives).
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let baked = std::path::Path::new(CRATE_ROOT).join("node_modules").join(package).join(sub_path);
     if baked.is_dir() {
         if let Ok(abs) = baked.canonicalize() {
             return Some(abs.to_string_lossy().into_owned());

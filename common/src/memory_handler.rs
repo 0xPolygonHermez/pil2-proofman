@@ -475,7 +475,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fields::{Field, Goldilocks};
+    use proofman_fields::{Field, Goldilocks};
 
     // These exercise the pool's accounting (take/release/reset round-trip, leak
     // detection, cancel). They don't assert anything about pinning, so they pass on

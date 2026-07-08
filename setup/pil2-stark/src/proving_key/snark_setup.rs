@@ -526,7 +526,7 @@ pub fn gen_snark_setup(
 ///   2. `node_modules/snarkjs` relative to cwd
 ///   3. Walk up from the executable's location to find `node_modules/snarkjs`
 ///
-/// Install via: `npm install`  (reads package.json in the repo root)
+/// Install via: `npm install`  (reads package.json in the setup crate)
 fn resolve_snarkjs_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SNARKJS_PATH") {
         let pb = PathBuf::from(&p);
