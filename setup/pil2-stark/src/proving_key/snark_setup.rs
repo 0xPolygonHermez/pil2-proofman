@@ -405,7 +405,7 @@ pub fn gen_snark_setup(
     tracing::info!("Compiling final...");
     let compile_final = std::process::Command::new(config.circom_exec)
         .args([
-            "--O2",
+            "--O1",
             "--r1cs",
             "--inspect",
             "--wasm",
