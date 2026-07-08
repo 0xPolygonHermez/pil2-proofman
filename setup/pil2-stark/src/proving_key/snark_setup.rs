@@ -121,7 +121,7 @@ pub fn gen_snark_setup(
     tracing::info!("Compiling recursivef...");
     let compile_rf = std::process::Command::new(config.circom_exec)
         .args([
-            "--O1",
+            "--O2",
             "--r1cs",
             "--prime",
             "goldilocks",
@@ -164,6 +164,7 @@ pub fn gen_snark_setup(
         airgroup_name: Some("Recursivef".to_string()),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;

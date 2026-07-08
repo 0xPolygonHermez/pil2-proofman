@@ -7,6 +7,8 @@
 //! The main entry point is [`plonk2pil`], which dispatches to the appropriate
 //! setup variant based on the `setup_type` argument.
 
+pub mod estimate;
+pub mod merge_copies;
 pub mod packers;
 pub mod r1cs;
 pub mod setups;
@@ -120,6 +122,34 @@ mod tests {
     use super::r1cs::to_plonk::*;
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
+
+    /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
+    /// assert + verify_merge_soundness). ESTIMATE_HASH selects Poseidon1 (default) or
+    /// Poseidon2.
+    ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
+    ///     cargo test -p stark-recurser run_compressor --release -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn run_compressor() {
+        use proofman_common::hash_family::GateRole;
+        let Ok(f) = std::env::var("ESTIMATE_R1CS") else {
+            eprintln!("set ESTIMATE_R1CS=/path/to/file.r1cs");
+            return;
+        };
+        let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
+        let hash_id = std::env::var("ESTIMATE_HASH").unwrap_or_else(|_| "Poseidon1".into());
+        let opts = PlonkOptions {
+            airgroup_name: Some("Compressor".into()),
+            max_constraint_degree: Some(5),
+            hash_id,
+            merge_copies: true,
+        };
+        let res = plonk2pil(&bytes, "compressor", &opts).expect("compressor packing failed");
+        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let cgi = get_custom_gates_info(&r1cs);
+        let n_pos = cgi.n(GateRole::PoseidonCompression) + cgi.n(GateRole::PoseidonSponge);
+        eprintln!("\n=== {f}  compressor OK: nBits={} nUsed={} n_pos={}", res.n_bits, res.n_used, n_pos);
+    }
 
     /// Build a minimal R1CS with a single multiplication constraint and no custom gates.
     fn build_simple_r1cs_bytes() -> Vec<u8> {
