@@ -81,7 +81,7 @@ pub fn gen_recursive_test_setup(
     tracing::info!("Compiling {}...", circom_name);
     let compile_status = std::process::Command::new(circom_exec)
         .args([
-            "--O1",
+            "--O2",
             "--r1cs",
             "--prime",
             "goldilocks",
@@ -128,8 +128,12 @@ pub fn gen_recursive_test_setup(
     // Use airgroup_name = "Compressor" (deterministic, avoids random hex suffix).
     // -------------------------------------------------------------------------
     let max_constraint_degree = if setup_type == "compressor" { Some(5) } else { None };
-    let plonk_opts =
-        PlonkOptions { airgroup_name: Some(NAME_FILE.to_string()), max_constraint_degree, hash_id: hash.to_string() };
+    let plonk_opts = PlonkOptions {
+        airgroup_name: Some(NAME_FILE.to_string()),
+        max_constraint_degree,
+        hash_id: hash.to_string(),
+        merge_copies: true,
+    };
     let r1cs_path = build_inner.join(format!("{}.r1cs", circom_name));
     let r1cs_data =
         fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS file: {}", r1cs_path.display()))?;

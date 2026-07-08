@@ -1,21 +1,23 @@
 //! Aggregation setup.
-//! 62 committed pols, 30 S cols, 5 rows/Poseidon1, 3 CMul/row.
+//! 48 committed pols, 24 S cols, 5 rows/Poseidon1, 2 CMul/row.
+//! Chain slots relocated low (a[16..31], a[32..47]) so the gate fits a 48-col band.
+//! Plonk band is a[0..15] on Poseidon rows (a[16..47] = chains); a[0..23] elsewhere.
 
-use super::super::super::r1cs::to_plonk::{
-    ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk,
-};
-use super::super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
-use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
+use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
 
-const COMMITTED_POLS: usize = 62;
-const N_COLS: usize = 30;
+const COMMITTED_POLS: usize = 48;
+const N_COLS: usize = 24;
 const POSEIDON_ROWS: usize = 5;
-const COL_P1: usize = 30; // chain 1 slot (width-16: cols 30..45)
-const COL_P2: usize = 46; // chain 2 slot (width-16: cols 46..61)
-const CMUL_PER_ROW: usize = 3;
+const COL_P1: usize = 16; // chain 1 slot (width-16: cols 16..31)
+const COL_P2: usize = 32; // chain 2 slot (width-16: cols 32..47)
+const CMUL_PER_ROW: usize = 2;
+const TREESEL_ROWS: usize = 2; // TreeSelector8 now spans 2 rows (a[0..14] + a[0..14]')
 const POSEIDON_WIDTH: usize = 16;
 
 fn rand_hex() -> String {
@@ -26,7 +28,7 @@ fn rand_hex() -> String {
 type PR = (usize, usize, usize); // (row, n_used, max_used)
 
 pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
-    let (plonk_constraints, plonk_additions) = r1cs2plonk(r1cs);
+    let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
 
     let mut cgi = get_custom_gates_info(r1cs);
@@ -40,21 +42,26 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector);
     let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
-    // Plonk piggyback tiers. CHECK_PLONK fires at PR', PR, FINAL' — those rows expose
-    // all 10 plonk gates → ten_extra. FINAL exposes gates 6,7,8,9 (a[18..29] free) →
-    // four tier. INIT exposes only gates 8,9 (a[24..29]; a[18..23] hold overflow anchors)
-    // → two tier, alongside SelectVal1. EvPol4 → three tier. TreeSelector8 consumes the
-    // entire plonk band a[0..29] — no piggyback.
-    let ten_count = n_total_poseidon * 3; // PR' + PR + FINAL'
-    let four_count = n_total_poseidon; // FINAL row
-    let three_count = n_ev_pol4_rows;
-    let two_count = n_sel_val1_rows + n_total_poseidon; // SelectVal1 + INIT row
-    let _ = n_tree_sel8_rows;
+    // Plonk piggyback tiers (a[48] band). 8 gates: q0 = gates 0,1 (a[0..5]); q1 = gates 2..7
+    // (a[6..23]). A row = one q0 constraint (gates 0,1) + one q1 constraint (its q1 gates).
+    //   PR', FINAL' : q0 (gates 0,1) + q1 gates 2,3,4  (a[0..14]) → "five" rows.
+    //   PR          : q0 (gates 0,1) + q1 gate 2       (a[0..8], a[9..14]=anchors) → "three" rows.
+    //   INIT/FINAL  : S0 = I/O → no plonk.
+    //   cmul row    : q1 gates 6,7 only (a[18..23]; cmul uses a[0..17]).
+    //   evpol row   : q1 gate 7 only  (a[21..23]; evpol uses a[0..20]).
+    //   TreeSelector8 (2 rows, a[0..14]) / FFT4 (a[0..23]) / SelectVal1 (a[0..21]) → no piggyback.
+    // Slot layout: q0 half always (1,2); q1 half end varies. cmul/evpol slots have no q0.
+    let n_tree_sel8_rows = n_tree_sel8_rows * TREESEL_ROWS;
+    let five_count = n_total_poseidon * 2; // PR' + FINAL'
+    let three_count = n_total_poseidon; // PR
+    let cmul_plonk_count = n_cmul_rows; // gates 6,7 on cmul rows
+    let ev_plonk_count = n_ev_pol4_rows; // gate 7 on evpol rows
 
     cgi.n_plonk_rows = {
-        let mut partial: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut half: Vec<(usize, usize)> = Vec::new();
-        let (mut ten, mut four, mut three, mut two) = (ten_count, four_count, three_count, two_count);
+        let mut partial: HashMap<String, (usize, usize)> = HashMap::new(); // (next, end)
+        let mut half: Vec<(usize, usize)> = Vec::new(); // open q1 halves (next, end)
+        let (mut five, mut three) = (five_count, three_count);
+        let (mut cmul_pl, mut ev_pl) = (cmul_plonk_count, ev_plonk_count);
         let mut rows = 0usize;
         for c in &plonk_constraints {
             let k = ckey(c);
@@ -66,23 +73,27 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             } else if !half.is_empty() {
                 let mut pr = half.remove(0);
                 pr.0 += 1;
-                partial.insert(k, pr);
-            } else if ten > 0 {
-                ten -= 1;
-                partial.insert(k, (1, 2));
-                half.push((2, 10));
-            } else if four > 0 {
-                four -= 1;
-                partial.insert(k, (7, 10));
+                if pr.0 == pr.1 {
+                    // 1-gate q1 half already exhausted; nothing to track.
+                } else {
+                    partial.insert(k, pr);
+                }
+            } else if five > 0 {
+                five -= 1;
+                partial.insert(k, (1, 2)); // q0 gates 0,1
+                half.push((2, 5)); // q1 gates 2,3,4
             } else if three > 0 {
                 three -= 1;
-                partial.insert(k, (8, 10));
-            } else if two > 0 {
-                two -= 1;
-                partial.insert(k, (9, 10));
+                partial.insert(k, (1, 2)); // q0 gates 0,1
+                half.push((2, 3)); // q1 gate 2 only
+            } else if cmul_pl > 0 {
+                cmul_pl -= 1;
+                partial.insert(k, (7, 8)); // opener took gate 6; gate 7 can coalesce
+            } else if ev_pl > 0 {
+                ev_pl -= 1; // q1 gate 7 only (single gate, no partial to track)
             } else {
-                partial.insert(k.clone(), (1, 2));
-                half.push((2, 10));
+                partial.insert(k.clone(), (1, 2)); // q0 gates 0,1
+                half.push((2, 8)); // q1 gates 2..7
                 rows += 1;
             }
         }
@@ -125,10 +136,10 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
     let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
 
-    let mut ten_extra: Vec<usize> = Vec::new();
-    let mut four_extra: Vec<usize> = Vec::new();
-    let mut three_extra: Vec<usize> = Vec::new();
-    let mut two_extra: Vec<usize> = Vec::new();
+    let mut five_extra: Vec<usize> = Vec::new(); // PR', FINAL' rows (q0 gates 0,1 + q1 gates 2,3,4)
+    let mut three_extra: Vec<usize> = Vec::new(); // PR row (q0 gates 0,1 + q1 gate 2)
+    let mut cmul_extra: Vec<usize> = Vec::new(); // cmul rows (q1 gates 6,7)
+    let mut ev_extra: Vec<usize> = Vec::new(); // evpol rows (q1 gate 7)
 
     // CustPoseidon1 (compression) gates come first, then Poseidon1 (sponge) gates,
     // matching the fixed-col patterns in aggregator.pil.
@@ -159,24 +170,22 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     //   im[5]=h1 anchors (11 used + 1 pad), im[6]=midState (intermediate, unused),
     //   im[7]=h2 anchors (11 used + pad), im[8]=R26, im[9]=R27, im[10]=R28, im[11]=R29
     //
-    // Witness layout per gate (5 rows):
-    //   row 0 (INIT):    a[0..15]=input, a[16..17]=key (compression only; 0 for sponge),
-    //                    a[18..23]=anchors[16..21], a[30..45]=R0, a[46..61]=R1
-    //   row 1 (PR'):     a[30..45]=R2, a[46..61]=R3
-    //   row 2 (PR):      a[30..45]=R4, a[46..61]=anchors[0..15]
-    //   row 3 (FINAL'):  a[30..45]=R26, a[46..61]=R27
-    //   row 4 (FINAL):   a[0..15]=output, a[30..45]=R28, a[46..61]=R29
+    // Witness layout per gate (5 rows; chain1=a[16..31], chain2=a[32..47]):
+    //   row 0 (INIT):    a[0..15]=input,                       a[16..31]=R0,  a[32..47]=R1
+    //   row 1 (PR'):     a[15]=key0,                           a[16..31]=R2,  a[32..47]=R3
+    //   row 2 (PR):      a[9..14]=anchors[16..21], a[15]=key1,  a[16..31]=R4,  a[32..47]=anchors[0..15]
+    //   row 3 (FINAL'):                                        a[16..31]=R26, a[32..47]=R27
+    //   row 4 (FINAL):   a[0..15]=output,                      a[16..31]=R28, a[32..47]=R29
     //
     // The 22 lane-0 partial anchors are circom im[5][0..10] (rounds 0..10) and
-    // im[7][0..10] (rounds 11..21), placed as anchors[0..15] → chain-2 a[46..61] @ PR
-    // and anchors[16..21] → a[18..23] @ INIT.
+    // im[7][0..10] (rounds 11..21): anchors[0..15] → chain-2 a[32..47] @ PR,
+    // anchors[16..21] → a[9..14] @ PR (same row).
     let process_poseidon1 = |s: &[u64],
                              is_compression: bool,
                              s_map: &mut [Vec<u32>],
                              cv: &mut [Vec<u64>],
-                             ten_extra: &mut Vec<usize>,
-                             four_extra: &mut Vec<usize>,
-                             two_extra: &mut Vec<usize>,
+                             five_extra: &mut Vec<usize>,
+                             three_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
         let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
@@ -214,8 +223,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         }
 
         // 22 lane-0 partial anchors: rounds 0..10 = anchors_h1[0..10], rounds 11..21 =
-        // anchors_h2[0..10]. Placed as anchors[0..15] → chain-2 a[46..61] @ PR (row r+2)
-        // and anchors[16..21] → plonk band a[18..23] @ INIT (row r).
+        // anchors_h2[0..10]. anchors[0..15] → chain-2 a[32..47] @ PR (row r+2); the 6
+        // overflow anchors[16..21] → a[9..14] on the SAME PR row (read unprimed by the PIL).
         let anchor = |round: usize| -> u64 {
             if round <= 10 {
                 anchors_h1[round]
@@ -227,16 +236,15 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[round + COL_P2][r + 2] = anchor(round) as u32; // anchors[0..15] → chain-2 @ PR
         }
         for round in 16..22 {
-            s_map[(round - 16) + 18][r] = anchor(round) as u32; // anchors[16..21] → a[18..23] @ INIT
+            s_map[(round - 16) + 9][r + 2] = anchor(round) as u32; // anchors[16..21] → a[9..14] @ PR
         }
 
-        // Key bits at INIT row cols 16..17 (compression only). At INIT, plonk gate 5
-        // (cols 15..17) doesn't fire (gate-5 selector = CHECK_PLONK, which excludes
-        // INIT), so cells 16, 17 are free for non-plonk witness. Avoids the conflict
-        // that would arise if key bits sat at a row where gate 5 fires (PR', PR, FINAL').
+        // Key bits (compression only) relocated to a[15]: key0 on PR' (row r+1), key1 on
+        // PR (row r+2). a[15] is the spare cell after 5 plonk gates (a[0..14]) on those rows.
+        // Can't use a[16..17] (chain-1 R0 at INIT) as the old layout did.
         if let Some(k) = key {
-            s_map[16][r] = k[0] as u32;
-            s_map[17][r] = k[1] as u32;
+            s_map[15][r + 1] = k[0] as u32;
+            s_map[15][r + 2] = k[1] as u32;
         }
 
         for off in 0..POSEIDON_ROWS {
@@ -245,15 +253,12 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             }
         }
 
-        // Plonk piggyback queues. CHECK_PLONK fires at PR', PR, FINAL' — all 10 plonk
-        // gates active at those rows → ten_extra. INIT fires gates 8,9 only (a[24..29]):
-        // gates 6,7 (a[18..23]) host the 6 partial overflow anchors. FINAL fires gates
-        // 6,7,8,9 (a[18..29] free at FINAL).
-        two_extra.push(r); // INIT row (gates 8,9 via POSEIDON1_INIT)
-        ten_extra.push(r + 1); // PR' row (CHECK_PLONK)
-        ten_extra.push(r + 2); // PR row  (CHECK_PLONK; chain-1 = R4, chain-2 = anchors, plonk band free)
-        ten_extra.push(r + 3); // FINAL' row (CHECK_PLONK)
-        four_extra.push(r + 4); // FINAL row (gates 6,7,8,9 fire via POSEIDON1_FINAL)
+        // Plonk piggyback queues (a[0..15] band on Poseidon rows). PR' and FINAL' expose
+        // gates 0..4 (a[0..14]) → five_extra. PR exposes gates 0..2 (a[0..8]; a[9..14]=anchors,
+        // a[15]=key1) → three_extra. INIT/FINAL host input/output → no plonk.
+        five_extra.push(r + 1); // PR'
+        three_extra.push(r + 2); // PR
+        five_extra.push(r + 3); // FINAL'
     };
 
     tracing::info!("Processing {} CustPoseidon1 (compression) gates...", cust_poseidon1_uses.len());
@@ -263,9 +268,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             true, // is_compression
             &mut s_map,
             &mut cv,
-            &mut ten_extra,
-            &mut four_extra,
-            &mut two_extra,
+            &mut five_extra,
+            &mut three_extra,
             r,
         );
         r += POSEIDON_ROWS;
@@ -278,16 +282,16 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             false, // is_compression
             &mut s_map,
             &mut cv,
-            &mut ten_extra,
-            &mut four_extra,
-            &mut two_extra,
+            &mut five_extra,
+            &mut three_extra,
             r,
         );
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, n_poseidon_rows);
 
-    // ── CMul (3/row) ──────────────────────────────────────────────────────────
+    // ── CMul (2/row) ──────────────────────────────────────────────────────────
+    // 2 cmuls per row on a[0..8], a[9..17]; a[18..23] free → plonk gates 6,7 (cmul_extra).
     tracing::info!("Processing {} cmul gates...", cmul_uses.len());
     let mut cmul_row: i64 = -1;
     let mut cmul_used = 0usize;
@@ -310,6 +314,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             for item in cv.iter_mut() {
                 item[r] = 0;
             }
+            cmul_extra.push(r); // a[18..23] free → plonk gates 6,7
             cmul_row = r as i64;
             cmul_used = 1;
             r += 1;
@@ -318,6 +323,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     assert_eq!(r, n_poseidon_rows + n_cmul_rows);
 
     // ── EvPol4 ────────────────────────────────────────────────────────────────
+    // EvPol4 uses a[0..20]; a[21..23] free → plonk gate 7 (ev_extra).
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     for cgu in &ev_pol4_uses {
         for (i, item) in s_map.iter_mut().enumerate().take(21) {
@@ -326,7 +332,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        three_extra.push(r);
+        ev_extra.push(r);
         r += 1;
     }
 
@@ -363,22 +369,28 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         r += 1;
     }
 
-    // ── TreeSelector8 ─────────────────────────────────────────────────────────
-    // TreeSelector8 signal layout: values[8][3] + keys[3] + out[3] = 30 signals.
-    // Occupies the entire plonk-band a[0..29] → no plonk piggyback at TreeSel rows.
+    // ── TreeSelector8 (2 rows) ──────────────────────────────────────────────────
+    // 30 signals split 24 + 6: the 8 vals[8][3] (signals 0..23) on the gate row a[0..23];
+    // key[3]+res[3] (signals 24..29) on the next row a[0..5]. Packing the gate row full
+    // minimizes the copy openings leaking to the second row. No plonk piggyback.
     tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
     for cgu in &tree_sel8_uses {
         assert_eq!(cgu.signals.len(), 30);
-        for (i, item) in s_map.iter_mut().enumerate().take(30) {
-            item[r] = cgu.signals[i] as u32;
+        for (i, item) in s_map.iter_mut().enumerate().take(24) {
+            item[r] = cgu.signals[i] as u32; // vals → a[0..23] @ row r
+        }
+        for (i, item) in s_map.iter_mut().enumerate().take(6) {
+            item[r + 1] = cgu.signals[24 + i] as u32; // key+res → a[0..5] @ row r+1
         }
         for item in cv.iter_mut() {
             item[r] = 0;
+            item[r + 1] = 0;
         }
-        r += 1;
+        r += TREESEL_ROWS;
     }
 
     // ── SelectVal1 ────────────────────────────────────────────────────────────
+    // Uses a[0..21]; only a[22..23] free (not a full 3-cell gate) → no plonk piggyback.
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
         assert_eq!(cgu.signals.len(), 22);
@@ -388,7 +400,6 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        two_extra.push(r);
         r += 1;
     }
 
@@ -434,15 +445,19 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                 s_map[3 * i + 1][row] = c[1] as u32;
                 s_map[3 * i + 2][row] = c[2] as u32;
             }
+            // Opener took gate pr.1; only keep the slot open if a later gate can coalesce.
             pr.1 += 1;
-            partial.insert(k, pr);
+            if pr.1 < pr.2 {
+                partial.insert(k, pr);
+            }
             if pure_plonk_rows.contains(&row) {
                 plonk_in_pure += 1;
             } else {
                 plonk_in_custom += 1;
             }
-        } else if !ten_extra.is_empty() {
-            let row = ten_extra.remove(0);
+        } else if !five_extra.is_empty() {
+            // PR' / FINAL': q0 gates 0,1 (dup) now; q1 gates 2,3,4 queued.
+            let row = five_extra.remove(0);
             cv[0][row] = c[3];
             cv[1][row] = c[4];
             cv[2][row] = c[5];
@@ -455,54 +470,54 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[4][row] = c[1] as u32;
             s_map[5][row] = c[2] as u32;
             partial.insert(k.clone(), (row, 1, 2));
-            half.push((row, 2, 10));
-            plonk_in_custom += 1;
-        } else if !four_extra.is_empty() {
-            let row = four_extra.remove(0);
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
-            // Initial dup across gates 6, 7, 8, 9 (cells 18..29).
-            for i in 6..10 {
-                s_map[3 * i][row] = c[0] as u32;
-                s_map[3 * i + 1][row] = c[1] as u32;
-                s_map[3 * i + 2][row] = c[2] as u32;
-            }
-            partial.insert(k, (row, 7, 10));
+            half.push((row, 2, 5));
             plonk_in_custom += 1;
         } else if !three_extra.is_empty() {
+            // PR: q0 gates 0,1 (dup) now; q1 gate 2 queued.
             let row = three_extra.remove(0);
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
-            // Initial dup across gates 7, 8, 9 (cells 21..29).
-            for i in 7..10 {
-                s_map[3 * i][row] = c[0] as u32;
-                s_map[3 * i + 1][row] = c[1] as u32;
-                s_map[3 * i + 2][row] = c[2] as u32;
-            }
-            partial.insert(k, (row, 8, 10));
+            cv[0][row] = c[3];
+            cv[1][row] = c[4];
+            cv[2][row] = c[5];
+            cv[3][row] = c[6];
+            cv[4][row] = c[7];
+            s_map[0][row] = c[0] as u32;
+            s_map[1][row] = c[1] as u32;
+            s_map[2][row] = c[2] as u32;
+            s_map[3][row] = c[0] as u32;
+            s_map[4][row] = c[1] as u32;
+            s_map[5][row] = c[2] as u32;
+            partial.insert(k.clone(), (row, 1, 2));
+            half.push((row, 2, 3));
             plonk_in_custom += 1;
-        } else if !two_extra.is_empty() {
-            let row = two_extra.remove(0);
+        } else if !cmul_extra.is_empty() {
+            // cmul row: q1 gates 6,7 (no q0). Dup across gates 6,7 (cells 18..23).
+            let row = cmul_extra.remove(0);
             cv[5][row] = c[3];
             cv[6][row] = c[4];
             cv[7][row] = c[5];
             cv[8][row] = c[6];
             cv[9][row] = c[7];
-            // Initial dup across gates 8, 9 (cells 24..29).
-            for i in 8..10 {
+            for i in 6..8 {
                 s_map[3 * i][row] = c[0] as u32;
                 s_map[3 * i + 1][row] = c[1] as u32;
                 s_map[3 * i + 2][row] = c[2] as u32;
             }
-            partial.insert(k, (row, 9, 10));
+            partial.insert(k, (row, 7, 8));
+            plonk_in_custom += 1;
+        } else if !ev_extra.is_empty() {
+            // evpol row: q1 gate 7 only (single gate, no partial to track).
+            let row = ev_extra.remove(0);
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            s_map[21][row] = c[0] as u32;
+            s_map[22][row] = c[1] as u32;
+            s_map[23][row] = c[2] as u32;
             plonk_in_custom += 1;
         } else {
+            // Pure-plonk row: q0 gates 0,1 (dup) now; q1 gates 2..7 queued.
             pure_plonk_rows.insert(r);
             plonk_in_pure += 1;
             cv[0][r] = c[3];
@@ -517,7 +532,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[4][r] = c[1] as u32;
             s_map[5][r] = c[2] as u32;
             partial.insert(k.clone(), (r, 1, 2));
-            half.push((r, 2, 10));
+            half.push((r, 2, 8));
             r += 1;
         }
     }
@@ -530,6 +545,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         plonk_in_custom,
     );
 
+    // Apply copy-merge remap to every placed cell (incl. custom-gate I/O) so the
+    // connection argument ties merged signals — the soundness-critical sweep,
+    // then assert each merged equality is actually re-enforced in-band.
+    apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_COLS);
     let sv = build_s_polynomials(N_COLS, n, n_bits, r, &s_map);
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 
