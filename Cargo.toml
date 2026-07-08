@@ -3,7 +3,9 @@ version = "1.0.1-alpha"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
+homepage = "https://github.com/0xPolygonHermez/pil2-proofman"
 repository = "https://github.com/0xPolygonHermez/pil2-proofman"
+documentation = "https://docs.rs/pil2-proofman"
 categories = ["cryptography"]
 
 [workspace]
