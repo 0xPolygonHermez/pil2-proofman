@@ -291,7 +291,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(5),
+        blowup_factor: Some(4),
         folding_factor: Some(4),
         pow_bits: Some(22),
         last_level_verification: Some(2),

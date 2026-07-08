@@ -182,9 +182,9 @@ pub(crate) fn run_recursive_setup(
             //     nQueries (enlarging recursive1's verifier) and recompress, so recursive1 fills the
             //     shared 2^(THRESHOLD-1) domain. Queries only ever INCREASE → soundness never weakens.
             let mut compressor_ss_override: Option<serde_json::Value> = None; // bumped starkStruct
-            // recursive1's n_used is affine in the compressor's nQueries (n_used = base + k*nQueries;
-            // base is large & query-independent), so a proportional guess undershoots. After one
-            // measured point we fit the slope from two points and solve for the exact nQueries.
+                                                                              // recursive1's n_used is affine in the compressor's nQueries (n_used = base + k*nQueries;
+                                                                              // base is large & query-independent), so a proportional guess undershoots. After one
+                                                                              // measured point we fit the slope from two points and solve for the exact nQueries.
             let mut prev_point: Option<(u64, u64)> = None; // (nQueries, n_used)
             const MAX_R1_ATTEMPTS: usize = 6;
             let r1_result = 'attempt: loop {
@@ -263,11 +263,7 @@ pub(crate) fn run_recursive_setup(
                         // A2: the original air's starkinfo path is only the right nQueries knob
                         // for the NO-compressor path; with a compressor the knob is the
                         // compressor's nQueries (handled via RecursiveTooSmallError below).
-                        stark_info_path: if compressor_result.is_none() {
-                            Some(item.si_path.as_path())
-                        } else {
-                            None
-                        },
+                        stark_info_path: if compressor_result.is_none() { Some(item.si_path.as_path()) } else { None },
                         defer_witness_lib: false, // recursive1 that bails too-small skips its own gen anyway
                         existing_pil_info: existing.clone(),
                         circom_exec: &circom_exec,

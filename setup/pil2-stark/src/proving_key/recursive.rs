@@ -567,19 +567,13 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            // JS uses { blowupFactor: 3, lastLevelVerification: 1 } for recursive1/2.
-            // Compressor uses blowupFactor: 2 and the default lastLevelVerification: 2.
             let make_recursive_settings = || {
-                let (blowup, last_level) = if template == RecursiveTemplate::Compressor {
-                    (2, None) // compressor: default lastLevelVerification (2)
-                } else {
-                    (3, None) // recursive1/2: JS uses lastLevelVerification: 1
-                };
+                let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
                 crate::types::stark_struct::StarkSettings {
                     blowup_factor: Some(blowup),
                     folding_factor: Some(3),
                     final_degree: Some(5),
-                    last_level_verification: last_level,
+                    last_level_verification: None,
                     ..Default::default()
                 }
             };

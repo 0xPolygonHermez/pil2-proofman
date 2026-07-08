@@ -26,16 +26,32 @@ pub const PLONK_CELLS: usize = 3;
 /// (input, round0-4, round26-29, output) = 176; the `0..11` loop writes im1 (11)
 /// plus im2 (11) = 22, so the Sponge body = 198. The Compression variant additionally
 /// writes fb and sb (`s_map[16]`/`s_map[17]`), giving 200.
-pub fn cells_per_gate(role: GateRole) -> usize {
+///
+/// `GateRole::TreeSelector` is NOT fixed-width: it covers TreeSelector4 (17 signals,
+/// Poseidon2) and TreeSelector8 (30 signals, Poseidon1). Its cell count must be read from
+/// the actual `CustomGateUse.signals.len()` (see [`tree_selector_cells`]), so this
+/// function returns `None` for it and callers must resolve it from the r1cs.
+pub fn cells_per_gate(role: GateRole) -> Option<usize> {
     match role {
-        GateRole::PoseidonSponge => 198,
-        GateRole::PoseidonCompression => 200,
-        GateRole::CMul => 9,          // signals.len() == 9
-        GateRole::EvPol4 => 21,       // take(21)
-        GateRole::Fft4 => 24,         // take(24)
-        GateRole::TreeSelector => 17, // take(17)
-        GateRole::SelectVal1 => 22,   // take(22)
+        GateRole::PoseidonSponge => Some(198),
+        GateRole::PoseidonCompression => Some(200),
+        GateRole::CMul => Some(9),        // signals.len() == 9
+        GateRole::EvPol4 => Some(21),     // take(21)
+        GateRole::Fft4 => Some(24),       // take(24)
+        GateRole::TreeSelector => None,   // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
+        GateRole::SelectVal1 => Some(22), // take(22)
     }
+}
+
+/// Cells one TreeSelector gate writes, read from the actual signal count of its first
+/// `CustomGateUse` (TreeSelector4 = 17, TreeSelector8 = 30). Falls back to 17 when the
+/// role has no gate uses in this r1cs (count is then 0, so the value is irrelevant).
+fn tree_selector_cells(r1cs: &R1csFile, cgi: &super::r1cs::to_plonk::CustomGatesInfo) -> usize {
+    use super::r1cs::to_plonk::filter_gate_uses;
+    filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector))
+        .first()
+        .map(|u| u.signals.len())
+        .unwrap_or(17)
 }
 
 /// Per-component slice of the estimate.
@@ -82,10 +98,13 @@ impl CellEstimate {
 /// gate placements), so only the PLONK count varies between the raw and merged paths.
 fn estimate_with_plonk_count(r1cs: &R1csFile, n_plonk: usize) -> CellEstimate {
     let cgi = get_custom_gates_info(r1cs);
+    let tree_cells = tree_selector_cells(r1cs, &cgi);
 
     let mk_gate = |name, role| {
         let count = cgi.n(role);
-        let cells_per = cells_per_gate(role);
+        // Fixed-width roles come from cells_per_gate; TreeSelector is width-variable
+        // (TreeSelector4=17 / TreeSelector8=30), resolved from the actual signal count.
+        let cells_per = cells_per_gate(role).unwrap_or(tree_cells);
         ComponentCells { name, count, cells_per, cells: count * cells_per }
     };
 
@@ -206,10 +225,13 @@ mod tests {
 
     #[test]
     fn cells_per_gate_matches_placement_widths() {
-        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), 198);
-        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), 200);
-        assert_eq!(cells_per_gate(GateRole::CMul), 9);
-        assert_eq!(cells_per_gate(GateRole::Fft4), 24);
+        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), Some(198));
+        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), Some(200));
+        assert_eq!(cells_per_gate(GateRole::CMul), Some(9));
+        assert_eq!(cells_per_gate(GateRole::Fft4), Some(24));
+        // TreeSelector is width-variable (TreeSelector4=17 / TreeSelector8=30) — resolved
+        // from the r1cs, not a fixed constant.
+        assert_eq!(cells_per_gate(GateRole::TreeSelector), None);
         assert_eq!(PLONK_CELLS, 3);
     }
 
