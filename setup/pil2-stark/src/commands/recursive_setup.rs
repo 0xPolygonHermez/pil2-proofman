@@ -187,7 +187,7 @@ pub(crate) fn run_recursive_setup(
                                                                               // measured point we fit the slope from two points and solve for the exact nQueries.
             let mut prev_point: Option<(u64, u64)> = None; // (nQueries, n_used)
             const MAX_R1_ATTEMPTS: usize = 6;
-            let r1_result = 'attempt: loop {
+            let r1_result = (|| -> Result<crate::proving_key::recursive::RecursiveSetupResult> {
                 for attempt in 0..MAX_R1_ATTEMPTS {
                     // (Re)run the compressor if this air has one.
                     if has_compressor {
@@ -276,7 +276,7 @@ pub(crate) fn run_recursive_setup(
 
                     tracing::info!("Running recursive1 for air '{}'", item.air_name);
                     match crate::proving_key::recursive::gen_recursive_setup(&r1_cfg, &witness_tracker) {
-                        Ok(r) => break 'attempt r,
+                        Ok(r) => return Ok(r),
                         Err(e) if e.is::<crate::proving_key::recursive::NeedsCompressorError>() => {
                             let n_bits =
                                 e.downcast_ref::<crate::proving_key::recursive::NeedsCompressorError>().unwrap().n_bits;
@@ -377,12 +377,12 @@ pub(crate) fn run_recursive_setup(
                         }
                     }
                 }
-                return Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(
                     "Air '{}' recursive1 did not converge to the shared domain after {} attempts",
                     item.air_name,
                     MAX_R1_ATTEMPTS
-                ));
-            };
+                ))
+            })()?;
 
             tracing::info!("Recursive1 setup complete for air '{}'", item.air_name);
 
