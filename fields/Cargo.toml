@@ -12,15 +12,12 @@ categories = { workspace = true }
 
 [dependencies]
 paste = "1.0.15"
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+proofman-starks-lib-c = { workspace = true }
 cfg-if = "1.0"
 
 serde = { version = "1.0.130", default-features = false, features = ["derive"] }
 num-bigint = { version = "0.4", default-features = false }
-
-# Linked only on x86_64, matching the `cfg(target_arch = "x86_64")` FFI paths in
-# the source; other architectures (e.g. Apple Silicon) use the pure-Rust fallback.
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-proofman-starks-lib-c = { workspace = true }
 
 [features]
 default = []

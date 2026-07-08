@@ -34,7 +34,7 @@ __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_
 }
 
 // Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
-// source of truth so every producer and consumer agrees. ColMajorTiled matches pre-1.0.0-beta behavior.
+// source of truth so every producer and consumer agrees. ColMajorTiled matches previous behavior.
 __host__ __device__ __forceinline__ Layout fixedLayout() {
     return Layout::ColMajorTiled;
 }

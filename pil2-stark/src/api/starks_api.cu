@@ -1498,7 +1498,7 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
     // prepare_blocks transposes const pols into fixedLayout() (ColMajorTiled) on the host -- this is the
-    // input layout calculate_const_tree_gpu (via ldeNativeTiled) expects. Restores pre-1.0.0-beta behavior.
+    // input layout calculate_const_tree_gpu (via ldeNativeTiled) expects. Restores previous behavior.
     fromRowMajorToColMajor(N, nCols, d_pol, d_aux, fixedLayout(), stream);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
@@ -1541,7 +1541,7 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
     // Custom commits are a fixed/preprocessed section -> fixedLayout() (ColMajorTiled), restoring the
-    // pre-1.0.0-beta GPU format. Transpose row-major input straight to tiled.
+    // previous GPU format. Transpose row-major input straight to tiled.
     fromRowMajorToColMajor(N, nCols, d_buffer, d_customCommitsPols, fixedLayout(), stream);
 
     Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
@@ -1608,7 +1608,7 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     NTTGoldilocksGPU ntt;
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
-    // Const tree uses fixedLayout() (ColMajorTiled), restoring the pre-sppark (pre-1.0.0-beta) GPU format
+    // Const tree uses fixedLayout() (ColMajorTiled), restoring the previous GPU format
     // so the produced .consttree_gpu matches that baseline. Call ldeNativeTiled directly: plain ntt.LDE
     // would dispatch to sppark (flat) for const dims. It is out-of-place so src stays intact.
     ntt.ldeNativeTiled((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream);
