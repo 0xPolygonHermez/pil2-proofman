@@ -15,6 +15,7 @@
 #include "goldilocks_trace_layout.cuh"   // getBufferOffset (column-major accessor)
 #include "sppark_lde.cuh"                // extern "C" prototypes (decl/def check)
 
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
 
@@ -140,7 +141,9 @@ static void ensure_prover_coset(const gpu_t &gpu)
 // persist for the process lifetime). All per-call state now lives in SpparkStreamCtx below; this
 // only guards the lazy coset re-seed.
 struct SpparkDevice {
-    bool coset_done = false;     // SHIFT=7 coset override applied to this device's tables
+    // Atomic so the double-checked lock-free fast path is race-free: the unlocked
+    // read must acquire-synchronize with the locked writer that publishes the coset.
+    std::atomic<bool> coset_done{false};  // SHIFT=7 coset override applied to this device's tables
 };
 
 // Per-caller-stream sppark context: a private sppark stream + scratch + handoff events, keyed by
@@ -203,13 +206,13 @@ static int sp_device_id()
         abort();
     }
     SpparkDevice &d = g_dev[dev];
-    if (!d.coset_done) {
+    if (!d.coset_done.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> g(g_dev_init_mutex);
-        if (!d.coset_done) {
+        if (!d.coset_done.load(std::memory_order_relaxed)) {
             (void)NTTParameters::all(false);
             (void)NTTParameters::all(true);
             ensure_prover_coset(gpu);   // align this device's LDE coset with SHIFT=7
-            d.coset_done = true;
+            d.coset_done.store(true, std::memory_order_release);
         }
     }
     return dev;

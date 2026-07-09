@@ -179,8 +179,7 @@ impl Toolchain {
             .arg("-shared")
             .args(&self.gencode)
             .args(objs)
-            .arg("-lcudart")
-            .arg("-o")
+            .args(LINK_FLAGS)
             .arg(dest)
             .output()
             .context("failed to spawn nvcc (link)")?;
@@ -197,8 +196,7 @@ impl Toolchain {
             .arg("-shared")
             .args(&self.compile_flags)
             .args(cus)
-            .arg("-lcudart")
-            .arg("-o")
+            .args(LINK_FLAGS)
             .arg(dest)
             .output()
             .context("failed to spawn nvcc (compile+link)")?;
@@ -208,3 +206,10 @@ impl Toolchain {
         Ok(())
     }
 }
+
+/// Trailing link flags shared by both link paths, ending in `-o` so the caller
+/// appends the destination. `-cudart static` embeds the CUDA runtime so the
+/// `.so` carries no `libcudart.so.<major>` dependency and loads regardless of
+/// the host's CUDA toolkit major, fixing `dlopen failed: libcudart.so.N`
+/// errors. `--strip-all` offsets the ~700KB the static runtime adds.
+const LINK_FLAGS: &[&str] = &["-cudart", "static", "-Xlinker", "--strip-all", "-o"];
