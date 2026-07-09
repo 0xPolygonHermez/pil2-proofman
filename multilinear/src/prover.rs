@@ -1,6 +1,7 @@
 //! The multilinear STARK prover: commit → zerocheck → batched PCS opening.
 
-use crate::basefold::{combine_codewords, combine_columns, commit_matrix, prove_opening, CommittedMatrix, OpeningProof};
+use crate::pcs::{combine_columns, CommittedMatrix, OpeningProof};
+use crate::pcs::{MlPcs, Pcs};
 use crate::eq::{rotate_table, skip_kernel_table};
 use crate::error::MlError;
 use crate::hypercube::{dot_base_ext, Ext};
@@ -104,7 +105,7 @@ pub fn prove_air(
         Some(m) => m,
         None => {
             let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
-            owned_const_matrix = commit_matrix(&const_refs, params);
+            owned_const_matrix = Pcs::commit(&const_refs, params);
             &owned_const_matrix
         }
     };
@@ -115,7 +116,7 @@ pub fn prove_air(
         .iter()
         .map(|cols| {
             let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
-            let matrix = commit_matrix(&refs, params);
+            let matrix = Pcs::commit(&refs, params);
             transcript.absorb_root(&matrix.root());
             matrix
         })
@@ -125,7 +126,7 @@ pub fn prove_air(
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
-        let matrix = commit_matrix(&refs, params);
+        let matrix = Pcs::commit(&refs, params);
         transcript.absorb_root(&matrix.root());
         stage_matrices.push(matrix);
         if stage_idx == 0 {
@@ -236,10 +237,10 @@ pub fn prove_air(
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
-    let phi_codeword = combine_codewords(&matrices, &col_coeffs);
+    let phi_codeword = Pcs::combine_codewords(&matrices, &col_coeffs);
 
     let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
-    let opening = prove_opening(params, &mut transcript, phi_table, w_table, phi_codeword, &matrices);
+    let opening = Pcs::open(params, &mut transcript, phi_table, w_table, phi_codeword, &matrices);
     let t_opening = t_opening.elapsed();
 
     log::debug!(

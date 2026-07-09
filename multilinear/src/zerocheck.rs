@@ -570,7 +570,7 @@ mod tests {
     use crate::evaluator::test_air::{fib_ir, fib_trace};
     use crate::hypercube::{mle_eval, to_ext_vec};
     use crate::sumcheck::interpolate_at;
-    use crate::basefold::MlParams;
+    use crate::pcs::MlParams;
     use fields::{Field, PrimeField64};
     use rand::{rng, RngExt};
 

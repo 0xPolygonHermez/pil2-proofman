@@ -8,7 +8,7 @@
 //! the extension field) and the verifier (one evaluation on the claimed
 //! openings at the final sumcheck point).
 
-use crate::basefold::MlParams;
+use crate::pcs::MlParams;
 use crate::error::MlError;
 use serde::{Deserialize, Serialize};
 

@@ -17,7 +17,6 @@
 //! Everything is pure Rust on top of the `fields` crate (Goldilocks + cubic
 //! extension, Poseidon2 Merkle trees and Fiat–Shamir transcript).
 
-mod basefold;
 mod encoding;
 mod eq;
 mod error;
@@ -25,13 +24,13 @@ mod evaluator;
 mod hypercube;
 mod ir;
 mod merkle;
+mod pcs;
 mod prover;
 mod sumcheck;
 mod transcript;
 mod verifier;
 mod zerocheck;
 
-pub use basefold::*;
 pub use encoding::*;
 pub use eq::*;
 pub use error::*;
@@ -39,6 +38,7 @@ pub use evaluator::*;
 pub use hypercube::*;
 pub use ir::*;
 pub use merkle::*;
+pub use pcs::*;
 pub use prover::*;
 pub use sumcheck::*;
 pub use transcript::*;

@@ -18,6 +18,7 @@
 
 use crate::encoding::{domain_point, encode_column, eval_ext_poly_at_base};
 use crate::error::MlError;
+use crate::pcs::MlPcs;
 use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
 use crate::merkle::MerkleTree;
 use crate::sumcheck::{verify_sumcheck_round, ProductOracle, SumcheckOracle};
@@ -30,7 +31,7 @@ pub const MERKLE_ARITY: u64 = 4;
 
 /// Build a Merkle tree over `leaves`.
 #[inline]
-fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64) -> MerkleTree {
+pub(crate) fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64) -> MerkleTree {
     #[cfg(feature = "ffi-poseidon2")]
     {
         MerkleTree::from_ffi(leaves, arity)
@@ -471,6 +472,50 @@ pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
         }
     }
     out
+}
+
+/// The Basefold scheme (sumcheck interleaved with 2:1 FRI folding + spot-check
+/// queries): the [`MlPcs`] implementation whose methods delegate to the free
+/// functions in this module.
+pub struct Basefold;
+
+impl MlPcs for Basefold {
+    type Commitment = CommittedMatrix;
+    type OpeningProof = OpeningProof;
+
+    fn commit(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedMatrix {
+        commit_matrix(columns, params)
+    }
+
+    fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<Ext> {
+        combine_codewords(matrices, coeffs)
+    }
+
+    fn open(
+        params: &MlParams,
+        transcript: &mut MlTranscript,
+        phi_table: Vec<Ext>,
+        w_table: Vec<Ext>,
+        phi_codeword: Vec<Ext>,
+        matrices: &[&CommittedMatrix],
+    ) -> OpeningProof {
+        prove_opening(params, transcript, phi_table, w_table, phi_codeword, matrices)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn verify(
+        params: &MlParams,
+        transcript: &mut MlTranscript,
+        n_vars: usize,
+        sigma: Ext,
+        proof: &OpeningProof,
+        stage_roots: &[[Goldilocks; 4]],
+        stage_n_cols: &[usize],
+        column_coeffs: &[Ext],
+        w_final: impl FnOnce(&[Ext]) -> Ext,
+    ) -> Result<Vec<Ext>, MlError> {
+        verify_opening(params, transcript, n_vars, sigma, proof, stage_roots, stage_n_cols, column_coeffs, w_final)
+    }
 }
 
 #[cfg(test)]

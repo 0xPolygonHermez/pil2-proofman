@@ -308,7 +308,7 @@ pub mod test_air {
     //!   is avoided by gating with the fixed column `not_last`),
     //!   FirstRow: a − pub0 = 0, b − pub1 = 0.
     use super::*;
-    use crate::basefold::MlParams;
+    use crate::pcs::MlParams;
     use crate::ir::{Boundary, ConstraintIr, IrBuilder};
     use fields::Field;
 
@@ -381,7 +381,7 @@ pub mod test_air {
 mod tests {
     use super::test_air::{fib_ir, fib_trace};
     use super::*;
-    use crate::basefold::MlParams;
+    use crate::pcs::MlParams;
     use fields::Field;
 
     #[test]

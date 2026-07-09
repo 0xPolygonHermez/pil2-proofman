@@ -1,6 +1,6 @@
 //! The multilinear STARK verifier.
 
-use crate::basefold::verify_opening;
+use crate::pcs::{MlPcs, Pcs};
 use crate::eq::{eq_eval, skip_kernel_eval};
 use crate::error::MlError;
 use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
@@ -217,7 +217,7 @@ pub fn verify_air(
     stage_n_cols.push(ir.n_const_cols as usize);
     stage_n_cols.extend(ir.custom_commits.iter().map(|c| c.n_cols as usize));
 
-    verify_opening(params, &mut transcript, n, sigma, &proof.opening, &roots, &stage_n_cols, &col_coeffs, |z| {
+    Pcs::verify(params, &mut transcript, n, sigma, &proof.opening, &roots, &stage_n_cols, &col_coeffs, |z| {
         kernels
             .iter()
             .zip(kernel_weights.iter())
@@ -231,7 +231,7 @@ pub fn verify_air(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::basefold::MlParams;
+    use crate::pcs::MlParams;
     use crate::evaluator::test_air::{fib_ir, fib_trace};
     use crate::prover::prove_air;
     use fields::Field;
@@ -297,7 +297,7 @@ mod tests {
     /// reuse path that the setup `.mlconst.bin` artifact feeds into `prove_air`.
     #[test]
     fn reused_const_matrix_matches_inline() {
-        use crate::basefold::{commit_matrix, CommittedMatrix};
+        use crate::pcs::{commit_matrix, CommittedMatrix};
 
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
