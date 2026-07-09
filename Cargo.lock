@@ -184,9 +184,9 @@ dependencies = [
 
 [[package]]
 name = "build-probe-mpi"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d78ace2bb02fc18ad937f1599a853fcf3da2327bc1eb3c8e62b1f2fe4573bfd6"
+checksum = "abee715b93fb80cbca8602265e0c2acd40b60df81fab1f3fd29a734babd697e7"
 dependencies = [
  "pkg-config",
  "shell-words",
@@ -200,9 +200,9 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "bytes"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
+checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cc"
@@ -417,18 +417,18 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.15"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+checksum = "d85363c37faeca707aef026efa9f3b34d077bce547e48f770770625c6013679e"
 dependencies = [
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-deque"
-version = "0.8.6"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+checksum = "5181e0de7b61eb03a81e347d6dd8797bae9da5146707b51077e2d71a54ec0ceb"
 dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
@@ -445,18 +445,18 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-queue"
-version = "0.3.12"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
+checksum = "803d13fb3b09d88be9f4dbc29062c66b19bf7170867ceb746d2a8689bf6c7a26"
 dependencies = [
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.21"
+version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "csv"
@@ -918,15 +918,41 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.8.2"
+version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "mpi"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "302522157fd9f0ae43eb9792db89932045a29ae57b15a525724c2b3d0981c338"
+dependencies = [
+ "build-probe-mpi",
+ "conv",
+ "libffi",
+ "mpi-sys",
+ "once_cell",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
+name = "mpi-sys"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b828192ea0f41740b6c2a40beaa140c63e8ae51aef58b6edf5d23c0340c4f2b"
+dependencies = [
+ "bindgen",
+ "build-probe-mpi",
+ "cc",
+]
 
 [[package]]
 name = "multimap"
@@ -1232,12 +1258,12 @@ dependencies = [
  "anyhow",
  "clap",
  "indexmap",
+ "mpi",
  "pil2-pilout",
  "pil2-stark-recurser",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
- "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1329,6 +1355,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "libloading",
+ "mpi",
  "num-traits",
  "pil2-std-lib",
  "proofman-common",
@@ -1336,7 +1363,6 @@ dependencies = [
  "proofman-fields",
  "proofman-hints",
  "proofman-macros",
- "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
@@ -1386,10 +1412,10 @@ dependencies = [
  "env",
  "libc",
  "libloading",
+ "mpi",
  "num_cpus",
  "proofman-fields",
  "proofman-macros",
- "proofman-mpi",
  "proofman-starks-lib-c",
  "proofman-util",
  "rayon",
@@ -1452,32 +1478,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "proofman-mpi"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67aa20a9f9545231a3f3a625c0da7c9c9cf25ae26e7453bdf0b08da6f4514aa8"
-dependencies = [
- "build-probe-mpi",
- "conv",
- "libffi",
- "once_cell",
- "proofman-mpi-sys",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
-name = "proofman-mpi-sys"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5f4fbc97ddd5516e2f38bc80ca5b64092aab5eb920a780e2606e570dafc9948"
-dependencies = [
- "bindgen",
- "build-probe-mpi",
- "cc",
 ]
 
 [[package]]
@@ -1762,9 +1762,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryu"
@@ -2645,18 +2645,18 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.52"
+version = "0.8.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
+checksum = "b7cbbc0a705a0fd05cc3676525980d2bf5a9bc4adac6d6475209a7887cf59d19"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.52"
+version = "0.8.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
+checksum = "e2e817b7b52d0c7358d3246da9d69935ebb18116b2b102b4230dac079b4862f5"
 dependencies = [
  "proc-macro2",
  "quote",

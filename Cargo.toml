@@ -102,7 +102,7 @@ prost = "0.13"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
-mpi = { package = "proofman-mpi", version = "0.8.1" }
+mpi = "0.8.2" 
 crossbeam-channel = "0.5.15"
 rayon = "1"
 serde = { version = "1.0.130", features = ["derive"] }
