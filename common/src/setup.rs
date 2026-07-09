@@ -196,7 +196,7 @@ impl<F: PrimeField64> Setup<F> {
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
-                .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
+                .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
