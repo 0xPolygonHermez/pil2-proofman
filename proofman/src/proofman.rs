@@ -1670,6 +1670,7 @@ where
             }
         }
 
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
         let mut device_slot = self.recurser_device_registered.lock().unwrap();
         {
             let cache = self.recurser_setups.read().unwrap();
