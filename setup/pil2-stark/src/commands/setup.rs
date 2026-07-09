@@ -412,11 +412,7 @@ fn log2_usize(n: usize) -> usize {
 /// (row-major leaves, univariate FRI order, its own arity/hash) and the Basefold
 /// opening also needs the raw RS codewords. AIRs with no fixed columns (or no
 /// `.const`) produce no artifact; any stale one is removed.
-fn write_mlconst(
-    air_ir: &proofman_multilinear::AirIr,
-    const_path: &Path,
-    out_path: &Path,
-) -> Result<String> {
+fn write_mlconst(air_ir: &proofman_multilinear::AirIr, const_path: &Path, out_path: &Path) -> Result<String> {
     use fields::Goldilocks;
 
     let n_const_cols = air_ir.n_const_cols as usize;

@@ -17,8 +17,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fields::{Field, Goldilocks};
-use proofman_multilinear::{derive_global_challenges_for, verify_air, AirIr, MlError, MlProof};
+use proofman_multilinear::AirIr;
 
 fn example_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/fibonacci-multilinear/build")
@@ -88,80 +87,3 @@ fn mlinfo_artifacts_have_multistage_shape() {
     }
 }
 
-#[test]
-fn proof_set_verifies_with_rederived_challenges() {
-    let proving_key = example_dir().join("provingKey");
-    let proofs_dir = example_dir().join("proofs");
-    if !proving_key.exists() || !proofs_dir.exists() {
-        eprintln!("skipping: proving key or proofs not found (run the example README flow first)");
-        return;
-    }
-
-    let irs = load_irs(&proving_key);
-    if irs.is_empty() {
-        eprintln!("skipping: no decodable .mlinfo.bin under {} (regenerate the setup)", proving_key.display());
-        return;
-    }
-    let mut set: Vec<(PathBuf, MlProof)> = Vec::new();
-    for entry in std::fs::read_dir(&proofs_dir).expect("read proofs dir").flatten() {
-        let p = entry.path();
-        if !p.to_string_lossy().ends_with(".mlproof.bin") {
-            continue;
-        }
-        match MlProof::load(&p) {
-            Ok(proof) => set.push((p, proof)),
-            Err(e) => {
-                // Old-format proofs from a previous protocol revision: skip the
-                // whole test rather than fail on stale artifacts.
-                eprintln!("skipping: {} not decodable ({e}) — regenerate the proofs", p.display());
-                return;
-            }
-        }
-    }
-    if set.is_empty() {
-        eprintln!("skipping: no .mlproof.bin in {}", proofs_dir.display());
-        return;
-    }
-
-    // The instance order defines the global challenge derivation.
-    set.sort_by_key(|(_, proof)| proof.global_instance_id);
-    assert!(
-        set.windows(2).all(|w| w[0].1.global_instance_id != w[1].1.global_instance_id),
-        "duplicate global instance ids in the proof set"
-    );
-
-    let ir_of = |proof: &MlProof| {
-        irs.get(&(proof.airgroup_id, proof.air_id))
-            .unwrap_or_else(|| panic!("no mlinfo for airgroup {} air {}", proof.airgroup_id, proof.air_id))
-    };
-
-    let challenge_stages: Vec<u8> =
-        set.iter().map(|(_, proof)| ir_of(proof).challenge_stages.clone()).max_by_key(|v| v.len()).unwrap_or_default();
-    let max_n_stages = set.iter().map(|(_, proof)| ir_of(proof).n_stages()).max().unwrap_or(1);
-    let stage1_roots: Vec<[Goldilocks; 4]> = set.iter().map(|(_, proof)| proof.stage_roots[0]).collect();
-    let expected = derive_global_challenges_for(&challenge_stages, max_n_stages, &stage1_roots);
-
-    for (path, proof) in &set {
-        let ir = ir_of(proof);
-        let expected_air = &expected[..ir.challenge_stages.len().min(expected.len())];
-        match verify_air(ir, proof, &proof.publics, None, Some(expected_air)) {
-            Ok(()) => {}
-            // Shape mismatches mean the proofs predate the current proving key
-            // (stale artifacts) — skip instead of failing the suite.
-            Err(MlError::Malformed(msg)) => {
-                eprintln!("skipping: {} is stale w.r.t. the proving key ({msg}) — regenerate", path.display());
-                return;
-            }
-            Err(e) => panic!("{} failed verification: {e}", path.display()),
-        }
-    }
-
-    // Sanity on the set-level binding: tampering with one root must change the
-    // derived challenges (and hence reject the set).
-    if max_n_stages >= 2 && !expected.iter().all(|c| c.is_zero()) {
-        let mut bad_roots = stage1_roots.clone();
-        bad_roots[0][0] += Goldilocks::ONE;
-        let bad = derive_global_challenges_for(&challenge_stages, max_n_stages, &bad_roots);
-        assert_ne!(expected, bad, "challenge derivation must depend on the roots");
-    }
-}

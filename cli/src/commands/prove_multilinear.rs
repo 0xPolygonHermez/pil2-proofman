@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::commands::field::Field;
 use fields::Goldilocks;
 use proofman::ProofMan;
-use proofman_common::ProofmanOptions;
+use proofman_common::{ProofOptions, ProofmanOptions};
 
 /// Generate the **base** multilinear (Basefold + sumcheck) proofs — one
 /// `.mlproof.bin` per AIR instance.
@@ -44,6 +44,10 @@ pub struct ProveMultilinearCmd {
     #[clap(short = 'c', long, value_name = "KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
+    /// Verify each proof right after generating it.
+    #[arg(short = 'y', long = "verify_proofs", default_value_t = false)]
+    pub verify_proofs: bool,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8,
@@ -72,12 +76,17 @@ impl ProveMultilinearCmd {
         }
         proofman.register_custom_commits(custom_commits_map)?;
 
+        let mut proof_options = ProofOptions::default();
+        proof_options.multilinear();
+        proof_options.verify_proofs = self.verify_proofs;
+
         match self.field {
-            Field::Goldilocks => proofman.generate_multilinear_proof(
+            Field::Goldilocks => proofman.generate_proof(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 None,
                 self.verbose.into(),
+                proof_options,
                 self.output_dir.clone(),
             )?,
         };

@@ -29,10 +29,9 @@ fn kernel_mle_eval(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext], 
 /// proof (useful in tests).
 ///
 /// `expected_challenges`: with a shared bus, the stage challenges are derived
-/// globally from every instance's stage-1 root
-/// ([`derive_global_challenges`](crate::derive_global_challenges)); the
-/// proof-set verifier recomputes them and passes them here. `None` accepts the
-/// challenges carried in the proof.
+/// globally from every instance's stage-1 commitment (by the orchestrator, the
+/// same way the univariate prover derives its global challenge); the caller
+/// passes them here. `None` accepts the challenges carried in the proof.
 pub fn verify_air(
     ir: &AirIr,
     proof: &MlProof,

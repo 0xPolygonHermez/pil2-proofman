@@ -4,7 +4,7 @@ use fields::{new_transcript, ExtensionField, Goldilocks, GoldilocksQuinticExtens
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx,
-    ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    ProofOptions, ProofSystem, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -41,6 +41,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
+use proofman_multilinear::{verify_air, Ext};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
@@ -1608,7 +1609,14 @@ where
         input_data_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
         proof_options: ProofOptions,
+        output_dir: Option<PathBuf>,
     ) -> ProofmanResult<ProvePhaseResult> {
+        let multilinear = proof_options.proof_system == ProofSystem::Multilinear;
+
+        if multilinear && self.pctx.gpu {
+            return Err(ProofmanError::InvalidParameters("The multilinear prover is CPU-only".into()));
+        }
+
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
@@ -1643,6 +1651,14 @@ where
         self.wcm.set_public_inputs_path(public_inputs_path);
 
         self.register_witness(&mut *witness_lib, library)?;
+
+        if multilinear {
+            if let Some(dir) = &output_dir {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| ProofmanError::InvalidParameters(format!("creating {}: {e}", dir.display())))?;
+            }
+            return self._generate_multilinear_proof(output_dir, proof_options.verify_proofs);
+        }
 
         if self.options.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
@@ -4390,6 +4406,64 @@ where
         Ok(stream_id)
     }
 
+    /// Record one instance's stage-1 contribution for the multilinear path,
+    /// using the *same* representation the univariate contribution flow expects
+    /// (`get_contribution_air` + `calculate_internal_contributions`): the
+    /// `values_hash` = `[vk(4) ‖ <root slot>(4) ‖ stage-1 airvalues]` in
+    /// `values_contributions`, and the commitment root in `roots_contributions`
+    /// (written into the `[4..8]` slot later by `calculate_internal_contributions`).
+    /// The only difference from univariate is that `root` is the Basefold root,
+    /// not the FRI root — so the global challenge is derived identically.
+    fn ml_record_contribution(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        roots_contributions: &[[F; 4]],
+        values_contributions: &[Mutex<Vec<F>>],
+        instance_id: usize,
+        root: &[Goldilocks; 4],
+    ) -> ProofmanResult<()> {
+        let n_field_elements = 4;
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
+
+        let n_airvalues = setup
+            .stark_info
+            .airvalues_map
+            .as_ref()
+            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .unwrap_or(0);
+        let size = 2 * n_field_elements + n_airvalues;
+
+        let mut values_hash = vec![F::ZERO; size];
+        let vk = setup.get_vk();
+        for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
+            *value = F::from_u64(vk[i]);
+        }
+        if let Some(airvalues_map) = setup.stark_info.airvalues_map.as_ref() {
+            let mut p = 0;
+            let mut count = 0;
+            for air_value in airvalues_map {
+                if air_value.stage == 1 {
+                    values_hash[2 * n_field_elements + count] = air_values[p];
+                    count += 1;
+                    p += 1;
+                }
+            }
+        }
+        *values_contributions[instance_id].lock().unwrap() = values_hash;
+
+        // `roots_contributions` is an `Arc<Vec<[F;4]>>` written per-instance (each
+        // instance_id is unique to one worker), mirroring how the univariate path
+        // writes it through a raw pointer from `commit_witness_c`.
+        let dst = roots_contributions[instance_id].as_ptr() as *mut F;
+        for (i, &r) in root.iter().enumerate() {
+            unsafe { *dst.add(i) = F::from_u64(r.as_canonical_u64()) };
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------------------
     // Multilinear (Basefold + sumcheck) proving path — milestone 1.
     //
@@ -4400,57 +4474,13 @@ where
     // univariate C++ prover. CPU-only, basic proofs only (no aggregation).
     // ------------------------------------------------------------------------
 
-    /// Generate one multilinear (Basefold) STARK proof per AIR instance.
-    pub fn generate_multilinear_proof(
+    /// Generate one multilinear (Basefold) STARK proof per AIR instance,
+    /// writing each to `output_dir` when set.
+    fn _generate_multilinear_proof(
         &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
-        verbose_mode: VerboseMode,
         output_dir: Option<PathBuf>,
+        verify_proofs: bool,
     ) -> ProofmanResult<ProvePhaseResult> {
-        if self.pctx.gpu {
-            return Err(ProofmanError::InvalidParameters(
-                "the multilinear prover is CPU-only in milestone 1 (do not enable GPU)".into(),
-            ));
-        }
-        if !witness_lib_path.exists() {
-            return Err(ProofmanError::InvalidParameters(format!(
-                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
-            )));
-        }
-        if let Some(ref input_data_path) = input_data_path {
-            if !input_data_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Input data file not found at path: {input_data_path:?}"
-                )));
-            }
-        }
-        if let Some(ref publics_path) = public_inputs_path {
-            if !publics_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Public inputs file not found at path: {publics_path:?}"
-                )));
-            }
-        }
-        if let Some(dir) = &output_dir {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| ProofmanError::InvalidParameters(format!("creating {}: {e}", dir.display())))?;
-        }
-
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-        self.register_witness(&mut *witness_lib, library)?;
-
-        self._generate_multilinear_proof(output_dir)
-    }
-
-    fn _generate_multilinear_proof(&self, output_dir: Option<PathBuf>) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_multilinear_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -4462,24 +4492,7 @@ where
 
         let _ = self.exec()?;
 
-        // Same dummy global challenge as the verify-constraints flow — witness
-        // libraries may read it during stage-1 computation. The real stage
-        // challenges are derived below from the multilinear stage-1 roots.
-        // Challenge-free pilouts have no stage-2 challenge slots to fill.
-        if self.pctx.global_info.n_challenges.len() > 1 {
-            let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
-            let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-            transcript.put(&dummy_element);
-            let mut global_challenge = [F::ZERO; 3];
-            transcript.get_field(&mut global_challenge);
-            self.pctx.set_global_challenge(2, &mut global_challenge);
-        }
-
-        // Pass 1: witness computation + stage-1 Basefold commitment (streamed by
-        // the witness workers). This is the multilinear analogue of the
-        // univariate contributions phase — commit every instance's stage 1 so
-        // the global stage challenges can be derived from all the roots — so it
-        // shares the timer name to keep the two provers' logs comparable.
+        // Pass 1: witness computation + stage-1 PCS commitment.
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
 
         let witness_done = Arc::new(Counter::new());
@@ -4518,6 +4531,8 @@ where
             let ml_roots_clone = ml_roots.clone();
             let ml_serial_clone = ml_serial.clone();
             let ml_ir_cache_clone = ml_ir_cache.clone();
+            let roots_contributions_clone = self.roots_contributions.clone();
+            let values_contributions_clone = self.values_contributions.clone();
             let handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                     Ok(instance_id) => {
@@ -4545,6 +4560,14 @@ where
                             .map(|(cols, _consts, ir)| {
                                 let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
                                 let root = proofman_multilinear::commit_matrix(&refs, &ir.params).root();
+                                Self::ml_record_contribution(
+                                    &pctx_clone,
+                                    &sctx_clone,
+                                    &roots_contributions_clone,
+                                    &values_contributions_clone,
+                                    instance_id,
+                                    &root,
+                                )?;
                                 ml_roots_clone.lock().unwrap().insert(instance_id, (root, ir));
                                 let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                                 if is_shared_buffer {
@@ -4629,18 +4652,6 @@ where
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
-        // ------------------------------------------------------------------
-        // Sequential multilinear pipeline (two passes, mirroring the
-        // univariate contributions/proof architecture: the CPU trace-buffer
-        // pool holds a single buffer, so each instance's trace must be freed
-        // before the next witness can be computed).
-        //
-        // Pass 1 (above, streamed by the witness workers): compute witness,
-        // commit stage 1, keep only the root, free the trace.
-        // Then: derive the global stage challenges from all stage-1 roots.
-        // Pass 2: recompute the witness per instance, run the stage-2 std
-        // pipeline with the published challenges, and prove.
-        // ------------------------------------------------------------------
         let roots_map = ml_roots.lock().unwrap();
         let mut instances: Vec<usize> = roots_map.keys().copied().collect();
         instances.sort_unstable();
@@ -4662,35 +4673,59 @@ where
             self.pctx.dctx_reset_instance_calculated(instance_id);
         }
 
-        // Global challenge derivation: binds every instance's stage-1
-        // commitment (a shared bus needs identical challenges everywhere).
+        // Global challenge
+        let internal_contribution =
+            calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
+        let contributions_size = match self.pctx.global_info.curve {
+            CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
+            _ => 10,
+        };
+
+        let all_internal = self.mpi_ctx.distribute_roots(internal_contribution);
+        let all_internal_split: Vec<Vec<F>> = all_internal
+            .chunks(contributions_size)
+            .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
+            .collect();
+
+        let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_split);
+        let internal_contribution_u64: Vec<u64> = internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect();
+
+        let contributions = vec![ContributionsInfo {
+            challenge: internal_contribution_u64,
+            worker_index: 0,
+            airgroup_id: 0,
+            aggregated: false,
+        }];
+
+        let mut global_challenge = calculate_global_challenge(&self.pctx, &contributions);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
+
+        // Read the expanded per-stage challenges back out of pctx as the `Ext`
+        // vector `prove_air` and the proof-set verifier consume.
         let challenge_stages: Vec<u8> =
             irs.iter().map(|ir| ir.challenge_stages.clone()).max_by_key(|v| v.len()).unwrap_or_default();
-        let max_n_stages = irs.iter().map(|ir| ir.n_stages()).max().unwrap_or(1);
-        let challenges =
-            proofman_multilinear::derive_global_challenges_for(&challenge_stages, max_n_stages, &stage1_roots);
+        let challenges: Vec<Ext> = {
+            let pctx_challenges = self.pctx.get_challenges();
+            let zero = Ext::from_array(&[Goldilocks::from_u64(0); 3]);
+            challenge_stages
+                .iter()
+                .enumerate()
+                .map(|(id, &st)| {
+                    let base = 3 * id;
+                    if st >= 2 && base + 3 <= pctx_challenges.len() {
+                        Ext::from_array(&[
+                            Goldilocks::from_u64(pctx_challenges[base].as_canonical_u64()),
+                            Goldilocks::from_u64(pctx_challenges[base + 1].as_canonical_u64()),
+                            Goldilocks::from_u64(pctx_challenges[base + 2].as_canonical_u64()),
+                        ])
+                    } else {
+                        zero
+                    }
+                })
+                .collect()
+        };
 
-        // Publish the derived challenges so the std witness components (hints)
-        // read the right values during stage-2 computation. The pctx buffer is
-        // sized from globalInfo, which may not cover the setup-level protocol
-        // challenges (vc/xi/...) — those are never derived here anyway.
-        let challenge_slots = self.pctx.get_challenges().len();
-        for (id, ch) in challenges.iter().enumerate() {
-            let st = challenge_stages[id] as usize;
-            if st < 2 || st > max_n_stages || 3 * id + 3 > challenge_slots {
-                continue;
-            }
-            let coords = [
-                F::from_u64(ch.value[0].as_canonical_u64()),
-                F::from_u64(ch.value[1].as_canonical_u64()),
-                F::from_u64(ch.value[2].as_canonical_u64()),
-            ];
-            self.pctx.set_challenge(3 * id, &coords);
-        }
-
-        // Pass 2: recompute the witness (deterministic per run — the same
-        // property the univariate minimal-memory flow relies on), run stage 2,
-        // prove. Timer names mirror the univariate prover for comparable logs.
+        // Generate the proofs
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(GENERATING_INNER_PROOFS);
         for (idx, &instance_id) in instances.iter().enumerate() {
@@ -4790,6 +4825,18 @@ where
             .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
             proof.global_instance_id = instance_id as u32;
             timer_stop_and_log_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
+
+            // `-y`: verify each proof against the same challenges the prover
+            // derived (via `calculate_global_challenge`), reusing the live pctx.
+            if verify_proofs {
+                verify_air(&ir, &proof, &publics, None, Some(&air_challenges)).map_err(|e| {
+                    ProofmanError::InvalidProof(format!(
+                        "instance {instance_id} ({}) failed multilinear verification: {e}",
+                        ir.name
+                    ))
+                })?;
+                tracing::info!("Multilinear proof for instance {instance_id} ({}) verified", ir.name);
+            }
 
             if let Some(dir) = &output_dir {
                 let path = dir.join(format!("{}_{}.mlproof.bin", ir.name, air_instance_id));

@@ -302,35 +302,6 @@ pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
     ir.challenge_stages.iter().enumerate().filter(|(_, &st)| st >= 2 && st <= n_stages).map(|(i, _)| i).collect()
 }
 
-/// Derive the global stage challenges from every instance's stage-1
-/// commitment, in instance order.
-///
-/// Returns the full global challenge vector.
-pub fn derive_global_challenges(ir: &AirIr, stage1_roots: &[[Goldilocks; 4]]) -> Vec<Ext> {
-    derive_global_challenges_for(&ir.challenge_stages, ir.n_stages(), stage1_roots)
-}
-
-/// [`derive_global_challenges`] for a heterogeneous instance set: pass the
-/// global challenge-stage list and the maximum number of witness stages among
-/// the participating AIRs.
-pub fn derive_global_challenges_for(
-    challenge_stages: &[u8],
-    n_stages: usize,
-    stage1_roots: &[[Goldilocks; 4]],
-) -> Vec<Ext> {
-    let mut transcript = MlTranscript::new();
-    for root in stage1_roots {
-        transcript.absorb_root(root);
-    }
-    let mut challenges = vec![Ext::ZERO; challenge_stages.len()];
-    for (id, &st) in challenge_stages.iter().enumerate() {
-        if st >= 2 && st as usize <= n_stages {
-            challenges[id] = transcript.challenge();
-        }
-    }
-    challenges
-}
-
 pub(crate) fn powers(base: Ext, n: usize) -> Vec<Ext> {
     let mut out = Vec::with_capacity(n);
     let mut cur = Ext::ONE;

@@ -3,7 +3,8 @@
 //! The multilinear prover is pure Rust: it consumes the witness trace computed
 //! by the normal witness pipeline, the raw `.const` file and the `.mlinfo.bin`
 //! artifact (the compiled [`AirIr`]) produced by `proofman-setup`, and never
-//! crosses the C++ FFI. See `ProofMan::generate_multilinear_proof`.
+//! crosses the C++ FFI. Entered via `ProofMan::generate_proof` with
+//! `ProofOptions::proof_system == ProofSystem::Multilinear`.
 //!
 //! When present, the prover also loads a `.mlconst.bin` artifact — the prebuilt
 //! Basefold commitment of the fixed columns, produced by `proofman-setup`
