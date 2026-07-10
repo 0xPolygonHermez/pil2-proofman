@@ -86,4 +86,3 @@ fn mlinfo_artifacts_have_multistage_shape() {
         }
     }
 }
-

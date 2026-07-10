@@ -85,21 +85,20 @@ pub fn verify_air(
 
     // --- Transcript replay: statement, commitments.
     let mut transcript = MlTranscript::new();
-    seed_transcript(&mut transcript, ir, publics);
+    seed_transcript(&mut transcript, ir.airgroup_id, ir.air_id, ir.n_bits, publics);
     transcript.absorb_root(&proof.const_root);
     for root in &proof.custom_roots {
         transcript.absorb_root(root);
     }
+
     for (stage_idx, root) in proof.stage_roots.iter().enumerate() {
         transcript.absorb_root(root);
-        if stage_idx == 0 {
-            for id in crate::prover::derived_challenge_ids(ir) {
-                transcript.absorb_ext(&proof.challenges[id]);
-            }
+        let stage = (stage_idx + 1) as u8;
+        crate::prover::absorb_stage_values(&mut transcript, ir, &proof.air_values, &proof.airgroup_values, stage);
+        for id in crate::prover::challenge_ids_for_stage(ir, stage + 1) {
+            transcript.absorb_ext(&proof.challenges[id]);
         }
     }
-    transcript.absorb_exts(&proof.air_values);
-    transcript.absorb_exts(&proof.airgroup_values);
 
     // --- Zerocheck ---
     let r = transcript.challenges(n);

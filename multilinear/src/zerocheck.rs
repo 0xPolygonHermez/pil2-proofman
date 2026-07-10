@@ -323,7 +323,7 @@ impl<'a> ZerocheckOracle<'a> {
     /// Bind the univariate-skip block to `γ`: collapse the first `ℓ` variables of
     /// every leaf table via its Lagrange lift over `D` at `γ`, leaving extension
     /// tables over the `m−ℓ` suffix variables; the remaining rounds are ordinary
-    /// Gruen rounds over `r_{ℓ+1..m}`.
+    /// rounds over `r_{ℓ+1..m}`.
     pub fn skip_bind(&mut self, gamma: Ext) {
         let ell = self.skip_bits;
         let np = 1usize << ell;

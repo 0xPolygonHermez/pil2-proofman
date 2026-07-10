@@ -1,4 +1,4 @@
-//! The multilinear STARK prover: commit → zerocheck → batched PCS opening.
+//! The multilinear STARK prover.
 
 use crate::pcs::{combine_columns, CommittedMatrix, OpeningProof};
 use crate::pcs::{MlPcs, Pcs};
@@ -16,8 +16,11 @@ use std::time::Instant;
 /// A multilinear STARK proof for one AIR instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MlProof {
+    /// Airgroup identifier.
     pub airgroup_id: u32,
+    /// AIR identifier.
     pub air_id: u32,
+    /// Number of bits in the hypercube (number of rows = 2^n_bits).
     pub n_bits: u32,
     /// Merkle roots of the witness stage commitments, in stage order.
     pub stage_roots: Vec<[Goldilocks; 4]>,
@@ -88,16 +91,21 @@ pub fn prove_air(
         return Err(MlError::Malformed("custom commit shape mismatch".into()));
     }
 
-    let n = ir.n_bits as usize;
-    let n_rows = 1usize << n;
+    let airgroup_id = ir.airgroup_id;
+    let air_id = ir.air_id;
+    let n_bits = ir.n_bits;
+
+    let m = n_bits as usize;
+    let n_rows = 1usize << m;
     let params = &ir.params;
 
     // Start the transcript with the statement: AIR identity and public inputs.
     let mut transcript = MlTranscript::new();
-    seed_transcript(&mut transcript, ir, publics);
+    seed_transcript(&mut transcript, airgroup_id, air_id, n_bits, publics);
 
     // --- Commitments ---
     let t_commit = Instant::now();
+
     // Fixed columns are known at setup time; reuse the prebuilt commitment
     // (loaded from the proving key) when supplied, otherwise build it here.
     let owned_const_matrix;
@@ -122,30 +130,31 @@ pub fn prove_air(
         })
         .collect();
 
-    // Stage commitments: one Merkle root per witness stage, in stage order.
+    // Stage commitments, interleaved per the multi-stage protocol: for stage i
+    // bind its root, then its air/airgroup value messages (stage-i outputs),
+    // then the (globally derived) challenge that gates stage i+1's witness.
+    // Everything is bound here, before the zerocheck's Fiat–Shamir randomness.
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
         let matrix = Pcs::commit(&refs, params);
         transcript.absorb_root(&matrix.root());
         stage_matrices.push(matrix);
-        if stage_idx == 0 {
-            // Bind the (globally derived) stage challenges right where the
-            // protocol produces them: after the stage-1 commitment.
-            for id in derived_challenge_ids(ir) {
-                transcript.absorb_ext(&challenges[id]);
-            }
+
+        let stage = (stage_idx + 1) as u8;
+        absorb_stage_values(&mut transcript, ir, air_values, airgroup_values, stage);
+        for id in challenge_ids_for_stage(ir, stage + 1) {
+            transcript.absorb_ext(&challenges[id]);
         }
     }
-    // Value messages are stage outputs: bind them before any zerocheck randomness.
-    transcript.absorb_exts(air_values);
-    transcript.absorb_exts(airgroup_values);
+
     let t_commit = t_commit.elapsed();
 
-    // --- Zerocheck: one sumcheck for all EveryRow constraints.
+    // --- Zerocheck ---
     let t_zerocheck = Instant::now();
-    let ell = ir.params.univariate_skip_bits.min(n);
-    let r = transcript.challenges(n);
+
+    let ell = ir.params.univariate_skip_bits.min(m);
+    let r = transcript.challenges(m);
     let alpha = transcript.challenge();
 
     let mut oracle = ZerocheckOracle::new(
@@ -161,9 +170,10 @@ pub fn prove_air(
         alpha,
         ell,
     );
-    let mut zerocheck_round_polys = Vec::with_capacity(n - ell + 1);
+
+    // Compute the univariate skip polynomial
+    let mut zerocheck_round_polys = Vec::with_capacity(m - ell + 1);
     let mut skip_gamma = Ext::ZERO;
-    let mut lambda_x = Vec::with_capacity(n - ell);
     if ell > 0 {
         let v = oracle.skip_round_evals();
         transcript.absorb_exts(&v);
@@ -171,7 +181,10 @@ pub fn prove_air(
         oracle.skip_bind(skip_gamma);
         zerocheck_round_polys.push(v);
     }
-    for _ in 0..(n - ell) {
+
+    // Compute the remaining rounds of the zerocheck protocol
+    let mut lambda_x = Vec::with_capacity(m - ell);
+    for _ in 0..(m - ell) {
         let evals = oracle.round_evals();
         transcript.absorb_exts(&evals);
         let ch = transcript.challenge();
@@ -181,7 +194,7 @@ pub fn prove_air(
     }
     let t_zerocheck = t_zerocheck.elapsed();
 
-    // --- Claimed openings: full (column × kernel) matrix, at the point `(γ, λ_X)`.
+    // --- Claimed openings ---
     let t_claims = Instant::now();
     let kernels = build_kernels(ir);
     let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, ell, skip_gamma, &lambda_x)).collect();
@@ -244,14 +257,14 @@ pub fn prove_air(
     let t_opening = t_opening.elapsed();
 
     log::debug!(
-        "ml prove_air[{}] n={n}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
+        "ml prove_air[{}] n={m}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
         ir.name,
     );
 
     Ok(MlProof {
-        airgroup_id: ir.airgroup_id,
-        air_id: ir.air_id,
-        n_bits: ir.n_bits,
+        airgroup_id,
+        air_id,
+        n_bits,
         stage_roots: stage_matrices.iter().map(|m| m.root()).collect(),
         const_root: const_matrix.root(),
         custom_roots: custom_matrices.iter().map(|m| m.root()).collect(),
@@ -267,12 +280,14 @@ pub fn prove_air(
 }
 
 /// Seed the transcript with the statement: AIR identity and public inputs.
-pub(crate) fn seed_transcript(transcript: &mut MlTranscript, ir: &AirIr, publics: &[Goldilocks]) {
-    transcript.absorb(&[
-        Goldilocks::from_u64(ir.airgroup_id as u64),
-        Goldilocks::from_u64(ir.air_id as u64),
-        Goldilocks::from_u64(ir.n_bits as u64),
-    ]);
+pub(crate) fn seed_transcript(
+    transcript: &mut MlTranscript,
+    airgroup_id: u32,
+    air_id: u32,
+    n_bits: u32,
+    publics: &[Goldilocks],
+) {
+    transcript.absorb(&[Goldilocks::from_u32(airgroup_id), Goldilocks::from_u32(air_id), Goldilocks::from_u32(n_bits)]);
     transcript.absorb(publics);
 }
 
@@ -298,9 +313,31 @@ pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: 
 /// Indices of the challenges the multilinear protocol actually derives:
 /// those of stages `2..=n_stages`. Later stages (quotient/evals/FRI batching)
 /// belong to the univariate protocol and stay zero.
-pub fn derived_challenge_ids(ir: &AirIr) -> Vec<usize> {
-    let n_stages = ir.n_stages() as u8;
-    ir.challenge_stages.iter().enumerate().filter(|(_, &st)| st >= 2 && st <= n_stages).map(|(i, _)| i).collect()
+pub(crate) fn challenge_ids_for_stage(ir: &AirIr, stage: u8) -> impl Iterator<Item = usize> + '_ {
+    ir.challenge_stages.iter().enumerate().filter(move |&(_, &st)| st == stage).map(|(i, _)| i)
+}
+
+/// Absorb, in global order, the air-value then airgroup-value messages that are
+/// outputs of `stage` (`airvalue_stages[j] == stage`, resp. airgroup). Keeping
+/// them with their stage's root is what the multi-stage protocol requires: the
+/// stage-(i+1) challenge must bind stage-i's value messages.
+pub(crate) fn absorb_stage_values(
+    transcript: &mut MlTranscript,
+    ir: &AirIr,
+    air_values: &[Ext],
+    airgroup_values: &[Ext],
+    stage: u8,
+) {
+    for (j, &st) in ir.airvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&air_values[j]);
+        }
+    }
+    for (j, &st) in ir.airgroupvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&airgroup_values[j]);
+        }
+    }
 }
 
 pub(crate) fn powers(base: Ext, n: usize) -> Vec<Ext> {
