@@ -27,7 +27,7 @@ class CudaGraphCache {
     uint64_t pending_key_ = 0;
     bool capturing_ = false;
 
-    static constexpr uint32_t CAPTURE_THRESHOLD = 1000;
+    static constexpr uint32_t CAPTURE_THRESHOLD = 2; // TEST: lowered from 1000 to force graph capture immediately (revert before merge)
 
     static void clearCudaError() {
         cudaGetLastError();

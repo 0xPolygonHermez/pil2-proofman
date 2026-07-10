@@ -1,3 +1,4 @@
+#include <cstdio>
 
 
 #include <string>
@@ -40,6 +41,13 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         {
             j["root" + to_string(i + 1)][k] = std::to_string(pointer[p++]);
         }
+    }
+    for(uint64_t i = 0; i < starkInfo.nStages + 1; i++) {
+        fprintf(stderr,"[VB] root%lu = [%s,%s,%s,%s]\n",(unsigned long)(i+1),
+            j["root"+to_string(i+1)][0].get<std::string>().c_str(),
+            j["root"+to_string(i+1)][1].get<std::string>().c_str(),
+            j["root"+to_string(i+1)][2].get<std::string>().c_str(),
+            j["root"+to_string(i+1)][3].get<std::string>().c_str());
     }
 
     j["evals"] = json::array();
