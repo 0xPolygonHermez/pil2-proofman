@@ -277,13 +277,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     // If this AIR has a generated Q kernel launch it instead of the bytecode interpreter.
-    bool computed = false;
-    if (dest.dest_gpu != nullptr && expsFn != nullptr) {
-        computed = tryLaunchExps(setupCtx, (ExpsKernelFn)expsFn, expsMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
-    }
-    if (!computed) {
-        computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
-    }
+    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
