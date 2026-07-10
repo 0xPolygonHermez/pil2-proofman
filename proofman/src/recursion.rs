@@ -74,6 +74,20 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 ) -> ProofmanResult<Proof<F>> {
     let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
 
+    // TEMP DEBUG: log the basic trace root (root1) of every Main (ag0/air0) basic proof,
+    // so instances can be matched by root across runs regardless of global_idx ordering.
+    // Layout (proof2pointer, Main): airgroupvalues(1*3) + airvalues(197*3) = 594, then root1 (4 words).
+    if proof.proof_type == ProofType::Basic && airgroup_id == 0 && air_id == 0 {
+        const ROOT1_OFF: usize = 594;
+        if proof.proof.len() >= ROOT1_OFF + 4 {
+            let root1 = &proof.proof[ROOT1_OFF..ROOT1_OFF + 4];
+            tracing::warn!(
+                "MAIN basic proof gid={:?} root1=[{},{},{},{}]",
+                proof.global_idx, root1[0], root1[1], root1[2], root1[3]
+            );
+        }
+    }
+
     if proof.proof_type != ProofType::Basic && proof.proof_type != ProofType::Compressor {
         return Err(ProofmanError::InvalidProof(format!(
             "Invalid proof type {:?} for airgroup_id {} air_id {}. Must be Basic or Compressor",
@@ -1041,6 +1055,26 @@ fn generate_witness<F: PrimeField64>(
         _ => memory_handler_recursive_witness.take_buffer_witness(),
     };
 
+    // TEMP DEBUG: dump the INPUT zkin fed into the recursive1 circuit for instance 11.
+    // NOTE: this is `updated_proof` = [circom publics header (publics_circom_size words)]
+    // ++ [basic proof]. It is NOT the raw basic proof; the basic proof (and its root1 at
+    // basic-offset 594) is embedded starting at word publics_circom_size. For an
+    // unambiguous root1 comparison prefer the "MAIN basic proof ... root1=" log added in
+    // gen_witness_recursive, which reads the raw basic buffer.
+    if instance_id == 11 && setup.airgroup_id == 0 && setup.air_id == 0 {
+        let rank = std::env::var("OMPI_COMM_WORLD_RANK")
+            .or_else(|_| std::env::var("PMI_RANK"))
+            .unwrap_or_else(|_| "unknown".into());
+        let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let p = std::path::Path::new("/tmp").join(format!(
+            "INPUT_proof_{instance_id}_ag0_air0_t{:?}_rank{rank}_{ts}.bin", setup.setup_type));
+        if let Ok(mut f) = File::create(&p) {
+            for word in zkin { let _ = f.write_all(&word.to_le_bytes()); }
+            let _ = f.flush();
+            tracing::warn!("INPUT zkin dumped (rank {rank}) to: {}", p.display());
+        }
+    }
+
     let res: i64 = unsafe {
         get_witness_fn(
             zkin.as_ptr() as *mut u64,
@@ -1054,13 +1088,16 @@ fn generate_witness<F: PrimeField64>(
     // TEMP DEBUG: dump a SUCCESSFUL zkin (opt-in via DUMP_GOOD_PROOF=1) so a known-good
     // proof can validate the offline verify harness. Only air 0 (Main), once.
     if res == 0 && instance_id == 11 && setup.airgroup_id == 0 && setup.air_id == 0 {
+        let rank = std::env::var("OMPI_COMM_WORLD_RANK")
+            .or_else(|_| std::env::var("PMI_RANK"))
+            .unwrap_or_else(|_| "unknown".into());
         let p = std::path::Path::new("/tmp").join(format!(
-            "GOOD_proof_{instance_id}_ag0_air0_t{:?}.bin", setup.setup_type));
+            "GOOD_proof_{instance_id}_ag0_air0_t{:?}_rank{rank}.bin", setup.setup_type));
         if !p.exists() {
             if let Ok(mut f) = File::create(&p) {
                 for word in zkin { let _ = f.write_all(&word.to_le_bytes()); }
                 let _ = f.flush();
-                tracing::warn!("GOOD proof dumped to: {}", p.display());
+                tracing::warn!("GOOD proof dumped (rank {rank}) to: {}", p.display());
             }
         }
     }
@@ -1074,9 +1111,12 @@ fn generate_witness<F: PrimeField64>(
             tracing::warn!("Failed to return witness buffer to pool: {e}");
         }
 
+        let rank = std::env::var("OMPI_COMM_WORLD_RANK")
+            .or_else(|_| std::env::var("PMI_RANK"))
+            .unwrap_or_else(|_| "unknown".into());
         let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let debug_file_path = std::path::Path::new("/tmp").join(format!(
-            "proof_{instance_id}_ag{}_air{}_t{:?}_{}.bin",
+            "proof_{instance_id}_ag{}_air{}_t{:?}_rank{rank}_{}.bin",
             setup.airgroup_id, setup.air_id, setup.setup_type, ts
         ));
         let mut file = File::create(&debug_file_path)?;
@@ -1084,7 +1124,7 @@ fn generate_witness<F: PrimeField64>(
             file.write_all(&word.to_le_bytes())?;
         }
         file.flush()?;
-        tracing::warn!("Debug proof data written to: {}", debug_file_path.display());
+        tracing::warn!("Debug proof data written (rank {rank}) to: {}", debug_file_path.display());
 
         return Err(ProofmanError::InvalidProof(format!(
             "Error generating witness for instance id {} [{}:{}] of type {:?}",
