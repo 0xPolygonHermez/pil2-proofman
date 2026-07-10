@@ -113,3 +113,4 @@ itoa = "1.0.17"
 thiserror = { version = "2" }
 rand = "0.10"
 anyhow = "1"
+mpi = { git = "https://github.com/rsmpi/rsmpi", rev = "fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6" }
