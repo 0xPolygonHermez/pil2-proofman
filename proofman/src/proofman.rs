@@ -2171,8 +2171,11 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+            let first_contribution_logged = Arc::new(AtomicBool::new(false));
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
+                let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
                 let roots_contributions_clone = self.roots_contributions.clone();
@@ -2217,6 +2220,10 @@ where
                                     break;
                                 }
                             };
+
+                            if !first_contribution_logged.swap(true, Ordering::Relaxed) {
+                                tracing::info!("First GPU contribution queued");
+                            }
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
                             if is_shared_buffer {
