@@ -1051,6 +1051,20 @@ fn generate_witness<F: PrimeField64>(
     };
     drop(state);
 
+    // TEMP DEBUG: dump a SUCCESSFUL zkin (opt-in via DUMP_GOOD_PROOF=1) so a known-good
+    // proof can validate the offline verify harness. Only air 0 (Main), once.
+    if res == 0 && instance_id == 11 && setup.airgroup_id == 0 && setup.air_id == 0 {
+        let p = std::path::Path::new("/tmp").join(format!(
+            "GOOD_proof_{instance_id}_ag0_air0_t{:?}.bin", setup.setup_type));
+        if !p.exists() {
+            if let Ok(mut f) = File::create(&p) {
+                for word in zkin { let _ = f.write_all(&word.to_le_bytes()); }
+                let _ = f.flush();
+                tracing::warn!("GOOD proof dumped to: {}", p.display());
+            }
+        }
+    }
+
     if res != 0 {
         let released = match setup.setup_type {
             ProofType::Compressor => memory_handler_recursive_witness.release_buffer_witness_compressor(witness),
