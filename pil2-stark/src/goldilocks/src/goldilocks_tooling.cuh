@@ -291,7 +291,12 @@ struct StreamData{
     Goldilocks::Element *pinned_aux_values;
 
     //runtime data
-    uint32_t status; //0: unused, 1: loading, 2: full
+    // Atomic: status is read (unlocked) by wait_stream_commit_done / callbacks while
+    // reserveStream/gen_proof write it, so a plain int would be a data race. The
+    // atomic only removes UB on the individual load/store; the check-then-act
+    // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
+    // by holding mutex_stream_selection, not by the atomic.
+    std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
     TimerGPU timer;
 

@@ -1670,6 +1670,7 @@ where
             }
         }
 
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
         let mut device_slot = self.recurser_device_registered.lock().unwrap();
         {
             let cache = self.recurser_setups.read().unwrap();
@@ -2170,8 +2171,11 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+            let first_contribution_logged = Arc::new(AtomicBool::new(false));
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
+                let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
                 let roots_contributions_clone = self.roots_contributions.clone();
@@ -2216,6 +2220,10 @@ where
                                     break;
                                 }
                             };
+
+                            if !first_contribution_logged.swap(true, Ordering::Relaxed) {
+                                tracing::info!("First GPU contribution queued");
+                            }
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
                             if is_shared_buffer {
@@ -2618,7 +2626,7 @@ where
                 return;
             }
             proofs_pending.increment();
-            if let Err(e) = Self::gen_proof(
+            let proof_stream_id = match Self::gen_proof(
                 &self.proofs,
                 &self.pctx,
                 &self.sctx,
@@ -2628,11 +2636,20 @@ where
                 &self.const_tree,
                 Some(stream_id),
             ) {
-                self.cancellation_info.write().unwrap().cancel(Some(e));
-            }
+                Ok(sid) => Some(sid),
+                Err(e) => {
+                    self.cancellation_info.write().unwrap().cancel(Some(e));
+                    None
+                }
+            };
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
+                // Trace H2D is async: wait on the proof's stream before recycling
+                // the shared buffer, else a concurrent take() overwrites it mid-copy.
+                if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
+                    wait_stream_commit_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
+                }
                 if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
                     self.cancellation_info.write().unwrap().cancel(Some(e));
                 }
@@ -2697,7 +2714,7 @@ where
                             }
                             continue;
                         } else {
-                            if let Err(e) = Self::gen_proof(
+                            let proof_stream_id = match Self::gen_proof(
                                 &proofs_clone,
                                 &pctx_clone,
                                 &sctx_clone,
@@ -2707,11 +2724,20 @@ where
                                 &const_tree_clone,
                                 None,
                             ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
+                                Ok(sid) => sid,
+                                Err(e) => {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    break;
+                                }
+                            };
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
+                                if pctx_clone.gpu {
+                                    wait_stream_commit_done_c(
+                                        pctx_clone.get_device_buffers_ptr(),
+                                        proof_stream_id as u64,
+                                    );
+                                }
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                     cancellation_info_clone.write().unwrap().cancel(Some(e));
                                     return;
@@ -4169,7 +4195,7 @@ where
         const_pols: &[F],
         const_tree: &[F],
         stream_id_: Option<usize>,
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<usize> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
         Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
@@ -4209,7 +4235,9 @@ where
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
-        gen_proof_c(
+        // Returns the stream the (async) trace H2D + commit ran on; the caller
+        // must wait on it before recycling this instance's shared trace buffer.
+        let proof_stream_id = gen_proof_c(
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
@@ -4231,7 +4259,7 @@ where
         }
 
         timer_stop_and_log_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
-        Ok(())
+        Ok(proof_stream_id as usize)
     }
 
     #[allow(clippy::type_complexity)]
