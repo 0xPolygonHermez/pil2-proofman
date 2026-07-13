@@ -4,7 +4,7 @@ use crate::pcs::{MlPcs, Pcs};
 use crate::eq::{eq_eval, skip_kernel_eval};
 use crate::error::MlError;
 use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
-use crate::hypercube::{to_ext_vec, boolean_point, Ext};
+use crate::hypercube::{boolean_point, Ext};
 use crate::ir::{AirIr, Boundary};
 use crate::prover::{powers, seed_transcript, MlProof};
 use crate::sumcheck::{interpolate_at, verifier_sumcheck_round};
@@ -15,9 +15,9 @@ use crate::zerocheck::{
 use fields::Goldilocks;
 
 /// The kernel's MLE evaluated at the opening point `z` (verifier side).
-fn kernel_mle_eval(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext], z: &[Ext]) -> Ext {
+fn kernel_mle_eval(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext], z: &[Ext]) -> Ext {
     match spec {
-        KernelSpec::Rot(s) => skip_kernel_eval(ell, *s as i64, gamma, lambda_x, z),
+        KernelSpec::Rot(s) => skip_kernel_eval(l, *s as i64, gamma, lambda_x, z),
         KernelSpec::Point(row) => eq_eval(&boolean_point(*row, z.len()), z),
     }
 }
@@ -69,7 +69,7 @@ pub fn verify_air(
     }
 
     let n = ir.n_bits as usize;
-    let ell = ir.params.univariate_skip_bits.min(n);
+    let l = ir.params.univariate_skip_bits.min(n);
     let params = &ir.params;
     let kernels = build_kernels(ir);
     let total_cols = ir.total_cols();
@@ -77,8 +77,8 @@ pub fn verify_air(
     if proof.claims.len() != total_cols || proof.claims.iter().any(|row| row.len() != kernels.len()) {
         return Err(MlError::Malformed("claims matrix has wrong shape".into()));
     }
-    // One skip round (if any) + `n − ell` Gruen rounds.
-    let expected_polys = if ell > 0 { n - ell + 1 } else { n };
+    // One skip round (if any) + `n − l` Gruen rounds.
+    let expected_polys = if l > 0 { n - l + 1 } else { n };
     if proof.zerocheck_round_polys.len() != expected_polys {
         return Err(MlError::Malformed(format!("expected {expected_polys} zerocheck round polynomials")));
     }
@@ -107,14 +107,14 @@ pub fn verify_air(
 
     let mut claim = Ext::ZERO;
     let mut skip_gamma = Ext::ZERO;
-    let mut lambda_x = Vec::with_capacity(n - ell);
+    let mut lambda_x = Vec::with_capacity(n - l);
     let mut round_polys = proof.zerocheck_round_polys.iter();
 
-    if ell > 0 {
-        // Skip round 0: v(Z) of degree d·(2^ell − 1) at Z = 0..deg. The check is
-        // the Gruen check generalised to ell variables: Σ_p eq(p, r_P)·v(φ(p)) = prev.
+    if l > 0 {
+        // Skip round 0: v(Z) of degree d·(2^l − 1) at Z = 0..deg. The check is
+        // the Gruen check generalised to l variables: Σ_p eq(p, r_P)·v(φ(p)) = prev.
         let v = round_polys.next().expect("skip round polynomial");
-        let np = 1usize << ell;
+        let np = 1usize << l;
         let want = d * (np - 1) + 1;
         if v.len() != want {
             return Err(MlError::Malformed(format!("skip round: expected {want} evaluations")));
@@ -122,8 +122,8 @@ pub fn verify_air(
         transcript.absorb_exts(v);
         skip_gamma = transcript.challenge();
         let mut lhs = Ext::ZERO;
-        for (p, &dp) in crate::eq::d_subgroup(ell).iter().enumerate() {
-            lhs += eq_eval(&boolean_point(p as u64, ell), &r[..ell]) * interpolate_at(v, Ext::from_base(dp));
+        for (p, &dp) in crate::eq::d_subgroup(l).iter().enumerate() {
+            lhs += eq_eval(&boolean_point(p as u64, l), &r[..l]) * interpolate_at(v, Ext::from_base(dp));
         }
         if lhs != claim {
             return Err(MlError::SumcheckRound { round: 0 });
@@ -131,7 +131,7 @@ pub fn verify_air(
         claim = interpolate_at(v, skip_gamma);
     }
 
-    // Gruen suffix rounds over r_X = r[ell..].
+    // Gruen suffix rounds over r_X = r[l..].
     let n_evals = d;
     for (round, sent) in round_polys.enumerate() {
         if sent.len() != n_evals {
@@ -139,7 +139,7 @@ pub fn verify_air(
         }
         transcript.absorb_exts(sent);
         let ch = transcript.challenge();
-        let rk = r[ell + round];
+        let rk = r[l + round];
         // sent[0] = g'(1); recover g'(0) = (claim − rₖ·g'(1)) / (1 − rₖ).
         let g0 = (claim - rk * sent[0]) * (Ext::ONE - rk).inverse();
         let mut evals = Vec::with_capacity(d + 1);
@@ -157,7 +157,7 @@ pub fn verify_air(
     let gamma = transcript.challenge();
 
     // --- Zerocheck final check: claim == eq(r,λ)·Σ_t α^t C_t(claimed openings).
-    let publics_ext = to_ext_vec(publics);
+    let publics_ext = Ext::from_base_batch(publics);
     let src = ClaimsAtPoint {
         ir,
         claims: &proof.claims,
@@ -233,7 +233,7 @@ pub fn verify_air(
     let w_at_u: Ext = kernels
         .iter()
         .zip(kernel_weights.iter())
-        .map(|(spec, w)| *w * kernel_mle_eval(spec, ell, skip_gamma, &lambda_x, &u))
+        .map(|(spec, w)| *w * kernel_mle_eval(spec, l, skip_gamma, &lambda_x, &u))
         .sum();
     if w_at_u.is_zero() {
         return Err(MlError::FinalCheck("batched kernel vanishes at the reduction point".into()));
@@ -274,18 +274,18 @@ mod tests {
         verify_air(&ir, &proof, &publics, None, None).expect("verify");
     }
 
-    /// Full prove→verify with the univariate skip enabled (`ell = 1..3`), which
+    /// Full prove→verify with the univariate skip enabled (`l = 1..3`), which
     /// exercises the skip round, the skip-kernel opening, and shifted (offset-1)
     /// reads through the skip block.
     #[test]
     fn prove_verify_roundtrip_with_skip() {
         let n_bits = 6;
-        for ell in 1..=3usize {
-            let params = MlParams { univariate_skip_bits: ell, ..test_params() };
+        for l in 1..=3usize {
+            let params = MlParams { univariate_skip_bits: l, ..test_params() };
             let ir = fib_ir(n_bits, params);
             let (witness, consts, publics) = fib_trace(n_bits);
             let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
-            verify_air(&ir, &proof, &publics, None, None).unwrap_or_else(|e| panic!("verify ell={ell}: {e}"));
+            verify_air(&ir, &proof, &publics, None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
         }
     }
 
@@ -293,16 +293,13 @@ mod tests {
     #[test]
     fn corrupted_trace_rejected_with_skip() {
         let n_bits = 6;
-        for ell in 1..=3usize {
-            let params = MlParams { univariate_skip_bits: ell, ..test_params() };
+        for l in 1..=3usize {
+            let params = MlParams { univariate_skip_bits: l, ..test_params() };
             let ir = fib_ir(n_bits, params);
             let (mut witness, consts, publics) = fib_trace(n_bits);
             witness[0][0][7] += Goldilocks::ONE;
             let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove runs");
-            assert!(
-                verify_air(&ir, &proof, &publics, None, None).is_err(),
-                "invalid trace must not verify (ell={ell})"
-            );
+            assert!(verify_air(&ir, &proof, &publics, None, None).is_err(), "invalid trace must not verify (l={l})");
         }
     }
 

@@ -13,7 +13,7 @@ use crate::output::global_info::{build_global_info_json, write_global_constraint
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
 use crate::types::security::{self, FRISecurityParams};
-use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
+use crate::types::stark_struct::{generate_stark_struct, StarkStruct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_folding_factors};
 
 /// Setup options parsed from CLI args.
@@ -224,9 +224,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
                 fs::write(&starkinfo_path, &starkinfo_json)?;
 
-                // Multilinear (Basefold) prover artifact. Not every AIR is
-                // supported yet (std arguments, custom commits, …): skip with a
-                // note instead of failing the setup.
+                // Multilinear prover artifact.
                 let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
                 let mlconst_path = files_dir.join(format!("{}.mlconst.bin", item.air_name));
                 match crate::output::mlinfo::build_air_ir(
@@ -234,21 +232,18 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     n_bits as u32,
                     proofman_multilinear::MlParams::default(),
                 ) {
-                    Ok(air_ir) => {
+                    Ok(mut air_ir) => {
+                        air_ir.params = ml_params(&stark_struct, n_bits, air_ir.total_cols());
                         air_ir
                             .save(&mlinfo_path)
                             .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
-                        // Prebuild the fixed-column commitment so the multilinear
-                        // prover reuses it instead of re-encoding + re-hashing the
-                        // const tree on every proof (and every instance).
+                        // Prebuild the fixed-column commitment.
                         let status = write_mlconst(&air_ir, &const_path, &mlconst_path)?;
-                        tracing::debug!("Air '{}': {status}", item.air_name);
+                        tracing::info!("Air '{}': {status}", item.air_name);
                     }
                     Err(e) => {
                         tracing::info!("Air '{}': not provable with the multilinear prover ({e})", item.air_name);
-                        // Never leave a stale artifact from a previous setup:
-                        // an outdated IR silently mismatches the new trace
-                        // layout and produces baffling constraint failures.
+                        // Never leave a stale artifact from a previous setup
                         if mlinfo_path.exists() {
                             fs::remove_file(&mlinfo_path)?;
                         }
@@ -404,14 +399,44 @@ fn log2_usize(n: usize) -> usize {
     (usize::BITS - 1 - n.leading_zeros()) as usize
 }
 
+/// Soundness-driven multilinear (PCS) parameters for one AIR.
+fn ml_params(stark_struct: &StarkStruct, n_bits: usize, total_cols: usize) -> proofman_multilinear::MlParams {
+    // Rate: reuse the AIR's configured blowup (at least 1).
+    let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
+    // Fold down to a small in-clear final polynomial, leaving ≥ 1 fold.
+    let log_final_poly_len = 4usize.min(n_bits.saturating_sub(1));
+    let univariate_skip_bits = 0;
+    let num_folds = n_bits - log_final_poly_len.min(n_bits.saturating_sub(1));
+
+    let fri = FRISecurityParams {
+        field_size: security::goldilocks_cube_field_size(),
+        dimension: 1u64 << n_bits,
+        rate: 1.0 / (1u64 << log_blowup) as f64,
+        n_opening_points: 1,                   // single-point opening at `u`
+        n_functions: total_cols.max(1) as u64, // columns batched by δ into Φ
+        folding_factors: vec![2; num_folds],   // TODO
+        max_grinding_bits: 0,                  // TODO
+        use_max_grinding_bits: false,
+        tree_arity: proofman_multilinear::MERKLE_ARITY,
+        target_security_bits: 128,
+    };
+    let q = security::get_optimal_fri_query_params("JBR", &fri);
+
+    proofman_multilinear::MlParams {
+        log_blowup,
+        n_queries: q.n_queries as usize,
+        log_final_poly_len,
+        grinding_bits: q.n_grinding_bits as usize,
+        univariate_skip_bits,
+    }
+}
+
 /// Build the multilinear prover's fixed-column commitment `<AIR>.mlconst.bin`
-/// from the just-written raw `.const` file, so the prover reuses it instead of
-/// re-encoding + re-hashing the const tree on every proof.
+/// from the just-written raw `.const` file.
 ///
 /// The univariate `.consttree` can't be reused: it commits a different object
-/// (row-major leaves, univariate FRI order, its own arity/hash) and the Basefold
-/// opening also needs the raw RS codewords. AIRs with no fixed columns (or no
-/// `.const`) produce no artifact; any stale one is removed.
+/// (row-major leaves, univariate FRI order, its own arity/hash) and the PCS
+/// opening also needs the raw RS codewords.
 fn write_mlconst(air_ir: &proofman_multilinear::AirIr, const_path: &Path, out_path: &Path) -> Result<String> {
     use fields::Goldilocks;
 

@@ -1,16 +1,18 @@
 //! Reed–Solomon encoding.
 
-use crate::hypercube::{values_to_coeffs, Ext};
+use crate::hypercube::Ext;
 use fields::{coset_lde, Field, Goldilocks};
 
 /// RS-encode one base-field column (given as hypercube values). Returns the
 /// `2^(n_bits + log_blowup)` codeword values in natural evaluation order.
+///
+/// Uses the **value-to-coefficient identification**: the
+/// hypercube values are fed directly to the RS encoder as the coefficients of
+/// the univariate `g(x) = Σ_i f̂_MLE(bin(i))·xⁱ`.
 pub fn encode_column(col: &[Goldilocks], log_blowup: usize) -> Vec<Goldilocks> {
     assert!(col.len().is_power_of_two());
     let n_bits = col.len().trailing_zeros() as usize;
-    let mut coeffs = col.to_vec();
-    values_to_coeffs(&mut coeffs);
-    coset_lde(&coeffs, n_bits, log_blowup, 1)
+    coset_lde(col, n_bits, log_blowup, 1)
 }
 
 /// Evaluate the univariate polynomial with extension-field coefficients
@@ -36,7 +38,7 @@ pub fn domain_point(n0_bits: usize, level: usize, j: u64) -> Goldilocks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hypercube::{fold_coeffs, fold_mle, to_ext_vec, values_to_coeffs};
+    use crate::hypercube::fold_mle;
     use fields::PrimeField64;
     use rand::{rng, RngExt};
 
@@ -50,20 +52,19 @@ mod tests {
         Ext::from_array(&c)
     }
 
-    /// One FRI fold of codeword values must equal the codeword of the
-    /// first-variable-bound multilinear — the identity the whole Basefold
-    /// construction rests on. Checked both in coefficient form (`fold_coeffs`)
-    /// and value form (`fold_mle` + Möbius).
+    /// One FRI fold of the codeword must equal the codeword of the
+    /// first-variable-bound multilinear.
     #[test]
-    fn codeword_fold_is_coefficient_fold() {
+    fn codeword_fold_is_mle_fold() {
         let n_bits = 4;
         let log_blowup = 2;
         let n0_bits = n_bits + log_blowup;
         let col = random_col(1 << n_bits);
-        let codeword = to_ext_vec(&encode_column(&col, log_blowup));
+        let codeword = Ext::from_base_batch(&encode_column(&col, log_blowup));
         let r = random_ext();
 
-        // Fold codeword values: pair (j, j+half), x = domain_point(level 0, j)
+        // Fold codeword values: pair (j, j+half), x = domain_point(level 0, j),
+        // using the value-to-coefficient fold `(1−r)·even + r·odd`.
         let n0 = 1usize << n0_bits;
         let half = n0 / 2;
         let two_inv = Goldilocks::TWO.inverse();
@@ -72,23 +73,17 @@ mod tests {
                 let x_inv = domain_point(n0_bits, 0, j as u64).inverse();
                 let a = codeword[j];
                 let b = codeword[j + half];
-                (a + b) * two_inv + r * ((a - b) * (two_inv * x_inv))
+                (Ext::ONE - r) * ((a + b) * two_inv) + r * ((a - b) * (two_inv * x_inv))
             })
             .collect();
 
-        // Bind X_1 = r in coefficient form and evaluate naively on the level-1 domain.
-        let mut coeffs = to_ext_vec(&col);
-        values_to_coeffs(&mut coeffs);
-        fold_coeffs(&mut coeffs, r);
+        // Bind X_1 = r on the values; those bound values are directly the
+        // coefficients of the level-1 codeword's univariate.
+        let mut vals = Ext::from_base_batch(&col);
+        fold_mle(&mut vals, r);
         for (j, folded) in folded_values.iter().enumerate() {
             let x = domain_point(n0_bits, 1, j as u64);
-            assert_eq!(*folded, eval_ext_poly_at_base(&coeffs, x), "position {j}");
+            assert_eq!(*folded, eval_ext_poly_at_base(&vals, x), "position {j}");
         }
-
-        // Cross-check: the same coefficients arise from fold_mle + Möbius.
-        let mut vals = to_ext_vec(&col);
-        fold_mle(&mut vals, r);
-        values_to_coeffs(&mut vals);
-        assert_eq!(vals, coeffs);
     }
 }

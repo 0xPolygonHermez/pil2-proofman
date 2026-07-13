@@ -132,10 +132,7 @@ pub fn prove_air(
         })
         .collect();
 
-    // Stage commitments, interleaved per the multi-stage protocol: for stage i
-    // bind its root, then its air/airgroup value messages (stage-i outputs),
-    // then the (globally derived) challenge that gates stage i+1's witness.
-    // Everything is bound here, before the zerocheck's Fiat–Shamir randomness.
+    // Stage commitments.
     let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
@@ -155,7 +152,7 @@ pub fn prove_air(
     // --- Zerocheck ---
     let t_zerocheck = Instant::now();
 
-    let ell = ir.params.univariate_skip_bits.min(m);
+    let l = ir.params.univariate_skip_bits.min(m);
     let r = transcript.challenges(m);
     let alpha = transcript.challenge();
 
@@ -170,13 +167,13 @@ pub fn prove_air(
         airgroup_values,
         &r,
         alpha,
-        ell,
+        l,
     );
 
     // Compute the univariate skip polynomial
-    let mut zerocheck_round_polys = Vec::with_capacity(m - ell + 1);
+    let mut zerocheck_round_polys = Vec::with_capacity(m - l + 1);
     let mut skip_gamma = Ext::ZERO;
-    if ell > 0 {
+    if l > 0 {
         let v = oracle.skip_round_evals();
         transcript.absorb_exts(&v);
         skip_gamma = transcript.challenge();
@@ -185,8 +182,8 @@ pub fn prove_air(
     }
 
     // Compute the remaining rounds of the zerocheck protocol.
-    let mut lambda_x = Vec::with_capacity(m - ell);
-    for _ in 0..(m - ell) {
+    let mut lambda_x = Vec::with_capacity(m - l);
+    for _ in 0..(m - l) {
         let evals = oracle.round_evals();
         let sent = evals[1..].to_vec();
         transcript.absorb_exts(&sent);
@@ -197,10 +194,10 @@ pub fn prove_air(
     }
     let t_zerocheck = t_zerocheck.elapsed();
 
-    // --- Claimed openings ---
+    // --- Opening Reductions ---
     let t_claims = Instant::now();
     let kernels = build_kernels(ir);
-    let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, ell, skip_gamma, &lambda_x)).collect();
+    let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, l, skip_gamma, &lambda_x)).collect();
 
     let all_cols: Vec<&[Goldilocks]> = witness
         .iter()
@@ -314,10 +311,10 @@ pub(crate) fn seed_transcript(
 }
 
 /// The kernel's table over the hypercube `{0,1}^m` (prover side).
-pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
+pub(crate) fn kernel_table(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
     match spec {
         KernelSpec::Rot(s) => {
-            let base = skip_kernel_table(ell, gamma, lambda_x);
+            let base = skip_kernel_table(l, gamma, lambda_x);
             if *s == 0 {
                 base
             } else {
@@ -325,7 +322,7 @@ pub(crate) fn kernel_table(spec: &KernelSpec, ell: usize, gamma: Ext, lambda_x: 
             }
         }
         KernelSpec::Point(row) => {
-            let mut t = vec![Ext::ZERO; 1 << (ell + lambda_x.len())];
+            let mut t = vec![Ext::ZERO; 1 << (l + lambda_x.len())];
             t[*row as usize] = Ext::ONE;
             t
         }

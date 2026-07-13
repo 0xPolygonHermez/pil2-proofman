@@ -58,8 +58,6 @@ pub fn ntt_tiny(data: &mut [Goldilocks], n_bits: usize, n_cols: usize) {
     data.copy_from_slice(&vals);
 }
 
-// TODO: IT IS NECESSARY TO GO TO A COSET?????
-
 /// Low-degree extension onto a multiplicative coset.
 ///
 /// Takes `n_cols` interleaved columns of `1 << n_bits` coefficients (natural

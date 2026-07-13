@@ -193,7 +193,7 @@ pub fn rot_kernel_eval(s: i64, lambda: &[Ext], z: &[Ext]) -> Ext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hypercube::{mle_eval, to_ext_vec, boolean_point};
+    use crate::hypercube::{mle_eval, boolean_point};
     use fields::{Goldilocks, PrimeField64};
     use rand::{rng, RngExt};
 
@@ -236,7 +236,7 @@ mod tests {
 
             let shifted: Vec<Goldilocks> =
                 (0..len).map(|i| col[(i as i64 + s).rem_euclid(len as i64) as usize]).collect();
-            assert_eq!(claimed, mle_eval(&to_ext_vec(&shifted), &lambda), "offset {s}");
+            assert_eq!(claimed, mle_eval(&Ext::from_base_batch(&shifted), &lambda), "offset {s}");
         }
     }
 

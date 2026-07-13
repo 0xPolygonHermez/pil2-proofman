@@ -20,7 +20,7 @@
 use crate::encoding::{domain_point, encode_column, eval_ext_poly_at_base};
 use crate::error::MlError;
 use crate::pcs::MlPcs;
-use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
+use crate::hypercube::{fold_mle, mle_eval, Ext};
 use crate::merkle::MerkleTree;
 use crate::sumcheck::{eq_product_verifier_sumcheck_round, EqProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
@@ -52,7 +52,7 @@ pub struct MlParams {
     /// Log2 of the length of the final in-clear polynomial (number of
     /// variables left unfolded); clamped so that at least one fold happens.
     pub log_final_poly_len: usize,
-    /// Proof-of-work bits (not implemented in v1; must be 0).
+    /// Proof-of-work bits.
     pub grinding_bits: usize,
     /// Univariate-skip length `ℓ`: the zerocheck collapses its first `ℓ`
     /// rounds into one univariate round over a size-`2^ℓ` subgroup.
@@ -61,8 +61,8 @@ pub struct MlParams {
 }
 
 impl Default for MlParams {
+    // Default parameters for testing-only
     fn default() -> Self {
-        // TODO: We should find correct numbers for this!!!
         Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0, univariate_skip_bits: 0 }
     }
 }
@@ -154,7 +154,8 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
 
-/// One FRI fold step: `f_{level+1}(x²) = (f(x)+f(−x))/2 + r·(f(x)−f(−x))/(2x)`.
+/// One FRI fold step, in the **value-to-coefficient** convention:
+/// `f_{level+1}(x²) = (1−r)·(f(x)+f(−x))/2 + r·(f(x)−f(−x))/(2x)`.
 pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<Ext> {
     let n = vals.len();
     debug_assert_eq!(n, 1usize << (n0_bits - level));
@@ -164,6 +165,7 @@ pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<
     let two_inv = Goldilocks::ONE_HALF;
     let w_inv = Goldilocks::new(Goldilocks::W_INV[bits]);
     let shift_inv = Goldilocks::new(Goldilocks::SHIFT_INV).exp_power_of_2(level);
+    let one_minus_r = Ext::ONE - r;
 
     let mut out = Vec::with_capacity(half);
     let mut x_inv = shift_inv;
@@ -172,7 +174,7 @@ pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<
         let b = vals[j + half];
         let sum = (a + b) * two_inv;
         let diff = (a - b) * (two_inv * x_inv);
-        out.push(sum + r * diff);
+        out.push(one_minus_r * sum + r * diff);
         x_inv *= w_inv;
     }
     out
@@ -182,7 +184,7 @@ pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<
 fn fold_pair(a: Ext, b: Ext, n0_bits: usize, level: usize, j: u64, r: Ext) -> Ext {
     let two_inv = Goldilocks::TWO.inverse();
     let x_inv = domain_point(n0_bits, level, j).inverse();
-    (a + b) * two_inv + r * ((a - b) * (two_inv * x_inv))
+    (Ext::ONE - r) * ((a + b) * two_inv) + r * ((a - b) * (two_inv * x_inv))
 }
 
 /// Pair-pack an extension codeword into Merkle leaves (6 Goldilocks each).
@@ -249,9 +251,8 @@ pub fn prove_opening(
     assert_eq!(phi_codeword.len(), 1usize << n0_bits);
     let num_folds = params.num_folds(n);
 
-    // Coefficient-form shadow of f
-    let mut phi_coeffs = phi_table.clone();
-    values_to_coeffs(&mut phi_coeffs);
+    // In-clear shadow of f.
+    let mut phi_vals = phi_table.clone();
     let mut oracle = EqProductOracle::new(phi_table, point.to_vec());
     let mut codeword = phi_codeword;
     let mut fold_trees: Vec<(MerkleTree, Vec<Vec<Goldilocks>>)> = Vec::with_capacity(num_folds - 1);
@@ -272,7 +273,7 @@ pub fn prove_opening(
         if t < num_folds {
             // Compute the folded codeword
             codeword = fold_codeword(&codeword, n0_bits, t, r);
-            fold_coeffs(&mut phi_coeffs, r);
+            fold_mle(&mut phi_vals, r);
             if t + 1 < num_folds {
                 // Before the last fold, commit the folded codeword as a Merkle tree and absorb its root.
                 let leaves = pack_ext_pairs(&codeword);
@@ -281,7 +282,9 @@ pub fn prove_opening(
                 fold_trees.push((tree, leaves));
             } else {
                 // After the last fold, send the remaining polynomial in clear.
-                final_poly = phi_coeffs.clone();
+                // These values are simultaneously the remaining MLE table and
+                // the coefficients of the remaining univariate codeword.
+                final_poly = phi_vals.clone();
                 transcript.absorb_exts(&final_poly);
             }
         }
@@ -372,7 +375,7 @@ pub fn verify_opening(
     }
 
     // Final algebraic check: claim == f(rs).
-    let phi_final = monomial_eval(&proof.final_poly, &rs[num_folds..]);
+    let phi_final = mle_eval(&proof.final_poly, &rs[num_folds..]);
     if claim != phi_final {
         return Err(MlError::FinalCheck("sumcheck claim != f(λ)".into()));
     }

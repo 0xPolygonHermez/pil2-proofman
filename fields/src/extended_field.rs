@@ -1,4 +1,5 @@
 use crate::Field;
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -79,6 +80,10 @@ impl<F: Field> CubicExtensionField<F> {
 
     pub fn from_base(x: F) -> Self {
         Self { value: [x, F::ZERO, F::ZERO] }
+    }
+
+    pub fn from_base_batch(arr: &[F]) -> Vec<Self> {
+        arr.iter().map(|&x| Self::from_base(x)).collect()
     }
 
     pub fn from_array(arr: &[F]) -> Self {

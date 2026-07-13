@@ -241,7 +241,7 @@ impl<'a> ZerocheckOracle<'a> {
         }
     }
 
-    /// Univariate-skip round 0: the polynomial `v(X) = Σ_y C̃(X,y)·eq(y, r_{l+1..m})` of
+    /// Univariate-skip round 0: the polynomial `g(X) = Σ_y C̃(X,y)·eq(y, r_{l+1..m})` of
     /// degree `d·(2^l − 1)`, as its evaluations at `Z = 0, 1, …, deg`.
     pub fn skip_round_evals(&self) -> Vec<Ext> {
         let l = self.skip_bits;
@@ -559,7 +559,7 @@ impl LeafSource for ClaimsAtCorner<'_> {
 mod tests {
     use super::*;
     use crate::evaluator::test_air::{fib_ir, fib_trace};
-    use crate::hypercube::{mle_eval, to_ext_vec};
+    use crate::hypercube::mle_eval;
     use crate::sumcheck::interpolate_at;
     use crate::pcs::MlParams;
     use fields::{Field, PrimeField64};
@@ -607,7 +607,7 @@ mod tests {
         let col_a = &witness[0][0];
         let col_b = &witness[0][1];
         let shift = |c: &Vec<Goldilocks>| -> Vec<Goldilocks> { (0..n_rows).map(|i| c[(i + 1) % n_rows]).collect() };
-        let ev = |c: &[Goldilocks]| mle_eval(&to_ext_vec(c), &lambda);
+        let ev = |c: &[Goldilocks]| mle_eval(&Ext::from_base_batch(c), &lambda);
         let a_l = ev(col_a);
         let b_l = ev(col_b);
         let a_n = ev(&shift(col_a));

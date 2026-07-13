@@ -9,10 +9,6 @@ use fields::{CubicExtensionField, Goldilocks};
 /// The challenge/folding field: cubic extension of Goldilocks (~192 bits).
 pub type Ext = CubicExtensionField<Goldilocks>;
 
-pub fn to_ext_vec(vals: &[Goldilocks]) -> Vec<Ext> {
-    vals.iter().map(|&v| Ext::from_base(v)).collect()
-}
-
 /// The Boolean point of the hypercube corresponding to row index `row`.
 pub fn boolean_point(row: u64, n: usize) -> Vec<Ext> {
     (0..n).map(|j| if (row >> j) & 1 == 1 { Ext::ONE } else { Ext::ZERO }).collect()
@@ -56,9 +52,9 @@ pub fn mle_eval(evals: &[Ext], point: &[Ext]) -> Ext {
     t[0]
 }
 
-/// Evaluate the MLE of a base-field table at an extension point.
+/// Evaluate a multilinear given in base-field evaluations form at `point`
 pub fn mle_eval_base(evals: &[Goldilocks], point: &[Ext]) -> Ext {
-    mle_eval(&to_ext_vec(evals), point)
+    mle_eval(&Ext::from_base_batch(evals), point)
 }
 
 /// Evaluate a multilinear given in coefficient form at `point`.
