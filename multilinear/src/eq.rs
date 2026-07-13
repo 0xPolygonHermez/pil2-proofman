@@ -59,36 +59,6 @@ pub fn lagrange_d(ell: usize, z: Ext) -> Vec<Ext> {
     d.iter().map(|&di| factor * (z - di).inverse() * di).collect()
 }
 
-/// Equality kernel over the subgroup `D` (`|D| = 2^ell`): the unique bilinear
-/// form that is `δ` on `D × D`, `eq_D(z,w) = Σ_{d∈D} L_d(z)·L_d(w)`.
-pub fn eq_d(ell: usize, z: Ext, w: Ext) -> Ext {
-    lagrange_d(ell, z).iter().zip(lagrange_d(ell, w).iter()).map(|(&a, &b)| a * b).sum()
-}
-
-/// Equality kernel over the hyperprism `D × H^n` (SWIRL Lem 2.3.1):
-/// `eq((zp,xp),(zq,xq)) = eq_D(zp,zq)·eq(xp,xq)`.
-pub fn eq_prism(ell: usize, zp: Ext, xp: &[Ext], zq: Ext, xq: &[Ext]) -> Ext {
-    eq_d(ell, zp, zq) * eq_eval(xp, xq)
-}
-
-/// Rotation-by-one kernel over the hyperprism `D × H^n` (SWIRL Remark 2.5.1),
-/// evaluated at point `(zp, xp)` and query `(zq, xq)`:
-///
-/// `eq_D(zp, ω·zq)·eq(xp,xq) + eq_D(zp,1)·eq_D(ω·zq,1)·(κ_rot,Hⁿ(xp,xq) − eq(xp,xq))`.
-///
-/// The first term rotates the `D`-coordinate by the generator `ω` (the common,
-/// carry-free case); the correction fires only at the `D`-wrap, where the carry
-/// enters the hypercube via the pure-hypercube rotation kernel
-/// [`rot_kernel_eval`]. `ell = 0` degenerates to the hypercube shift-by-1 kernel.
-pub fn rot_kernel_prism(ell: usize, zp: Ext, xp: &[Ext], zq: Ext, xq: &[Ext]) -> Ext {
-    let omega = Goldilocks::new(Goldilocks::W[ell]);
-    let eq_x = eq_eval(xp, xq);
-    // κ_rot,Hⁿ(xp, xq) = rot_kernel_eval(1, λ=xq, z=xp).
-    let corr = rot_kernel_eval(1, xq, xp) - eq_x;
-    let wrap = eq_d(ell, zp, Ext::ONE) * eq_d(ell, zq * omega, Ext::ONE);
-    eq_d(ell, zp, zq * omega) * eq_x + wrap * corr
-}
-
 /// Prover-side table of the plain univariate-skip kernel over `{0,1}^m`
 /// (`m = ell + lambda_x.len()`): `K_0(b) = L_{b_P}(γ)·eq(b_X, λ_X)`, where the
 /// low `ell` bits `b_P` index the subgroup `D` (Lagrange in `γ`) and the high
@@ -310,59 +280,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn eq_d_delta_and_symmetric() {
-        for ell in 0..=3 {
-            let d = d_subgroup(ell);
-            for (i, &a) in d.iter().enumerate() {
-                for (j, &b) in d.iter().enumerate() {
-                    let e = eq_d(ell, Ext::from_base(a), Ext::from_base(b));
-                    assert_eq!(e, if i == j { Ext::ONE } else { Ext::ZERO }, "ell={ell} i={i} j={j}");
-                }
-            }
-            let (z, w) = (random_ext(), random_ext());
-            assert_eq!(eq_d(ell, z, w), eq_d(ell, w, z), "symmetry ell={ell}");
-        }
-    }
-
-    /// The hyperprism rotation kernel (SWIRL 2.5.1 closed form) must equal the
-    /// defining convolution `Σ_{z'} eq(rot(z'), pt)·eq(z', qry)` (2.3) over the
-    /// domain `D × H^n`, with `rot` = index + 1.
-    #[test]
-    fn rot_kernel_prism_matches_brute_force() {
-        for ell in 0..=3usize {
-            for n in 0..=3usize {
-                let (zp, zq) = (random_ext(), random_ext());
-                let xp: Vec<Ext> = (0..n).map(|_| random_ext()).collect();
-                let xq: Vec<Ext> = (0..n).map(|_| random_ext()).collect();
-                let lag_zp = lagrange_d(ell, zp);
-                let lag_zq = lagrange_d(ell, zq);
-                let total = 1usize << (ell + n);
-                let mask = (1usize << ell) - 1;
-                let prism_dom = |j: usize, lag: &[Ext], x: &[Ext]| -> Ext {
-                    lag[j & mask] * eq_eval(&boolean_point((j >> ell) as u64, n), x)
-                };
-                let mut brute = Ext::ZERO;
-                for i in 0..total {
-                    let roti = (i + 1) & (total - 1);
-                    brute += prism_dom(roti, &lag_zp, &xp) * prism_dom(i, &lag_zq, &xq);
-                }
-                assert_eq!(rot_kernel_prism(ell, zp, &xp, zq, &xq), brute, "ell={ell} n={n}");
-            }
-        }
-    }
-
-    /// `ell = 0` (trivial `D = {1}`) degenerates to the pure-hypercube
-    /// shift-by-1 kernel.
-    #[test]
-    fn rot_kernel_prism_ell0_is_hypercube_rot() {
-        let n = 4;
-        let (zp, zq) = (random_ext(), random_ext());
-        let xp: Vec<Ext> = (0..n).map(|_| random_ext()).collect();
-        let xq: Vec<Ext> = (0..n).map(|_| random_ext()).collect();
-        assert_eq!(rot_kernel_prism(0, zp, &xp, zq, &xq), rot_kernel_eval(1, &xq, &xp));
     }
 
     // --- Option-B (multilinear-commitment) univariate-skip kernel ---

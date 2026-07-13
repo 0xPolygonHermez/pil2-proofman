@@ -1,11 +1,13 @@
-//! The zerocheck PIOP: prove that every `EveryRow` constraint vanishes on the
-//! whole hypercube via one sumcheck of
+//! The zerocheck PIOP: Given prismalinear polynomials w_1,...,w_k ∈ F[Z,X₁,...,Xₘ],
+//! and constraints C_1,...,C_t, prove that
 //!
-//! `G(X) = eq(r, X) · Σ_t α^t · C_t(X)`,
+//! `C_t((w_j^{(s)}(y))_{j,s}) = 0` for all `t` and `y` in the hyperprism `D_m`,
 //!
-//! where `r` and `α` are transcript challenges sampled after the trace
-//! commitments. The sumcheck terminates in evaluation claims on the committed
-//! columns at the challenge point.
+//! This is proven using a sumcheck over `D^m` of the polynomial
+//!
+//! `G(X) = ∑_{y ∈ D_m} eq(X,y)·Σ_t α^{t-1} C_t((w_j^{(s)}(y))_{j,s})`,
+//!
+//! where `α` and `r` are random challenges.
 
 use crate::eq::{d_subgroup, eq_evals, lagrange_d, rotate_table};
 use crate::evaluator::{constraint_value, eval_instrs, LeafSource, Val};
@@ -101,7 +103,7 @@ pub struct ZerocheckOracle<'a> {
     /// then extension-field — so the dominant first round runs over `Goldilocks`.
     tables: Tables,
     /// `[stage-1][col][offset_idx]` → index into `tables`.
-    wit_index: Vec<Vec<Vec<usize>>>,
+    wtn_index: Vec<Vec<Vec<usize>>>,
     /// `[col][offset_idx]` → index into `tables`.
     const_index: Vec<Vec<usize>>,
     /// `[commit][col][offset_idx]` → index into `tables`.
@@ -143,7 +145,7 @@ impl Tables {
 
 struct TablePoint<'o> {
     ir: &'o AirIr,
-    wit_index: &'o [Vec<Vec<usize>>],
+    wtn_index: &'o [Vec<Vec<usize>>],
     const_index: &'o [Vec<usize>],
     custom_index: &'o [Vec<Vec<usize>>],
     vals: &'o [Val],
@@ -156,7 +158,7 @@ struct TablePoint<'o> {
 impl LeafSource for TablePoint<'_> {
     fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
-        self.vals[self.wit_index[stage as usize - 1][col as usize][o]]
+        self.vals[self.wtn_index[stage as usize - 1][col as usize][o]]
     }
     fn constant(&self, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
@@ -181,7 +183,6 @@ impl LeafSource for TablePoint<'_> {
 }
 
 impl<'a> ZerocheckOracle<'a> {
-    /// `witness[stage-1]`/`consts`: column-major base-field columns.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ir: &'a AirIr,
@@ -196,8 +197,7 @@ impl<'a> ZerocheckOracle<'a> {
         alpha: Ext,
         skip_bits: usize,
     ) -> Self {
-        let _n_rows = 1usize << ir.n_bits;
-        // Base-field tables: the first round runs entirely over `Goldilocks`.
+        // Tables over which constraints are defined
         let mut tables: Vec<Vec<Goldilocks>> = Vec::new();
 
         let mut make_tables = |col: &[Goldilocks]| -> Vec<usize> {
@@ -211,24 +211,23 @@ impl<'a> ZerocheckOracle<'a> {
                 .collect()
         };
 
-        let mut wit_index = Vec::with_capacity(witness.len());
+        let mut wtn_index = Vec::with_capacity(witness.len());
         for stage_cols in witness {
-            wit_index.push(stage_cols.iter().map(|c| make_tables(c)).collect::<Vec<_>>());
+            wtn_index.push(stage_cols.iter().map(|c| make_tables(c)).collect::<Vec<_>>());
         }
         let const_index: Vec<Vec<usize>> = consts.iter().map(|c| make_tables(c)).collect();
         let custom_index: Vec<Vec<Vec<usize>>> =
             customs.iter().map(|commit| commit.iter().map(|c| make_tables(c)).collect()).collect();
 
-        // Suffix eq weight. Plain Gruen (skip_bits = 0): the first round binds one
-        // variable, so drop r₁ → eq over r_{2..m}. Univariate skip (skip_bits = ℓ):
-        // round 0 sums over the whole suffix weighted by eq(x, r_{ℓ+1..m}), so keep
-        // the full suffix eq; `skip_bind` folds it once for the first suffix round.
+        // Compute eq(x, r_{l+1..m}):
+        //      - skip_bits = 0: the first round binds one variable, so drop r₁ → eq over r_{2..m}
+        //      - skip_bits = l: round 0 sums over the whole suffix weighted by eq(x, r_{l+1..m}), so keep the full suffix eq.
         let eq_suffix = if skip_bits == 0 { eq_evals(&r[1..]) } else { eq_evals(&r[skip_bits..]) };
 
         Self {
             ir,
             tables: Tables::Base(tables),
-            wit_index,
+            wtn_index,
             const_index,
             custom_index,
             eq_suffix,
@@ -242,23 +241,15 @@ impl<'a> ZerocheckOracle<'a> {
         }
     }
 
-    /// Univariate-skip round 0: the polynomial `v(Z) = Σ_x C̃(Z,x)·eq(x, r_X)` of
-    /// degree `d·(2^ℓ − 1)`, as its evaluations at `Z = 0, 1, …, deg`. Each column
-    /// is read through its degree-`<2^ℓ` Lagrange lift over `D` in the first `ℓ`
-    /// variables. Only valid before any bind, with `skip_bits > 0`.
-    ///
-    /// `v` is first sampled at the `2^ℓ` points of `D` — where the constraint is
-    /// read at Boolean rows, so `eval_instrs` runs in the **base field** (the
-    /// univariate-skip payoff) — and at `deg+1−2^ℓ` extra points of a coset of
-    /// `D` (extension-field, via the `D`-lift), then resampled onto the canonical
-    /// `0..deg` grid the verifier expects (transparent to the verifier).
+    /// Univariate-skip round 0: the polynomial `v(X) = Σ_y C̃(X,y)·eq(y, r_{l+1..m})` of
+    /// degree `d·(2^l − 1)`, as its evaluations at `Z = 0, 1, …, deg`.
     pub fn skip_round_evals(&self) -> Vec<Ext> {
-        let ell = self.skip_bits;
-        debug_assert!(ell > 0);
-        let np = 1usize << ell; // |D|
+        let l = self.skip_bits;
+        debug_assert!(l > 0);
+        let np = 1usize << l; // |D|
         let d = self.ir.max_constraint_degree as usize;
         let n_pts = d * (np - 1) + 1; // deg(v) + 1
-        let nx = self.eq_suffix.len(); // 2^{m-ℓ}
+        let nx = self.eq_suffix.len(); // 2^{m-l}
         let base = match &self.tables {
             Tables::Base(t) => t,
             Tables::Ext(_) => panic!("skip_round_evals must run before any bind"),
@@ -288,9 +279,11 @@ impl<'a> ZerocheckOracle<'a> {
             }};
         }
 
+        // Compute v(Z) = Σ_x C̃(Z,x)·eq(x, r_{l+1..m}) for each Z = 0..deg(v).
         let mut node_vals = Vec::with_capacity(n_pts);
-        // (a) D-points ω^0..ω^{2^ℓ−1}: Boolean rows → base-field eval_instrs.
-        let d_pts = d_subgroup(ell);
+
+        // (a) D-points ω^0..ω^{2^l−1}: Boolean rows → base-field eval_instrs.
+        let d_pts = d_subgroup(l);
         for p_prime in 0..np {
             node_vals.push(v_at!(|x: usize, vals: &mut [Val]| {
                 for (t, table) in base.iter().enumerate() {
@@ -298,11 +291,12 @@ impl<'a> ZerocheckOracle<'a> {
                 }
             }));
         }
+
         // (b) Extra nodes in a coset of D (disjoint from D): extension eval_instrs
         //     through each column's D-lift at Z.
         let extra_nodes = coset_nodes(n_pts - np);
         for &z in &extra_nodes {
-            let lag = lagrange_d(ell, z);
+            let lag = lagrange_d(l, z);
             node_vals.push(v_at!(|x: usize, vals: &mut [Val]| {
                 for (t, table) in base.iter().enumerate() {
                     let mut acc = Ext::ZERO;
@@ -320,14 +314,14 @@ impl<'a> ZerocheckOracle<'a> {
         (0..n_pts).map(|k| lagrange_eval(&nodes, &node_vals, Ext::from_base(Goldilocks::from_u64(k as u64)))).collect()
     }
 
-    /// Bind the univariate-skip block to `γ`: collapse the first `ℓ` variables of
+    /// Bind the univariate-skip block to `γ`: collapse the first `l` variables of
     /// every leaf table via its Lagrange lift over `D` at `γ`, leaving extension
-    /// tables over the `m−ℓ` suffix variables; the remaining rounds are ordinary
-    /// rounds over `r_{ℓ+1..m}`.
+    /// tables over the `m−l` suffix variables; the remaining rounds are ordinary
+    /// rounds over `r_{l+1..m}`.
     pub fn skip_bind(&mut self, gamma: Ext) {
-        let ell = self.skip_bits;
-        let np = 1usize << ell;
-        let lag = lagrange_d(ell, gamma);
+        let l = self.skip_bits;
+        let np = 1usize << l;
+        let lag = lagrange_d(l, gamma);
         let base = match &self.tables {
             Tables::Base(t) => t,
             Tables::Ext(_) => panic!("skip_bind must run before any other bind"),
@@ -348,20 +342,20 @@ impl<'a> ZerocheckOracle<'a> {
             })
             .collect();
         self.tables = Tables::Ext(ext);
-        // eq_suffix = eq(·, r_{ℓ..m}); fold once → eq(·, r_{ℓ+1..m}) for the first
+        // eq_suffix = eq(·, r_{l..m}); fold once → eq(·, r_{l+1..m}) for the first
         // suffix Gruen round (valid since (1−r)+r = 1, independent of γ).
         let half = self.eq_suffix.len() / 2;
         for j in 0..half {
             self.eq_suffix[j] = self.eq_suffix[2 * j] + self.eq_suffix[2 * j + 1];
         }
         self.eq_suffix.truncate(half);
-        self.rounds_left = self.ir.n_bits as usize - ell;
+        self.rounds_left = self.ir.n_bits as usize - l;
     }
 
     fn table_point<'s>(&'s self, vals: &'s [Val]) -> TablePoint<'s> {
         TablePoint {
             ir: self.ir,
-            wit_index: &self.wit_index,
+            wtn_index: &self.wtn_index,
             const_index: &self.const_index,
             custom_index: &self.custom_index,
             vals,
@@ -381,9 +375,7 @@ fn rotate_shifted(col: &[Goldilocks], s: i32) -> Vec<Goldilocks> {
 
 /// `n` distinct extra interpolation nodes for the univariate-skip round
 /// polynomial: a coset `SHIFT·{ω^0, ω^1, …}` of a subgroup large enough to hold
-/// them. Disjoint from `D` (all roots of unity) because `SHIFT` is a non-root
-/// (the LDE coset shift), so combined with the `D`-points they form a distinct
-/// node set for interpolation.
+/// them.
 fn coset_nodes(n: usize) -> Vec<Ext> {
     if n == 0 {
         return Vec::new();
@@ -406,7 +398,6 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
     }
 
     fn round_degree(&self) -> usize {
-        // The eq(.,.) polynomial does not count
         self.ir.max_constraint_degree as usize
     }
 
@@ -436,7 +427,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                 }
                 let src = TablePoint {
                     ir: self.ir,
-                    wit_index: &self.wit_index,
+                    wtn_index: &self.wtn_index,
                     const_index: &self.const_index,
                     custom_index: &self.custom_index,
                     vals: &vals,
@@ -646,8 +637,8 @@ mod tests {
     }
 
     /// Univariate-skip zerocheck at the oracle level: the skip round-0 poly `v`
-    /// (degree `d·(2^ℓ−1)`) must pass the skip check `Σ_p eq(p,r_P)·v(φ(p)) = 0`
-    /// on a valid trace, and after binding `γ` the `m−ℓ` Gruen suffix rounds must
+    /// (degree `d·(2^l−1)`) must pass the skip check `Σ_p eq(p,r_P)·v(φ(p)) = 0`
+    /// on a valid trace, and after binding `γ` the `m−l` Gruen suffix rounds must
     /// terminate at the batched constraint value at the skip point `(γ, λ_X)` —
     /// reconstructed independently via the (validated) `skip_kernel_table`.
     #[test]
@@ -656,36 +647,36 @@ mod tests {
         use crate::hypercube::boolean_point;
 
         let m = 5usize;
-        for ell in 1..=3usize {
+        for l in 1..=3usize {
             let ir = fib_ir(m as u32, MlParams::default());
             let (witness, consts, publics) = fib_trace(m as u32);
             let d = ir.max_constraint_degree as usize;
 
             let r: Vec<Ext> = (0..m).map(|_| random_ext()).collect();
             let alpha = random_ext();
-            let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha, ell);
+            let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha, l);
 
             // Skip round + check.
             let v = oracle.skip_round_evals();
-            assert_eq!(v.len(), d * ((1 << ell) - 1) + 1, "ell={ell}");
-            let dsub = d_subgroup(ell);
+            assert_eq!(v.len(), d * ((1 << l) - 1) + 1, "l={l}");
+            let dsub = d_subgroup(l);
             let mut skip_sum = Ext::ZERO;
             for (p, &dp) in dsub.iter().enumerate() {
-                skip_sum += eq_eval(&boolean_point(p as u64, ell), &r[..ell]) * interpolate_at(&v, Ext::from_base(dp));
+                skip_sum += eq_eval(&boolean_point(p as u64, l), &r[..l]) * interpolate_at(&v, Ext::from_base(dp));
             }
-            assert_eq!(skip_sum, Ext::ZERO, "skip check ell={ell}");
+            assert_eq!(skip_sum, Ext::ZERO, "skip check l={l}");
 
             let gamma = random_ext();
             let mut claim = interpolate_at(&v, gamma);
             oracle.skip_bind(gamma);
 
-            // Gruen suffix rounds over r_X = r[ell..].
+            // Gruen suffix rounds over r_X = r[l..].
             let mut lambda_x = Vec::new();
-            for round in 0..(m - ell) {
+            for round in 0..(m - l) {
                 let evals = oracle.round_evals();
                 let ch = random_ext();
-                let rk = r[ell + round];
-                assert_eq!((Ext::ONE - rk) * evals[0] + rk * evals[1], claim, "suffix round {round} ell={ell}");
+                let rk = r[l + round];
+                assert_eq!((Ext::ONE - rk) * evals[0] + rk * evals[1], claim, "suffix round {round} l={l}");
                 claim = interpolate_at(&evals, ch);
                 oracle.bind(ch);
                 lambda_x.push(ch);
@@ -693,7 +684,7 @@ mod tests {
 
             // Final: batched constraint at (γ, λ_X) via the skip kernels (offset 0
             // and offset 1 = rotate by 1), matching the fib constraints.
-            let k0 = skip_kernel_table(ell, gamma, &lambda_x);
+            let k0 = skip_kernel_table(l, gamma, &lambda_x);
             let k1 = crate::eq::rotate_table(&k0, 1);
             let ev = |col: &Vec<Goldilocks>, kern: &[Ext]| -> Ext {
                 col.iter().zip(kern.iter()).map(|(&w, &k)| k * w).sum()
@@ -702,7 +693,7 @@ mod tests {
             let (a_n, b_n) = (ev(&witness[0][0], &k1), ev(&witness[0][1], &k1));
             let nl = ev(&consts[0], &k0);
             let expected = nl * (b_n - (a_l + b_l)) + alpha * (nl * (a_n - b_l));
-            assert_eq!(claim, expected, "final claim ell={ell}");
+            assert_eq!(claim, expected, "final claim l={l}");
         }
     }
 }

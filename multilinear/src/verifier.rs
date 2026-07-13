@@ -7,7 +7,7 @@ use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
 use crate::hypercube::{to_ext_vec, boolean_point, Ext};
 use crate::ir::{AirIr, Boundary};
 use crate::prover::{powers, seed_transcript, MlProof};
-use crate::sumcheck::interpolate_at;
+use crate::sumcheck::{interpolate_at, verifier_sumcheck_round};
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{
     build_kernels, constraint_weights, kernel_index_of_boundary, ClaimsAtCorner, ClaimsAtPoint, KernelSpec,
@@ -132,18 +132,20 @@ pub fn verify_air(
     }
 
     // Gruen suffix rounds over r_X = r[ell..].
-    let n_evals = d + 1;
-    for (round, evals) in round_polys.enumerate() {
-        if evals.len() != n_evals {
+    let n_evals = d;
+    for (round, sent) in round_polys.enumerate() {
+        if sent.len() != n_evals {
             return Err(MlError::Malformed(format!("zerocheck round {round}: expected {n_evals} evaluations")));
         }
-        transcript.absorb_exts(evals);
+        transcript.absorb_exts(sent);
         let ch = transcript.challenge();
         let rk = r[ell + round];
-        if (Ext::ONE - rk) * evals[0] + rk * evals[1] != claim {
-            return Err(MlError::SumcheckRound { round: round + usize::from(ell > 0) });
-        }
-        claim = interpolate_at(evals, ch);
+        // sent[0] = g'(1); recover g'(0) = (claim − rₖ·g'(1)) / (1 − rₖ).
+        let g0 = (claim - rk * sent[0]) * (Ext::ONE - rk).inverse();
+        let mut evals = Vec::with_capacity(d + 1);
+        evals.push(g0);
+        evals.extend_from_slice(sent);
+        claim = interpolate_at(&evals, ch);
         lambda_x.push(ch);
     }
 
@@ -199,7 +201,7 @@ pub fn verify_air(
         }
     }
 
-    // --- Batched Basefold opening of all claims.
+    // --- Opening reduction ---
     let col_coeffs = powers(delta, total_cols);
     let kernel_weights = powers(gamma, kernels.len());
     let mut sigma = Ext::ZERO;
@@ -209,6 +211,36 @@ pub fn verify_air(
         }
     }
 
+    if proof.reduction_round_polys.len() != n {
+        return Err(MlError::Malformed(format!("expected {n} opening-reduction round polynomials")));
+    }
+    let mut red_claim = sigma;
+    let mut u = Vec::with_capacity(n);
+    for (t, evals) in proof.reduction_round_polys.iter().enumerate() {
+        // Tweak 1: the prover omits g(0), sending the 2 evals g(1), g(2) of the
+        // degree-2 round poly; `verifier_sumcheck_round` recovers g(0).
+        if evals.len() != 2 {
+            return Err(MlError::Malformed(format!("reduction round {t}: expected 2 evaluations")));
+        }
+        transcript.absorb_exts(evals);
+        let ch = transcript.challenge();
+        red_claim = verifier_sumcheck_round(red_claim, evals, ch, t)?;
+        u.push(ch);
+    }
+
+    // The remaining claim is Φ̃(u)·W̃(u); the batched kernel MLE at `u` is
+    // verifier-evaluable in O(kernels·n), leaving `Φ̃(u)` for the PCS.
+    let w_at_u: Ext = kernels
+        .iter()
+        .zip(kernel_weights.iter())
+        .map(|(spec, w)| *w * kernel_mle_eval(spec, ell, skip_gamma, &lambda_x, &u))
+        .sum();
+    if w_at_u.is_zero() {
+        return Err(MlError::FinalCheck("batched kernel vanishes at the reduction point".into()));
+    }
+    let phi_at_u = red_claim * w_at_u.inverse();
+
+    // --- Batched Basefold opening of `Φ̃(u)`.
     let mut roots: Vec<[Goldilocks; 4]> = proof.stage_roots.clone();
     roots.push(proof.const_root);
     roots.extend(proof.custom_roots.iter().copied());
@@ -216,13 +248,7 @@ pub fn verify_air(
     stage_n_cols.push(ir.n_const_cols as usize);
     stage_n_cols.extend(ir.custom_commits.iter().map(|c| c.n_cols as usize));
 
-    Pcs::verify(params, &mut transcript, n, sigma, &proof.opening, &roots, &stage_n_cols, &col_coeffs, |z| {
-        kernels
-            .iter()
-            .zip(kernel_weights.iter())
-            .map(|(spec, w)| *w * kernel_mle_eval(spec, ell, skip_gamma, &lambda_x, z))
-            .sum()
-    })?;
+    Pcs::verify(params, &mut transcript, n, phi_at_u, &proof.opening, &roots, &stage_n_cols, &col_coeffs, &u)?;
 
     Ok(())
 }
@@ -358,6 +384,11 @@ mod tests {
         let mut proof3 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         proof3.opening.final_poly[0] += Ext::ONE;
         assert!(verify_air(&ir, &proof3, &publics, None, None).is_err());
+
+        // Tamper with an opening-reduction round polynomial.
+        let mut proof4 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        proof4.reduction_round_polys[1][0] += Ext::ONE;
+        assert!(verify_air(&ir, &proof4, &publics, None, None).is_err());
     }
 
     #[test]

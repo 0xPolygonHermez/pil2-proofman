@@ -6,7 +6,7 @@ use crate::eq::{rotate_table, skip_kernel_table};
 use crate::error::MlError;
 use crate::hypercube::{dot_base_ext, Ext};
 use crate::ir::AirIr;
-use crate::sumcheck::SumcheckOracle;
+use crate::sumcheck::{ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{build_kernels, KernelSpec, ZerocheckOracle};
 use fields::{Goldilocks, PrimeField64};
@@ -32,6 +32,8 @@ pub struct MlProof {
     pub zerocheck_round_polys: Vec<Vec<Ext>>,
     /// Claimed weighted-sum openings: `claims[global_col][kernel]`.
     pub claims: Vec<Vec<Ext>>,
+    /// Opening-reduction round polynomials.
+    pub reduction_round_polys: Vec<Vec<Ext>>,
     pub opening: OpeningProof,
     pub publics: Vec<Goldilocks>,
     /// Global transcript challenges used by the constraints (full global
@@ -182,14 +184,15 @@ pub fn prove_air(
         zerocheck_round_polys.push(v);
     }
 
-    // Compute the remaining rounds of the zerocheck protocol
+    // Compute the remaining rounds of the zerocheck protocol.
     let mut lambda_x = Vec::with_capacity(m - ell);
     for _ in 0..(m - ell) {
         let evals = oracle.round_evals();
-        transcript.absorb_exts(&evals);
+        let sent = evals[1..].to_vec();
+        transcript.absorb_exts(&sent);
         let ch = transcript.challenge();
         oracle.bind(ch);
-        zerocheck_round_polys.push(evals);
+        zerocheck_round_polys.push(sent);
         lambda_x.push(ch);
     }
     let t_zerocheck = t_zerocheck.elapsed();
@@ -225,7 +228,7 @@ pub fn prove_air(
     }
     let t_claims = t_claims.elapsed();
 
-    // --- Two-level batching and the Basefold opening.
+    // --- Two-level batching and the opening reduction.
     let t_opening = Instant::now();
     let delta = transcript.challenge();
     let gamma = transcript.challenge();
@@ -238,6 +241,7 @@ pub fn prove_air(
             sigma += col_coeffs[j] * kernel_weights[i] * *v;
         }
     }
+    let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
 
     let phi_table = combine_columns(&all_cols, &col_coeffs);
     let mut w_table = vec![Ext::ZERO; n_rows];
@@ -247,13 +251,30 @@ pub fn prove_air(
         }
     }
 
+    // Opening reduction: one plain sumcheck of `Σ_b Φ(b)·W(b) = σ` collapses
+    // every (column, kernel) claim to evaluations at its challenge point `u`;
+    // the sharing of challenges is what makes all claims land on one point.
+    let mut reduction = ProductOracle::new(phi_table.clone(), w_table);
+    let mut reduction_round_polys = Vec::with_capacity(m);
+    let mut u = Vec::with_capacity(m);
+    for _ in 0..m {
+        // Tweak 1: omit g(0); the verifier recovers it from g(0)+g(1) = claim.
+        let evals = reduction.round_evals();
+        let sent = evals[1..].to_vec();
+        transcript.absorb_exts(&sent);
+        reduction_round_polys.push(sent);
+        let ch = transcript.challenge();
+        reduction.bind(ch);
+        u.push(ch);
+    }
+
+    // --- The Basefold opening of `Φ̃(u)`.
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
     let phi_codeword = Pcs::combine_codewords(&matrices, &col_coeffs);
 
-    let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
-    let opening = Pcs::open(params, &mut transcript, phi_table, w_table, phi_codeword, &matrices);
+    let opening = Pcs::open(params, &mut transcript, phi_table, &u, phi_codeword, &matrices);
     let t_opening = t_opening.elapsed();
 
     log::debug!(
@@ -270,6 +291,7 @@ pub fn prove_air(
         custom_roots: custom_matrices.iter().map(|m| m.root()).collect(),
         zerocheck_round_polys,
         claims,
+        reduction_round_polys,
         opening,
         publics: publics.to_vec(),
         challenges: challenges.to_vec(),

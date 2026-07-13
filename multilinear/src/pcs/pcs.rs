@@ -1,13 +1,13 @@
 //! The multilinear polynomial commitment scheme (PCS) seam.
 //!
 //! The prover ([`crate::prove_air`]) and verifier ([`crate::verify_air`]) reduce
-//! a STARK statement to a single batched weighted-sum opening
-//! `Σ_b Φ(b)·W(b) = σ` and reach the commitment scheme only through the
-//! [`MlPcs`] trait and the [`Pcs`] alias. Everything around the PCS — the
-//! batching, transcript, zerocheck, challenge derivation, and Merkle /
-//! `.mlconst.bin` plumbing — is scheme-agnostic, so a new scheme (e.g. WHIR,
-//! see [`crate::whir`]) is added by implementing this trait and repointing
-//! `Pcs` at it.
+//! a STARK statement — via the zerocheck and the opening-reduction sumcheck —
+//! to a single batched evaluation claim `Φ̃(u) = σ` at one point `u`, and reach
+//! the commitment scheme only through the [`MlPcs`] trait and the [`Pcs`]
+//! alias. Everything around the PCS — the batching, transcript, zerocheck,
+//! kernel handling, challenge derivation, and Merkle / `.mlconst.bin` plumbing
+//! — is scheme-agnostic, so a new scheme (e.g. WHIR, see [`crate::whir`]) is
+//! added by implementing this trait and repointing `Pcs` at it.
 
 use fields::Goldilocks;
 
@@ -18,12 +18,12 @@ use crate::transcript::MlTranscript;
 use super::basefold::MlParams;
 
 /// A multilinear polynomial commitment scheme: commit base-field column
-/// matrices and prove/verify the batched weighted-sum opening
-/// `Σ_b Φ(b)·W(b) = σ`.
+/// matrices and prove/verify the batched single-point opening
+/// `Φ̃(u) = σ`, i.e. `Σ_b Φ(b)·eq(b, u) = σ`.
 ///
-/// The `Φ` (committed columns) / `W` (verifier-evaluable kernels) split, and
-/// the meaning of `σ`, are defined by the caller; the scheme only has to prove
-/// the weighted sum and the underlying column openings.
+/// `Φ` (the random linear combination of committed columns), the point `u`,
+/// and the meaning of `σ` are defined by the caller; the scheme only has to
+/// prove the eq-weighted sum and the underlying column openings.
 pub trait MlPcs {
     /// A committed matrix of columns (carries the encoded codewords + Merkle tree).
     type Commitment;
@@ -37,21 +37,21 @@ pub trait MlPcs {
     /// scheme's evaluation domain (folded together with the opening).
     fn combine_codewords(matrices: &[&Self::Commitment], coeffs: &[Ext]) -> Vec<Ext>;
 
-    /// Prove `Σ_b Φ(b)·W(b) = σ`. `phi_table`/`w_table` are the hypercube MLE
-    /// tables of `Φ` and `W`; `phi_codeword` is `Φ`'s codeword (from
-    /// [`combine_codewords`](MlPcs::combine_codewords)); `matrices` are the
-    /// commitments anchoring the query phase.
+    /// Prove `Σ_b Φ(b)·eq(b, u) = σ`. `phi_table` is the hypercube MLE table of
+    /// `Φ` and `point` the evaluation point `u`; `phi_codeword` is `Φ`'s
+    /// codeword (from [`combine_codewords`](MlPcs::combine_codewords));
+    /// `matrices` are the commitments anchoring the query phase.
     fn open(
         params: &MlParams,
         transcript: &mut MlTranscript,
         phi_table: Vec<Ext>,
-        w_table: Vec<Ext>,
+        point: &[Ext],
         phi_codeword: Vec<Ext>,
         matrices: &[&Self::Commitment],
     ) -> Self::OpeningProof;
 
-    /// Verify the opening and return the per-column evaluations at the final
-    /// sumcheck point (the caller cross-checks these against the claimed values).
+    /// Verify the opening of `Φ̃(point) = σ` and return the scheme's sumcheck
+    /// challenge point on success.
     #[allow(clippy::too_many_arguments)]
     fn verify(
         params: &MlParams,
@@ -62,7 +62,7 @@ pub trait MlPcs {
         stage_roots: &[[Goldilocks; 4]],
         stage_n_cols: &[usize],
         column_coeffs: &[Ext],
-        w_final: impl FnOnce(&[Ext]) -> Ext,
+        point: &[Ext],
     ) -> Result<Vec<Ext>, MlError>;
 }
 

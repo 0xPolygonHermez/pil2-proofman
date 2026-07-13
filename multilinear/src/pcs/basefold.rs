@@ -1,18 +1,19 @@
 //! Basefold: batched multilinear opening via sumcheck interleaved with FRI folding.
 //!
-//! The statement proven is a weighted hypercube sum `Σ_b Φ(b)·W(b) = σ`, where
-//! `Φ = Σ_j δ^j·w_j` is a random linear combination of the committed columns
-//! (this is what gets FRI-folded) and `W = Σ_i γ^i·K_i` is a random combination
-//! of verifier-evaluable kernels (`eq(·,λ)`, rotation kernels, Boolean-point
-//! kernels). The caller (the STARK prover/verifier) forms `Φ`, `W`, `σ`; this
-//! module runs the interleaved protocol:
+//! The statement proven is a single-point evaluation `f(u) = σ`, i.e. the
+//! hypercube sum `Σ_b f(b)·eq(b, u) = σ`, where `f = Σ_j δ^j·f_j` is a random
+//! linear combination of the committed columns (this is what gets FRI-folded)
+//! and `u` is the point every claim was previously collapsed to by the
+//! opening-reduction sumcheck. The caller (the STARK prover/verifier) forms
+//! `f`, `u`, `σ`; this module runs the interleaved protocol:
 //!
-//! - `n` sumcheck rounds of the degree-2 product `Φ·W`; the round-`t` challenge
-//!   also folds the codeword of `Φ` one step (fold = partial evaluation, the
-//!   Basefold identity). Folded oracles `Φ_1 … Φ_{L−1}` are Merkle-committed;
-//!   after `L` folds the remaining polynomial is sent in clear (`final_poly`,
-//!   which is simultaneously the partially-bound MLE table and the coefficient
-//!   vector of the remaining univariate).
+//! - `n` sumcheck rounds of the degree-2 product `f·eq(·,u)` (the eq factor is
+//!   handled analytically by [`EqProductOracle`], never materialized); the
+//!   round-`t` challenge also folds the codeword of `f` one step (fold =
+//!   partial evaluation, the Basefold identity). Folded oracles `f_1 … f_{L−1}`
+//!   are Merkle-committed; after `L` folds the remaining polynomial is sent in
+//!   clear (`final_poly`, which is simultaneously the partially-bound MLE table
+//!   and the coefficient vector of the remaining univariate).
 //! - A query phase checking fold consistency at random domain positions,
 //!   anchored in the stage commitments at level 0.
 
@@ -21,7 +22,7 @@ use crate::error::MlError;
 use crate::pcs::MlPcs;
 use crate::hypercube::{fold_coeffs, monomial_eval, values_to_coeffs, Ext};
 use crate::merkle::MerkleTree;
-use crate::sumcheck::{verify_sumcheck_round, ProductOracle, SumcheckOracle};
+use crate::sumcheck::{eq_product_verifier_sumcheck_round, EqProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use fields::{Field, Goldilocks, Poseidon2_16};
 
@@ -153,7 +154,7 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
 
-/// One FRI fold step: `Φ_{level+1}(x²) = (Φ(x)+Φ(−x))/2 + r·(Φ(x)−Φ(−x))/(2x)`.
+/// One FRI fold step: `f_{level+1}(x²) = (f(x)+f(−x))/2 + r·(f(x)−f(−x))/(2x)`.
 pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<Ext> {
     let n = vals.len();
     debug_assert_eq!(n, 1usize << (n0_bits - level));
@@ -212,66 +213,74 @@ pub struct OpeningQuery {
     /// Per stage matrix: the raw pair-packed leaf at position `p1` and its path.
     pub stage_leaves: Vec<Vec<Goldilocks>>,
     pub stage_paths: Vec<Vec<Vec<Goldilocks>>>,
-    /// Openings of the committed fold oracles `Φ_1 … Φ_{L−1}`.
+    /// Openings of the committed fold oracles `f_1 … f_{L−1}`.
     pub fold_openings: Vec<FoldOpening>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpeningProof {
-    /// Sumcheck round polynomials (evaluations at 0, 1, 2), one per variable.
-    pub round_polys: Vec<Vec<Ext>>,
-    /// Roots of the committed fold oracles `Φ_1 … Φ_{L−1}`.
+    /// Sumcheck round polynomials (evaluations at 0), one per variable.
+    pub round_polys: Vec<Ext>,
+    /// Roots of the committed fold oracles `f_1 … f_{L−1}`.
     pub fold_roots: Vec<[Goldilocks; 4]>,
     /// The remaining polynomial after `L` folds, in clear (`2^(n−L)` coefficients).
     pub final_poly: Vec<Ext>,
     pub queries: Vec<OpeningQuery>,
 }
 
-/// Prove the batched opening `Σ_b Φ(b)·W(b) = σ`.
+/// Prove the batched single-point opening `f(u) = σ`.
 ///
-/// `phi_table`/`w_table`: MLE tables of `Φ` and `W` on the hypercube (length `2^n`).
-/// `phi_codeword`: codeword of `Φ` on the level-0 domain (`Σ_j δ^j · codeword_j`).
+/// `phi_table`: MLE table of `f` on the hypercube.
+/// `point`: the evaluation point `u`.
+/// `phi_codeword`: codeword of `f`
 /// `matrices`: the stage commitments, in the same order the verifier will use.
 pub fn prove_opening(
     params: &MlParams,
     transcript: &mut MlTranscript,
     phi_table: Vec<Ext>,
-    w_table: Vec<Ext>,
+    point: &[Ext],
     phi_codeword: Vec<Ext>,
     matrices: &[&CommittedMatrix],
 ) -> OpeningProof {
     assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
     let n = phi_table.len().trailing_zeros() as usize;
+    assert_eq!(point.len(), n);
     let n0_bits = params.n0_bits(n);
     assert_eq!(phi_codeword.len(), 1usize << n0_bits);
     let num_folds = params.num_folds(n);
 
-    // Coefficient-form shadow of Φ: folded with the same challenges, it yields
-    // the in-clear final polynomial (whose codeword is the fully folded oracle).
+    // Coefficient-form shadow of f
     let mut phi_coeffs = phi_table.clone();
     values_to_coeffs(&mut phi_coeffs);
-    let mut oracle = ProductOracle::new(phi_table, w_table);
+    let mut oracle = EqProductOracle::new(phi_table, point.to_vec());
     let mut codeword = phi_codeword;
     let mut fold_trees: Vec<(MerkleTree, Vec<Vec<Goldilocks>>)> = Vec::with_capacity(num_folds - 1);
     let mut round_polys = Vec::with_capacity(n);
     let mut final_poly: Vec<Ext> = Vec::new();
 
+    // Commit phase: sumcheck rounds interleaved with FRI folds.
     for t in 0..n {
-        let evals = oracle.round_evals();
-        transcript.absorb_exts(&evals);
-        round_polys.push(evals);
+        // Compute the sumcheck round polynomial
+        let eval = oracle.round_evals()[0];
+        transcript.absorb_ext(&eval);
+        round_polys.push(eval);
+
+        // Sample a challenge and update the running claim to s = gᵢ(rᵢ)
         let r = transcript.challenge();
         oracle.bind(r);
 
         if t < num_folds {
+            // Compute the folded codeword
             codeword = fold_codeword(&codeword, n0_bits, t, r);
             fold_coeffs(&mut phi_coeffs, r);
             if t + 1 < num_folds {
+                // Before the last fold, commit the folded codeword as a Merkle tree and absorb its root.
                 let leaves = pack_ext_pairs(&codeword);
                 let tree = build_merkle(&leaves, MERKLE_ARITY);
                 transcript.absorb_root(&tree.root());
                 fold_trees.push((tree, leaves));
             } else {
+                // After the last fold, send the remaining polynomial in clear.
                 final_poly = phi_coeffs.clone();
                 transcript.absorb_exts(&final_poly);
             }
@@ -303,13 +312,13 @@ pub fn prove_opening(
     OpeningProof { round_polys, fold_roots: fold_trees.iter().map(|(t, _)| t.root()).collect(), final_poly, queries }
 }
 
-/// Verify a batched opening.
+/// Verify a batched single-point opening `f(u) = σ`.
 ///
-/// `sigma`: the claimed sum. `stage_roots`/`stage_n_cols`: the stage
-/// commitments. `column_coeffs`: the `δ`-coefficients of every column in
-/// commitment order (flattened across matrices). `w_final`: evaluates
-/// `W̃` at the final sumcheck point (the verifier can always do this —
-/// kernels are eq/rotation/Boolean-point kernels).
+/// `sigma`: the claimed evaluation.
+/// `proof`: the opening proof.
+/// `stage_roots`/`stage_n_cols`: the stage commitments.
+/// `column_coeffs`: the `δ`-coefficients of every column in commitment order.
+/// `point`: the evaluation point `u`.
 ///
 /// Returns the sumcheck challenge point on success.
 #[allow(clippy::too_many_arguments)]
@@ -322,7 +331,7 @@ pub fn verify_opening(
     stage_roots: &[[Goldilocks; 4]],
     stage_n_cols: &[usize],
     column_coeffs: &[Ext],
-    w_final: impl FnOnce(&[Ext]) -> Ext,
+    point: &[Ext],
 ) -> Result<Vec<Ext>, MlError> {
     assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
     let n0_bits = params.n0_bits(n_vars);
@@ -342,16 +351,17 @@ pub fn verify_opening(
         return Err(MlError::Malformed("column coefficient count mismatch".into()));
     }
 
-    // Sumcheck rounds (replaying the transcript).
+    // Sumcheck rounds (replaying the transcript). The prover sends only the
+    // linear factor `h` of each round polynomial; we
+    // reconstruct `g = prefix·eq₁(u_t,·)·h` from the known eq point `u` and the
+    // running `prefix`, then run the standard sumcheck round check.
     let mut claim = sigma;
     let mut rs = Vec::with_capacity(n_vars);
-    for (t, evals) in proof.round_polys.iter().enumerate() {
-        if evals.len() != 3 {
-            return Err(MlError::Malformed(format!("round {t}: expected degree-2 round polynomial")));
-        }
-        transcript.absorb_exts(evals);
+    for (t, eval) in proof.round_polys.iter().enumerate() {
+        transcript.absorb_ext(eval);
         let r = transcript.challenge();
-        claim = verify_sumcheck_round(claim, evals, r, t)?;
+        let next_claim = eq_product_verifier_sumcheck_round(claim, *eval, point[t], r)?;
+        claim = next_claim;
         rs.push(r);
 
         if t + 1 < num_folds {
@@ -361,13 +371,10 @@ pub fn verify_opening(
         }
     }
 
-    // Final algebraic check: claim == Φ̃(rs) · W̃(rs). The final polynomial is
-    // in monomial-coefficient form (it is simultaneously the coefficient vector
-    // of the remaining univariate, checked at the queries).
+    // Final algebraic check: claim == f(rs).
     let phi_final = monomial_eval(&proof.final_poly, &rs[num_folds..]);
-    let w_val = w_final(&rs);
-    if claim != phi_final * w_val {
-        return Err(MlError::FinalCheck("sumcheck claim != Φ̃(λ)·W̃(λ)".into()));
+    if claim != phi_final {
+        return Err(MlError::FinalCheck("sumcheck claim != f(λ)".into()));
     }
 
     // Query phase.
@@ -381,7 +388,7 @@ pub fn verify_opening(
             return Err(MlError::Malformed(format!("query {k}: stage opening count mismatch")));
         }
 
-        // Verify stage openings and combine columns into the Φ_0 pair.
+        // Verify stage openings and combine columns into the f_0 pair.
         let half0 = 1u64 << (n0_bits - 1);
         let mut a = Ext::ZERO;
         let mut b = Ext::ZERO;
@@ -462,7 +469,7 @@ pub fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<E
     out
 }
 
-/// Compute the batched MLE table `Σ_j coeff_j · w_j` over the raw columns.
+/// Compute the batched MLE table `Σ_j coeff_j · f_j` over the raw columns.
 pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
     let n = columns[0].len();
     let mut out = vec![Ext::ZERO; n];
@@ -495,11 +502,11 @@ impl MlPcs for Basefold {
         params: &MlParams,
         transcript: &mut MlTranscript,
         phi_table: Vec<Ext>,
-        w_table: Vec<Ext>,
+        point: &[Ext],
         phi_codeword: Vec<Ext>,
         matrices: &[&CommittedMatrix],
     ) -> OpeningProof {
-        prove_opening(params, transcript, phi_table, w_table, phi_codeword, matrices)
+        prove_opening(params, transcript, phi_table, point, phi_codeword, matrices)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -512,9 +519,9 @@ impl MlPcs for Basefold {
         stage_roots: &[[Goldilocks; 4]],
         stage_n_cols: &[usize],
         column_coeffs: &[Ext],
-        w_final: impl FnOnce(&[Ext]) -> Ext,
+        point: &[Ext],
     ) -> Result<Vec<Ext>, MlError> {
-        verify_opening(params, transcript, n_vars, sigma, proof, stage_roots, stage_n_cols, column_coeffs, w_final)
+        verify_opening(params, transcript, n_vars, sigma, proof, stage_roots, stage_n_cols, column_coeffs, point)
     }
 }
 
@@ -575,7 +582,7 @@ mod tests {
 
         let phi_table = combine_columns(&all_cols, &coeffs);
         let phi_codeword = combine_codewords(&matrices, &coeffs);
-        let proof = prove_opening(&params, &mut tp, phi_table, kernel.clone(), phi_codeword, &matrices);
+        let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &matrices);
 
         // --- verifier transcript ---
         let mut tv = MlTranscript::new();
@@ -598,11 +605,11 @@ mod tests {
             &[mat_a.root(), mat_b.root()],
             &[3, 2],
             &coeffs,
-            |point| crate::eq::eq_eval(&lambda, point),
+            &lambda_v,
         )
         .expect("opening must verify");
 
-        // The claim delivered by the fold cascade equals Φ̃ at the challenge point.
+        // The claim delivered by the fold cascade equals f at the challenge point.
         assert_eq!(rs.len(), n);
     }
 
@@ -625,15 +632,13 @@ mod tests {
         let coeffs = vec![Ext::ONE];
         let phi_table = combine_columns(&[&col], &coeffs);
         let phi_codeword = combine_codewords(&[&mat], &coeffs);
-        let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
+        let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &[&mat]);
 
         let mut tv = MlTranscript::new();
         tv.absorb_root(&mat.root());
         let lambda_v = tv.challenges(n);
         tv.absorb_ext(&sigma);
-        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, |point| {
-            crate::eq::eq_eval(&lambda_v, point)
-        });
+        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, &lambda_v);
         assert!(res.is_err(), "inflated claim must be rejected");
     }
 
@@ -669,15 +674,13 @@ mod tests {
         let coeffs = vec![Ext::ONE];
         let phi_table = combine_columns(&[&col], &coeffs);
         let phi_codeword: Vec<Ext> = mat.codewords[0].iter().map(|&v| Ext::from_base(v)).collect();
-        let proof = prove_opening(&params, &mut tp, phi_table, kernel, phi_codeword, &[&mat]);
+        let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &[&mat]);
 
         let mut tv = MlTranscript::new();
         tv.absorb_root(&mat.root());
         let lambda_v = tv.challenges(n);
         tv.absorb_ext(&sigma);
-        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, |point| {
-            crate::eq::eq_eval(&lambda_v, point)
-        });
+        let res = verify_opening(&params, &mut tv, n, sigma, &proof, &[mat.root()], &[1], &coeffs, &lambda_v);
         assert!(res.is_err(), "corrupted codeword must be rejected");
     }
 }
