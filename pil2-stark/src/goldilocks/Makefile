@@ -47,7 +47,7 @@ ifeq ($(UNAME_S),Linux)
     BUILD_DIR_GPU := ./build_gpu
     CUDA_SRC_DIRS := ./src ../utils ./utils
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-    NVCCFLAGS := -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff -U STARK_POSEIDON1
+    NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff -U STARK_POSEIDON1
 endif
 
 # Debug build flags
