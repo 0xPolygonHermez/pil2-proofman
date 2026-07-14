@@ -131,7 +131,7 @@ CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
 CUDA_GRAPH ?= 1
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
+NVCCFLAGS := --expt-relaxed-constexpr -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
              -I./external/sppark/ff -I./external/sppark -I./external/sppark/util -I./external/sppark/ec -I./external/blst/src \
              -DFEATURE_BN254 --diag-suppress 114
 ifeq ($(CUDA_GRAPH), 1)
