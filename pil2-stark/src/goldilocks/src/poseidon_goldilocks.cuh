@@ -75,7 +75,7 @@ using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<8>;
 // 2^64 mod p = 2^32 - 1 (the "epsilon" of the Goldilocks field): the
 // correction to apply whenever a value crosses the 2^64 boundary (borrow or
 // carry) during reduction.
-#define POS1_EPSILON 0xFFFFFFFFULL
+__device__ constexpr uint64_t POS1_EPSILON = 0xFFFFFFFFULL;
 
 // (hi*2^64 + lo) mod p, canonical. hi = hh*2^32 + hl:
 // v == lo - hh + hl*(2^32 - 1)  (mod p)
@@ -92,12 +92,12 @@ __device__ __forceinline__ uint64_t pos1_reduce128_(uint64_t hi, uint64_t lo)
     return r;
 }
 
-// (c*2^128 + hi*2^64 + lo) mod p, canonical; 2^128 == -2^32 (mod p), c < 2^31.
+// (c*2^128 + hi*2^64 + lo) mod p, canonical, using 2^128 == -2^32 (mod p).
 __device__ __forceinline__ uint64_t pos1_reduce160_(uint32_t c, uint64_t hi, uint64_t lo)
 {
     uint64_t r = pos1_reduce128_(hi, lo);
     uint64_t sub = ((uint64_t)c) << 32;
-    r = (r >= sub) ? (r - sub) : (r + GOLDILOCKS_PRIME - sub); //note sub < GOLDILOCKS_PRIME 
+    r = (r >= sub) ? (r - sub) : (r + GOLDILOCKS_PRIME - sub);
     if (r >= GOLDILOCKS_PRIME) r -= GOLDILOCKS_PRIME;
     return r;
 }
