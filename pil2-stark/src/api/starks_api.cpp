@@ -1194,3 +1194,27 @@ void poseidon2_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_
         Poseidon2Mode::Auto, 0, dim);
 }
 
+void ntt_coset_lde_gl(void *output, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t num_rows_ext)
+{
+    if (num_rows == 0 || num_cols == 0) return;
+    Goldilocks::Element *out = (Goldilocks::Element *)output; // num_rows_ext * num_cols
+    Goldilocks::Element *in  = (Goldilocks::Element *)input;  // num_rows     * num_cols
+
+    // Coset-scale row j by SHIFT^j and zero-pad up to num_rows_ext, matching
+    // `fields::coset_lde` (which scales the coefficients then runs a plain NTT
+    // over the extended domain — no INTT, since the input is already coeffs).
+    std::vector<Goldilocks::Element> buf(num_rows_ext * num_cols, Goldilocks::zero());
+    Goldilocks::Element sp = Goldilocks::one();
+    for (uint64_t j = 0; j < num_rows; j++)
+    {
+        for (uint64_t c = 0; c < num_cols; c++)
+        {
+            Goldilocks::mul(buf[j * num_cols + c], in[j * num_cols + c], sp);
+        }
+        Goldilocks::mul(sp, sp, Goldilocks::shift());
+    }
+
+    NTT_Goldilocks ntt(num_rows_ext);
+    ntt.NTT(out, buf.data(), num_rows_ext, num_cols);
+}
+

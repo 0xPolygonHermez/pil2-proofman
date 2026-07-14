@@ -68,7 +68,6 @@ impl MerkleTree {
     /// same per-level digest layout `new` produces. Byte-compatible with
     /// `new::<Poseidon2_16>` (guarded by `ffi_tree_matches_pure_rust`), so the
     /// pure-Rust verifier validates the resulting roots and paths unchanged.
-    #[cfg(feature = "ffi-poseidon2")]
     pub fn from_ffi(leaves: &[Vec<Goldilocks>], arity: u64) -> Self {
         use fields::PrimeField64;
         assert!(!leaves.is_empty());
@@ -154,7 +153,6 @@ impl MerkleTree {
 /// Total node count (all levels incl. per-level arity padding) for a tree of
 /// `num_leaves` leaves — matches the C++ `getTreeNumElements/HASH_SIZE` and
 /// `fields::partial_merkle_tree` formulas.
-#[cfg(feature = "ffi-poseidon2")]
 fn tree_num_nodes(num_leaves: u64, arity: u64) -> u64 {
     let mut num_nodes = num_leaves;
     let mut level = num_leaves;

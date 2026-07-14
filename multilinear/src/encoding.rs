@@ -15,6 +15,31 @@ pub fn encode_column(col: &[Goldilocks], log_blowup: usize) -> Vec<Goldilocks> {
     coset_lde(col, n_bits, log_blowup, 1)
 }
 
+/// RS-encode a whole matrix of equal-length base-field columns, returning one
+/// codeword per column, via a single batched call into the C++ AVX/threaded NTT.
+///
+/// Interleaves the columns row-major into canonical `u64`, runs the C++ coset
+/// NTT once (`num_cols` batched), then de-interleaves the extended codewords.
+pub fn encode_columns(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<Vec<Goldilocks>> {
+    use fields::PrimeField64;
+    assert!(!columns.is_empty());
+    let n = columns[0].len();
+    assert!(n.is_power_of_two() && columns.iter().all(|c| c.len() == n));
+    let ncols = columns.len();
+    let n_ext = n << log_blowup;
+
+    let mut input = vec![0u64; n * ncols];
+    for (c, col) in columns.iter().enumerate() {
+        for (j, &v) in col.iter().enumerate() {
+            input[j * ncols + c] = v.as_canonical_u64();
+        }
+    }
+    let mut out = vec![0u64; n_ext * ncols];
+    proofman_starks_lib_c::ntt_coset_lde_c(out.as_mut_ptr(), input.as_ptr(), ncols as u64, n as u64, n_ext as u64);
+
+    (0..ncols).map(|c| (0..n_ext).map(|i| Goldilocks::new(out[i * ncols + c])).collect()).collect()
+}
+
 /// Evaluate the univariate polynomial with extension-field coefficients
 /// `coeffs` at a base-field point `x`.
 pub fn eval_ext_poly_at_base(coeffs: &[Ext], x: Goldilocks) -> Ext {
@@ -50,6 +75,23 @@ mod tests {
     fn random_ext() -> Ext {
         let c = random_col(3);
         Ext::from_array(&c)
+    }
+
+    /// The FFI batched coset LDE must be byte-identical to the pure-Rust
+    /// per-column `encode_column` — the codeword layout the verifier's
+    /// `domain_point`/`fold_codeword`/query phase all assume.
+    #[test]
+    fn ffi_ntt_matches_coset_lde() {
+        for n_bits in [3usize, 6, 10] {
+            for log_blowup in [1usize, 2] {
+                let cols: Vec<Vec<Goldilocks>> = (0..5).map(|_| random_col(1 << n_bits)).collect();
+                let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+                let ffi = encode_columns(&refs, log_blowup);
+                for (c, col) in cols.iter().enumerate() {
+                    assert_eq!(ffi[c], encode_column(col, log_blowup), "n_bits={n_bits} blowup={log_blowup} col={c}");
+                }
+            }
+        }
     }
 
     /// One FRI fold of the codeword must equal the codeword of the

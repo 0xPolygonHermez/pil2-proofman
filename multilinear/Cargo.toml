@@ -8,24 +8,19 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-# `verify` selects the pure-Rust Goldilocks arithmetic so this crate builds
-# standalone (without it, `fields` needs the C++ FFI backend on x86_64).
 fields = { workspace = true, features = ["verify"] }
 serde = { workspace = true }
 bincode = { workspace = true }
 thiserror.workspace = true
 log = { workspace = true }
 rayon = { workspace = true, optional = true }
-proofman-starks-lib-c = { workspace = true, optional = true }
+proofman-starks-lib-c = { workspace = true }
 
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
-# Exposes the hand-built synthetic AIRs (`test_air`) outside `#[cfg(test)]` so
-# benchmarks can reuse them.
+# Exposes the hand-built synthetic AIRs (`test_air`) outside `#[cfg(test)]`.
 testutil = []
-# Offload the prover-side Merkle commit to the C++ AVX/AVX512 Poseidon2 kernels.
-ffi-poseidon2 = ["dep:proofman-starks-lib-c"]
 
 [dev-dependencies]
 rand = { workspace = true }
