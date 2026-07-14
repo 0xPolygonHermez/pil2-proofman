@@ -22,6 +22,7 @@ use crate::error::MlError;
 use crate::pcs::MlPcs;
 use crate::hypercube::{fold_mle, mle_eval, Ext};
 use crate::merkle::MerkleTree;
+use crate::par::map_slice;
 use crate::sumcheck::{eq_product_verifier_sumcheck_round, EqProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use fields::{Field, Goldilocks, Poseidon2_16};
@@ -146,7 +147,7 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
     let n = columns[0].len();
     assert!(columns.iter().all(|c| c.len() == n));
 
-    let codewords: Vec<Vec<Goldilocks>> = columns.iter().map(|c| encode_column(c, params.log_blowup)).collect();
+    let codewords: Vec<Vec<Goldilocks>> = map_slice(columns, |c| encode_column(c, params.log_blowup));
     let n0 = codewords[0].len();
 
     let leaves = pack_base_pairs(&codewords);

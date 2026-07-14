@@ -15,15 +15,23 @@ serde = { workspace = true }
 bincode = { workspace = true }
 thiserror.workspace = true
 log = { workspace = true }
+rayon = { workspace = true, optional = true }
 proofman-starks-lib-c = { workspace = true, optional = true }
 
 [features]
+default = ["parallel"]
+parallel = ["dep:rayon"]
 # Exposes the hand-built synthetic AIRs (`test_air`) outside `#[cfg(test)]` so
 # benchmarks can reuse them.
 testutil = []
 # Offload the prover-side Merkle commit to the C++ AVX/AVX512 Poseidon2 kernels.
-# The pure-Rust verifier validates the same Poseidon2 roots either way.
 ffi-poseidon2 = ["dep:proofman-starks-lib-c"]
 
 [dev-dependencies]
 rand = { workspace = true }
+env_logger = { workspace = true }
+
+[[bench]]
+name = "prove"
+harness = false
+required-features = ["testutil"]

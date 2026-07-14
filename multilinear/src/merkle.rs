@@ -3,7 +3,18 @@
 
 use fields::{linear_hash_seq, Field, Goldilocks, Hash};
 
+use crate::par::{map_range, map_slice};
+
 pub const DIGEST_CELLS: usize = 4;
+
+/// Flatten a vector of 4-cell digests into the level's flat digest buffer.
+fn flatten_digests(digs: Vec<[Goldilocks; DIGEST_CELLS]>) -> Vec<Goldilocks> {
+    let mut out = Vec::with_capacity(digs.len() * DIGEST_CELLS);
+    for d in &digs {
+        out.extend_from_slice(d);
+    }
+    out
+}
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MerkleTree {
@@ -19,28 +30,33 @@ impl MerkleTree {
         assert!(!leaves.is_empty());
         assert_eq!(arity as usize * DIGEST_CELLS, H::WIDTH, "arity * 4 must equal H::WIDTH");
 
-        let mut level = Vec::with_capacity(leaves.len() * DIGEST_CELLS);
-        for leaf in leaves {
+        // Leaf digests.
+        let hash_leaf = |leaf: &Vec<Goldilocks>| -> [Goldilocks; DIGEST_CELLS] {
             let st = linear_hash_seq::<Goldilocks, H>(leaf);
-            level.extend_from_slice(&st.as_ref()[..DIGEST_CELLS]);
-        }
+            let mut d = [Goldilocks::ZERO; DIGEST_CELLS];
+            d.copy_from_slice(&st.as_ref()[..DIGEST_CELLS]);
+            d
+        };
+        let level = flatten_digests(map_slice(leaves, hash_leaf));
 
         let mut levels = vec![level];
         while levels.last().unwrap().len() > DIGEST_CELLS {
             let cur = levels.last().unwrap();
             let n_dig = cur.len() / DIGEST_CELLS;
-            let padded = n_dig.div_ceil(arity as usize) * arity as usize;
-            let mut cur_padded = cur.clone();
-            cur_padded.resize(padded * DIGEST_CELLS, Goldilocks::ZERO);
+            let n_groups = n_dig.div_ceil(arity as usize);
+            let w = arity as usize * DIGEST_CELLS;
 
-            let mut next = Vec::with_capacity((padded / arity as usize) * DIGEST_CELLS);
-            for group in 0..(padded / arity as usize) {
+            let hash_group = |group: usize| -> [Goldilocks; DIGEST_CELLS] {
                 let mut st = H::State::default();
-                let w = arity as usize * DIGEST_CELLS;
-                st.as_mut()[..w].copy_from_slice(&cur_padded[group * w..(group + 1) * w]);
+                let base = group * w;
+                let avail = cur.len().saturating_sub(base).min(w);
+                st.as_mut()[..avail].copy_from_slice(&cur[base..base + avail]);
                 H::hash(&mut st);
-                next.extend_from_slice(&st.as_ref()[..DIGEST_CELLS]);
-            }
+                let mut d = [Goldilocks::ZERO; DIGEST_CELLS];
+                d.copy_from_slice(&st.as_ref()[..DIGEST_CELLS]);
+                d
+            };
+            let next = flatten_digests(map_range(n_groups, hash_group));
             levels.push(next);
         }
 

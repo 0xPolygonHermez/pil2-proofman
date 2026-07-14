@@ -24,6 +24,7 @@ mod evaluator;
 mod hypercube;
 mod ir;
 mod merkle;
+mod par;
 mod pcs;
 mod prover;
 mod sumcheck;
