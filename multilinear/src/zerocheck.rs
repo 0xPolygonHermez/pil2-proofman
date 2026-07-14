@@ -43,7 +43,7 @@ pub fn global_custom_col(ir: &AirIr, commit: u8, col: u32) -> usize {
 /// Boolean-point kernel per hypercube corner referenced by boundary constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KernelSpec {
-    /// `K(y) = eq((y − s) mod 2^n, λ)` — discharges `w̃^{→s}(λ)` claims.
+    /// `K(y) = eq((y − s) mod 2^n, λ)` — discharges `w̃^{(s)}(λ)` claims.
     Rot(i32),
     /// `K(y) = eq(y, bits(row))` — discharges `w(row)` corner claims.
     Point(u64),

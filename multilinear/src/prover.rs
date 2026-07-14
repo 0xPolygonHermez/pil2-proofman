@@ -105,7 +105,7 @@ pub fn prove_air(
     let mut transcript = MlTranscript::new();
     seed_transcript(&mut transcript, airgroup_id, air_id, n_bits, publics);
 
-    // --- Commitments ---
+    // --- Step 1: Trace Commitments ---
     let t_commit = Instant::now();
 
     // Fixed columns are known at setup time; reuse the prebuilt commitment
@@ -149,7 +149,7 @@ pub fn prove_air(
 
     let t_commit = t_commit.elapsed();
 
-    // --- Zerocheck ---
+    // --- Step 2: Constraint Zerocheck ---
     let t_zerocheck = Instant::now();
 
     let l = ir.params.univariate_skip_bits.min(m);
@@ -194,11 +194,18 @@ pub fn prove_air(
     }
     let t_zerocheck = t_zerocheck.elapsed();
 
-    // --- Opening Reductions ---
+    // --- Step 3: Opening Reductions ---
     let t_claims = Instant::now();
+
+    // --- Step 3.1: Compute the opening claims
+
+    // Compute all the kernel tables K_{rot^s}(X, Y) = ∑_c eq_m(c,X)·eq_m(rot^s(c),Y) for all rotations s and corners c.
+    // When s=0, K_{rot^0}(X,Y) = eq_m(X,Y), the identity kernel.
     let kernels = build_kernels(ir);
     let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, l, skip_gamma, &lambda_x)).collect();
 
+    // Compute the RHS of the linear relation:
+    //      w_j^{(s)}(λ) = ∑_c w_j(c)·K_{rot^s}(c, λ)
     let all_cols: Vec<&[Goldilocks]> = witness
         .iter()
         .flat_map(|stage| stage.iter().map(|c| c.as_slice()))
@@ -220,26 +227,19 @@ pub fn prove_air(
                 .collect()
         })
         .collect();
+
+    // Send w_j^{(s)}(λ) claims
     for row in &claims {
         transcript.absorb_exts(row);
     }
-    let t_claims = t_claims.elapsed();
 
-    // --- Two-level batching and the opening reduction.
-    let t_opening = Instant::now();
+    // --- Step 3.2: Reduce all claims to a single point evaluation
     let delta = transcript.challenge();
     let gamma = transcript.challenge();
     let col_coeffs = powers(delta, all_cols.len());
     let kernel_weights = powers(gamma, kernels.len());
 
-    let mut sigma = Ext::ZERO;
-    for (j, row) in claims.iter().enumerate() {
-        for (i, v) in row.iter().enumerate() {
-            sigma += col_coeffs[j] * kernel_weights[i] * *v;
-        }
-    }
-    let _ = sigma; // prover-side sanity value; the verifier recomputes it from the claims
-
+    // Batch the input columns
     let phi_table = combine_columns(&all_cols, &col_coeffs);
     let mut w_table = vec![Ext::ZERO; n_rows];
     for (wt, table) in kernel_weights.iter().zip(kernel_tables.iter()) {
@@ -264,8 +264,10 @@ pub fn prove_air(
         reduction.bind(ch);
         u.push(ch);
     }
+    let t_claims = t_claims.elapsed();
 
     // --- The Basefold opening of `Φ̃(u)`.
+    let t_opening = Instant::now();
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());

@@ -181,7 +181,7 @@ pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<
 }
 
 #[inline]
-fn fold_pair(a: Ext, b: Ext, n0_bits: usize, level: usize, j: u64, r: Ext) -> Ext {
+pub(crate) fn fold_pair(a: Ext, b: Ext, n0_bits: usize, level: usize, j: u64, r: Ext) -> Ext {
     let two_inv = Goldilocks::TWO.inverse();
     let x_inv = domain_point(n0_bits, level, j).inverse();
     (Ext::ONE - r) * ((a + b) * two_inv) + r * ((a - b) * (two_inv * x_inv))

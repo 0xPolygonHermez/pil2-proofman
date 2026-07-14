@@ -4,9 +4,9 @@
 //! hypercube.
 //!
 //! The rotation kernel handles "arbitrary offset" accesses, the
-//! shifted column `w^{→s}(b) = w((b + s) mod 2^n)` satisfies
+//! shifted column `w^{(s)}(b) = w((b + s) mod 2^n)` satisfies
 //!
-//! `w̃^{→s}(λ) = Σ_y w((y + s) mod 2^n) · eq(y, λ) = Σ_y w(y) · K_s(y)`,
+//! `w̃^{(s)}(λ) = Σ_y w((y + s) mod 2^n) · eq(y, λ) = Σ_y w(y) · K_s(y)`,
 //!
 //! with `K_s(y) = eq((y − s) mod 2^n, λ)`,
 //! so a shifted-column evaluation claim is a weighted-sum claim on the *base*
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn rotated_eq_table_evaluates_shifted_column() {
-        // Σ_y w(y)·rot_s_table[y] must equal w̃^{→s}(λ) = MLE of the shifted column.
+        // Σ_y w(y)·rot_s_table[y] must equal w̃^{(s)}(λ) = MLE of the shifted column.
         let n = 4;
         let len = 1usize << n;
         let col = random_base_col(n);
