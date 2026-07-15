@@ -18,3 +18,4 @@ witness.workspace = true
 pil-std-lib.workspace = true
 fields.workspace = true
 tracing.workspace = true
+rand.workspace = true

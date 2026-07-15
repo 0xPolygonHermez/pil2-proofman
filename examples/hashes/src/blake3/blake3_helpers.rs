@@ -1,15 +1,10 @@
-/// Deterministic pseudo-random Blake3 input generator
+use rand::{rngs::StdRng, RngExt, SeedableRng};
+
+/// Pseudo-random Blake3 input generator
 pub(crate) fn random_blake3_input(seed: u64) -> ([u32; 16], [u32; 16]) {
-    let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678_9ABC_DEF0);
-    let mut next = || {
-        s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = s;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        (z ^ (z >> 31)) as u32
-    };
-    let state = core::array::from_fn(|_| next());
-    let message = core::array::from_fn(|_| next());
+    let mut rng = StdRng::seed_from_u64(seed);
+    let state = core::array::from_fn(|_| rng.random());
+    let message = core::array::from_fn(|_| rng.random());
     (state, message)
 }
 
@@ -25,16 +20,17 @@ pub(crate) fn range_row(v: u16) -> usize {
     v as usize
 }
 
-/// Row index of an XOR-rotate table tuple (a, b, rot), rot in {0, 12, 7}
+/// Row index of an XOR-rotate table tuple (offset, a, b, rot), rot in {0, 12, 7}
 #[inline]
-pub(crate) fn table_row(a: u8, b: u8, rot: u32) -> usize {
+pub(crate) fn table_row(offset: usize, a: u8, b: u8, rot: u32) -> usize {
+    debug_assert!(offset < 4);
     let rot_block = match rot {
         0 => 0,
         12 => 1,
         7 => 2,
         _ => panic!("rotation {rot} is not in the table (expected 0, 12 or 7)"),
     };
-    rot_block * (1 << 16) + (b as usize) * 256 + a as usize
+    rot_block * (1 << 18) + offset * (1 << 16) + (b as usize) * 256 + a as usize
 }
 
 /// Split the XOR-rotate output into its two limb pieces
@@ -49,4 +45,10 @@ pub(crate) fn xor_rotr_split(a: u8, b: u8, rot: u32) -> (u8, u8) {
     let c0 = ((c >> (8 * l)) & 0xff) as u8;
     let c1 = ((c >> (8 * lp1)) & 0xff) as u8;
     (c0, c1)
+}
+
+/// Full 32-bit lane-positioned XOR-rotate output: rotr((a ^ b) << 8·offset, rot)
+#[inline]
+pub(crate) fn xor_rotr_full(a: u8, b: u8, offset: usize, rot: u32) -> u32 {
+    (((a ^ b) as u32) << (8 * offset)).rotate_right(rot)
 }

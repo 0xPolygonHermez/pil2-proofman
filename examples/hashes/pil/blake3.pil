@@ -6,7 +6,7 @@ require "common.pil"
 // Precompile in charge of performing the BLAKE3 permutation
 // For reference: https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html or https://github.com/BLAKE3-team/BLAKE3
 
-airtemplate Blake3(const int N = 2**18) {
+airtemplate Blake3(const int N = 2**20) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        BLAKE3 ROUND FUNCTION SPECIFICATION
@@ -171,7 +171,7 @@ airtemplate Blake3(const int N = 2**18) {
     // vd' === (vd ^ va') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
     col witness bits(8) vd_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 2) % 4], c1: 0);
+        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 2) % 4], c1: 0);
     }
 
     // vc' === (vc + vd') mod 2³²
@@ -183,7 +183,7 @@ airtemplate Blake3(const int N = 2**18) {
     // vb' === (vb ^ vc') >>> 12
     col witness bits(8) vb_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
+        xor_rotr_check(offset: 0, a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
     }
 
     /*
@@ -212,7 +212,7 @@ airtemplate Blake3(const int N = 2**18) {
     // vd'' === (vd' ^ va'') >>> 8 (Note that ROTR 8 is a byte-aligned rotation)
     col witness bits(8) vd_prime_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 3) % 4], c1: 0);
+        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 3) % 4], c1: 0);
     }
 
     // vc'' === (vc' + vd'') mod 2³²
@@ -221,28 +221,25 @@ airtemplate Blake3(const int N = 2**18) {
     const expr vd_prime_prime_packed = pack_bytes(vd_prime_prime);
     add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
 
-    // vb'' === (vb' ^ vc'') >>> 7
-    col witness bits(8) vb_prime_prime_s[4][2];
-    for (int i = 0; i < 4; i++) {
-        xor_rotr_check(a: vb_prime[i], b: vc_prime_prime[i], rot: 7, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
-    }
-
     /*
+        vb'' === (vb' ^ vc'') >>> 7
+
         ROTR 7
-        x    in[x]         out[x]           out[x][0..3]
-        ----------------------------------------------------
-        0    0x88      0x10_00_00_01     0x10 XXXX XXXX 0x01
-        1    0x99      0x00_00_01_32     XXXX XXXX 0x01 0x32
-        2    0xAA      0x00_01_54_00     XXXX 0x01 0x54 XXXX
-        3    0xBB      0x01_76_00_00     0x01 0x76 XXXX XXXX
-        ----------------------------------------------------
-        Result:        0x11_77_55_33     0x11 0x77 0x55 0x33
+        x    in[x]         out[x]    
+        -----------------------------
+        0    0x88      0x10_00_00_01 
+        1    0x99      0x00_00_01_32 
+        2    0xAA      0x00_01_54_00 
+        3    0xBB      0x01_76_00_00 
+        -----------------------------
+        Result:        0x11_77_55_33 
     */
-    const expr vb_prime_prime[4];
-    vb_prime_prime[0] = vb_prime_prime_s[0][1] + vb_prime_prime_s[1][0];
-    vb_prime_prime[1] = vb_prime_prime_s[1][1] + vb_prime_prime_s[2][0];
-    vb_prime_prime[2] = vb_prime_prime_s[2][1] + vb_prime_prime_s[3][0];
-    vb_prime_prime[3] = vb_prime_prime_s[0][0] + vb_prime_prime_s[3][1];
+    col witness bits(32) vb_prime_prime_s[4];
+    expr vb_pp_packed = 0;
+    for (int i = 0; i < 4; i++) {
+        xor_rotr_check(offset: i, a: vb_prime[i], b: vc_prime_prime[i], rot: 7, c0: vb_prime_prime_s[i], c1: 0);
+        vb_pp_packed += vb_prime_prime_s[i];
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TRANSITION CONSTRAINTS
@@ -251,7 +248,6 @@ airtemplate Blake3(const int N = 2**18) {
     // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
     // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
     const expr va_pp_packed = pack_bytes(va_prime_prime);
-    const expr vb_pp_packed = pack_bytes(vb_prime_prime);
     const expr vc_pp_packed = pack_bytes(vc_prime_prime);
     const expr vd_pp_packed = pack_bytes(vd_prime_prime);
 
@@ -345,7 +341,7 @@ airtemplate Blake3(const int N = 2**18) {
     // BLAKE3 OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const int TABLE_SIZE = P2_17 + P2_16;
+    const int TABLE_SIZE = P2_19 + P2_18;
     if (N < TABLE_SIZE) {
         error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
     }
@@ -356,36 +352,45 @@ airtemplate Blake3(const int N = 2**18) {
     // Input B (8 bits)
     col fixed B = [0:P2_8..MASK_8:P2_8]...;
 
+    // Offset (2 bits)
+    col fixed OFFSET = [0:P2_16..MASK_2:P2_16]...;
+
     // Rotation (1,5 bits)
-    col fixed ROTATION = [0:P2_16, 12:P2_16, 7:P2_16]...;
+    col fixed ROTATION = [0:P2_18, 12:P2_18, 7:P2_18]...;
 
     // Output C2 (8 bits)
     col fixed C_ROT[2];
 
     #pragma transpile
     for (int i = 0; i < N; i++) {
-        const int [rot, a, b] = [ROTATION[i], A[i], B[i]];
+        const int [offset, rot, a, b] = [OFFSET[i], ROTATION[i], A[i], B[i]];
 
         // ROTR the XOR byte
-        const int byte = a ^ b;
+        const int byte = (a ^ b) << 8 * offset;
         const int c = ((byte >> rot) | (byte << ((32 - rot) % 32))) & MASK_32;
 
-        const int s   = (32 - rot) % 32;  // normalized bit shift
-        const int l   = (s / 8) % 4;
-        const int lp1 = (l + 1) % 4;
+        if (rot == 7) {
+            // Compute the 32-bit output
+            C_ROT[0][i] = c;
+            C_ROT[1][i] = 0;
+        } else {
+            const int s   = (32 - rot) % 32;  // normalized bit shift
+            const int l   = (s / 8) % 4;
+            const int lp1 = (l + 1) % 4;
 
-        const int c_rot0 = (c >> (8 * l))   & MASK_8;
-        const int c_rot1 = (c >> (8 * lp1)) & MASK_8;
+            const int c_rot0 = (c >> (8 * l))   & MASK_8;
+            const int c_rot1 = (c >> (8 * lp1)) & MASK_8;
 
-        C_ROT[0][i] = c_rot0;
-        C_ROT[1][i] = c_rot1;
+            C_ROT[0][i] = c_rot0;
+            C_ROT[1][i] = c_rot1;
+        }
     }
 
     col witness mul_table;
-    lookup_proves(BLAKE3_TABLE_ID, [A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
+    lookup_proves(BLAKE3_TABLE_ID, [OFFSET, A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
 
-    function xor_rotr_check(const expr a, const expr b, const int rot, const expr c0, const expr c1) {
-        lookup_assumes(air.BLAKE3_TABLE_ID, [a, b, rot, c0, c1]);
+    function xor_rotr_check(const expr offset, const expr a, const expr b, const int rot, const expr c0, const expr c1) {
+        lookup_assumes(air.BLAKE3_TABLE_ID, [offset, a, b, rot, c0, c1]);
     }
 
     // Given a,b,c,active it checks c == (a + b) mod 2³² when active == 1

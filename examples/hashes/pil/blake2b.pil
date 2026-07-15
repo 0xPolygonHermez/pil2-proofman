@@ -6,7 +6,7 @@ require "common.pil"
 // Precompile in charge of performing the BLAKE2b permutation
 // For reference: https://www.rfc-editor.org/rfc/rfc7693.html or https://www.blake2.net/
 
-airtemplate Blake2b(const int N = 2**17) {
+airtemplate Blake2b(const int N = 2**16) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        BLAKE2B ROUND FUNCTION SPECIFICATION
@@ -173,7 +173,7 @@ airtemplate Blake2b(const int N = 2**17) {
     // vd' === (vd ^ va') >>> 32 (Note that ROTR 32 is a byte-aligned rotation)
     col witness bits(8) vd_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 4) % 8], c1: 0);
+        xor_check(a: vd[i], b: va_prime[i], c: vd_prime[(i + 4) % 8]);
     }
 
     // vc' === (vc + vd') mod 2⁶⁴
@@ -185,7 +185,7 @@ airtemplate Blake2b(const int N = 2**17) {
     // vb' === (vb ^ vc') >>> 24 (Note that ROTR 24 is a byte-aligned rotation)
     col witness bits(8) vb_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(a: vb[i], b: vc_prime[i], rot: 0, c0: vb_prime[(i + 5) % 8], c1: 0);
+        xor_check(a: vb[i], b: vc_prime[i], c: vb_prime[(i + 5) % 8]);
     }
 
     // va'' === (va' + vb' + y) mod 2⁶⁴
@@ -197,7 +197,7 @@ airtemplate Blake2b(const int N = 2**17) {
     // vd'' === (vd' ^ va'') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
     col witness bits(8) vd_prime_prime[8];
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 6) % 8], c1: 0);
+        xor_check(a: vd_prime[i], b: va_prime_prime[i], c: vd_prime_prime[(i + 6) % 8]);
     }
 
     // vc'' === (vc' + vd'') mod 2⁶⁴
@@ -206,32 +206,23 @@ airtemplate Blake2b(const int N = 2**17) {
     const expr vd_prime_prime_packed[2] = pack_u64(vd_prime_prime);
     add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
 
-    // vb'' === (vb' ^ vc'') >>> 63
-    col witness bits(8) vb_prime_prime_s[8][2];
+    // vb'' === (vb' ^ vc'') >>> 63 = (vb' ^ vc'') <<< 1 = 2·(vb' ^ vc'') with wraparound
+    col witness bits(8) vb_pp_xor[8];   // z = vb' ^ vc''
+    col witness bits(1) vb_pp_t[2];     // top bits of z_lo, z_hi
     for (int i = 0; i < 8; i++) {
-        xor_rotr_check(a: vb_prime[i], b: vc_prime_prime[i], rot: 63, c0: vb_prime_prime_s[i][0], c1: vb_prime_prime_s[i][1]);
+        xor_check(a: vb_prime[i], b: vc_prime_prime[i], c: vb_pp_xor[i]);
     }
+    vb_pp_t[0] * (1 - vb_pp_t[0]) === 0;
+    vb_pp_t[1] * (1 - vb_pp_t[1]) === 0;
 
-    /*
-        ROTR 63 = ROTL 1
-        i    in[i]    c0 (limb i)    c1 (limb (i+1)%8)
-        ------------------------------------------------
-        0    0x88       0x10              0x01
-        1    0x99       0x32              0x01
-        2    0xAA       0x54              0x01
-        3    0xBB       0x76              0x01
-        4    0xCC       0x98              0x01
-        5    0xDD       0xBA              0x01
-        6    0xEE       0xDC              0x01
-        7    0xFF       0xFE              0x01
-        ------------------------------------------------
-        in  = [88 99 AA BB CC DD EE FF]
-        out = [11 33 55 77 99 BB DD FF]
-    */
-    const expr vb_prime_prime[8];
-    for (int k = 0; k < 8; k++) {
-        vb_prime_prime[k] = vb_prime_prime_s[k][0] + vb_prime_prime_s[(k + 7) % 8][1];
-    }
+    const expr z[2] = pack_u64(vb_pp_xor); // [lo, hi]
+    const expr vb_pp_packed[2];
+    vb_pp_packed[0] = 2*z[0] - P2_32*vb_pp_t[0] + vb_pp_t[1]; // rotl1: lo' = 2·z_lo mod 2³² + top(z_hi)
+    vb_pp_packed[1] = 2*z[1] - P2_32*vb_pp_t[1] + vb_pp_t[0]; // rotl1: hi' = 2·z_hi mod 2³² + top(z_lo)
+    // The carry bits are sound with just booleanity: z limbs are byte-bound to [0, 2³²) by the table, and 
+    // the transition constraint equates vb_pp_packed[j] to a future vb_packed[j] which is also < 2³². 
+    // If the prover lies about a t bit, the expression lands outside [0, 2³²) as a field element (off by ±2³²), 
+    // so the equality can never hold.
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TRANSITION CONSTRAINTS
@@ -240,7 +231,6 @@ airtemplate Blake2b(const int N = 2**17) {
     // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
     // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
     const expr va_pp_packed[2] = pack_u64(va_prime_prime);
-    const expr vb_pp_packed[2] = pack_u64(vb_prime_prime);
     const expr vc_pp_packed[2] = pack_u64(vc_prime_prime);
     const expr vd_pp_packed[2] = pack_u64(vd_prime_prime);
 
@@ -336,7 +326,7 @@ airtemplate Blake2b(const int N = 2**17) {
     // BLAKE2B OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const int TABLE_SIZE = P2_17;
+    const int TABLE_SIZE = P2_16;
     if (N < TABLE_SIZE) {
         error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
     }
@@ -347,36 +337,22 @@ airtemplate Blake2b(const int N = 2**17) {
     // Input B (8 bits)
     col fixed B = [0:P2_8..MASK_8:P2_8]...;
 
-    // Rotation (1 bit)
-    col fixed ROTATION = [0:P2_16, 63:P2_16]...;
-
-    // Output C2 (8 bits)
-    col fixed C_ROT[2];
+    // Output C (8 bits)
+    col fixed C;
 
     #pragma transpile
     for (int i = 0; i < N; i++) {
-        const int [rot, a, b] = [ROTATION[i], A[i], B[i]];
+        const int [a, b] = [A[i], B[i]];
 
-        // ROTR the XOR byte
-        const int byte = a ^ b;
-        const int c = ((byte >> rot) | (byte << ((64 - rot) % 64))) & MASK_64;
-
-        const int s   = (64 - rot) % 64;  // normalized bit shift
-        const int l   = (s / 8) % 8;
-        const int lp1 = (l + 1) % 8;
-
-        const int c_rot0 = (c >> (8 * l))   & MASK_8;
-        const int c_rot1 = (c >> (8 * lp1)) & MASK_8;
-
-        C_ROT[0][i] = c_rot0;
-        C_ROT[1][i] = c_rot1;
+        // XOR
+        C[i] = a ^ b;
     }
 
     col witness mul_table;
-    lookup_proves(BLAKE2B_TABLE_ID, [A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
+    lookup_proves(BLAKE2B_TABLE_ID, [A, B, C], mul_table);
 
-    function xor_rotr_check(const expr a, const expr b, const int rot, const expr c0, const expr c1) {
-        lookup_assumes(air.BLAKE2B_TABLE_ID, [a, b, rot, c0, c1]);
+    function xor_check(const expr a, const expr b, const expr c) {
+        lookup_assumes(air.BLAKE2B_TABLE_ID, [a, b, c]);
     }
 
     // Pack a 64-bit word into two 32-bit limbs [lo, hi]

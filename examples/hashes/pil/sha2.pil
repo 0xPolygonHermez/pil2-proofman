@@ -4,7 +4,7 @@ require "std_lookup.pil"
 // Precompile in charge of performing the SHA2-256 permutation 
 // For reference: Section 6.2 of https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf
 
-airtemplate Sha2(const int N = 2**22) {
+airtemplate Sha2(const int N = 2**8) {
     /*
        ═══════════════════════════════════════════════════════════════════════════
        SHA2-256 FUNCTION SPECIFICATION

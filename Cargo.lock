@@ -789,6 +789,7 @@ dependencies = [
  "proofman",
  "proofman-common",
  "proofman-macros",
+ "rand 0.10.1",
  "tracing",
  "witness",
 ]

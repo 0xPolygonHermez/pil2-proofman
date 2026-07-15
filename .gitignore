@@ -11,3 +11,4 @@ MyLogFile.log
 pil2-stark/lib-gpu/*
 package-lock.json
 setup/pil2-stark/node_modules/*
+node_modules
