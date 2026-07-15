@@ -446,9 +446,11 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
     Goldilocks3GPU::Element res;
     Goldilocks3GPU::mul(res, basePow, xi_t);
 
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION)] = res[0];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION)] = res[1];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION)] = res[2];
+    Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
+    
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
 }
 
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
@@ -555,8 +557,11 @@ __global__ void computeEvals_v2(
         EvalInfo evalInfo = d_evalInfo[evalIdx];
         gl64_t *pol;
         // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
-        // (1) and fixed/const (2) follow fixedLayout(). d_LEv is always ColMajor.
-        Layout polLayout = Layout::ColMajor;
+        // (1) and fixed/const (2) follow fixedLayout(). d_LEv follows resolveLayout keyed on ITS OWN
+        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it, so it works
+        // under both sppark (ColMajor) and non-sppark (ColMajorTiled).
+        Layout levLayout = resolveLayout(63 - __clzll(N), openingsSize * FIELD_EXTENSION);
+        Layout polLayout;
         if (evalInfo.type == 0)
         {
             pol = d_cmPols;
@@ -583,9 +588,9 @@ __global__ void computeEvals_v2(
             uint64_t row = (tid << extendBits);
             uint64_t chunkBase = tid - threadIdx.x;
             Goldilocks3GPU::Element LEv;
-            LEv[0] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
-            LEv[1] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
-            LEv[2] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
+            LEv[0] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION, levLayout)];
+            LEv[1] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION, levLayout)];
+            LEv[2] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION, levLayout)];
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {

@@ -1441,13 +1441,10 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
     closeStreamTimer(d_buffers->streamsData[streamId].timer, instanceId, airgroupId, airId, false);
-    
-   
-
-    if (proof_done_callback != nullptr) {
-        proof_done_callback(instanceId, "");
-    }
-
+    // NOTE: contributions commit_root does NOT fire proof_done_callback. That decrement
+    // is owned by the proofs_pending accounting on the Prove path; firing it here (a
+    // contributions harvest) could land in the NULL-callback window between prove runs
+    // and lose/mis-drive a decrement → proofs_pending never reaches zero → Prove wedges.
 }
 
 void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
