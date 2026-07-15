@@ -276,7 +276,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         // direct-copy fast path in goldilocks_tooling.cu). The basic trace is an H2D
         // source, so it is pinned. Relies on pool buffers never permanently escaping —
         // shared-buffer traces recycle the same Vec back, and `reset` enforces it.
-        let pool = Pool::new(n_buffers, buffer_size, true, cancelled.clone());
+        let pool = Pool::new(n_buffers, buffer_size, false, cancelled.clone());
 
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
         tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
@@ -408,8 +408,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         let witness = Pool::new(n_buffers, buffer_size_witness, false, cancelled.clone());
         let witness_compressor =
             Pool::new(n_buffers_compressor, buffer_size_witness_compressor, false, cancelled.clone());
-        let trace = Pool::new(n_buffers, buffer_size_trace, true, cancelled.clone());
-        let trace_compressor = Pool::new(n_buffers_compressor, buffer_size_trace_compressor, true, cancelled.clone());
+        let trace = Pool::new(n_buffers, buffer_size_trace, false, cancelled.clone());
+        let trace_compressor = Pool::new(n_buffers_compressor, buffer_size_trace_compressor, false, cancelled.clone());
 
         let total = witness.total_bytes()
             + witness_compressor.total_bytes()
