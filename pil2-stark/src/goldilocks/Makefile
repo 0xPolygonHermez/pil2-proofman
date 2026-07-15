@@ -134,7 +134,7 @@ SPPARK_DIR := ./../../external/sppark
 SPPARK_INC := -I$(SPPARK_DIR) -I$(SPPARK_DIR)/ff -I$(SPPARK_DIR)/util -I$(SPPARK_DIR)/ec
 # sppark's fr_t==gl64_t typedef is gated on FEATURE_GOLDILOCKS; the gl64_t backend needs the same
 # reduction/asm macros the top-level build passes (see NVCCFLAGS / NVCCFLAGS_GL there).
-SPPARK_DEFS := -DFEATURE_GOLDILOCKS -DGOLDILOCKS_PLONKY2 -DGL64_PARTIALLY_REDUCED -D__ADX__ -D__USE_ASSEMBLY__
+SPPARK_DEFS := -DFEATURE_GOLDILOCKS -DGOLDILOCKS_ZISK -DGL64_PARTIALLY_REDUCED -D__ADX__ -D__USE_ASSEMBLY__
 $(BUILD_DIR_GPU)/src/sppark_lde.cu.o: src/sppark_lde.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(NVCCFLAGS) $(SPPARK_INC) $(SPPARK_DEFS) -c $< --output-file $@

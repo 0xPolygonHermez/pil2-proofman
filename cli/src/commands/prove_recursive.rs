@@ -89,13 +89,15 @@ impl ProveRecursiveCmd {
         // the full SetupsVadcop aggregation stack (compressor + recursive1 + recursive2 +
         // vadcop_final), which would fail on proving keys that only contain this AIR.
         //
-        // The on-disk proving artifacts for a standalone recursive AIR (stark_info, const
-        // pols, .so/.dat/.exec) live at the Basic AIR path (build/<Type>/airs/<Air>/air/),
-        // NOT the compressor/recursive layout. Building the SetupCtx as `Compressor` when
-        // has_compressor is unset yields an *empty* setup (setup.rs:172), so load the
-        // setup as Basic. `proof_type` (parsed above) is still used as the proofType
-        // argument to gen_recursive_proof_c below.
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], self.gpu)?;
+        // Load the setup for the ACTUAL parsed proof_type so global_info.get_air_setup_path
+        // resolves the correct on-disk layout: Basic -> airs/<Air>/air/<Air>, Recursive1 ->
+        // airs/<Air>/recursive1/recursive1, etc. (global_info.rs:151-181). The prior code
+        // hardcoded Basic, which only works for test proving keys that place recursive
+        // artifacts under air/; on a full zisk key the recursive1 .so/.dat/.exec/.const live
+        // under recursive1/, so loading as Basic looked for a nonexistent air/<Air>.so.
+        // (Compressor with has_compressor unset still yields an empty setup, but a recursive
+        // proof file never names that case here.)
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], self.gpu)?;
 
         // Initialize the GPU (set_gpu_mode_c + init_gpu_setup_c). Without this the CUDA
         // context is not selected and check_device_memory_c (used by set_device_buffers)

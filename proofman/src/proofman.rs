@@ -60,7 +60,7 @@ use crate::check_const_pols_gpu;
 use crate::ensure_gpu_available;
 use crate::check_const_tree;
 use crate::check_tree_paths;
-use crate::Counter;
+use crate::{Counter, PendingProof};
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
 
@@ -2491,12 +2491,13 @@ where
                     if id == u64::MAX - 1 {
                         return;
                     }
+                    // Settles the outstanding unit this message represents, on any exit.
+                    let _settled = PendingProof::from_outstanding(&proofs_pending_clone);
                     if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
                     if !options.aggregation {
-                        proofs_pending_clone.decrement();
                         continue;
                     }
 
@@ -2600,16 +2601,28 @@ where
                     };
 
                     if let Some(witness) = witness {
-                        proofs_pending_clone.increment();
-                        if new_proof_type == ProofType::Compressor as usize {
-                            compressor_witness_tx_clone.send(witness).unwrap();
+                        // New downstream unit; commit to the callback only if the handoff
+                        // succeeds, else the guard drops and balances it.
+                        let child = proofs_pending_clone.pending();
+                        let sent = if new_proof_type == ProofType::Compressor as usize {
+                            compressor_witness_tx_clone.send(witness)
                         } else if new_proof_type == ProofType::Recursive1 as usize {
-                            rec1_witness_tx_clone.send(witness).unwrap();
+                            rec1_witness_tx_clone.send(witness)
                         } else {
-                            rec2_witness_tx_clone.send(witness).unwrap();
+                            rec2_witness_tx_clone.send(witness)
+                        };
+                        if sent.is_ok() {
+                            child.commit();
+                        } else {
+                            // Witness channels live on `self`, so a failed send means the
+                            // pipeline is torn down mid-run: surface it, don't drop silently.
+                            cancellation_info_clone
+                                .write()
+                                .unwrap()
+                                .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
+                            break;
                         }
                     }
-                    proofs_pending_clone.decrement();
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
@@ -2625,7 +2638,9 @@ where
             if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 return;
             }
-            proofs_pending.increment();
+            // Commit to the callback on a successful launch; on failure or a panic
+            // (e.g. a poisoned lock inside gen_proof) the guard drops and balances it.
+            let pending = proofs_pending.pending();
             let proof_stream_id = match Self::gen_proof(
                 &self.proofs,
                 &self.pctx,
@@ -2636,7 +2651,10 @@ where
                 &self.const_tree,
                 Some(stream_id),
             ) {
-                Ok(sid) => Some(sid),
+                Ok(sid) => {
+                    pending.commit();
+                    Some(sid)
+                }
                 Err(e) => {
                     self.cancellation_info.write().unwrap().cancel(Some(e));
                     None
@@ -2700,10 +2718,14 @@ where
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
+            let proofs_pending_clone = proofs_pending.clone();
             let handle_recursive = std::thread::spawn(move || loop {
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
                 if !force_recursive_stream {
                     if let Ok(instance_id) = proofs_rx.try_recv() {
+                        // Settles on the cancel/free path or a gen_proof error; committed
+                        // to the callback only on a successful launch.
+                        let pending = PendingProof::from_outstanding(&proofs_pending_clone);
                         if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
@@ -2724,7 +2746,10 @@ where
                                 &const_tree_clone,
                                 None,
                             ) {
-                                Ok(sid) => sid,
+                                Ok(sid) => {
+                                    pending.commit();
+                                    sid
+                                }
                                 Err(e) => {
                                     cancellation_info_clone.write().unwrap().cancel(Some(e));
                                     break;
@@ -2776,6 +2801,10 @@ where
                     }
                     Some(w) => w,
                 };
+
+                // Settles on an error `break` below; committed once the recursive proof
+                // is launched and its callback is guaranteed.
+                let pending = PendingProof::from_outstanding(&proofs_pending_clone);
 
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
                 if witness.proof_type == ProofType::Recursive2 {
@@ -2866,6 +2895,8 @@ where
                     }
                 }
 
+                pending.commit();
+
                 if !pctx_clone.gpu {
                     launch_callback_c(id as u64, new_proof_type_str);
                 }
@@ -2879,12 +2910,14 @@ where
                 continue;
             }
 
-            proofs_pending.increment();
+            // Committed to the async callback; if the send panics the guard balances it.
+            let pending = proofs_pending.pending();
             if self.pctx.is_air_instance_stored(instance_id) {
                 self.proofs_tx.send(instance_id).unwrap();
             } else {
                 instances_to_be_calculated.push(instance_id);
             }
+            pending.commit();
         }
 
         let witness_done = Arc::new(Counter::new());
@@ -2954,6 +2987,14 @@ where
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
         for handle in handles {
             handle.join().unwrap();
+        }
+
+        // The guards balance every synchronous path, but on cancellation a witness
+        // committed into a channel and never received has no live guard. Reset only now —
+        // after the blocking drain fired the remaining callbacks and every handler was
+        // joined — so no late settle can decrement a zeroed counter (usize::MAX wrap).
+        if self.cancellation_info.read().unwrap().token.is_cancelled() {
+            proofs_pending.reset();
         }
 
         self.check_cancel(true)?;
@@ -4039,6 +4080,11 @@ where
         let witness_minimal_memory_handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let _join_guard = JoinAllGuard { handles: witness_minimal_memory_handles.clone() };
+        // Instances skipped in the per-instance branch below never increment, so exclude
+        // them from the wait target, else witness_done can't reach it and the wait stalls
+        // with no cancellation. (Skips only occur under the skip_prover_instances debug
+        // flag, which takes this branch; the bulk GPU branch computes every instance.)
+        let mut expected = instances.len();
         if !minimal_memory && (self.pctx.gpu || stats) {
             timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
@@ -4047,6 +4093,7 @@ where
             for &instance_id in instances.iter() {
                 let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
                 if skip {
+                    expected -= 1;
                     continue;
                 }
                 let n_threads_witness = self.num_threads_per_witness;
@@ -4154,7 +4201,7 @@ where
         }
 
         witness_done.wait_until_value_and_check_streams(
-            instances.len(),
+            expected,
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );

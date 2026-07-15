@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Condvar, Mutex, RwLock,
+    Arc, Condvar, Mutex, RwLock,
 };
 use std::time::{Duration, Instant};
 
@@ -250,5 +250,111 @@ impl Counter {
     #[inline(always)]
     pub fn get_count(&self) -> usize {
         self.counter.load(Ordering::Acquire)
+    }
+}
+
+/// RAII balance guard for one unit of in-flight proof work. Its `decrement()`
+/// runs on `Drop` for any exit path (success, `break`, `?`, cancellation, panic),
+/// so the counter cannot leak by a forgotten decrement. Call [`PendingProof::commit`]
+/// once the work is handed to the async pipeline, where the C proof-done callback
+/// owns the decrement instead.
+#[must_use = "dropping the guard immediately decrements; hold it until the work is handed off or has failed"]
+pub struct PendingProof {
+    counter: Arc<Counter>,
+    armed: bool,
+}
+
+impl PendingProof {
+    /// Adopt an already-counted outstanding unit (no increment); its single
+    /// `decrement()` is now owed by this guard.
+    #[inline(always)]
+    pub fn from_outstanding(counter: &Arc<Counter>) -> PendingProof {
+        PendingProof { counter: counter.clone(), armed: true }
+    }
+
+    /// Disarm: the async proof-done callback owns the decrement now.
+    #[inline(always)]
+    pub fn commit(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingProof {
+    #[inline(always)]
+    fn drop(&mut self) {
+        if self.armed {
+            self.counter.decrement();
+        }
+    }
+}
+
+impl Counter {
+    /// Increment and return an armed [`PendingProof`] whose drop balances it.
+    #[inline(always)]
+    pub fn pending(self: &Arc<Self>) -> PendingProof {
+        self.increment();
+        PendingProof::from_outstanding(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_increments_and_drop_decrements() {
+        let counter = Arc::new(Counter::new());
+        let guard = counter.pending();
+        assert_eq!(counter.get_count(), 1);
+        drop(guard);
+        assert_eq!(counter.get_count(), 0);
+    }
+
+    #[test]
+    fn commit_disarms_the_decrement() {
+        let counter = Arc::new(Counter::new());
+        let guard = counter.pending();
+        guard.commit();
+        assert_eq!(counter.get_count(), 1, "committed guard must not decrement on drop");
+        counter.decrement(); // the "callback" settles it
+        assert_eq!(counter.get_count(), 0);
+    }
+
+    #[test]
+    fn from_outstanding_adopts_without_incrementing() {
+        let counter = Arc::new(Counter::new());
+        counter.increment(); // unit counted at submit time
+        let guard = PendingProof::from_outstanding(&counter);
+        assert_eq!(counter.get_count(), 1, "adoption must not increment");
+        drop(guard);
+        assert_eq!(counter.get_count(), 0);
+    }
+
+    #[test]
+    fn drop_decrements_on_panic_unwind() {
+        let counter = Arc::new(Counter::new());
+        let c = counter.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = c.pending();
+            panic!("simulated failure between increment and handoff");
+        }));
+        assert!(result.is_err());
+        assert_eq!(counter.get_count(), 0, "guard must settle the unit on unwind");
+    }
+
+    #[test]
+    fn wait_until_zero_returns_once_guards_settle() {
+        let counter = Arc::new(Counter::new());
+        let cancellation = RwLock::new(CancellationInfo::default());
+        let guard = counter.pending();
+        let c = counter.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(guard);
+            drop(c);
+        });
+        counter.wait_until_zero(&cancellation);
+        assert_eq!(counter.get_count(), 0);
+        handle.join().unwrap();
     }
 }

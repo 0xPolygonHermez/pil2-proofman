@@ -40,7 +40,7 @@ __host__ __device__ __forceinline__ Layout fixedLayout() {
 }
 
 // (row,col) offset for the given layout. Default ColMajor (flat): col*nRows + row.
-__device__ __forceinline__ uint64_t getBufferOffset(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout = Layout::ColMajor) {
+__device__ __forceinline__ uint64_t getBufferOffset(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout) {
     if (layout == Layout::ColMajor) {
         (void)nCols;
         return col * nRows + row;
@@ -58,7 +58,7 @@ __device__ __forceinline__ uint64_t getBufferOffset(uint64_t row, uint64_t col, 
 }
 
 // Specialization for row = chunkBase + threadIdx.x (chunkBase a multiple of TILE_HEIGHT). ColMajor/Tiled.
-__device__ __forceinline__ uint64_t getBufferOffset_pack256(uint64_t chunkBase, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout = Layout::ColMajor) {
+__device__ __forceinline__ uint64_t getBufferOffset_pack256(uint64_t chunkBase, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout) {
     if (layout == Layout::ColMajor) {
         (void)nCols;
         return col * nRows + chunkBase + threadIdx.x;

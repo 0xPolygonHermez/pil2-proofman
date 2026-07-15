@@ -692,10 +692,6 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     mt.merkelize();
     mt.getRoot(rootGL);
 
-    if (proof_done_callback != nullptr) {
-        proof_done_callback(instanceId, "basic");
-    }
-
     return 0;
 }
 
