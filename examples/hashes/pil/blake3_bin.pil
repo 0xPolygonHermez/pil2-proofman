@@ -1,0 +1,252 @@
+// Precompile in charge of performing the BLAKE3 permutation
+// For reference: https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html or https://github.com/BLAKE3-team/BLAKE3
+
+airtemplate Blake3Bin(const int N = 2**20) {
+    /*
+       ═══════════════════════════════════════════════════════════════════════════
+       BLAKE3 ROUND FUNCTION SPECIFICATION
+       ═══════════════════════════════════════════════════════════════════════════
+
+       BLAKE3(v: [u32; 16], m: [u32; 16]) -> [u32; 16]
+
+        Each round consists of 8 G function calls and a permutation:
+
+            • 4 Column steps: Mix columns independently
+                v := G(v, 0, 4,  8, 12, m[ 0], m[ 1])
+                v := G(v, 1, 5,  9, 13, m[ 2], m[ 3])
+                v := G(v, 2, 6, 10, 14, m[ 4], m[ 5])
+                v := G(v, 3, 7, 11, 15, m[ 6], m[ 7])
+
+            • 4 Diagonal steps: Mix diagonals independently
+                v := G(v, 0, 5, 10, 15, m[ 8], m[ 9])
+                v := G(v, 1, 6, 11, 12, m[10], m[11])
+                v := G(v, 2, 7,  8, 13, m[12], m[13])
+                v := G(v, 3, 4,  9, 14, m[14], m[15])
+
+            • Message word selection permutation for round i:
+                m := PERMUTE(m)
+
+        Each G function performs 8 sequential operations on two input 
+        words x and y into four words indexed by a, b, c, and d in v:
+            G(v, a, b, c, d, x, y):
+                v[a] := (v[a] + v[b] + x) mod 2³²
+                v[d] := (v[d] ^ v[a]) >>> 16
+                v[c] := (v[c] + v[d]) mod 2³²
+                v[b] := (v[b] ^ v[c]) >>> 12
+                v[a] := (v[a] + v[b] + y) mod 2³²
+                v[d] := (v[d] ^ v[a]) >>> 8
+                v[c] := (v[c] + v[d]) mod 2³²
+                v[b] := (v[b] ^ v[c]) >>> 7
+
+       ═══════════════════════════════════════════════════════════════════════════
+       EXECUTION TRACE LAYOUT
+       ═══════════════════════════════════════════════════════════════════════════
+
+           ROW      va        vb          vc         vd         x          y        ROUND         STAGE      
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  0   |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    1    |  G1 - COL MIX  | <-- V/M IN
+        |  1   |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    1    |  G2 - COL MIX  | <-- V/M IN
+        |  2   |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    1    |  G3 - COL MIX  | <-- V/M IN
+        |  3   |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    1    |  G4 - COL MIX  | <-- V/M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  4   |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    1    |  G1 - DIA MIX  | <-- M IN
+        |  5   |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    1    |  G2 - DIA MIX  | <-- M IN
+        |  6   |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    1    |  G3 - DIA MIX  | <-- M IN
+        |  7   |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    1    |  G4 - DIA MIX  | <-- M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        | ...  |   ...    |   ...    |   ...    |   ...    |   ...    |   ...    |   ...   |       ...      |
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  48  |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    7    |  G1 - COL MIX  |
+        |  49  |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    7    |  G2 - COL MIX  |
+        |  50  |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    7    |  G3 - COL MIX  |
+        |  51  |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    7    |  G4 - COL MIX  |
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  52  |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    7    |  G1 - DIA MIX  | <-- V OUT
+        |  53  |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    7    |  G2 - DIA MIX  | <-- V OUT
+        |  54  |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    7    |  G3 - DIA MIX  | <-- V OUT
+        |  55  |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    7    |  G4 - DIA MIX  | <-- V OUT
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+    */
+
+    const int CLOCKS_PER_G = 1;
+    const int NUM_G_PER_ROUND = 8;
+    const int NUM_ROUNDS = 7;
+    const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_PER_ROUND;
+    const int CLOCKS = CLOCKS_PER_ROUND * NUM_ROUNDS;
+
+    // Calculate usable capacity
+    const int NUM_NON_USABLE_ROWS = N % CLOCKS;
+    const int NUM_OPS;
+    if (NUM_NON_USABLE_ROWS == 0) {
+        // N is perfectly divisible by CLOCKS
+        if (N < CLOCKS) {
+            error(`N must be at least ${CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
+        }
+
+        NUM_OPS = N / CLOCKS;
+    } else {
+        // N is not divisible by CLOCKS
+        if (N < 2*CLOCKS) {
+            error(`N must be at least ${2*CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
+        }
+
+        // Subtract 1 because we can't fit a complete cycle in the remaining rows
+        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    }
+
+    const int NUM_BLAKE3 = NUM_OPS;
+    println(`The total number of Blake3's with N = ${N} is ${NUM_BLAKE3}`);
+
+    // Message word permutation schedule
+    const int SIGMA[7][16];
+    SIGMA[0] = [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15];
+    SIGMA[1] = [ 2,  6,  3, 10,  7,  0,  4, 13,  1, 11, 12,  5,  9, 14, 15,  8];
+    SIGMA[2] = [ 3,  4, 10, 12, 13,  2,  7, 14,  6,  5,  9,  0, 11, 15,  8,  1];
+    SIGMA[3] = [10,  7, 12,  9, 14,  3, 13, 15,  4,  0, 11,  2,  5,  8,  1,  6];
+    SIGMA[4] = [12, 13,  9, 11, 15, 10, 14,  8,  7,  2,  5,  3,  0,  1,  6,  4];
+    SIGMA[5] = [ 9, 14, 11,  5,  8, 12, 15,  1, 13,  3,  0, 10,  2,  6,  4,  7];
+    SIGMA[6] = [11, 15,  5,  0,  1,  9,  8,  6, 14, 10,  2, 12,  3,  4,  7, 13];
+
+    // ── Clock Selectors ──
+
+    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    if (NUM_NON_USABLE_ROWS == 0) {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
+    } else {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
+    }
+
+    // Clock selectors for each row in the cycle
+    const expr CLK[CLOCKS];
+    for (int i = 0; i < CLOCKS; i++) {
+        CLK[i] = (i)'CLK_0;
+    }
+
+    // ── Committed columns (Over F₂) ────────────────────────────────────────────────────
+    // Input columns: one column per bit.
+    col witness va[32], vb[32], vc[32], vd[32], x[32], y[32];
+
+    // Carry columns: one column per carry bit.
+    col witness carry_a1[2][31];   // va'  = (va + vb + x) mod 2³²   (two chained adders)
+    col witness carry_c1[31];      // vc'  = (vc + vd') mod 2³²
+    col witness carry_a2[2][31];   // va'' = (va' + vb' + y) mod 2³²
+    col witness carry_c2[31];      // vc'' = (vc' + vd'') mod 2³²
+
+    // ── G-function ──────────────
+    const expr t1[32]    = add32(va, vb, carry_a1[0]);
+    const expr va_p[32]  = add32(t1, x, carry_a1[1]);      // va'  = (va + vb + x) mod 2³²
+    const expr vd_p[32]  = xor_rotr(vd, va_p, 16);         // vd'  = (vd ^ va') >>> 16
+    const expr vc_p[32]  = add32(vc, vd_p, carry_c1);      // vc'  = (vc + vd') mod 2³²
+    const expr vb_p[32]  = xor_rotr(vb, vc_p, 12);         // vb'  = (vb ^ vc') >>> 12
+    const expr t2[32]    = add32(va_p, vb_p, carry_a2[0]);
+    const expr va_pp[32] = add32(t2, y, carry_a2[1]);      // va'' = (va' + vb' + y) mod 2³²
+    const expr vd_pp[32] = xor_rotr(vd_p, va_pp, 8);       // vd'' = (vd' ^ va'') >>> 8
+    const expr vc_pp[32] = add32(vc_p, vd_pp, carry_c2);   // vc'' = (vc' + vd'') mod 2³²
+    const expr vb_pp[32] = xor_rotr(vb_p, vc_pp, 7);       // vb'' = (vb' ^ vc'') >>> 7
+
+    // ── Transition Constraints ──
+    // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
+    // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
+
+    // Column-to-diagonal clock selectors
+    const expr ctd1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
+    const expr ctd2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
+    const expr ctd3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
+    const expr ctd4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
+    const expr ctd12_clocks = ctd1_clocks + ctd2_clocks;
+    const expr ctd34_clocks = ctd3_clocks + ctd4_clocks;
+    const expr ctd123_clocks = ctd12_clocks + ctd3_clocks;
+    const expr ctd234_clocks = ctd2_clocks + ctd34_clocks;
+    const expr ctd_clocks = ctd12_clocks + ctd34_clocks;
+
+    // Round-by-round clock selectors
+    const expr rbr1_clocks = clock_set(start: 8, end: 8 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr2_clocks = clock_set(start: 9, end: 9 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr3_clocks = clock_set(start: 10, end: 10 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr4_clocks = clock_set(start: 11, end: 11 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr12_clocks = rbr1_clocks + rbr2_clocks;
+    const expr rbr34_clocks = rbr3_clocks + rbr4_clocks;
+    const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;
+    const expr rbr234_clocks = rbr2_clocks + rbr3_clocks + rbr4_clocks;
+    const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
+
+    for (int i = 0; i < 32; i++) {
+        (ctd_clocks + rbr_clocks) * (va[i] + (4)'va_pp[i]) === 0;
+
+        ctd123_clocks * (vb[i] + (3)'vb_pp[i]) + ctd4_clocks * (vb[i] + (7)'vb_pp[i]) +
+        rbr1_clocks * (vb[i] + (1)'vb_pp[i]) + rbr234_clocks * (vb[i] + (5)'vb_pp[i]) === 0;
+
+        (ctd12_clocks + rbr12_clocks) * (vc[i] + (2)'vc_pp[i]) + 
+        (ctd34_clocks + rbr34_clocks) * (vc[i] + (6)'vc_pp[i]) === 0;
+
+        ctd1_clocks * (vd[i] + (1)'vd_pp[i]) + ctd234_clocks * (vd[i] + (5)'vd_pp[i]) +
+        rbr123_clocks * (vd[i] + (3)'vd_pp[i]) + rbr4_clocks * (vd[i] + (7)'vd_pp[i]) === 0;
+    }
+
+    // ── Message schedule ─────────────────────────────────────────────────────
+    // Round 0 commits the 16 message words directly (SIGMA[0] = identity):
+    // row g of each block holds x = m[2g], y = m[2g+1], for g = 0..7.
+    // For rounds 1..6, row p = 8r + g must read x = m[SIGMA[r][2g]] and
+    // y = m[SIGMA[r][2g+1]].
+    for (int i = 0; i < 32; i++) {
+        expr msg_x_routing = 0;
+        expr msg_y_routing = 0;
+        for (int p = CLOCKS_PER_ROUND; p < CLOCKS; p++) {
+            const int r = p / CLOCKS_PER_ROUND;
+            const int g = p % CLOCKS_PER_ROUND;
+            const int jx = SIGMA[r][2 * g];
+            const int jy = SIGMA[r][2 * g + 1];
+
+            expr src_x;
+            if (jx % 2 == 0) {
+                src_x = (p - jx / 2)'x[i];
+            } else {
+                src_x = (p - jx / 2)'y[i];
+            }
+
+            expr src_y;
+            if (jy % 2 == 0) {
+                src_y = (p - jy / 2)'x[i];
+            } else {
+                src_y = (p - jy / 2)'y[i];
+            }
+
+            msg_x_routing += CLK[p] * (x[i] + src_x);
+            msg_y_routing += CLK[p] * (y[i] + src_y);
+        }
+        msg_x_routing === 0;
+        msg_y_routing === 0;
+    }
+
+    // ── 32-bit addition ─────────────────────────────────────
+    // The addition (a + b) mod 2^32 can be computed as:
+    //      - s[i]   = a[i] ^ b[i] ^ c[i] = a[i] + b[i] + c[i]
+    //      - c[i+1] = maj(a[i], b[i], c[i]) = (a[i] & b[i]) ^ (a[i] & c[i]) ^ (b[i] & c[i]) =
+    //               = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]) = (a[i] + c[i]) * (b[i] + c[i]) + c[i]
+    // where c[i] represents the carry bit from the previous addition, and c[0] = 0.
+    // Carry out of bit 31 is the discarded wrap.
+    function add32(const expr a[], const expr b[], const expr carry[]): expr[] {
+        assert(length(a) == 32 && length(b) == 32 && length(carry) == 31);
+        expr c_prev = 0; // c[0] = 0, hardwired
+        expr s[32];
+        for (int i = 0; i < 32; i++) {
+            s[i] = a[i] + b[i] + c_prev;
+            if (i < 31) {
+                (a[i] + c_prev) * (b[i] + c_prev) === carry[i] + c_prev;
+                c_prev = carry[i];
+            }
+        }
+        return s;
+    }
+
+    // ── XOR + ROTR ─
+    //     ((u ^ v) >>> r)[i]  =  ((u >>> r) ^ (v >>> r))[i]  =  u[(i + r) % 32] + v[(i + r) % 32]
+    function xor_rotr(const expr u[], const expr v[], const int r): expr[] {
+        assert(length(u) == 32 && length(v) == 32);
+        expr out[32];
+        for (int i = 0; i < 32; i++) {
+            out[i] = u[(i + r) % 32] + v[(i + r) % 32];
+        }
+        return out;
+    }
+}

@@ -62,13 +62,14 @@ cargo run --bin proofman-cli verify-constraints \
 
 ## Hash Throughput Comparison
 
-Cost is measured in clocks per column; lower **cost / byte** is better.
+**Size / Rate** is the committed witness bytes per hashed input byte; lower is better.
 
-| Hash       | Full-op cost            | Msg bytes/block | Cost / byte | Relative  | BF  |
-| :--------- | :---------------------- | :-------------- | ----------: | --------: | --: |
-| Poseidon2  | 14 × 392 = 5.488        | 96 (*)          |        57,2 |     1,00× |   1 |
-| Blake3     | 56 × 108 = 6.048        | 64              |        94,5 |     1,65× |   1 |
-| Blake2b    | 64 × 190 = 12.160       | 128             |        95,0 |     1,66× |   1 |
-| SHA2-256   | 72 × 115 = 8.280        | 64              |       129,3 |     2,26× |   1 |
+| Hash       | Field      | Full-Op Cells           | Witness Size (bytes) | Rate (bytes)    | Size / Rate | Relative  |
+| :--------- | :--------- | :---------------------- | -------------------: | :-------------- | ----------: | --------: |
+| Blake3     | Binary     | 56 × 381 = 21.336       |                2.667 | 64              |        41,7 |     1,00× |
+| Poseidon2  | Goldilocks | 14 × 392 = 5.488        |               43.904 | 96 (*)          |       457,3 |    10,97× |
+| Blake3     | Goldilocks | 56 × 108 = 6.048        |               48.384 | 64              |       756,0 |    18,14× |
+| Blake2b    | Goldilocks | 64 × 190 = 12.160       |               97.280 | 128             |       760,0 |    18,24× |
+| SHA2-256   | Goldilocks | 72 × 115 = 8.280        |               66.240 | 64              |     1.035,0 |    24,84× |
 
 (*) Poseidon2 bytes are nominal (12 Goldilocks elements × 8 bytes); a Goldilocks element holds ~63.99 bits, so the truly absorbable payload is slightly under 96 bytes.
