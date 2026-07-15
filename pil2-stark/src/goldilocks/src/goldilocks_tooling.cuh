@@ -9,6 +9,7 @@
 #include "cuda_graph_cache.cuh"
 #endif
 #include "goldilocks_base_field.hpp"
+#include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset (fromRowMajorToColMajor)
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
@@ -271,6 +272,9 @@ struct AirInstanceInfo {
 };
 
 
+// Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
+#define PINNED_AUX_VALUES_MAX 65536
+
 struct StreamData{
 
     //const data
@@ -281,9 +285,18 @@ struct StreamData{
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
+    // Per-stream pinned staging for the contributions aux_values H2D, enabling an
+    // async copy (no per-copy stream sync); reused only on event-gated stream
+    // reselect. Used by commit_witness_gpu only.
+    Goldilocks::Element *pinned_aux_values;
 
     //runtime data
-    uint32_t status; //0: unused, 1: loading, 2: full
+    // Atomic: status is read (unlocked) by wait_stream_commit_done / callbacks while
+    // reserveStream/gen_proof write it, so a plain int would be a data race. The
+    // atomic only removes UB on the individual load/store; the check-then-act
+    // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
+    // by holding mutex_stream_selection, not by the atomic.
+    std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
     TimerGPU timer;
 
@@ -328,6 +341,7 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -363,8 +377,9 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
-        cudaEventDestroy(end_event);
-        cudaEventCreate(&end_event);
+        // end_event is created once in initialize() and destroyed in free();
+        // cudaEventRecord overwrites it on each use, so there is no need to
+        // destroy/recreate it on every per-instance reset.
         status = reset_status ? 0 : 3;
 
         root = nullptr;
@@ -383,6 +398,7 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
+        cudaFreeHost(pinned_aux_values);
     }
 };
 
@@ -398,6 +414,7 @@ struct DeviceRecursiveFBuffers
     uint8_t* pinnedBuffer;
     uint8_t* pinnedBufferConstTree;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
+    size_t aux_trace_size = 0;  // bytes of d_aux_trace when owned (standalone mode)
     bool owns_aux_trace;
     bool owns_const_tree;
     std::atomic<bool> const_tree_loaded{false};  // CPU flag: true when const tree copy is complete
@@ -502,19 +519,24 @@ void load_and_copy_to_device_in_chunks(
 
 #endif
 
-// --- Data layout utilities 
-__global__ void fromRowMajorToTiled(
+// --- Data layout utilities
+// Transpose row-major input -> the committed-section storage layout `layout` (the destination layout
+// passed to getBufferOffset). Callers pass resolveLayout(nBits, nCols): ColMajor (flat) for most AIRs,
+// ColMajorTiled for small high-column ones. Readers (expressions / Merkle) use the SAME layout.
+__global__ void fromRowMajorToColMajor(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,
-    uint64_t* __restrict__ output
+    uint64_t* __restrict__ output,
+    Layout layout
 );
 
-void fromRowMajorToTiled(
+void fromRowMajorToColMajor(
     uint64_t nRows,
     uint64_t nCols,
     gl64_t* src,
     gl64_t* dst,
+    Layout layout,
     cudaStream_t stream
 );
 

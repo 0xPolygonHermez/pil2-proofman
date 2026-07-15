@@ -131,3 +131,14 @@ values!(Lookup3AirGroupValues<F> {
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "Lookup0"),
+    (0, 1, "Lookup1"),
+    (0, 2, "Lookup2_12"),
+    (0, 3, "Lookup2_13"),
+    (0, 4, "Lookup2_15"),
+    (0, 5, "Lookup3"),
+];

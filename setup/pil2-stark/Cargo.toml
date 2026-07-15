@@ -21,6 +21,7 @@ fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
 proofman-util = { workspace = true }
 stark-recurser = { path = "../stark-recurser" }
+exps-codegen = { path = "../exps-codegen" }
 pilout = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
@@ -37,4 +38,4 @@ which = "6"
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-mpi = { version = "0.8.0" }
+mpi = { workspace = true }

@@ -8,22 +8,23 @@ categories = ["cryptography"]
 
 [workspace]
 members = [
-  # Core crates
-  "cli",
-  "curves",
-  "common",
-  "fields",
-  "hints",
-  "pilout",
-  "proofman",
-  "macros",
-  "provers/starks-lib-c",
-  "witness",
-  "util",
-  "verifier",
-  "soundness",
-  "setup/stark-recurser",
-  "setup/pil2-stark",
+    # Core crates
+    "cli",
+    "curves",
+    "common",
+    "fields",
+    "hints",
+    "pilout",
+    "proofman",
+    "macros",
+    "provers/starks-lib-c",
+    "witness",
+    "util",
+    "verifier",
+    "soundness",
+    "setup/stark-recurser",
+    "setup/pil2-stark",
+    "setup/exps-codegen",
 
   # PIL2 components library
   "pil2-components/lib/std/rs",
@@ -49,21 +50,22 @@ members = [
 ]
 
 default-members = [
-  "cli",
-  "curves",
-  "common",
-  "fields",
-  "hints",
-  "pilout",
-  "proofman",
-  "macros",
-  "provers/starks-lib-c",
-  "witness",
-  "util",
-  "verifier",
-  "soundness",
-  "setup/stark-recurser",
-  "setup/pil2-stark",
+    "cli",
+    "curves",
+    "common",
+    "fields",
+    "hints",
+    "pilout",
+    "proofman",
+    "macros",
+    "provers/starks-lib-c",
+    "witness",
+    "util",
+    "verifier",
+    "soundness",
+    "setup/stark-recurser",
+    "setup/pil2-stark",
+    "setup/exps-codegen",
 ]
 
 resolver = "2"
@@ -78,6 +80,7 @@ proofman-soundness = { path = "soundness" }
 proofman-verifier = { path = "verifier" }
 proofman-util = { path = "util" }
 proofman-cli = { path = "cli" }
+exps-codegen = { path = "setup/exps-codegen" }
 pil-std-lib = { path = "pil2-components/lib/std/rs" }
 witness = { path = "witness" }
 pilout = { path = "pilout" }
@@ -114,3 +117,8 @@ itoa = "1.0.17"
 thiserror = { version = "2" }
 rand = "0.10"
 anyhow = "1"
+# Pinned to git: the released mpi-sys 0.2.3 pins bindgen 0.69, which cannot parse
+# the OpenMPI headers with libclang >= 22; this rev is mpi 0.8.1 + bindgen 0.72
+# (rsmpi/rsmpi#223). Switch back to a plain version requirement once a release
+# newer than mpi-sys 0.2.3 is published.
+mpi = { git = "https://github.com/rsmpi/rsmpi", rev = "fa1dc36cb9918fa4dc3a9626bc18c523d2b280a6" }

@@ -100,7 +100,7 @@ static void MAIN_LDE_CM1_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((MAIN_N + 127) / 128);
     initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, MAIN_N, MAIN_CM1);
-    fromRowMajorToTiled(MAIN_N, MAIN_CM1, d_flat, d_src, stream);
+    fromRowMajorToColMajor(MAIN_N, MAIN_CM1, d_flat, d_src, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
@@ -139,7 +139,7 @@ static void MAIN_LDE_CM2_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((MAIN_N + 127) / 128);
     initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, MAIN_N, MAIN_CM2);
-    fromRowMajorToTiled(MAIN_N, MAIN_CM2, d_flat, d_src, stream);
+    fromRowMajorToColMajor(MAIN_N, MAIN_CM2, d_flat, d_src, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
@@ -160,7 +160,7 @@ static void MAIN_LDE_CM2_GPU_BENCH(benchmark::State &state)
 
 // ===========================================================================
 // MAIN_MERKLE_STAGE1_GPU_BENCH -- Poseidon2 Merkle tree over 8M x 38
-// W=16 arity=4, Tiles layout (identical to production stage-1 commit).
+// W=16 arity=4, ColMajor layout (identical to production stage-1 commit).
 // ===========================================================================
 static void MAIN_MERKLE_STAGE1_GPU_BENCH(benchmark::State &state)
 {
@@ -188,7 +188,7 @@ static void MAIN_MERKLE_STAGE1_GPU_BENCH(benchmark::State &state)
         (uint64_t *)d_tree,
         (uint64_t *)d_trace,
         MAIN_CM1, MAIN_N_EXT,
-        Layout::Tiles, stream);
+        Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
@@ -197,7 +197,7 @@ static void MAIN_MERKLE_STAGE1_GPU_BENCH(benchmark::State &state)
             (uint64_t *)d_tree,
             (uint64_t *)d_trace,
             MAIN_CM1, MAIN_N_EXT,
-            Layout::Tiles, stream);
+            Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -235,7 +235,7 @@ static void MAIN_MERKLE_STAGE2_GPU_BENCH(benchmark::State &state)
         (uint64_t *)d_tree,
         (uint64_t *)d_trace,
         MAIN_CM2, MAIN_N_EXT,
-        Layout::Tiles, stream);
+        Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
@@ -244,7 +244,7 @@ static void MAIN_MERKLE_STAGE2_GPU_BENCH(benchmark::State &state)
             (uint64_t *)d_tree,
             (uint64_t *)d_trace,
             MAIN_CM2, MAIN_N_EXT,
-            Layout::Tiles, stream);
+            Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -276,7 +276,7 @@ static void MAIN_LDE_SWEEP_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((MAIN_N + 127) / 128);
     initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, MAIN_N, nCols);
-    fromRowMajorToTiled(MAIN_N, nCols, d_flat, d_src, stream);
+    fromRowMajorToColMajor(MAIN_N, nCols, d_flat, d_src, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
@@ -297,7 +297,7 @@ static void MAIN_LDE_SWEEP_GPU_BENCH(benchmark::State &state)
 
 // ===========================================================================
 // MAIN_MERKLE_SWEEP_GPU_BENCH -- Poseidon2 Merkle over N_ext rows, W=16
-// arity=4, Tiles layout; nCols swept via ->Arg(). Tree is built over the
+// arity=4, ColMajor layout; nCols swept via ->Arg(). Tree is built over the
 // extended (LDE'd) domain, matching production stage commits.
 // ===========================================================================
 static void MAIN_MERKLE_SWEEP_GPU_BENCH(benchmark::State &state)
@@ -328,7 +328,7 @@ static void MAIN_MERKLE_SWEEP_GPU_BENCH(benchmark::State &state)
         (uint64_t *)d_tree,
         (uint64_t *)d_trace,
         nCols, MAIN_N_EXT,
-        Layout::Tiles, stream);
+        Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
@@ -337,7 +337,7 @@ static void MAIN_MERKLE_SWEEP_GPU_BENCH(benchmark::State &state)
             (uint64_t *)d_tree,
             (uint64_t *)d_trace,
             nCols, MAIN_N_EXT,
-            Layout::Tiles, stream);
+            Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -467,9 +467,9 @@ static void MAIN_EXPR_PATTERN_GPU_BENCH(benchmark::State &state)
 
     // Convert to tiled layout (column-major within 256x4 tiles). This is what
     // production's `computeExpression_` reads from.
-    fromRowMajorToTiled(MAIN_N_EXT, MAIN_CM1,     d_cm1_flat, d_cm1, stream);
-    fromRowMajorToTiled(MAIN_N_EXT, MAIN_CM2,     d_cm2_flat, d_cm2, stream);
-    fromRowMajorToTiled(MAIN_N_EXT, MAIN_CM3 * 3, d_cm3_flat, d_cm3, stream);
+    fromRowMajorToColMajor(MAIN_N_EXT, MAIN_CM1,     d_cm1_flat, d_cm1, Layout::ColMajor, stream);
+    fromRowMajorToColMajor(MAIN_N_EXT, MAIN_CM2,     d_cm2_flat, d_cm2, Layout::ColMajor, stream);
+    fromRowMajorToColMajor(MAIN_N_EXT, MAIN_CM3 * 3, d_cm3_flat, d_cm3, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Match production: 512 blocks x 256 threads, ~40 KB dynamic smem.

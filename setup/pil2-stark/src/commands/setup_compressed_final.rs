@@ -42,6 +42,11 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
             proofman_common::hash_family::FAMILIES
         );
     }
+    // Register the hash family with the linked starks library before any
+    // const-tree build. The full `setup` path does this via `set_hash_family_c`
+    // (see commands/setup.rs); this standalone command must do it too, otherwise
+    // `build_const_tree_c` aborts with "hash family not set in this linked image".
+    proofman_starks_lib_c::set_hash_family_c(&hash);
 
     let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");
     let const_root_path = vadcop_dir.join("vadcop_final.verkey.json");

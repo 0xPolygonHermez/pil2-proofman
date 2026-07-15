@@ -3,6 +3,7 @@ use std::process::exit;
 use clap::{Parser, Subcommand};
 mod commands;
 use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
+use commands::gen_exps::GenExpsCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
@@ -12,7 +13,7 @@ use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
 use commands::verify_snark::VerifySnark;
-use commands::gen_witness::GenWitnessCmd;
+use commands::prove_recursive::ProveRecursiveCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
@@ -45,7 +46,8 @@ pub enum Commands {
     VerifySnark(VerifySnark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
-    GenWitness(GenWitnessCmd),
+    ProveRecursive(ProveRecursiveCmd),
+    GenExps(GenExpsCmd),
 }
 
 fn main() {
@@ -76,7 +78,8 @@ fn main() {
             Commands::VerifySnark(args) => args.run(),
             Commands::Stats(args) => args.run(),
             Commands::Execute(args) => args.run(),
-            Commands::GenWitness(args) => args.run(),
+            Commands::ProveRecursive(args) => args.run(),
+            Commands::GenExps(args) => args.run(),
         })
         .expect("failed to spawn main thread")
         .join()

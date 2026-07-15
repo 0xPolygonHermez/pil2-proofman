@@ -1,6 +1,6 @@
 use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    load_const_pols, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
@@ -16,11 +16,27 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
-    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
+    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c, set_gpu_mode_c,
+    get_num_gpus_c, init_gpu_setup_c, GOLDILOCKS_MERKLE_TREE_ARITY,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
 use serde::{Deserialize, Serialize};
+
+/// Sets GPU mode and verifies that a usable GPU is available when `gpu` is requested.
+/// Returns an error if the library was built without CUDA support, or if GPU mode was
+/// requested but no GPUs were found.
+pub fn ensure_gpu_available(gpu: bool) -> ProofmanResult<()> {
+    if !set_gpu_mode_c(gpu) {
+        return Err(ProofmanError::InvalidConfiguration(
+            "GPU mode requested but library was built without CUDA support".into(),
+        ));
+    }
+    if gpu && get_num_gpus_c() == 0 {
+        return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
+    }
+    Ok(())
+}
 
 pub enum SnarkProtocol {
     Fflonk,
@@ -152,6 +168,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<Self> {
         initialize_logger(verbose_mode, None);
 
+        ensure_gpu_available(gpu)?;
+
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
         let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
@@ -181,7 +199,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         check_const_tree(&setup_recursivef, &d_buffers)?;
 
         let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
-        load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+        load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
         let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
         let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
         load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
@@ -261,7 +279,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn generate_final_snark_proof(&self, vadcop_proof: &VadcopFinalProof) -> ProofmanResult<SnarkProof> {
+    pub fn generate_final_snark_proof(
+        &self,
+        vadcop_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         if let Some(d_buffer) = self.d_buffers {
@@ -275,6 +297,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         }
         let proof = vadcop_proof.proof_with_publics();
 
+        // The RecursiveF verifier checks the proof against this verkey (stamped
+        // into the leading 4 slots of the publics). Default is the vadcop_final
+        // verkey; a recurser/aggregated proof committed under its own verkey, so
+        // the caller passes it here — using vadcop_final's would diverge the
+        // wrapper transcript (VerifyPoW aborts).
+        let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -282,7 +311,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.aux_trace,
             &self.recursivef_const_pols,
             &self.recursivef_const_tree,
-            &self.vadcop_final_verkey,
+            verkey,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             self.d_buffers_recursivef,
         )?;
@@ -359,6 +388,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 }
 
 pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
+    let vadcop_public_inputs = if vadcop_public_inputs.len() == publics_info.n_publics + 1 {
+        &vadcop_public_inputs[1..]
+    } else {
+        vadcop_public_inputs
+    };
     if vadcop_public_inputs.len() != publics_info.n_publics {
         return Err(ProofmanError::InvalidConfiguration(format!(
             "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
@@ -397,6 +431,8 @@ pub fn check_setup_snark<F: PrimeField64>(
 ) -> ProofmanResult<()> {
     initialize_logger(verbose_mode, None);
 
+    ensure_gpu_available(gpu)?;
+
     let setup_recursivef_path =
         PathBuf::from(format!("{}/{}/{}", proving_key_snark_path.display(), "recursivef", "recursivef"));
 
@@ -425,6 +461,8 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 ) -> ProofmanResult<bool> {
     initialize_logger(verbose_mode, None);
 
+    ensure_gpu_available(gpu)?;
+
     if vadcop_proof.compressed {
         return Err(ProofmanError::InvalidConfiguration(
             "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
@@ -449,10 +487,15 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         None,
     )?;
 
+    ensure_gpu_available(gpu)?;
+    if gpu {
+        init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
+    }
+
     check_const_tree(&setup_recursivef, &None)?;
 
     let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
-    load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
+    load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
     let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
     let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
     load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);

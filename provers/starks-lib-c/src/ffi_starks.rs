@@ -74,6 +74,16 @@ pub fn generate_plonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) 
     unsafe { plonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
 }
 
+/// Plonkish gate counts (constraints, additions) for an r1cs file — no ptau
+/// needed. Returns `None` if the file could not be processed.
+pub fn get_plonk_circuit_stats_c(r1cs_file: &str) -> Option<(u64, u64)> {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let mut n_constraints: u64 = 0;
+    let mut n_additions: u64 = 0;
+    let ret = unsafe { plonk_circuit_stats_c(c_r1cs.as_ptr(), &mut n_constraints, &mut n_additions) };
+    (ret == 0).then_some((n_constraints, n_additions))
+}
+
 pub fn initialize_agg_readiness_tracker_c() {
     unsafe {
         initialize_agg_readiness_tracker();
@@ -165,6 +175,26 @@ pub fn set_hash_family_c(family: &str) {
 
 pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_pinned_size(p_stark_info) }
+}
+
+pub fn register_host_memory_c(ptr: *mut c_void, size: u64) -> bool {
+    unsafe { register_host_memory(ptr, size) != 0 }
+}
+
+pub fn unregister_host_memory_c(ptr: *mut c_void) {
+    unsafe {
+        unregister_host_memory(ptr);
+    }
+}
+
+/// Block until the commit work on `stream_id` has completed on the GPU, so a
+/// shared trace buffer whose async H2D copy rode that stream can be safely
+/// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
+/// `pctx.gpu`).
+pub fn wait_stream_commit_done_c(d_buffers: *mut c_void, stream_id: u64) {
+    unsafe {
+        wait_stream_commit_done(d_buffers, stream_id);
+    }
 }
 
 pub fn set_memory_expressions_c(p_stark_info: *mut c_void, n_tmp1: u64, n_tmp3: u64) {

@@ -34,6 +34,33 @@ impl std::fmt::Display for NeedsCompressorError {
 }
 
 impl std::error::Error for NeedsCompressorError {}
+
+/// Sentinel error returned when a has-compressor recursive1 packs BELOW the shared
+/// 2^(THRESHOLD-1) domain. The caller catches this, bumps the compressor's nQueries
+/// (which enlarges recursive1's verifier), re-runs the compressor, and retries — so
+/// every recursive1 in an airgroup lands at the same nBits and shares one setup.
+/// Bailed BEFORE the const-tree build so the caller can resize before any const file
+/// is written against a mismatched (reused) starkInfo.
+#[derive(Debug)]
+pub struct RecursiveTooSmallError {
+    /// recursive1's n_bits from plonk2pil (below the threshold).
+    pub n_bits: usize,
+    /// recursive1's n_used (rows before padding) — drives the compressor nQueries bump.
+    pub n_used: usize,
+}
+
+impl std::fmt::Display for RecursiveTooSmallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Recursive1 packs to 2^{} (n_used={}) below the shared recursive domain; \
+             compressor nQueries must grow",
+            self.n_bits, self.n_used
+        )
+    }
+}
+
+impl std::error::Error for RecursiveTooSmallError {}
 use serde_json::Value;
 
 use pilout::pilout_proxy::PilOutProxy;
@@ -101,6 +128,14 @@ pub struct RecursiveSetupConfig<'a> {
     /// and written back to this path so the change is persisted for re-runs.
     pub stark_info_path: Option<&'a std::path::Path>,
 
+    /// When true, skip the (expensive) witness-library generation for this run and instead
+    /// return its parameters in `RecursiveSetupResult::witness_lib_params`. Used by the
+    /// compressor→recursive1 resize loop: intermediate compressor attempts that will be
+    /// superseded by a nQueries bump would otherwise generate a witness lib that is thrown
+    /// away. The caller generates the winning compressor's witness lib exactly once after
+    /// the loop converges.
+    pub defer_witness_lib: bool,
+
     /// Optional pre-computed pil_info result to reuse instead of running starkSetup again.
     /// When provided, the pil_info computation (starkInfo / verifierInfo / expressionsInfo)
     /// is skipped and these values are used directly — this mirrors the JS behaviour where
@@ -133,6 +168,14 @@ pub struct RecursiveSetupResult {
     /// n_bits from plonk2pil (log2 of circuit rows).  Exposed so the caller
     /// can validate size without re-reading the starkInfo JSON.
     pub n_bits: usize,
+    /// n_used from plonk2pil (rows actually used before power-of-2 padding).  Exposed
+    /// so the caller can compute how much a compressor's nQueries must grow to fill a
+    /// has-compressor recursive1 up to the shared 2^(THRESHOLD-1) target.
+    pub n_used: usize,
+    /// Set only when the config requested `defer_witness_lib`: the `(name_filename,
+    /// files_dir)` needed to generate the witness library later, once this run is known
+    /// to be the final (non-superseded) one. `None` when the witness lib was generated inline.
+    pub witness_lib_params: Option<(String, String)>,
 }
 
 /// Run the recursive setup for a single air/template combination.
@@ -203,6 +246,7 @@ pub fn gen_recursive_setup(
         airgroup_name: Some(plonk_airgroup_name),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     if template == RecursiveTemplate::Compressor {
         plonk_opts.max_constraint_degree = Some(5);
@@ -248,7 +292,7 @@ pub fn gen_recursive_setup(
         tracing::info!("Compiling {}...", name_filename);
         let compile_status = std::process::Command::new(config.circom_exec)
             .args([
-                "--O1",
+                "--O2",
                 "--r1cs",
                 "--prime",
                 "goldilocks",
@@ -360,15 +404,45 @@ pub fn gen_recursive_setup(
         }
     }
 
+    // Has-compressor recursive1: the A2 nQueries knob above is the compressor's, not
+    // this circuit's starkInfo, so we can't fix the size here. Instead bail early (before
+    // the const-tree build, which would otherwise crash with a size mismatch against the
+    // reused/shared starkInfo) and let the caller bump the compressor's nQueries and retry.
+    // All recursive1 in an airgroup share one setup, so they must all reach 2^(THRESHOLD-1).
+    if template == RecursiveTemplate::Recursive1
+        && config.has_compressor
+        && plonk_result.n_bits < RECURSIVE_BITS_THRESHOLD
+    {
+        tracing::warn!(
+            "Recursive1 for air '{}' (has compressor) packs to n_bits={} < {} (n_used={}); \
+             requesting a compressor nQueries bump",
+            config.air_name,
+            plonk_result.n_bits,
+            RECURSIVE_BITS_THRESHOLD,
+            plonk_result.n_used
+        );
+        return Err(anyhow::Error::new(RecursiveTooSmallError {
+            n_bits: plonk_result.n_bits,
+            n_used: plonk_result.n_used,
+        }));
+    }
+
     // Generate witness library (background) — done AFTER the threshold / A2 check
-    // so the compiled output is from the final (possibly adjusted) circom.
-    witness_tracker.run_witness_library_generation(
-        config.build_dir,
-        files_dir.to_str().unwrap_or(""),
-        &name_filename,
-        template_str,
-        config.circom_helpers_dir,
-    );
+    // so the compiled output is from the final (possibly adjusted) circom. When
+    // `defer_witness_lib` is set (compressor inside the resize loop), skip it here and
+    // hand the params back so the caller generates it once for the winning attempt.
+    let witness_lib_params = if config.defer_witness_lib {
+        Some((name_filename.clone(), files_dir.to_string_lossy().into_owned()))
+    } else {
+        witness_tracker.run_witness_library_generation(
+            config.build_dir,
+            files_dir.to_str().unwrap_or(""),
+            &name_filename,
+            template_str,
+            config.circom_helpers_dir,
+        );
+        None
+    };
 
     // Write fixed polynomials binary
     let fixed_bin_path = build_dir_path.join(format!("{}.fixed.bin", name_filename));
@@ -493,19 +567,13 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            // JS uses { blowupFactor: 3, lastLevelVerification: 1 } for recursive1/2.
-            // Compressor uses blowupFactor: 2 and the default lastLevelVerification: 2.
             let make_recursive_settings = || {
-                let (blowup, last_level) = if template == RecursiveTemplate::Compressor {
-                    (2, None) // compressor: default lastLevelVerification (2)
-                } else {
-                    (3, Some(1)) // recursive1/2: JS uses lastLevelVerification: 1
-                };
+                let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
                 crate::types::stark_struct::StarkSettings {
                     blowup_factor: Some(blowup),
                     folding_factor: Some(3),
                     final_degree: Some(5),
-                    last_level_verification: last_level,
+                    last_level_verification: None,
                     ..Default::default()
                 }
             };
@@ -537,7 +605,24 @@ pub fn gen_recursive_setup(
                 tree_arity: stark_struct.merkle_tree_arity as u64,
                 target_security_bits: 128,
             };
-            let fri_security = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params);
+            let mut fri_security = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params);
+
+            // An explicit starkStruct override (config.stark_struct) may request MORE queries
+            // than the security-optimal count — this is how the caller sizes a has-compressor
+            // recursive1 up to the shared domain (more compressor queries → bigger recursive1
+            // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
+            // strengthens. get_optimal_fri_query_params otherwise discards the override entirely.
+            let override_q = stark_struct.n_queries as u64;
+            if config.stark_struct.is_some() && override_q > fri_security.n_queries {
+                tracing::info!(
+                    "Honoring nQueries override for {}: {} → {} (security floor {})",
+                    template_str,
+                    fri_security.n_queries,
+                    override_q,
+                    fri_security.n_queries
+                );
+                fri_security.n_queries = override_q;
+            }
 
             let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
                 &pil_info_result.setup,
@@ -545,8 +630,8 @@ pub fn gen_recursive_setup(
                 &pil_info_result.pil_code,
                 &opening_points,
                 &fri_security,
-                0,
-                0,
+                config.airgroup_id,
+                config.air_id,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
                 pil_info_result.fri_exp_id,
@@ -694,6 +779,8 @@ pub fn gen_recursive_setup(
         verifier_info: setup_verifier_info,
         expressions_info: setup_expressions_info,
         n_bits: plonk_result.n_bits,
+        n_used: plonk_result.n_used,
+        witness_lib_params,
     })
 }
 
@@ -848,19 +935,34 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// bootstrap the Node deps (see [`crate::proving_key::node_deps`]) and resolve
-/// again. Setup owns making its own tooling available — callers (SDK, worker,
-/// CLI, tests) shouldn't each carry an npm bootstrap.
+/// run `npm install` in the proofman repo root (where `package.json` lives)
+/// and resolve again. Setup owns making its own tooling available — callers
+/// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
     if let Some(path) = resolve_pil2com_exec() {
         return Some(path);
     }
-    let root = crate::proving_key::node_deps::ensure_node_deps(".bin/pil2com")?;
-    let exec = root.join("node_modules/.bin/pil2com");
-    exec.canonicalize().ok().and_then(|p| p.to_str().map(String::from))
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let root = Path::new(PROOFMAN_ROOT);
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if !root.join("package.json").is_file() {
+        return None;
+    }
+    tracing::info!("pil2com not found; running `npm install` in {}", root.display());
+    match std::process::Command::new("npm").arg("install").current_dir(&root).status() {
+        Ok(status) if status.success() => resolve_pil2com_exec(),
+        Ok(status) => {
+            tracing::warn!("`npm install` in {} exited with {status}", root.display());
+            None
+        }
+        Err(e) => {
+            tracing::warn!("failed to run `npm install` in {}: {e}", root.display());
+            None
+        }
+    }
 }
 
-/// Find a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
+/// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Search order:
 ///   1. Env var override
 ///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)

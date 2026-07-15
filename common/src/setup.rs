@@ -123,24 +123,29 @@ impl<F: PrimeField64> Setup<F> {
         verify_constraints: bool,
         preallocate: bool,
         gpu: bool,
-        recursive2_path: Option<&PathBuf>,
+        starkinfo_source_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
-        let stark_info_path = match setup_type {
-            ProofType::Recursive1 => {
-                let setup_path_recursive2 =
-                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
-                setup_path_recursive2.display().to_string() + ".starkinfo.json"
-            }
-            _ => setup_path.display().to_string() + ".starkinfo.json",
+        let starkinfo_borrow_path = match setup_type {
+            ProofType::Recursive1 => Some(
+                starkinfo_source_path
+                    .expect("starkinfo_source_path (Recursive2 stem) must be provided for Recursive1")
+                    .clone(),
+            ),
+            ProofType::RecurserAggregator => Some(
+                starkinfo_source_path
+                    .expect("starkinfo_source_path (vadcop_final stem) must be provided for RecurserAggregator")
+                    .clone(),
+            ),
+            _ => None,
+        };
+        let stark_info_path = match &starkinfo_borrow_path {
+            Some(p) => p.display().to_string() + ".starkinfo.json",
+            None => setup_path.display().to_string() + ".starkinfo.json",
         };
 
-        let expressions_bin_path = match setup_type {
-            ProofType::Recursive1 => {
-                let setup_path_recursive2 =
-                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
-                setup_path_recursive2.display().to_string() + ".bin"
-            }
-            _ => setup_path.display().to_string() + ".bin",
+        let expressions_bin_path = match &starkinfo_borrow_path {
+            Some(p) => p.display().to_string() + ".bin",
+            None => setup_path.display().to_string() + ".bin",
         };
 
         let const_pols_path = match !gpu {
@@ -191,7 +196,7 @@ impl<F: PrimeField64> Setup<F> {
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
-                .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
+                .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;

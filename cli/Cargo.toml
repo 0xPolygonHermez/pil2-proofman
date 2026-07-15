@@ -19,6 +19,7 @@ proofman-verifier = { workspace = true }
 proofman-soundness = { workspace = true }
 witness = { workspace = true }
 fields = { workspace = true }
+exps-codegen = { workspace = true }
 
 tracing.workspace = true
 libloading.workspace = true

@@ -40,7 +40,11 @@ void StarkInfo::load(json j)
         } else {
             starkStruct.merkleTreeCustom = false;
         }
-        starkStruct.lastLevelVerification = 0;
+        if(j["starkStruct"].contains("lastLevelVerification")) {
+            starkStruct.lastLevelVerification = j["starkStruct"]["lastLevelVerification"];
+        } else {
+            starkStruct.lastLevelVerification = 0;
+        }
     } else {
         starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
         starkStruct.transcriptArity = j["starkStruct"]["transcriptArity"];

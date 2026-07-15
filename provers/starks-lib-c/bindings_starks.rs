@@ -23,6 +23,12 @@ extern "C" {
         zkey_file: *const ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 
+    pub fn plonk_circuit_stats_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        n_constraints: *mut u64,
+        n_additions: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(
@@ -53,7 +59,13 @@ extern "C" {
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn register_host_memory(ptr: *mut ::std::os::raw::c_void, size: u64) -> u32;
+
+    pub fn unregister_host_memory(ptr: *mut ::std::os::raw::c_void);
+
+    pub fn wait_stream_commit_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
+
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;

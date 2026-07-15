@@ -64,6 +64,14 @@ fn build_tera_context_bn128(
     let transcript_arity = if custom { arity } else { 16usize };
     let n_bits_arity = (arity as f64).log2().ceil() as usize;
     let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
+    let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
+    if last_level_verification > 0 && custom {
+        bail!(
+            "gen_stark_verifier_bn128: lastLevelVerification > 0 is not supported with \
+             merkleTreeCustom (circuits.bn128/custom/merklehash.circom lacks the templates)"
+        );
+    }
+    let s0_last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
     let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
@@ -95,8 +103,13 @@ fn build_tera_context_bn128(
     let total_bits = n_queries * step0_bits;
     let n_fields = if total_bits == 0 { 0 } else { (total_bits - 1) / 253 + 1 };
 
-    // Merkle dimensions
-    let merkle_levels_s0 = if step0_bits == 0 { 0usize } else { ((step0_bits - 1) / n_bits_arity) + 1 };
+    // Merkle dimensions (truncated by lastLevelVerification: all template
+    // usages of merkle_levels_s0 are sibling-array dims).
+    let merkle_levels_s0 = if step0_bits == 0 {
+        0usize
+    } else {
+        (((step0_bits - 1) / n_bits_arity) + 1).saturating_sub(last_level_verification)
+    };
 
     // ── Boundary flags ─────────────────────────────────────────────────────
     let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
@@ -242,7 +255,11 @@ fn build_tera_context_bn128(
             let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) as usize };
             let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
             let exponent = if s == 0 { 1usize } else { 1 << (prev_bits - n_bits_s) };
-            let ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
+            let full_ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
+            let ml = full_ml.saturating_sub(last_level_verification);
+            let is_empty = last_level_verification > 0 && full_ml <= last_level_verification;
+            let last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
+            let mt_size = if n_bits_s == 0 { 1usize } else { 1 << n_bits_s };
 
             // e0 = inv(shift^(1 << (nBitsExt - prevStepBits)))
             // e1 = inv(shift^(1 << (nBitsExt - prevStepBits)) * w[prevStepBits])
@@ -265,6 +282,9 @@ fn build_tera_context_bn128(
                 "exponent": exponent,
                 "val_size": val_size,
                 "merkle_levels": ml,
+                "is_empty": is_empty,
+                "last_mt_size": last_mt_size,
+                "mt_size": mt_size,
                 "e0": e0,
                 "e1": e1,
                 "is_last": is_last,
@@ -491,6 +511,9 @@ fn build_tera_context_bn128(
     ctx.insert("arity", &arity);
     ctx.insert("n_bits_arity", &n_bits_arity);
     ctx.insert("merkle_levels_s0", &merkle_levels_s0);
+    ctx.insert("last_level_verification", &last_level_verification);
+    ctx.insert("last_level_verification_gt0", &(last_level_verification > 0));
+    ctx.insert("s0_last_mt_size", &s0_last_mt_size);
     ctx.insert("transcript_arity", &transcript_arity);
     ctx.insert("final_pol_size", &final_pol_size);
     ctx.insert("n_last_bits", &n_last_bits);
@@ -632,6 +655,57 @@ mod tests {
         assert!(out.contains("template GLConst(num)"), "out:\n{out}");
         assert!(out.contains("template GLConst3(num)"), "out:\n{out}");
         assert!(out.contains("template GLC3()"), "out:\n{out}");
+    }
+
+    fn llv_stark_info() -> Value {
+        let mut si = minimal_stark_info(2, 4, 10);
+        si["starkStruct"]["merkleTreeArity"] = json!(4);
+        si["starkStruct"]["lastLevelVerification"] = json!(2);
+        si["starkStruct"]["steps"] = json!([{"nBits": 10}, {"nBits": 6}]);
+        si["mapSectionsN"] = json!({"cm1": 2, "cm2": 2, "cm3": 2});
+        si
+    }
+
+    #[test]
+    fn llv_emits_until_level_and_root_checks() {
+        let si = llv_stark_info();
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions::default();
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        // truncated sibling depth: full = (10-1)/2+1 = 5, minus llv 2 -> 3
+        assert!(out.contains("s0_siblingsC[3][4]"), "out:\n{out}");
+        // last-level inputs: arity^llv = 16, flat single elements
+        assert!(out.contains("s0_last_levelsC[16]"), "out:\n{out}");
+        assert!(out.contains("s0_last_levels1[16]"), "out:\n{out}");
+        assert!(out.contains("s1_last_levels[16]"), "out:\n{out}");
+        assert!(out.contains("VerifyMerkleHashUntilLevel("), "out:\n{out}");
+        // root checks: s0 trees height 1<<10, fri step 1 height 1<<6
+        assert!(out.contains("VerifyMerkleRoot(2, 4, 1024)"), "out:\n{out}");
+        assert!(out.contains("VerifyMerkleRoot(2, 4, 64)"), "out:\n{out}");
+    }
+
+    #[test]
+    fn llv_zero_output_has_no_last_levels() {
+        let mut si = llv_stark_info();
+        si["starkStruct"]["lastLevelVerification"] = json!(0);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions::default();
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(!out.contains("last_levels"), "out:\n{out}");
+        assert!(!out.contains("UntilLevel"), "out:\n{out}");
+        // full sibling depth restored
+        assert!(out.contains("s0_siblingsC[5][4]"), "out:\n{out}");
+    }
+
+    #[test]
+    fn llv_with_custom_bails() {
+        let mut si = llv_stark_info();
+        si["starkStruct"]["merkleTreeCustom"] = json!(true);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions::default();
+        let result = gen_stark_verifier_bn128(None, &si, &vi, &opts);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("lastLevelVerification"));
     }
 
     #[test]

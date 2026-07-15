@@ -73,6 +73,10 @@ pub struct ProveCmd {
     #[clap(short = 't', long)]
     pub max_streams: Option<usize>,
 
+    /// Cap on per-GPU recursive (aggregation) streams. Also memory-bounded.
+    #[clap(long)]
+    pub max_recursive_streams: Option<usize>,
+
     #[clap(short = 'n', long)]
     pub number_threads_witness: Option<usize>,
 
@@ -100,6 +104,9 @@ impl ProveCmd {
 
         if let Some(max_streams) = self.max_streams {
             options.with_max_number_streams(max_streams);
+        }
+        if let Some(max_recursive_streams) = self.max_recursive_streams {
+            options.with_max_number_recursive_streams(max_recursive_streams);
         }
         if let Some(number_threads_witness) = self.number_threads_witness {
             options.with_number_threads_pools_witness(number_threads_witness);
@@ -166,7 +173,7 @@ impl ProveCmd {
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof)?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
                 }
             }
         }
