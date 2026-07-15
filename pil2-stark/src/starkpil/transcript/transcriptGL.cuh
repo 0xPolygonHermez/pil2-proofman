@@ -36,7 +36,7 @@ public:
 
     bool parallel;
 
-    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream, bool parallel = true);
+    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream, bool parallel = false);
     ~TranscriptGL_GPU()
     {
         CHECKCUDAERR(cudaFree(state));
