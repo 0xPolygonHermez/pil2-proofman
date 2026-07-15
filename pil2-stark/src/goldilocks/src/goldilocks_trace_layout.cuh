@@ -30,7 +30,8 @@ enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 // SAME (nBits, nCols), so they always agree without storing the choice. Native tiled wins for small
 // domains with many columns; everything else uses flat (sppark).
 __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_t nCols) {
-    return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
+    //return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
+    return Layout::ColMajorTiled;
 }
 
 // Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
