@@ -13,10 +13,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 use fields::{Goldilocks, PrimeField64};
-use proofman_multilinear::{AirIr, Boundary, ConstraintIr, Instr, MlCustomCommit, MlParams, Op, Operand, SrcKind};
+use proofman_multilinear::{
+    AirIr, Boundary, BusIr, BusTerm, ConstraintIr, Instr, MlCustomCommit, MlParams, Op, Operand, SrcKind,
+};
 
 use crate::expr::expression::{ExprChild, Expression};
-use crate::types::pilout_info::SetupResult;
+use crate::types::pilout_info::{HintFieldValue, HintInfo, SetupResult};
 
 struct Compiler<'a> {
     setup: &'a SetupResult,
@@ -176,6 +178,69 @@ impl Compiler<'_> {
     }
 }
 
+/// The single-expression value of a hint field.
+fn hint_field<'h>(hint: &'h HintInfo, name: &str) -> Result<&'h Expression> {
+    let f = hint
+        .fields
+        .iter()
+        .find(|f| f.name == name)
+        .ok_or_else(|| anyhow!("hint '{}' missing field '{name}'", hint.name))?;
+    match f.values.as_slice() {
+        [HintFieldValue::Single(e)] => Ok(e),
+        _ => bail!("hint '{}' field '{name}' is not a single expression", hint.name),
+    }
+}
+
+/// Lower the LogUp-GKR bus hints (`@gkr_sum_bus` marker, one `@gkr_sum_term`
+/// per row fraction, one `@gkr_sum_direct_term` per instance-level fraction)
+/// emitted by the STD's GKR mode into a [`BusIr`]. Returns `None` when the
+/// AIR has no GKR bus (plain-logup or bus-free AIRs).
+fn lower_bus(compiler: &mut Compiler) -> Result<Option<BusIr>> {
+    let hints = &compiler.setup.hints;
+    let marker = {
+        let markers: Vec<&HintInfo> = hints.iter().filter(|h| h.name == "gkr_sum_bus").collect();
+        match markers.as_slice() {
+            [] => return Ok(None),
+            [one] => *one,
+            _ => bail!("multiple @gkr_sum_bus hints in one AIR"),
+        }
+    };
+
+    let mut terms = Vec::new();
+    let mut max_term_degree = 1u32;
+    for hint in hints.iter().filter(|h| h.name == "gkr_sum_term") {
+        let (num, deg_num, _) = compiler.lower_expr(hint_field(hint, "numerator")?)?;
+        let (den, deg_den, _) = compiler.lower_expr(hint_field(hint, "denominator")?)?;
+        let degree = deg_num.max(deg_den);
+        max_term_degree = max_term_degree.max(degree);
+        terms.push(BusTerm { num, den, degree });
+    }
+    if terms.is_empty() {
+        bail!("@gkr_sum_bus without @gkr_sum_term hints");
+    }
+
+    let mut scalar_terms = Vec::new();
+    for hint in hints.iter().filter(|h| h.name == "gkr_sum_direct_term") {
+        let (num, deg_num, offs_num) = compiler.lower_expr(hint_field(hint, "numerator")?)?;
+        let (den, deg_den, offs_den) = compiler.lower_expr(hint_field(hint, "denominator")?)?;
+        if deg_num.max(deg_den) > 0 || !offs_num.is_empty() || !offs_den.is_empty() {
+            bail!("@gkr_sum_direct_term references columns (scalar terms must be scalar-only)");
+        }
+        scalar_terms.push(BusTerm { num, den, degree: 0 });
+    }
+
+    // `result` is the `gsum_result` airgroup value, or the literal 0 in
+    // one-instance mode (where the instance's contribution must vanish).
+    let (result_op, _, _) = compiler.lower_expr(hint_field(marker, "result")?)?;
+    let result_airgroupvalue = match result_op.kind {
+        SrcKind::AirGroupValue => Some(result_op.idx),
+        SrcKind::Number if compiler.numbers[result_op.idx as usize] == 0 => None,
+        _ => bail!("@gkr_sum_bus result must be an airgroup value or the literal 0"),
+    };
+
+    Ok(Some(BusIr { terms, scalar_terms, result_airgroupvalue, max_term_degree }))
+}
+
 /// Compile a `SetupResult` into the multilinear prover's `AirIr`.
 pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Result<AirIr> {
     let n_stages = setup.n_stages;
@@ -186,6 +251,15 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
             .get(&format!("cm{stage}"))
             .ok_or_else(|| anyhow!("missing cm{stage} section width"))?;
         cols_per_stage.push(width as u32);
+    }
+    // GKR-mode AIRs declare stage-2 challenges but commit no stage-2 columns;
+    // drop trailing empty stages so the prover neither expects nor commits
+    // empty matrices.
+    while cols_per_stage.last() == Some(&0) {
+        cols_per_stage.pop();
+    }
+    if cols_per_stage.is_empty() {
+        bail!("AIR commits no witness columns");
     }
 
     let mut compiler = Compiler {
@@ -233,6 +307,9 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
     let airvalue_stages: Vec<u8> = setup.air_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
     let airgroupvalue_stages: Vec<u8> = setup.airgroup_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
 
+    // LogUp-GKR bus (present iff the STD compiled the AIR in GKR mode).
+    let bus = lower_bus(&mut compiler)?;
+
     Ok(AirIr {
         name: setup.name.clone(),
         airgroup_id: setup.airgroup_id as u32,
@@ -251,6 +328,7 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         constraints,
         max_constraint_degree: max_degree,
         opening_offsets: compiler.offsets.into_iter().collect(),
+        bus,
         params,
     })
 }
@@ -264,38 +342,43 @@ mod tests {
     use prost::Message;
     use proofman_multilinear::SrcKind;
 
-    /// Compile SimpleLeft (std lookups: stage-2 gsum + im-pols, challenges,
-    /// airgroup values) from the checked-in pilout and pin the AirIr shape.
-    #[test]
-    fn simple_left_compiles_to_multistage_ir() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pil2-components/test/simple/build/simple.pilout");
+    /// Load a checked-in pilout and compile one AIR into its `AirIr`.
+    /// Returns `None` (test skipped) when the fixture is absent.
+    fn compile_fixture_air(path: &str, air_name: &str) -> Option<AirIr> {
         let data = match std::fs::read(path) {
             Ok(d) => d,
             Err(_) => {
                 eprintln!("skipping: {path} not found");
-                return;
+                return None;
             }
         };
         let pilout = pb::PilOut::decode(data.as_slice()).expect("decode pilout");
 
-        // Locate SimpleLeft.
         let (ag_idx, air_idx, n_bits) = pilout
             .air_groups
             .iter()
             .enumerate()
             .find_map(|(g, ag)| {
                 ag.airs.iter().enumerate().find_map(|(a, air)| {
-                    (air.name.as_deref() == Some("SimpleLeft"))
+                    (air.name.as_deref() == Some(air_name))
                         .then(|| (g, a, (air.num_rows.unwrap() as usize).trailing_zeros()))
                 })
             })
-            .expect("SimpleLeft in pilout");
+            .unwrap_or_else(|| panic!("{air_name} in pilout"));
 
         let stark_struct = generate_stark_struct(&StarkSettings::default(), n_bits as usize);
         let opts = PrepareOptions { debug: false, im_pols_stages: false };
         let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &opts);
 
-        let ir = build_air_ir(&pil_result.setup, n_bits, MlParams::default()).expect("build AirIr");
+        Some(build_air_ir(&pil_result.setup, n_bits, MlParams::default()).expect("build AirIr"))
+    }
+
+    /// Compile SimpleLeft (std lookups: stage-2 gsum + im-pols, challenges,
+    /// airgroup values) from the checked-in pilout and pin the AirIr shape.
+    #[test]
+    fn simple_left_compiles_to_multistage_ir() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pil2-components/test/simple/build/simple.pilout");
+        let Some(ir) = compile_fixture_air(path, "SimpleLeft") else { return };
 
         // Two stages: 16 base columns in stage 1, 21 (7 ext columns) in stage 2.
         assert_eq!(ir.cols_per_stage, vec![16, 21]);
@@ -325,6 +408,51 @@ mod tests {
                     assert!(o.idx + o.dim as u32 <= width, "operand past section: {o:?}");
                 }
             }
+        }
+    }
+
+    /// The same system compiled with the LogUp-GKR sum bus
+    /// (`simple_gkr.pilout`): single stage, no gsum/im columns or bus
+    /// constraints, and the `@gkr_*` hints lowered into a `BusIr`.
+    #[test]
+    fn simple_left_gkr_compiles_to_single_stage_bus_ir() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pil2-components/test/simple/build/simple_gkr.pilout");
+        let Some(ir) = compile_fixture_air(path, "SimpleLeft") else { return };
+
+        // Same 16 stage-1 columns as the plain system, no stage 2.
+        assert_eq!(ir.cols_per_stage, vec![16], "GKR mode must commit no stage-2 columns");
+        // std_alpha/std_gamma still declared at stage 2.
+        assert!(ir.challenge_stages.contains(&2), "bus challenges must survive");
+        // gsum_result is still an airgroup value.
+        assert_eq!(ir.airgroupvalue_stages, vec![2]);
+
+        let bus = ir.bus.as_ref().expect("GKR mode must lower a BusIr");
+        // SimpleLeft feeds the bus with 3 permutation terms, 1 lookup term and
+        // 7 range checks — at least 11 row terms, exactly one result value.
+        assert!(bus.terms.len() >= 11, "expected >= 11 bus terms, got {}", bus.terms.len());
+        assert!(bus.max_term_degree >= 1);
+        assert!(bus.result_airgroupvalue.is_some(), "gsum_result index must be resolved");
+
+        // No operand anywhere may reference a stage-2 witness column.
+        for instr in &ir.instrs {
+            for o in [&instr.a, &instr.b] {
+                assert!(!matches!(o.kind, SrcKind::Witness { stage: 2 }), "stage-2 witness operand in GKR mode: {o:?}");
+            }
+        }
+
+        // Every denominator must involve the bus challenge γ somewhere in its
+        // cone (it is `compressed_exprs + std_gamma`): check at least one
+        // challenge operand exists in the instruction list.
+        assert!(
+            ir.instrs.iter().any(|i| [i.a, i.b].iter().any(|o| o.kind == SrcKind::Challenge)),
+            "expected challenge operands in the bus term cones"
+        );
+
+        // The plain and GKR systems must agree on the stage-1 layout.
+        let plain_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pil2-components/test/simple/build/simple.pilout");
+        if let Some(plain) = compile_fixture_air(plain_path, "SimpleLeft") {
+            assert_eq!(plain.cols_per_stage[0], ir.cols_per_stage[0]);
+            assert!(plain.bus.is_none(), "plain mode must not carry a bus");
         }
     }
 }

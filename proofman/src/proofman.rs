@@ -2881,6 +2881,8 @@ where
             }
         }
 
+        timer_stop_and_log_info!(GENERATING_PROOFS);
+
         if options.verify_proofs {
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
@@ -4704,26 +4706,12 @@ where
         // vector `prove_air` and the proof-set verifier consume.
         let challenge_stages: Vec<u8> =
             irs.iter().map(|ir| ir.challenge_stages.clone()).max_by_key(|v| v.len()).unwrap_or_default();
-        let challenges: Vec<Ext> = {
-            let pctx_challenges = self.pctx.get_challenges();
-            let zero = Ext::from_array(&[Goldilocks::from_u64(0); 3]);
-            challenge_stages
-                .iter()
-                .enumerate()
-                .map(|(id, &st)| {
-                    let base = 3 * id;
-                    if st >= 2 && base + 3 <= pctx_challenges.len() {
-                        Ext::from_array(&[
-                            Goldilocks::from_u64(pctx_challenges[base].as_canonical_u64()),
-                            Goldilocks::from_u64(pctx_challenges[base + 1].as_canonical_u64()),
-                            Goldilocks::from_u64(pctx_challenges[base + 2].as_canonical_u64()),
-                        ])
-                    } else {
-                        zero
-                    }
-                })
-                .collect()
-        };
+        let challenges: Vec<Ext> = crate::multilinear::ml_challenges(&self.pctx.get_challenges(), &challenge_stages);
+
+        // Per-instance airgroup values (3 slots per value), collected for the
+        // cross-instance global (bus-balance) constraint check under `-y`.
+        let my_instances_all = self.pctx.dctx_get_process_instances();
+        let mut airgroup_values_air_instances: Vec<Vec<F>> = vec![Vec::new(); my_instances_all.len()];
 
         // Generate the proofs
         timer_start_info!(GENERATING_PROOFS);
@@ -4829,13 +4817,39 @@ where
             // `-y`: verify each proof against the same challenges the prover
             // derived (via `calculate_global_challenge`), reusing the live pctx.
             if verify_proofs {
-                verify_air(&ir, &proof, &publics, None, Some(&air_challenges)).map_err(|e| {
-                    ProofmanError::InvalidProof(format!(
+                tracing::info!(
+                    "    Verifying proof of {}: Instance #{} with global index #{}",
+                    ir.name,
+                    air_instance_id,
+                    instance_id
+                );
+                if let Err(e) = verify_air(&ir, &proof, &publics, None, Some(&air_challenges)) {
+                    tracing::info!(
+                        "··· {}",
+                        format!("\u{2717} Proof of {}: Instance #{air_instance_id} was not verified", ir.name)
+                            .bright_red()
+                            .bold()
+                    );
+                    return Err(ProofmanError::InvalidProof(format!(
                         "instance {instance_id} ({}) failed multilinear verification: {e}",
                         ir.name
-                    ))
-                })?;
-                tracing::info!("Multilinear proof for instance {instance_id} ({}) verified", ir.name);
+                    )));
+                }
+                tracing::info!(
+                    "    {}",
+                    format!("\u{2713} Proof of {}: Instance #{air_instance_id} was verified", ir.name)
+                        .bright_green()
+                        .bold()
+                );
+
+                // Keep this instance's airgroup values (the bus contribution)
+                // for the global balance check after the loop.
+                let flat: Vec<F> = proof
+                    .airgroup_values
+                    .iter()
+                    .flat_map(|v| v.value.iter().map(|g| F::from_u64(g.as_canonical_u64())))
+                    .collect();
+                airgroup_values_air_instances[self.pctx.dctx_get_instance_local_idx(instance_id)?] = flat;
             }
 
             if let Some(dir) = &output_dir {
@@ -4859,6 +4873,19 @@ where
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
         timer_stop_and_log_info!(GENERATING_PROOFS);
+
+        // `-y`: the cross-instance global constraints (the LogUp bus balance
+        // `gsum·den + num === 0` over the aggregated airgroup values) — each
+        // proof pins its own bus contribution, but only the SET balances.
+        // Mirrors the univariate `verify_proofs` flow.
+        if verify_proofs {
+            let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances)?;
+            let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+            if self.mpi_ctx.rank == 0 {
+                verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues)?;
+            }
+            tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
+        }
 
         self.wcm.end(&DebugInfo::default())?;
 

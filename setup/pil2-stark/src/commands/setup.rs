@@ -400,7 +400,11 @@ fn log2_usize(n: usize) -> usize {
 }
 
 /// Soundness-driven multilinear (PCS) parameters for one AIR.
-fn ml_params(stark_struct: &StarkStruct, n_bits: usize, total_cols: usize) -> proofman_multilinear::MlParams {
+pub(crate) fn ml_params(
+    stark_struct: &StarkStruct,
+    n_bits: usize,
+    total_cols: usize,
+) -> proofman_multilinear::MlParams {
     // Rate: reuse the AIR's configured blowup (at least 1).
     let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
     // Fold down to a small in-clear final polynomial, leaving ≥ 1 fold.

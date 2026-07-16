@@ -153,6 +153,22 @@ switch (ACTIVE_FIELD) {
         error("Unknown field");
 }
 
+/*
+Sum bus proving modes:
+
+ Plain (default) : the running-sum (`gsum`) and intermediate (`im`) columns are
+                   committed at stage 2 and tied by constraints.
+ LogUp-GKR       : no auxiliary bus columns; the raw bus terms are emitted as
+                   hints and the fractional sum is proven by the multilinear
+                   logup-GKR protocol https://eprint.iacr.org/2023/1284.pdf.
+*/
+
+int GKR_SUM_BUS = 0;
+
+function enable_gkr_sum_bus() {
+    GKR_SUM_BUS = 1;
+}
+
 // Maximum constraint degree
 int MAX_CONSTRAINT_DEGREE = 3;
 

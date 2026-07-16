@@ -67,19 +67,21 @@ fn mlinfo_artifacts_have_multistage_shape() {
         return;
     }
 
-    // The example uses the std permutation bus, so at least one AIR must be
-    // multi-stage with challenges and airgroup values (the bus balance).
+    // The example uses the std permutation bus compiled in LogUp-GKR mode:
+    // single-stage (no gsum/im columns), a lowered BusIr, and the bus
+    // challenges/airgroup values still declared.
     let fibonacci = irs.values().find(|ir| ir.name == "Fibonacci").expect("Fibonacci AIR in the proving key");
-    assert_eq!(fibonacci.n_stages(), 2, "std bus implies a stage-2");
-    assert!(fibonacci.cols_per_stage[1] > 0, "stage-2 must commit columns (gsum/im-pols)");
+    assert_eq!(fibonacci.n_stages(), 1, "GKR mode commits no stage-2 columns");
+    assert!(fibonacci.bus.is_some(), "GKR mode implies a lowered bus");
     assert!(!fibonacci.challenge_stages.is_empty(), "std bus implies stage challenges");
     assert!(!fibonacci.airgroupvalue_stages.is_empty(), "std bus implies airgroup values");
     assert!(fibonacci.offset_index(0).is_some() && fibonacci.offset_index(1).is_some());
 
     for ir in irs.values() {
-        // Structural invariants every compiled IR must satisfy.
+        // Structural invariants every compiled IR must satisfy. Bus-only AIRs
+        // (e.g. the range tables) legitimately have zero constraints.
         assert!(ir.n_bits >= 1);
-        assert!(!ir.constraints.is_empty(), "{}: no constraints", ir.name);
+        assert!(!ir.constraints.is_empty() || ir.bus.is_some(), "{}: no constraints and no bus", ir.name);
         assert!(ir.max_constraint_degree >= 1);
         for (i, instr) in ir.instrs.iter().enumerate() {
             assert_eq!(instr.dst as usize, i, "{}: instr {i} breaks dst==index invariant", ir.name);

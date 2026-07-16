@@ -147,6 +147,12 @@ fn assemble_dim<S: LeafSource>(src: &S, stage: u8, base: u32, row_offset: i32, d
     acc
 }
 
+/// Value of an arbitrary operand after [`eval_instrs`] has run (leaves are
+/// read from `src`, temps from the scratch buffer).
+pub fn operand_eval<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], op: &Operand) -> Val {
+    operand_value(ir, src, temps, op)
+}
+
 fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], op: &Operand) -> Val {
     match op.kind {
         SrcKind::Witness { stage } => assemble_dim(src, stage, op.idx, op.row_offset, op.dim),
@@ -187,10 +193,15 @@ pub fn constraint_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], c_idx
 /// reverse DFS over temp references). Used for boundary constraints, whose
 /// leaf source is only defined for the leaves the constraint actually reads.
 pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Val>, c_idx: usize) -> Val {
+    eval_operand_cone(ir, src, temps, &ir.constraints[c_idx].root)
+}
+
+/// Evaluate only the dependency cone of an arbitrary root operand. Used for
+/// scalar bus terms, whose leaf source is only defined for scalar leaves.
+pub fn eval_operand_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<Val>, root: &Operand) -> Val {
     debug_assert!(ir.instrs.iter().enumerate().all(|(i, ins)| ins.dst as usize == i));
     temps.resize(ir.n_temps as usize, Val::zero());
 
-    let root = &ir.constraints[c_idx].root;
     let mut needed = vec![false; ir.instrs.len()];
     let mut stack: Vec<usize> = Vec::new();
     if root.kind == SrcKind::Temp {
@@ -225,6 +236,48 @@ pub fn eval_constraint_cone<S: LeafSource>(ir: &AirIr, src: &S, temps: &mut Vec<
     operand_value(ir, src, temps, root)
 }
 
+/// Leaf source reading a base-field trace at one row (columns wrap cyclically
+/// for shifted reads). Used by [`check_constraints_on_trace`] and by the bus
+/// input-layer builder in `logup_gkr.rs`.
+pub struct RowSource<'a> {
+    pub witness: &'a [Vec<Vec<Goldilocks>>],
+    pub consts: &'a [Vec<Goldilocks>],
+    pub customs: &'a [Vec<Vec<Goldilocks>>],
+    pub publics: &'a [Goldilocks],
+    pub challenges: &'a [Ext],
+    pub air_values: &'a [Ext],
+    pub airgroup_values: &'a [Ext],
+    pub row: usize,
+    pub n_rows: usize,
+}
+
+impl LeafSource for RowSource<'_> {
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
+        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        Val::B(self.witness[(stage - 1) as usize][col as usize][r])
+    }
+    fn constant(&self, col: u32, row_offset: i32) -> Val {
+        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        Val::B(self.consts[col as usize][r])
+    }
+    fn public(&self, idx: u32) -> Val {
+        Val::B(self.publics[idx as usize])
+    }
+    fn challenge(&self, idx: u32) -> Val {
+        Val::E(self.challenges[idx as usize])
+    }
+    fn air_value(&self, idx: u32) -> Val {
+        Val::E(self.air_values[idx as usize])
+    }
+    fn airgroup_value(&self, idx: u32) -> Val {
+        Val::E(self.airgroup_values[idx as usize])
+    }
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
+        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        Val::B(self.customs[commit as usize][col as usize][r])
+    }
+}
+
 /// Debug helper mirroring the C++ `verify_constraints` mode: evaluate every
 /// constraint at every row of a base-field trace and report offending rows.
 /// `witness[stage−1]` are the stage's columns, `consts` the fixed columns; all
@@ -241,44 +294,6 @@ pub fn check_constraints_on_trace(
     airgroup_values: &[Ext],
 ) -> Result<(), MlError> {
     let n_rows = 1usize << ir.n_bits;
-
-    struct RowSource<'a> {
-        witness: &'a [Vec<Vec<Goldilocks>>],
-        consts: &'a [Vec<Goldilocks>],
-        customs: &'a [Vec<Vec<Goldilocks>>],
-        publics: &'a [Goldilocks],
-        challenges: &'a [Ext],
-        air_values: &'a [Ext],
-        airgroup_values: &'a [Ext],
-        row: usize,
-        n_rows: usize,
-    }
-    impl LeafSource for RowSource<'_> {
-        fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
-            let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Val::B(self.witness[(stage - 1) as usize][col as usize][r])
-        }
-        fn constant(&self, col: u32, row_offset: i32) -> Val {
-            let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Val::B(self.consts[col as usize][r])
-        }
-        fn public(&self, idx: u32) -> Val {
-            Val::B(self.publics[idx as usize])
-        }
-        fn challenge(&self, idx: u32) -> Val {
-            Val::E(self.challenges[idx as usize])
-        }
-        fn air_value(&self, idx: u32) -> Val {
-            Val::E(self.air_values[idx as usize])
-        }
-        fn airgroup_value(&self, idx: u32) -> Val {
-            Val::E(self.airgroup_values[idx as usize])
-        }
-        fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
-            let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
-            Val::B(self.customs[commit as usize][col as usize][r])
-        }
-    }
 
     let mut temps = Vec::new();
     for (c_idx, c) in ir.constraints.iter().enumerate() {
@@ -356,6 +371,7 @@ pub mod test_air {
             ],
             max_constraint_degree: 2,
             opening_offsets: vec![0, 1],
+            bus: None,
             params,
         }
     }
@@ -374,6 +390,84 @@ pub mod test_air {
         not_last[n - 1] = Goldilocks::ZERO;
         let publics = vec![Goldilocks::ONE, Goldilocks::TWO];
         (vec![vec![a, bcol]], vec![not_last], publics)
+    }
+
+    /// A hand-built lookup AIR proven with the LogUp-GKR bus (no committed
+    /// running-sum columns): stage-1 columns `a` (looked-up values), `t`
+    /// (table) and `mul` (multiplicities); bus terms
+    ///   assume: `−1 / (a + γ)`,   prove: `mul / (t + γ)`,
+    /// with `γ` the stage-2 challenge and the instance's net contribution
+    /// carried in airgroup value 0. `with_scalar_term` adds the direct
+    /// fraction `pub0 / (γ + pub1)` at the instance level.
+    pub fn lookup_ir(n_bits: u32, params: MlParams, with_scalar_term: bool) -> AirIr {
+        use crate::ir::{BusIr, BusTerm};
+
+        let mut b = IrBuilder::default();
+        let a = b.witness(1, 0, 0);
+        let t = b.witness(1, 1, 0);
+        let mul = b.witness(1, 2, 0);
+        let gamma = b.challenge(0);
+
+        let one = b.number(1);
+        let neg_one = b.neg(one);
+        let den_a = b.add(a, gamma);
+        let den_t = b.add(t, gamma);
+
+        let scalar_terms = if with_scalar_term {
+            let p0 = b.public(0);
+            let p1 = b.public(1);
+            let den = b.add(gamma, p1);
+            vec![BusTerm { num: p0, den, degree: 0 }]
+        } else {
+            vec![]
+        };
+
+        AirIr {
+            name: "LookupTest".into(),
+            airgroup_id: 0,
+            air_id: 1,
+            n_bits,
+            cols_per_stage: vec![3],
+            n_const_cols: 1,
+            custom_commits: vec![],
+            n_publics: if with_scalar_term { 2 } else { 0 },
+            challenge_stages: vec![2],
+            airvalue_stages: vec![],
+            airgroupvalue_stages: vec![2],
+            numbers: b.numbers.clone(),
+            n_temps: b.n_temps(),
+            instrs: b.instrs,
+            constraints: vec![],
+            max_constraint_degree: 1,
+            opening_offsets: vec![0],
+            bus: Some(BusIr {
+                terms: vec![
+                    BusTerm { num: neg_one, den: den_a, degree: 1 },
+                    BusTerm { num: mul, den: den_t, degree: 1 },
+                ],
+                scalar_terms,
+                result_airgroupvalue: Some(0),
+                max_term_degree: 1,
+            }),
+            params,
+        }
+    }
+
+    /// A balanced lookup trace for [`lookup_ir`]: `t = 0..n`, `a` drawn from
+    /// `t`, `mul[v] = #{i : a[i] = v}` — so the bus fraction sum is zero.
+    #[allow(clippy::type_complexity)]
+    pub fn lookup_trace(n_bits: u32) -> (Vec<Vec<Vec<Goldilocks>>>, Vec<Vec<Goldilocks>>) {
+        use fields::PrimeField64;
+        let n = 1usize << n_bits;
+        let t: Vec<Goldilocks> = (0..n as u64).map(Goldilocks::from_u64).collect();
+        let looked: Vec<usize> = (0..n).map(|i| (i * i + 3 * i) % n).collect();
+        let a: Vec<Goldilocks> = looked.iter().map(|&v| Goldilocks::from_u64(v as u64)).collect();
+        let mut counts = vec![0u64; n];
+        for &v in &looked {
+            counts[v] += 1;
+        }
+        let mul: Vec<Goldilocks> = counts.into_iter().map(Goldilocks::from_u64).collect();
+        (vec![vec![a, t, mul]], vec![vec![Goldilocks::ZERO; n]])
     }
 }
 

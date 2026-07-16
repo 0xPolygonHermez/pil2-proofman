@@ -11,10 +11,15 @@ cargo run --bin proofman-setup -- compile-pil \
     -I ./pil2-components/lib/std/pil \
     -o ./examples/fibonacci-multilinear/pil/build.pilout
 
-# 2. Generate the proving key
+# 2. Run the setup to generate the proving key and verification key
 cargo run --bin proofman-setup -- setup \
     -a ./examples/fibonacci-multilinear/pil/build.pilout \
     -b ./examples/fibonacci-multilinear/build
+
+# 2.1 Optionally, you can generate the stats
+cargo run --bin proofman-setup -- stats --multilinear \
+    -a ./examples/fibonacci-multilinear/pil/build.pilout \
+    -o ./examples/fibonacci-multilinear/build/stats.txt
 
 # 3. Generate the PIL Helpers
 cargo run --bin proofman-cli pil-helpers \
@@ -43,12 +48,7 @@ cargo run --bin proofman-cli -- prove-multilinear \
     --proving-key examples/fibonacci-multilinear/build/provingKey \
     --public-inputs examples/fibonacci-multilinear/src/inputs.json \
     --custom-commits rom=examples/fibonacci-multilinear/build/rom.bin \
-    --output-dir examples/fibonacci-multilinear/build/proofs
-
-# 8. Verify the base-proof set
-cargo run --bin proofman-cli -- verify-multilinear \
-    --proof examples/fibonacci-multilinear/build/proofs/*.mlproof.bin \
-    --proving-key examples/fibonacci-multilinear/build/provingKey
+    --output-dir examples/fibonacci-multilinear/build/proofs -y
 ```
 
 With the proving key generated, `cargo test -p proofman-multilinear --test setup_artifact` runs an end-to-end prove+verify against the real setup artifacts (it skips when the proving key is absent).

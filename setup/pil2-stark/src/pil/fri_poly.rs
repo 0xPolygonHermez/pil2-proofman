@@ -171,6 +171,13 @@ pub fn generate_fri_polynomial(
         }
     }
 
+    // Zero-constraint AIRs (e.g. GKR-mode bus-only AIRs) have an empty ev_map,
+    // so no per-opening expression was built: the univariate FRI polynomial
+    // degenerates to the constant 0, mirroring the constraint-polynomial dummy.
+    let fri_exp = fri_exp.or_else(|| {
+        Some(Expression { op: "number".to_string(), value: Some("0".to_string()), dim: 1, ..Default::default() })
+    });
+
     // Push only the final FRI expression (matches JS: one expressions.push)
     let mut fri_final = fri_exp.expect("At least one opening point required");
     let fri_final_id = expressions.len();

@@ -2,10 +2,11 @@
 
 use crate::pcs::{combine_columns, CommittedMatrix, OpeningProof};
 use crate::pcs::{MlPcs, Pcs};
-use crate::eq::{rotate_table, skip_kernel_table};
+use crate::eq::{eq_evals, rotate_table, skip_kernel_table};
 use crate::error::MlError;
 use crate::hypercube::{dot_base_ext, Ext};
 use crate::ir::AirIr;
+use crate::logup_gkr::{BusProof, BusProver};
 use crate::sumcheck::{ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{build_kernels, KernelSpec, ZerocheckOracle};
@@ -30,6 +31,8 @@ pub struct MlProof {
     pub custom_roots: Vec<[Goldilocks; 4]>,
     /// Zerocheck round polynomials (evaluations at `0..=max_degree+1`).
     pub zerocheck_round_polys: Vec<Vec<Ext>>,
+    /// The LogUp-GKR bus phase (present iff the AIR was compiled with a bus).
+    pub bus: Option<BusProof>,
     /// Claimed weighted-sum openings: `claims[global_col][kernel]`.
     pub claims: Vec<Vec<Ext>>,
     /// Opening-reduction round polynomials.
@@ -100,6 +103,22 @@ pub fn prove_air(
     let m = n_bits as usize;
     let n_rows = 1usize << m;
     let params = &ir.params;
+
+    // --- LogUp-GKR bus: build the fraction tree (transcript-free) and fix the
+    // result airgroup value before anything absorbs or evaluates it.
+    let mut airgroup_values = airgroup_values.to_vec();
+    let bus_prover = match &ir.bus {
+        Some(bus) => {
+            let bp =
+                BusProver::build(ir, bus, witness, consts, customs, publics, challenges, air_values, &airgroup_values)?;
+            if let Some(idx) = bus.result_airgroupvalue {
+                airgroup_values[idx as usize] = bp.result;
+            }
+            Some(bp)
+        }
+        None => None,
+    };
+    let airgroup_values = &airgroup_values[..];
 
     // Start the transcript with the statement: AIR identity and public inputs.
     let mut transcript = MlTranscript::new();
@@ -194,6 +213,29 @@ pub fn prove_air(
     }
     let t_zerocheck = t_zerocheck.elapsed();
 
+    // --- Step 2b: LogUp-GKR bus phase — the walk over the fraction tree plus
+    // the input-layer reduction, terminating in column claims at `v`.
+    let t_bus = Instant::now();
+    let (bus_proof, bus_point) = match (&ir.bus, &bus_prover) {
+        (Some(bus), Some(bp)) => {
+            let (proof, v) = bp.prove(
+                ir,
+                bus,
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                airgroup_values,
+                &mut transcript,
+            );
+            (Some(proof), v)
+        }
+        _ => (None, Vec::new()),
+    };
+    let t_bus = t_bus.elapsed();
+
     // --- Step 3: Opening Reductions ---
     let t_claims = Instant::now();
 
@@ -202,7 +244,8 @@ pub fn prove_air(
     // Compute all the kernel tables K_{rot^s}(X, Y) = ∑_c eq_m(c,X)·eq_m(rot^s(c),Y) for all rotations s and corners c.
     // When s=0, K_{rot^0}(X,Y) = eq_m(X,Y), the identity kernel.
     let kernels = build_kernels(ir);
-    let kernel_tables: Vec<Vec<Ext>> = kernels.iter().map(|k| kernel_table(k, l, skip_gamma, &lambda_x)).collect();
+    let kernel_tables: Vec<Vec<Ext>> =
+        kernels.iter().map(|k| kernel_table(k, l, skip_gamma, &lambda_x, &bus_point)).collect();
 
     // Compute the RHS of the linear relation:
     //      w_j^{(s)}(λ) = ∑_c w_j(c)·K_{rot^s}(c, λ)
@@ -222,7 +265,7 @@ pub fn prove_air(
                 .map(|(spec, table)| match spec {
                     // Corner claims are plain trace reads; no need for the dot product.
                     KernelSpec::Point(row) => Ext::from_base(col[*row as usize]),
-                    KernelSpec::Rot(_) => dot_base_ext(col, table),
+                    KernelSpec::Rot(_) | KernelSpec::BusRot(_) => dot_base_ext(col, table),
                 })
                 .collect()
         })
@@ -277,7 +320,7 @@ pub fn prove_air(
     let t_opening = t_opening.elapsed();
 
     log::debug!(
-        "ml prove_air[{}] n={m}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
+        "ml prove_air[{}] n={m}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} bus={t_bus:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
         ir.name,
     );
 
@@ -289,6 +332,7 @@ pub fn prove_air(
         const_root: const_matrix.root(),
         custom_roots: custom_matrices.iter().map(|m| m.root()).collect(),
         zerocheck_round_polys,
+        bus: bus_proof,
         claims,
         reduction_round_polys,
         opening,
@@ -313,7 +357,8 @@ pub(crate) fn seed_transcript(
 }
 
 /// The kernel's table over the hypercube `{0,1}^m` (prover side).
-pub(crate) fn kernel_table(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext]) -> Vec<Ext> {
+/// `bus_point` is the LogUp-GKR input-reduction point `v` (empty without a bus).
+pub(crate) fn kernel_table(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext], bus_point: &[Ext]) -> Vec<Ext> {
     match spec {
         KernelSpec::Rot(s) => {
             let base = skip_kernel_table(l, gamma, lambda_x);
@@ -327,6 +372,14 @@ pub(crate) fn kernel_table(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[
             let mut t = vec![Ext::ZERO; 1 << (l + lambda_x.len())];
             t[*row as usize] = Ext::ONE;
             t
+        }
+        KernelSpec::BusRot(s) => {
+            let base = eq_evals(bus_point);
+            if *s == 0 {
+                base
+            } else {
+                rotate_table(&base, *s as i64)
+            }
         }
     }
 }

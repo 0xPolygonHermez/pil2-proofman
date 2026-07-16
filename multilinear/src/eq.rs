@@ -216,9 +216,9 @@ mod tests {
         let n = 4;
         let point: Vec<Ext> = (0..n).map(|_| random_ext()).collect();
         let table = eq_evals(&point);
-        for idx in 0..(1usize << n) {
+        for (idx, &t) in table.iter().enumerate() {
             let b = boolean_point(idx as u64, n);
-            assert_eq!(table[idx], eq_eval(&b, &point));
+            assert_eq!(t, eq_eval(&b, &point));
         }
     }
 

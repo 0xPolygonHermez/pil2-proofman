@@ -1,24 +1,28 @@
 //! The multilinear STARK verifier.
 
 use crate::pcs::{MlPcs, Pcs};
-use crate::eq::{eq_eval, skip_kernel_eval};
+use crate::eq::{eq_eval, rot_kernel_eval, skip_kernel_eval};
 use crate::error::MlError;
-use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs};
+use crate::evaluator::{constraint_value, eval_constraint_cone, eval_instrs, operand_eval};
 use crate::hypercube::{boolean_point, Ext};
 use crate::ir::{AirIr, Boundary};
+use crate::logup_gkr::{eval_scalar_fraction, verify_bus_phase};
 use crate::prover::{powers, seed_transcript, MlProof};
 use crate::sumcheck::{interpolate_at, verifier_sumcheck_round};
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{
-    build_kernels, constraint_weights, kernel_index_of_boundary, ClaimsAtCorner, ClaimsAtPoint, KernelSpec,
+    build_kernels, constraint_weights, kernel_index_of_boundary, ClaimsAtBusPoint, ClaimsAtCorner, ClaimsAtPoint,
+    KernelSpec,
 };
 use fields::Goldilocks;
 
 /// The kernel's MLE evaluated at the opening point `z` (verifier side).
-fn kernel_mle_eval(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext], z: &[Ext]) -> Ext {
+/// `bus_point` is the LogUp-GKR input-reduction point `v` (empty without a bus).
+fn kernel_mle_eval(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext], bus_point: &[Ext], z: &[Ext]) -> Ext {
     match spec {
         KernelSpec::Rot(s) => skip_kernel_eval(l, *s as i64, gamma, lambda_x, z),
         KernelSpec::Point(row) => eq_eval(&boolean_point(*row, z.len()), z),
+        KernelSpec::BusRot(s) => rot_kernel_eval(*s as i64, bus_point, z),
     }
 }
 
@@ -66,6 +70,9 @@ pub fn verify_air(
         if proof.challenges != expected {
             return Err(MlError::Malformed("proof challenges do not match the globally derived challenges".into()));
         }
+    }
+    if proof.bus.is_some() != ir.bus.is_some() {
+        return Err(MlError::Malformed("bus phase presence does not match the AIR".into()));
     }
 
     let n = ir.n_bits as usize;
@@ -149,6 +156,13 @@ pub fn verify_air(
         lambda_x.push(ch);
     }
 
+    // --- Bus phase replay: GKR walk + input-layer reduction rounds.
+    let bus_ver = match (&ir.bus, &proof.bus) {
+        (Some(bus), Some(bp)) => Some(verify_bus_phase(bus, bp, n, &mut transcript)?),
+        _ => None,
+    };
+    let bus_point: Vec<Ext> = bus_ver.as_ref().map(|b| b.point.clone()).unwrap_or_default();
+
     // --- Claims and batching challenges.
     for row in &proof.claims {
         transcript.absorb_exts(row);
@@ -201,6 +215,41 @@ pub fn verify_air(
         }
     }
 
+    // --- Bus final checks: the reduction claim against the claimed openings
+    // at `v`, and the result airgroup value against the output fraction.
+    if let (Some(bus), Some(bv)) = (&ir.bus, &bus_ver) {
+        let src = ClaimsAtBusPoint {
+            ir,
+            kernels: &kernels,
+            claims: &proof.claims,
+            publics: &publics_ext,
+            challenges: &proof.challenges,
+            air_values: &proof.air_values,
+            airgroup_values: &proof.airgroup_values,
+        };
+        eval_instrs(ir, &src, &mut temps);
+        let mut batched = Ext::ZERO;
+        for (t, term) in bus.terms.iter().enumerate() {
+            let num_v = operand_eval(ir, &src, &temps, &term.num).to_ext();
+            let den_v = operand_eval(ir, &src, &temps, &term.den).to_ext();
+            batched += bv.term_weights[t] * (num_v + bv.mu * den_v);
+        }
+        if batched != bv.final_claim {
+            return Err(MlError::FinalCheck("bus reduction claim inconsistent with claimed openings".into()));
+        }
+
+        // result·q_out·s_den == p_out·s_den + s_num·q_out  (no inversions).
+        let (s_num, s_den) =
+            eval_scalar_fraction(ir, bus, publics, &proof.challenges, &proof.air_values, &proof.airgroup_values)?;
+        let expected = match bus.result_airgroupvalue {
+            Some(idx) => proof.airgroup_values[idx as usize],
+            None => Ext::ZERO,
+        };
+        if expected * bv.q_out * s_den != bv.p_out * s_den + s_num * bv.q_out {
+            return Err(MlError::FinalCheck("bus result airgroup value inconsistent with the output fraction".into()));
+        }
+    }
+
     // --- Opening reduction ---
     let col_coeffs = powers(delta, total_cols);
     let kernel_weights = powers(gamma, kernels.len());
@@ -233,7 +282,7 @@ pub fn verify_air(
     let w_at_u: Ext = kernels
         .iter()
         .zip(kernel_weights.iter())
-        .map(|(spec, w)| *w * kernel_mle_eval(spec, l, skip_gamma, &lambda_x, &u))
+        .map(|(spec, w)| *w * kernel_mle_eval(spec, l, skip_gamma, &lambda_x, &bus_point, &u))
         .sum();
     if w_at_u.is_zero() {
         return Err(MlError::FinalCheck("batched kernel vanishes at the reduction point".into()));
@@ -386,6 +435,126 @@ mod tests {
         let mut proof4 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
         proof4.reduction_round_polys[1][0] += Ext::ONE;
         assert!(verify_air(&ir, &proof4, &publics, None, None).is_err());
+    }
+
+    // --- LogUp-GKR bus tests on the hand-built lookup AIR ---
+
+    use crate::evaluator::test_air::{lookup_ir, lookup_trace};
+
+    fn random_gamma() -> Ext {
+        use fields::PrimeField64;
+        use rand::{rng, RngExt};
+        let mut r = rng();
+        Ext::from_array(&[
+            Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64),
+            Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64),
+            Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64),
+        ])
+    }
+
+    /// A balanced lookup proves and verifies with a zero bus result.
+    #[test]
+    fn bus_prove_verify_roundtrip() {
+        let n_bits = 5;
+        let ir = lookup_ir(n_bits, test_params(), false);
+        let (witness, consts) = lookup_trace(n_bits);
+        let gamma = random_gamma();
+
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        verify_air(&ir, &proof, &[], None, None).expect("verify");
+        assert_eq!(proof.airgroup_values[0], Ext::ZERO, "balanced lookup must have zero bus result");
+    }
+
+    /// Bus + univariate skip: the bus reduction point coexists with the
+    /// skip-form zerocheck kernels.
+    #[test]
+    fn bus_prove_verify_roundtrip_with_skip() {
+        let n_bits = 5;
+        for l in 1..=2usize {
+            let params = MlParams { univariate_skip_bits: l, ..test_params() };
+            let ir = lookup_ir(n_bits, params, false);
+            let (witness, consts) = lookup_trace(n_bits);
+            let gamma = random_gamma();
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+            verify_air(&ir, &proof, &[], None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
+        }
+    }
+
+    /// Scalar ("direct") bus terms enter the result airgroup value and its
+    /// consistency check.
+    #[test]
+    fn bus_scalar_term_enters_result() {
+        use fields::PrimeField64;
+        let n_bits = 4;
+        let ir = lookup_ir(n_bits, test_params(), true);
+        let (witness, consts) = lookup_trace(n_bits);
+        let gamma = random_gamma();
+        let publics = vec![Goldilocks::from_u64(5), Goldilocks::from_u64(9)];
+
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        verify_air(&ir, &proof, &publics, None, None).expect("verify");
+
+        // result = 0 (balanced rows) + pub0/(γ + pub1).
+        let expected = Ext::from_base(publics[0]) * (gamma + publics[1]).inverse();
+        assert_eq!(proof.airgroup_values[0], expected);
+    }
+
+    /// A corrupted multiplicity still yields a VALID per-instance proof — the
+    /// imbalance surfaces only in the (nonzero) bus result, which the global
+    /// balance check rejects at the set level.
+    #[test]
+    fn corrupted_multiplicity_shifts_bus_result() {
+        let n_bits = 4;
+        let ir = lookup_ir(n_bits, test_params(), false);
+        let (mut witness, consts) = lookup_trace(n_bits);
+        witness[0][2][3] += Goldilocks::ONE; // mul[3] += 1
+        let gamma = random_gamma();
+
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        verify_air(&ir, &proof, &[], None, None).expect("per-instance proof stays valid");
+        assert_ne!(proof.airgroup_values[0], Ext::ZERO, "imbalance must show in the bus result");
+    }
+
+    /// Tampering with the bus result (claiming balance for an unbalanced
+    /// trace) must be rejected by the result consistency check.
+    #[test]
+    fn tampered_bus_result_rejected() {
+        let n_bits = 4;
+        let ir = lookup_ir(n_bits, test_params(), false);
+        let (mut witness, consts) = lookup_trace(n_bits);
+        witness[0][2][3] += Goldilocks::ONE;
+        let gamma = random_gamma();
+
+        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        proof.airgroup_values[0] = Ext::ZERO;
+        assert!(verify_air(&ir, &proof, &[], None, None).is_err(), "faked balance must be rejected");
+    }
+
+    /// Tampering with bus messages must be rejected.
+    #[test]
+    fn tampered_bus_messages_rejected() {
+        let n_bits = 4;
+        let ir = lookup_ir(n_bits, test_params(), false);
+        let (witness, consts) = lookup_trace(n_bits);
+        let gamma = random_gamma();
+        let prove = || prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+
+        let mut p1 = prove();
+        p1.bus.as_mut().unwrap().fractional.p_out += Ext::ONE;
+        assert!(verify_air(&ir, &p1, &[], None, None).is_err(), "tampered p_out");
+
+        let mut p2 = prove();
+        p2.bus.as_mut().unwrap().fractional.layer_claims[2][0] += Ext::ONE;
+        assert!(verify_air(&ir, &p2, &[], None, None).is_err(), "tampered split value");
+
+        let mut p3 = prove();
+        p3.bus.as_mut().unwrap().reduction_round_polys[0][0] += Ext::ONE;
+        assert!(verify_air(&ir, &p3, &[], None, None).is_err(), "tampered reduction round");
+
+        let mut p4 = prove();
+        let last = p4.bus.as_mut().unwrap().fractional.layer_round_polys.last_mut().unwrap();
+        last[0][0] += Ext::ONE;
+        assert!(verify_air(&ir, &p4, &[], None, None).is_err(), "tampered walk round");
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub enum Op {
     Neg,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SrcKind {
     /// Committed witness column of a stage (1-based stage as in pilout).
     /// `idx` is the *base-slot* offset within the stage; extension-valued
@@ -97,6 +97,37 @@ pub struct MlCustomCommit {
     pub n_cols: u32,
 }
 
+/// One fraction `num/den` contributed to the LogUp bus by every row (or, for
+/// scalar terms, once per instance). `den` includes the bus challenge `+γ`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BusTerm {
+    pub num: Operand,
+    pub den: Operand,
+    /// Max total degree of `num`/`den` in the committed columns.
+    pub degree: u32,
+}
+
+/// The LogUp sum bus of one AIR, proven with the GKR fractional sumcheck
+/// instead of committed running-sum columns (see `logup_gkr.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusIr {
+    /// Per-row fraction terms; the input layer of the fraction tree has
+    /// `terms.len().next_power_of_two() · 2^n_bits` entries (padded with the
+    /// neutral fraction `0/1`), term index in the low variables.
+    pub terms: Vec<BusTerm>,
+    /// Instance-level "direct" fractions: expressions of scalars only
+    /// (publics, challenges, air/airgroup values — never columns). They are
+    /// added to `p_out/q_out` when forming the bus result.
+    pub scalar_terms: Vec<BusTerm>,
+    /// Global index of the airgroup value carrying the instance's net bus
+    /// contribution (`gsum_result`); `None` in single-instance mode, where the
+    /// contribution must be zero.
+    pub result_airgroupvalue: Option<u32>,
+    /// Max `BusTerm::degree` over `terms` (round-degree bound of the
+    /// input-layer reduction sumcheck).
+    pub max_term_degree: u32,
+}
+
 /// Everything the multilinear prover/verifier needs to know about one AIR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirIr {
@@ -127,8 +158,11 @@ pub struct AirIr {
     pub n_temps: u32,
     pub constraints: Vec<ConstraintIr>,
     pub max_constraint_degree: u32,
-    /// Distinct row offsets referenced by any constraint (always contains 0).
+    /// Distinct row offsets referenced by any constraint or bus term (always
+    /// contains 0).
     pub opening_offsets: Vec<i32>,
+    /// The LogUp sum bus, when this AIR was compiled in GKR mode.
+    pub bus: Option<BusIr>,
     pub params: MlParams,
 }
 
@@ -153,15 +187,28 @@ impl AirIr {
         self.opening_offsets.iter().position(|&s| s == offset)
     }
 
+    /// Format tag prefixed to `.mlinfo.bin`. Bump whenever `AirIr`'s bincode
+    /// layout changes so stale proving-key artifacts fail with a clear
+    /// message instead of a decode error.
+    pub const MLINFO_MAGIC: &'static [u8; 8] = b"MLINFO02";
+
     pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
-        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+        let mut bytes = Self::MLINFO_MAGIC.to_vec();
+        bincode::serde::encode_into_std_write(self, &mut bytes, bincode::config::standard())
             .map_err(|e| MlError::Io(format!("serializing AirIr: {e}")))?;
         std::fs::write(path, bytes).map_err(|e| MlError::Io(format!("writing {}: {e}", path.display())))
     }
 
     pub fn load(path: &std::path::Path) -> Result<Self, MlError> {
         let bytes = std::fs::read(path).map_err(|e| MlError::Io(format!("reading {}: {e}", path.display())))?;
-        let (ir, _) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+        let Some(payload) = bytes.strip_prefix(Self::MLINFO_MAGIC.as_slice()) else {
+            return Err(MlError::Io(format!(
+                "{}: stale or foreign .mlinfo.bin (expected format {}) — re-run proofman-setup",
+                path.display(),
+                String::from_utf8_lossy(Self::MLINFO_MAGIC),
+            )));
+        };
+        let (ir, _) = bincode::serde::decode_from_slice(payload, bincode::config::standard())
             .map_err(|e| MlError::Io(format!("decoding AirIr: {e}")))?;
         Ok(ir)
     }

@@ -1,6 +1,9 @@
 require "fibonacci.pil"
 require "module.pil"
 
+// Enable GKR sum bus for the Fibonacci example
+enable_gkr_sum_bus();
+
 airgroup FiboCPU {
     Fibonacci(N: 2**10);
     Module(N: 2**8);

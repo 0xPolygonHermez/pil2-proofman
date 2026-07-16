@@ -56,9 +56,12 @@ impl AirIrCache {
 /// re-encoding + re-hashing the const tree on every proof. `None` for a key
 /// means the artifact is absent (older proving key), in which case the prover
 /// falls back to building the commitment itself.
+/// Cached commitment per (airgroup_id, air_id); `None` = artifact absent.
+type ConstMatrixEntry = Option<Arc<CommittedMatrix>>;
+
 #[derive(Default)]
 pub struct ConstMatrixCache {
-    cache: Mutex<HashMap<(usize, usize), Option<Arc<CommittedMatrix>>>>,
+    cache: Mutex<HashMap<(usize, usize), ConstMatrixEntry>>,
 }
 
 impl ConstMatrixCache {
@@ -180,6 +183,33 @@ pub fn values_to_ext<F: PrimeField64>(
             ])
         })
         .collect())
+}
+
+/// Expand pctx's flat challenge buffer into the `Ext` vector `prove_air` and
+/// `verify_air` consume: stage ≥ 2 challenges become Ext values, the rest
+/// (univariate-only stages) stay zero. Shared by the prover and the proof-set
+/// verifier so the two expansions cannot drift.
+pub fn ml_challenges<F: PrimeField64>(
+    pctx_challenges: &[F],
+    challenge_stages: &[u8],
+) -> Vec<proofman_multilinear::Ext> {
+    let zero = proofman_multilinear::Ext::from_array(&[Goldilocks::ZERO; 3]);
+    challenge_stages
+        .iter()
+        .enumerate()
+        .map(|(id, &st)| {
+            let base = 3 * id;
+            if st >= 2 && base + 3 <= pctx_challenges.len() {
+                proofman_multilinear::Ext::from_array(&[
+                    Goldilocks::new(pctx_challenges[base].as_canonical_u64()),
+                    Goldilocks::new(pctx_challenges[base + 1].as_canonical_u64()),
+                    Goldilocks::new(pctx_challenges[base + 2].as_canonical_u64()),
+                ])
+            } else {
+                zero
+            }
+        })
+        .collect()
 }
 
 /// Reassemble air values, whose buffer layout depends on the value's stage:

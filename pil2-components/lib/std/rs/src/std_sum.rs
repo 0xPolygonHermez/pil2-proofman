@@ -107,6 +107,12 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let setup = sctx.get_setup(airgroup_id, air_id)?;
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
+                    // LogUp-GKR mode: the bus is proven by the multilinear
+                    // prover's fractional sumcheck.
+                    if !get_hint_ids_by_name(p_expressions_bin, "gkr_sum_bus").is_empty() {
+                        continue;
+                    }
+
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
                     let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
                     let im_total_hints: Vec<u64> = im_hints.iter().chain(im_airval_hints.iter()).cloned().collect();

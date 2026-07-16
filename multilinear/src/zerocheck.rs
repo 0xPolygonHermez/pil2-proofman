@@ -9,12 +9,45 @@
 //!
 //! where `α` and `r` are random challenges.
 
+use std::collections::HashSet;
+
 use crate::eq::{d_subgroup, eq_evals, lagrange_d, rotate_table};
-use crate::evaluator::{constraint_value, eval_instrs, LeafSource, Val};
+use crate::evaluator::{eval_instrs, operand_eval, LeafSource, Val};
 use crate::hypercube::{fold_mle, Ext};
-use crate::ir::{AirIr, Boundary};
+use crate::ir::{AirIr, Boundary, Operand, SrcKind};
 use crate::sumcheck::{lagrange_eval, SumcheckOracle};
 use fields::{Goldilocks, PrimeField64};
+
+/// The `(column, offset)` leaf pairs the evaluator actually dereferences:
+/// every column operand in the instruction list plus the constraint and
+/// bus-term roots (leaf roots bypass the instruction list). Extension-valued
+/// operands mark their `dim` consecutive base slots. The oracle materializes
+/// (and folds, every round) one table per pair — columns never read at an
+/// offset get no table there.
+pub fn referenced_leaves(ir: &AirIr) -> HashSet<(SrcKind, u32, i32)> {
+    let mut set = HashSet::new();
+    let mut mark = |op: &Operand| {
+        if matches!(op.kind, SrcKind::Witness { .. } | SrcKind::Const | SrcKind::Custom { .. }) {
+            for k in 0..op.dim as u32 {
+                set.insert((op.kind, op.idx + k, op.row_offset));
+            }
+        }
+    };
+    for instr in &ir.instrs {
+        mark(&instr.a);
+        mark(&instr.b);
+    }
+    for c in &ir.constraints {
+        mark(&c.root);
+    }
+    if let Some(bus) = &ir.bus {
+        for t in bus.terms.iter().chain(bus.scalar_terms.iter()) {
+            mark(&t.num);
+            mark(&t.den);
+        }
+    }
+    set
+}
 
 /// Global column order used everywhere (commitments, claims matrix, batching):
 /// stage-1 witness columns, stage-2 witness columns, …, then const columns.
@@ -47,6 +80,9 @@ pub enum KernelSpec {
     Rot(i32),
     /// `K(y) = eq(y, bits(row))` — discharges `w(row)` corner claims.
     Point(u64),
+    /// `K(y) = eq((y − s) mod 2^n, v)` at the bus input-reduction point `v` —
+    /// discharges the `w̃^{(s)}(v)` claims of the LogUp-GKR final check.
+    BusRot(i32),
 }
 
 pub fn build_kernels(ir: &AirIr) -> Vec<KernelSpec> {
@@ -58,12 +94,21 @@ pub fn build_kernels(ir: &AirIr) -> Vec<KernelSpec> {
     if ir.constraints.iter().any(|c| c.boundary == Boundary::LastRow) {
         kernels.push(KernelSpec::Point(n_rows - 1));
     }
+    // Bus kernels come last so the zerocheck kernel indices are unaffected.
+    if ir.bus.is_some() {
+        kernels.extend(ir.opening_offsets.iter().map(|&s| KernelSpec::BusRot(s)));
+    }
     kernels
 }
 
 /// Index of the kernel discharging offset-`s` claims.
 pub fn kernel_index_of_offset(ir: &AirIr, offset: i32) -> usize {
     ir.offset_index(offset).expect("offset not in opening_offsets")
+}
+
+/// Index of the bus kernel discharging offset-`s` claims at the bus point.
+pub fn bus_kernel_index_of_offset(kernels: &[KernelSpec], offset: i32) -> usize {
+    kernels.iter().position(|k| *k == KernelSpec::BusRot(offset)).expect("bus kernel missing")
 }
 
 /// Index of the corner kernel for a boundary.
@@ -93,27 +138,37 @@ pub fn constraint_weights(ir: &AirIr, alpha: Ext) -> Vec<Ext> {
     w
 }
 
-/// Prover-side sumcheck oracle for `G(X) = eq(r,X) · Σ_t α^t C_t(X)`.
+/// Prover-side oracle for eq-weighted sumchecks of batched IR expressions:
+/// `G(X) = eq(r,X) · Σ_t w_t · E_t(X)` for weighted root operands `(E_t, w_t)`.
+/// The zerocheck instantiates it with `(C_t, α^t)` over the constraints; the
+/// LogUp-GKR input reduction with the bus-term numerators/denominators
+/// weighted by the term-selector eq table.
 ///
 /// Keeps one extension-field table per `(column, offset)` leaf.
 /// All tables fold together each round.
 pub struct ZerocheckOracle<'a> {
     ir: &'a AirIr,
-    /// One table per `(column, offset)` leaf. Base-field until the first `bind`,
-    /// then extension-field — so the dominant first round runs over `Goldilocks`.
+    /// One table per *referenced* `(column, offset)` leaf (see
+    /// [`referenced_leaves`]). Base-field until the first `bind`, then
+    /// extension-field — so the dominant first round runs over `Goldilocks`.
     tables: Tables,
-    /// `[stage-1][col][offset_idx]` → index into `tables`.
-    wtn_index: Vec<Vec<Vec<usize>>>,
+    /// `[stage-1][col][offset_idx]` → index into `tables` (`None` = leaf never
+    /// dereferenced, no table built).
+    wtn_index: Vec<Vec<Vec<Option<usize>>>>,
     /// `[col][offset_idx]` → index into `tables`.
-    const_index: Vec<Vec<usize>>,
+    const_index: Vec<Vec<Option<usize>>>,
     /// `[commit][col][offset_idx]` → index into `tables`.
-    custom_index: Vec<Vec<Vec<usize>>>,
+    custom_index: Vec<Vec<Vec<Option<usize>>>>,
     eq_suffix: Vec<Ext>,
     publics: Vec<Goldilocks>,
     challenges: Vec<Ext>,
     air_values: Vec<Ext>,
     airgroup_values: Vec<Ext>,
-    weights: Vec<Ext>,
+    /// Weighted root operands `(E_t, w_t)`; zero weights are dropped.
+    roots: Vec<(Operand, Ext)>,
+    /// Degree bound of the batched expression (= round-polynomial degree of
+    /// the non-eq factor).
+    degree: usize,
     rounds_left: usize,
     skip_bits: usize,
 }
@@ -145,9 +200,9 @@ impl Tables {
 
 struct TablePoint<'o> {
     ir: &'o AirIr,
-    wtn_index: &'o [Vec<Vec<usize>>],
-    const_index: &'o [Vec<usize>],
-    custom_index: &'o [Vec<Vec<usize>>],
+    wtn_index: &'o [Vec<Vec<Option<usize>>>],
+    const_index: &'o [Vec<Option<usize>>],
+    custom_index: &'o [Vec<Vec<Option<usize>>>],
     vals: &'o [Val],
     publics: &'o [Goldilocks],
     challenges: &'o [Ext],
@@ -158,11 +213,11 @@ struct TablePoint<'o> {
 impl LeafSource for TablePoint<'_> {
     fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
-        self.vals[self.wtn_index[stage as usize - 1][col as usize][o]]
+        self.vals[self.wtn_index[stage as usize - 1][col as usize][o].expect("unreferenced witness leaf")]
     }
     fn constant(&self, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
-        self.vals[self.const_index[col as usize][o]]
+        self.vals[self.const_index[col as usize][o].expect("unreferenced const leaf")]
     }
     fn public(&self, idx: u32) -> Val {
         Val::B(self.publics[idx as usize])
@@ -178,11 +233,13 @@ impl LeafSource for TablePoint<'_> {
     }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
-        self.vals[self.custom_index[commit as usize][col as usize][o]]
+        self.vals[self.custom_index[commit as usize][col as usize][o].expect("unreferenced custom leaf")]
     }
 }
 
 impl<'a> ZerocheckOracle<'a> {
+    /// The zerocheck instance: roots are the `EveryRow` constraints weighted
+    /// by powers of `alpha`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ir: &'a AirIr,
@@ -197,27 +254,89 @@ impl<'a> ZerocheckOracle<'a> {
         alpha: Ext,
         skip_bits: usize,
     ) -> Self {
-        // Tables over which constraints are defined
+        let roots: Vec<(Operand, Ext)> = ir
+            .constraints
+            .iter()
+            .zip(constraint_weights(ir, alpha))
+            .filter(|(_, w)| !w.is_zero())
+            .map(|(c, w)| (c.root, w))
+            .collect();
+        Self::with_roots(
+            ir,
+            witness,
+            consts,
+            customs,
+            publics,
+            challenges,
+            air_values,
+            airgroup_values,
+            r,
+            roots,
+            ir.max_constraint_degree as usize,
+            skip_bits,
+        )
+    }
+
+    /// Generic instance over arbitrary weighted root operands of degree bound
+    /// `degree` (used by the LogUp-GKR input reduction).
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_roots(
+        ir: &'a AirIr,
+        witness: &[Vec<Vec<Goldilocks>>],
+        consts: &[Vec<Goldilocks>],
+        customs: &[Vec<Vec<Goldilocks>>],
+        publics: &[Goldilocks],
+        challenges: &[Ext],
+        air_values: &[Ext],
+        airgroup_values: &[Ext],
+        r: &[Ext],
+        roots: Vec<(Operand, Ext)>,
+        degree: usize,
+        skip_bits: usize,
+    ) -> Self {
+        // Tables over which constraints are defined — only the (column, offset)
+        // pairs the evaluator actually dereferences get a table (and a fold
+        // per round).
+        let refs = referenced_leaves(ir);
         let mut tables: Vec<Vec<Goldilocks>> = Vec::new();
 
-        let mut make_tables = |col: &[Goldilocks]| -> Vec<usize> {
+        let mut make_tables = |kind: SrcKind, col_idx: u32, col: &[Goldilocks]| -> Vec<Option<usize>> {
             ir.opening_offsets
                 .iter()
                 .map(|&s| {
+                    if !refs.contains(&(kind, col_idx, s)) {
+                        return None;
+                    }
                     let table = if s == 0 { col.to_vec() } else { rotate_shifted(col, s) };
                     tables.push(table);
-                    tables.len() - 1
+                    Some(tables.len() - 1)
                 })
                 .collect()
         };
 
         let mut wtn_index = Vec::with_capacity(witness.len());
-        for stage_cols in witness {
-            wtn_index.push(stage_cols.iter().map(|c| make_tables(c)).collect::<Vec<_>>());
+        for (stage_idx, stage_cols) in witness.iter().enumerate() {
+            let stage = stage_idx as u8 + 1;
+            wtn_index.push(
+                stage_cols
+                    .iter()
+                    .enumerate()
+                    .map(|(c, col)| make_tables(SrcKind::Witness { stage }, c as u32, col))
+                    .collect::<Vec<_>>(),
+            );
         }
-        let const_index: Vec<Vec<usize>> = consts.iter().map(|c| make_tables(c)).collect();
-        let custom_index: Vec<Vec<Vec<usize>>> =
-            customs.iter().map(|commit| commit.iter().map(|c| make_tables(c)).collect()).collect();
+        let const_index: Vec<Vec<Option<usize>>> =
+            consts.iter().enumerate().map(|(c, col)| make_tables(SrcKind::Const, c as u32, col)).collect();
+        let custom_index: Vec<Vec<Vec<Option<usize>>>> = customs
+            .iter()
+            .enumerate()
+            .map(|(commit, cols)| {
+                cols.iter()
+                    .enumerate()
+                    .map(|(c, col)| make_tables(SrcKind::Custom { commit: commit as u8 }, c as u32, col))
+                    .collect()
+            })
+            .collect();
 
         // Compute eq(x, r_{l+1..m}):
         //      - skip_bits = 0: the first round binds one variable, so drop r₁ → eq over r_{2..m}
@@ -235,7 +354,8 @@ impl<'a> ZerocheckOracle<'a> {
             challenges: challenges.to_vec(),
             air_values: air_values.to_vec(),
             airgroup_values: airgroup_values.to_vec(),
-            weights: constraint_weights(ir, alpha),
+            roots,
+            degree,
             rounds_left: ir.n_bits as usize,
             skip_bits,
         }
@@ -247,7 +367,7 @@ impl<'a> ZerocheckOracle<'a> {
         let l = self.skip_bits;
         debug_assert!(l > 0);
         let np = 1usize << l; // |D|
-        let d = self.ir.max_constraint_degree as usize;
+        let d = self.degree;
         let n_pts = d * (np - 1) + 1; // deg(v) + 1
         let nx = self.eq_suffix.len(); // 2^{m-l}
         let base = match &self.tables {
@@ -268,10 +388,8 @@ impl<'a> ZerocheckOracle<'a> {
                     let src = self.table_point(&vals);
                     eval_instrs(self.ir, &src, &mut temps);
                     let mut c = Val::zero();
-                    for (t, w) in self.weights.iter().enumerate() {
-                        if !w.is_zero() {
-                            c = c + Val::E(*w) * constraint_value(self.ir, &src, &temps, t);
-                        }
+                    for (root, w) in &self.roots {
+                        c = c + Val::E(*w) * operand_eval(self.ir, &src, &temps, root);
                     }
                     vk += self.eq_suffix[x] * c.to_ext();
                 }
@@ -398,7 +516,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
     }
 
     fn round_degree(&self) -> usize {
-        self.ir.max_constraint_degree as usize
+        self.degree
     }
 
     fn round_evals(&self) -> Vec<Ext> {
@@ -438,10 +556,8 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                 };
                 eval_instrs(self.ir, &src, &mut temps);
                 let mut c = Val::zero();
-                for (t, wt) in self.weights.iter().enumerate() {
-                    if !wt.is_zero() {
-                        c = c + Val::E(*wt) * constraint_value(self.ir, &src, &temps, t);
-                    }
+                for (root, wt) in &self.roots {
+                    c = c + Val::E(*wt) * operand_eval(self.ir, &src, &temps, root);
                 }
                 *gx += (Val::E(w) * c).to_ext();
             }
@@ -555,6 +671,45 @@ impl LeafSource for ClaimsAtCorner<'_> {
     }
 }
 
+/// Verifier-side leaf source for the LogUp-GKR input-reduction final check:
+/// reads the claimed openings at the bus point `v`, mapping a column's row
+/// offset to its `BusRot` kernel.
+pub struct ClaimsAtBusPoint<'a> {
+    pub ir: &'a AirIr,
+    pub kernels: &'a [KernelSpec],
+    pub claims: &'a [Vec<Ext>],
+    pub publics: &'a [Ext],
+    pub challenges: &'a [Ext],
+    pub air_values: &'a [Ext],
+    pub airgroup_values: &'a [Ext],
+}
+
+impl LeafSource for ClaimsAtBusPoint<'_> {
+    fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
+        Val::E(self.claims[global_col(self.ir, stage, col)][bus_kernel_index_of_offset(self.kernels, row_offset)])
+    }
+    fn constant(&self, col: u32, row_offset: i32) -> Val {
+        Val::E(self.claims[global_const_col(self.ir, col)][bus_kernel_index_of_offset(self.kernels, row_offset)])
+    }
+    fn public(&self, idx: u32) -> Val {
+        Val::E(self.publics[idx as usize])
+    }
+    fn challenge(&self, idx: u32) -> Val {
+        Val::E(self.challenges[idx as usize])
+    }
+    fn air_value(&self, idx: u32) -> Val {
+        Val::E(self.air_values[idx as usize])
+    }
+    fn airgroup_value(&self, idx: u32) -> Val {
+        Val::E(self.airgroup_values[idx as usize])
+    }
+    fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
+        Val::E(
+            self.claims[global_custom_col(self.ir, commit, col)][bus_kernel_index_of_offset(self.kernels, row_offset)],
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,10 +745,9 @@ mod tests {
         // Gruen inter-round check: (1−r_k)·g'(0) + r_k·g'(1) = prev.
         let mut claim = Ext::ZERO;
         let mut lambda = Vec::new();
-        for round in 0..n_bits as usize {
+        for (round, &rk) in r.iter().enumerate().take(n_bits as usize) {
             let evals = oracle.round_evals();
             let ch = random_ext();
-            let rk = r[round];
             assert_eq!((Ext::ONE - rk) * evals[0] + rk * evals[1], claim, "round {round}");
             claim = interpolate_at(&evals, ch);
             oracle.bind(ch);
