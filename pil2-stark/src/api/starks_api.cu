@@ -899,6 +899,19 @@ void get_stream_proofs_gpu(void *d_buffers_){
             d_buffers->streamsData[i].mutex_stream_selection.unlock();
             continue;
         }
+        // status==1 means another host thread is still ENQUEUEING a proof on this
+        // stream (it will set status=2 and record end_event when done). Collecting
+        // and resetting it here would mark the stream free mid-enqueue, so
+        // selectStream could hand it to a second proof and interleave two proofs
+        // on the same stream/slot, corrupting both. Skip it; its owner finishes
+        // the enqueue and the proof is collected on a later pass.
+        if (d_buffers->streamsData[i].status == 1) {
+            zklog.warning("get_stream_proofs: skipping stream " + std::to_string(i) +
+                          " still being enqueued (instanceId " +
+                          std::to_string(d_buffers->streamsData[i].instanceId) + ")");
+            d_buffers->streamsData[i].mutex_stream_selection.unlock();
+            continue;
+        }
         cudaSetDevice(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         if(d_buffers->streamsData[i].root != nullptr) {
@@ -932,6 +945,29 @@ void get_stream_proofs_non_blocking_gpu(void *d_buffers_){
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
+    // The caller wants to collect the proof it just enqueued on streamId, but by
+    // now the polling thread (get_stream_proofs_non_blocking) may already have
+    // collected it and handed the stream to a NEW proof. Take the selection mutex
+    // and re-check the status before touching the stream:
+    //  - status==2: an enqueue-complete proof is on the stream (the caller's, or
+    //    a finished successor's) -> sync + collect + reset, same as the poller.
+    //  - status==1: a successor is still ENQUEUEING. Syncing + collecting +
+    //    resetting here would serialize a half-built proof and mark the stream
+    //    free mid-enqueue, letting selectStream interleave two proofs on one
+    //    stream/slot. The caller's own proof was already collected (otherwise
+    //    status would still be 2), so there is nothing to do.
+    //  - status==0/3: already collected -> nothing to do.
+    d_buffers->streamsData[streamId].mutex_stream_selection.lock();
+    if (d_buffers->streamsData[streamId].status != 2) {
+        if (d_buffers->streamsData[streamId].status == 1) {
+            zklog.warning("get_stream_id_proof: stream " + std::to_string(streamId) +
+                          " already re-assigned and being enqueued (instanceId " +
+                          std::to_string(d_buffers->streamsData[streamId].instanceId) +
+                          "); caller's proof was already collected");
+        }
+        d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
+        return;
+    }
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
     if(d_buffers->streamsData[streamId].root != nullptr) {
             get_commit_root(d_buffers, streamId);
@@ -939,7 +975,8 @@ void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
             get_proof(d_buffers, streamId);
         }
 
-    d_buffers->streamsData[streamId].reset(false); 
+    d_buffers->streamsData[streamId].reset(false);
+    d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
 }
 
 uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream)
