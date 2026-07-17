@@ -34,6 +34,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
+void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
@@ -1979,13 +1980,14 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
         }
     }
 
-    reserveStream(d_buffers, selectedStreamId);
+    reserveStreamLocked(d_buffers, selectedStreamId);
     d_buffers->streamsData[selectedStreamId].mutex_stream_selection.unlock();
 
     return selectedStreamId;
 }
 
-void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
+// Requires the caller to hold streamsData[streamId].mutex_stream_selection
+void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId){
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     if(d_buffers->streamsData[streamId].status==2 && cudaEventQuery(d_buffers->streamsData[streamId].end_event) == cudaSuccess) {
 
@@ -1997,6 +1999,12 @@ void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
     }
     d_buffers->streamsData[streamId].reset(false);
     d_buffers->streamsData[streamId].status = 1;
+}
+
+void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
+    d_buffers->streamsData[streamId].mutex_stream_selection.lock();
+    reserveStreamLocked(d_buffers, streamId);
+    d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
 }
 
 void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_id, uint64_t air_id, bool isProve) {
