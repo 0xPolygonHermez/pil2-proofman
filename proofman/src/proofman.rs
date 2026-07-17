@@ -228,6 +228,8 @@ impl Drop for JoinAllGuard {
     }
 }
 
+type InstanceBody = Arc<dyn Fn(usize) -> ProofmanResult<()> + Send + Sync>;
+
 struct WitnessGuard {
     witness_tx: Sender<usize>,
     handler: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
@@ -1305,11 +1307,8 @@ where
         self._verify_proof_constraints(debug_info)
     }
 
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
-
-        let _computing = self.acquire_computing("_verify_proof_constraints");
-
+    /// Single-partition setup, state reset and witness-library execution.
+    fn reset_and_exec(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
@@ -1318,26 +1317,16 @@ where
         self.pctx.dctx_reset();
 
         let _ = self.exec()?;
+        Ok(())
+    }
 
-        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
-        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-        transcript.put(&dummy_element);
-
-        let mut global_challenge = [F::ZERO; 3];
-        transcript.get_field(&mut global_challenge);
-        self.pctx.set_global_challenge(2, &mut global_challenge);
-        transcript.put(&dummy_element);
-
+    /// Shared pass-1 orchestration.
+    fn run_contribution_pass(&self, body: InstanceBody) -> ProofmanResult<()> {
         let witness_done = Arc::new(Counter::new());
-
         self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
-
         let minimal_memory = true;
 
-        let my_instances = self.pctx.dctx_get_process_instances();
-        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
-        let valid_constraints = Arc::new(AtomicBool::new(true));
-
+        // Spawn workers
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
             n_streams: self.n_streams,
@@ -1346,21 +1335,10 @@ where
         };
 
         for _ in 0..self.n_streams {
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let memory_handler_clone = self.memory_handler.clone();
             let contributions_rx_clone = self.contributions_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let valid_constraints = valid_constraints.clone();
-            let airgroup_values_air_instances = airgroup_values_air_instances.clone();
-            let wcm_clone = self.wcm.clone();
-            let debug_info_clone = debug_info.clone();
-            // Reuse the process-wide aux_trace / const_pols buffers. In CPU mode the
-            // verify path runs one instance at a time; in GPU mode these are empty
-            // Vecs and initialize_air_instance skips the host-side init.
-            let aux_trace_arc = self.aux_trace.clone();
-            let const_pols_arc = self.const_pols.clone();
-            let contribution_handle = std::thread::spawn(move || loop {
+            let body = body.clone();
+            let handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                     Ok(instance_id) => {
                         if instance_id == usize::MAX {
@@ -1369,18 +1347,7 @@ where
                         if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                             break;
                         }
-                        if let Err(e) = Self::process_verify_constraints_instance(
-                            &pctx_clone,
-                            &sctx_clone,
-                            memory_handler_clone.clone(),
-                            &wcm_clone,
-                            instance_id,
-                            &debug_info_clone,
-                            valid_constraints.clone(),
-                            airgroup_values_air_instances.clone(),
-                            &const_pols_arc,
-                            &aux_trace_arc,
-                        ) {
+                        if let Err(e) = body(instance_id) {
                             cancellation_info_clone.write().unwrap().cancel(Some(e));
                             break;
                         }
@@ -1393,10 +1360,10 @@ where
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                 }
             });
-
-            self.handle_contributions.lock().unwrap().push(contribution_handle);
+            self.handle_contributions.lock().unwrap().push(handle);
         }
 
+        // Perform the witness computation
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, None, false);
 
@@ -1406,6 +1373,7 @@ where
             handles: witness_handles.clone(),
         };
 
+        let my_instances = self.pctx.dctx_get_process_instances();
         let my_instances_no_tables = my_instances
             .iter()
             .filter(|idx| {
@@ -1445,12 +1413,10 @@ where
             .collect::<Vec<_>>();
 
         timer_start_debug!(CALCULATING_TABLES);
-
         for instance_id in my_instances_tables.iter() {
             self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         }
-
         timer_stop_and_log_debug!(CALCULATING_TABLES);
 
         self.pctx.set_proof_tx(None);
@@ -1465,6 +1431,60 @@ where
         }
 
         self.check_cancel(true)?;
+        Ok(())
+    }
+
+    /// Verify proof constraints by executing the witness library and checking the constraints for each instance.
+    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
+
+        let _computing = self.acquire_computing("_verify_proof_constraints");
+
+        self.reset_and_exec(debug_info)?;
+
+        // Define dummy challenge values used for contraints verification
+        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
+        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
+        transcript.put(&dummy_element);
+
+        let mut global_challenge = [F::ZERO; 3];
+        transcript.get_field(&mut global_challenge);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
+        transcript.put(&dummy_element);
+
+        let my_instances = self.pctx.dctx_get_process_instances();
+        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+        let valid_constraints = Arc::new(AtomicBool::new(true));
+
+        // Reuse the process-wide aux_trace / const_pols buffers. In CPU mode the
+        // verify path runs one instance at a time; in GPU mode these are empty
+        // Vecs and initialize_air_instance skips the host-side init.
+        let body: InstanceBody = {
+            let pctx = self.pctx.clone();
+            let sctx = self.sctx.clone();
+            let memory_handler = self.memory_handler.clone();
+            let wcm = self.wcm.clone();
+            let debug_info = debug_info.clone();
+            let valid_constraints = valid_constraints.clone();
+            let airgroup_values_air_instances = airgroup_values_air_instances.clone();
+            let aux_trace = self.aux_trace.clone();
+            let const_pols = self.const_pols.clone();
+            Arc::new(move |instance_id| {
+                Self::process_verify_constraints_instance(
+                    &pctx,
+                    &sctx,
+                    memory_handler.clone(),
+                    &wcm,
+                    instance_id,
+                    &debug_info,
+                    valid_constraints.clone(),
+                    airgroup_values_air_instances.clone(),
+                    &const_pols,
+                    &aux_trace,
+                )
+            })
+        };
+        self.run_contribution_pass(body)?;
 
         self.wcm.end(debug_info)?;
 
@@ -1474,13 +1494,9 @@ where
 
         if check_global_constraints {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();
-            let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances)?;
-            let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+            let valid_global_constraints = self.check_global_constraints(&airgroup_values_air_instances, debug_info);
 
             if self.mpi_ctx.rank == 0 {
-                let valid_global_constraints =
-                    verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
-
                 timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
                 if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
                     return Ok(());
@@ -2150,26 +2166,9 @@ where
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
-            let internal_contribution =
-                calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
+            let internal_contribution_u64 = self.aggregate_partial_contributions();
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
-
-            let contributions_size = match self.pctx.global_info.curve {
-                CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
-                _ => 10,
-            };
-
-            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
-            let all_internal_partial_contributions_split: Vec<Vec<F>> = all_internal_partial_contributions
-                .chunks(contributions_size)
-                .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
-                .collect();
-
-            let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_partial_contributions_split);
-
-            let internal_contribution_u64: Vec<u64> =
-                internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -2228,8 +2227,7 @@ where
             }
         }
 
-        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
-        self.pctx.set_global_challenge(2, &mut global_challenge);
+        self.set_global_challenge_from(all_partial_contributions_u64);
 
         timer_start_info!(GENERATING_PROOFS);
 
@@ -3415,15 +3413,8 @@ where
         }
         timer_stop_and_log_info!(VERIFYING_PROOFS);
 
-        let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances)?;
-        let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
-
-        if self.mpi_ctx.rank == 0 {
-            let valid_global_constraints =
-                verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
-            if valid_global_constraints.is_err() {
-                valid_proofs = false;
-            }
+        if self.check_global_constraints(&airgroup_values_air_instances, &DebugInfo::default()).is_err() {
+            valid_proofs = false;
         }
 
         if valid_proofs {
@@ -3432,6 +3423,20 @@ where
         } else {
             Err(ProofmanError::InvalidProof("Basic proofs were not verified".into()))
         }
+    }
+
+    /// Check cross-instance global constraints (e.g. the LogUp bus balance)
+    fn check_global_constraints(
+        &self,
+        airgroup_values_air_instances: &[Vec<F>],
+        debug_info: &DebugInfo,
+    ) -> ProofmanResult<()> {
+        let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, airgroup_values_air_instances)?;
+        let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+        if self.mpi_ctx.rank == 0 {
+            verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues)?;
+        }
+        Ok(())
     }
 
     fn exec(&self) -> ProofmanResult<String> {
@@ -4318,111 +4323,45 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn get_contribution_air(
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        roots_contributions: &[[F; 4]],
-        values_contributions: &[Mutex<Vec<F>>],
-        instance_id: usize,
-        aux_trace: &mut [F],
-        const_pols: &mut [F],
-    ) -> ProofmanResult<u64> {
-        let n_field_elements = 4;
-        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    /// Aggregate this process's per-instance contributions.
+    fn aggregate_partial_contributions(&self) -> Vec<u64> {
+        let internal_contribution =
+            calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
 
-        timer_start_debug!(GET_CONTRIBUTION_AIR, "GET_CONTRIBUTION_AIR_{} [{}:{}]", instance_id, airgroup_id, air_id);
-
-        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-        let setup = sctx.get_setup(airgroup_id, air_id)?;
-        let p_setup: *mut c_void = (&setup.p_setup).into();
-
-        let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
-
-        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
-
-        let mut steps_params = pctx.get_air_instance_params(instance_id, true);
-
-        if !pctx.gpu {
-            steps_params.aux_trace = aux_trace.as_mut_ptr() as *mut u8;
-            load_const_pols(setup, const_pols);
-            steps_params.p_const_pols = const_pols.as_mut_ptr() as *mut u8;
-        }
-
-        let p_steps_params: *mut u8 = (&steps_params).into();
-
-        let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
-            Some(c) => pctx.get_custom_commits_fixed_buffer(&c.name, true)?.to_string_lossy().into_owned(),
-            None => String::new(),
+        let contributions_size = match self.pctx.global_info.curve {
+            CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
+            _ => 10,
         };
 
-        // The commit (incl. the now-async trace H2D) runs on this stream; the root
-        // is collected later when the stream's end_event is polled. Return the
-        // streamId so the caller can gate trace-buffer reuse on its completion.
-        let stream_id = commit_witness_c(
-            p_setup,
-            p_steps_params,
-            instance_id as u64,
-            airgroup_id as u64,
-            air_id as u64,
-            roots_contributions[instance_id].as_ptr() as *mut u8,
-            pctx.get_device_buffers_ptr(),
-            &custom_commits_fixed_path,
-        );
+        let all_internal = self.mpi_ctx.distribute_roots(internal_contribution);
+        let all_internal_split: Vec<Vec<F>> = all_internal
+            .chunks(contributions_size)
+            .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
+            .collect();
 
-        let n_airvalues = setup
-            .stark_info
-            .airvalues_map
-            .as_ref()
-            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
-            .unwrap_or(0);
-
-        let size = 2 * n_field_elements + n_airvalues;
-
-        let mut values_hash = vec![F::ZERO; size];
-
-        let vk = setup.get_vk();
-        for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
-            *value = F::from_u64(vk[i]);
-        }
-
-        let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
-        let mut p = 0;
-        let mut count = 0;
-        for air_value in airvalues_map {
-            if air_value.stage == 1 {
-                values_hash[2 * n_field_elements + count] = air_values[p];
-                count += 1;
-                p += 1;
-            }
-        }
-
-        *values_contributions[instance_id].lock().unwrap() = values_hash;
-
-        timer_stop_and_log_debug!(
-            GET_CONTRIBUTION_AIR,
-            "GET_CONTRIBUTION_AIR_{} [{}:{}]",
-            instance_id,
-            airgroup_id,
-            air_id
-        );
-        Ok(stream_id)
+        let aggregated = aggregate_contributions(&self.pctx, &all_internal_split);
+        aggregated.iter().map(|&x| x.as_canonical_u64()).collect()
     }
 
-    /// Record one instance's stage-1 contribution for the multilinear path,
-    /// using the *same* representation the univariate contribution flow expects
-    /// (`get_contribution_air` + `calculate_internal_contributions`): the
-    /// `values_hash` = `[vk(4) ‖ <root slot>(4) ‖ stage-1 airvalues]` in
-    /// `values_contributions`, and the commitment root in `roots_contributions`
-    /// (written into the `[4..8]` slot later by `calculate_internal_contributions`).
-    /// The only difference from univariate is that `root` is the Basefold root,
-    /// not the FRI root — so the global challenge is derived identically.
-    fn ml_record_contribution(
+    /// Derive the stage-2 global challenge from the partial contributions and
+    /// install it into pctx (expanding the per-stage challenge vector).
+    fn set_global_challenge_from(&self, contributions: &[ContributionsInfo]) {
+        let mut global_challenge = calculate_global_challenge(&self.pctx, contributions);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
+    }
+
+    /// Store the per-instance contribution `values_hash` =
+    /// `[vk(4) ‖ <root slot>(4) ‖ stage-1 air values]` — the
+    /// backend-independent half of the contribution record
+    /// (`calculate_internal_contributions` later copies the commitment root
+    /// into the `[4..8]` slot before hashing). The univariate and multilinear
+    /// flows MUST agree on this layout, or their global challenges silently
+    /// diverge — that invariant lives here and nowhere else.
+    fn record_contribution_values(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
-        roots_contributions: &[[F; 4]],
         values_contributions: &[Mutex<Vec<F>>],
         instance_id: usize,
-        root: &[Goldilocks; 4],
     ) -> ProofmanResult<()> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -4455,6 +4394,85 @@ where
             }
         }
         *values_contributions[instance_id].lock().unwrap() = values_hash;
+        Ok(())
+    }
+
+    pub fn get_contribution_air(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        roots_contributions: &[[F; 4]],
+        values_contributions: &[Mutex<Vec<F>>],
+        instance_id: usize,
+        aux_trace: &mut [F],
+        const_pols: &mut [F],
+    ) -> ProofmanResult<u64> {
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+
+        timer_start_debug!(GET_CONTRIBUTION_AIR, "GET_CONTRIBUTION_AIR_{} [{}:{}]", instance_id, airgroup_id, air_id);
+
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let p_setup: *mut c_void = (&setup.p_setup).into();
+
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
+
+        let mut steps_params = pctx.get_air_instance_params(instance_id, true);
+
+        if !pctx.gpu {
+            steps_params.aux_trace = aux_trace.as_mut_ptr() as *mut u8;
+            load_const_pols(setup, const_pols);
+            steps_params.p_const_pols = const_pols.as_mut_ptr() as *mut u8;
+        }
+
+        let p_steps_params: *mut u8 = (&steps_params).into();
+
+        let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
+            Some(c) => pctx.get_custom_commits_fixed_buffer(&c.name, true)?.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
+
+        // The commit (incl. the now-async trace H2D) runs on this stream; the root
+        // is collected later when the stream's end_event is polled. Return the
+        // streamId so the caller can gate trace-buffer reuse on its completion.
+        let stream_id = commit_witness_c(
+            p_setup,
+            p_steps_params,
+            instance_id as u64,
+            airgroup_id as u64,
+            air_id as u64,
+            roots_contributions[instance_id].as_ptr() as *mut u8,
+            pctx.get_device_buffers_ptr(),
+            &custom_commits_fixed_path,
+        );
+
+        Self::record_contribution_values(pctx, sctx, values_contributions, instance_id)?;
+
+        timer_stop_and_log_debug!(
+            GET_CONTRIBUTION_AIR,
+            "GET_CONTRIBUTION_AIR_{} [{}:{}]",
+            instance_id,
+            airgroup_id,
+            air_id
+        );
+        Ok(stream_id)
+    }
+
+    /// Record one instance's stage-1 contribution for the multilinear path,
+    /// using the *same* representation the univariate contribution flow expects
+    /// (`get_contribution_air` + `calculate_internal_contributions`): the
+    /// `values_hash` = `[vk(4) ‖ <root slot>(4) ‖ stage-1 airvalues]` in
+    /// `values_contributions`, and the commitment root in `roots_contributions`
+    /// (written into the `[4..8]` slot later by `calculate_internal_contributions`).
+    /// The only difference from univariate is that `root` is the Basefold root,
+    /// not the FRI root — so the global challenge is derived identically.
+    fn ml_record_contribution(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        roots_contributions: &[[F; 4]],
+        values_contributions: &[Mutex<Vec<F>>],
+        instance_id: usize,
+        root: &[Goldilocks; 4],
+    ) -> ProofmanResult<()> {
+        Self::record_contribution_values(pctx, sctx, values_contributions, instance_id)?;
 
         // `roots_contributions` is an `Arc<Vec<[F;4]>>` written per-instance (each
         // instance_id is unique to one worker), mirroring how the univariate path
@@ -4485,25 +4503,11 @@ where
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_multilinear_proof");
 
-        self.set_partition(1, vec![0], 0)?;
-
-        self.pctx.set_debug_info(&DebugInfo::default());
-        self.cancellation_info.write().unwrap().reset();
-        self.reset()?;
-        self.pctx.dctx_reset();
-
-        let _ = self.exec()?;
+        self.reset_and_exec(&DebugInfo::default())?;
 
         // Pass 1: witness computation + stage-1 PCS commitment.
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
 
-        let witness_done = Arc::new(Counter::new());
-
-        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
-
-        let minimal_memory = true;
-
-        let my_instances = self.pctx.dctx_get_process_instances();
         // Pass 1 is streamed by the workers: as each instance's stage-1
         // witness completes, commit it, keep the root, and FREE the trace —
         // the CPU pool holds a single buffer, so releasing promptly is what
@@ -4512,145 +4516,47 @@ where
         // aux/const buffers are shared.
         type MlRoots = Arc<Mutex<HashMap<usize, ([Goldilocks; 4], Arc<proofman_multilinear::AirIr>)>>>;
         let ml_roots: MlRoots = Arc::new(Mutex::new(HashMap::new()));
-        let ml_serial = Arc::new(Mutex::new(()));
         let ml_ir_cache = Arc::new(AirIrCache::default());
 
-        let _contributions_guard = WorkerPoolGuard {
-            sentinel: usize::MAX,
-            n_streams: self.n_streams,
-            tx: self.contributions_tx.clone(),
-            handles: self.handle_contributions.clone(),
-        };
-
-        for _ in 0..self.n_streams {
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let memory_handler_clone = self.memory_handler.clone();
-            let const_pols_clone = self.const_pols.clone();
-            let aux_trace_clone = self.aux_trace.clone();
-            let contributions_rx_clone = self.contributions_rx.clone();
-            let cancellation_info_clone = self.cancellation_info.clone();
-            let ml_roots_clone = ml_roots.clone();
-            let ml_serial_clone = ml_serial.clone();
-            let ml_ir_cache_clone = ml_ir_cache.clone();
-            let roots_contributions_clone = self.roots_contributions.clone();
-            let values_contributions_clone = self.values_contributions.clone();
-            let handle = std::thread::spawn(move || loop {
-                match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
-                    Ok(instance_id) => {
-                        if instance_id == usize::MAX {
-                            break;
-                        }
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            break;
-                        }
-                        if ml_roots_clone.lock().unwrap().contains_key(&instance_id) {
-                            tracing::warn!("multilinear: instance {instance_id} delivered twice, skipping");
-                            continue;
-                        }
-                        tracing::debug!("multilinear: pass-1 processing instance {instance_id}");
-                        let result = {
-                            let _guard = ml_serial_clone.lock().unwrap();
-                            Self::ml_prepare_stage1(
-                                &pctx_clone,
-                                &sctx_clone,
-                                &const_pols_clone,
-                                &aux_trace_clone,
-                                instance_id,
-                                &ml_ir_cache_clone,
-                            )
-                            .map(|(cols, _consts, ir)| {
-                                let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
-                                let root = proofman_multilinear::commit_matrix(&refs, &ir.params).root();
-                                Self::ml_record_contribution(
-                                    &pctx_clone,
-                                    &sctx_clone,
-                                    &roots_contributions_clone,
-                                    &values_contributions_clone,
-                                    instance_id,
-                                    &root,
-                                )?;
-                                ml_roots_clone.lock().unwrap().insert(instance_id, (root, ir));
-                                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                                if is_shared_buffer {
-                                    memory_handler_clone.release_buffer(witness_buffer)?;
-                                }
-                                Ok::<(), ProofmanError>(())
-                            })
-                            .and_then(|r| r)
-                        };
-                        if let Err(e) = result {
-                            cancellation_info_clone.write().unwrap().cancel(Some(e));
-                            break;
-                        }
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            break;
-                        }
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        let body: InstanceBody = {
+            let pctx = self.pctx.clone();
+            let sctx = self.sctx.clone();
+            let memory_handler = self.memory_handler.clone();
+            let const_pols = self.const_pols.clone();
+            let aux_trace = self.aux_trace.clone();
+            let ml_roots = ml_roots.clone();
+            let ml_serial = Arc::new(Mutex::new(()));
+            let ml_ir_cache = ml_ir_cache.clone();
+            let roots_contributions = self.roots_contributions.clone();
+            let values_contributions = self.values_contributions.clone();
+            Arc::new(move |instance_id| {
+                if ml_roots.lock().unwrap().contains_key(&instance_id) {
+                    tracing::warn!("multilinear: instance {instance_id} delivered twice, skipping");
+                    return Ok(());
                 }
-            });
-
-            self.handle_contributions.lock().unwrap().push(handle);
-        }
-
-        let (witness_handler, witness_handles) =
-            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, None, false);
-
-        let _witness_guard = WitnessGuard {
-            witness_tx: self.witness_tx.clone(),
-            handler: witness_handler.clone(),
-            handles: witness_handles.clone(),
-        };
-
-        let my_instances_no_tables = my_instances
-            .iter()
-            .filter(|idx| {
-                !self.pctx.dctx_is_table(**idx)
-                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
+                tracing::debug!("multilinear: pass-1 processing instance {instance_id}");
+                let _guard = ml_serial.lock().unwrap();
+                let (cols, _consts, ir) =
+                    Self::ml_prepare_stage1(&pctx, &sctx, &const_pols, &aux_trace, instance_id, &ml_ir_cache)?;
+                let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+                let root = proofman_multilinear::commit_matrix(&refs, &ir.params).root();
+                Self::ml_record_contribution(
+                    &pctx,
+                    &sctx,
+                    &roots_contributions,
+                    &values_contributions,
+                    instance_id,
+                    &root,
+                )?;
+                ml_roots.lock().unwrap().insert(instance_id, (root, ir));
+                let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+                if is_shared_buffer {
+                    memory_handler.release_buffer(witness_buffer)?;
+                }
+                Ok(())
             })
-            .copied()
-            .collect::<Vec<_>>();
-
-        self.calculate_witness(
-            &my_instances_no_tables,
-            self.memory_handler.clone(),
-            witness_done.clone(),
-            minimal_memory,
-            false,
-        )?;
-
-        if let Some(h) = witness_handler.lock().unwrap().take() {
-            h.join().unwrap();
-        }
-        drop(witness_handles);
-
-        let my_instances_tables = self
-            .pctx
-            .dctx_get_my_tables()
-            .into_iter()
-            .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
-            .collect::<Vec<_>>();
-
-        for instance_id in my_instances_tables.iter() {
-            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-        }
-
-        self.pctx.set_proof_tx(None);
-
-        for _ in 0..self.n_streams {
-            self.contributions_tx.send(usize::MAX).ok();
-        }
-
-        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        self.check_cancel(true)?;
+        };
+        self.run_contribution_pass(body)?;
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -4675,32 +4581,14 @@ where
             self.pctx.dctx_reset_instance_calculated(instance_id);
         }
 
-        // Global challenge
-        let internal_contribution =
-            calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
-        let contributions_size = match self.pctx.global_info.curve {
-            CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
-            _ => 10,
-        };
-
-        let all_internal = self.mpi_ctx.distribute_roots(internal_contribution);
-        let all_internal_split: Vec<Vec<F>> = all_internal
-            .chunks(contributions_size)
-            .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
-            .collect();
-
-        let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_split);
-        let internal_contribution_u64: Vec<u64> = internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect();
-
+        // Global challenge.
         let contributions = vec![ContributionsInfo {
-            challenge: internal_contribution_u64,
+            challenge: self.aggregate_partial_contributions(),
             worker_index: 0,
             airgroup_id: 0,
             aggregated: false,
         }];
-
-        let mut global_challenge = calculate_global_challenge(&self.pctx, &contributions);
-        self.pctx.set_global_challenge(2, &mut global_challenge);
+        self.set_global_challenge_from(&contributions);
 
         // Read the expanded per-stage challenges back out of pctx as the `Ext`
         // vector `prove_air` and the proof-set verifier consume.
@@ -4884,11 +4772,7 @@ where
         // proof pins its own bus contribution, but only the SET balances.
         // Mirrors the univariate `verify_proofs` flow.
         if verify_proofs {
-            let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances)?;
-            let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
-            if self.mpi_ctx.rank == 0 {
-                verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues)?;
-            }
+            self.check_global_constraints(&airgroup_values_air_instances, &DebugInfo::default())?;
             tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
         }
 

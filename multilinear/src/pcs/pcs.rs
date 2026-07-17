@@ -1,13 +1,4 @@
 //! The multilinear polynomial commitment scheme (PCS) seam.
-//!
-//! The prover ([`crate::prove_air`]) and verifier ([`crate::verify_air`]) reduce
-//! a STARK statement — via the zerocheck and the opening-reduction sumcheck —
-//! to a single batched evaluation claim `Φ̃(u) = σ` at one point `u`, and reach
-//! the commitment scheme only through the [`MlPcs`] trait and the [`Pcs`]
-//! alias. Everything around the PCS — the batching, transcript, zerocheck,
-//! kernel handling, challenge derivation, and Merkle / `.mlconst.bin` plumbing
-//! — is scheme-agnostic, so a new scheme (e.g. WHIR, see [`crate::whir`]) is
-//! added by implementing this trait and repointing `Pcs` at it.
 
 use fields::Goldilocks;
 
