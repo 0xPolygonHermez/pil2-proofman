@@ -525,6 +525,7 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.memory_handler.reset()?;
         self.memory_handler_recursive_witness.reset()?;
+        self.pctx.reset_job_state();
 
         Ok(())
     }
