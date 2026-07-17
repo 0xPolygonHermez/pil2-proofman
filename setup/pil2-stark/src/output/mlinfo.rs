@@ -5,9 +5,9 @@
 //! The setup expression arena is lowered into a flat instruction list; arena
 //! references (`op == "exp"`) are memoized so shared subexpressions become
 //! shared temps. AIRs using features the multilinear prover does not support
-//! yet (air values, proof values, custom commits, `everyFrame` constraints,
-//! shifted columns inside boundary constraints) are rejected with a
-//! descriptive error — the setup then simply skips the mlinfo artifact.
+//! yet (`everyFrame` constraints, shifted columns inside boundary
+//! constraints) are rejected with a descriptive error — the setup then simply
+//! skips the mlinfo artifact.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -114,6 +114,11 @@ impl Compiler<'_> {
                 let idx = e.id.ok_or_else(|| anyhow!("airgroupvalue operand without id"))?;
                 let dim = self.setup.airgroup_values_map.get(idx).map(|v| v.dim as u8).unwrap_or(e.dim.max(1) as u8);
                 Ok((Operand { kind: SrcKind::AirGroupValue, idx: idx as u32, row_offset: 0, dim }, 0, BTreeSet::new()))
+            }
+            "proofvalue" => {
+                let idx = e.id.ok_or_else(|| anyhow!("proofvalue operand without id"))?;
+                let dim = self.setup.proof_values_map.get(idx).map(|v| v.dim as u8).unwrap_or(e.dim.max(1) as u8);
+                Ok((Operand { kind: SrcKind::ProofValue, idx: idx as u32, row_offset: 0, dim }, 0, BTreeSet::new()))
             }
             "number" => {
                 let value = e.value.as_deref().ok_or_else(|| anyhow!("number operand without value"))?;
@@ -306,6 +311,7 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
     }
     let airvalue_stages: Vec<u8> = setup.air_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
     let airgroupvalue_stages: Vec<u8> = setup.airgroup_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
+    let proofvalue_stages: Vec<u8> = setup.proof_values_map.iter().map(|c| c.stage.unwrap_or(0) as u8).collect();
 
     // LogUp-GKR bus (present iff the STD compiled the AIR in GKR mode).
     let bus = lower_bus(&mut compiler)?;
@@ -322,6 +328,7 @@ pub fn build_air_ir(setup: &SetupResult, n_bits: u32, params: MlParams) -> Resul
         challenge_stages,
         airvalue_stages,
         airgroupvalue_stages,
+        proofvalue_stages,
         numbers: compiler.numbers,
         n_temps: compiler.instrs.len() as u32,
         instrs: compiler.instrs,

@@ -44,7 +44,6 @@ members = [
   "pil2-components/test/common/rs",
 
   # Examples
-  "examples/fibonacci-multilinear",
   "examples/fibonacci-square",
   "examples/test-recursive",
   "macros-test",

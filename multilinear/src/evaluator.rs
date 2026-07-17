@@ -122,6 +122,9 @@ pub trait LeafSource {
     fn airgroup_value(&self, _idx: u32) -> Val {
         unimplemented!("airgroup values not available in this context")
     }
+    fn proof_value(&self, _idx: u32) -> Val {
+        unimplemented!("proof values not available in this context")
+    }
 }
 
 /// The extension-basis element `u` (coordinates `[0, 1, 0]`): an ext-valued
@@ -162,6 +165,7 @@ fn operand_value<S: LeafSource>(ir: &AirIr, src: &S, temps: &[Val], op: &Operand
         SrcKind::Challenge => src.challenge(op.idx),
         SrcKind::AirValue => src.air_value(op.idx),
         SrcKind::AirGroupValue => src.airgroup_value(op.idx),
+        SrcKind::ProofValue => src.proof_value(op.idx),
         SrcKind::Number => Val::B(Goldilocks::new(ir.numbers[op.idx as usize])),
         SrcKind::Temp => temps[op.idx as usize],
     }
@@ -247,6 +251,7 @@ pub struct RowSource<'a> {
     pub challenges: &'a [Ext],
     pub air_values: &'a [Ext],
     pub airgroup_values: &'a [Ext],
+    pub proof_values: &'a [Ext],
     pub row: usize,
     pub n_rows: usize,
 }
@@ -272,6 +277,9 @@ impl LeafSource for RowSource<'_> {
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
     }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
+    }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
         Val::B(self.customs[commit as usize][col as usize][r])
@@ -292,6 +300,7 @@ pub fn check_constraints_on_trace(
     challenges: &[Ext],
     air_values: &[Ext],
     airgroup_values: &[Ext],
+    proof_values: &[Ext],
 ) -> Result<(), MlError> {
     let n_rows = 1usize << ir.n_bits;
 
@@ -303,8 +312,18 @@ pub fn check_constraints_on_trace(
             crate::ir::Boundary::LastRow => Box::new(core::iter::once(n_rows - 1)),
         };
         for row in rows {
-            let src =
-                RowSource { witness, consts, customs, publics, challenges, air_values, airgroup_values, row, n_rows };
+            let src = RowSource {
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                airgroup_values,
+                proof_values,
+                row,
+                n_rows,
+            };
             eval_instrs(ir, &src, &mut temps);
             let v = constraint_value(ir, &src, &temps, c_idx).to_ext();
             if !v.is_zero() {
@@ -360,6 +379,7 @@ pub mod test_air {
             challenge_stages: vec![],
             airvalue_stages: vec![],
             airgroupvalue_stages: vec![],
+            proofvalue_stages: vec![],
             numbers: b.numbers.clone(),
             n_temps: b.n_temps(),
             instrs: b.instrs,
@@ -398,7 +418,9 @@ pub mod test_air {
     ///   assume: `−1 / (a + γ)`,   prove: `mul / (t + γ)`,
     /// with `γ` the stage-2 challenge and the instance's net contribution
     /// carried in airgroup value 0. `with_scalar_term` adds the direct
-    /// fraction `pub0 / (γ + pub1)` at the instance level.
+    /// fraction `pub0 / (γ + pub1 + pv0)` at the instance level, with `pv0` a
+    /// stage-1 proof value that also enters an every-row constraint
+    /// `mul·(pv0 − pv0) === 0`.
     pub fn lookup_ir(n_bits: u32, params: MlParams, with_scalar_term: bool) -> AirIr {
         use crate::ir::{BusIr, BusTerm};
 
@@ -413,10 +435,17 @@ pub mod test_air {
         let den_a = b.add(a, gamma);
         let den_t = b.add(t, gamma);
 
+        let mut constraints = vec![];
         let scalar_terms = if with_scalar_term {
             let p0 = b.public(0);
             let p1 = b.public(1);
-            let den = b.add(gamma, p1);
+            let pv = b.proof_value(0, 1);
+            let den0 = b.add(gamma, p1);
+            let den = b.add(den0, pv);
+            // Exercise proof values in the constraint path too.
+            let z = b.sub(pv, pv);
+            let c = b.mul(mul, z);
+            constraints.push(ConstraintIr { boundary: Boundary::EveryRow, root: c, degree: 1 });
             vec![BusTerm { num: p0, den, degree: 0 }]
         } else {
             vec![]
@@ -434,10 +463,11 @@ pub mod test_air {
             challenge_stages: vec![2],
             airvalue_stages: vec![],
             airgroupvalue_stages: vec![2],
+            proofvalue_stages: if with_scalar_term { vec![1] } else { vec![] },
             numbers: b.numbers.clone(),
             n_temps: b.n_temps(),
             instrs: b.instrs,
-            constraints: vec![],
+            constraints,
             max_constraint_degree: 1,
             opening_offsets: vec![0],
             bus: Some(BusIr {
@@ -482,7 +512,7 @@ mod tests {
     fn fib_trace_satisfies_ir() {
         let ir = fib_ir(4, MlParams::default());
         let (witness, consts, publics) = fib_trace(4);
-        check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).expect("valid trace");
+        check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[]).expect("valid trace");
     }
 
     #[test]
@@ -490,7 +520,7 @@ mod tests {
         let ir = fib_ir(4, MlParams::default());
         let (mut witness, consts, publics) = fib_trace(4);
         witness[0][0][5] += Goldilocks::ONE;
-        assert!(check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[]).is_err());
+        assert!(check_constraints_on_trace(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[]).is_err());
     }
 
     #[test]

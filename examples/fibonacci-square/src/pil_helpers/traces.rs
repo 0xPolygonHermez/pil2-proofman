@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "c9361fdf6122c9530e1dab1436fbeb1ed8f3475a3dc2d3f32cf44479a1e425eb";
+pub const PILOUT_HASH: &str = "3d753476878a04c88f39f9c9d22911b060cbd1cd67005a6f7421a45fdc368e4c";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -80,29 +80,29 @@ values!(BuildProofValues<F> {
 });
  
 trace_row!(FibonacciSquareFixedRow<F> {
- L1: F, __L1__: F,
+ L1: F,
 });
-pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194304, 0, 0>;
+pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4096, 0, 0>;
 
 trace_row!(FibonacciSquareTraceRow<F> {
  a:F, b:F, test:F, test2:F, test3:F,
 });
 
-pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
+pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4096, 0, 0>;
 
 trace_row!(ModuleFixedRow<F> {
- SEGMENT_LN: F, __L1__: F,
+ SEGMENT_LN: F,
 });
-pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 1048576, 0, 1>;
+pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 1024, 0, 1>;
 
 trace_row!(ModuleTraceRow<F> {
  x:F, q:F, x_mod:F,
 });
 
-pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
+pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1024, 0, 1>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 1], VALS: [F; 1], __L1__: F,
+ OPID: [F; 1], VALS: [F; 1],
 });
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
 
@@ -115,7 +115,7 @@ pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256,
 trace_row!(FibonacciSquareRomTraceRow<F> {
  line: F, flags: F,
 });
-pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 4194304, 0, 0, 0>;
+pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 4096, 0, 0, 0>;
 
 
 values!(FibonacciSquareAirValues<F> {
@@ -139,4 +139,12 @@ values!(SpecifiedRangesAirGroupValues<F> {
 });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "FibonacciSquare"),
+    (0, 1, "Module"),
+    (0, 2, "SpecifiedRanges"),
 ];

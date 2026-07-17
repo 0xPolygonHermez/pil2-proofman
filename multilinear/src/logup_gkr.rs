@@ -412,6 +412,7 @@ fn build_bus_input(
     challenges: &[Ext],
     air_values: &[Ext],
     airgroup_values: &[Ext],
+    proof_values: &[Ext],
 ) -> Result<(Vec<Goldilocks>, Vec<Ext>), MlError> {
     let n_rows = 1usize << ir.n_bits;
     let (cap, _) = bus_layout(bus);
@@ -420,7 +421,18 @@ fn build_bus_input(
 
     let mut temps: Vec<Val> = Vec::new();
     for row in 0..n_rows {
-        let src = RowSource { witness, consts, customs, publics, challenges, air_values, airgroup_values, row, n_rows };
+        let src = RowSource {
+            witness,
+            consts,
+            customs,
+            publics,
+            challenges,
+            air_values,
+            airgroup_values,
+            proof_values,
+            row,
+            n_rows,
+        };
         eval_instrs(ir, &src, &mut temps);
         for (t, term) in bus.terms.iter().enumerate() {
             // Numerators are `±sel`/`mul` expressions: base-field *values*,
@@ -448,6 +460,7 @@ struct ScalarSource<'a> {
     challenges: &'a [Ext],
     air_values: &'a [Ext],
     airgroup_values: &'a [Ext],
+    proof_values: &'a [Ext],
 }
 
 impl LeafSource for ScalarSource<'_> {
@@ -472,6 +485,9 @@ impl LeafSource for ScalarSource<'_> {
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
     }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
+    }
 }
 
 /// The scalar bus terms as one fraction `(num, den)`. Verifier-evaluable:
@@ -484,8 +500,9 @@ pub fn eval_scalar_fraction(
     challenges: &[Ext],
     air_values: &[Ext],
     airgroup_values: &[Ext],
+    proof_values: &[Ext],
 ) -> Result<(Ext, Ext), MlError> {
-    let src = ScalarSource { publics, challenges, air_values, airgroup_values };
+    let src = ScalarSource { publics, challenges, air_values, airgroup_values, proof_values };
     let mut temps: Vec<Val> = Vec::new();
     let (mut num, mut den) = (Ext::ZERO, Ext::ONE);
     for term in &bus.scalar_terms {
@@ -521,11 +538,14 @@ impl BusProver {
         challenges: &[Ext],
         air_values: &[Ext],
         airgroup_values: &[Ext],
+        proof_values: &[Ext],
     ) -> Result<Self, MlError> {
-        let (p, q) =
-            build_bus_input(ir, bus, witness, consts, customs, publics, challenges, air_values, airgroup_values)?;
+        let (p, q) = build_bus_input(
+            ir, bus, witness, consts, customs, publics, challenges, air_values, airgroup_values, proof_values,
+        )?;
         let tree = FractionTree::new(p, q)?;
-        let (s_num, s_den) = eval_scalar_fraction(ir, bus, publics, challenges, air_values, airgroup_values)?;
+        let (s_num, s_den) =
+            eval_scalar_fraction(ir, bus, publics, challenges, air_values, airgroup_values, proof_values)?;
         let (p_out, q_out) = tree.output();
         let result = p_out * q_out.inverse() + s_num * s_den.inverse();
         Ok(Self { tree, result })
@@ -546,6 +566,7 @@ impl BusProver {
         challenges: &[Ext],
         air_values: &[Ext],
         airgroup_values: &[Ext],
+        proof_values: &[Ext],
         transcript: &mut MlTranscript,
     ) -> (BusProof, Vec<Ext>) {
         let n = ir.n_bits as usize;
@@ -577,6 +598,7 @@ impl BusProver {
             challenges,
             air_values,
             airgroup_values,
+            proof_values,
             u_row,
             roots,
             bus_round_degree(bus),

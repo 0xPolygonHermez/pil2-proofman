@@ -45,6 +45,9 @@ pub struct MlProof {
     pub challenges: Vec<Ext>,
     /// Air values (per-instance prover messages), in global order.
     pub air_values: Vec<Ext>,
+    /// Proof values (proof-level prover messages, shared by every instance),
+    /// in global order.
+    pub proof_values: Vec<Ext>,
     /// Airgroup values (enter cross-instance global constraints), in global order.
     pub airgroup_values: Vec<Ext>,
     /// Global instance id assigned by the proving orchestrator; defines the
@@ -80,6 +83,7 @@ pub fn prove_air(
     challenges: &[Ext],
     air_values: &[Ext],
     airgroup_values: &[Ext],
+    proof_values: &[Ext],
 ) -> Result<MlProof, MlError> {
     if witness.len() != ir.n_stages() {
         return Err(MlError::Malformed(format!("expected {} witness stages", ir.n_stages())));
@@ -89,6 +93,9 @@ pub fn prove_air(
     }
     if air_values.len() != ir.airvalue_stages.len() || airgroup_values.len() != ir.airgroupvalue_stages.len() {
         return Err(MlError::Malformed("air/airgroup value count mismatch".into()));
+    }
+    if proof_values.len() != ir.proofvalue_stages.len() {
+        return Err(MlError::Malformed(format!("expected {} proof values", ir.proofvalue_stages.len())));
     }
     if customs.len() != ir.custom_commits.len()
         || customs.iter().zip(ir.custom_commits.iter()).any(|(cols, cc)| cols.len() != cc.n_cols as usize)
@@ -109,8 +116,18 @@ pub fn prove_air(
     let mut airgroup_values = airgroup_values.to_vec();
     let bus_prover = match &ir.bus {
         Some(bus) => {
-            let bp =
-                BusProver::build(ir, bus, witness, consts, customs, publics, challenges, air_values, &airgroup_values)?;
+            let bp = BusProver::build(
+                ir,
+                bus,
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                &airgroup_values,
+                proof_values,
+            )?;
             if let Some(idx) = bus.result_airgroupvalue {
                 airgroup_values[idx as usize] = bp.result;
             }
@@ -160,7 +177,7 @@ pub fn prove_air(
         stage_matrices.push(matrix);
 
         let stage = (stage_idx + 1) as u8;
-        absorb_stage_values(&mut transcript, ir, air_values, airgroup_values, stage);
+        absorb_stage_values(&mut transcript, ir, air_values, airgroup_values, proof_values, stage);
         for id in challenge_ids_for_stage(ir, stage + 1) {
             transcript.absorb_ext(&challenges[id]);
         }
@@ -184,6 +201,7 @@ pub fn prove_air(
         challenges,
         air_values,
         airgroup_values,
+        proof_values,
         &r,
         alpha,
         l,
@@ -228,6 +246,7 @@ pub fn prove_air(
                 challenges,
                 air_values,
                 airgroup_values,
+                proof_values,
                 &mut transcript,
             );
             (Some(proof), v)
@@ -340,6 +359,7 @@ pub fn prove_air(
         challenges: challenges.to_vec(),
         air_values: air_values.to_vec(),
         airgroup_values: airgroup_values.to_vec(),
+        proof_values: proof_values.to_vec(),
         global_instance_id: 0,
     })
 }
@@ -400,6 +420,7 @@ pub(crate) fn absorb_stage_values(
     ir: &AirIr,
     air_values: &[Ext],
     airgroup_values: &[Ext],
+    proof_values: &[Ext],
     stage: u8,
 ) {
     for (j, &st) in ir.airvalue_stages.iter().enumerate() {
@@ -410,6 +431,11 @@ pub(crate) fn absorb_stage_values(
     for (j, &st) in ir.airgroupvalue_stages.iter().enumerate() {
         if st == stage {
             transcript.absorb_ext(&airgroup_values[j]);
+        }
+    }
+    for (j, &st) in ir.proofvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&proof_values[j]);
         }
     }
 }

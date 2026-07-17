@@ -42,6 +42,7 @@ pub fn verify_air(
     publics: &[Goldilocks],
     expected_const_root: Option<&[Goldilocks; 4]>,
     expected_challenges: Option<&[Ext]>,
+    expected_proof_values: Option<&[Ext]>,
 ) -> Result<(), MlError> {
     if proof.airgroup_id != ir.airgroup_id || proof.air_id != ir.air_id || proof.n_bits != ir.n_bits {
         return Err(MlError::Malformed("proof does not match the AIR".into()));
@@ -63,12 +64,18 @@ pub fn verify_air(
     if proof.challenges.len() != ir.challenge_stages.len()
         || proof.air_values.len() != ir.airvalue_stages.len()
         || proof.airgroup_values.len() != ir.airgroupvalue_stages.len()
+        || proof.proof_values.len() != ir.proofvalue_stages.len()
     {
         return Err(MlError::Malformed("challenge/value vector shape mismatch".into()));
     }
     if let Some(expected) = expected_challenges {
         if proof.challenges != expected {
             return Err(MlError::Malformed("proof challenges do not match the globally derived challenges".into()));
+        }
+    }
+    if let Some(expected) = expected_proof_values {
+        if proof.proof_values != expected {
+            return Err(MlError::Malformed("proof values do not match the globally shared proof values".into()));
         }
     }
     if proof.bus.is_some() != ir.bus.is_some() {
@@ -101,7 +108,14 @@ pub fn verify_air(
     for (stage_idx, root) in proof.stage_roots.iter().enumerate() {
         transcript.absorb_root(root);
         let stage = (stage_idx + 1) as u8;
-        crate::prover::absorb_stage_values(&mut transcript, ir, &proof.air_values, &proof.airgroup_values, stage);
+        crate::prover::absorb_stage_values(
+            &mut transcript,
+            ir,
+            &proof.air_values,
+            &proof.airgroup_values,
+            &proof.proof_values,
+            stage,
+        );
         for id in crate::prover::challenge_ids_for_stage(ir, stage + 1) {
             transcript.absorb_ext(&proof.challenges[id]);
         }
@@ -179,6 +193,7 @@ pub fn verify_air(
         challenges: &proof.challenges,
         air_values: &proof.air_values,
         airgroup_values: &proof.airgroup_values,
+        proof_values: &proof.proof_values,
     };
     let mut temps = Vec::new();
     eval_instrs(ir, &src, &mut temps);
@@ -207,6 +222,7 @@ pub fn verify_air(
             challenges: &proof.challenges,
             air_values: &proof.air_values,
             airgroup_values: &proof.airgroup_values,
+        proof_values: &proof.proof_values,
             kernel,
         };
         let v = eval_constraint_cone(ir, &src, &mut temps, t).to_ext();
@@ -226,6 +242,7 @@ pub fn verify_air(
             challenges: &proof.challenges,
             air_values: &proof.air_values,
             airgroup_values: &proof.airgroup_values,
+        proof_values: &proof.proof_values,
         };
         eval_instrs(ir, &src, &mut temps);
         let mut batched = Ext::ZERO;
@@ -239,8 +256,15 @@ pub fn verify_air(
         }
 
         // result·q_out·s_den == p_out·s_den + s_num·q_out  (no inversions).
-        let (s_num, s_den) =
-            eval_scalar_fraction(ir, bus, publics, &proof.challenges, &proof.air_values, &proof.airgroup_values)?;
+        let (s_num, s_den) = eval_scalar_fraction(
+            ir,
+            bus,
+            publics,
+            &proof.challenges,
+            &proof.air_values,
+            &proof.airgroup_values,
+            &proof.proof_values,
+        )?;
         let expected = match bus.result_airgroupvalue {
             Some(idx) => proof.airgroup_values[idx as usize],
             None => Ext::ZERO,
@@ -319,8 +343,8 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
-        verify_air(&ir, &proof, &publics, None, None).expect("verify");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
+        verify_air(&ir, &proof, &publics, None, None, None).expect("verify");
     }
 
     /// Full prove→verify with the univariate skip enabled (`l = 1..3`), which
@@ -333,8 +357,8 @@ mod tests {
             let params = MlParams { univariate_skip_bits: l, ..test_params() };
             let ir = fib_ir(n_bits, params);
             let (witness, consts, publics) = fib_trace(n_bits);
-            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
-            verify_air(&ir, &proof, &publics, None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
+            verify_air(&ir, &proof, &publics, None, None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
         }
     }
 
@@ -347,8 +371,8 @@ mod tests {
             let ir = fib_ir(n_bits, params);
             let (mut witness, consts, publics) = fib_trace(n_bits);
             witness[0][0][7] += Goldilocks::ONE;
-            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove runs");
-            assert!(verify_air(&ir, &proof, &publics, None, None).is_err(), "invalid trace must not verify (l={l})");
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove runs");
+            assert!(verify_air(&ir, &proof, &publics, None, None, None).is_err(), "invalid trace must not verify (l={l})");
         }
     }
 
@@ -358,8 +382,8 @@ mod tests {
         let ir = fib_ir(n_bits, test_params());
         let (mut witness, consts, publics) = fib_trace(n_bits);
         witness[0][0][7] += Goldilocks::ONE;
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove runs");
-        assert!(verify_air(&ir, &proof, &publics, None, None).is_err(), "invalid trace must not verify");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove runs");
+        assert!(verify_air(&ir, &proof, &publics, None, None, None).is_err(), "invalid trace must not verify");
     }
 
     /// A prebuilt fixed-column commitment, saved and reloaded as a proving-key
@@ -388,13 +412,13 @@ mod tests {
 
         // A proof reusing the artifact must be byte-identical to one that builds
         // the commitment inline (same transcript, same challenges).
-        let inline = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove inline");
+        let inline = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove inline");
         let reused =
-            prove_air(&ir, &witness, &consts, Some(&loaded), &[], &publics, &[], &[], &[]).expect("prove reused");
+            prove_air(&ir, &witness, &consts, Some(&loaded), &[], &publics, &[], &[], &[], &[]).expect("prove reused");
         assert_eq!(reused.const_root, inline.const_root, "const roots differ");
         let enc = |p: &crate::MlProof| bincode::serde::encode_to_vec(p, bincode::config::standard()).expect("encode");
         assert_eq!(enc(&reused), enc(&inline), "reused proof differs from inline proof");
-        verify_air(&ir, &reused, &publics, None, None).expect("reused proof must verify");
+        verify_air(&ir, &reused, &publics, None, None, None).expect("reused proof must verify");
     }
 
     #[test]
@@ -402,12 +426,12 @@ mod tests {
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
 
         // Different publics break both the transcript binding and the
         // first-row constraints.
         let bad = vec![Goldilocks::TWO, Goldilocks::TWO];
-        assert!(verify_air(&ir, &proof, &bad, None, None).is_err());
+        assert!(verify_air(&ir, &proof, &bad, None, None, None).is_err());
     }
 
     #[test]
@@ -417,24 +441,24 @@ mod tests {
         let (witness, consts, publics) = fib_trace(n_bits);
 
         // Tamper with a claimed opening.
-        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
         proof.claims[0][0] += Ext::ONE;
-        assert!(verify_air(&ir, &proof, &publics, None, None).is_err());
+        assert!(verify_air(&ir, &proof, &publics, None, None, None).is_err());
 
         // Tamper with a zerocheck round polynomial.
-        let mut proof2 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof2 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
         proof2.zerocheck_round_polys[0][0] += Ext::ONE;
-        assert!(verify_air(&ir, &proof2, &publics, None, None).is_err());
+        assert!(verify_air(&ir, &proof2, &publics, None, None, None).is_err());
 
         // Tamper with the final polynomial.
-        let mut proof3 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof3 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
         proof3.opening.final_poly[0] += Ext::ONE;
-        assert!(verify_air(&ir, &proof3, &publics, None, None).is_err());
+        assert!(verify_air(&ir, &proof3, &publics, None, None, None).is_err());
 
         // Tamper with an opening-reduction round polynomial.
-        let mut proof4 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let mut proof4 = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
         proof4.reduction_round_polys[1][0] += Ext::ONE;
-        assert!(verify_air(&ir, &proof4, &publics, None, None).is_err());
+        assert!(verify_air(&ir, &proof4, &publics, None, None, None).is_err());
     }
 
     // --- LogUp-GKR bus tests on the hand-built lookup AIR ---
@@ -460,8 +484,8 @@ mod tests {
         let (witness, consts) = lookup_trace(n_bits);
         let gamma = random_gamma();
 
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
-        verify_air(&ir, &proof, &[], None, None).expect("verify");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+        verify_air(&ir, &proof, &[], None, None, None).expect("verify");
         assert_eq!(proof.airgroup_values[0], Ext::ZERO, "balanced lookup must have zero bus result");
     }
 
@@ -475,8 +499,8 @@ mod tests {
             let ir = lookup_ir(n_bits, params, false);
             let (witness, consts) = lookup_trace(n_bits);
             let gamma = random_gamma();
-            let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
-            verify_air(&ir, &proof, &[], None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
+            let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+            verify_air(&ir, &proof, &[], None, None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
         }
     }
 
@@ -490,13 +514,19 @@ mod tests {
         let (witness, consts) = lookup_trace(n_bits);
         let gamma = random_gamma();
         let publics = vec![Goldilocks::from_u64(5), Goldilocks::from_u64(9)];
+        let pv = Ext::from_base(Goldilocks::from_u64(7));
 
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[gamma], &[], &[Ext::ZERO]).expect("prove");
-        verify_air(&ir, &proof, &publics, None, None).expect("verify");
+        let proof =
+            prove_air(&ir, &witness, &consts, None, &[], &publics, &[gamma], &[], &[Ext::ZERO], &[pv]).expect("prove");
+        verify_air(&ir, &proof, &publics, None, None, Some(&[pv])).expect("verify");
 
-        // result = 0 (balanced rows) + pub0/(γ + pub1).
-        let expected = Ext::from_base(publics[0]) * (gamma + publics[1]).inverse();
+        // result = 0 (balanced rows) + pub0/(γ + pub1 + pv).
+        let expected = Ext::from_base(publics[0]) * (gamma + publics[1] + pv).inverse();
         assert_eq!(proof.airgroup_values[0], expected);
+
+        // A different proof value must be rejected by the expected check.
+        let other = Ext::from_base(Goldilocks::from_u64(8));
+        assert!(verify_air(&ir, &proof, &publics, None, None, Some(&[other])).is_err());
     }
 
     /// A corrupted multiplicity still yields a VALID per-instance proof — the
@@ -510,8 +540,8 @@ mod tests {
         witness[0][2][3] += Goldilocks::ONE; // mul[3] += 1
         let gamma = random_gamma();
 
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
-        verify_air(&ir, &proof, &[], None, None).expect("per-instance proof stays valid");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+        verify_air(&ir, &proof, &[], None, None, None).expect("per-instance proof stays valid");
         assert_ne!(proof.airgroup_values[0], Ext::ZERO, "imbalance must show in the bus result");
     }
 
@@ -525,9 +555,9 @@ mod tests {
         witness[0][2][3] += Goldilocks::ONE;
         let gamma = random_gamma();
 
-        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
         proof.airgroup_values[0] = Ext::ZERO;
-        assert!(verify_air(&ir, &proof, &[], None, None).is_err(), "faked balance must be rejected");
+        assert!(verify_air(&ir, &proof, &[], None, None, None).is_err(), "faked balance must be rejected");
     }
 
     /// Tampering with bus messages must be rejected.
@@ -537,24 +567,24 @@ mod tests {
         let ir = lookup_ir(n_bits, test_params(), false);
         let (witness, consts) = lookup_trace(n_bits);
         let gamma = random_gamma();
-        let prove = || prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO]).expect("prove");
+        let prove = || prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
 
         let mut p1 = prove();
         p1.bus.as_mut().unwrap().fractional.p_out += Ext::ONE;
-        assert!(verify_air(&ir, &p1, &[], None, None).is_err(), "tampered p_out");
+        assert!(verify_air(&ir, &p1, &[], None, None, None).is_err(), "tampered p_out");
 
         let mut p2 = prove();
         p2.bus.as_mut().unwrap().fractional.layer_claims[2][0] += Ext::ONE;
-        assert!(verify_air(&ir, &p2, &[], None, None).is_err(), "tampered split value");
+        assert!(verify_air(&ir, &p2, &[], None, None, None).is_err(), "tampered split value");
 
         let mut p3 = prove();
         p3.bus.as_mut().unwrap().reduction_round_polys[0][0] += Ext::ONE;
-        assert!(verify_air(&ir, &p3, &[], None, None).is_err(), "tampered reduction round");
+        assert!(verify_air(&ir, &p3, &[], None, None, None).is_err(), "tampered reduction round");
 
         let mut p4 = prove();
         let last = p4.bus.as_mut().unwrap().fractional.layer_round_polys.last_mut().unwrap();
         last[0][0] += Ext::ONE;
-        assert!(verify_air(&ir, &p4, &[], None, None).is_err(), "tampered walk round");
+        assert!(verify_air(&ir, &p4, &[], None, None, None).is_err(), "tampered walk round");
     }
 
     #[test]
@@ -562,13 +592,13 @@ mod tests {
         let n_bits = 4;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
-        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[]).expect("prove");
+        let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove");
 
         let dir = std::env::temp_dir().join("ml_proof_test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fib.mlproof.bin");
         proof.save(&path).expect("save");
         let loaded = MlProof::load(&path).expect("load");
-        verify_air(&ir, &loaded, &publics, None, None).expect("verify loaded proof");
+        verify_air(&ir, &loaded, &publics, None, None, None).expect("verify loaded proof");
     }
 }

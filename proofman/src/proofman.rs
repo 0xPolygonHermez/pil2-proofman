@@ -4768,6 +4768,9 @@ where
                 let air_instance = self.pctx.air_instances[instance_id].read().unwrap();
                 ext_values_by_stage(&air_instance.airvalues, &ir.airvalue_stages)?
             };
+            // Proof values are proof-level prover messages, shared by every
+            // instance (stage-1 values already entered the global challenge).
+            let proof_values = ext_values_by_stage(&self.pctx.get_proof_values(), &ir.proofvalue_stages)?;
 
             // Custom (fixed) commitments, e.g. ROMs: columns come from the
             // buffer registered via --custom-commits.
@@ -4794,6 +4797,7 @@ where
                 &air_challenges,
                 &air_values,
                 &airgroup_values,
+                &proof_values,
             )
             .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
 
@@ -4809,6 +4813,7 @@ where
                 &air_challenges,
                 &air_values,
                 &airgroup_values,
+                &proof_values,
             )
             .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
             proof.global_instance_id = instance_id as u32;
@@ -4823,7 +4828,7 @@ where
                     air_instance_id,
                     instance_id
                 );
-                if let Err(e) = verify_air(&ir, &proof, &publics, None, Some(&air_challenges)) {
+                if let Err(e) = verify_air(&ir, &proof, &publics, None, Some(&air_challenges), Some(&proof_values)) {
                     tracing::info!(
                         "··· {}",
                         format!("\u{2717} Proof of {}: Instance #{air_instance_id} was not verified", ir.name)

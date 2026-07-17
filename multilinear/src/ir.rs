@@ -40,6 +40,9 @@ pub enum SrcKind {
     AirValue,
     /// Airgroup value (per-instance scalar entering global constraints); global index.
     AirGroupValue,
+    /// Proof value (proof-level scalar, prover message shared by every
+    /// instance; stage-1 values enter the global challenge); global index.
+    ProofValue,
     /// Constant from the `numbers` pool.
     Number,
     /// Result of a previous instruction.
@@ -152,6 +155,8 @@ pub struct AirIr {
     pub airvalue_stages: Vec<u8>,
     /// Stage of each airgroup value, in global order.
     pub airgroupvalue_stages: Vec<u8>,
+    /// Stage of each proof value, in global order.
+    pub proofvalue_stages: Vec<u8>,
     /// Pool of literal constants.
     pub numbers: Vec<u64>,
     pub instrs: Vec<Instr>,
@@ -190,7 +195,7 @@ impl AirIr {
     /// Format tag prefixed to `.mlinfo.bin`. Bump whenever `AirIr`'s bincode
     /// layout changes so stale proving-key artifacts fail with a clear
     /// message instead of a decode error.
-    pub const MLINFO_MAGIC: &'static [u8; 8] = b"MLINFO02";
+    pub const MLINFO_MAGIC: &'static [u8; 8] = b"MLINFO03";
 
     pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
         let mut bytes = Self::MLINFO_MAGIC.to_vec();
@@ -262,6 +267,10 @@ impl IrBuilder {
 
     pub fn airgroup_value(&self, idx: u32, dim: u8) -> Operand {
         Operand { kind: SrcKind::AirGroupValue, idx, row_offset: 0, dim }
+    }
+
+    pub fn proof_value(&self, idx: u32, dim: u8) -> Operand {
+        Operand { kind: SrcKind::ProofValue, idx, row_offset: 0, dim }
     }
 
     pub fn op(&mut self, op: Op, a: Operand, b: Operand) -> Operand {

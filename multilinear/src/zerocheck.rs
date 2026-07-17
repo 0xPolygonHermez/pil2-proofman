@@ -164,6 +164,7 @@ pub struct ZerocheckOracle<'a> {
     challenges: Vec<Ext>,
     air_values: Vec<Ext>,
     airgroup_values: Vec<Ext>,
+    proof_values: Vec<Ext>,
     /// Weighted root operands `(E_t, w_t)`; zero weights are dropped.
     roots: Vec<(Operand, Ext)>,
     /// Degree bound of the batched expression (= round-polynomial degree of
@@ -208,6 +209,7 @@ struct TablePoint<'o> {
     challenges: &'o [Ext],
     air_values: &'o [Ext],
     airgroup_values: &'o [Ext],
+    proof_values: &'o [Ext],
 }
 
 impl LeafSource for TablePoint<'_> {
@@ -231,6 +233,9 @@ impl LeafSource for TablePoint<'_> {
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
     }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
+    }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         let o = self.ir.offset_index(row_offset).expect("unknown offset");
         self.vals[self.custom_index[commit as usize][col as usize][o].expect("unreferenced custom leaf")]
@@ -250,6 +255,7 @@ impl<'a> ZerocheckOracle<'a> {
         challenges: &[Ext],
         air_values: &[Ext],
         airgroup_values: &[Ext],
+        proof_values: &[Ext],
         r: &[Ext],
         alpha: Ext,
         skip_bits: usize,
@@ -270,6 +276,7 @@ impl<'a> ZerocheckOracle<'a> {
             challenges,
             air_values,
             airgroup_values,
+            proof_values,
             r,
             roots,
             ir.max_constraint_degree as usize,
@@ -289,6 +296,7 @@ impl<'a> ZerocheckOracle<'a> {
         challenges: &[Ext],
         air_values: &[Ext],
         airgroup_values: &[Ext],
+        proof_values: &[Ext],
         r: &[Ext],
         roots: Vec<(Operand, Ext)>,
         degree: usize,
@@ -354,6 +362,7 @@ impl<'a> ZerocheckOracle<'a> {
             challenges: challenges.to_vec(),
             air_values: air_values.to_vec(),
             airgroup_values: airgroup_values.to_vec(),
+            proof_values: proof_values.to_vec(),
             roots,
             degree,
             rounds_left: ir.n_bits as usize,
@@ -481,6 +490,7 @@ impl<'a> ZerocheckOracle<'a> {
             challenges: &self.challenges,
             air_values: &self.air_values,
             airgroup_values: &self.airgroup_values,
+            proof_values: &self.proof_values,
         }
     }
 }
@@ -553,6 +563,7 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
                     challenges: &self.challenges,
                     air_values: &self.air_values,
                     airgroup_values: &self.airgroup_values,
+                    proof_values: &self.proof_values,
                 };
                 eval_instrs(self.ir, &src, &mut temps);
                 let mut c = Val::zero();
@@ -605,6 +616,7 @@ pub struct ClaimsAtPoint<'a> {
     pub challenges: &'a [Ext],
     pub air_values: &'a [Ext],
     pub airgroup_values: &'a [Ext],
+    pub proof_values: &'a [Ext],
 }
 
 impl LeafSource for ClaimsAtPoint<'_> {
@@ -626,6 +638,9 @@ impl LeafSource for ClaimsAtPoint<'_> {
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
     }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
+    }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         Val::E(self.claims[global_custom_col(self.ir, commit, col)][kernel_index_of_offset(self.ir, row_offset)])
     }
@@ -641,6 +656,7 @@ pub struct ClaimsAtCorner<'a> {
     pub challenges: &'a [Ext],
     pub air_values: &'a [Ext],
     pub airgroup_values: &'a [Ext],
+    pub proof_values: &'a [Ext],
     pub kernel: usize,
 }
 
@@ -665,6 +681,9 @@ impl LeafSource for ClaimsAtCorner<'_> {
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
     }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
+    }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         assert_eq!(row_offset, 0, "boundary constraints must not reference shifted columns");
         Val::E(self.claims[global_custom_col(self.ir, commit, col)][self.kernel])
@@ -682,6 +701,7 @@ pub struct ClaimsAtBusPoint<'a> {
     pub challenges: &'a [Ext],
     pub air_values: &'a [Ext],
     pub airgroup_values: &'a [Ext],
+    pub proof_values: &'a [Ext],
 }
 
 impl LeafSource for ClaimsAtBusPoint<'_> {
@@ -702,6 +722,9 @@ impl LeafSource for ClaimsAtBusPoint<'_> {
     }
     fn airgroup_value(&self, idx: u32) -> Val {
         Val::E(self.airgroup_values[idx as usize])
+    }
+    fn proof_value(&self, idx: u32) -> Val {
+        Val::E(self.proof_values[idx as usize])
     }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
         Val::E(
@@ -740,7 +763,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha, 0);
+        let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[], &r, alpha, 0);
 
         // Gruen inter-round check: (1−r_k)·g'(0) + r_k·g'(1) = prev.
         let mut claim = Ext::ZERO;
@@ -783,7 +806,7 @@ mod tests {
 
         let r: Vec<Ext> = (0..n_bits).map(|_| random_ext()).collect();
         let alpha = random_ext();
-        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha, 0);
+        let oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[], &r, alpha, 0);
         let evals = oracle.round_evals();
         // The round-0 weighted combination equals Σ_X eq(r,X)·C(X) = C̃(r), which
         // is nonzero w.h.p. when the trace violates a constraint.
@@ -808,7 +831,7 @@ mod tests {
 
             let r: Vec<Ext> = (0..m).map(|_| random_ext()).collect();
             let alpha = random_ext();
-            let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &r, alpha, l);
+            let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[], &r, alpha, l);
 
             // Skip round + check.
             let v = oracle.skip_round_evals();
