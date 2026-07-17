@@ -1058,6 +1058,12 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
     if (air_instance_info->stored_tree) {
+        // The stream was reserved by selectStream (status=1); returning without
+        // releasing it would leak the slot for the process lifetime (selectStream
+        // never considers status==1 eligible), eventually starving the pool.
+        d_buffers->streamsData[streamId].mutex_stream_selection.lock();
+        d_buffers->streamsData[streamId].reset(false);
+        d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
         return;
     }
 
