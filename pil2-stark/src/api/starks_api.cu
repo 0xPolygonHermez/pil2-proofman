@@ -481,6 +481,8 @@ void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
+        cudaSetDevice(d_buffers->streamsData[i].gpuId);
+        CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         d_buffers->streamsData[i].instanceId = -1;
         d_buffers->streamsData[i].airgroupId = (uint64_t)-1;
         d_buffers->streamsData[i].airId = (uint64_t)-1;
@@ -1837,6 +1839,8 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
         }
         if (!firstGpuIdle) std::this_thread::sleep_for(std::chrono::microseconds(300));
     }
+    CHECKCUDAERR(cudaSetDevice(firstGpuId));
+    CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
 
