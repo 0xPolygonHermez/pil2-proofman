@@ -1664,6 +1664,13 @@ where
     }
 
     pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
+        // These paths write the same instance-shared proving scratch (aux_trace /
+        // const pols / recursive pools) as `_generate_proof`, but historically
+        // took only `recurser_fold_lock`, which is disjoint from `computing` —
+        // no mutual exclusion with a live proof computation. Serialize here;
+        // in correct operation the lock is always free (phase ordering), so the
+        // cost is zero and any wait is a caught overlap (warned by acquire_computing).
+        let _computing = self.acquire_computing("register_recurser_setup");
         {
             let cache = self.recurser_setups.read().unwrap();
             if cache.contains_key(recurser_id) {
@@ -1785,6 +1792,13 @@ where
         free_inputs_b: &[u64],
         root_c_recurser_agg: &[u64; 4],
     ) -> ProofmanResult<VadcopFinalProof> {
+        // These paths write the same instance-shared proving scratch (aux_trace /
+        // const pols / recursive pools) as `_generate_proof`, but historically
+        // took only `recurser_fold_lock`, which is disjoint from `computing` —
+        // no mutual exclusion with a live proof computation. Serialize here;
+        // in correct operation the lock is always free (phase ordering), so the
+        // cost is zero and any wait is a caught overlap (warned by acquire_computing).
+        let _computing = self.acquire_computing("prove_recurser_aggregator");
         if proof_a.compressed || proof_b.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "prove_recurser_aggregator: compressed inputs are not supported".to_string(),
@@ -1888,6 +1902,13 @@ where
         &self,
         vadcop_final_proof: &VadcopFinalProof,
     ) -> ProofmanResult<VadcopFinalProof> {
+        // These paths write the same instance-shared proving scratch (aux_trace /
+        // const pols / recursive pools) as `_generate_proof`, but historically
+        // took only `recurser_fold_lock`, which is disjoint from `computing` —
+        // no mutual exclusion with a live proof computation. Serialize here;
+        // in correct operation the lock is always free (phase ordering), so the
+        // cost is zero and any wait is a caught overlap (warned by acquire_computing).
+        let _computing = self.acquire_computing("generate_vadcop_final_proof_compressed");
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
