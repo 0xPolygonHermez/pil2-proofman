@@ -3258,6 +3258,20 @@ where
             if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
+
+            // Validate the received proof length before any indexing/split.
+            {
+                let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
+                let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
+                let expected = setup.proof_size as usize + publics_aggregation;
+                if proof.proof.len() != expected {
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Aggregated proof from workers {:?} airgroup {} has wrong length {} (expected {}) — malformed or truncated in transit",
+                        proof.worker_indexes, proof.airgroup_id, proof.proof.len(), expected
+                    ))));
+                    break;
+                }
+            }
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
