@@ -20,6 +20,15 @@ extern "C" {
         dim: u64,
     );
 
+    pub fn poseidon1_merkletree_gl(
+        tree: *mut ::std::os::raw::c_void,
+        input: *mut ::std::os::raw::c_void,
+        num_cols: u64,
+        num_rows: u64,
+        arity: u64,
+        dim: u64,
+    );
+
     pub fn ntt_coset_lde_gl(
         output: *mut ::std::os::raw::c_void,
         input: *mut ::std::os::raw::c_void,

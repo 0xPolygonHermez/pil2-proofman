@@ -95,7 +95,12 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                     proofman_multilinear::MlParams::default(),
                 ) {
                     Ok(mut ir) => {
-                        ir.params = crate::commands::setup::ml_params(&stark_struct, n_bits, ir.total_cols());
+                        ir.params = crate::commands::setup::ml_params(
+                            &stark_struct,
+                            n_bits,
+                            ir.total_cols(),
+                            proofman_multilinear::MlHashFamily::Poseidon2,
+                        );
                         let ml = ml_air_stats(&ir);
                         summary_lines.push(format!("{} | {} | {}", airgroup_name, air_name, ml.summary));
                         stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));

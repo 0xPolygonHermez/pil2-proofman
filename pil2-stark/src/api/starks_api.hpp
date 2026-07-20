@@ -227,6 +227,10 @@ extern "C" {
     // using the AVX/AVX512/threaded backend. Used by the multilinear prover.
     void poseidon2_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim);
 
+    // Poseidon1 counterpart of poseidon2_merkletree_gl, for multilinear proofs
+    // configured with the Poseidon1 hash family.
+    void poseidon1_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim);
+
     // Coset low-degree extension for the multilinear prover.
     void ntt_coset_lde_gl(void *output, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t num_rows_ext);
 

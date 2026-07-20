@@ -11,7 +11,7 @@ use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
-    get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
+    get_instances_ready_c, free_device_buffers_c, use_packed_trace_c, get_n_constraints_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
@@ -4035,17 +4035,44 @@ where
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
-        let ss = &setup.stark_info.stark_struct;
-        tracing::debug!(
-            "Univariate Params[{}] n_bits={} blowup=2^{} hash={} queries={} fri_steps={} pow_bits={}",
-            pctx.global_info.airs[airgroup_id][air_id].name,
-            ss.n_bits,
-            ss.n_bits_ext - ss.n_bits,
-            ss.verification_hash_type,
-            ss.n_queries,
-            ss.steps.len(),
-            ss.pow_bits,
-        );
+        {
+            let ss = &setup.stark_info.stark_struct;
+            let si = &setup.stark_info;
+            let log_blowup = ss.n_bits_ext - ss.n_bits;
+            // FRI folding factors between consecutive domain sizes.
+            let factors: Vec<u64> = ss.steps.windows(2).map(|w| 1u64 << (w[0].n_bits - w[1].n_bits)).collect();
+            let early_stop = ss.steps.last().map(|s| s.n_bits).unwrap_or(0);
+            // FRI batch = every committed base column opened at the query points
+            // (all witness stages + fixed columns).
+            let batch: u64 = (1..=si.n_stages).filter_map(|s| si.map_sections_n.get(&format!("cm{s}"))).sum::<u64>()
+                + si.n_constants;
+            tracing::debug!(
+                "Parameters [{}]:\n\
+                 \x20   Proof System:            (Univariate) DEEP-ALI\n\
+                 \x20   PCS:                     FRI\n\
+                 \x20   Hash:                    {}\n\
+                 \x20   Number of queries:       {}\n\
+                 \x20   Grinding query phase:    {} bits\n\
+                 \x20   Field:                   Goldilocks³\n\
+                 \x20   Trace length (H):        2^{}\n\
+                 \x20   Code Domain (H·ρ⁻¹):     2^{}\n\
+                 \x20   Rate (ρ):                2^-{log_blowup}\n\
+                 \x20   FRI rounds:              {}\n\
+                 \x20   FRI folding factors:     {:?}\n\
+                 \x20   FRI early stop degree:   2^{early_stop}\n\
+                 \x20   Batch size:              {batch}\n\
+                 \x20   Number of constraints:   {}",
+                pctx.global_info.airs[airgroup_id][air_id].name,
+                pctx.global_info.hash,
+                ss.n_queries,
+                ss.pow_bits,
+                ss.n_bits,
+                ss.n_bits_ext,
+                factors.len(),
+                factors,
+                get_n_constraints_c(p_setup),
+            );
+        }
 
         let mut steps_params = pctx.get_air_instance_params(instance_id, true);
 

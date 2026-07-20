@@ -1194,6 +1194,16 @@ void poseidon2_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_
         Poseidon2Mode::Auto, 0, dim);
 }
 
+void poseidon1_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim)
+{
+    // Poseidon1 counterpart of poseidon2_merkletree_gl (width 16 == arity 4 * capacity 4).
+    PoseidonGoldilocks<16>::merkletree(
+        (Goldilocks::Element *)tree,
+        (Goldilocks::Element *)input,
+        num_cols, num_rows, arity,
+        PoseidonMode::Auto, 0, dim);
+}
+
 void ntt_coset_lde_gl(void *output, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t num_rows_ext)
 {
     if (num_rows == 0 || num_cols == 0) return;

@@ -63,15 +63,13 @@ impl MerkleTree {
         Self { arity, levels }
     }
 
-    /// Build the tree by offloading the (Poseidon2) hashing to the C++
-    /// AVX/AVX512/threaded kernel, then slicing its flat node buffer into the
-    /// same per-level digest layout `new` produces. Byte-compatible with
-    /// `new::<Poseidon2_16>` (guarded by `ffi_tree_matches_pure_rust`), so the
-    /// pure-Rust verifier validates the resulting roots and paths unchanged.
-    pub fn from_ffi(leaves: &[Vec<Goldilocks>], arity: u64) -> Self {
+    /// Build the tree by offloading the hashing to the C++ AVX/AVX512/threaded
+    /// kernel for the selected hash family, then slicing its flat node buffer
+    /// into the same per-level digest layout `new` produces.
+    pub fn from_ffi(leaves: &[Vec<Goldilocks>], arity: u64, hash: crate::pcs::MlHashFamily) -> Self {
         use fields::PrimeField64;
         assert!(!leaves.is_empty());
-        debug_assert_eq!(arity, 4, "C++ Poseidon2 GL merkletree uses sponge width 16 == arity 4");
+        debug_assert_eq!(arity, 4, "C++ GL merkletree uses sponge width 16 == arity 4");
         let num_rows = leaves.len() as u64;
         let width = leaves[0].len();
         assert!(leaves.iter().all(|l| l.len() == width), "leaves must have uniform width");
@@ -85,14 +83,11 @@ impl MerkleTree {
         // Full node buffer (all levels including per-level padding).
         let num_nodes = tree_num_nodes(num_rows, arity);
         let mut nodes = vec![0u64; (num_nodes * DIGEST_CELLS as u64) as usize];
-        proofman_starks_lib_c::poseidon2_merkletree_c(
-            nodes.as_mut_ptr(),
-            input.as_ptr(),
-            width as u64,
-            num_rows,
-            arity,
-            1,
-        );
+        let merkletree_c = match hash {
+            crate::pcs::MlHashFamily::Poseidon1 => proofman_starks_lib_c::poseidon1_merkletree_c,
+            crate::pcs::MlHashFamily::Poseidon2 => proofman_starks_lib_c::poseidon2_merkletree_c,
+        };
+        merkletree_c(nodes.as_mut_ptr(), input.as_ptr(), width as u64, num_rows, arity, 1);
 
         // Slice the flat buffer into per-level (unpadded) digests — the layout
         // `path`/`root` expect. Mirrors `fields::partial_merkle_tree`'s walk.

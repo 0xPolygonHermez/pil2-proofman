@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "d978df5f1da79206f81b1f42d267b79bb5312aaf38cde727021dbed2fa6c8933";
+pub const PILOUT_HASH: &str = "75419f0df94205c3b19e0b45b6f2a6077295e8db972303e88d47c3d715351491";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -80,29 +80,29 @@ values!(BuildProofValues<F> {
 });
  
 trace_row!(FibonacciSquareFixedRow<F> {
- L1: F, __L1__: F,
+ L1: F,
 });
-pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 1024, 0, 0>;
+pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 262144, 0, 0>;
 
 trace_row!(FibonacciSquareTraceRow<F> {
  a:F, b:F, test:F, test2:F, test3:F,
 });
 
-pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 1024, 0, 0>;
+pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 262144, 0, 0>;
 
 trace_row!(ModuleFixedRow<F> {
- SEGMENT_LN: F, __L1__: F,
+ SEGMENT_LN: F,
 });
-pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 64, 0, 1>;
+pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 32768, 0, 1>;
 
 trace_row!(ModuleTraceRow<F> {
  x:F, q:F, x_mod:F,
 });
 
-pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 64, 0, 1>;
+pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 32768, 0, 1>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 1], VALS: [F; 1], __L1__: F,
+ OPID: [F; 1], VALS: [F; 1],
 });
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
 
@@ -115,7 +115,7 @@ pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256,
 trace_row!(FibonacciSquareRomTraceRow<F> {
  line: F, flags: F,
 });
-pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 1024, 0, 0, 0>;
+pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 262144, 0, 0, 0>;
 
 
 values!(FibonacciSquareAirValues<F> {

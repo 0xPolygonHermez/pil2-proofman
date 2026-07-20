@@ -322,6 +322,16 @@ pub fn poseidon2_merkletree_c(tree: *mut u64, input: *const u64, num_cols: u64, 
     }
 }
 
+/// Poseidon1 counterpart of [`poseidon2_merkletree_c`].
+///
+/// # Safety
+/// `tree` and `input` must point to valid buffers of the sizes described above.
+pub fn poseidon1_merkletree_c(tree: *mut u64, input: *const u64, num_cols: u64, num_rows: u64, arity: u64, dim: u64) {
+    unsafe {
+        poseidon1_merkletree_gl(tree as *mut c_void, input as *mut c_void, num_cols, num_rows, arity, dim);
+    }
+}
+
 pub fn ntt_coset_lde_c(output: *mut u64, input: *const u64, num_cols: u64, num_rows: u64, num_rows_ext: u64) {
     unsafe {
         ntt_coset_lde_gl(output as *mut c_void, input as *mut c_void, num_cols, num_rows, num_rows_ext);

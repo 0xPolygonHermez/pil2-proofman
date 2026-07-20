@@ -27,14 +27,65 @@ use crate::transcript::MlTranscript;
 use fields::{Field, Goldilocks, Poseidon2_16};
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
-/// Hash used for Merkle trees.
-pub type MlHash = Poseidon2_16;
 pub const MERKLE_ARITY: u64 = 4;
 
-/// Build a Merkle tree over `leaves`.
+/// Hash family for the transcript, Merkle trees and grinding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MlHashFamily {
+    Poseidon1,
+    Poseidon2,
+}
+
+impl MlHashFamily {
+    /// The `fields` hash-family id string (for `new_transcript` / `hash_state`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            MlHashFamily::Poseidon1 => "Poseidon1",
+            MlHashFamily::Poseidon2 => "Poseidon2",
+        }
+    }
+
+    /// Parse from `pctx.global_info.hash`.
+    pub fn from_id(id: &str) -> Result<Self, MlError> {
+        match id {
+            "Poseidon1" => Ok(MlHashFamily::Poseidon1),
+            "Poseidon2" => Ok(MlHashFamily::Poseidon2),
+            other => Err(MlError::Unsupported(format!("hash family '{other}'"))),
+        }
+    }
+}
+
+/// Build a Merkle tree over `leaves` with the given hash family, offloading to
+/// the C++ AVX/threaded backend.
 #[inline]
-pub(crate) fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64) -> MerkleTree {
-    MerkleTree::from_ffi(leaves, arity)
+pub(crate) fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64, hash: MlHashFamily) -> MerkleTree {
+    MerkleTree::from_ffi(leaves, arity, hash)
+}
+
+/// Verify a Merkle path against `root` for the selected hash family.
+#[inline]
+fn verify_mt_leaf(
+    hash: MlHashFamily,
+    root: &[Goldilocks; 4],
+    path: &[Vec<Goldilocks>],
+    idx: u64,
+    leaf: &[Goldilocks],
+    arity: u64,
+) -> bool {
+    match hash {
+        MlHashFamily::Poseidon1 => fields::verify_mt::<Goldilocks, fields::Poseidon1_16, fields::Poseidon1_16>(
+            root,
+            &[],
+            path,
+            idx,
+            leaf,
+            arity,
+            0,
+        ),
+        MlHashFamily::Poseidon2 => {
+            fields::verify_mt::<Goldilocks, Poseidon2_16, Poseidon2_16>(root, &[], path, idx, leaf, arity, 0)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -52,12 +103,21 @@ pub struct MlParams {
     /// rounds into one univariate round over a size-`2^ℓ` subgroup.
     /// `0` disables the skip. Must be `≤ n_bits`.
     pub univariate_skip_bits: usize,
+    /// Hash family for the transcript, Merkle trees and grinding.
+    pub hash: MlHashFamily,
 }
 
 impl Default for MlParams {
     // Default parameters for testing-only
     fn default() -> Self {
-        Self { log_blowup: 2, n_queries: 50, log_final_poly_len: 4, grinding_bits: 0, univariate_skip_bits: 0 }
+        Self {
+            log_blowup: 2,
+            n_queries: 50,
+            log_final_poly_len: 4,
+            grinding_bits: 0,
+            univariate_skip_bits: 0,
+            hash: MlHashFamily::Poseidon2,
+        }
     }
 }
 
@@ -147,7 +207,7 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
 
     timer_start_debug!(ML_COMMIT_MERKLE);
     let leaves = pack_base_pairs(&codewords);
-    let tree = build_merkle(&leaves, MERKLE_ARITY);
+    let tree = build_merkle(&leaves, MERKLE_ARITY, params.hash);
     timer_stop_and_log_debug!(ML_COMMIT_MERKLE);
 
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
@@ -278,7 +338,7 @@ pub fn prove_opening(
             if t + 1 < num_folds {
                 // Before the last fold, commit the folded codeword as a Merkle tree and absorb its root.
                 let leaves = pack_ext_pairs(&codeword);
-                let tree = build_merkle(&leaves, MERKLE_ARITY);
+                let tree = build_merkle(&leaves, MERKLE_ARITY, params.hash);
                 transcript.absorb_root(&tree.root());
                 fold_trees.push((tree, leaves));
             } else {
@@ -423,7 +483,7 @@ pub fn verify_opening(
             if leaf.len() != 2 * n_cols {
                 return Err(MlError::Malformed(format!("query {k}: stage {m} leaf has wrong length")));
             }
-            if !fields::verify_mt::<Goldilocks, MlHash, MlHash>(&stage_roots[m], &[], path, p1, leaf, MERKLE_ARITY, 0) {
+            if !verify_mt_leaf(params.hash, &stage_roots[m], path, p1, leaf, MERKLE_ARITY) {
                 return Err(MlError::MerklePath(format!("query {k}, stage {m}, position {p1}")));
             }
             for c in 0..n_cols {
@@ -446,15 +506,7 @@ pub fn verify_opening(
             let mut leaf = Vec::with_capacity(6);
             leaf.extend_from_slice(&opening.pair[0].value);
             leaf.extend_from_slice(&opening.pair[1].value);
-            if !fields::verify_mt::<Goldilocks, MlHash, MlHash>(
-                &proof.fold_roots[i],
-                &[],
-                &opening.path,
-                q,
-                &leaf,
-                MERKLE_ARITY,
-                0,
-            ) {
+            if !verify_mt_leaf(params.hash, &proof.fold_roots[i], &opening.path, q, &leaf, MERKLE_ARITY) {
                 return Err(MlError::MerklePath(format!("query {k}, fold oracle {level}, position {q}")));
             }
 
@@ -563,7 +615,14 @@ mod tests {
     }
 
     fn test_params() -> MlParams {
-        MlParams { log_blowup: 2, n_queries: 8, log_final_poly_len: 2, grinding_bits: 0, univariate_skip_bits: 0 }
+        MlParams {
+            log_blowup: 2,
+            n_queries: 8,
+            log_final_poly_len: 2,
+            grinding_bits: 0,
+            univariate_skip_bits: 0,
+            hash: MlHashFamily::Poseidon2,
+        }
     }
 
     /// Full commit → open → verify roundtrip: two matrices (stages), several
@@ -582,7 +641,7 @@ mod tests {
         let all_cols: Vec<&[Goldilocks]> = cols_a.iter().chain(cols_b.iter()).map(|c| c.as_slice()).collect();
 
         // --- prover transcript ---
-        let mut tp = MlTranscript::new();
+        let mut tp = MlTranscript::new(MlHashFamily::Poseidon2);
         tp.absorb_root(&mat_a.root());
         tp.absorb_root(&mat_b.root());
 
@@ -609,7 +668,7 @@ mod tests {
         let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &matrices);
 
         // --- verifier transcript ---
-        let mut tv = MlTranscript::new();
+        let mut tv = MlTranscript::new(MlHashFamily::Poseidon2);
         tv.absorb_root(&mat_a.root());
         tv.absorb_root(&mat_b.root());
         let lambda_v = tv.challenges(n);
@@ -646,7 +705,7 @@ mod tests {
         let col = random_col(len);
         let mat = commit_matrix(&[&col], &params);
 
-        let mut tp = MlTranscript::new();
+        let mut tp = MlTranscript::new(MlHashFamily::Poseidon2);
         tp.absorb_root(&mat.root());
         let lambda = tp.challenges(n);
         let kernel = eq_evals(&lambda);
@@ -658,7 +717,7 @@ mod tests {
         let phi_codeword = combine_codewords(&[&mat], &coeffs);
         let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &[&mat]);
 
-        let mut tv = MlTranscript::new();
+        let mut tv = MlTranscript::new(MlHashFamily::Poseidon2);
         tv.absorb_root(&mat.root());
         let lambda_v = tv.challenges(n);
         tv.absorb_ext(&sigma);
@@ -686,10 +745,10 @@ mod tests {
         let half = n0 / 2;
         let leaves: Vec<Vec<Goldilocks>> =
             (0..half).map(|j| vec![mat.codewords[0][j], mat.codewords[0][j + half]]).collect();
-        mat.tree = MerkleTree::new::<MlHash>(&leaves, MERKLE_ARITY);
+        mat.tree = MerkleTree::new::<Poseidon2_16>(&leaves, MERKLE_ARITY);
         mat.leaves = leaves;
 
-        let mut tp = MlTranscript::new();
+        let mut tp = MlTranscript::new(MlHashFamily::Poseidon2);
         tp.absorb_root(&mat.root());
         let lambda = tp.challenges(n);
         let kernel = eq_evals(&lambda);
@@ -700,7 +759,7 @@ mod tests {
         let phi_codeword: Vec<Ext> = mat.codewords[0].iter().map(|&v| Ext::from_base(v)).collect();
         let proof = prove_opening(&params, &mut tp, phi_table, &lambda, phi_codeword, &[&mat]);
 
-        let mut tv = MlTranscript::new();
+        let mut tv = MlTranscript::new(MlHashFamily::Poseidon2);
         tv.absorb_root(&mat.root());
         let lambda_v = tv.challenges(n);
         tv.absorb_ext(&sigma);

@@ -94,6 +94,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     tracing::info!("Processing {} AIRs", work_items.len());
 
+    // Hash family for the multilinear artifacts, taken from the same setting as
+    // the univariate/recursion layer so the transcripts and Merkle trees agree.
+    let ml_hash = proofman_multilinear::MlHashFamily::from_id(&opts.hash)
+        .map_err(|e| anyhow::anyhow!("multilinear setup: {e}"))?;
+
     let pilout = Arc::new(pilout);
     let settings_map = Arc::new(settings_map);
     let build_dir = opts.build_dir.clone();
@@ -233,7 +238,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     proofman_multilinear::MlParams::default(),
                 ) {
                     Ok(mut air_ir) => {
-                        air_ir.params = ml_params(&stark_struct, n_bits, air_ir.total_cols());
+                        air_ir.params = ml_params(&stark_struct, n_bits, air_ir.total_cols(), ml_hash);
                         air_ir
                             .save(&mlinfo_path)
                             .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
@@ -404,6 +409,7 @@ pub(crate) fn ml_params(
     stark_struct: &StarkStruct,
     n_bits: usize,
     total_cols: usize,
+    hash: proofman_multilinear::MlHashFamily,
 ) -> proofman_multilinear::MlParams {
     // Rate: reuse the AIR's configured blowup (at least 1).
     let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
@@ -418,7 +424,7 @@ pub(crate) fn ml_params(
         rate: 1.0 / (1u64 << log_blowup) as f64,
         n_opening_points: 1,                   // single-point opening at `u`
         n_functions: total_cols.max(1) as u64, // columns batched by δ into Φ
-        folding_factors: vec![2; num_folds], // TODO
+        folding_factors: vec![2; num_folds],   // TODO
         max_grinding_bits: stark_struct.pow_bits as u64,
         use_max_grinding_bits: true,
         tree_arity: proofman_multilinear::MERKLE_ARITY,
@@ -432,6 +438,7 @@ pub(crate) fn ml_params(
         log_final_poly_len,
         grinding_bits: q.n_grinding_bits as usize,
         univariate_skip_bits,
+        hash,
     }
 }
 

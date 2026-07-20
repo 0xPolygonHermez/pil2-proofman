@@ -112,15 +112,42 @@ pub fn prove_air(
     let n_rows = 1usize << m;
     let params = &ir.params;
 
-    tracing::debug!(
-        "Multilinear Params[{}] n_bits={m} blowup=2^{} queries={} final_poly=2^{} pow_bits={} skip_bits={}",
-        ir.name,
-        params.log_blowup,
-        params.n_queries,
-        params.log_final_poly_len,
-        params.grinding_bits,
-        params.univariate_skip_bits,
-    );
+    {
+        // Basefold folds by 2 (factor 2^1) each round down to the in-clear
+        // final polynomial; the query phase batches every committed column.
+        let num_folds = params.num_folds(m.max(1));
+        let every_row = ir.constraints.iter().filter(|c| c.boundary == crate::ir::Boundary::EveryRow).count();
+        let bus_terms = ir.bus.as_ref().map(|b| b.terms.len() + b.scalar_terms.len()).unwrap_or(0);
+        tracing::debug!(
+            "Parameters [{}]:\n\
+             \x20   Proof System:            (Multilinear) SumCheck + LogUp-GKR\n\
+             \x20   PCS:                     Basefold\n\
+             \x20   Hash:                    {}\n\
+             \x20   Number of queries:       {}\n\
+             \x20   Grinding query phase:    {} bits\n\
+             \x20   Field:                   Goldilocks³\n\
+             \x20   Trace length (H):        2^{m}\n\
+             \x20   Code Domain (H·ρ⁻¹):     2^{}\n\
+             \x20   Rate (ρ):                2^-{}\n\
+             \x20   FRI rounds:              {num_folds}\n\
+             \x20   FRI folding factors:     {:?}\n\
+             \x20   FRI early stop degree:   2^{}\n\
+             \x20   Batch size:              {}\n\
+             \x20   Number of constraints:   {every_row}\n\
+             \x20   Number of bus arguments: {bus_terms}\n\
+             \x20   Univariate skip (bits):  {}",
+            ir.name,
+            params.hash.id(),
+            params.n_queries,
+            params.grinding_bits,
+            m + params.log_blowup,
+            params.log_blowup,
+            vec![2usize; num_folds],
+            params.log_final_poly_len,
+            ir.total_cols(),
+            params.univariate_skip_bits,
+        );
+    }
 
     // --- LogUp-GKR bus: build the fraction tree (transcript-free) and fix the
     // result airgroup value before anything absorbs or evaluates it.
@@ -151,7 +178,7 @@ pub fn prove_air(
     timer_stop_and_log_debug!(ML_PROVE_BUS_BUILD);
 
     // Start the transcript with the statement: AIR identity and public inputs.
-    let mut transcript = MlTranscript::new();
+    let mut transcript = MlTranscript::new(params.hash);
     seed_transcript(&mut transcript, airgroup_id, air_id, n_bits, publics);
 
     // --- Step 1: Trace Commitments ---

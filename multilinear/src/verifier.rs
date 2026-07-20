@@ -98,7 +98,7 @@ pub fn verify_air(
     }
 
     // --- Transcript replay: statement, commitments.
-    let mut transcript = MlTranscript::new();
+    let mut transcript = MlTranscript::new(params.hash);
     seed_transcript(&mut transcript, ir.airgroup_id, ir.air_id, ir.n_bits, publics);
     transcript.absorb_root(&proof.const_root);
     for root in &proof.custom_roots {
@@ -335,7 +335,14 @@ mod tests {
     use fields::Field;
 
     fn test_params() -> MlParams {
-        MlParams { log_blowup: 2, n_queries: 12, log_final_poly_len: 2, grinding_bits: 0, univariate_skip_bits: 0 }
+        MlParams {
+            log_blowup: 2,
+            n_queries: 12,
+            log_final_poly_len: 2,
+            grinding_bits: 0,
+            univariate_skip_bits: 0,
+            hash: crate::MlHashFamily::Poseidon2,
+        }
     }
 
     #[test]

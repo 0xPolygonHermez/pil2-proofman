@@ -2,21 +2,19 @@
 //! `fields::Transcript` with extension-field challenges.
 
 use crate::hypercube::Ext;
-use fields::{poseidon2_hash, Field, Goldilocks, PrimeField64, Poseidon2_16, Transcript};
+use crate::pcs::MlHashFamily;
+use fields::{hash_state, new_transcript, Field, Goldilocks, PrimeField64, TranscriptDyn};
 
 pub struct MlTranscript {
-    inner: Transcript<Goldilocks, Poseidon2_16>,
-}
-
-impl Default for MlTranscript {
-    fn default() -> Self {
-        Self::new()
-    }
+    inner: TranscriptDyn<Goldilocks>,
+    hash: MlHashFamily,
 }
 
 impl MlTranscript {
-    pub fn new() -> Self {
-        Self { inner: Transcript::new() }
+    /// A transcript over the given hash family (Poseidon1/Poseidon2), matching
+    /// the AIR's `MlParams::hash` so prover and verifier agree.
+    pub fn new(hash: MlHashFamily) -> Self {
+        Self { inner: new_transcript::<Goldilocks>(hash.id()), hash }
     }
 
     pub fn absorb(&mut self, vals: &[Goldilocks]) {
@@ -54,7 +52,7 @@ impl MlTranscript {
 
     /// Proof-of-work grinding. The prover searches for a `nonce`
     /// such that `H(seed ‖ nonce)` has at least `bits` trailing zero bits,
-    /// where `seed` is drawn from the current transcript state. 
+    /// where `seed` is drawn from the current transcript state.
     /// The nonce is then absorbed, so the subsequent query indices depend on it.
     /// Returns the winning nonce.
     pub fn grind(&mut self, bits: usize) -> u64 {
@@ -62,7 +60,7 @@ impl MlTranscript {
             return 0;
         }
         let seed = self.pow_seed();
-        let nonce = find_pow_nonce(&seed, bits);
+        let nonce = find_pow_nonce(&seed, bits, self.hash);
         self.absorb(&[Goldilocks::from_u64(nonce)]);
         nonce
     }
@@ -76,7 +74,7 @@ impl MlTranscript {
             return true;
         }
         let seed = self.pow_seed();
-        let ok = pow_ok(&seed, nonce, bits);
+        let ok = pow_ok(&seed, nonce, bits, self.hash);
         self.absorb(&[Goldilocks::from_u64(nonce)]);
         ok
     }
@@ -88,25 +86,26 @@ impl MlTranscript {
     }
 }
 
-/// `H(seed ‖ nonce)` has `≥ bits` trailing zero bits, `H = Poseidon2_16`.
-/// The input is the seed state (≤ 15 cells) with the nonce in the last cell.
-fn pow_ok(seed: &[Goldilocks], nonce: u64, bits: usize) -> bool {
+/// `H(seed ‖ nonce)` has `≥ bits` trailing zero bits, `H` the width-16
+/// permutation of the transcript's hash family. The input is the seed state
+/// (≤ 15 cells) with the nonce in the last cell.
+fn pow_ok(seed: &[Goldilocks], nonce: u64, bits: usize, hash: MlHashFamily) -> bool {
     let mut input = [Goldilocks::ZERO; 16];
     let n = seed.len().min(15);
     input[..n].copy_from_slice(&seed[..n]);
     input[15] = Goldilocks::from_u64(nonce);
-    let out = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&input);
-    (out[0].as_canonical_u64().trailing_zeros() as usize) >= bits
+    hash_state(hash.id(), &mut input);
+    (input[0].as_canonical_u64().trailing_zeros() as usize) >= bits
 }
 
 /// Search for the smallest `nonce` satisfying [`pow_ok`].
 #[cfg(feature = "parallel")]
-fn find_pow_nonce(seed: &[Goldilocks], bits: usize) -> u64 {
+fn find_pow_nonce(seed: &[Goldilocks], bits: usize, hash: MlHashFamily) -> u64 {
     use rayon::prelude::*;
     const BLOCK: u64 = 1 << 16;
     let mut start = 0u64;
     loop {
-        let hit = (start..start + BLOCK).into_par_iter().find_map_first(|n| pow_ok(seed, n, bits).then_some(n));
+        let hit = (start..start + BLOCK).into_par_iter().find_map_first(|n| pow_ok(seed, n, bits, hash).then_some(n));
         if let Some(n) = hit {
             return n;
         }
@@ -115,8 +114,8 @@ fn find_pow_nonce(seed: &[Goldilocks], bits: usize) -> u64 {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn find_pow_nonce(seed: &[Goldilocks], bits: usize) -> u64 {
-    (0u64..).find(|&n| pow_ok(seed, n, bits)).expect("grinding nonce exists")
+fn find_pow_nonce(seed: &[Goldilocks], bits: usize, hash: MlHashFamily) -> u64 {
+    (0u64..).find(|&n| pow_ok(seed, n, bits, hash)).expect("grinding nonce exists")
 }
 
 #[cfg(test)]
@@ -131,16 +130,16 @@ mod tests {
         // Same absorbed prefix on both sides.
         let seed = |t: &mut MlTranscript| t.absorb(&[Goldilocks::from_u64(42), Goldilocks::from_u64(7)]);
 
-        let mut tp = MlTranscript::new();
+        let mut tp = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         seed(&mut tp);
         let nonce = tp.grind(bits);
 
-        let mut tv = MlTranscript::new();
+        let mut tv = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         seed(&mut tv);
         assert!(tv.verify_grind(nonce, bits), "the winning nonce must verify");
 
         // A different nonce almost surely misses the 2^-8 target.
-        let mut tw = MlTranscript::new();
+        let mut tw = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         seed(&mut tw);
         assert!(!tw.verify_grind(nonce.wrapping_add(1), bits), "a wrong nonce must be rejected");
     }
@@ -150,12 +149,12 @@ mod tests {
     #[test]
     fn grind_keeps_transcripts_in_sync() {
         let bits = 6;
-        let mut tp = MlTranscript::new();
+        let mut tp = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         tp.absorb(&[Goldilocks::from_u64(99)]);
         let nonce = tp.grind(bits);
         let after_prover = tp.challenge();
 
-        let mut tv = MlTranscript::new();
+        let mut tv = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         tv.absorb(&[Goldilocks::from_u64(99)]);
         assert!(tv.verify_grind(nonce, bits));
         assert_eq!(after_prover, tv.challenge(), "post-grind transcripts diverged");
@@ -164,12 +163,12 @@ mod tests {
     /// `bits == 0` is a pure no-op: no nonce absorbed, transcript unchanged.
     #[test]
     fn grind_zero_bits_is_noop() {
-        let mut t0 = MlTranscript::new();
+        let mut t0 = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         t0.absorb(&[Goldilocks::from_u64(1)]);
         assert_eq!(t0.grind(0), 0);
         let c0 = t0.challenge();
 
-        let mut t1 = MlTranscript::new();
+        let mut t1 = MlTranscript::new(crate::MlHashFamily::Poseidon2);
         t1.absorb(&[Goldilocks::from_u64(1)]);
         assert_eq!(c0, t1.challenge(), "grind(0) must not touch the transcript");
     }

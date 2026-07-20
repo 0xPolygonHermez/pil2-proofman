@@ -771,10 +771,10 @@ mod tests {
             let (p, q) = random_inputs(k);
             let tree = FractionTree::new(p.clone(), q.clone()).expect("build");
 
-            let mut tp = MlTranscript::new();
+            let mut tp = MlTranscript::new(crate::MlHashFamily::Poseidon2);
             let (proof, prover_claims) = prove_fractional_sum(&tree, &mut tp);
 
-            let mut tv = MlTranscript::new();
+            let mut tv = MlTranscript::new(crate::MlHashFamily::Poseidon2);
             let verifier_claims = verify_fractional_sum(&proof, k, &mut tv).expect("verify");
             assert_eq!(prover_claims, verifier_claims, "k={k}");
 
@@ -791,10 +791,10 @@ mod tests {
         let k = 5;
         let (p, q) = random_inputs(k);
         let tree = FractionTree::new(p.clone(), q.clone()).expect("build");
-        let (proof, _) = prove_fractional_sum(&tree, &mut MlTranscript::new());
+        let (proof, _) = prove_fractional_sum(&tree, &mut MlTranscript::new(crate::MlHashFamily::Poseidon2));
 
         let rejected = |proof: &FractionalSumcheckProof| -> bool {
-            match verify_fractional_sum(proof, k, &mut MlTranscript::new()) {
+            match verify_fractional_sum(proof, k, &mut MlTranscript::new(crate::MlHashFamily::Poseidon2)) {
                 Err(_) => true,
                 Ok(claims) => claims.p != mle_eval_base(&p, &claims.point) || claims.q != mle_eval(&q, &claims.point),
             }
