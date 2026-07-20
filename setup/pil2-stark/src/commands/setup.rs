@@ -418,9 +418,9 @@ pub(crate) fn ml_params(
         rate: 1.0 / (1u64 << log_blowup) as f64,
         n_opening_points: 1,                   // single-point opening at `u`
         n_functions: total_cols.max(1) as u64, // columns batched by δ into Φ
-        folding_factors: vec![2; num_folds],   // TODO
-        max_grinding_bits: 0,                  // TODO
-        use_max_grinding_bits: false,
+        folding_factors: vec![2; num_folds], // TODO
+        max_grinding_bits: stark_struct.pow_bits as u64,
+        use_max_grinding_bits: true,
         tree_arity: proofman_multilinear::MERKLE_ARITY,
         target_security_bits: 128,
     };

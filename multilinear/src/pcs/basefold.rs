@@ -226,6 +226,8 @@ pub struct OpeningProof {
     pub fold_roots: Vec<[Goldilocks; 4]>,
     /// The remaining polynomial after `L` folds, in clear (`2^(n−L)` coefficients).
     pub final_poly: Vec<Ext>,
+    /// Proof-of-work nonce grinding the query indices (0 when `grinding_bits == 0`).
+    pub pow_nonce: u64,
     pub queries: Vec<OpeningQuery>,
 }
 
@@ -243,7 +245,6 @@ pub fn prove_opening(
     phi_codeword: Vec<Ext>,
     matrices: &[&CommittedMatrix],
 ) -> OpeningProof {
-    assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
     let n = phi_table.len().trailing_zeros() as usize;
     assert_eq!(point.len(), n);
     let n0_bits = params.n0_bits(n);
@@ -292,6 +293,11 @@ pub fn prove_opening(
 
     timer_stop_and_log_debug!(ML_OPEN_SUMCHECK_FOLD);
 
+    // Proof-of-work grinding, then the query phase (indices depend on the nonce).
+    timer_start_debug!(ML_OPEN_GRIND);
+    let pow_nonce = transcript.grind(params.grinding_bits);
+    timer_stop_and_log_debug!(ML_OPEN_GRIND, "ML_OPEN_GRIND bits={}", params.grinding_bits);
+
     // Query phase: indices are pair positions in [0, N_0/2).
     timer_start_debug!(ML_OPEN_QUERY);
     let indices = transcript.query_indices(params.n_queries as u64, (n0_bits - 1) as u64);
@@ -317,7 +323,13 @@ pub fn prove_opening(
 
     timer_stop_and_log_debug!(ML_OPEN_QUERY, "ML_OPEN_QUERY n={n} queries={}", params.n_queries);
 
-    OpeningProof { round_polys, fold_roots: fold_trees.iter().map(|(t, _)| t.root()).collect(), final_poly, queries }
+    OpeningProof {
+        round_polys,
+        fold_roots: fold_trees.iter().map(|(t, _)| t.root()).collect(),
+        final_poly,
+        pow_nonce,
+        queries,
+    }
 }
 
 /// Verify a batched single-point opening `f(u) = σ`.
@@ -341,7 +353,6 @@ pub fn verify_opening(
     column_coeffs: &[Ext],
     point: &[Ext],
 ) -> Result<Vec<Ext>, MlError> {
-    assert_eq!(params.grinding_bits, 0, "grinding not implemented in v1");
     let n0_bits = params.n0_bits(n_vars);
     let num_folds = params.num_folds(n_vars);
     let total_cols: usize = stage_n_cols.iter().sum();
@@ -383,6 +394,11 @@ pub fn verify_opening(
     let phi_final = mle_eval(&proof.final_poly, &rs[num_folds..]);
     if claim != phi_final {
         return Err(MlError::FinalCheck("sumcheck claim != f(λ)".into()));
+    }
+
+    // Proof-of-work check, mirroring the prover, before the query indices.
+    if !transcript.verify_grind(proof.pow_nonce, params.grinding_bits) {
+        return Err(MlError::FinalCheck("grinding proof-of-work check failed".into()));
     }
 
     // Query phase.

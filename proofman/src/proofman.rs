@@ -4646,19 +4646,6 @@ where
             })
             .collect::<ProofmanResult<_>>()?;
 
-        let stage1_roots: Vec<[Goldilocks; 4]> = instances
-            .iter()
-            .map(|&id| {
-                let r = self.roots_contributions[id].read();
-                [
-                    Goldilocks::new(r[0].as_canonical_u64()),
-                    Goldilocks::new(r[1].as_canonical_u64()),
-                    Goldilocks::new(r[2].as_canonical_u64()),
-                    Goldilocks::new(r[3].as_canonical_u64()),
-                ]
-            })
-            .collect();
-
         // Prebuilt fixed-column commitments from the proving key (`.mlconst.bin`),
         // shared across all instances of an AIR.
         let const_matrix_cache = ConstMatrixCache::default();
@@ -4699,17 +4686,6 @@ where
                 instance_id,
                 &ir_cache,
             )?;
-            {
-                let refs: Vec<&[Goldilocks]> = stage1_cols.iter().map(|c| c.as_slice()).collect();
-                let root = proofman_multilinear::commit_matrix(&refs, &ir.params).root();
-                if root != stage1_roots[idx] {
-                    return Err(ProofmanError::InvalidProof(format!(
-                        "instance {instance_id} ({}): witness recomputation is not deterministic — \
-                         stage-1 commitment differs between passes",
-                        ir.name
-                    )));
-                }
-            }
 
             let mut witness = vec![stage1_cols];
             if ir.n_stages() >= 2 {
