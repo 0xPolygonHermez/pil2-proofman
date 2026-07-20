@@ -265,6 +265,14 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
         my_gpu_ids[i] = assigned_gpus[i];
     }
 
+    // Scope sppark's GPU registry to this rank's devices before it probes all GPUs.
+    {
+        int ords[32];
+        uint32_t n = n_gpus < 32 ? n_gpus : 32;
+        for (uint32_t i = 0; i < n; i++) ords[i] = (int)my_gpu_ids[i];
+        sppark_set_visible_devices(ords, (int)n);
+    }
+
     // Force CUDA primary context creation only on this rank's assigned GPUs.
     // Why: never touch the default device (GPU 0) implicitly — non-owning ranks
     // would each create a ~300 MB primary context there and starve the rank that
@@ -1109,11 +1117,23 @@ void tile_const_pols_gpu(void *pStarkinfo, void *pConstPols, char *constFile, vo
 void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffer_,  char* verkey) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
-    if (d_commit_buffer_ != nullptr) {
-        DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+    DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+    if (d_commit_buffer != nullptr) {
         gpuId = d_commit_buffer->my_gpu_ids[0];
     }
-    
+
+    // Scope sppark's GPU registry to this rank's devices before ngpus() below
+    // builds it. Without this, a standalone SNARK-wrap process (no prior
+    // gen_device_buffers_gpu) would probe every GPU on the node.
+    {
+        int ords[32];
+        uint32_t n = (d_commit_buffer != nullptr) ? d_commit_buffer->n_gpus : 1;
+        if (n > 32) n = 32;
+        for (uint32_t i = 0; i < n; i++)
+            ords[i] = (int)((d_commit_buffer != nullptr) ? d_commit_buffer->my_gpu_ids[i] : gpuId);
+        sppark_set_visible_devices(ords, (int)n);
+    }
+
     // Force sppark's lazy GPU registry to initialize now, while we still control
     // the current CUDA device. The first call into any sppark entry point
     // (select_gpu, gpu_props, ngpus, all_gpus) constructs a function-local static
