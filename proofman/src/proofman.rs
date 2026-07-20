@@ -4359,6 +4359,12 @@ where
             let root = buf[off..off + HASH_SIZE].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
             tracing::info!("··· Instance {} [{}:{}]: root stage {}: [{}]", id, airgroup_id, air_id, label, root);
         }
+
+        // Nonce: last word of the proof buffer (both writeProof and proof2pointer emit
+        // it last, after the FRI final polynomial).
+        if let Some(nonce) = buf.last() {
+            tracing::info!("··· Instance {} [{}:{}]: nonce: {}", id, airgroup_id, air_id, nonce);
+        }
     }
 
     fn gen_proof(
