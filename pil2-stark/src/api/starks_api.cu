@@ -1722,14 +1722,14 @@ uint64_t get_num_gpus_gpu() {
 }
 
 void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
-    int deviceId;
-    CHECKCUDAERR(cudaGetDevice(&deviceId));
-    cudaSetDevice(deviceId);
-
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
-    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
-    return (void *)d_unifiedBuffer;
+    // Always the FIRST GPU's buffer (my_gpu_ids[0], not necessarily device 0 —
+    // NUMA can reorder). Pointer index only: no cudaSetDevice, so the caller's
+    // current device is untouched. The consumer binds the device itself via
+    // get_first_gpu_id().
+    const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
+    return (void *)d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[firstGpuId]];
 }
 
 uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
@@ -1786,6 +1786,14 @@ uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return 0;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     return d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
+}
+
+// Device id of the FIRST GPU (my_gpu_ids[0]) — the borrowed buffer's GPU. NOT
+// necessarily 0 (NUMA can reorder). Consumers bind this before using the buffer.
+uint32_t get_first_gpu_id_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return d_buffers->my_gpu_ids[0];
 }
 
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
