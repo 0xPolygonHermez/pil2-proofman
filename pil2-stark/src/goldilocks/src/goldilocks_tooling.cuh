@@ -275,6 +275,11 @@ struct AirInstanceInfo {
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
 
+// Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
+// buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against the smaller one.
+#define PINNED_EXPS_SLOTS 40000
+#define PINNED_EXPS_SLOTS_RECURSIVEF 20000
+
 struct StreamData{
 
     //const data
@@ -307,6 +312,11 @@ struct StreamData{
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;
 
+    // Setup identity for the const-reuse checks: airgroupId/airId/proofType alone can
+    // alias (all recurser setups share (0,0,"recursive2")). Survives reset() like the
+    // context fields; cleared wherever the cached constants are invalidated.
+    void *contextSetup;
+
     //callback inputs
     void *root;
     void *pSetupCtx;
@@ -327,7 +337,7 @@ struct StreamData{
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
-        uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
+        uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
@@ -345,6 +355,7 @@ struct StreamData{
 
         root = nullptr;
         pSetupCtx = nullptr;
+        contextSetup = nullptr;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
@@ -375,16 +386,27 @@ struct StreamData{
         CHECKCUDAERR(cudaFree(d_expsArgs));
     }
 
-    void reset(bool reset_status){
+    void reset(bool reset_status, int64_t resident_instance_id = -1){
         cudaSetDevice(gpuId);
         // end_event is created once in initialize() and destroyed in free();
         // cudaEventRecord overwrites it on each use, so there is no need to
         // destroy/recreate it on every per-instance reset.
-        status = reset_status ? 0 : 3;
-
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
+        // instanceId != -1 = witness still resident (commit-root harvest passes it).
+        // All fields must be final before the status store: lockless readers gate on it.
+        instanceId = resident_instance_id;
+        status = reset_status ? 0 : 3;
+    }
+
+    // Destroy this stream's cached graphs. Call when their baked aux-trace buffers no
+    // longer match their key (buffer borrower overwrote them, or a job reset). Both
+    // callers synchronize this stream/device first, so no graph is in flight.
+    void invalidateGraphCache(){
+    #ifdef USE_CUDA_GRAPH
+        if (graph_cache) graph_cache->clear();
+    #endif
     }
 
     void free(){
@@ -428,7 +450,7 @@ struct DeviceRecursiveFBuffers
 
 
     DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
-        uint64_t maxExps = 20000;
+        uint64_t maxExps = PINNED_EXPS_SLOTS_RECURSIVEF;
         cudaStreamCreate(&stream);
         cudaStreamCreate(&stream_const_tree);
         timer.init(stream);

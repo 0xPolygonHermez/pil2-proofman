@@ -10,9 +10,20 @@ use std::sync::Mutex;
 use crate::ContributionsInfo;
 use rayon::prelude::*;
 
-fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
-    let my_instances = pctx.dctx_get_process_instances();
+/// Debug dump of per-instance root contributions plus the shared publics and proof
+/// values. Gated on PROOFMAN_DEBUG_CHALLENGES so it is a no-op unless explicitly
+/// enabled. Runs on CPU and GPU (roots/values are host-side by this point).
+fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+    if std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_err() {
+        return;
+    }
 
+    let fmt = |v: &[F]| v.iter().map(|x| x.as_canonical_u64().to_string()).collect::<Vec<_>>().join(", ");
+
+    tracing::info!("··· Publics: [{}]", fmt(&pctx.get_publics()));
+    tracing::info!("··· Proof values: [{}]", fmt(&pctx.get_proof_values()));
+
+    let my_instances = pctx.dctx_get_process_instances();
     for instance_id in my_instances.iter() {
         let root_contribution = roots_contributions[*instance_id];
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id).unwrap();
@@ -39,6 +50,7 @@ where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
     timer_start_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
+    print_challenges(pctx, roots_contributions);
     let my_instances = pctx.dctx_get_process_instances();
 
     let contributions_size = match pctx.global_info.curve {

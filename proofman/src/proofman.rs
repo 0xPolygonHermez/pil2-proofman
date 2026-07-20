@@ -22,7 +22,11 @@ use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock};
+
+/// Enable per-proof debug logging of airgroup values and stage roots. Read once so the
+/// hot recursive handler doesn't hit getenv per proof.
+static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
@@ -388,6 +392,7 @@ enum OuterAggregationState {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        // Direct calls: cancel_memory_handlers is out of reach of this minimal-bounds Drop.
         self.memory_handler.cancel();
         self.memory_handler_recursive_witness.cancel();
         if let Err(e) = self.reset() {
@@ -601,10 +606,8 @@ where
             return Ok(());
         }
 
-        // Cancellation confirmed: unblock any worker parked in a buffer-pool take()
-        // before we join/reset, so a failed proof tears down instead of hanging.
-        self.memory_handler.cancel();
-        self.memory_handler_recursive_witness.cancel();
+        // Cancellation confirmed: unblock parked workers before we join/reset.
+        self.cancel_memory_handlers();
 
         let error = {
             let mut info = self.cancellation_info.write().unwrap();
@@ -630,8 +633,12 @@ where
     pub fn cancel(&self) {
         let mut cancellation_info = self.cancellation_info.write().unwrap();
         cancellation_info.cancel(None);
-        // Unblock any worker parked in a buffer-pool take() so teardown doesn't hang
-        // on a buffer that will never be released.
+        self.cancel_memory_handlers();
+    }
+
+    /// Unblock any worker parked in a buffer-pool take() so teardown doesn't hang on
+    /// a buffer that will never be released. Must run before joining such workers.
+    fn cancel_memory_handlers(&self) {
         self.memory_handler.cancel();
         self.memory_handler_recursive_witness.cancel();
     }
@@ -1678,6 +1685,8 @@ where
             }
         }
 
+        // `computing` (acquired above) also serializes the C++ air_instances map
+        // insert here against concurrent proof reads (std::map insert vs find is UB).
         let _fold_guard = self.recurser_fold_lock.lock().unwrap();
         let mut device_slot = self.recurser_device_registered.lock().unwrap();
         {
@@ -2155,6 +2164,10 @@ where
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_proof");
 
+        // A prove owns the proof-done callback and the recursive channels: tear down
+        // any outer-aggregation machinery still Running (Internal phase never reset()s).
+        self.stop_outer_aggregations();
+
         if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !self.pctx.is_setup_partition_init() {
                 return Err(ProofmanError::InvalidParameters(
@@ -2497,6 +2510,7 @@ where
             let pctx_clone = self.pctx.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
+            let sctx_clone = self.sctx.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
@@ -2519,6 +2533,14 @@ where
                         break;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
+
+                    // Debug: per-proof airgroup values + stage roots, read from the stored
+                    // proof so it works on the GPU pipeline (which never reaches
+                    // verify_proofs). Gated on PROOFMAN_DEBUG_CHALLENGES.
+                    if *DEBUG_CHALLENGES {
+                        Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);
+                    }
+
                     if !options.aggregation {
                         continue;
                     }
@@ -3002,8 +3024,7 @@ where
         }
 
         if self.cancellation_info.read().unwrap().token.is_cancelled() {
-            self.memory_handler.cancel();
-            self.memory_handler_recursive_witness.cancel();
+            self.cancel_memory_handlers();
         }
 
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
@@ -3145,7 +3166,8 @@ where
             }
 
             if self.mpi_ctx.rank == 0 {
-                let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options)?;
+                // Inner variant: `computing` is already held by _generate_proof.
+                let vadcop_final = self.receive_aggregated_proofs_inner(vec![], true, true, &options)?;
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
@@ -3224,7 +3246,21 @@ where
         Ok(())
     }
 
+    /// Shares the C proof-done callback and the recursive/rec2 channels with the
+    /// prove pipeline, so it must not run concurrently with `_generate_proof`:
+    /// serialized via `computing`. Callers already holding it use `_inner`.
     pub fn receive_aggregated_proofs(
+        &self,
+        agg_proofs: Vec<AggProofs>,
+        last_proof: bool,
+        final_proof: bool,
+        options: &ProofOptions,
+    ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let _computing = self.acquire_computing("receive_aggregated_proofs");
+        self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
+    }
+
+    fn receive_aggregated_proofs_inner(
         &self,
         agg_proofs: Vec<AggProofs>,
         last_proof: bool,
@@ -3411,6 +3447,11 @@ where
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
                 &self.cancellation_info,
             );
+            // On cancellation unblock parked workers, or stop_outer_aggregations joins
+            // rec2 threads stuck in Pool::take() while holding `computing`.
+            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                self.cancel_memory_handlers();
+            }
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
             self.stop_outer_aggregations();
 
@@ -4269,6 +4310,57 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Debug: log a stored basic proof's airgroup values and per-stage Merkle roots
+    /// (stage1, stage2, …, stageQ), read straight from the serialized proof buffer so it
+    /// works on the GPU pipeline. No-op for non-basic types. The proof-buffer layout
+    /// (from writeProof) is: [airgroup values][air values][stage roots × HASH_SIZE]…,
+    /// with the last of the `n_stages + 1` roots being the Q-stage root.
+    fn debug_print_airgroup_values(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        proofs: &[RwLock<Option<Proof<F>>>],
+        id: u64,
+        proof_type: &ProofType,
+    ) {
+        const HASH_SIZE: usize = 4;
+        if *proof_type != ProofType::Basic {
+            return;
+        }
+        let (airgroup_id, air_id) = match pctx.dctx_get_instance_info(id as usize) {
+            Ok(info) => info,
+            Err(_) => return,
+        };
+        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { return };
+        // Both serializers (GPU writeProof and CPU proof2pointer) pad EVERY airgroup/air
+        // value entry to FIELD_EXTENSION words, so the serialized span is 3 * entry_count.
+        const FE: usize = 3;
+        let n_airgroup = setup.stark_info.airgroupvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let n_air = setup.stark_info.airvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let airgroup_words = n_airgroup * FE;
+        let n_stage_roots = setup.stark_info.n_stages as usize + 1; // +1 = Q stage
+
+        let guard = proofs[id as usize].read().unwrap();
+        let Some(proof) = guard.as_ref() else { return };
+        let buf = &proof.proof;
+        if airgroup_words > buf.len() {
+            return; // malformed/short buffer — never panic in this debug path
+        }
+
+        let vals = buf[0..airgroup_words].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+        tracing::info!("··· Instance {} [{}:{}]: airgroup values: [{}]", id, airgroup_id, air_id, vals);
+
+        let roots_base = airgroup_words + n_air * FE;
+        for s in 0..n_stage_roots {
+            let off = roots_base + s * HASH_SIZE;
+            if off + HASH_SIZE > buf.len() {
+                break;
+            }
+            let label = if s + 1 == n_stage_roots { "Q".to_string() } else { (s + 1).to_string() };
+            let root = buf[off..off + HASH_SIZE].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+            tracing::info!("··· Instance {} [{}:{}]: root stage {}: [{}]", id, airgroup_id, air_id, label, root);
+        }
+    }
+
     fn gen_proof(
         proofs: &[RwLock<Option<Proof<F>>>],
         pctx: &ProofCtx<F>,
@@ -4336,6 +4428,14 @@ where
             const_pols_tree_path,
             &custom_commits_fixed_path,
         );
+
+        // u64::MAX: the skip_recalculation claim failed (stream reused since the
+        // instances_ready snapshot) — see gen_proof_gpu for why there is no fallback.
+        if proof_stream_id == u64::MAX {
+            return Err(ProofmanError::ProofmanError(format!(
+                "instance {instance_id} witness no longer resident on stream {stream_id}; stream was reused since the snapshot"
+            )));
+        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");

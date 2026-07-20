@@ -461,7 +461,10 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     {
         CudaGraphCache *graphCache = cudagraph::current();
         if (graphCache) {
-            uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
+            // Key on d_const_tree too: the captured graph bakes this pointer, and the
+            // final-snark flow frees/reallocs d_constPols — replaying a graph captured
+            // against the old address would read stale/unmapped constants.
+            uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx ^ (uint64_t)(uintptr_t)d_const_tree;
             uint64_t key = CudaGraphCache::makeKey(0x515559ULL ^ ctxId, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps.size());
             if (graphCache->tryLaunch(key, stream)) {
                 graphHandled = true;
