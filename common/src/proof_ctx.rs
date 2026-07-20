@@ -1071,8 +1071,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         (gpu_buf_ptr, gpu_buf_size)
     }
 
-    /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_gpu_buffer`
-    /// returns. Not always 0 (NUMA can reorder). 0 when GPU mode is off.
+    /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
+    /// points to. Not always 0 (NUMA can reorder). 0 when GPU mode is off.
     pub fn first_gpu_id(&self) -> u32 {
         if self.gpu {
             get_first_gpu_id_c(self.d_buffers.get_ptr())
