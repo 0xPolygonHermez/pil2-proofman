@@ -1721,15 +1721,24 @@ uint64_t get_num_gpus_gpu() {
     return deviceCount;
 }
 
+// Buffer of the caller's CURRENT device. Callers that run kernels on a
+// specific GPU (const-tree regeneration, recursivef) bind the device first
+// and get that device's buffer.
 void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
 
-    // Always the FIRST GPU's buffer (my_gpu_ids[0], not necessarily device 0 —
-    // NUMA can reorder). Pointer index only: no cudaSetDevice, so the caller's
-    // current device is untouched. The consumer binds the device itself via
-    // get_first_gpu_id().
-    const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
-    return (void *)d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[firstGpuId]];
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return (void *)d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
+}
+
+// Buffer of the FIRST GPU (my_gpu_ids[0], not necessarily device 0 — NUMA can
+// reorder), for consumers of the acquire/release_first_gpu_buffer borrow (mem
+// ops). 
+void *get_first_gpu_buffer_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return nullptr;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return (void *)d_buffers->gpuMemoryBuffer[0];
 }
 
 uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {

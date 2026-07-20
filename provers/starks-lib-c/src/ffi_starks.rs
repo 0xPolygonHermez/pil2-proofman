@@ -1487,6 +1487,11 @@ pub fn get_first_gpu_id_c(d_buffers: *mut ::std::os::raw::c_void) -> u32 {
     unsafe { get_first_gpu_id(d_buffers) }
 }
 
+/// Unified buffer of the first GPU (my_gpu_ids[0]). Does not touch the caller's current device.
+pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    unsafe { get_first_gpu_buffer(d_buffers) }
+}
+
 pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers: *mut ::std::os::raw::c_void,
     d_buffers_recursivef: *mut ::std::os::raw::c_void,
