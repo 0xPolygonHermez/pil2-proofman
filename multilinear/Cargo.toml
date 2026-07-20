@@ -13,8 +13,10 @@ serde = { workspace = true }
 bincode = { workspace = true }
 thiserror.workspace = true
 log = { workspace = true }
+tracing = { workspace = true }
 rayon = { workspace = true, optional = true }
 proofman-starks-lib-c = { workspace = true }
+proofman-util = { workspace = true }
 
 [features]
 default = ["parallel"]

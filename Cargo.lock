@@ -1678,10 +1678,12 @@ dependencies = [
  "fields",
  "log",
  "proofman-starks-lib-c",
+ "proofman-util",
  "rand 0.10.1",
  "rayon",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

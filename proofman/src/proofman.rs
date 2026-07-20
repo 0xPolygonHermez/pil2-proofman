@@ -4035,6 +4035,18 @@ where
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
+        let ss = &setup.stark_info.stark_struct;
+        tracing::debug!(
+            "Univariate Params[{}] n_bits={} blowup=2^{} hash={} queries={} fri_steps={} pow_bits={}",
+            pctx.global_info.airs[airgroup_id][air_id].name,
+            ss.n_bits,
+            ss.n_bits_ext - ss.n_bits,
+            ss.verification_hash_type,
+            ss.n_queries,
+            ss.steps.len(),
+            ss.pow_bits,
+        );
+
         let mut steps_params = pctx.get_air_instance_params(instance_id, true);
 
         if !pctx.gpu {
@@ -4553,7 +4565,6 @@ where
                         tracing::warn!("multilinear: instance {instance_id} delivered twice, skipping");
                         return Ok(());
                     }
-                    tracing::debug!("multilinear: pass-1 processing instance {instance_id}");
                     let _guard = ml_serial.lock().unwrap();
                     let (cols, _consts, ir) =
                         Self::ml_prepare_stage1(&pctx, &sctx, &const_pols, &aux_trace, instance_id, &ml_ir_cache)?;

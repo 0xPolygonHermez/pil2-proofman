@@ -25,6 +25,7 @@ use crate::merkle::MerkleTree;
 use crate::sumcheck::{eq_product_verifier_sumcheck_round, EqProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use fields::{Field, Goldilocks, Poseidon2_16};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
 /// Hash used for Merkle trees.
 pub type MlHash = Poseidon2_16;
@@ -139,11 +140,16 @@ pub fn commit_matrix(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedM
     let n = columns[0].len();
     assert!(columns.iter().all(|c| c.len() == n));
 
+    timer_start_debug!(ML_COMMIT_ENCODE);
     let codewords: Vec<Vec<Goldilocks>> = encode_columns(columns, params.log_blowup);
     let n0 = codewords[0].len();
+    timer_stop_and_log_debug!(ML_COMMIT_ENCODE, "ML_COMMIT_ENCODE N=2^{} #Cols={}", n.trailing_zeros(), columns.len());
 
+    timer_start_debug!(ML_COMMIT_MERKLE);
     let leaves = pack_base_pairs(&codewords);
     let tree = build_merkle(&leaves, MERKLE_ARITY);
+    timer_stop_and_log_debug!(ML_COMMIT_MERKLE);
+
     CommittedMatrix { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize }
 }
 
@@ -253,6 +259,7 @@ pub fn prove_opening(
     let mut final_poly: Vec<Ext> = Vec::new();
 
     // Commit phase: sumcheck rounds interleaved with FRI folds.
+    timer_start_debug!(ML_OPEN_SUMCHECK_FOLD);
     for t in 0..n {
         // Compute the sumcheck round polynomial
         let eval = oracle.round_evals()[0];
@@ -283,7 +290,10 @@ pub fn prove_opening(
         }
     }
 
+    timer_stop_and_log_debug!(ML_OPEN_SUMCHECK_FOLD);
+
     // Query phase: indices are pair positions in [0, N_0/2).
+    timer_start_debug!(ML_OPEN_QUERY);
     let indices = transcript.query_indices(params.n_queries as u64, (n0_bits - 1) as u64);
 
     let queries = indices
@@ -304,6 +314,8 @@ pub fn prove_opening(
             OpeningQuery { stage_leaves, stage_paths, fold_openings }
         })
         .collect();
+
+    timer_stop_and_log_debug!(ML_OPEN_QUERY, "ML_OPEN_QUERY n={n} queries={}", params.n_queries);
 
     OpeningProof { round_polys, fold_roots: fold_trees.iter().map(|(t, _)| t.root()).collect(), final_poly, queries }
 }

@@ -1,5 +1,9 @@
 //! The multilinear STARK prover.
 
+use fields::{Goldilocks, PrimeField64};
+use serde::{Deserialize, Serialize};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
+
 use crate::pcs::{combine_columns, CommittedMatrix, OpeningProof};
 use crate::pcs::{MlPcs, Pcs};
 use crate::eq::{eq_evals, rotate_table, skip_kernel_table};
@@ -10,9 +14,6 @@ use crate::logup_gkr::{BusProof, BusProver};
 use crate::sumcheck::{ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 use crate::zerocheck::{build_kernels, KernelSpec, ZerocheckOracle};
-use fields::{Goldilocks, PrimeField64};
-use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 /// A multilinear STARK proof for one AIR instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,8 +112,19 @@ pub fn prove_air(
     let n_rows = 1usize << m;
     let params = &ir.params;
 
+    tracing::debug!(
+        "Multilinear Params[{}] n_bits={m} blowup=2^{} queries={} final_poly=2^{} pow_bits={} skip_bits={}",
+        ir.name,
+        params.log_blowup,
+        params.n_queries,
+        params.log_final_poly_len,
+        params.grinding_bits,
+        params.univariate_skip_bits,
+    );
+
     // --- LogUp-GKR bus: build the fraction tree (transcript-free) and fix the
     // result airgroup value before anything absorbs or evaluates it.
+    timer_start_debug!(ML_PROVE_BUS_BUILD);
     let mut airgroup_values = airgroup_values.to_vec();
     let bus_prover = match &ir.bus {
         Some(bus) => {
@@ -136,13 +148,14 @@ pub fn prove_air(
         None => None,
     };
     let airgroup_values = &airgroup_values[..];
+    timer_stop_and_log_debug!(ML_PROVE_BUS_BUILD);
 
     // Start the transcript with the statement: AIR identity and public inputs.
     let mut transcript = MlTranscript::new();
     seed_transcript(&mut transcript, airgroup_id, air_id, n_bits, publics);
 
     // --- Step 1: Trace Commitments ---
-    let t_commit = Instant::now();
+    timer_start_debug!(ML_PROVE_COMMIT);
 
     // Fixed columns are known at setup time; reuse the prebuilt commitment
     // (loaded from the proving key) when supplied, otherwise build it here.
@@ -183,15 +196,14 @@ pub fn prove_air(
         }
     }
 
-    let t_commit = t_commit.elapsed();
+    timer_stop_and_log_debug!(ML_PROVE_COMMIT);
 
     // --- Step 2: Constraint Zerocheck ---
-    let t_zerocheck = Instant::now();
-
     let l = ir.params.univariate_skip_bits.min(m);
     let r = transcript.challenges(m);
     let alpha = transcript.challenge();
 
+    timer_start_debug!(ML_PROVE_ZEROCHECK_SETUP);
     let mut oracle = ZerocheckOracle::new(
         ir,
         witness,
@@ -206,8 +218,10 @@ pub fn prove_air(
         alpha,
         l,
     );
+    timer_stop_and_log_debug!(ML_PROVE_ZEROCHECK_SETUP);
 
     // Compute the univariate skip polynomial
+    timer_start_debug!(ML_PROVE_ZEROCHECK_ROUNDS);
     let mut zerocheck_round_polys = Vec::with_capacity(m - l + 1);
     let mut skip_gamma = Ext::ZERO;
     if l > 0 {
@@ -229,11 +243,11 @@ pub fn prove_air(
         zerocheck_round_polys.push(sent);
         lambda_x.push(ch);
     }
-    let t_zerocheck = t_zerocheck.elapsed();
+    timer_stop_and_log_debug!(ML_PROVE_ZEROCHECK_ROUNDS);
 
     // --- Step 2b: LogUp-GKR bus phase — the walk over the fraction tree plus
     // the input-layer reduction, terminating in column claims at `v`.
-    let t_bus = Instant::now();
+    timer_start_debug!(ML_PROVE_BUS_WALK);
     let (bus_proof, bus_point) = match (&ir.bus, &bus_prover) {
         (Some(bus), Some(bp)) => {
             let (proof, v) = bp.prove(
@@ -253,10 +267,10 @@ pub fn prove_air(
         }
         _ => (None, Vec::new()),
     };
-    let t_bus = t_bus.elapsed();
+    timer_stop_and_log_debug!(ML_PROVE_BUS_WALK);
 
     // --- Step 3: Opening Reductions ---
-    let t_claims = Instant::now();
+    timer_start_debug!(ML_PROVE_CLAIMS);
 
     // --- Step 3.1: Compute the opening claims
 
@@ -326,22 +340,17 @@ pub fn prove_air(
         reduction.bind(ch);
         u.push(ch);
     }
-    let t_claims = t_claims.elapsed();
+    timer_stop_and_log_debug!(ML_PROVE_CLAIMS);
 
     // --- The Basefold opening of `Φ̃(u)`.
-    let t_opening = Instant::now();
+    timer_start_debug!(ML_PROVE_OPENING);
     let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
     let phi_codeword = Pcs::combine_codewords(&matrices, &col_coeffs);
 
     let opening = Pcs::open(params, &mut transcript, phi_table, &u, phi_codeword, &matrices);
-    let t_opening = t_opening.elapsed();
-
-    log::debug!(
-        "ml prove_air[{}] n={m}: commit={t_commit:.1?} zerocheck={t_zerocheck:.1?} bus={t_bus:.1?} claims={t_claims:.1?} opening={t_opening:.1?}",
-        ir.name,
-    );
+    timer_stop_and_log_debug!(ML_PROVE_OPENING);
 
     Ok(MlProof {
         airgroup_id,
