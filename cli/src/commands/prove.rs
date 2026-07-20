@@ -163,7 +163,6 @@ impl ProveCmd {
                     None,
                     self.verbose.into(),
                     proof_options.clone(),
-                    None,
                 )?,
             };
 

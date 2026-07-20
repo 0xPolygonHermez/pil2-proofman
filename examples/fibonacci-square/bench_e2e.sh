@@ -137,7 +137,7 @@ for shape in "${SHAPES[@]}"; do
   $SETUP stats --multilinear -a "$PILOUT" -o "$log.stats-ml.txt" >"$log.stats-ml" 2>&1 || true
   am=$(area_from_stats "$log.stats-ml" Committed "$fib" "$mod" Fixed)
   read -r mc mi mt <<<"$(bench_prove "$log.ml" \
-    $CLI prove-multilinear -v -w "$WLIB" -k "$PK" -i "$INPUTS" --custom-commits "rom=$ROM" -o "$EX/build/proofs_ml")"
+    $CLI prove-multilinear -v -w "$WLIB" -k "$PK" -i "$INPUTS" --custom-commits "rom=$ROM")"
 
   spd_i=$(awk "BEGIN{ if(\"$ui\"!=\"NA\" && \"$mi\"!=\"NA\" && $mi>0) printf \"%.2fx\", $ui/$mi; else print \"-\" }")
   spd_t=$(awk "BEGIN{ if(\"$ut\"!=\"NA\" && \"$mt\"!=\"NA\" && $mt>0) printf \"%.2fx\", $ut/$mt; else print \"-\" }")

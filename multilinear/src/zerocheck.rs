@@ -831,7 +831,8 @@ mod tests {
 
             let r: Vec<Ext> = (0..m).map(|_| random_ext()).collect();
             let alpha = random_ext();
-            let mut oracle = ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[], &r, alpha, l);
+            let mut oracle =
+                ZerocheckOracle::new(&ir, &witness, &consts, &[], &publics, &[], &[], &[], &[], &r, alpha, l);
 
             // Skip round + check.
             let v = oracle.skip_round_evals();

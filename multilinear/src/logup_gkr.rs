@@ -541,7 +541,16 @@ impl BusProver {
         proof_values: &[Ext],
     ) -> Result<Self, MlError> {
         let (p, q) = build_bus_input(
-            ir, bus, witness, consts, customs, publics, challenges, air_values, airgroup_values, proof_values,
+            ir,
+            bus,
+            witness,
+            consts,
+            customs,
+            publics,
+            challenges,
+            air_values,
+            airgroup_values,
+            proof_values,
         )?;
         let tree = FractionTree::new(p, q)?;
         let (s_num, s_den) =

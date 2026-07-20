@@ -222,8 +222,7 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build_ml/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build_ml/rom.bin \
-     --output-dir examples/fibonacci-square/build_ml/proofs_cpu -y
+     --custom-commits rom=examples/fibonacci-square/build_ml/rom.bin -y
 ```
 
 **With recursion:**

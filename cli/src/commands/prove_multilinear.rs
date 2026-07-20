@@ -8,15 +8,7 @@ use fields::Goldilocks;
 use proofman::ProofMan;
 use proofman_common::{ProofOptions, ProofmanOptions};
 
-/// Generate the **base** multilinear (Basefold + sumcheck) proofs — one
-/// `.mlproof.bin` per AIR instance.
-///
-/// This mirrors the univariate convention where base proofs are ephemeral:
-/// the main `prove` command never writes them, it aggregates and writes only
-/// the final proof. The multilinear prover has no aggregation yet (that is a
-/// later milestone), so base proofs are exposed through this dedicated command
-/// and consumed by `verify-multilinear`. Omit `--output-dir` to prove without
-/// writing anything (a timing run).
+/// Generate the **base** multilinear proofs — one per AIR instance.
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
@@ -32,11 +24,6 @@ pub struct ProveMultilinearCmd {
     /// Proving key folder path
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
-
-    /// Output dir path. Omit to prove without writing the base proofs to disk
-    /// (a timing run); pass it to write one `.mlproof.bin` per instance.
-    #[clap(short = 'o', long)]
-    pub output_dir: Option<PathBuf>,
 
     #[clap(long, default_value_t = Field::Goldilocks)]
     pub field: Field,
@@ -87,7 +74,6 @@ impl ProveMultilinearCmd {
                 None,
                 self.verbose.into(),
                 proof_options,
-                self.output_dir.clone(),
             )?,
         };
 

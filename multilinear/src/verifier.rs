@@ -222,7 +222,7 @@ pub fn verify_air(
             challenges: &proof.challenges,
             air_values: &proof.air_values,
             airgroup_values: &proof.airgroup_values,
-        proof_values: &proof.proof_values,
+            proof_values: &proof.proof_values,
             kernel,
         };
         let v = eval_constraint_cone(ir, &src, &mut temps, t).to_ext();
@@ -242,7 +242,7 @@ pub fn verify_air(
             challenges: &proof.challenges,
             air_values: &proof.air_values,
             airgroup_values: &proof.airgroup_values,
-        proof_values: &proof.proof_values,
+            proof_values: &proof.proof_values,
         };
         eval_instrs(ir, &src, &mut temps);
         let mut batched = Ext::ZERO;
@@ -372,7 +372,10 @@ mod tests {
             let (mut witness, consts, publics) = fib_trace(n_bits);
             witness[0][0][7] += Goldilocks::ONE;
             let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove runs");
-            assert!(verify_air(&ir, &proof, &publics, None, None, None).is_err(), "invalid trace must not verify (l={l})");
+            assert!(
+                verify_air(&ir, &proof, &publics, None, None, None).is_err(),
+                "invalid trace must not verify (l={l})"
+            );
         }
     }
 
@@ -499,7 +502,8 @@ mod tests {
             let ir = lookup_ir(n_bits, params, false);
             let (witness, consts) = lookup_trace(n_bits);
             let gamma = random_gamma();
-            let proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+            let proof =
+                prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
             verify_air(&ir, &proof, &[], None, None, None).unwrap_or_else(|e| panic!("verify l={l}: {e}"));
         }
     }
@@ -555,7 +559,8 @@ mod tests {
         witness[0][2][3] += Goldilocks::ONE;
         let gamma = random_gamma();
 
-        let mut proof = prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+        let mut proof =
+            prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
         proof.airgroup_values[0] = Ext::ZERO;
         assert!(verify_air(&ir, &proof, &[], None, None, None).is_err(), "faked balance must be rejected");
     }
@@ -567,7 +572,8 @@ mod tests {
         let ir = lookup_ir(n_bits, test_params(), false);
         let (witness, consts) = lookup_trace(n_bits);
         let gamma = random_gamma();
-        let prove = || prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
+        let prove =
+            || prove_air(&ir, &witness, &consts, None, &[], &[], &[gamma], &[], &[Ext::ZERO], &[]).expect("prove");
 
         let mut p1 = prove();
         p1.bus.as_mut().unwrap().fractional.p_out += Ext::ONE;
