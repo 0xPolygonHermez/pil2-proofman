@@ -4778,6 +4778,38 @@ where
             None => String::new(),
         };
 
+        // DIAGNOSTIC (ZISK_WC_DUMP=<dir>): dump this instance's witness EXACTLY as it is
+        // handed to the prover — the host trace buffer (packed for packed airs), right
+        // before the H2D copy + GPU commit. Covers EVERY air (Main, Mem, Rom, Binary, …),
+        // one file per instance under a per-process staging dir, plus a checksum log. The
+        // CLI promotes the whole staging dir by verify outcome: first verifying run →
+        // `reference/`, a failing run → `bad_<pid>/`, later verifying runs discarded — so
+        // disk stays bounded. Comparing a bad instance's bytes vs the reference tells us
+        // whether the witness is already wrong at the prover's door (WC generation) or
+        // identical (prover/GPU).
+        if let Ok(dir) = std::env::var("ZISK_WC_DUMP") {
+            let trace_len = pctx.air_instances[instance_id].read().unwrap().trace.len();
+            if !steps_params.trace.is_null() && trace_len > 0 {
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(steps_params.trace, trace_len * std::mem::size_of::<F>())
+                };
+                let mut fp: u64 = 0xcbf29ce484222325;
+                for b in bytes {
+                    fp = (fp ^ *b as u64).wrapping_mul(0x100000001b3);
+                }
+                let staging = std::path::Path::new(&dir).join(format!("staging_{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&staging);
+                let path = staging.join(format!("inst{instance_id}_ag{airgroup_id}_air{air_id}.bin"));
+                match std::fs::write(&path, bytes) {
+                    Ok(()) => tracing::info!(
+                        "[WC-DUMP] inst {instance_id} [{airgroup_id}:{air_id}] {} bytes fp=0x{fp:016x}",
+                        bytes.len()
+                    ),
+                    Err(e) => tracing::warn!("[WC-DUMP] inst {instance_id}: write failed: {e}"),
+                }
+            }
+        }
+
         // The commit (incl. the now-async trace H2D) runs on this stream; the root
         // is collected later when the stream's end_event is polled. Return the
         // streamId so the caller can gate trace-buffer reuse on its completion.
