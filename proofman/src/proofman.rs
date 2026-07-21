@@ -24,8 +24,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
-/// Enable per-proof debug logging of airgroup values and stage roots. Read once so the
-/// hot recursive handler doesn't hit getenv per proof.
+/// Master switch for per-proof debug logging of airgroup values, stage roots, and the
+/// challenge/contribution dump (`print_challenges`). Currently FORCED ON. To restore the
+/// env-driven behavior, replace `true` with `std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok()`.
+/// Read once so the hot recursive handler doesn't hit getenv per proof.
 static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
 use csv::Writer;
 
@@ -2381,8 +2383,12 @@ where
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
-            let internal_contribution =
-                calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
+            let internal_contribution = calculate_internal_contributions(
+                &self.pctx,
+                &self.roots_contributions,
+                &self.values_contributions,
+                *DEBUG_CHALLENGES,
+            );
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -2536,7 +2542,7 @@ where
 
                     // Debug: per-proof airgroup values + stage roots, read from the stored
                     // proof so it works on the GPU pipeline (which never reaches
-                    // verify_proofs). Gated on PROOFMAN_DEBUG_CHALLENGES.
+                    // verify_proofs). Gated on the DEBUG_CHALLENGES switch (see its definition).
                     if *DEBUG_CHALLENGES {
                         Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);
                     }

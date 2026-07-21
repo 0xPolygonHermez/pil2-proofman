@@ -11,13 +11,10 @@ use crate::ContributionsInfo;
 use rayon::prelude::*;
 
 /// Debug dump of per-instance root contributions plus the shared publics and proof
-/// values. Gated on PROOFMAN_DEBUG_CHALLENGES so it is a no-op unless explicitly
-/// enabled. Runs on CPU and GPU (roots/values are host-side by this point).
+/// values. The caller gates this on the `print` flag of `calculate_internal_contributions`
+/// (driven by the `DEBUG_CHALLENGES` switch in proofman.rs), so this function itself is an
+/// unconditional dump. Runs on CPU and GPU (roots/values are host-side by this point).
 fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
-    if std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_err() {
-        return;
-    }
-
     let fmt = |v: &[F]| v.iter().map(|x| x.as_canonical_u64().to_string()).collect::<Vec<_>>().join(", ");
 
     tracing::info!("··· Publics: [{}]", fmt(&pctx.get_publics()));
@@ -44,13 +41,16 @@ pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
     roots_contributions: &[[F; 4]],
     values_contributions: &[Mutex<Vec<F>>],
+    print: bool,
 ) -> Vec<u64>
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
     timer_start_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
-    print_challenges(pctx, roots_contributions);
+    if print {
+        print_challenges(pctx, roots_contributions);
+    }
     let my_instances = pctx.dctx_get_process_instances();
 
     let contributions_size = match pctx.global_info.curve {
