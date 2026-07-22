@@ -97,6 +97,67 @@ fn wc_dump_bad_witness<F: PrimeField64>(
         Err(e) => tracing::warn!("[WC-DUMP] inst {instance_id}: write failed: {e}"),
     }
 }
+
+/// Return the per-job WC-dump directory name key: ZISK_WC_JOB when the daemon sets
+/// it (the clean job UUID), else the pid for the single-shot CLI path.
+fn wc_dump_job_key() -> String {
+    std::env::var("ZISK_WC_JOB").unwrap_or_else(|_| std::process::id().to_string())
+}
+
+/// Write a VirtualTable (or any table) BASIC witness to a per-job staging dir
+/// `<ZISK_WC_DUMP>/tables_<job>/` as soon as it is produced, regardless of proof
+/// outcome. Unlike the failing-instance dump, tables are kept until the end of the
+/// proof and then dropped on the happy path (see `wc_dump_finalize_tables`), so a
+/// FAILING run leaves the exact table witnesses that fed the (diverging) global
+/// challenge, giving a matched good-vs-bad table pair across runs. Tables are the
+/// only witnesses observed to be non-deterministic, so we retain them to disk
+/// rather than pinning GB of pool buffers in memory. Best-effort.
+fn wc_dump_table_witness<F: PrimeField64>(
+    dir: &str,
+    instance_id: usize,
+    airgroup_id: usize,
+    air_id: usize,
+    buffer: &[F],
+) {
+    let bytes =
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, std::mem::size_of_val(buffer)) };
+    let tables = std::path::Path::new(dir).join(format!("tables_{}", wc_dump_job_key()));
+    let _ = std::fs::create_dir_all(&tables);
+    let path = tables.join(format!("inst{instance_id}_ag{airgroup_id}_air{air_id}.bin"));
+    match std::fs::write(&path, bytes) {
+        Ok(()) => tracing::info!(
+            "[WC-DUMP] table witness inst {instance_id} [{airgroup_id}:{air_id}] {} bytes -> {}",
+            bytes.len(),
+            path.display()
+        ),
+        Err(e) => tracing::warn!("[WC-DUMP] table inst {instance_id}: write failed: {e}"),
+    }
+}
+
+/// End-of-proof handling for the retained table witnesses: on the HAPPY path
+/// (`cancelled == false`) the proof verified, so the tables were deterministic-
+/// enough and their staging dir is deleted to keep disk bounded. On FAILURE the
+/// dir is kept (renamed to `tables_bad_<job>/`) so it survives even if the same
+/// job id is retried. Best-effort; no-op unless ZISK_WC_DUMP is set.
+fn wc_dump_finalize_tables(cancelled: bool) {
+    let Some(dir) = WC_DUMP_DIR.as_ref() else { return };
+    let job = wc_dump_job_key();
+    let tables = std::path::Path::new(dir).join(format!("tables_{job}"));
+    if !tables.exists() {
+        return;
+    }
+    if cancelled {
+        let kept = std::path::Path::new(dir).join(format!("tables_bad_{job}"));
+        let _ = std::fs::remove_dir_all(&kept);
+        match std::fs::rename(&tables, &kept) {
+            Ok(()) => tracing::error!("[WC-DUMP] proof FAILED; kept table witnesses at {}", kept.display()),
+            Err(e) => tracing::warn!("[WC-DUMP] failed to keep table witnesses: {e}"),
+        }
+    } else {
+        let _ = std::fs::remove_dir_all(&tables);
+        tracing::info!("[WC-DUMP] proof ok; discarded retained table witnesses");
+    }
+}
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
@@ -603,6 +664,11 @@ impl<F: PrimeField64> ProofMan<F> {
                 self.memory_handler.release_buffer(buf)?;
             }
         }
+
+        // ZISK_WC_DUMP: end-of-proof handling for the retained table witnesses.
+        // Drop them on the happy path; keep them (as tables_bad_<job>/) on failure.
+        // Cancelled token == this proof failed/aborted.
+        wc_dump_finalize_tables(self.cancellation_info.read().unwrap().token.is_cancelled());
 
         // free_instance returns (is_shared, buf) — shared buffers must be put back into
         // the pool, otherwise the pool capacity shrinks and memory_handler.reset() fails
@@ -2829,6 +2895,25 @@ where
                 if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
                     wait_stream_commit_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
                 }
+                // ZISK_WC_DUMP: tables (VirtualTables) are the only non-deterministic
+                // witnesses, so dump every one to disk now (kept until end-of-proof,
+                // then dropped on the happy path). Buffer still released normally —
+                // no memory pinning for the large table buffers.
+                if let Some(dir) = WC_DUMP_DIR.as_ref() {
+                    if self.pctx.dctx_is_table(*instance_id as usize) {
+                        if let Ok((airgroup_id, air_id)) =
+                            self.pctx.dctx_get_instance_info(*instance_id as usize)
+                        {
+                            wc_dump_table_witness(
+                                dir,
+                                *instance_id as usize,
+                                airgroup_id,
+                                air_id,
+                                &witness_buffer,
+                            );
+                        }
+                    }
+                }
                 // ZISK_WC_DUMP: retain the basic witness for dump-on-failure instead
                 // of releasing now; overflow buffers still go back to the pool.
                 let to_release = if WC_DUMP_DIR.is_some() {
@@ -2933,6 +3018,23 @@ where
                                         pctx_clone.get_device_buffers_ptr(),
                                         proof_stream_id as u64,
                                     );
+                                }
+                                // ZISK_WC_DUMP: dump table (VirtualTable) witnesses to
+                                // disk now; kept until end-of-proof, dropped on happy path.
+                                if let Some(dir) = WC_DUMP_DIR.as_ref() {
+                                    if pctx_clone.dctx_is_table(instance_id) {
+                                        if let Ok((airgroup_id, air_id)) =
+                                            pctx_clone.dctx_get_instance_info(instance_id)
+                                        {
+                                            wc_dump_table_witness(
+                                                dir,
+                                                instance_id,
+                                                airgroup_id,
+                                                air_id,
+                                                &witness_buffer,
+                                            );
+                                        }
+                                    }
                                 }
                                 // ZISK_WC_DUMP: retain the basic witness for
                                 // dump-on-failure; overflow goes back to the pool.
