@@ -33,6 +33,10 @@ impl<F: PrimeField64> Values<F> {
     pub fn new(n_values: usize) -> Self {
         Self { values: RwLock::new(vec![F::ZERO; n_values]) }
     }
+
+    pub fn reset(&self) {
+        self.values.write().unwrap().fill(F::ZERO);
+    }
 }
 
 impl<F> Default for Values<F> {
@@ -334,6 +338,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.reset_instances();
         self.mpi_ctx.reset();
+    }
+
+    pub fn reset_job_state(&self) {
+        self.public_inputs.reset();
+        self.proof_values.reset();
+        self.challenges.reset();
+        self.global_challenge.reset();
     }
 
     pub fn is_setup_partition_init(&self) -> bool {

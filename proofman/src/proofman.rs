@@ -22,7 +22,13 @@ use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock};
+
+/// Master switch for per-proof debug logging of airgroup values, stage roots, and the
+/// challenge/contribution dump (`print_challenges`). Off by default; enable by setting
+/// the `PROOFMAN_DEBUG_CHALLENGES` env var. Read once so the hot recursive handler
+/// doesn't hit getenv per proof.
+static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
@@ -525,6 +531,7 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.memory_handler.reset()?;
         self.memory_handler_recursive_witness.reset()?;
+        self.pctx.reset_job_state();
 
         Ok(())
     }
@@ -600,10 +607,8 @@ where
             return Ok(());
         }
 
-        // Cancellation confirmed: unblock any worker parked in a buffer-pool take()
-        // before we join/reset, so a failed proof tears down instead of hanging.
-        self.memory_handler.cancel();
-        self.memory_handler_recursive_witness.cancel();
+        // Cancellation confirmed: unblock parked workers before we join/reset.
+        self.cancel_memory_handlers();
 
         let error = {
             let mut info = self.cancellation_info.write().unwrap();
@@ -629,8 +634,12 @@ where
     pub fn cancel(&self) {
         let mut cancellation_info = self.cancellation_info.write().unwrap();
         cancellation_info.cancel(None);
-        // Unblock any worker parked in a buffer-pool take() so teardown doesn't hang
-        // on a buffer that will never be released.
+        self.cancel_memory_handlers();
+    }
+
+    /// Unblock any worker parked in a buffer-pool take() so teardown doesn't hang on
+    /// a buffer that will never be released. Must run before joining such workers.
+    fn cancel_memory_handlers(&self) {
         self.memory_handler.cancel();
         self.memory_handler_recursive_witness.cancel();
     }
@@ -1663,6 +1672,7 @@ where
     }
 
     pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("register_recurser_setup");
         {
             let cache = self.recurser_setups.read().unwrap();
             if cache.contains_key(recurser_id) {
@@ -1784,6 +1794,7 @@ where
         free_inputs_b: &[u64],
         root_c_recurser_agg: &[u64; 4],
     ) -> ProofmanResult<VadcopFinalProof> {
+        let _computing = self.acquire_computing("prove_recurser_aggregator");
         if proof_a.compressed || proof_b.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "prove_recurser_aggregator: compressed inputs are not supported".to_string(),
@@ -1854,6 +1865,7 @@ where
             &self.const_pols,
             &self.const_tree,
             self.pctx.get_device_buffers_ptr(),
+            recurser_id,
         )?;
 
         VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.clone()).map_err(|e| {
@@ -1887,6 +1899,7 @@ where
         &self,
         vadcop_final_proof: &VadcopFinalProof,
     ) -> ProofmanResult<VadcopFinalProof> {
+        let _computing = self.acquire_computing("generate_vadcop_final_proof_compressed");
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
@@ -2346,8 +2359,12 @@ where
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
-            let internal_contribution =
-                calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
+            let internal_contribution = calculate_internal_contributions(
+                &self.pctx,
+                &self.roots_contributions,
+                &self.values_contributions,
+                *DEBUG_CHALLENGES,
+            );
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -2475,6 +2492,7 @@ where
             let pctx_clone = self.pctx.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
+            let sctx_clone = self.sctx.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
@@ -2497,6 +2515,11 @@ where
                         break;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
+
+                    if *DEBUG_CHALLENGES {
+                        Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);
+                    }
+
                     if !options.aggregation {
                         continue;
                     }
@@ -2980,8 +3003,7 @@ where
         }
 
         if self.cancellation_info.read().unwrap().token.is_cancelled() {
-            self.memory_handler.cancel();
-            self.memory_handler_recursive_witness.cancel();
+            self.cancel_memory_handlers();
         }
 
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
@@ -3123,7 +3145,7 @@ where
             }
 
             if self.mpi_ctx.rank == 0 {
-                let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options)?;
+                let vadcop_final = self.receive_aggregated_proofs_inner(vec![], true, true, &options)?;
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
@@ -3209,6 +3231,17 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let _computing = self.acquire_computing("receive_aggregated_proofs");
+        self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
+    }
+
+    fn receive_aggregated_proofs_inner(
+        &self,
+        agg_proofs: Vec<AggProofs>,
+        last_proof: bool,
+        final_proof: bool,
+        options: &ProofOptions,
+    ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         if !agg_proofs.is_empty() {
             tracing::info!("Received {:?} aggregated proofs", agg_proofs);
         }
@@ -3235,6 +3268,19 @@ where
 
             if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
+            }
+
+            {
+                let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
+                let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
+                let expected = setup.proof_size as usize + publics_aggregation;
+                if proof.proof.len() != expected {
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Aggregated proof from workers {:?} airgroup {} has wrong length {} (expected {}) — malformed or truncated in transit",
+                        proof.worker_indexes, proof.airgroup_id, proof.proof.len(), expected
+                    ))));
+                    break;
+                }
             }
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
@@ -3375,6 +3421,9 @@ where
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
                 &self.cancellation_info,
             );
+            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                self.cancel_memory_handlers();
+            }
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
             self.stop_outer_aggregations();
 
@@ -4233,6 +4282,54 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn debug_print_airgroup_values(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        proofs: &[RwLock<Option<Proof<F>>>],
+        id: u64,
+        proof_type: &ProofType,
+    ) {
+        const HASH_SIZE: usize = 4;
+        if *proof_type != ProofType::Basic {
+            return;
+        }
+        let (airgroup_id, air_id) = match pctx.dctx_get_instance_info(id as usize) {
+            Ok(info) => info,
+            Err(_) => return,
+        };
+        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { return };
+        const FE: usize = 3;
+        let n_airgroup = setup.stark_info.airgroupvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let n_air = setup.stark_info.airvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let airgroup_words = n_airgroup * FE;
+        let n_stage_roots = setup.stark_info.n_stages as usize + 1; // +1 = Q stage
+
+        let guard = proofs[id as usize].read().unwrap();
+        let Some(proof) = guard.as_ref() else { return };
+        let buf = &proof.proof;
+        if airgroup_words > buf.len() {
+            return;
+        }
+
+        let vals = buf[0..airgroup_words].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+        tracing::info!("··· Instance {} [{}:{}]: airgroup values: [{}]", id, airgroup_id, air_id, vals);
+
+        let roots_base = airgroup_words + n_air * FE;
+        for s in 0..n_stage_roots {
+            let off = roots_base + s * HASH_SIZE;
+            if off + HASH_SIZE > buf.len() {
+                break;
+            }
+            let label = if s + 1 == n_stage_roots { "Q".to_string() } else { (s + 1).to_string() };
+            let root = buf[off..off + HASH_SIZE].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+            tracing::info!("··· Instance {} [{}:{}]: root stage {}: [{}]", id, airgroup_id, air_id, label, root);
+        }
+
+        if let Some(nonce) = buf.last() {
+            tracing::info!("··· Instance {} [{}:{}]: nonce: {}", id, airgroup_id, air_id, nonce);
+        }
+    }
+
     fn gen_proof(
         proofs: &[RwLock<Option<Proof<F>>>],
         pctx: &ProofCtx<F>,
@@ -4300,6 +4397,12 @@ where
             const_pols_tree_path,
             &custom_commits_fixed_path,
         );
+
+        if proof_stream_id == u64::MAX {
+            return Err(ProofmanError::ProofmanError(format!(
+                "instance {instance_id} witness no longer resident on stream {stream_id}; stream was reused since the snapshot"
+            )));
+        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");

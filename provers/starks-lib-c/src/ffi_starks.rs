@@ -1034,6 +1034,7 @@ pub fn gen_recursive_proof_c(
     const_tree_path: &str,
     proof_type: &str,
     force_recursive_stream: bool,
+    recurser_id: &str,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1046,6 +1047,9 @@ pub fn gen_recursive_proof_c(
 
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let recurser_id_name = CString::new(recurser_id).unwrap();
+    let recurser_id_ptr = recurser_id_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_recursive_proof(
@@ -1066,6 +1070,7 @@ pub fn gen_recursive_proof_c(
             const_tree_filename_ptr,
             proof_type_ptr,
             force_recursive_stream,
+            recurser_id_ptr,
         )
     }
 }

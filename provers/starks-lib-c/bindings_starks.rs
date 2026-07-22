@@ -443,8 +443,9 @@ extern "C" {
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
         force_recursive_stream: bool,
+        recurser_id: *mut ::std::os::raw::c_char,
     ) -> u64;
-    
+
     pub fn calculate_const_tree_fixed(
         pSetupCtx_: *mut ::std::os::raw::c_void,
         airgroupId: u64,
