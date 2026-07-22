@@ -4797,7 +4797,14 @@ where
                 for b in bytes {
                     fp = (fp ^ *b as u64).wrapping_mul(0x100000001b3);
                 }
-                let staging = std::path::Path::new(&dir).join(format!("staging_{}", std::process::id()));
+                // Key the staging dir by the caller-supplied job id when present
+                // (ZISK_WC_JOB), so a long-lived daemon proving many jobs gets one
+                // staging dir per job instead of a single pid-keyed dir that would
+                // intermix witnesses across jobs. Falls back to the pid for the
+                // single-shot CLI manual-loop path (fresh process per run).
+                let staging_key = std::env::var("ZISK_WC_JOB")
+                    .unwrap_or_else(|_| std::process::id().to_string());
+                let staging = std::path::Path::new(&dir).join(format!("staging_{staging_key}"));
                 let _ = std::fs::create_dir_all(&staging);
                 let path = staging.join(format!("inst{instance_id}_ag{airgroup_id}_air{air_id}.bin"));
                 match std::fs::write(&path, bytes) {
