@@ -224,22 +224,23 @@ pub fn gen_snark_setup(
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
-    let field_size = crate::types::security::goldilocks_cube_field_size();
+    let field_size_bits = crate::types::security::goldilocks_safe_extension_field_size_bits();
     let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
     let folding_factors_rf = crate::output::stark_info::compute_folding_factors(&stark_struct_rf);
-    let fri_params_rf = crate::types::security::FRISecurityParams {
-        field_size,
+    let fri_params_rf = crate::types::security::FriParams {
+        field_size_bits,
         dimension: 1u64 << stark_struct_rf.n_bits,
         rate: 1.0 / (1u64 << (stark_struct_rf.n_bits_ext - stark_struct_rf.n_bits)) as f64,
         n_opening_points: opening_points_rf.len() as u64,
-        n_functions: ev_map_len_rf.max(1) as u64,
+        batch_size: ev_map_len_rf.max(1) as u64,
         folding_factors: folding_factors_rf,
         max_grinding_bits: stark_struct_rf.pow_bits as u64,
         use_max_grinding_bits: true,
         tree_arity: stark_struct_rf.merkle_tree_arity as u64,
         target_security_bits: 128,
     };
-    let fri_security_rf = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params_rf);
+    let regime = crate::types::security::DecodingRegime::Jbr;
+    let fri_security_rf = fri_params_rf.get_optimal_query_params(&regime);
 
     let starkinfo_rf = crate::output::stark_info::build_starkinfo_output(
         &pil_result_rf.setup,

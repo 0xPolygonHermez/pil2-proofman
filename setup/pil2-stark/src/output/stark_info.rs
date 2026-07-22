@@ -21,7 +21,7 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri_security: &security::FRIQueryResult,
+    fri_security: &security::FriQueryResult,
     airgroup_id: usize,
     air_id: usize,
     air_name: &str,

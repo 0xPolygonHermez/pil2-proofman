@@ -12,7 +12,7 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::security::{self, FRISecurityParams};
+use crate::types::security::{self, FriParams};
 use crate::types::stark_struct::{generate_stark_struct, StarkStruct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_folding_factors};
 
@@ -197,20 +197,21 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let ev_map_len = pil_code.ev_map.len();
                 let folding_factors = compute_folding_factors(&stark_struct);
                 let opening_points = collect_opening_points(setup_result);
-                let field_size = security::goldilocks_cube_field_size();
-                let fri_params = FRISecurityParams {
-                    field_size,
+                let field_size_bits = security::goldilocks_safe_extension_field_size_bits();
+                let fri_params = FriParams {
+                    field_size_bits,
                     dimension: 1u64 << stark_struct.n_bits,
                     rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
                     n_opening_points: opening_points.len() as u64,
-                    n_functions: ev_map_len.max(1) as u64,
+                    batch_size: ev_map_len.max(1) as u64,
                     folding_factors: folding_factors.clone(),
                     max_grinding_bits: stark_struct.pow_bits as u64,
                     use_max_grinding_bits: true,
                     tree_arity: stark_struct.merkle_tree_arity as u64,
                     target_security_bits: 128,
                 };
-                let fri_security = security::get_optimal_fri_query_params("JBR", &fri_params);
+                let regime = crate::types::security::DecodingRegime::Jbr;
+                let fri_security = fri_params.get_optimal_query_params(&regime);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
@@ -411,35 +412,80 @@ pub(crate) fn ml_params(
     total_cols: usize,
     hash: proofman_multilinear::MlHashFamily,
 ) -> proofman_multilinear::MlParams {
+    // The PCS is WHIR. Its opening folds `k` variables per block (matching the
+    // prover's `WhirParams::default().folding_factor`), the domain halves once
+    // per block (rate drops `2^{1-k}`), and every block does `n_queries` uniform
+    // in-domain queries with no grinding (WHIR v1 placeholders — see whir.rs).
+    // We size `n_queries` from the WHIR query-phase soundness bound (soundcalc's
+    // `pcs/whir.py`, ported to `security.rs`).
+    const WHIR_FOLDING_FACTOR: usize = 4;
+    const TARGET_SECURITY_BITS: usize = 128;
+
     // Rate: reuse the AIR's configured blowup (at least 1).
     let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
     // Fold down to a small in-clear final polynomial, leaving ≥ 1 fold.
     let log_final_poly_len = 4usize.min(n_bits.saturating_sub(1));
     let univariate_skip_bits = 0;
-    let num_folds = n_bits - log_final_poly_len.min(n_bits.saturating_sub(1));
 
-    let fri = FRISecurityParams {
-        field_size: security::goldilocks_cube_field_size(),
-        dimension: 1u64 << n_bits,
-        rate: 1.0 / (1u64 << log_blowup) as f64,
-        n_opening_points: 1,                   // single-point opening at `u`
-        n_functions: total_cols.max(1) as u64, // columns batched by δ into Φ
-        folding_factors: vec![2; num_folds],   // TODO
-        max_grinding_bits: stark_struct.pow_bits as u64,
-        use_max_grinding_bits: true,
-        tree_arity: proofman_multilinear::MERKLE_ARITY,
-        target_security_bits: 128,
+    // Per-query soundness at iteration 0 (the highest rate ⇒ smallest δ ⇒
+    // query-hungriest); `n_queries` is uniform across blocks.
+    let field_size_bits = security::goldilocks_safe_extension_field_size_bits();
+    let regime = crate::types::security::DecodingRegime::Jbr;
+    let bits_per_query = security::whir_query_bits(&field_size_bits, log_blowup as u32, regime);
+    let n_queries = (TARGET_SECURITY_BITS as f64 / bits_per_query).ceil().max(1.0) as usize;
+
+    // Sanity-check the full WHIR PCS soundness at this query count (all
+    // components: batching / folding / OOD / shift / final). The query-
+    // independent components (list-decoding) depend only on the rate; if they
+    // fall below target the fix is a lower rate (higher blowup), not more
+    // queries — surface that here rather than silently under-securing.
+    let k = WHIR_FOLDING_FACTOR.min(n_bits.max(1));
+    let n_rounds = whir_num_fold_rounds(n_bits, k, log_final_poly_len);
+    let whir = security::WhirParams {
+        field_size_bits,
+        log_inv_rate: log_blowup as u32,
+        log_degree: n_bits as u32,
+        folding_factors: vec![k as u32; n_rounds],
+        batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
+        power_batching: true,
+        constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
+        num_queries: vec![n_queries as u64; n_rounds],
+        num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
+        grinding_batching_phase: 0,
+        grinding_bits_folding: vec![vec![0u32; k]; n_rounds],
+        grinding_bits_queries: vec![0u32; n_rounds],
+        grinding_bits_ood: vec![0u32; n_rounds.saturating_sub(1)],
     };
-    let q = security::get_optimal_fri_query_params("JBR", &fri);
+    let achieved = whir.min_pcs_bits(regime);
+    if achieved < TARGET_SECURITY_BITS as i64 {
+        tracing::warn!(
+            "WHIR PCS soundness for this AIR is {achieved} bits (< {TARGET_SECURITY_BITS}); \
+             the list-decoding (non-query) terms cap it — increase blowup (currently 2^-{log_blowup}) \
+             or add grinding. n_bits={n_bits}, cols={total_cols}, queries={n_queries}."
+        );
+    }
 
     proofman_multilinear::MlParams {
         log_blowup,
-        n_queries: q.n_queries as usize,
+        n_queries,
         log_final_poly_len,
-        grinding_bits: q.n_grinding_bits as usize,
+        grinding_bits: 0,
         univariate_skip_bits,
         hash,
     }
+}
+
+/// Number of WHIR fold blocks `R` — mirrors `proofman_multilinear`'s
+/// `num_fold_rounds` so `ml_params` sizes queries for the same schedule the
+/// prover uses (fold `k` vars per block until ≤ `log_final_poly_len` remain).
+fn whir_num_fold_rounds(n: usize, k: usize, log_final_poly_len: usize) -> usize {
+    assert!(k >= 1 && k <= n, "folding factor {k} out of range for {n} vars");
+    let target = n.saturating_sub(log_final_poly_len);
+    let mut r = target.div_ceil(k).max(1);
+    while r * k > n {
+        r -= 1;
+    }
+    r.max(1)
 }
 
 /// Build the multilinear prover's fixed-column commitment `<AIR>.mlconst.bin`
@@ -479,8 +525,9 @@ fn write_mlconst(air_ir: &proofman_multilinear::AirIr, const_path: &Path, out_pa
     }
 
     let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
-    let matrix = proofman_multilinear::commit_matrix(&refs, &air_ir.params);
-    matrix.save(out_path).map_err(|e| anyhow::anyhow!("writing {}: {e}", out_path.display()))?;
+    use proofman_multilinear::{MlPcs, Pcs};
+    let matrix = Pcs::commit(&refs, &air_ir.params);
+    Pcs::save_commitment(&matrix, out_path).map_err(|e| anyhow::anyhow!("writing {}: {e}", out_path.display()))?;
 
     Ok(format!("committed {n_const_cols} fixed columns ({n_rows} rows)"))
 }
