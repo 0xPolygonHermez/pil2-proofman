@@ -1564,18 +1564,20 @@ where
             &custom_commits_fixed_path,
         );
 
-        #[cfg(feature = "diagnostic")]
-        {
-            let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
-            if invalid_initialization {
-                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
-            }
-        }
-
         pctx.set_instance_stream_id(instance_id, stream_id);
 
         if !pctx.gpu {
             calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            #[cfg(feature = "diagnostic")]
+            {
+                let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
+                if invalid_initialization {
+                    return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
+                }
+            }
+        }
+
+        if !pctx.gpu {
             wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
             calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
         } else {
