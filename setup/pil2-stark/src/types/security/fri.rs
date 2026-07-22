@@ -250,7 +250,6 @@ mod tests {
             target_security_bits: 128,
         };
         let rp = CodeParams::new(&params.field_size_bits, params.dimension, params.rate, 0.0, params.n_opening_points);
-        let length = rp.length.to_f64_round(Round::Nearest);
         let (n_queries, n_grinding_bits) = params.optimal_calc(&DecodingRegime::Jbr, &rp);
         assert_eq!(n_queries, 215, "nQueries at alpha=0 should be 215");
         assert_eq!(n_grinding_bits, 22);
