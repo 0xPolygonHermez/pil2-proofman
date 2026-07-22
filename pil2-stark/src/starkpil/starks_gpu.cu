@@ -253,8 +253,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     CudaGraphCache *graphCache = cudagraph::current();
     // Only the native (ColMajorTiled) LDE is graph-capturable: the flat (ColMajor) path delegates to
     // sppark, which runs the NTT on its own private stream (joined to the caller via events) --
-    // cross-stream work mid single-stream capture is illegal. Skip the capture path for flat commits.
-    bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+    // cross-stream work mid single-stream capture is illegal. isGraphCapturableLayout is the shared
+    // predicate the LDE dispatch also uses, so capture can never target the sppark path.
+    bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
     if (graphCache && capturable && !skipRecalculation && nCols > 0) {
         uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -360,8 +361,9 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
 
 #ifdef USE_CUDA_GRAPH
         // Only the native (ColMajorTiled) computeQ is graph-capturable; the flat (ColMajor) path uses
-        // sppark (host sync + own stream), illegal mid-capture. Skip capture for flat cmQ.
-        bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+        // sppark (host sync + own stream), illegal mid-capture. isGraphCapturableLayout is the shared
+        // predicate the computeQ dispatch also uses, so capture can never target the sppark path.
+        bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
         if (cudagraph::aggressive() && capturable) {
             CudaGraphCache *graphCache = cudagraph::current();
             if (graphCache) {

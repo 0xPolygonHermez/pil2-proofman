@@ -3,6 +3,7 @@ use std::{
     sync::RwLock,
 };
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{MpiCtx, ProofmanError};
@@ -19,7 +20,7 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_unified_buffer_gpu_c,
+    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
 };
 use proofman_util::DeviceBuffer;
@@ -266,6 +267,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    pub reload_fixed_pols_gpu: Arc<AtomicBool>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -318,6 +320,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1056,6 +1059,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn acquire_first_gpu_buffer(&self) {
         if self.gpu {
             acquire_first_gpu_buffer_c(self.d_buffers.get_ptr());
+            self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -1063,14 +1067,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         if self.gpu {
             release_first_gpu_buffer_c(self.d_buffers.get_ptr());
         }
-    }
-
-    /// Unified buffer of the caller's CURRENT device.
-    pub fn get_gpu_buffer(&self) -> (usize, u64) {
-        let device_buffers_ptr = self.d_buffers.get_ptr();
-        let gpu_buf_ptr = get_unified_buffer_gpu_c(device_buffers_ptr) as usize;
-        let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
-        (gpu_buf_ptr, gpu_buf_size)
     }
 
     /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via

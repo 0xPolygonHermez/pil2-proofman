@@ -300,6 +300,7 @@ impl ProveRecursiveCmd {
             &setup.const_pols_tree_path,
             proof_type_str,
             false,
+            "",
         );
 
         // The recursive prover writes its output asynchronously; the result is only in

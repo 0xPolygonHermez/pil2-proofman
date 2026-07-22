@@ -88,9 +88,16 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, STARK_STEP_0);
 
 #ifdef USE_CUDA_GRAPH
+    // Point the thread-local capture cache at THIS stream's cache for the duration of the
+    // proof, and clear it on exit. Every capture region lives in this call tree, so clearing
+    // here means any future beginCapture reached from another path (with current() unset)
+    // faults loudly instead of silently reusing this stream's cache with another's buffers.
     cudagraph::current() = d_buffers->streamsData[stream_id].graph_cache.get();
     cudagraph::aggressive() = recursive;
     cudaGetLastError();
+    struct GraphCtxGuard {
+        ~GraphCtxGuard() { cudagraph::current() = nullptr; cudagraph::aggressive() = false; }
+    } graphCtxGuard;
 #endif
 
     uint64_t countId = 0;

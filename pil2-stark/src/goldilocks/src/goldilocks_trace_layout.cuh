@@ -33,6 +33,14 @@ __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_
     return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
 }
 
+// Single source of truth for CUDA-graph capturability of the NTT/LDE/computeQ path: only the native
+// (ColMajorTiled) backend is pure kernels; the flat (ColMajor) backend delegates to sppark (own stream
+// + host sync), which is illegal to capture. The LDE/computeQ dispatch and the capture guards in
+// starks_gpu.cu both gate on THIS, so "runs the native path" and "is capturable" can never drift apart.
+__host__ __device__ __forceinline__ bool isGraphCapturableLayout(uint64_t nBits, uint64_t nCols) {
+    return resolveLayout(nBits, nCols) == Layout::ColMajorTiled;
+}
+
 // Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
 // source of truth so every producer and consumer agrees. ColMajorTiled matches pre-1.0.0-beta behavior.
 __host__ __device__ __forceinline__ Layout fixedLayout() {

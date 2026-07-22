@@ -351,7 +351,6 @@ pub struct ProofMan<F: PrimeField64> {
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     witness_info: RwLock<WitnessInfo>,
-    reload_fixed_pols_gpu: Arc<AtomicBool>,
     options: ProofmanOptions,
 
     /// Serializes proof-generation entry points. Use `acquire_computing()`.
@@ -554,7 +553,7 @@ where
     }
 
     pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
-        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.pctx.reload_fixed_pols_gpu.clone())
     }
 
     pub fn set_barrier(&self) {
@@ -2119,7 +2118,6 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
-            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             computing: Mutex::new(()),
         })
     }
@@ -3748,7 +3746,11 @@ where
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
 
-        if self.pctx.gpu && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
+        if let Err(e) = self.wcm.execute() {
+            self.cancellation_info.write().unwrap().cancel(Some(e));
+        }
+
+        if self.pctx.gpu && self.pctx.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
             let _ = load_device_const_pols(
                 &self.pctx,
@@ -3758,12 +3760,8 @@ where
                 self.options.aggregation,
                 true,
             )?;
-            self.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
+            self.pctx.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
             timer_stop_and_log_info!(RELOAD_FIXED_POLS);
-        }
-
-        if let Err(e) = self.wcm.execute() {
-            self.cancellation_info.write().unwrap().cancel(Some(e));
         }
 
         self.check_cancel(true)?;
