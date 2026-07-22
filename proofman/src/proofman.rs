@@ -29,6 +29,74 @@ use std::sync::{LazyLock, Mutex, RwLock};
 /// env-driven behavior, replace `true` with `std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok()`.
 /// Read once so the hot recursive handler doesn't hit getenv per proof.
 static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
+
+/// DIAGNOSTIC (ZISK_WC_DUMP=<dir>): when set, the prove loop retains each basic
+/// proof's host witness buffer in flight instead of recycling it immediately, and
+/// dumps ONLY the buffer of an instance whose recursive verify fails
+/// (VerifyEvaluations0). The happy path pays no disk I/O and no hashing — the one
+/// write happens on the rare failure, giving the exact bytes to replay. Read once.
+static WC_DUMP_DIR: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZISK_WC_DUMP").ok());
+/// Hard cap on retained-but-unverified witness buffers, so pinning them out of the
+/// pool can never starve `take()` (the pool has fixed capacity). With n_streams=1
+/// only ~1 is ever in flight; a small cap covers bursts, and overflow releases the
+/// oldest (losing only its dump-ability, never wedging the run).
+const WC_DUMP_MAX_RETAINED: usize = 4;
+
+/// Retain a BASIC witness buffer out of the pool (keyed by instance id) so it can
+/// be dumped if its recursive verify later fails; returns the buffer to release
+/// instead when retention is disabled or the cap is hit. Only called when
+/// ZISK_WC_DUMP is set. Enforces WC_DUMP_MAX_RETAINED so pinning can never starve
+/// the pool: on overflow it evicts the lowest-id retained buffer and hands both it
+/// and (if the new one lost the race) the new buffer back for release.
+fn wc_retain_basic<F: PrimeField64>(
+    retain: &Arc<Mutex<HashMap<usize, Vec<F>>>>,
+    instance_id: usize,
+    buffer: Vec<F>,
+) -> Vec<Vec<F>> {
+    let mut map = retain.lock().unwrap();
+    let mut to_release = Vec::new();
+    if map.len() >= WC_DUMP_MAX_RETAINED {
+        // Evict oldest (lowest id) to bound memory / keep the pool fed.
+        if let Some(&oldest) = map.keys().min() {
+            if let Some(buf) = map.remove(&oldest) {
+                to_release.push(buf);
+            }
+        }
+    }
+    if let Some(prev) = map.insert(instance_id, buffer) {
+        // A retained buffer for this id already existed (shouldn't normally happen);
+        // release the stale one rather than leak it out of the pool.
+        to_release.push(prev);
+    }
+    to_release
+}
+
+/// Write a retained BASIC witness buffer to `<ZISK_WC_DUMP>/bad_<job>/` after its
+/// recursive verify failed. `job` keys the dir by ZISK_WC_JOB when the daemon sets
+/// it (else the pid), matching the earlier staging convention. Best-effort: a dump
+/// failure only loses the diagnostic, never the run.
+fn wc_dump_bad_witness<F: PrimeField64>(
+    dir: &str,
+    instance_id: usize,
+    airgroup_id: usize,
+    air_id: usize,
+    buffer: &[F],
+) {
+    let bytes =
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, std::mem::size_of_val(buffer)) };
+    let job = std::env::var("ZISK_WC_JOB").unwrap_or_else(|_| std::process::id().to_string());
+    let bad = std::path::Path::new(dir).join(format!("bad_{job}"));
+    let _ = std::fs::create_dir_all(&bad);
+    let path = bad.join(format!("inst{instance_id}_ag{airgroup_id}_air{air_id}.bin"));
+    match std::fs::write(&path, bytes) {
+        Ok(()) => tracing::error!(
+            "[WC-DUMP] BAD basic witness inst {instance_id} [{airgroup_id}:{air_id}] {} bytes -> {}",
+            bytes.len(),
+            path.display()
+        ),
+        Err(e) => tracing::warn!("[WC-DUMP] inst {instance_id}: write failed: {e}"),
+    }
+}
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
@@ -348,6 +416,12 @@ pub struct ProofMan<F: PrimeField64> {
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    /// ZISK_WC_DUMP diagnostic: basic-proof witness buffers retained in flight,
+    /// keyed by instance id, until their recursive verify confirms them (see
+    /// wc_retain_basic / wc_dump_bad_witness). Drained back to the pool in reset()
+    /// so any never-verified survivor still satisfies the pool integrity check.
+    /// Empty unless ZISK_WC_DUMP is set.
+    wc_retain: Arc<Mutex<HashMap<usize, Vec<F>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     witness_info: RwLock<WitnessInfo>,
@@ -519,6 +593,16 @@ impl<F: PrimeField64> ProofMan<F> {
         }
 
         self.total_outer_agg_proofs.reset();
+
+        // ZISK_WC_DUMP: any basic witness still retained (never reached its recursive
+        // verify — e.g. cancelled mid-flight) must go back to the pool too, else the
+        // reset integrity check below trips. Dropped without dumping (not a failure).
+        {
+            let drained: Vec<Vec<F>> = self.wc_retain.lock().unwrap().drain().map(|(_, v)| v).collect();
+            for buf in drained {
+                self.memory_handler.release_buffer(buf)?;
+            }
+        }
 
         // free_instance returns (is_shared, buf) — shared buffers must be put back into
         // the pool, otherwise the pool capacity shrinks and memory_handler.reset() fails
@@ -2134,6 +2218,7 @@ where
             received_agg_proofs,
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
             handle_contributions: Arc::new(Mutex::new(Vec::new())),
+            wc_retain: Arc::new(Mutex::new(HashMap::new())),
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
@@ -2508,6 +2593,10 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
+        // ZISK_WC_DUMP diagnostic: retain basic-proof witness buffers in flight
+        // (see the field declaration). Local clone for the closures below.
+        let wc_retain = self.wc_retain.clone();
+
         register_proof_done_callback_c(self.recursive_tx.clone());
 
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
@@ -2528,6 +2617,9 @@ where
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
+            // ZISK_WC_DUMP: this thread consumes retained basic witnesses on verify.
+            let wc_retain_clone = wc_retain.clone();
+            let memory_handler_basic_clone = self.memory_handler.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -2640,6 +2732,25 @@ where
                             &setups_clone,
                             &proof,
                         );
+                        // ZISK_WC_DUMP: this recursive witness came from a BASIC proof,
+                        // so its retained witness buffer (if any) is dumpable. On failure
+                        // (VerifyEvaluations0) write it; either way release it afterward.
+                        if WC_DUMP_DIR.is_some() {
+                            let retained: Option<Vec<F>> =
+                                wc_retain_clone.lock().unwrap().remove(&(id as usize));
+                            if let Some(buf) = retained {
+                                if w.is_err() {
+                                    wc_dump_bad_witness(
+                                        WC_DUMP_DIR.as_ref().unwrap(),
+                                        id as usize,
+                                        proof.airgroup_id,
+                                        proof.air_id,
+                                        &buf,
+                                    );
+                                }
+                                let _ = memory_handler_basic_clone.release_buffer(buf);
+                            }
+                        }
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
@@ -2718,8 +2829,17 @@ where
                 if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
                     wait_stream_commit_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
                 }
-                if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
-                    self.cancellation_info.write().unwrap().cancel(Some(e));
+                // ZISK_WC_DUMP: retain the basic witness for dump-on-failure instead
+                // of releasing now; overflow buffers still go back to the pool.
+                let to_release = if WC_DUMP_DIR.is_some() {
+                    wc_retain_basic(&wc_retain, *instance_id as usize, witness_buffer)
+                } else {
+                    vec![witness_buffer]
+                };
+                for buf in to_release {
+                    if let Err(e) = self.memory_handler.release_buffer(buf) {
+                        self.cancellation_info.write().unwrap().cancel(Some(e));
+                    }
                 }
             }
         });
@@ -2769,6 +2889,7 @@ where
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let proofs_pending_clone = proofs_pending.clone();
+            let wc_retain_clone = wc_retain.clone();
             let handle_recursive = std::thread::spawn(move || loop {
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
                 if !force_recursive_stream {
@@ -2813,9 +2934,18 @@ where
                                         proof_stream_id as u64,
                                     );
                                 }
-                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                    return;
+                                // ZISK_WC_DUMP: retain the basic witness for
+                                // dump-on-failure; overflow goes back to the pool.
+                                let to_release = if WC_DUMP_DIR.is_some() {
+                                    wc_retain_basic(&wc_retain_clone, instance_id, witness_buffer)
+                                } else {
+                                    vec![witness_buffer]
+                                };
+                                for buf in to_release {
+                                    if let Err(e) = memory_handler_clone.release_buffer(buf) {
+                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                        return;
+                                    }
                                 }
                             }
                             continue;
@@ -4778,44 +4908,6 @@ where
             None => String::new(),
         };
 
-        // DIAGNOSTIC (ZISK_WC_DUMP=<dir>): dump this instance's witness EXACTLY as it is
-        // handed to the prover — the host trace buffer (packed for packed airs), right
-        // before the H2D copy + GPU commit. Covers EVERY air (Main, Mem, Rom, Binary, …),
-        // one file per instance under a per-process staging dir, plus a checksum log. The
-        // CLI promotes the whole staging dir by verify outcome: first verifying run →
-        // `reference/`, a failing run → `bad_<pid>/`, later verifying runs discarded — so
-        // disk stays bounded. Comparing a bad instance's bytes vs the reference tells us
-        // whether the witness is already wrong at the prover's door (WC generation) or
-        // identical (prover/GPU).
-        if let Ok(dir) = std::env::var("ZISK_WC_DUMP") {
-            let trace_len = pctx.air_instances[instance_id].read().unwrap().trace.len();
-            if !steps_params.trace.is_null() && trace_len > 0 {
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(steps_params.trace, trace_len * std::mem::size_of::<F>())
-                };
-                let mut fp: u64 = 0xcbf29ce484222325;
-                for b in bytes {
-                    fp = (fp ^ *b as u64).wrapping_mul(0x100000001b3);
-                }
-                // Key the staging dir by the caller-supplied job id when present
-                // (ZISK_WC_JOB), so a long-lived daemon proving many jobs gets one
-                // staging dir per job instead of a single pid-keyed dir that would
-                // intermix witnesses across jobs. Falls back to the pid for the
-                // single-shot CLI manual-loop path (fresh process per run).
-                let staging_key = std::env::var("ZISK_WC_JOB")
-                    .unwrap_or_else(|_| std::process::id().to_string());
-                let staging = std::path::Path::new(&dir).join(format!("staging_{staging_key}"));
-                let _ = std::fs::create_dir_all(&staging);
-                let path = staging.join(format!("inst{instance_id}_ag{airgroup_id}_air{air_id}.bin"));
-                match std::fs::write(&path, bytes) {
-                    Ok(()) => tracing::info!(
-                        "[WC-DUMP] inst {instance_id} [{airgroup_id}:{air_id}] {} bytes fp=0x{fp:016x}",
-                        bytes.len()
-                    ),
-                    Err(e) => tracing::warn!("[WC-DUMP] inst {instance_id}: write failed: {e}"),
-                }
-            }
-        }
 
         // The commit (incl. the now-async trace H2D) runs on this stream; the root
         // is collected later when the stream's end_event is polled. Return the
