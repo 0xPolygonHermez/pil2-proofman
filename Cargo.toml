@@ -10,66 +10,67 @@ categories = ["cryptography"]
 
 [workspace]
 members = [
-    # Core crates
-    "cli",
-    "curves",
-    "common",
-    "fields",
-    "hints",
-    "pilout",
-    "proofman",
-    "macros",
-    "provers/starks-lib-c",
-    "pil2-stark",
-    "witness",
-    "util",
-    "verifier",
-    "soundness",
-    "setup/stark-recurser",
-    "setup/pil2-stark",
-    "setup/exps-codegen",
+  # Core crates
+  "cli",
+  "curves",
+  "common",
+  "fields",
+  "hints",
+  "pilout",
+  "proofman",
+  "macros",
+  "provers/starks-lib-c",
+  "pil2-stark",
+  "witness",
+  "util",
+  "verifier",
+  "soundness",
+  "setup/stark-recurser",
+  "setup/pil2-stark",
+  "setup/exps-codegen",
 
-    # PIL2 components library
-    "pil2-components/lib/std/rs",
+  # PIL2 components library
+  "pil2-components/lib/std/rs",
 
-    # PIL2 component tests
-    "pil2-components/test/connection/rs",
-    "pil2-components/test/diff_buses/rs",
-    "pil2-components/test/direct_update/rs",
-    "pil2-components/test/lookup/rs",
-    "pil2-components/test/one_instance/rs",
-    "pil2-components/test/permutation/rs",
-    "pil2-components/test/range_check/rs",
-    "pil2-components/test/simple/rs",
-    "pil2-components/test/special/rs",
-    "pil2-components/test/virtual_tables/rs",
-    "pil2-components/test/common/rs",
+  # PIL2 component tests
+  "pil2-components/test/connection/rs",
+  "pil2-components/test/diff_buses/rs",
+  "pil2-components/test/direct_update/rs",
+  "pil2-components/test/lookup/rs",
+  "pil2-components/test/one_instance/rs",
+  "pil2-components/test/permutation/rs",
+  "pil2-components/test/range_check/rs",
+  "pil2-components/test/simple/rs",
+  "pil2-components/test/special/rs",
+  "pil2-components/test/virtual_tables/rs",
+  "pil2-components/test/common/rs",
 
-    # Examples
-    "examples/fibonacci-square",
-    "examples/test-recursive",
-    "macros-test",
+  # Examples
+  "examples/fibonacci-square",
+  "examples/hashes",
+  "examples/test-recursive",
+  "macros-test",
 ]
 
 default-members = [
-    "cli",
-    "curves",
-    "common",
-    "fields",
-    "hints",
-    "pilout",
-    "proofman",
-    "macros",
-    "provers/starks-lib-c",
-    "pil2-stark",
-    "witness",
-    "util",
-    "verifier",
-    "soundness",
-    "setup/stark-recurser",
-    "setup/pil2-stark",
-    "setup/exps-codegen",
-    "pil2-components/lib/std/rs",
+  "cli",
+  "curves",
+  "common",
+  "fields",
+  "hints",
+  "pilout",
+  "proofman",
+  "macros",
+  "provers/starks-lib-c",
+  "pil2-stark",
+  "witness",
+  "util",
+  "verifier",
+  "soundness",
+  "setup/stark-recurser",
+  "setup/pil2-stark",
+  "setup/exps-codegen",
+  "pil2-components/lib/std/rs",
 ]
 
 resolver = "2"
@@ -102,7 +103,7 @@ prost = "0.13"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
-mpi = "0.8.2" 
+mpi = "0.8.2"
 crossbeam-channel = "0.5.15"
 rayon = "1"
 serde = { version = "1.0.130", features = ["derive"] }
@@ -114,7 +115,10 @@ libloading = "0.8.7"
 sysinfo = "0.35.1"
 blake3 = "1.3.1"
 csv = "1.3.1"
-bincode = { version = "2.0", default-features = false, features = ["serde", "std"] }
+bincode = { version = "2.0", default-features = false, features = [
+  "serde",
+  "std",
+] }
 borsh = { version = "1.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"

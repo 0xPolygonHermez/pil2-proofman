@@ -173,14 +173,11 @@ __global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldi
     }
 }
 
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily){
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily){
 
     uint64_t totalBits = n * nBits;
 
     uint64_t NFields = (totalBits + 62) / 63;
-
-    constexpr uint64_t MAX_FIELDS = 1024;
-    Goldilocks::Element fields[MAX_FIELDS];
 
     for (uint64_t i = 0; i < NFields; i++)
     {
@@ -378,16 +375,13 @@ __global__ void __getStateWarp(Goldilocks::Element* output, uint64_t nOutputs, G
     }
 }
 
-__global__ void __getPermutationsWarp(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
+__global__ void __getPermutationsWarp(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
 {
     const uint32_t lane = threadIdx.x;
     const uint32_t transcriptOutSize = TRX_OUT_SIZE(arity);
 
     uint64_t totalBits = n * nBits;
     uint64_t NFields = (totalBits + 62) / 63;
-
-    Goldilocks::Element* fields = nullptr;
-    if (lane == 0) fields = new Goldilocks::Element[NFields];
 
     for (uint64_t i = 0; i < NFields; i++)
     {
@@ -424,7 +418,6 @@ __global__ void __getPermutationsWarp(uint64_t *res, uint64_t n, uint64_t nBits,
             }
             res[i] = a;
         }
-        delete[] fields;
     }
 }
 
@@ -524,10 +517,10 @@ void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, 
         __getState<<<1, 1, 0, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
 }
 
-void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream)
+void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* perm_scratch, cudaStream_t stream)
 {
     if (parallel)
-        __getPermutationsWarp<<<1, 32, 0, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
+        __getPermutationsWarp<<<1, 32, 0, stream>>>(res, n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
-        __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
+        __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
 }

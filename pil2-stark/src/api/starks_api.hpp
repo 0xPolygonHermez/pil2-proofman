@@ -191,6 +191,8 @@ extern "C" {
     void acquire_first_gpu_buffer(void *d_buffers_);
     void release_first_gpu_buffer(void *d_buffers_);
     uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_);
+    uint32_t get_first_gpu_id(void *d_buffers_);
+    void *get_first_gpu_buffer(void *d_buffers_);
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);

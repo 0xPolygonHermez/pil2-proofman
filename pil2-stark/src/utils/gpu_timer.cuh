@@ -98,7 +98,10 @@ public:
     void syncAndCompute(const std::string& name) {
         auto& entry = timers.at(name);
         cudaEventSynchronize(entry.stop);
-        cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+        if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+            cudaGetLastError();   // clear sticky error
+            entry.timeMs = 0.0f;  // don't propagate garbage
+        }
     }
 
     float getTimeMs(const std::string& name) {
@@ -119,7 +122,10 @@ public:
         for (auto& entry : it->second) {
             if (entry.timeMs < 0.0f) {
                 cudaEventSynchronize(entry.stop);
-                cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                    cudaGetLastError();   // clear sticky error
+                    entry.timeMs = 0.0f;  // don't propagate garbage
+                }
             }
             total += entry.timeMs / 1000.0;
         }
@@ -140,7 +146,10 @@ public:
                 for (auto& entry : entries) {
                     if (entry.timeMs < 0.0f) {
                         cudaEventSynchronize(entry.stop);
-                        cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                        if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                            cudaGetLastError();   // clear sticky error
+                            entry.timeMs = 0.0f;  // don't propagate garbage
+                        }
                     }
                     total_sec += entry.timeMs / 1000.0;
                 }
@@ -157,7 +166,10 @@ public:
             for (auto& entry : entries) {
                 if (entry.timeMs < 0.0f) {
                     cudaEventSynchronize(entry.stop);
-                    cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                    if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                        cudaGetLastError();   // clear sticky error
+                        entry.timeMs = 0.0f;  // don't propagate garbage
+                    }
                 }
             }
         }

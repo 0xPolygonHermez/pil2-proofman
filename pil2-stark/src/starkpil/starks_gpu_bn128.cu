@@ -20,8 +20,7 @@ __global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * querySize + idx_x;
-        // Use the proper tiled format from goldilocks_trace_layout.cuh
-        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
+        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, Layout::ColMajor);
         uint64_t val = d_treeTrace[idx_trace][0];
         // Reduce the Goldilocks value
         if (val >= GOLDILOCKS_PRIME) {

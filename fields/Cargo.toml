@@ -28,4 +28,6 @@ verify = []
 rand = { workspace = true }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_vendor, values("zisk"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(target_vendor, values("zisk"))',
+] }

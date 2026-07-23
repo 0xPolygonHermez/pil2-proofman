@@ -20,7 +20,7 @@ use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
     alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_unified_buffer_gpu_c,
-    get_unified_buffer_gpu_size_c,
+    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -1054,10 +1054,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+    /// Unified buffer of the caller's CURRENT device.
     pub fn get_gpu_buffer(&self) -> (usize, u64) {
         let device_buffers_ptr = self.d_buffers.get_ptr();
         let gpu_buf_ptr = get_unified_buffer_gpu_c(device_buffers_ptr) as usize;
         let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
         (gpu_buf_ptr, gpu_buf_size)
+    }
+
+    /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via
+    /// `acquire_first_gpu_buffer`, does not touch the current device.
+    pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
+        let device_buffers_ptr = self.d_buffers.get_ptr();
+        let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
+        let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
+        (gpu_buf_ptr, gpu_buf_size)
+    }
+
+    /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
+    /// points to. Not always 0 (NUMA can reorder). 0 when GPU mode is off.
+    pub fn first_gpu_id(&self) -> u32 {
+        if self.gpu {
+            get_first_gpu_id_c(self.d_buffers.get_ptr())
+        } else {
+            0
+        }
     }
 }
