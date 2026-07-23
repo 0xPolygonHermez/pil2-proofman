@@ -17,9 +17,9 @@ use crate::{
 pub struct StdRangeCheck<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
     ranges: Vec<StdRange>,
-    pub u8air: Option<Arc<U8Air>>,
-    pub u16air: Option<Arc<U16Air>>,
-    pub specified_ranges_air: Option<Arc<SpecifiedRanges>>,
+    pub u8air: Option<Arc<U8Air<F>>>,
+    pub u16air: Option<Arc<U16Air<F>>>,
+    pub specified_ranges_air: Option<Arc<SpecifiedRanges<F>>>,
     virtual_table: Arc<StdVirtualTable<F>>,
 }
 
@@ -69,10 +69,10 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let specified_ranges_air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
         // Instantiate the AIRs
-        let u8air = Self::create_air::<U8Air>(&pctx, sctx, shared_tables, &u8air_hint)?;
-        let u16air = Self::create_air::<U16Air>(&pctx, sctx, shared_tables, &u16air_hint)?;
+        let u8air = Self::create_air::<U8Air<F>>(&pctx, sctx, shared_tables, &u8air_hint)?;
+        let u16air = Self::create_air::<U16Air<F>>(&pctx, sctx, shared_tables, &u16air_hint)?;
         let specified_ranges_air =
-            Self::create_air::<SpecifiedRanges>(&pctx, sctx, shared_tables, &specified_ranges_air_hint)?;
+            Self::create_air::<SpecifiedRanges<F>>(&pctx, sctx, shared_tables, &specified_ranges_air_hint)?;
 
         // Early return if no range check users
         let std_rc_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users");
@@ -356,7 +356,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 // Therefore, we can safely cast value to u8
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let row = U8Air::get_global_row(value as u8);
+                    let row = U8Air::<F>::get_global_row(value as u8);
 
                     // Increment the virtual row
                     self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
@@ -369,7 +369,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 // Therefore, we can safely cast value to u16
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let row = U16Air::get_global_row(value as u16);
+                    let row = U16Air::<F>::get_global_row(value as u16);
 
                     // Increment the virtual row
                     self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
@@ -385,7 +385,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let upper_value = (range_data.max - value) as u8;
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let rows = vec![U8Air::get_global_row(lower_value), U8Air::get_global_row(upper_value)];
+                    let rows = vec![U8Air::<F>::get_global_row(lower_value), U8Air::<F>::get_global_row(upper_value)];
 
                     // Increment the virtual row
                     self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
@@ -403,7 +403,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let upper_value = (range_data.max - value) as u16;
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let rows = vec![U16Air::get_global_row(lower_value), U16Air::get_global_row(upper_value)];
+                    let rows = vec![U16Air::<F>::get_global_row(lower_value), U16Air::<F>::get_global_row(upper_value)];
 
                     // Increment the virtual rows
                     self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
@@ -416,7 +416,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             StdRangeType::SpecifiedRanges => {
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let row = SpecifiedRanges::get_global_row(range_item.data.min, value);
+                    let row = SpecifiedRanges::<F>::get_global_row(range_item.data.min, value);
 
                     // Increment the virtual rows
                     self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
@@ -445,7 +445,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
                     let vals: Vec<u8> = (0..values.len()).map(|v| v as u8).collect();
-                    let rows = U8Air::get_global_rows(&vals);
+                    let rows = U8Air::<F>::get_global_rows(&vals);
 
                     // Increment the virtual rows
                     self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
@@ -459,7 +459,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
                     let vals: Vec<u16> = (0..values.len()).map(|v| v as u16).collect();
-                    let rows = U16Air::get_global_rows(&vals);
+                    let rows = U16Air::<F>::get_global_rows(&vals);
 
                     // Increment the virtual rows
                     self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
@@ -471,7 +471,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
                     let vals: Vec<i64> = (0..values.len()).map(|v| v as i64).collect();
-                    let rows = SpecifiedRanges::get_global_rows(range_item.data.min, &vals);
+                    let rows = SpecifiedRanges::<F>::get_global_rows(range_item.data.min, &vals);
 
                     // Increment the virtual rows
                     self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);

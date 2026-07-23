@@ -1,10 +1,9 @@
 use std::sync::{
     atomic::{AtomicBool, AtomicU64},
-    Arc, RwLock,
+    Arc, Mutex, RwLock,
 };
 
 use fields::PrimeField64;
-use proofman_util::create_buffer_fast;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
@@ -17,7 +16,7 @@ use crate::AirComponent;
 
 const P2_8: usize = 256;
 
-pub struct U8Air {
+pub struct U8Air<F: PrimeField64> {
     airgroup_id: usize,
     air_id: usize,
     shift: usize,
@@ -28,9 +27,13 @@ pub struct U8Air {
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    // Persistent trace buffer slot. Pre-allocated in `new`; taken in `calculate_witness`
+    // and refilled via the `reclaim_slot` hook when the instance traces are cleared,
+    // so the same allocation is reused across jobs instead of realloc'd per block.
+    trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
 }
 
-impl<F: PrimeField64> AirComponent<F> for U8Air {
+impl<F: PrimeField64> AirComponent<F> for U8Air<F> {
     fn new(
         pctx: &ProofCtx<F>,
         _sctx: &SetupCtx<F>,
@@ -47,6 +50,8 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
             .collect();
 
+        let trace_buffer = Arc::new(Mutex::new(Some(vec![F::ZERO; num_cols * num_rows])));
+
         Ok(Arc::new(Self {
             airgroup_id,
             air_id,
@@ -58,11 +63,12 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
             table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
             shared_tables,
+            trace_buffer,
         }))
     }
 }
 
-impl U8Air {
+impl<F: PrimeField64> U8Air<F> {
     pub const fn get_global_row(value: u8) -> u64 {
         value as u64
     }
@@ -117,7 +123,7 @@ impl U8Air {
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for U8Air {
+impl<F: PrimeField64> WitnessComponent<F> for U8Air<F> {
     fn execute(
         &self,
         pctx: Arc<ProofCtx<F>>,
@@ -180,8 +186,12 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
             }
 
             if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
-                let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast(buffer_size);
+                let mut buffer = self
+                    .trace_buffer
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("U8Air trace_buffer must be populated by reclaim before calculate_witness");
                 let any_nonzero = AtomicBool::new(false);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
@@ -199,19 +209,15 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
                         self.air_id
                     );
                     pctx.dctx_skip_process_instance(instance_id);
+                    *self.trace_buffer.lock().unwrap() = Some(buffer);
                     return Ok(());
                 }
                 let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
                 let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
-                let air_instance = AirInstance::new(TraceInfo::new(
-                    self.airgroup_id,
-                    self.air_id,
-                    n_cols,
-                    self.num_rows,
-                    buffer,
-                    false,
-                    false,
-                ));
+                let air_instance = AirInstance::new(
+                    TraceInfo::new(self.airgroup_id, self.air_id, n_cols, self.num_rows, buffer, false, false)
+                        .with_reclaim_slot(self.trace_buffer.clone()),
+                );
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

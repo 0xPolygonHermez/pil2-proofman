@@ -2,10 +2,9 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
     },
 };
-use proofman_util::create_buffer_fast;
 use rayon::prelude::*;
 
 use fields::PrimeField64;
@@ -20,9 +19,9 @@ pub struct StdVirtualTable<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
     pub global_id_by_uid: HashMap<usize, usize>,   // uid -> global_id
     pub indices_by_global_id: Vec<(usize, usize)>, // global_id -> (air_idx, uid_idx)
-    pub virtual_table_airs: Option<Vec<Arc<VirtualTableAir>>>,
+    pub virtual_table_airs: Option<Vec<Arc<VirtualTableAir<F>>>>,
 }
-pub struct VirtualTableAir {
+pub struct VirtualTableAir<F: PrimeField64> {
     airgroup_id: usize,
     air_id: usize,
     shift: u64,
@@ -34,6 +33,10 @@ pub struct VirtualTableAir {
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    // Persistent trace buffer slot. Pre-allocated in `new`; taken in `calculate_witness`
+    // and refilled via the `reclaim_slot` hook when the instance traces are cleared,
+    // so the same allocation is reused across jobs instead of realloc'd per block.
+    trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
@@ -114,6 +117,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
                 .collect();
 
+            let trace_buffer = Arc::new(Mutex::new(Some(vec![F::ZERO; num_muls as usize * num_rows])));
+
             let virtual_table_air = VirtualTableAir {
                 airgroup_id,
                 air_id,
@@ -126,6 +131,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
                 shared_tables,
+                trace_buffer,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
         }
@@ -180,7 +186,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
     }
 }
 
-impl VirtualTableAir {
+impl<F: PrimeField64> VirtualTableAir<F> {
     pub fn get_id(&self, id: usize) -> ProofmanResult<usize> {
         if let Some(pos) = self.table_ids.iter().position(|&(table_id, _)| table_id == id) {
             Ok(pos)
@@ -291,7 +297,7 @@ impl VirtualTableAir {
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
+impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir<F> {
     fn execute(
         &self,
         pctx: Arc<ProofCtx<F>>,
@@ -355,8 +361,12 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
             }
 
             if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
-                let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast(buffer_size);
+                let mut buffer = self
+                    .trace_buffer
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("VirtualTableAir trace_buffer must be populated by reclaim before calculate_witness");
                 let any_nonzero = std::sync::atomic::AtomicBool::new(false);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
@@ -374,19 +384,15 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                         self.air_id
                     );
                     pctx.dctx_skip_process_instance(instance_id);
+                    *self.trace_buffer.lock().unwrap() = Some(buffer);
                     return Ok(());
                 }
                 let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
                 let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
-                let air_instance = AirInstance::new(TraceInfo::new(
-                    self.airgroup_id,
-                    self.air_id,
-                    n_cols,
-                    self.num_rows,
-                    buffer,
-                    false,
-                    false,
-                ));
+                let air_instance = AirInstance::new(
+                    TraceInfo::new(self.airgroup_id, self.air_id, n_cols, self.num_rows, buffer, false, false)
+                        .with_reclaim_slot(self.trace_buffer.clone()),
+                );
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

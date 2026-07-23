@@ -1,6 +1,12 @@
 use std::ptr;
+use std::sync::{Arc, Mutex};
 use fields::PrimeField64;
 use proofman_util::create_buffer_fast;
+
+/// Slot used to hand a trace buffer back to its owning component for reuse,
+/// so table AIRs can recycle their allocation across jobs instead of
+/// reaching into pctx.air_instances.
+pub type ReclaimSlot<F> = Arc<Mutex<Option<Vec<F>>>>;
 
 use crate::{
     trace::{Trace, Values},
@@ -69,6 +75,7 @@ pub struct TraceInfo<F> {
     airgroup_values: Option<Vec<F>>,
     shared_buffer: bool,
     is_packed: bool,
+    reclaim_slot: Option<ReclaimSlot<F>>,
 }
 
 impl<F> TraceInfo<F> {
@@ -92,7 +99,13 @@ impl<F> TraceInfo<F> {
             airgroup_values: None,
             shared_buffer,
             is_packed,
+            reclaim_slot: None,
         }
+    }
+
+    pub fn with_reclaim_slot(mut self, slot: ReclaimSlot<F>) -> Self {
+        self.reclaim_slot = Some(slot);
+        self
     }
 
     pub fn is_packed(mut self, is_packed: bool) -> Self {
@@ -164,6 +177,7 @@ pub struct AirInstance<F> {
     pub shared_buffer: bool,
     pub is_packed: bool,
     pub stream_id: u64,
+    pub reclaim_slot: Option<ReclaimSlot<F>>,
 }
 
 impl<F: PrimeField64> AirInstance<F> {
@@ -192,6 +206,7 @@ impl<F: PrimeField64> AirInstance<F> {
             fixed: Vec::new(),
             is_packed: trace_info.is_packed,
             stream_id: 0,
+            reclaim_slot: trace_info.reclaim_slot,
         }
     }
 
@@ -326,8 +341,22 @@ impl<F: PrimeField64> AirInstance<F> {
     }
 
     pub fn clear_traces(&mut self) -> (bool, Vec<F>) {
+        if let Some(slot) = self.reclaim_slot.take() {
+            if !self.trace.is_empty() {
+                if let Ok(mut guard) = slot.lock() {
+                    if guard.is_none() {
+                        *guard = Some(std::mem::take(&mut self.trace));
+                    }
+                }
+            }
+            self.custom_commits_fixed = Vec::new();
+            self.aux_trace = Vec::new();
+            self.fixed = Vec::new();
+            return (false, Vec::new());
+        }
         let trace = std::mem::take(&mut self.trace);
         let shared_buffer = self.shared_buffer && !trace.is_empty();
+        let trace = if shared_buffer { trace } else { Vec::new() };
         self.custom_commits_fixed = Vec::new();
         self.aux_trace = Vec::new();
         self.fixed = Vec::new();
