@@ -1,8 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
-use witness::WitnessComponent;
-use fields::PrimeField64;
+use proofman_witness::WitnessComponent;
+use proofman_fields::PrimeField64;
 
 use crate::pil_helpers::{Blake2bTrace, Blake2bTraceRow};
 
