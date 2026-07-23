@@ -1,56 +1,7 @@
-use rug::{Float, ops::Pow};
-
-use super::common::{field_size_from_bits, hpf, truncate_decimal_places};
-
-// ---------------------------------------------------------------------------
-// Code Parameters
-// ---------------------------------------------------------------------------
-
-pub(crate) struct CodeParams {
-    /// Field size |F|.
-    pub(crate) field_size: Float,
-    #[allow(unused)]
-    /// Dimension k of the code.
-    pub(crate) dimension: Float,
-    /// Length n of the code.
-    pub(crate) length: Float,
-    /// Code rate ρ = k/n.
-    pub(crate) rate: Float,
-    /// Minimum distance δ = 1 - ρ.
-    pub(crate) minimum_distance: Float,
-    /// Augmented rate ρ' = ρ * (k + n_opening_points) / k.
-    pub(crate) augmented_rate: Float,
-    /// Alpha parameter for the code, used in security calculations.
-    pub(crate) alpha: f64,
-}
-
-impl CodeParams {
-    pub(crate) fn new(field_size_bits: &Float, dimension: u64, rate: f64, alpha: f64, n_opening_points: u64) -> Self {
-        let field_size = field_size_from_bits(field_size_bits);
-        let dim_f = hpf(dimension);
-        let rate_f = hpf(rate);
-        let length = dim_f.clone() / &rate_f;
-        let minimum_distance = hpf(1) - &rate_f;
-        let augmented_rate = {
-            let dim_plus_open = &dim_f + hpf(n_opening_points);
-            let numer = rate_f.clone() * &dim_plus_open;
-            numer / &dim_f
-        };
-        CodeParams { field_size, dimension: dim_f, length, rate: rate_f, minimum_distance, augmented_rate, alpha }
-    }
-
-    /// The square root of the code rate ρ.
-    fn sqrt_rate(&self) -> Float {
-        self.rate.clone().sqrt()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Decoding Regimes
-// ---------------------------------------------------------------------------
-
-/// A Reed–Solomon decoding regime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which decoding regime to instantiate. This is the *kind* of regime, known
+/// upfront; the concrete [`ProximityGapsRegime`] also needs the gap-widening
+/// factor `alpha`, which is deduced (searched over) by the PCS solvers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodingRegime {
     /// Johnson bound regime (JBR).
     Jbr,
@@ -59,121 +10,184 @@ pub enum DecodingRegime {
 }
 
 impl DecodingRegime {
-    // --- regime-specific ---
+    /// Instantiate a concrete regime. `alpha` widens the JBR gap and is
+    /// ignored by UDR (whose gap is fixed at δ/20).
+    pub fn instantiate(&self, field_size: f64, alpha: f64) -> Box<dyn ProximityGapsRegime> {
+        match self {
+            DecodingRegime::Jbr => Box::new(JohnsonBoundRegime::new(field_size, alpha)),
+            DecodingRegime::Udr => Box::new(UniqueDecodingRegime::new(field_size)),
+        }
+    }
+}
+
+/// A regime for proximity gaps or (mutual) correlated agreement.
+/// We only consider Reed-Solomon codes here, of dimension k, size n, and rate k/n.
+pub trait ProximityGapsRegime {
+    /// Returns the name of the regime.
+    fn identifier(&self) -> &'static str;
+
+    /// The field size over which the code is defined.
+    fn field_size(&self) -> &f64;
 
     /// The decoding radius: the largest fraction of errors that can be corrected.
-    pub(crate) fn decoding_radius(&self, cp: &CodeParams) -> Float {
-        match self {
-            // 1 - √ρ, where ρ is the code rate (= 1 - √(1-δ)).
-            DecodingRegime::Jbr => hpf(1) - cp.sqrt_rate(),
-            // δ/2, where δ is the minimum distance of the code.
-            DecodingRegime::Udr => cp.minimum_distance.clone() / hpf(2),
-        }
-    }
+    fn decoding_radius(&self, rate: &f64) -> f64;
 
-    /// The gap parameter η between the maximum decoding radius and the proximity parameter.
-    pub(crate) fn gap(&self, cp: &CodeParams) -> Float {
-        match self {
-            DecodingRegime::Jbr => {
-                // Something small that makes γ ∈ [δ/2, 1 - √(1-δ) - η] (see [BCHKS25] Corollary 1.4),
-                // where δ = 1 - ρ is the minimum distance of the code.
-                let base_correction = hpf(1) / hpf(300);
-                let alpha_str = format!("{}", 1.0 + cp.alpha);
-                let alpha_plus_one = hpf(Float::parse(&alpha_str).unwrap());
-                let raw = base_correction * &alpha_plus_one;
-                let gap = truncate_decimal_places(&raw, 20);
+    /// The gap between the decoding radius and the proximity parameter.
+    fn gap(&self, rate: &f64) -> f64;
 
-                // γ ∈ [δ/2, 1 - √(1-δ) - η] <=> 1 - √(1-δ) - η > δ/2 <=> η < 1 - √(1-δ) - δ/2
-                let delta_half = &cp.minimum_distance / hpf(2);
-                assert!(
-                    gap < self.decoding_radius(cp) - delta_half,
-                    "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR"
-                );
-                gap
-            }
-            DecodingRegime::Udr => {
-                // Something small that makes γ ∈ [δ/3, δ/2 - η] (see [BCHKS25] Corollary 1.4).
-                let gap = &cp.rate / hpf(20);
-
-                // γ ∈ [δ/3, δ/2 - η] <=> δ/2 - η > δ/3 <=> η < δ/6
-                assert!(gap < cp.minimum_distance.clone() / hpf(6), "Gap must be smaller than minimum δ/6 in UDR");
-                gap
-            }
-        }
-    }
-
-    /// The (mutual) correlated-agreement error for a single linear combination.
-    pub(crate) fn calculate_linear_error(&self, cp: &CodeParams) -> Float {
-        match self {
-            DecodingRegime::Jbr => {
-                // Theorem 4.2 from [BCHKS25].
-                let n = &cp.length;
-                let m = jbr_multiplicity(self, cp);
-                let rate = &cp.rate;
-                let sqrt_rate = cp.sqrt_rate();
-                let pp = self.proximity_parameter(cp);
-
-                let m_shifted = m + hpf(0.5);
-
-                // First fraction: (2·(m + 1/2)⁵ + 3·(m + 1/2)·γ·ρ)·n / (3·ρ·√ρ)
-                let numerator = (hpf(2) * m_shifted.clone().pow(5) + hpf(3) * &m_shifted * pp * rate) * n;
-                let denominator = hpf(3) * rate * &sqrt_rate;
-                let first_fraction = numerator / denominator;
-
-                // Second fraction: (m + 1/2) / √ρ
-                let second_fraction = m_shifted / &sqrt_rate;
-
-                (first_fraction + second_fraction) / &cp.field_size
-            }
-            DecodingRegime::Udr => {
-                // Obtained from [BCHKS25] Corollary 1.4.
-                let pp = self.proximity_parameter(cp);
-                let error = pp * &cp.length + hpf(1);
-                error / &cp.field_size
-            }
-        }
-    }
-
-    /// Upper bound on the list size ℓ at this code's decoding radius.
-    pub(crate) fn max_list_size(&self, cp: &CodeParams) -> Float {
-        match self {
-            // Reed–Solomon at radius 1 − √ρ − η is (ℓ, ·)-list decodable with
-            // ℓ = 1 / (2·η·√ρ)  [BCHKS25].
-            DecodingRegime::Jbr => {
-                let sqrt_aug_rate = cp.augmented_rate.clone().sqrt();
-                let two_gap = hpf(2) * &self.gap(cp);
-                hpf(1) / (two_gap * &sqrt_aug_rate)
-            }
-            // Unique decoding: at most one codeword in the ball.
-            DecodingRegime::Udr => hpf(1),
-        }
-    }
-
-    // --- shared, common to every regime ---
-
-    /// The proximity parameter γ = decoding_radius − gap.
-    pub(crate) fn proximity_parameter(&self, cp: &CodeParams) -> Float {
-        let pp = self.decoding_radius(cp) - self.gap(cp);
+    /// Returns the maximum delta for this regime, based on the rate
+    /// and the dimension of the code.
+    fn proximity_parameter(&self, rate: &f64) -> f64 {
+        let pp = self.decoding_radius(rate) - self.gap(rate);
         assert!(pp > 0.0, "Proximity parameter must be positive");
         pp
     }
 
-    /// Batching error for powers coefficients `c_i = γ^i`: `linear · (n − 1)`.
-    pub(crate) fn calculate_powers_error(&self, cp: &CodeParams, n_functions: u64) -> Float {
-        self.calculate_linear_error(cp) * (n_functions - 1)
+    /// Returns an upper bound on the list size for this regime.
+    fn max_list_size(&self, rate: &f64, dimension: u32) -> u64;
+
+    /// Upper bound on the MCA error for independent coefficients
+    /// 1, r_1, ..., r_{batch_size-1}
+    /// (batching over affine spaces, BCIKS20 Thm 1.6).
+    fn error_linear(&self, rate: &f64, dimension: u32) -> f64;
+
+    /// Upper bound on the MCA error for a random linear combination with
+    /// coefficients r^0, r^1, ..., r^{batch_size-1}
+    /// (batching over parameterized curves, BCIKS20 Thm 6.2 ).
+    fn error_powers(&self, rate: &f64, dimension: u32, batch_size: u64) -> f64 {
+        self.error_linear(rate, dimension) * (batch_size as f64 - 1.0)
+    }
+
+    /// Upper bound on the MCA error for coefficients eq(r, 0), ..., eq(r, batch_size-1)
+    /// (multilinear batching, BCHKS25 §4.1; compare Thms 1.5 and 1.6).
+    fn error_multilinear(&self, rate: &f64, dimension: u32, batch_size: u64) -> f64 {
+        self.error_linear(rate, dimension) * (batch_size as f64).log2().ceil()
     }
 }
 
-/// The multiplicity parameter `m` of the Guruswami–Sudan list decoder (JBR):
-/// `m = max(⌈√ρ / (2η)⌉, 3)` [BCHKS25] Theorem 4.2. The factor of 2 that the
-/// statement of Theorem 4.2 omits is a confirmed typo (see soundcalc).
-fn jbr_multiplicity(regime: &DecodingRegime, cp: &CodeParams) -> Float {
-    let two_gap = hpf(2) * &regime.gap(cp);
-    let m_ceil = (cp.sqrt_rate() / &two_gap).ceil();
-    let three = hpf(3);
-    if m_ceil > three {
-        m_ceil
-    } else {
-        three
+pub struct UniqueDecodingRegime {
+    /// Field size |F|.
+    field_size: f64,
+}
+
+impl UniqueDecodingRegime {
+    pub fn new(field_size: f64) -> Self {
+        Self { field_size }
+    }
+}
+
+impl ProximityGapsRegime for UniqueDecodingRegime {
+    fn identifier(&self) -> &'static str {
+        "UDR"
+    }
+
+    fn field_size(&self) -> &f64 {
+        &self.field_size
+    }
+
+    fn decoding_radius(&self, rate: &f64) -> f64 {
+        // δ/2, where δ = 1 - ρ is the minimum distance of the code.
+        (1.0 - rate) / 2.0
+    }
+
+    fn gap(&self, rate: &f64) -> f64 {
+        // Something small that makes γ ∈ [δ/3, δ/2 - η] (see [BCHKS25] Corollary 1.4).
+        let minimum_distance = 1.0 - rate;
+        let gap = minimum_distance / 20.0;
+
+        // γ ∈ [δ/3, δ/2 - η] <=> δ/2 - η > δ/3 <=> η < δ/6
+        assert!(gap < minimum_distance / 6.0, "Gap must be smaller than δ/6 in UDR");
+        gap
+    }
+
+    fn max_list_size(&self, _rate: &f64, _dimension: u32) -> u64 {
+        // Unique decoding: at most one codeword in the ball.
+        1
+    }
+
+    fn error_linear(&self, rate: &f64, dimension: u32) -> f64 {
+        // [BCHKS25] Corollary 1.4 with γ = δ/2 − η.
+        let pp = self.proximity_parameter(rate);
+        let n = dimension as f64 / rate;
+        (pp * n + 1.0) / &self.field_size
+    }
+}
+
+/// Johnson bound regime.
+pub struct JohnsonBoundRegime {
+    /// Field size |F|.
+    field_size: f64,
+    /// Gap-widening factor.
+    alpha: f64,
+}
+
+impl JohnsonBoundRegime {
+    pub fn new(field_size: f64, alpha: f64) -> Self {
+        Self { field_size, alpha }
+    }
+
+    /// The multiplicity parameter `m` of the Guruswami–Sudan list decoder (JBR):
+    /// `m = max(⌈√ρ / (2η)⌉, 3)` [BCHKS25] Theorem 4.2. The factor of 2 that the
+    /// statement of Theorem 4.2 omits is a confirmed typo.
+    fn jbr_multiplicity(&self, rate: &f64) -> u64 {
+        let two_gap = 2.0 * self.gap(rate);
+        let m_ceil = (rate.clone().sqrt() / two_gap).ceil() as u64;
+        m_ceil.max(3)
+    }
+}
+
+impl ProximityGapsRegime for JohnsonBoundRegime {
+    fn identifier(&self) -> &'static str {
+        "JBR"
+    }
+
+    fn field_size(&self) -> &f64 {
+        &self.field_size
+    }
+
+    fn decoding_radius(&self, rate: &f64) -> f64 {
+        // 1 - √ρ, where ρ is the code rate.
+        1.0 - rate.sqrt()
+    }
+
+    fn gap(&self, rate: &f64) -> f64 {
+        // Something small that makes γ ∈ [δ/2, 1 - √(1-δ) - η] (see [BCHKS25] Corollary 1.4),
+        // where δ = 1 - ρ is the minimum distance of the code.
+        let base_correction = 1.0 / 300.0;
+        let gap = base_correction * (1.0 + self.alpha);
+
+        // γ ∈ [δ/2, 1 - √(1-δ) - η] <=> 1 - √(1-δ) - η > δ/2 <=> η < 1 - √(1-δ) - δ/2
+        let minimum_distance = 1.0 - rate;
+        let delta_half = minimum_distance / 2.0;
+        assert!(
+            gap < self.decoding_radius(rate) - delta_half,
+            "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR"
+        );
+        gap
+    }
+
+    fn max_list_size(&self, rate: &f64, _dimension: u32) -> u64 {
+        // Reed–Solomon at radius 1 − √ρ − η is (ℓ, ·)-list decodable with
+        // ℓ = 1 / (2·η·√ρ) [BCHKS25].
+        let two_gap = 2.0 * self.gap(rate);
+        (1.0 / (two_gap * rate.sqrt())).ceil() as u64
+    }
+
+    fn error_linear(&self, rate: &f64, dimension: u32) -> f64 {
+        // Theorem 4.2 from [BCHKS25].
+        let sqrt_rate = rate.sqrt();
+        let m = self.jbr_multiplicity(rate);
+        let m_shifted = m as f64 + 0.5;
+
+        // First fraction: (2·(m + 1/2)⁵ + 3·(m + 1/2)·γ·ρ)·n / (3·ρ·√ρ)
+        let n = dimension as f64 / rate;
+        let numerator = (2.0 * m_shifted.powi(5) + 3.0 * m_shifted * self.gap(rate) * rate) * n;
+        let denominator = 3.0 * rate * sqrt_rate;
+        let first_fraction = numerator / denominator;
+
+        // Second fraction: (m + 1/2) / √ρ
+        let second_fraction = m_shifted / sqrt_rate;
+
+        (first_fraction + second_fraction) / &self.field_size
     }
 }

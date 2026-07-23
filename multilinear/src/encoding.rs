@@ -40,6 +40,20 @@ pub fn encode_columns(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<Vec<G
     (0..ncols).map(|c| (0..n_ext).map(|i| Goldilocks::new(out[i * ncols + c])).collect()).collect()
 }
 
+/// RS-encode an **extension-field** column (given as `Ext` hypercube values /
+/// univariate coefficients). Value-to-coefficient coset LDE is `F`-linear and
+/// `Ext = F³`, so this is the limb-wise base-field encode recombined: identical
+/// to encoding the `Ext` polynomial directly. Used by WHIR's STIR re-encode of
+/// a folded (extension) oracle.
+pub fn encode_column_ext(vals: &[Ext], log_blowup: usize) -> Vec<Ext> {
+    let limb0: Vec<Goldilocks> = vals.iter().map(|v| v.value[0]).collect();
+    let limb1: Vec<Goldilocks> = vals.iter().map(|v| v.value[1]).collect();
+    let limb2: Vec<Goldilocks> = vals.iter().map(|v| v.value[2]).collect();
+    let enc = encode_columns(&[&limb0, &limb1, &limb2], log_blowup);
+    let n_ext = enc[0].len();
+    (0..n_ext).map(|i| Ext::from_array(&[enc[0][i], enc[1][i], enc[2][i]])).collect()
+}
+
 /// Evaluate the univariate polynomial with extension-field coefficients
 /// `coeffs` at a base-field point `x`.
 pub fn eval_ext_poly_at_base(coeffs: &[Ext], x: Goldilocks) -> Ext {
@@ -89,6 +103,27 @@ mod tests {
                 let ffi = encode_columns(&refs, log_blowup);
                 for (c, col) in cols.iter().enumerate() {
                     assert_eq!(ffi[c], encode_column(col, log_blowup), "n_bits={n_bits} blowup={log_blowup} col={c}");
+                }
+            }
+        }
+    }
+
+    /// `encode_column_ext` must equal the limb-wise base-field encode: for a
+    /// base column lifted to `Ext`, it equals `encode_column` lifted to `Ext`.
+    #[test]
+    fn encode_column_ext_is_limbwise() {
+        for n_bits in [3usize, 6] {
+            for log_blowup in [1usize, 2] {
+                let cols: [Vec<Goldilocks>; 3] =
+                    [random_col(1 << n_bits), random_col(1 << n_bits), random_col(1 << n_bits)];
+                let vals: Vec<Ext> =
+                    (0..(1 << n_bits)).map(|i| Ext::from_array(&[cols[0][i], cols[1][i], cols[2][i]])).collect();
+                let ext_enc = encode_column_ext(&vals, log_blowup);
+                let e0 = encode_column(&cols[0], log_blowup);
+                let e1 = encode_column(&cols[1], log_blowup);
+                let e2 = encode_column(&cols[2], log_blowup);
+                for i in 0..ext_enc.len() {
+                    assert_eq!(ext_enc[i], Ext::from_array(&[e0[i], e1[i], e2[i]]), "n={n_bits} bl={log_blowup} i={i}");
                 }
             }
         }

@@ -64,7 +64,7 @@ pub(crate) fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64, hash: MlHashF
 
 /// Verify a Merkle path against `root` for the selected hash family.
 #[inline]
-fn verify_mt_leaf(
+pub(crate) fn verify_mt_leaf(
     hash: MlHashFamily,
     root: &[Goldilocks; 4],
     path: &[Vec<Goldilocks>],
@@ -568,6 +568,18 @@ impl MlPcs for Basefold {
 
     fn commit(columns: &[&[Goldilocks]], params: &MlParams) -> CommittedMatrix {
         commit_matrix(columns, params)
+    }
+
+    fn commitment_root(commitment: &CommittedMatrix) -> [Goldilocks; 4] {
+        commitment.root()
+    }
+
+    fn save_commitment(commitment: &CommittedMatrix, path: &std::path::Path) -> Result<(), MlError> {
+        commitment.save(path)
+    }
+
+    fn load_commitment(path: &std::path::Path) -> Result<CommittedMatrix, MlError> {
+        CommittedMatrix::load(path)
     }
 
     fn combine_codewords(matrices: &[&CommittedMatrix], coeffs: &[Ext]) -> Vec<Ext> {

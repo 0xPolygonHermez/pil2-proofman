@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use fields::{Field, Goldilocks, PrimeField64};
 use proofman_common::{ProofmanError, ProofmanResult, Setup};
-use proofman_multilinear::{AirIr, CommittedMatrix};
+use proofman_multilinear::{AirIr, MlPcs, Pcs, PcsCommitment};
 
 /// Cache of loaded `.mlinfo.bin` artifacts, keyed by (airgroup_id, air_id).
 #[derive(Default)]
@@ -57,7 +57,7 @@ impl AirIrCache {
 /// means the artifact is absent (older proving key), in which case the prover
 /// falls back to building the commitment itself.
 /// Cached commitment per (airgroup_id, air_id); `None` = artifact absent.
-type ConstMatrixEntry = Option<Arc<CommittedMatrix>>;
+type ConstMatrixEntry = Option<Arc<PcsCommitment>>;
 
 #[derive(Default)]
 pub struct ConstMatrixCache {
@@ -65,14 +65,14 @@ pub struct ConstMatrixCache {
 }
 
 impl ConstMatrixCache {
-    pub fn get<F: PrimeField64>(&self, setup: &Setup<F>) -> ProofmanResult<Option<Arc<CommittedMatrix>>> {
+    pub fn get<F: PrimeField64>(&self, setup: &Setup<F>) -> ProofmanResult<Option<Arc<PcsCommitment>>> {
         let key = (setup.airgroup_id, setup.air_id);
         if let Some(entry) = self.cache.lock().unwrap().get(&key) {
             return Ok(entry.clone());
         }
         let path = setup.setup_path.with_extension("mlconst.bin");
         let entry = if path.exists() {
-            Some(Arc::new(CommittedMatrix::load(&path).map_err(|e| {
+            Some(Arc::new(Pcs::load_commitment(&path).map_err(|e| {
                 ProofmanError::InvalidParameters(format!("loading fixed-column commitment {}: {e}", path.display()))
             })?))
         } else {

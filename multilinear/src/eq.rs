@@ -140,6 +140,43 @@ pub fn eq_evals(point: &[Ext]) -> Vec<Ext> {
     t
 }
 
+/// Tensor expansion of the **power (monomial) kernel** at a field point `z`:
+/// `pow(z)[b] = Π_d (z^{2^d})^{b_d} = z^{index(b)}` for `b ∈ {0,1}^m`, where
+/// `index(b) = Σ_d b_d·2^d` (variable `X_1` = least-significant bit).
+///
+/// This is the kernel for an in-domain query on a value-to-coefficient
+/// codeword: `Σ_b g(b)·pow(z)[b] = Σ_i g[i]·z^i = ĝ^uni(z)`, the univariate
+/// evaluation the fold produces (unlike [`eq_evals`], which gives the
+/// *multilinear* evaluation used for out-of-domain points).
+pub fn pow_evals(z: Ext, m: usize) -> Vec<Ext> {
+    let mut t = Vec::with_capacity(1 << m);
+    t.push(Ext::ONE);
+    let mut zp = z; // z^{2^d}
+    for d in 0..m {
+        let len = 1 << d;
+        t.resize(2 * len, Ext::ZERO);
+        for i in (0..len).rev() {
+            let v = t[i];
+            t[i + len] = v * zp;
+            t[i] = v;
+        }
+        zp = zp * zp;
+    }
+    t
+}
+
+/// Multilinear evaluation of [`pow_evals`]`(z, rs.len())` at `rs`:
+/// `Π_d ((1 − rs_d) + rs_d·z^{2^d})`.
+pub fn pow_eval(z: Ext, rs: &[Ext]) -> Ext {
+    let mut acc = Ext::ONE;
+    let mut zp = z;
+    for &r in rs {
+        acc *= (Ext::ONE - r) + r * zp;
+        zp = zp * zp;
+    }
+    acc
+}
+
 /// Cyclically rotate a kernel table by offset `s`.
 pub fn rotate_table<T: Copy>(table: &[T], s: i64) -> Vec<T> {
     let n = table.len();
@@ -204,6 +241,30 @@ mod tests {
             Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64),
             Goldilocks::new(r.random::<u64>() % Goldilocks::ORDER_U64),
         ])
+    }
+
+    /// The power kernel must reproduce the univariate evaluation
+    /// `Σ_i val[i]·z^i`, and its MLE closed form must match the tensor's MLE.
+    /// This is the soundness anchor for in-domain query constraints.
+    #[test]
+    fn pow_kernel_is_univariate_eval() {
+        for m in 1..=6usize {
+            let val: Vec<Ext> = (0..(1 << m)).map(|_| random_ext()).collect();
+            let z = random_ext();
+
+            // Σ_b val[b]·pow(z)[b] == Σ_i val[i]·z^i (Horner).
+            let table = pow_evals(z, m);
+            let via_kernel: Ext = val.iter().zip(table.iter()).map(|(&v, &p)| v * p).sum();
+            let mut horner = Ext::ZERO;
+            for &c in val.iter().rev() {
+                horner = horner * z + c;
+            }
+            assert_eq!(via_kernel, horner, "m={m}");
+
+            // pow_eval closed form == MLE of the tensor.
+            let rs: Vec<Ext> = (0..m).map(|_| random_ext()).collect();
+            assert_eq!(pow_eval(z, &rs), mle_eval(&table, &rs), "m={m} mle");
+        }
     }
 
     fn random_base_col(n: usize) -> Vec<Goldilocks> {

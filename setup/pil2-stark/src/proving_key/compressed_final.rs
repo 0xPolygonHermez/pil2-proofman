@@ -228,30 +228,15 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let folding_factors = crate::output::stark_info::compute_folding_factors(&compressed_stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size_bits = crate::types::security::goldilocks_safe_extension_field_size_bits();
-    let fri_params = crate::types::security::FriParams {
-        field_size_bits,
-        dimension: 1u64 << compressed_stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (compressed_stark_struct.n_bits_ext - compressed_stark_struct.n_bits)) as f64,
-        n_opening_points: opening_points.len() as u64,
-        batch_size: ev_map_len.max(1) as u64,
-        folding_factors: folding_factors.clone(),
-        max_grinding_bits: compressed_stark_struct.pow_bits as u64,
-        use_max_grinding_bits: true,
-        tree_arity: compressed_stark_struct.merkle_tree_arity as u64,
-        target_security_bits: 128,
-    };
-    let regime = crate::types::security::DecodingRegime::Jbr;
-    let fri_security = fri_params.get_optimal_query_params(&regime);
+    let fri = crate::output::stark_info::build_fri(&compressed_stark_struct, ev_map_len.max(1) as u64);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &compressed_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri_security,
+        &fri,
         0,
         0,
         "compressed_final",

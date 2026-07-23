@@ -24,6 +24,15 @@ pub trait MlPcs {
     /// RS-encode and Merkle-commit a set of base-field columns.
     fn commit(columns: &[&[Goldilocks]], params: &MlParams) -> Self::Commitment;
 
+    /// Merkle root of a commitment (absorbed into the transcript / stored in the proof).
+    fn commitment_root(commitment: &Self::Commitment) -> [Goldilocks; 4];
+
+    /// Serialize a commitment as a proving-key artifact (`.mlconst.bin`).
+    fn save_commitment(commitment: &Self::Commitment, path: &std::path::Path) -> Result<(), MlError>;
+
+    /// Load a commitment written by [`save_commitment`](MlPcs::save_commitment).
+    fn load_commitment(path: &std::path::Path) -> Result<Self::Commitment, MlError>;
+
     /// Codeword of `Φ = Σ_j coeffs[j]·col_j` over the committed matrices, in the
     /// scheme's evaluation domain (folded together with the opening).
     fn combine_codewords(matrices: &[&Self::Commitment], coeffs: &[Ext]) -> Vec<Ext>;
@@ -59,4 +68,10 @@ pub trait MlPcs {
 
 /// The multilinear PCS the prover and verifier use. Swap this alias (once the
 /// scheme implements [`MlPcs`]) to change the whole prover's commitment scheme.
-pub type Pcs = crate::pcs::Basefold;
+pub type Pcs = crate::pcs::Whir;
+
+/// The active scheme's commitment type (`<Pcs as MlPcs>::Commitment`).
+pub type PcsCommitment = <Pcs as MlPcs>::Commitment;
+
+/// The active scheme's opening-proof type (`<Pcs as MlPcs>::OpeningProof`).
+pub type PcsOpening = <Pcs as MlPcs>::OpeningProof;

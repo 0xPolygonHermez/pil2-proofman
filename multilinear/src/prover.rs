@@ -4,7 +4,7 @@ use fields::{Goldilocks, PrimeField64};
 use serde::{Deserialize, Serialize};
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
-use crate::pcs::{combine_columns, CommittedMatrix, OpeningProof};
+use crate::pcs::{combine_columns, PcsCommitment, PcsOpening};
 use crate::pcs::{MlPcs, Pcs};
 use crate::eq::{eq_evals, rotate_table, skip_kernel_table};
 use crate::error::MlError;
@@ -38,7 +38,7 @@ pub struct MlProof {
     pub claims: Vec<Vec<Ext>>,
     /// Opening-reduction round polynomials.
     pub reduction_round_polys: Vec<Vec<Ext>>,
-    pub opening: OpeningProof,
+    pub opening: PcsOpening,
     pub publics: Vec<Goldilocks>,
     /// Global transcript challenges used by the constraints (full global
     /// challenge vector; entries for stages the multilinear protocol does not
@@ -78,7 +78,7 @@ pub fn prove_air(
     ir: &AirIr,
     witness: &[Vec<Vec<Goldilocks>>],
     consts: &[Vec<Goldilocks>],
-    const_matrix: Option<&CommittedMatrix>,
+    const_matrix: Option<&PcsCommitment>,
     customs: &[Vec<Vec<Goldilocks>>],
     publics: &[Goldilocks],
     challenges: &[Ext],
@@ -113,15 +113,13 @@ pub fn prove_air(
     let params = &ir.params;
 
     {
-        // Basefold folds by 2 (factor 2^1) each round down to the in-clear
-        // final polynomial; the query phase batches every committed column.
         let num_folds = params.num_folds(m.max(1));
         let every_row = ir.constraints.iter().filter(|c| c.boundary == crate::ir::Boundary::EveryRow).count();
         let bus_terms = ir.bus.as_ref().map(|b| b.terms.len() + b.scalar_terms.len()).unwrap_or(0);
         tracing::debug!(
             "Parameters [{}]:\n\
              \x20   Proof System:            (Multilinear) SumCheck + LogUp-GKR\n\
-             \x20   PCS:                     Basefold\n\
+             \x20   PCS:                     WHIR\n\
              \x20   Hash:                    {}\n\
              \x20   Number of queries:       {}\n\
              \x20   Grinding query phase:    {} bits\n\
@@ -187,7 +185,7 @@ pub fn prove_air(
     // Fixed columns are known at setup time; reuse the prebuilt commitment
     // (loaded from the proving key) when supplied, otherwise build it here.
     let owned_const_matrix;
-    let const_matrix: &CommittedMatrix = match const_matrix {
+    let const_matrix: &PcsCommitment = match const_matrix {
         Some(m) => m,
         None => {
             let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
@@ -195,25 +193,25 @@ pub fn prove_air(
             &owned_const_matrix
         }
     };
-    transcript.absorb_root(&const_matrix.root());
+    transcript.absorb_root(&Pcs::commitment_root(const_matrix));
 
     // Custom columns are computed once before the first proof and reused for all proofs of the same AIR instance.
-    let custom_matrices: Vec<CommittedMatrix> = customs
+    let custom_matrices: Vec<PcsCommitment> = customs
         .iter()
         .map(|cols| {
             let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
             let matrix = Pcs::commit(&refs, params);
-            transcript.absorb_root(&matrix.root());
+            transcript.absorb_root(&Pcs::commitment_root(&matrix));
             matrix
         })
         .collect();
 
     // Stage commitments.
-    let mut stage_matrices: Vec<CommittedMatrix> = Vec::with_capacity(witness.len());
+    let mut stage_matrices: Vec<PcsCommitment> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
         let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
         let matrix = Pcs::commit(&refs, params);
-        transcript.absorb_root(&matrix.root());
+        transcript.absorb_root(&Pcs::commitment_root(&matrix));
         stage_matrices.push(matrix);
 
         let stage = (stage_idx + 1) as u8;
@@ -369,9 +367,9 @@ pub fn prove_air(
     }
     timer_stop_and_log_debug!(ML_PROVE_CLAIMS);
 
-    // --- The Basefold opening of `Φ̃(u)`.
+    // --- The Opening Proof of `Φ̃(u)`.
     timer_start_debug!(ML_PROVE_OPENING);
-    let mut matrices: Vec<&CommittedMatrix> = stage_matrices.iter().collect();
+    let mut matrices: Vec<&PcsCommitment> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
     let phi_codeword = Pcs::combine_codewords(&matrices, &col_coeffs);
@@ -383,9 +381,9 @@ pub fn prove_air(
         airgroup_id,
         air_id,
         n_bits,
-        stage_roots: stage_matrices.iter().map(|m| m.root()).collect(),
-        const_root: const_matrix.root(),
-        custom_roots: custom_matrices.iter().map(|m| m.root()).collect(),
+        stage_roots: stage_matrices.iter().map(Pcs::commitment_root).collect(),
+        const_root: Pcs::commitment_root(const_matrix),
+        custom_roots: custom_matrices.iter().map(Pcs::commitment_root).collect(),
         zerocheck_round_polys,
         bus: bus_proof,
         claims,

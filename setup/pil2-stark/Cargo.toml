@@ -31,7 +31,6 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 indexmap = { version = "2", features = ["serde"] }
-rug = "1"
 tempfile = "3"
 rayon = { workspace = true }
 clap = { version = "4.5.38", features = ["derive", "env"] }

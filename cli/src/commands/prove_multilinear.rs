@@ -8,7 +8,6 @@ use fields::Goldilocks;
 use proofman::ProofMan;
 use proofman_common::{ProofOptions, ProofmanOptions};
 
-/// Generate the **base** multilinear proofs — one per AIR instance.
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]

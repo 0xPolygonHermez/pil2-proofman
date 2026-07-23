@@ -12,9 +12,9 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::security::{self, FriParams};
+use crate::types::security;
 use crate::types::stark_struct::{generate_stark_struct, StarkStruct, StarkStructsConfig};
-use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_folding_factors};
+use crate::output::stark_info::{build_starkinfo_output, collect_opening_points};
 
 /// Setup options parsed from CLI args.
 pub struct SetupOptions {
@@ -195,30 +195,15 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let pil_code = &pil_result.pil_code;
 
                 let ev_map_len = pil_code.ev_map.len();
-                let folding_factors = compute_folding_factors(&stark_struct);
                 let opening_points = collect_opening_points(setup_result);
-                let field_size_bits = security::goldilocks_safe_extension_field_size_bits();
-                let fri_params = FriParams {
-                    field_size_bits,
-                    dimension: 1u64 << stark_struct.n_bits,
-                    rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                    n_opening_points: opening_points.len() as u64,
-                    batch_size: ev_map_len.max(1) as u64,
-                    folding_factors: folding_factors.clone(),
-                    max_grinding_bits: stark_struct.pow_bits as u64,
-                    use_max_grinding_bits: true,
-                    tree_arity: stark_struct.merkle_tree_arity as u64,
-                    target_security_bits: 128,
-                };
-                let regime = crate::types::security::DecodingRegime::Jbr;
-                let fri_security = fri_params.get_optimal_query_params(&regime);
+                let fri = crate::output::stark_info::build_fri(&stark_struct, ev_map_len.max(1) as u64);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
                     &stark_struct,
                     pil_code,
                     &opening_points,
-                    &fri_security,
+                    &fri,
                     item.ag_idx,
                     item.air_idx,
                     &item.air_name,
@@ -429,9 +414,9 @@ pub(crate) fn ml_params(
 
     // Per-query soundness at iteration 0 (the highest rate ⇒ smallest δ ⇒
     // query-hungriest); `n_queries` is uniform across blocks.
-    let field_size_bits = security::goldilocks_safe_extension_field_size_bits();
-    let regime = crate::types::security::DecodingRegime::Jbr;
-    let bits_per_query = security::whir_query_bits(&field_size_bits, log_blowup as u32, regime);
+    let field_size = security::goldilocks_safe_extension_field_size();
+    let regime = security::regimes::DecodingRegime::Jbr;
+    let bits_per_query = security::pcs::whir_query_bits(field_size, log_blowup as u32, regime);
     let n_queries = (TARGET_SECURITY_BITS as f64 / bits_per_query).ceil().max(1.0) as usize;
 
     // Sanity-check the full WHIR PCS soundness at this query count (all
@@ -441,22 +426,29 @@ pub(crate) fn ml_params(
     // queries — surface that here rather than silently under-securing.
     let k = WHIR_FOLDING_FACTOR.min(n_bits.max(1));
     let n_rounds = whir_num_fold_rounds(n_bits, k, log_final_poly_len);
-    let whir = security::WhirParams {
-        field_size_bits,
-        log_inv_rate: log_blowup as u32,
-        log_degree: n_bits as u32,
-        folding_factors: vec![k as u32; n_rounds],
-        batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
-        power_batching: true,
-        constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
-        num_queries: vec![n_queries as u64; n_rounds],
-        num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
-        grinding_batching_phase: 0,
-        grinding_bits_folding: vec![vec![0u32; k]; n_rounds],
-        grinding_bits_queries: vec![0u32; n_rounds],
-        grinding_bits_ood: vec![0u32; n_rounds.saturating_sub(1)],
-    };
-    let achieved = whir.min_pcs_bits(regime);
+    let whir = security::pcs::Whir::with_security_params(
+        security::pcs::WhirConfig {
+            field_size,
+            num_variables: n_bits as u32,
+            log_inv_rate: log_blowup as u32,
+            folding_factors: vec![k as u32; n_rounds],
+            batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
+            batching: security::pcs::Batching::Powers,
+            constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
+            grinding_bits: 0,
+            target_security_bits: TARGET_SECURITY_BITS as u64,
+            regime,
+        },
+        security::pcs::WhirSecurityParams {
+            num_queries: vec![n_queries as u64; n_rounds],
+            num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
+            grinding_bits_batching: 0,
+            grinding_bits_folding: vec![vec![0u32; k]; n_rounds],
+            grinding_bits_queries: vec![0u32; n_rounds],
+            grinding_bits_ood: vec![0u32; n_rounds.saturating_sub(1)],
+        },
+    );
+    let achieved = security::pcs::Pcs::total_security_bits(&whir) as i64;
     if achieved < TARGET_SECURITY_BITS as i64 {
         tracing::warn!(
             "WHIR PCS soundness for this AIR is {achieved} bits (< {TARGET_SECURITY_BITS}); \

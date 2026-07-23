@@ -21,7 +21,7 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri_security: &security::FriQueryResult,
+    fri: &security::pcs::Fri,
     airgroup_id: usize,
     air_id: usize,
     air_name: &str,
@@ -37,12 +37,12 @@ pub fn build_starkinfo_output(
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
         last_level_verification: stark_struct.last_level_verification,
-        pow_bits: fri_security.n_grinding_bits as usize,
+        pow_bits: fri.security_params().grinding_bits_query as usize,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
         steps,
-        n_queries: fri_security.n_queries as usize,
+        n_queries: fri.security_params().n_queries as usize,
     };
 
     let boundaries: Vec<BoundaryOutput> = {
@@ -281,9 +281,9 @@ pub fn build_starkinfo_output(
         ev_map,
         fri_exp_id,
         security: Some(SecurityInfo {
-            proximity_gap: fri_security.proximity_gap,
-            proximity_parameter: fri_security.proximity_parameter,
-            regime: "JBR".to_string(),
+            proximity_gap: fri.proximity_gap(),
+            proximity_parameter: fri.proximity_parameter(),
+            regime: fri.regime_identifier().to_string(),
         }),
     }
 }
@@ -299,6 +299,26 @@ pub fn compute_folding_factors(stark_struct: &StarkStruct) -> Vec<u64> {
         factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u64);
     }
     factors
+}
+
+/// Build the solved FRI PCS for a stark struct: the free parameters come from
+/// the struct, the query count and grinding split are deduced by `Fri::new`.
+pub fn build_fri(stark_struct: &StarkStruct, batch_size: u64) -> security::pcs::Fri {
+    let folding_bits = compute_folding_factors(stark_struct);
+    security::pcs::Fri::new(security::pcs::FriConfig {
+        field_size: security::goldilocks_safe_extension_field_size(),
+        trace_length: 1u32 << stark_struct.n_bits,
+        rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
+        batch_size,
+        batching: security::pcs::Batching::Powers,
+        folding_factors: folding_bits.iter().map(|&b| 1u32 << b).collect(),
+        early_stop_degree: 1u32 << stark_struct.steps.last().expect("stark struct needs steps").n_bits,
+        max_grinding_bits: stark_struct.pow_bits as u64,
+        use_max_grinding_bits: true,
+        tree_arity: stark_struct.merkle_tree_arity as u64,
+        target_security_bits: 128,
+        regime: security::regimes::DecodingRegime::Jbr,
+    })
 }
 
 /// Build the expressionsinfo JSON structure.

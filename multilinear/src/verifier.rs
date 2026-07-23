@@ -402,23 +402,23 @@ mod tests {
     /// reuse path that the setup `.mlconst.bin` artifact feeds into `prove_air`.
     #[test]
     fn reused_const_matrix_matches_inline() {
-        use crate::pcs::{commit_matrix, CommittedMatrix};
+        use crate::pcs::{MlPcs, Pcs};
 
         let n_bits = 5;
         let ir = fib_ir(n_bits, test_params());
         let (witness, consts, publics) = fib_trace(n_bits);
 
-        // Build, persist, and reload the fixed-column commitment.
+        // Build, persist, and reload the fixed-column commitment via the active
+        // PCS (the `.mlconst.bin` reuse path setup feeds into `prove_air`).
         let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
-        let built = commit_matrix(&const_refs, &ir.params);
+        let built = Pcs::commit(&const_refs, &ir.params);
         let path = std::env::temp_dir().join(format!("ml_reused_const_{}.bin", std::process::id()));
-        built.save(&path).expect("save const matrix");
-        let loaded = CommittedMatrix::load(&path).expect("load const matrix");
+        Pcs::save_commitment(&built, &path).expect("save const matrix");
+        let loaded = Pcs::load_commitment(&path).expect("load const matrix");
         let _ = std::fs::remove_file(&path);
 
-        // Reloaded root and leaves must match the freshly built ones.
-        assert_eq!(loaded.root(), built.root(), "reloaded root differs");
-        assert_eq!(loaded.leaves, built.leaves, "rebuilt leaves differ");
+        // Reloaded root must match the freshly built one.
+        assert_eq!(Pcs::commitment_root(&loaded), Pcs::commitment_root(&built), "reloaded root differs");
 
         // A proof reusing the artifact must be byte-identical to one that builds
         // the commitment inline (same transcript, same challenges).
