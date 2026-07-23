@@ -39,6 +39,12 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId,
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
+// PROOFMAN_SUMCHECK diagnostic (defined lower in this TU); forward-declared for the
+// earlier functions (gen_proof_gpu / initialize_instance_gpu) that call it.
+void proofman_sumcheck(const char *stage, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, const void *d_ptr, uint64_t n_u64, cudaStream_t stream);
+extern thread_local uint64_t g_sumcheck_inst;
+extern thread_local uint64_t g_sumcheck_air;
+
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
@@ -752,6 +758,10 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
 
 
+    extern thread_local uint64_t g_sumcheck_inst; 
+    extern thread_local uint64_t g_sumcheck_air;
+    g_sumcheck_inst = instanceId; 
+    g_sumcheck_air = airId;
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, false, reuse_constants);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
@@ -803,7 +813,8 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    
+    proofman_sumcheck("proof_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
+
     size_t totalCopySize = 0;
     totalCopySize += setupCtx->starkInfo.nPublics;
     totalCopySize += setupCtx->starkInfo.proofValuesSize;
@@ -844,6 +855,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), (gl64_t*)(d_aux_trace + offsetCm1), resolveLayout(setupCtx->starkInfo.starkStruct.nBits, nCols), stream);
     }
+    proofman_sumcheck("proof_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offsetCm1, N * nCols, stream);
 
     return streamId;
 }
@@ -1343,6 +1355,49 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// PROOFMAN_SUMCHECK=1 diagnostic: per-stage GPU checksum of a device buffer, to
+// bisect WHERE the witness/commit pipeline diverges (run-to-run, or
+// contribution-vs-prover). Position-mixed additive reduction (order-independent
+// across threads, position-sensitive). Env-gated; per-call scratch so
+// concurrent streams don't race; syncs its own stream (diagnostic only).
+// ---------------------------------------------------------------------------
+__global__ void proofman_sumcheck_kernel(const uint64_t *d, uint64_t n, unsigned long long *out) {
+    uint64_t idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+    uint64_t stride = (uint64_t)gridDim.x * blockDim.x;
+    unsigned long long local = 0;
+    for (uint64_t i = idx; i < n; i += stride) {
+        uint64_t h = d[i] + 0x9E3779B97F4A7C15ULL * (i + 1);
+        h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
+        local += (unsigned long long)h;
+    }
+    atomicAdd(out, local);
+}
+
+// thread-local instance/air context for cross-TU call sites (extendAndMerkelize_inplace in
+// starks_gpu.cu) that lack the ids directly; set by gen_proof_gpu before genProof runs.
+thread_local uint64_t g_sumcheck_inst = 0;
+thread_local uint64_t g_sumcheck_air = 0;
+
+void proofman_sumcheck(const char *stage, uint64_t instanceId, uint64_t airgroupId,
+                          uint64_t airId, const void *d_ptr, uint64_t n_u64, cudaStream_t stream) {
+    static int en = -1;
+    if (en < 0) { const char *e = getenv("PROOFMAN_SUMCHECK"); en = (e && e[0] == '1') ? 1 : 0; }
+    if (!en || n_u64 == 0) return;
+    unsigned long long *d_out = nullptr;
+    if (cudaMalloc(&d_out, sizeof(unsigned long long)) != cudaSuccess) return;
+    CHECKCUDAERR(cudaMemsetAsync(d_out, 0, sizeof(unsigned long long), stream));
+    proofman_sumcheck_kernel<<<256, 256, 0, stream>>>((const uint64_t *)d_ptr, n_u64, d_out);
+    unsigned long long h = 0;
+    CHECKCUDAERR(cudaMemcpyAsync(&h, d_out, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    cudaFree(d_out);
+    printf("[SUMCHECK] inst=%lu airgroup=%lu air=%lu stage=%-10s n=%lu cksum=%016llx\n",
+           (unsigned long)instanceId, (unsigned long)airgroupId, (unsigned long)airId, stage,
+           (unsigned long)n_u64, h);
+    fflush(stdout);
+}
+
 uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -1382,7 +1437,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    
+    proofman_sumcheck("contrib_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
+
     uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
 
     uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
@@ -1397,6 +1453,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offset_dst), (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
     }
+    proofman_sumcheck("contrib_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offset_src, N * nCols, stream);
 
     uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
@@ -1486,7 +1543,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     }
 
+    proofman_sumcheck("contrib_before_lde", instanceId, airgroupId, airId, d_aux_trace + offset_src, N * nCols, stream);
     ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+    proofman_sumcheck("contrib_after_lde", instanceId, airgroupId, airId, d_aux_trace + offset_dst, NExtended * nCols, stream);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on the
     // small domain) -- ColMajorTiled for tiled AIRs (e.g. Keccakf cm1), else ColMajor. Hardcoding
