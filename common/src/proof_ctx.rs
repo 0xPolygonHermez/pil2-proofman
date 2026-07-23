@@ -343,13 +343,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.mpi_ctx.reset();
     }
 
-    pub fn reset_job_state(&self) {
-        self.public_inputs.reset();
-        self.proof_values.reset();
-        self.challenges.reset();
-        self.global_challenge.reset();
-    }
-
     pub fn is_setup_partition_init(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_setup_partition_init()
