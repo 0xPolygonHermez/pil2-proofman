@@ -959,6 +959,7 @@ where
         num_rows: usize,
         offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
+        let _computing = self.acquire_computing("get_instance_trace");
         if self.pctx.dctx_is_instance_calculated(instance_id) {
             return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
@@ -990,6 +991,7 @@ where
     }
 
     pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let _computing = self.acquire_computing("get_instance_air_values");
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();

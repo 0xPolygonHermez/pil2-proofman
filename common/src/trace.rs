@@ -176,9 +176,11 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let mut buffer = std::mem::take(&mut self.buffer);
 
         if !self.shared_buffer {
-            // Buffer was created internally, not from external Vec<F>
+            // forget before reconstructing over the same allocation, else double-free.
             let len = NUM_ROWS * R::ROW_SIZE;
-            return unsafe { Vec::from_raw_parts(buffer.as_ptr() as *mut F, len, len) };
+            let ptr = buffer.as_ptr();
+            std::mem::forget(buffer);
+            return unsafe { Vec::from_raw_parts(ptr as *mut F, len, len) };
         }
 
         // Buffer was created from external Vec<F>, restore original metadata

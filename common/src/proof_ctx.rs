@@ -535,9 +535,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+        dctx.instances_calculated[global_idx]
+            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+            .is_ok()
     }
 
     pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
