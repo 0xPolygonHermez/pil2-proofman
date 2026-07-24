@@ -303,9 +303,14 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
         if (nCols > 0)
         {
-            if (step == 1) proofman_sumcheck("proof_before_lde", g_sumcheck_inst, 0, g_sumcheck_air, src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream);
+            // Label carries the stage (cm1, cm2, ...) so every prover stage is
+            // distinguishable in the log; the contribution only ever commits cm1.
+            char sc_before[48], sc_after[48];
+            snprintf(sc_before, sizeof(sc_before), "proof_before_lde_cm%u", (unsigned)step);
+            snprintf(sc_after, sizeof(sc_after), "proof_after_lde_cm%u", (unsigned)step);
+            proofman_sumcheck(sc_before, g_sumcheck_inst, 0, g_sumcheck_air, src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream);
             ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
-            if (step == 1) proofman_sumcheck("proof_after_lde", g_sumcheck_inst, 0, g_sumcheck_air, dst + offset_dst, (uint64_t)NExtended * nCols, stream);
+            proofman_sumcheck(sc_after, g_sumcheck_inst, 0, g_sumcheck_air, dst + offset_dst, (uint64_t)NExtended * nCols, stream);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
             buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
             TimerStopCategoryGPU(timer, MERKLE_TREE);

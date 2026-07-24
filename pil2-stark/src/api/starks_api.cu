@@ -813,7 +813,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    proofman_sumcheck("proof_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
+    //proofman_sumcheck("proof_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
 
     size_t totalCopySize = 0;
     totalCopySize += setupCtx->starkInfo.nPublics;
@@ -855,7 +855,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), (gl64_t*)(d_aux_trace + offsetCm1), resolveLayout(setupCtx->starkInfo.starkStruct.nBits, nCols), stream);
     }
-    proofman_sumcheck("proof_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offsetCm1, N * nCols, stream);
+    //proofman_sumcheck("proof_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offsetCm1, N * nCols, stream);
 
     return streamId;
 }
@@ -1392,7 +1392,7 @@ void proofman_sumcheck(const char *stage, uint64_t instanceId, uint64_t airgroup
     CHECKCUDAERR(cudaMemcpyAsync(&h, d_out, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     cudaFree(d_out);
-    printf("[SUMCHECK] inst=%lu airgroup=%lu air=%lu stage=%-10s n=%lu cksum=%016llx\n",
+    printf("[SUMCHECK] inst=%lu airgroup=%lu air=%lu stage=%-22s n=%lu cksum=%016llx\n",
            (unsigned long)instanceId, (unsigned long)airgroupId, (unsigned long)airId, stage,
            (unsigned long)n_u64, h);
     fflush(stdout);
@@ -1437,7 +1437,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    proofman_sumcheck("contrib_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
+    //proofman_sumcheck("contrib_before_unpack", instanceId, airgroupId, airId, dst, total_size / sizeof(uint64_t), stream);
 
     uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
 
@@ -1453,7 +1453,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offset_dst), (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
     }
-    proofman_sumcheck("contrib_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offset_src, N * nCols, stream);
+    //proofman_sumcheck("contrib_after_unpack", instanceId, airgroupId, airId, d_aux_trace + offset_src, N * nCols, stream);
 
     uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
