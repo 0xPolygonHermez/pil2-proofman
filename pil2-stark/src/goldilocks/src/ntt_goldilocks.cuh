@@ -169,6 +169,10 @@ public:
 
     void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
+    // Flat (ColMajor) DIT butterfly pass, one column at a time. WIP backend: exposed for
+    // benchmarking/validation against the tiled path before it is wired into LDE().
+    void nttDitFlatCols(gl64_t *data, uint64_t nBits, uint64_t nCols, bool inverse, bool bitRev, bool batchCols, cudaStream_t stream);
+
     // INTT dispatches on resolveLayout: ColMajor -> inttSppark, ColMajorTiled -> inttNativeTiled.
     void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
     void inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);       // ColMajor

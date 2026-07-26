@@ -127,7 +127,7 @@ impl Toolchain {
             "-I/usr/lib/x86_64-linux-gnu/openmpi/include".into(),
         ];
 
-        let defs: Vec<String> = [
+        let mut defs: Vec<String> = [
             "-D__USE_CUDA__",
             "-DGL64_PARTIALLY_REDUCED",
             "-D__AVX2__",
@@ -144,6 +144,14 @@ impl Toolchain {
         .iter()
         .map(|s| s.to_string())
         .collect();
+
+        // The generated TU includes goldilocks_trace_layout.cuh, so any resolveLayout() it
+        // compiles must make the SAME decision as the prover's libstarksgpu.a. Without this the
+        // kernel resolves ColMajor while the LDE writes ColMajorTiled, and proofs are silently
+        // wrong. Mirrors cm_layout()/store_qq() in emit.rs and -DFORCE_TILED_LAYOUT in the Makefile.
+        if std::env::var("FORCE_TILED_LAYOUT").map(|v| v == "1").unwrap_or(false) {
+            defs.push("-DFORCE_TILED_LAYOUT".to_string());
+        }
 
         let mut compile_flags: Vec<String> = ["-Xcompiler", "-fPIC", "-Xcompiler", "-mavx2", "-std=c++17", "-O3"]
             .iter()

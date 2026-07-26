@@ -84,6 +84,7 @@ void nttFlat( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t
 void nttDit( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void nttDifLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void nttDitLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
+void nttDitFlat(gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, bool bitRev, bool batchCols, cudaStream_t stream, uint64_t maxLogDomainSize);
 
 // =============================================================================
 // Q-polynomial kernel
@@ -423,6 +424,7 @@ __global__ void nttDitButterflyKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_
     }
 
     // Store tile back, with INTT scaling on final stage
+    // Store tile back, with INTT scaling on final stage
     if(inverse && (base_step + n_loc_steps) >= log_domain_size_in){
         gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size_in]);
         if(extend) inv_factor = inv_factor * d_r[row];
@@ -434,6 +436,117 @@ __global__ void nttDitButterflyKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_
             data_block[row*ncols_block+i] = tile[i*BATCH_HEIGHT+threadIdx.x];
         }
     }
+}
+
+// Register-resident DIT butterfly. Same math and twiddles as nttDitButterflyKernel, but each
+// thread PERMANENTLY owns tile rows 2i and 2i+1 (for all BATCH_WIDTH columns) in registers,
+// so stages never round-trip through shared memory. Partner for stage s lives in lane
+// i ^ (1<<(s-1)), which is inside the warp for s<=5 -> __shfl_xor_sync. Stages 6,7 cross
+// warps and fall back to shared. Mirrors sppark ct_mixed_radix_narrow.cu:74-100.
+// Launch: <<<(domainSize/BATCH_HEIGHT, colGroups), BATCH_HEIGHT_DIV2>>>
+__device__ __forceinline__ uint32_t ntt_pair_id(uint32_t e, uint32_t s)
+{
+    return ((e >> (s + 1)) << s) | (e & ((1u << s) - 1u));
+}
+
+__global__ void nttDitButterflyRegKernel(gl64_t *data, gl64_t *twiddles, gl64_t *d_r,
+    uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out,
+    uint32_t nCols, uint32_t base_step, bool inverse, bool extend,
+    uint64_t maxLogDomainSize, uint32_t col_group_offset)
+{
+    __shared__ gl64_t tile[BATCH_HEIGHT * BATCH_WIDTH];
+
+    uint32_t n_loc_steps = min(log_domain_size_in - base_step, (uint32_t)BATCH_HEIGHT_LOG2);
+    uint32_t i = threadIdx.x;                       // [0, BATCH_HEIGHT_DIV2)
+
+    uint32_t col_group    = blockIdx.y + col_group_offset;
+    uint32_t block_stride = domain_size_out * BATCH_WIDTH;
+    gl64_t  *data_block   = data + col_group * block_stride;
+    uint32_t col_base     = col_group * BATCH_WIDTH;
+    uint32_t ncols_block  = (nCols - col_base) < BATCH_WIDTH ? (nCols - col_base) : BATCH_WIDTH;
+
+    uint32_t groupSize = 1u << base_step;
+    uint32_t nGroups   = domain_size_in / groupSize;
+    uint32_t remaining_high_bits = log_domain_size_in - (base_step + 1);
+    uint32_t high_mask = (1u << remaining_high_bits) - 1u;
+
+    #define NTT_GROW(k) ({ uint32_t _t = blockIdx.x * BATCH_HEIGHT + (k);        \
+                           (_t % nGroups) * groupSize + (_t / nGroups); })
+    #define NTT_W(pid, s) ({ uint32_t _gs = base_step + (s); uint32_t _ggs = 1u << _gs;       \
+        uint32_t _bbi = blockIdx.x * BATCH_HEIGHT_DIV2 + (pid);                               \
+        uint32_t _gbi = ((_bbi & high_mask) << base_step) + (_bbi >> remaining_high_bits);    \
+        twiddles[(_gbi & (_ggs - 1u)) * ((1u << maxLogDomainSize) >> (_gs + 1))]; })
+
+    uint32_t rowA = NTT_GROW(2 * i);
+    uint32_t rowB = NTT_GROW(2 * i + 1);
+
+    gl64_t a[BATCH_WIDTH], b[BATCH_WIDTH];
+    for (uint32_t j = 0; j < ncols_block; j++) {
+        a[j] = data_block[(uint64_t)rowA * ncols_block + j];
+        b[j] = data_block[(uint64_t)rowB * ncols_block + j];
+    }
+
+    // stage 0: the pair is this thread's own two registers
+    if (n_loc_steps > 0) {
+        gl64_t w = NTT_W(i, 0);
+        for (uint32_t j = 0; j < ncols_block; j++) {
+            gl64_t t = b[j] * w;
+            b[j] = a[j] - t;
+            a[j] = a[j] + t;
+        }
+    }
+
+    for (uint32_t s = 1; s < n_loc_steps; s++) {
+        uint32_t laneMask = 1u << (s - 1);
+        if (laneMask < warpSize) {
+            bool   upper = (i & laneMask) != 0u;
+            gl64_t wa = NTT_W(ntt_pair_id(2 * i, s), s);
+            gl64_t wb = NTT_W(ntt_pair_id(2 * i + 1, s), s);
+            for (uint32_t j = 0; j < ncols_block; j++) {
+                gl64_t oa, ob;
+                *(uint64_t *)&oa = __shfl_xor_sync(0xffffffffu, *(uint64_t *)&a[j], laneMask);
+                *(uint64_t *)&ob = __shfl_xor_sync(0xffffffffu, *(uint64_t *)&b[j], laneMask);
+                a[j] = upper ? (oa - wa * a[j]) : (a[j] + wa * oa);
+                b[j] = upper ? (ob - wb * b[j]) : (b[j] + wb * ob);
+            }
+        } else {
+            // cross-warp: stage through shared using the classic index mapping
+            for (uint32_t j = 0; j < ncols_block; j++) {
+                tile[j * BATCH_HEIGHT + 2 * i]     = a[j];
+                tile[j * BATCH_HEIGHT + 2 * i + 1] = b[j];
+            }
+            __syncthreads();
+            uint32_t gsz = 1u << s;
+            uint32_t idx1 = ((i >> s) << (s + 1)) + (i & (gsz - 1u));
+            uint32_t idx2 = idx1 + gsz;
+            gl64_t w = NTT_W(i, s);
+            for (uint32_t j = 0; j < ncols_block; j++) {
+                gl64_t t = tile[j * BATCH_HEIGHT + idx2] * w;
+                tile[j * BATCH_HEIGHT + idx2] = tile[j * BATCH_HEIGHT + idx1] - t;
+                tile[j * BATCH_HEIGHT + idx1] = tile[j * BATCH_HEIGHT + idx1] + t;
+            }
+            __syncthreads();
+            for (uint32_t j = 0; j < ncols_block; j++) {
+                a[j] = tile[j * BATCH_HEIGHT + 2 * i];
+                b[j] = tile[j * BATCH_HEIGHT + 2 * i + 1];
+            }
+            __syncthreads();
+        }
+    }
+
+    bool last = inverse && (base_step + n_loc_steps) >= log_domain_size_in;
+    gl64_t fa = gl64_t(uint64_t(1)), fb = gl64_t(uint64_t(1));
+    if (last) {
+        gl64_t inv = gl64_t(domain_size_inverse[log_domain_size_in]);
+        fa = extend ? inv * d_r[rowA] : inv;
+        fb = extend ? inv * d_r[rowB] : inv;
+    }
+    for (uint32_t j = 0; j < ncols_block; j++) {
+        data_block[(uint64_t)rowA * ncols_block + j] = last ? a[j] * fa : a[j];
+        data_block[(uint64_t)rowB * ncols_block + j] = last ? b[j] * fb : b[j];
+    }
+    #undef NTT_GROW
+    #undef NTT_W
 }
 
 // DIF radix-2 butterfly kernel with packed storage for LDE.
@@ -624,6 +737,235 @@ void nttDitLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl6
 }
 
 // =============================================================================
+// Flat (ColMajor) backend
+//
+// A column of flat ColMajor storage is one contiguous run of `domain_size` elements, so a
+// launch can cover a SINGLE column and still see the whole transform. That is the property
+// the tiled path cannot have: its smallest addressable unit is BATCH_WIDTH=4 interleaved
+// columns, which at 2^22 is 134 MB -- above a 96 MB L2, so every stage streams from DRAM
+// (measured: 1.94 DRAM passes per launch vs sppark's 1.04). One flat column is 32 MB and
+// stays resident across its stages, which is where sppark's 2x comes from.
+//
+// The butterfly math, the row permutation and the twiddle indexing are identical to
+// nttDitButterflyKernel -- only the addressing changes (col[row] instead of a tile offset).
+// =============================================================================
+
+// In-place bit-reversal permutation of one flat ColMajor column. Pairs with the DIT
+// butterflies below to form a complete NTT, mirroring bitReversalKernel + nttDit on the
+// tiled path -- which is what makes the two comparable in the equivalence test.
+__global__ void bitReversalFlatColKernel(gl64_t *col, uint32_t log_domain_size, uint32_t domain_size)
+{
+    col += (uint64_t)blockIdx.y * domain_size;
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= (1u << log_domain_size)) return;
+    uint32_t j = __brev(i) >> (32 - log_domain_size);
+    if (i < j) {
+        gl64_t t = col[i];
+        col[i] = col[j];
+        col[j] = t;
+    }
+}
+
+__global__ void nttDitFlatColKernel(gl64_t *col, gl64_t *twiddles, gl64_t *d_r,
+                                    uint32_t domain_size, uint32_t log_domain_size,
+                                    uint32_t base_step, bool inverse, bool extend,
+                                    uint64_t maxLogDomainSize)
+{
+    __shared__ gl64_t tile[BATCH_HEIGHT];
+
+    // gridDim.y selects the column, so the SAME kernel serves both launch strategies:
+    // per-column (gridDim.y==1, driver loops) and all-columns-at-once (gridDim.y==nCols).
+    col += (uint64_t)blockIdx.y * domain_size;
+    uint32_t n_loc_steps = min(log_domain_size - base_step, (uint32_t)BATCH_HEIGHT_LOG2);
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+
+    uint32_t groupSize = 1 << base_step;
+    uint32_t nGroups = domain_size / groupSize;
+    uint32_t low_bits = row / nGroups;
+    uint32_t high_bits = row % nGroups;
+    row = high_bits * groupSize + low_bits;
+
+    tile[threadIdx.x] = col[row];
+    __syncthreads();
+
+    uint32_t remaining_high_bits = log_domain_size - (base_step + 1);
+    uint32_t high_mask = (1 << remaining_high_bits) - 1;
+
+    for (int loc_step = 0; loc_step < (int)n_loc_steps; loc_step++) {
+        uint32_t i = threadIdx.x;
+        if (i < BATCH_HEIGHT_DIV2) {
+            uint32_t group_size = 1 << loc_step;
+            uint32_t group = i >> loc_step;
+            uint32_t group_pos = i & (group_size - 1);
+            uint32_t index1 = (group << (loc_step + 1)) + group_pos;
+            uint32_t index2 = index1 + group_size;
+            gl64_t factor;
+            {
+                uint32_t gs = base_step + loc_step;
+                uint32_t ggs = 1 << gs;
+                uint32_t bbi = blockIdx.x * BATCH_HEIGHT_DIV2 + i;
+                uint32_t gbi = (((bbi & high_mask) << base_step) + (bbi >> remaining_high_bits));
+                uint32_t ggp = gbi & (ggs - 1);
+                factor = twiddles[ggp * ((1 << maxLogDomainSize) >> (gs + 1))];
+            }
+            gl64_t odd_sub = tile[index2] * factor;
+            tile[index2] = tile[index1] - odd_sub;
+            tile[index1] = tile[index1] + odd_sub;
+        }
+        __syncthreads();
+    }
+
+    if (inverse && (base_step + n_loc_steps) >= log_domain_size) {
+        gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size]);
+        if (extend) inv_factor = inv_factor * d_r[row];
+        col[row] = tile[threadIdx.x] * inv_factor;
+    } else {
+        col[row] = tile[threadIdx.x];
+    }
+}
+
+// Coalesced variant. At base_step>0 a transform unit's 256 elements sit at stride
+// groupSize, so one unit per block gives each lane its own sector (measured 16.4
+// sectors/request). Merging FLAT_ZC units with CONSECUTIVE `low` fixes that: elements of
+// different units at the same `high` are adjacent in memory, so lanes walking `low` read
+// contiguous runs. Same idea as sppark's coalesced_load, with the redistribution folded
+// into the shared-memory staging this kernel already does.
+//
+// Requires nGroups >= BATCH_HEIGHT (one `low` per block in the un-merged mapping); the
+// driver falls back to the plain kernel otherwise.
+#define FLAT_ZC 8
+// Shared-memory bank-conflict padding. The butterfly indices stride by powers of two, so
+// with 32 banks every stage collides (measured 42.4M conflicts vs sppark's 0.55M). Adding
+// one slot per 32 shifts each run across banks -- same trick as CONFLICT_FREE_OFFSET in
+// sppark's kernels and in hints.cu's scan.
+#define FLAT_BANKS_LOG2 5
+#define FLAT_PAD(i) ((i) + ((i) >> FLAT_BANKS_LOG2))
+// Tile is [h][z] with the z-stride padded to FLAT_ZC+1 (=9). 9 is coprime with 32 banks, so
+// the butterfly (fixed z, 32 consecutive h -> stride 9) hits 32 distinct banks, and the
+// staging loop (l fastest) walks near-consecutive slots. Storing [z][h] instead put all
+// FLAT_ZC groups of a given h in ONE bank -> the 8-way conflict measured above.
+#define FLAT_ZSTRIDE (FLAT_ZC + 1)
+#define FLAT_TILE_ELEMS (BATCH_HEIGHT * FLAT_ZSTRIDE)
+
+__global__ void nttDitFlatColZKernel(gl64_t *col, gl64_t *twiddles, gl64_t *d_r,
+                                     uint32_t domain_size, uint32_t log_domain_size,
+                                     uint32_t base_step, bool inverse, bool extend,
+                                     uint64_t maxLogDomainSize)
+{
+    __shared__ gl64_t tile[FLAT_TILE_ELEMS];
+
+    col += (uint64_t)blockIdx.y * domain_size;
+    uint32_t groupSize  = 1u << base_step;
+    uint32_t nGroups    = domain_size >> base_step;
+    uint32_t highBlocks = nGroups / BATCH_HEIGHT;
+    uint32_t high_block = blockIdx.x % highBlocks;
+    uint32_t low_base   = (blockIdx.x / highBlocks) * FLAT_ZC;
+    uint32_t h0         = high_block * BATCH_HEIGHT;
+
+    // Load with `low` fastest -> consecutive lanes hit consecutive addresses.
+    for (uint32_t i = threadIdx.x; i < BATCH_HEIGHT * FLAT_ZC; i += blockDim.x) {
+        uint32_t h = i / FLAT_ZC, l = i % FLAT_ZC;
+        tile[h * FLAT_ZSTRIDE + l] = col[(uint64_t)(h0 + h) * groupSize + low_base + l];
+    }
+    __syncthreads();
+
+    uint32_t n_loc_steps = min(log_domain_size - base_step, (uint32_t)BATCH_HEIGHT_LOG2);
+    uint32_t remaining_high_bits = log_domain_size - (base_step + 1);
+    uint32_t high_mask = (1u << remaining_high_bits) - 1u;
+
+    for (int loc_step = 0; loc_step < (int)n_loc_steps; loc_step++) {
+        for (uint32_t j = threadIdx.x; j < FLAT_ZC * BATCH_HEIGHT_DIV2; j += blockDim.x) {
+            uint32_t z = j / BATCH_HEIGHT_DIV2;
+            uint32_t i = j % BATCH_HEIGHT_DIV2;
+            uint32_t group_size = 1u << loc_step;
+            uint32_t group = i >> loc_step;
+            uint32_t group_pos = i & (group_size - 1);
+            uint32_t index1 = (group << (loc_step + 1)) + group_pos;
+            uint32_t index2 = index1 + group_size;
+            gl64_t factor;
+            {
+                uint32_t gs  = base_step + loc_step;
+                uint32_t ggs = 1u << gs;
+                // Original block id of this unit, so the twiddle index is unchanged.
+                uint32_t B   = (low_base + z) * highBlocks + high_block;
+                uint32_t bbi = B * BATCH_HEIGHT_DIV2 + i;
+                uint32_t gbi = ((bbi & high_mask) << base_step) + (bbi >> remaining_high_bits);
+                uint32_t ggp = gbi & (ggs - 1);
+                factor = twiddles[ggp * ((1u << maxLogDomainSize) >> (gs + 1))];
+            }
+            uint32_t p1 = index1 * FLAT_ZSTRIDE + z;
+            uint32_t p2 = index2 * FLAT_ZSTRIDE + z;
+            gl64_t odd_sub = tile[p2] * factor;
+            tile[p2] = tile[p1] - odd_sub;
+            tile[p1] = tile[p1] + odd_sub;
+        }
+        __syncthreads();
+    }
+
+    bool last = inverse && (base_step + n_loc_steps) >= log_domain_size;
+    for (uint32_t i = threadIdx.x; i < BATCH_HEIGHT * FLAT_ZC; i += blockDim.x) {
+        uint32_t h = i / FLAT_ZC, l = i % FLAT_ZC;
+        uint64_t addr = (uint64_t)(h0 + h) * groupSize + low_base + l;
+        gl64_t v = tile[h * FLAT_ZSTRIDE + l];
+        if (last) {
+            gl64_t f = gl64_t(domain_size_inverse[log_domain_size]);
+            if (extend) f = f * d_r[addr];
+            v = v * f;
+        }
+        col[addr] = v;
+    }
+}
+
+// Per-column DIT driver on flat ColMajor storage. Every stage of a column completes before
+// the next column starts, so the column's working set stays L2-resident across its stages.
+void nttDitFlat(gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors,
+                gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols,
+                bool inverse, bool extend, bool bitRev, bool batchCols, cudaStream_t stream, uint64_t maxLogDomainSize)
+{
+    assert(log_domain_size >= BATCH_HEIGHT_LOG2 && "Domain size must be >= BATCH_HEIGHT");
+    uint32_t domain_size = 1 << log_domain_size;
+
+    int device_id;
+    cudaGetDevice(&device_id);
+    if (d_fwd_twiddle_factors[device_id] == nullptr || d_inv_twiddle_factors[device_id] == nullptr) {
+        fprintf(stderr, "[NTT] ERROR: Twiddle factors not initialized for device %d.\n", device_id);
+        abort();
+    }
+    gl64_t *d_twiddles = inverse ? d_inv_twiddle_factors[device_id] : d_fwd_twiddle_factors[device_id];
+    gl64_t *d_r = d_r_[device_id];
+
+    dim3 threads(BATCH_HEIGHT, 1, 1);
+
+    // Q2 -- launch strategy, layout unchanged. Reuse in an NTT is BETWEEN stages (stage k
+    // writes what stage k+1 reads), never within one. So what matters is how much data a
+    // launch touches: per-column keeps 1 column (33.6 MB at 2^22) hot in L2 across its
+    // stages; all-columns-at-once touches nCols*N (402 MB at 12 cols) and re-streams every
+    // stage. Same kernel, selected by gridDim.y.
+    uint32_t colStride = batchCols ? nCols : 1;
+    for (uint32_t c0 = 0; c0 < nCols; c0 += colStride) {
+        uint32_t nc = min(colStride, nCols - c0);
+        gl64_t *base = data + (uint64_t)c0 * domain_size;
+        if (bitRev) {
+            bitReversalFlatColKernel<<<dim3(domain_size / BATCH_HEIGHT, nc, 1), threads, 0, stream>>>(base, log_domain_size, domain_size);
+            CHECKCUDAERR(cudaGetLastError());
+        }
+        for (uint32_t step = 0; step < log_domain_size; step += BATCH_HEIGHT_LOG2) {
+            uint32_t nGroups = domain_size >> step;
+            if (step != 0 && nGroups >= BATCH_HEIGHT) {
+                dim3 zb(domain_size / (BATCH_HEIGHT * FLAT_ZC), nc, 1);
+                nttDitFlatColZKernel<<<zb, threads, 0, stream>>>(
+                    base, d_twiddles, d_r, domain_size, log_domain_size, step, inverse, extend, maxLogDomainSize);
+            } else {
+                dim3 b(domain_size / BATCH_HEIGHT, nc, 1);
+                nttDitFlatColKernel<<<b, threads, 0, stream>>>(
+                    base, d_twiddles, d_r, domain_size, log_domain_size, step, inverse, extend, maxLogDomainSize);
+            }
+            CHECKCUDAERR(cudaGetLastError());
+        }
+    }
+}
+
+// =============================================================================
 // Class methods
 // =============================================================================
 
@@ -701,7 +1043,18 @@ void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
                                  uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                                  cudaStream_t stream, bool preserve_src, gl64_t* preserve_scratch)
 {
-    sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
+    // Column-chunked launches by default (same kernels-per-column semantics, L2-sized
+    // gridDim.y batching -- see sppark_lde_flat_batched). PROOFMAN_LDE_BATCHED=0 reverts
+    // to the stock serial per-column driver.
+    static int batched = -1;
+    if (batched < 0) {
+        const char *e = getenv("PROOFMAN_LDE_BATCHED");
+        batched = (e && e[0] == '0') ? 0 : 1;
+    }
+    if (batched && preserve_src && preserve_scratch != nullptr)
+        sppark_lde_flat_batched((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
+    else
+        sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
 }
 
 // Native tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
@@ -723,6 +1076,13 @@ void NTTGoldilocksGPU::ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_,
     dim3 grid1((ext_size + block.x - 1) / block.x,
              (nCols + block.y - 1) / block.y);
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
+}
+
+void NTTGoldilocksGPU::nttDitFlatCols(gl64_t *data, uint64_t nBits, uint64_t nCols, bool inverse, bool bitRev, bool batchCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0) return;
+    nttDitFlat(data, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors,
+               (uint32_t)nBits, (uint32_t)nCols, inverse, false, bitRev, batchCols, stream, maxLogDomainSize);
 }
 
 // LDE: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
