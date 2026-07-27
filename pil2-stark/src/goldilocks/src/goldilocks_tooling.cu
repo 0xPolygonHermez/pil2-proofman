@@ -8,22 +8,6 @@
 // staged path, so this is always safe to attempt.
 static bool copy_direct_registered_h2d_if_enabled(const void *src, void *dst, uint64_t total_size, cudaStream_t stream)
 {
-    // ZISK_SYNC_H2D=1 DIAGNOSTIC: disable the direct async H2D fast path so every H2D
-    // goes through the STAGED path, which copies src->pinned SYNCHRONOUSLY before the
-    // async device copy (so the host source cannot be overwritten mid-DMA). If enabling
-    // this makes the intermittently-wrong CONTRIBUTION commit deterministically correct,
-    // the bug is the direct-async-H2D source-buffer race (source reused/overwritten while
-    // the in-flight DMA still reads it), matching "same witness, contribution root wrong,
-    // prover root right".
-    {
-        static int sync_h2d = -1;
-        if (sync_h2d < 0) {
-            const char *e = getenv("ZISK_SYNC_H2D");
-            sync_h2d = (e && e[0] == '1') ? 1 : 0;
-        }
-        if (sync_h2d) return false;
-    }
-
     if (total_size < 16 * 1024 * 1024) return false;
 
     cudaPointerAttributes attrs;

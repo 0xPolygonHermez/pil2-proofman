@@ -221,12 +221,6 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
     x[k] = gl64_t(shift.fe) * w_k;
 }
 
-// Diagnostic sumcheck defined in starks_api.cu (gated by PROOFMAN_SUMCHECK=1). g_sumcheck_inst/air
-// are thread-locals set by gen_proof_gpu before genProof, so this cross-TU call site has the ids.
-void proofman_sumcheck(const char *stage, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, const void *d_ptr, uint64_t n_u64, cudaStream_t stream);
-extern thread_local uint64_t g_sumcheck_inst;
-extern thread_local uint64_t g_sumcheck_air;
-
 void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript,  bool skipRecalculation, TimerGPU &timer, cudaStream_t stream)
 {
     if (step <= setupCtx.starkInfo.nStages)
