@@ -79,7 +79,34 @@ struct AirInstanceInfo {
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
     uint64_t* d_num_packed_words;
-    
+
+    // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
+    // at setup; the instruction table is uploaded later, per program, via
+    // set_instruction_table(). d_instr_table == nullptr selects the plain unpack path.
+    uint8_t  *d_col_source = nullptr;   // per column: 0 = row stream, 1 = table stream
+    uint64_t  index_bits = 0;           // width of the leading index header in a compact row
+    uint64_t  words_per_entry = 0;      // u64 words per instruction-table entry
+    uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
+    uint64_t  num_entries = 0;
+
+    // Upload (replacing any previous) the program-specific instruction table. Caller must
+    // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
+    // while work using d_instr_table is in flight on this GPU -- the cudaFree below would
+    // pull the table out from under a running unpack. `words` also refreshes
+    // words_per_entry (seeded from PackedInfo at setup); the live program wins.
+    void set_instruction_table(const uint64_t *table, uint64_t entries, uint64_t words) {
+        if (d_instr_table != nullptr) {
+            CHECKCUDAERR(cudaFree(d_instr_table));
+            d_instr_table = nullptr;
+        }
+        num_entries = entries;
+        words_per_entry = words;
+        if (entries > 0 && words > 0) {
+            CHECKCUDAERR(cudaMalloc(&d_instr_table, entries * words * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_instr_table, table, entries * words * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+    }
+
     AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
@@ -220,6 +247,14 @@ struct AirInstanceInfo {
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+            // Indexed variant descriptor; the table itself arrives via set_instruction_table().
+            if (packedInfo->col_source != nullptr) {
+                index_bits = packedInfo->index_bits;
+                words_per_entry = packedInfo->words_per_entry;
+                CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
+                CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+            }
         }
     }
 
@@ -267,6 +302,14 @@ struct AirInstanceInfo {
 
         if (unpack_info != nullptr) {
             CHECKCUDAERR(cudaFree(unpack_info));
+        }
+
+        if (d_col_source != nullptr) {
+            CHECKCUDAERR(cudaFree(d_col_source));
+        }
+
+        if (d_instr_table != nullptr) {
+            CHECKCUDAERR(cudaFree(d_instr_table));
         }
     }
 };

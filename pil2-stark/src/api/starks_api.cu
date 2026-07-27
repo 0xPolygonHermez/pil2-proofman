@@ -355,6 +355,36 @@ void use_packed_trace_gpu(void *d_buffers_, bool packed) {
     d_buffers->packedTrace = packed;
 }
 
+// Upload (per program) the instruction table for an indexed air onto every local GPU's
+// AirInstanceInfo. Non-indexed instances (d_col_source == nullptr) are skipped.
+void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId,
+                                    uint64_t *table, uint64_t num_entries, uint64_t words_per_entry) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::pair<uint64_t, uint64_t> key = {airgroupId, airId};
+    uint64_t uploaded = 0;
+    auto it = d_buffers->air_instances.find(key);
+    if (it != d_buffers->air_instances.end()) {
+        for (auto &per_proof_type : it->second) {
+            std::vector<AirInstanceInfo *> &instances = per_proof_type.second;
+            for (int i = 0; i < d_buffers->n_gpus && i < (int)instances.size(); ++i) {
+                AirInstanceInfo *aii = instances[i];
+                if (aii == nullptr || aii->d_col_source == nullptr) continue; // indexed airs only
+                cudaSetDevice(d_buffers->my_gpu_ids[i]);
+                aii->set_instruction_table(table, num_entries, words_per_entry);
+                uploaded++;
+            }
+        }
+    }
+    // Silence here used to mean "the table never landed" -- the air had not been set
+    // up yet (register before load_device_setups), or it carries no indexed
+    // descriptor. Either way the later unpack aborts; say so at the actual cause.
+    if (uploaded == 0) {
+        zklog.warning("register_instruction_table: air (" + std::to_string(airgroupId) + "," +
+                      std::to_string(airId) + ") matched no indexed AirInstanceInfo; the table was "
+                      "NOT uploaded (register after load_device_setups, and only for indexed airs)");
+    }
+}
+
 void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t constPolsSize = totalConstPols * sizeof(Goldilocks::Element);
@@ -2180,10 +2210,17 @@ static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers) {
 // Poseidon1 arity 4 only (family checked here, arity by the caller).
 // Synchronous; safe to call concurrently on distinct slots, and while the
 // first GPU's buffer is borrowed by gpu-mops (touches only the slot).
+//
+// Indexed airs are supported: the compact-row descriptor and the uploaded
+// instruction table are read from the first GPU's AirInstanceInfo (separate
+// cudaMalloc'd allocations, so the gpu-mops borrow of gpuMemoryBuffer[0] does
+// not disturb them) -- hence airgroupId/airId.
+//
 // Returns 0 on success, negative on misuse; -14 (region busy: legacy work is
 // running on an overlapped stream) is an expected transient -- callers fall
 // back to the legacy path silently.
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
+                                     uint64_t airgroupId, uint64_t airId,
                                      void *packed, uint64_t nBits, uint64_t nBitsExt,
                                      uint64_t nCols, uint64_t wordsPerRow,
                                      void *colWidths, void *root) {
@@ -2200,6 +2237,35 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (d_buffers->streamCommitQuiesced.load(std::memory_order_acquire)) return -14;
 
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
+
+    // Indexed descriptor from the first GPU's AirInstanceInfo (d_col_source is set
+    // at setup from PackedInfo; d_instr_table arrives per program via
+    // register_instruction_table). Both live outside gpuMemoryBuffer[0].
+    const uint8_t *dColSource = nullptr;
+    const uint64_t *dTable = nullptr;
+    AirInstanceInfo *aii = nullptr;
+    auto it = d_buffers->air_instances.find({airgroupId, airId});
+    if (it != d_buffers->air_instances.end()) {
+        auto pit = it->second.find("basic");
+        if (pit != it->second.end() && !pit->second.empty()) aii = pit->second[0];
+    }
+    if (aii != nullptr && aii->d_col_source != nullptr) {
+        if (aii->d_instr_table == nullptr) {
+            // Indexed air with no table yet: the plain walk would decode the compact
+            // rows as full ones, so refuse rather than emit a wrong root. Distinct
+            // from -14 so the caller surfaces it.
+            zklog.error("commit_witness_streaming: air (" + std::to_string(airgroupId) + "," +
+                        std::to_string(airId) + ") is indexed but no instruction table is "
+                        "registered; call register_instruction_table first");
+            return -16;
+        }
+        dColSource = aii->d_col_source;
+        dTable = aii->d_instr_table;
+        dims.indexBits = aii->index_bits;
+        dims.wordsPerEntry = aii->words_per_entry;
+        dims.numEntries = aii->num_entries;
+    }
+
     if (streamCommitSlotElems(dims) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
         return -13;
 
@@ -2210,7 +2276,8 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                        (d_buffers->streamCommitFloorBytes + slotIdx * d_buffers->streamCommitSlotBytes) /
                            sizeof(Goldilocks::Element);
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
-                                    (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx]);
+                                    (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
+                                    dColSource, dTable);
     streamCommitReleaseRegion(d_buffers);
     return rc;
 }

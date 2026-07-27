@@ -16,6 +16,7 @@ void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId
 uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath);
 void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
 void use_packed_trace_cpu(void *d_buffers_, bool packed);
+void register_instruction_table_cpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry);
 void free_device_buffers_cpu(void *d_buffers);
 void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
 uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
@@ -53,6 +54,7 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx, uint64_t airgroupId, uint64
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
 void use_packed_trace_gpu(void *d_buffers_, bool packed);
+void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry);
 void free_device_buffers_gpu(void *d_buffers);
 void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
 void free_device_buffers_recursivef_gpu(void *d_buffers);
@@ -76,7 +78,7 @@ uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
@@ -119,6 +121,7 @@ StarksBackend cpu_backend = []() {
     backend.wait_trace_h2d_done = nullptr;            // CPU: no async stream to wait on
     backend.gen_device_buffers = gen_device_buffers_cpu;
     backend.use_packed_trace = use_packed_trace_cpu;
+    backend.register_instruction_table = register_instruction_table_cpu;
     backend.free_device_buffers = free_device_buffers_cpu;
     backend.gen_device_buffers_recursivef = nullptr;      // default: nullptr
     backend.free_device_buffers_recursivef = nullptr;
@@ -182,6 +185,7 @@ StarksBackend gpu_backend = []() {
     backend.wait_trace_h2d_done = wait_trace_h2d_done_gpu;
     backend.gen_device_buffers = gen_device_buffers_gpu;
     backend.use_packed_trace = use_packed_trace_gpu;
+    backend.register_instruction_table = register_instruction_table_gpu;
     backend.free_device_buffers = free_device_buffers_gpu;
     backend.gen_device_buffers_recursivef = gen_device_buffers_recursivef_gpu;
     backend.free_device_buffers_recursivef = free_device_buffers_recursivef_gpu;
@@ -360,6 +364,11 @@ void use_packed_trace(void *d_buffers, bool packed) {
     if (backend->use_packed_trace) backend->use_packed_trace(d_buffers, packed);
 }
 
+void register_instruction_table(void *d_buffers, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->register_instruction_table) backend->register_instruction_table(d_buffers, airgroupId, airId, table, num_entries, words_per_entry);
+}
+
 uint32_t register_host_memory(void *ptr, uint64_t size) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->register_host_memory ? backend->register_host_memory(ptr, size) : 0;
@@ -504,13 +513,14 @@ void stream_commit_pause() {
 }
 
 int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
+                                 uint64_t airgroupId, uint64_t airId,
                                  void *packed, uint64_t nBits, uint64_t nBitsExt,
                                  uint64_t nCols, uint64_t wordsPerRow,
                                  void *colWidths, void *root) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->commit_witness_streaming
-               ? backend->commit_witness_streaming(d_buffers_, slotIdx, packed, nBits,
-                                                   nBitsExt, nCols, wordsPerRow, colWidths, root)
+               ? backend->commit_witness_streaming(d_buffers_, slotIdx, airgroupId, airId, packed,
+                                                   nBits, nBitsExt, nCols, wordsPerRow, colWidths, root)
                : -1;
 }
 

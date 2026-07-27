@@ -656,6 +656,30 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     }
 }
 
+// Unpack a packed cm1 into `dst` (row-major), dispatching plain vs indexed. Fatal
+// when an indexed air has no instruction table registered: falling back to the plain
+// walk would silently decode the compact rows as if they were full ones, so the trace
+// would be wrong with no other symptom. register_instruction_table must be called
+// after load_device_setups and before the first commit of that program.
+static void unpack_cm1_cpu(DeviceCommitBuffersCPU *d_buffers, uint64_t airgroupId, uint64_t airId,
+                           const PackedInfoCPU *pInfo, const uint64_t *src, uint64_t *dst,
+                           uint64_t nRows, uint64_t nCols) {
+    if (!pInfo->indexed()) {
+        d_buffers->unpack_cpu(src, dst, nRows, nCols, pInfo->num_packed_words, pInfo->unpack_info);
+        return;
+    }
+    const uint64_t *table = d_buffers->getInstructionTable(airgroupId, airId);
+    if (table == nullptr) {
+        zklog.error("unpack_cm1_cpu: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                    ") is indexed but no instruction table is registered; call register_instruction_table first");
+        exitProcess();
+    }
+    d_buffers->unpack_cpu_indexed(src, table, dst, nRows, nCols, pInfo->num_packed_words,
+                                  pInfo->words_per_entry, pInfo->unpack_info, pInfo->col_source,
+                                  pInfo->index_bits, d_buffers->getInstructionTableEntries(airgroupId, airId),
+                                  airgroupId, airId);
+}
+
 uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
@@ -676,10 +700,11 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+        unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
+                       (uint64_t *)&auxTraceGL[offset_src], N, nCols);
         memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
     }
-    
+
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
@@ -799,7 +824,8 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&params->aux_trace[offsetCm1], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+        unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
+                       (uint64_t *)&params->aux_trace[offsetCm1], N, nCols);
         memcpy(params->trace, &params->aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
     }
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
@@ -817,6 +843,12 @@ void use_packed_trace_cpu(void *d_buffers_, bool packed) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     d_buffers->packedTrace = packed;
 }
+
+// Store the program's instruction table for an indexed air; used by unpack_cpu_indexed.
+void register_instruction_table_cpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry) {
+    DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+    d_buffers->registerInstructionTable(airgroupId, airId, table, num_entries, words_per_entry);
+}
 void free_device_buffers_cpu(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     delete d_buffers;
@@ -829,7 +861,7 @@ void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     PackedInfo *packedInfo = (PackedInfo *)packedInfo_;
     if (packedInfo != nullptr) {
-        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info);
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info, packedInfo->col_source, packedInfo->index_bits, packedInfo->words_per_entry);
     }
 }
 

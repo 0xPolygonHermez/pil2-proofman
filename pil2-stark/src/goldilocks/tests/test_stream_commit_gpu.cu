@@ -181,6 +181,118 @@ TEST(GOLDILOCKS_TEST, stream_commit_reduced_small)
     runStreamCommitReduced(16, 38, 2);
 }
 
+// Indexed (compact) witness: the same 38-column trace, but the columns flagged
+// in COL_SOURCE are hoisted into a shared instruction table and each row keeps
+// only a 32-bit index plus its runtime columns. The slot root must be identical
+// to committing the equivalent FULL packed trace -- that equality is what lets
+// try_slot_commit hand indexed airs to a slot at all.
+static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEntries)
+{
+    const uint64_t nBitsExt = nBits + 1;
+    const uint32_t CAP = 4, TPB = 128;
+    const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
+    const uint64_t INDEX_BITS = 32;
+
+    ASSERT_LE(nCols, 38u);
+    cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
+
+    // Every 3rd column is instruction-derived.
+    std::vector<uint8_t> colSource(nCols);
+    for (uint64_t c = 0; c < nCols; c++) colSource[c] = (c % 3 == 2) ? 1 : 0;
+
+    // Compact-row widths: the index header, then the runtime columns.
+    // Table-entry widths: the instruction columns.
+    std::vector<uint64_t> rowW{INDEX_BITS}, tabW;
+    for (uint64_t c = 0; c < nCols; c++)
+        (colSource[c] ? tabW : rowW).push_back(MAIN_WIDTHS[c]);
+    auto wordsFor = [](const std::vector<uint64_t> &w) {
+        uint64_t b = 0; for (uint64_t x : w) b += x; return (b + 63) / 64;
+    };
+    const uint64_t rowWords = wordsFor(rowW), entWords = wordsFor(tabW);
+
+    // Instruction table + per-row values, then BOTH encodings of the same trace.
+    std::vector<uint64_t> table(nEntries * entWords), tabVals(tabW.size());
+    std::vector<std::vector<uint64_t>> entryVals(nEntries, std::vector<uint64_t>(tabW.size()));
+    uint64_t x = 0x9E3779B97F4A7C15ull;
+    auto next = [&]() { x ^= x << 13; x ^= x >> 7; x ^= x << 17; return x; };
+    for (uint64_t e = 0; e < nEntries; e++) {
+        for (size_t i = 0; i < tabW.size(); i++) entryVals[e][i] = next();
+        packRow(entryVals[e].data(), tabW.size(), tabW.data(), entWords, &table[e * entWords]);
+    }
+
+    std::vector<uint64_t> hCompact(N * rowWords), hFull(N * MAIN_WORDS);
+    {
+        std::vector<uint64_t> rowVals(nCols), compactVals(rowW.size()), fullVals(nCols);
+        for (uint64_t r = 0; r < N; r++) {
+            uint64_t idx = r % nEntries;
+            compactVals[0] = idx;
+            size_t ri = 1, ti = 0;
+            for (uint64_t c = 0; c < nCols; c++) {
+                if (colSource[c]) {
+                    // Mask exactly as packRow would, so the full encoding carries
+                    // the same value the table entry decodes to.
+                    uint64_t nb = MAIN_WIDTHS[c];
+                    uint64_t m = (nb == 64) ? ~0ULL : ((1ULL << nb) - 1ULL);
+                    fullVals[c] = entryVals[idx][ti++] & m;
+                } else {
+                    uint64_t v = next();
+                    compactVals[ri++] = v;
+                    fullVals[c] = v;
+                }
+            }
+            packRow(compactVals.data(), rowW.size(), rowW.data(), rowWords, &hCompact[r * rowWords]);
+            packRow(fullVals.data(), nCols, MAIN_WIDTHS, MAIN_WORDS, &hFull[r * MAIN_WORDS]);
+        }
+    }
+
+    // Reference: commit the FULL packed trace through the plain slot path.
+    std::vector<uint64_t> rootRef(CAP), rootIdx(CAP);
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, MAIN_WORDS};
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hFull.data(), rootRef.data(), s), 0);
+        CHECKCUDAERR(cudaFree(slot));
+    }
+    // Under test: commit the COMPACT trace + table through the indexed slot path.
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
+        CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
+        uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
+        CHECKCUDAERR(cudaMemcpy(dT, table.data(), table.size() * 8, cudaMemcpyHostToDevice));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, dT), 0);
+        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
+    }
+
+    printf("[stream-commit] indexed nBits=%lu nCols=%lu: %lu words/row vs %lu full, %lu-entry table\n",
+           nBits, nCols, rowWords, MAIN_WORDS, nEntries);
+    for (uint32_t i = 0; i < CAP; i++)
+        ASSERT_EQ(rootRef[i], rootIdx[i]) << "indexed root element " << i << " differs";
+
+    // An incomplete indexed descriptor must be rejected, not silently mis-unpacked.
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
+        EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr), 0);
+        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
+    }
+    CHECKCUDAERR(cudaStreamDestroy(s));
+}
+
+// Multi-chunk (38 cols = 4 chunks) so the per-chunk cursor repositioning over
+// both the row and table streams is exercised, not just chunk 0.
+TEST(GOLDILOCKS_TEST, stream_commit_indexed_small)
+{
+    runStreamCommitIndexed(16, 38, 7);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_indexed_main_shape)
+{
+    runStreamCommitIndexed(20, 38, 64);
+}
+
 // Main cm1 shape (2^22 x 38, blowup 2): exercises the SERIAL aliased-LDE
 // flow -- the production slot configuration.
 TEST(GOLDILOCKS_TEST, stream_commit_reduced_main_shape)

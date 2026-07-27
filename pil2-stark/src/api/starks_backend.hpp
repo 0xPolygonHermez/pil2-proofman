@@ -51,6 +51,7 @@ struct StarksBackend {
     // Device management
     void *(*gen_device_buffers)(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
     void (*use_packed_trace)(void *d_buffers, bool packed);
+    void (*register_instruction_table)(void *d_buffers, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry);
     void (*free_device_buffers)(void *d_buffers);
     void *(*gen_device_buffers_recursivef)(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void (*free_device_buffers_recursivef)(void *d_buffers);
@@ -74,7 +75,7 @@ struct StarksBackend {
     uint64_t (*get_stream_commit_floor)(void *d_buffers_);
     uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
     void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);

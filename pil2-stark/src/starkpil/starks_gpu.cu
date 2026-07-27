@@ -102,6 +102,83 @@ __global__ void unpack(
     }
 }
 
+// Read `nbits` from a packed stream at cursor (word,idx,off), advancing the cursor.
+// Mirrors unpack()'s bit-walk exactly so indexed output is bit-identical.
+__device__ __forceinline__ uint64_t idx_read_bits(
+    const uint64_t* base, uint64_t words, uint64_t &word, uint64_t &idx, uint64_t &off, uint64_t nbits)
+{
+    uint64_t val;
+    uint64_t bits_left = 64 - off;
+    if (nbits <= bits_left) {
+        uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
+        val = (word >> off) & mask;
+        off += nbits;
+        if (off == 64 && idx + 1 < words) { word = base[++idx]; off = 0; }
+    } else {
+        uint64_t low = word >> off;
+        word = base[++idx];
+        uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
+        val = (high << bits_left) | low;
+        off = nbits - bits_left;
+    }
+    return val;
+}
+
+// Indexed unpack: each compact row holds a leading instruction index plus the runtime
+// columns; the instruction-derived columns live once in `table`. Two bit cursors (row,
+// table); each output column c is sourced per d_col_source[c]. Bit-identical to unpack().
+__global__ void unpack_indexed(
+    const uint64_t* src,             // compact rows: words_per_row each
+    const uint64_t* table,           // instruction table: words_per_entry each
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols,
+    uint64_t words_per_row,
+    uint64_t words_per_entry,
+    const uint64_t* d_unpack_info,   // nbits per output column
+    const uint8_t*  d_col_source,    // 0 = from row stream, 1 = from table stream
+    uint64_t index_bits,             // width of the leading index header in the row
+    uint64_t num_entries,            // instruction-table entry count (index bound)
+    Layout layout
+) {
+    // One shared word per column carries BOTH the width and the source flag
+    // (nbits in the low 32 bits, source in bit 32) -- nbits <= 64, so they fit.
+    // Folding them keeps the inner loop at a single shared read instead of also
+    // taking a dependent global load for d_col_source, and keeps the shared
+    // footprint identical to the plain unpack, so unpack_trace's sharedMemSize
+    // (nCols * 8) covers both kernels unchanged. This kernel is DRAM-bound (the
+    // strided row reads dominate), so treat it as hygiene, not a throughput win.
+    extern __shared__ uint64_t shared_unpack_info[];
+    for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
+        shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32);
+    }
+    __syncthreads();
+
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= nRows) return;
+
+    const uint64_t* rbase = src + row * words_per_row;
+    uint64_t rword = rbase[0], ridx = 0, roff = 0;
+    uint64_t index = idx_read_bits(rbase, words_per_row, rword, ridx, roff, index_bits);
+    // A witness bug can put an out-of-range index here. The CPU unpack reports it and
+    // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
+    // then simply fails instead of reading past the table.
+    if (index >= num_entries) index = 0;
+
+    const uint64_t* tbase = table + index * words_per_entry;
+    uint64_t tword = tbase[0], tidx = 0, toff = 0;
+
+    for (uint64_t c = 0; c < nCols; c++) {
+        uint64_t info = shared_unpack_info[c];
+        uint64_t nbits = info & 0xFFFFFFFFull;
+        // Warp-uniform: col_source depends only on c, so this never diverges.
+        uint64_t val = (info >> 32)
+            ? idx_read_bits(tbase, words_per_entry, tword, tidx, toff, nbits)
+            : idx_read_bits(rbase, words_per_row, rword, ridx, roff, nbits);
+        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
+    }
+}
+
 void unpack_fixed(
     uint64_t* d_num_packed_words,
     uint64_t* d_unpack_info,
@@ -144,17 +221,47 @@ void unpack_trace(
     dim3 blocks((nRows + threads.x - 1) / threads.x);
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
+    Layout layout = resolveLayout(63 - __builtin_clzll(nRows), nCols);
     TimerStartCategoryGPU(timer, UNPACK_TRACE);
-    // cm1 unpack: same storage layout the commit/LDE uses (resolveLayout on the small domain).
-    unpack<<<blocks, threads, sharedMemSize, stream>>>(
-        src,
-        dst,
-        nRows,
-        nCols,
-        air_instance_info->d_num_packed_words,
-        air_instance_info->unpack_info,
-        resolveLayout(63 - __builtin_clzll(nRows), nCols)
-    );
+    // d_col_source (set at setup from PackedInfo) is what makes an air indexed; the
+    // table arrives later per program. Dispatch on the descriptor, NOT on the table:
+    // an indexed air with no table must abort, because the plain walk would happily
+    // decode compact rows as full ones and yield a silently wrong trace.
+    if (air_instance_info->d_col_source != nullptr) {
+        if (air_instance_info->d_instr_table == nullptr) {
+            zklog.error("unpack_trace: air (" + std::to_string(air_instance_info->airgroupId) + "," +
+                        std::to_string(air_instance_info->airId) + ") is indexed but no instruction "
+                        "table is registered; call register_instruction_table first");
+            exitProcess();
+        }
+        // Indexed cm1 unpack: compact rows + shared instruction table reconstruct the full
+        // nCols output. Same storage layout as the plain path.
+        unpack_indexed<<<blocks, threads, sharedMemSize, stream>>>(
+            src,
+            air_instance_info->d_instr_table,
+            dst,
+            nRows,
+            nCols,
+            air_instance_info->num_packed_words,
+            air_instance_info->words_per_entry,
+            air_instance_info->unpack_info,
+            air_instance_info->d_col_source,
+            air_instance_info->index_bits,
+            air_instance_info->num_entries,
+            layout
+        );
+    } else {
+        // cm1 unpack: same storage layout the commit/LDE uses (resolveLayout on the small domain).
+        unpack<<<blocks, threads, sharedMemSize, stream>>>(
+            src,
+            dst,
+            nRows,
+            nCols,
+            air_instance_info->d_num_packed_words,
+            air_instance_info->unpack_info,
+            layout
+        );
+    }
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());
 }
