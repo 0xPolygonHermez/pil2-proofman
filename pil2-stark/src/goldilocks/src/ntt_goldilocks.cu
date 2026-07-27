@@ -687,7 +687,7 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
         abort();
     }
 
-    if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
+    if (!isGraphCapturableLayout(nBits, nCols)) {
         computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
     } else {
         computeQNativeTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
@@ -746,7 +746,7 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
     gl64_t *d_dst_ = &d_dst[offset_dst];
     gl64_t *d_src_ = &d_src[offset_src];
 
-    if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
+    if (!isGraphCapturableLayout(nBits, nCols)) {
         ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
     } else {
         ldeNativeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);

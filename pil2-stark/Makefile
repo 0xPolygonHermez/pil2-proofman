@@ -138,6 +138,13 @@ ifeq ($(CUDA_GRAPH), 1)
     NVCCFLAGS += -DUSE_CUDA_GRAPH
 endif
 
+# Benchmark switch: route every committed section through the native (ColMajorTiled) NTT
+# instead of sppark. Requires regenerating the expression kernels with the matching
+# FORCE_TILED_LAYOUT=1 (proofman-setup gen-exps) -- see goldilocks_trace_layout.cuh.
+ifeq ($(FORCE_TILED_LAYOUT), 1)
+    NVCCFLAGS += -DFORCE_TILED_LAYOUT
+endif
+
 # Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 

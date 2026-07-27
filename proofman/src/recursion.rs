@@ -385,6 +385,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         &setup.const_pols_tree_path,
         witness.proof_type.clone().into(),
         force_recursive_stream,
+        "",
     );
 
     // Trace H2D is async: gate buffer reuse on the stream's commit event so a
@@ -843,6 +844,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
     d_buffers: *mut c_void,
+    recurser_id: &str,
 ) -> ProofmanResult<Vec<u64>> {
     timer_start_info!(GENERATE_RECURSER_AGGREGATOR);
     let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -940,6 +942,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         &setup.const_pols_tree_path,
         setup.setup_type.clone().into(),
         false,
+        recurser_id, // disambiguates recurser setups sharing (0,0,"recursive2")
     );
     get_stream_id_proof_c(d_buffers, stream_id);
     timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);

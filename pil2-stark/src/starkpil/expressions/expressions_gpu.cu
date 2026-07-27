@@ -97,6 +97,34 @@ ExpressionsGPU::~ExpressionsGPU()
     expsClose(expsLib);
 }
 
+// Stage one launch's params/args into pinned slot `countId` and enqueue the H2D
+// copies. Slot strides are in BYTES: pinned_exps_* are Element* only by type, so
+// Element* arithmetic would stride 8x too far.
+static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args,
+                          uint64_t countId, const DestParamsGPU *h_dest_params, const ExpsArguments &h_expsArgs,
+                          DestParamsGPU *d_destParams, ExpsArguments *d_expsArgs, cudaStream_t stream)
+{
+    if (countId >= PINNED_EXPS_SLOTS) {
+        zklog.error("ExpressionsGPU: expression launch count " + std::to_string(countId) +
+                    " exceeds pinned slot capacity " + std::to_string(PINNED_EXPS_SLOTS));
+        exitProcess();
+    }
+    // Each slot spans 2 DestParamsGPU (stride 2*sizeof) and d_destParams is sized for 2;
+    // more params would overrun both the pinned slot and the device buffer.
+    if (h_expsArgs.dest_nParams > 2) {
+        zklog.error("ExpressionsGPU: dest_nParams " + std::to_string(h_expsArgs.dest_nParams) +
+                    " exceeds slot capacity 2");
+        exitProcess();
+    }
+    uint8_t *paramsSlot = (uint8_t *)pinned_exps_params + countId * 2 * sizeof(DestParamsGPU);
+    memcpy(paramsSlot, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
+    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, paramsSlot, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+
+    uint8_t *argsSlot = (uint8_t *)pinned_exps_args + countId * sizeof(ExpsArguments);
+    memcpy(argsSlot, &h_expsArgs, sizeof(ExpsArguments));
+    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+}
+
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
     ExpsArguments h_expsArgs;
@@ -168,18 +196,14 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
-    
+
     assert(bufferCommitSize  + 9  < 32);
     size_t ptrMem = 32 * sizeof(Goldilocks::Element);
     size_t tmpMem = (h_expsArgs.maxTemp1Size + h_expsArgs.maxTemp3Size) * sizeof(Goldilocks::Element);
@@ -238,6 +262,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
 
+    // The pinned slot and d_destParams hold at most 2 entries.
+    assert(dest.params.size() == 1 || dest.params.size() == 2);
+
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
@@ -256,12 +283,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;

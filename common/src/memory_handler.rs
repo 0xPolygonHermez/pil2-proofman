@@ -173,11 +173,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
                 self.buffer_size
             )));
         }
-        // On the abort path take() may hand out freshly-allocated buffers without
-        // drawing from the channel, so the live buffer count can exceed the channel
-        // capacity. A blocking send would then park forever on a full channel,
-        // reintroducing the teardown hang. Release best-effort when cancelled: the
-        // dropped buffer is freed normally and the pool is about to be torn down.
+        // On the abort path take() may hand out fresh buffers, so live buffers can
+        // exceed channel capacity; a blocking send would park forever. Release
+        // best-effort when cancelled. KNOWN HAZARD for the cancellation rework:
+        // dropping a REGISTERED buffer leaves a live cudaHostRegister on recycled
+        // pages — a later allocation there takes the un-gated direct-H2D fast path.
         if self.cancelled.load(Ordering::SeqCst) {
             let _ = self.sender.try_send(buffer);
             return Ok(());

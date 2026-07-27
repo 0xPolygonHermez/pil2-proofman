@@ -8,6 +8,7 @@
 #include "goldilocks_cubic_extension.hpp"
 #include "goldilocks_cubic_extension.cuh"
 #include "proof2zkinStark.hpp"
+#include "proofman_sumcheck.cuh"
 
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
@@ -253,8 +254,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     CudaGraphCache *graphCache = cudagraph::current();
     // Only the native (ColMajorTiled) LDE is graph-capturable: the flat (ColMajor) path delegates to
     // sppark, which runs the NTT on its own private stream (joined to the caller via events) --
-    // cross-stream work mid single-stream capture is illegal. Skip the capture path for flat commits.
-    bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+    // cross-stream work mid single-stream capture is illegal. isGraphCapturableLayout is the shared
+    // predicate the LDE dispatch also uses, so capture can never target the sppark path.
+    bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
     if (graphCache && capturable && !skipRecalculation && nCols > 0) {
         uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -296,7 +298,10 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
         if (nCols > 0)
         {
+            // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
+            PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
             ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+            PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
             buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
             TimerStopCategoryGPU(timer, MERKLE_TREE);
@@ -360,8 +365,9 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
 
 #ifdef USE_CUDA_GRAPH
         // Only the native (ColMajorTiled) computeQ is graph-capturable; the flat (ColMajor) path uses
-        // sppark (host sync + own stream), illegal mid-capture. Skip capture for flat cmQ.
-        bool capturable = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols) == Layout::ColMajorTiled;
+        // sppark (host sync + own stream), illegal mid-capture. isGraphCapturableLayout is the shared
+        // predicate the computeQ dispatch also uses, so capture can never target the sppark path.
+        bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
         if (cudagraph::aggressive() && capturable) {
             CudaGraphCache *graphCache = cudagraph::current();
             if (graphCache) {

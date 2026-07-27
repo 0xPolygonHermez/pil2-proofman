@@ -294,12 +294,9 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     });
     HintFieldValue hintFieldAirgroupVal = hintFieldAirgroup->values[0];
 
-    Goldilocks::Element vals[3];
-    
-    Dest destStruct(vals, 1, 0, 0, true);
+    Dest destStruct(nullptr, 1, 0, 0, true);
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     destStruct.dest_gpu = h_params.aux_trace + offsetAuxTrace;
-    destStruct.dest = nullptr;
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 

@@ -275,6 +275,11 @@ struct AirInstanceInfo {
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
 
+// Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
+// buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against it. Shared by the
+// main streams and the recursiveF buffer so the single bound matches every allocation.
+#define PINNED_EXPS_SLOTS 40000
+
 struct StreamData{
 
     //const data
@@ -307,6 +312,15 @@ struct StreamData{
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;
 
+    // Disambiguates recurser setups (all share (0,0,"recursive2")) in the recursive-path
+    // const-reuse check; empty for normal recursion. Cleared by invalidateContext().
+    string recurserId;
+
+    // Scalar "resident witness" marker read locklessly by get_instances_ready (reading
+    // proofType there would race concurrent std::string writes). Set by commit_witness,
+    // cleared by every proof path and invalidateContext; survives reset() like proofType.
+    bool witnessResident;
+
     //callback inputs
     void *root;
     void *pSetupCtx;
@@ -327,7 +341,7 @@ struct StreamData{
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
-        uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
+        uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
@@ -345,6 +359,8 @@ struct StreamData{
 
         root = nullptr;
         pSetupCtx = nullptr;
+        recurserId = "";
+        witnessResident = false;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
@@ -385,6 +401,15 @@ struct StreamData{
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
+    }
+
+    // Invalidate the const-reuse identity so the next proof reloads constants.
+    void invalidateContext(){
+        airgroupId = UINT64_MAX;
+        airId = UINT64_MAX;
+        proofType = "";
+        recurserId = "";
+        witnessResident = false;
     }
 
     void free(){
@@ -428,7 +453,7 @@ struct DeviceRecursiveFBuffers
 
 
     DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
-        uint64_t maxExps = 20000;
+        uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaStreamCreate(&stream);
         cudaStreamCreate(&stream_const_tree);
         timer.init(stream);
