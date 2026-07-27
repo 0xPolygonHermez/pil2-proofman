@@ -25,10 +25,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
 /// Master switch for per-proof debug logging of airgroup values, stage roots, and the
-/// challenge/contribution dump (`print_challenges`). Off by default; enable by setting
-/// the `PROOFMAN_DEBUG_CHALLENGES` env var. Read once so the hot recursive handler
-/// doesn't hit getenv per proof.
-static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
+/// challenge/contribution dump (`print_challenges`). Off by default; enable with
+/// `PROOFMAN_DEBUG_CHALLENGES=1` (matching PROOFMAN_SUMCHECK: any other value, or unset,
+/// means off). Read once so the hot recursive handler doesn't hit getenv per proof.
+static DEBUG_CHALLENGES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").map(|v| v == "1").unwrap_or(false));
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;

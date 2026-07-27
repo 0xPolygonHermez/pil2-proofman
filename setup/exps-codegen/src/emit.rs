@@ -31,19 +31,14 @@ __device__ __forceinline__ g3 cg_sub31(g3 x, gl64_t s){ g3 r; r.a=x.a-s; r.b=x.b
 __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.b; r.c=-y.c; return r; }
 "#;
 
-/// The C++ `Layout` enum value a committed section of `n_cols` columns is stored
-/// in, mirroring `resolveLayout(nBits, nCols)` in goldilocks_trace_layout.cuh.
-/// Keyed on the SMALL-domain nBits (not extended), exactly as the built-in
-/// expression evaluator does (expressions_gpu.cu: `nBits = 63 - clz(N)`).
-///
-/// FORCE_TILED_LAYOUT=1 in the environment mirrors the `-DFORCE_TILED_LAYOUT` build of
-/// goldilocks_trace_layout.cuh (the native-NTT benchmark variant). The two MUST match: the
-/// literal emitted here is what the generated kernel uses to read committed sections, while
-/// the C++ header decides how the LDE/Merkle write them.
+/// FORCE_TILED_LAYOUT=1 mirrors the `-DFORCE_TILED_LAYOUT` C++ build; the two MUST match, or the
+/// kernel reads committed sections in a layout the LDE/Merkle didn't write. See [`cm_layout`].
 fn force_tiled() -> bool {
     std::env::var("FORCE_TILED_LAYOUT").map(|v| v == "1").unwrap_or(false)
 }
 
+/// Committed-section layout the generated kernel reads, mirroring `resolveLayout(nBits,nCols)` in
+/// goldilocks_trace_layout.cuh. Keyed on small-domain nBits (not extended), like expressions_gpu.cu.
 fn cm_layout(n_bits: u64, n_cols: u64) -> &'static str {
     if force_tiled() || (n_bits <= 17 && n_cols > 500) {
         "Layout::ColMajorTiled"

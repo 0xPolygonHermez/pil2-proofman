@@ -1054,7 +1054,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn acquire_first_gpu_buffer(&self) {
         if self.gpu {
             acquire_first_gpu_buffer_c(self.d_buffers.get_ptr());
-            // self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 

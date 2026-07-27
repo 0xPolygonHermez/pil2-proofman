@@ -29,13 +29,9 @@ enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 // transpose, AND the commit-Merkle / FRI / opening-eval kernels in starks_gpu.cu all call this with the
 // SAME (nBits, nCols), so they always agree without storing the choice. Native tiled wins for small
 // domains with many columns; everything else uses flat (sppark).
-// FORCE_TILED_LAYOUT: benchmark switch that routes EVERY committed section through the native
-// (ColMajorTiled) backend instead of sppark, to compare the two NTTs end-to-end.
-//
-// MUST be kept in sync with cm_layout()/store_qq() in setup/exps-codegen/src/emit.rs, which bake
-// this same decision into the generated .exps.so as a literal enum. Building the C++ with this
-// flag WITHOUT regenerating the expression kernels (proofman-setup gen-exps) makes the readers
-// disagree with the writers and silently produces wrong proofs.
+// FORCE_TILED_LAYOUT: benchmark switch forcing every committed section through the native tiled
+// NTT. Must match cm_layout()/store_qq() in setup/exps-codegen/src/emit.rs; rebuild the C++ AND
+// regenerate the exps kernels (gen-exps) together, or readers/writers disagree -> wrong proofs.
 __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_t nCols) {
 #ifdef FORCE_TILED_LAYOUT
     (void)nBits; (void)nCols;
