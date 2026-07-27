@@ -408,30 +408,44 @@ pub(crate) fn ml_params(
 
     // Rate: reuse the AIR's configured blowup (at least 1).
     let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
-    // Fold down to a small in-clear final polynomial, leaving ≥ 1 fold.
-    let log_final_poly_len = 4usize.min(n_bits.saturating_sub(1));
     let univariate_skip_bits = 0;
+
+    // Fold schedule.
+    let step_bits: Vec<usize> = stark_struct.steps.windows(2).map(|p| p[0].n_bits - p[1].n_bits).collect();
+    let (fold_bits, log_final_poly_len) = if !step_bits.is_empty() && step_bits.iter().sum::<usize>() <= n_bits {
+        let total: usize = step_bits.iter().sum();
+        (step_bits, n_bits - total)
+    } else {
+        // No univariate steps to mirror: uniform fallback, folding down to a
+        // small in-clear final polynomial.
+        let log_final_poly_len = 4usize.min(n_bits.saturating_sub(1));
+        let k = WHIR_FOLDING_FACTOR.min(n_bits.max(1));
+        (vec![k; whir_num_fold_rounds(n_bits, k, log_final_poly_len)], log_final_poly_len)
+    };
+    let n_rounds = fold_bits.len();
 
     // Per-query soundness at iteration 0 (the highest rate ⇒ smallest δ ⇒
     // query-hungriest); `n_queries` is uniform across blocks.
     let field_size = security::goldilocks_safe_extension_field_size();
     let regime = security::regimes::DecodingRegime::Jbr;
+    // Grinding: mirror the univariate pow bits; each WHIR block grinds the
+    // same budget before drawing its query indices.
+    let grinding_bits = stark_struct.pow_bits;
     let security_per_query = security::pcs::whir_security_per_query(field_size, log_blowup as u32, regime);
-    let n_queries = (TARGET_SECURITY_BITS as f64 / security_per_query).ceil().max(1.0) as usize;
+    let n_queries =
+        ((TARGET_SECURITY_BITS as f64 - grinding_bits as f64) / security_per_query).ceil().max(1.0) as usize;
 
     // Sanity-check the full WHIR PCS soundness at this query count (all
     // components: batching / folding / OOD / shift / final). The query-
     // independent components (list-decoding) depend only on the rate; if they
     // fall below target the fix is a lower rate (higher blowup), not more
     // queries — surface that here rather than silently under-securing.
-    let k = WHIR_FOLDING_FACTOR.min(n_bits.max(1));
-    let n_rounds = whir_num_fold_rounds(n_bits, k, log_final_poly_len);
     let whir = security::pcs::Whir::with_security_params(
         security::pcs::WhirConfig {
             field_size,
             trace_length: 1u32 << n_bits,
             rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - n_bits)) as f64,
-            log_folding_factors: vec![k as u32; n_rounds],
+            log_folding_factors: fold_bits.iter().map(|&b| b as u32).collect(),
             batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
             batching: security::pcs::Batching::Powers,
             constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
@@ -447,8 +461,8 @@ pub(crate) fn ml_params(
             num_queries: vec![n_queries as u64; n_rounds],
             num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
             grinding_bits_batching: 0,
-            grinding_bits_folding: vec![vec![0u32; k]; n_rounds],
-            grinding_bits_queries: vec![0u32; n_rounds],
+            grinding_bits_folding: fold_bits.iter().map(|&b| vec![0u32; b]).collect(),
+            grinding_bits_queries: vec![grinding_bits as u32; n_rounds],
             grinding_bits_ood: vec![0u32; n_rounds.saturating_sub(1)],
         },
     );
@@ -465,8 +479,9 @@ pub(crate) fn ml_params(
         log_blowup,
         n_queries,
         whir_query_schedule: vec![],
+        whir_fold_schedule: fold_bits,
         log_final_poly_len,
-        grinding_bits: 0,
+        grinding_bits,
         univariate_skip_bits,
         hash,
     }

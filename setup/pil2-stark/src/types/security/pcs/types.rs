@@ -62,7 +62,11 @@ impl fmt::Display for Batching {
 
 /// Bits of security from an error probability.
 pub fn bits_of_security_from_error(epsilon: f64) -> u32 {
-    debug_assert!(epsilon > 0.0 && epsilon.is_finite(), "invalid error {epsilon}");
+    debug_assert!(epsilon >= 0.0 && epsilon.is_finite(), "invalid error {epsilon}");
+    // An exact 0 means "below 2^-1074" (the smallest subnormal).
+    if epsilon == 0.0 {
+        return 1074;
+    }
     (-epsilon.log2()).floor().max(0.0) as u32
 }
 

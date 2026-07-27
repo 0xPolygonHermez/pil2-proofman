@@ -195,7 +195,7 @@ impl AirIr {
     /// Format tag prefixed to `.mlinfo.bin`. Bump whenever `AirIr`'s bincode
     /// layout changes so stale proving-key artifacts fail with a clear
     /// message instead of a decode error.
-    pub const MLINFO_MAGIC: &'static [u8; 8] = b"MLINFO03";
+    pub const MLINFO_MAGIC: &'static [u8; 8] = b"MLINFO04";
 
     pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
         let mut bytes = Self::MLINFO_MAGIC.to_vec();

@@ -338,6 +338,8 @@ mod tests {
         MlParams {
             log_blowup: 2,
             n_queries: 12,
+            whir_query_schedule: vec![],
+            whir_fold_schedule: vec![],
             log_final_poly_len: 2,
             grinding_bits: 0,
             univariate_skip_bits: 0,

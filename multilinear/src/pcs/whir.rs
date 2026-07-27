@@ -26,10 +26,12 @@
 //! over all `n` variables (blocks of `k` + a `n − R·k` tail), ending in the
 //! single check `claim == Φ̃(rs)·W(rs)`.
 //!
-//! Scope: **full WHIR structure with PLACEHOLDER parameters** — fixed folding
-//! factor `k`, per-block query count `= MlParams.n_queries`, `grinding_bits = 0`.
-//! These are NOT soundness-calibrated (the per-round query/rate/grinding
-//! schedule from the WHIR soundness theorem is a follow-up). Correctness is
+//! Parameters: fixed folding factor `k`; per-block query counts from
+//! `MlParams.whir_query_schedule` (the soundness-driven schedule pinned by the
+//! setup — the improving rate lets later blocks spend far fewer queries), with
+//! uniform `MlParams.n_queries` as the fallback when no schedule is set; and
+//! `MlParams.grinding_bits` of proof-of-work per block, ground into the
+//! transcript right before the query positions are drawn. Correctness is
 //! gated by the roundtrip/tamper tests below.
 //!
 //! [`MlPcs`]: crate::pcs::MlPcs
@@ -45,10 +47,9 @@ use crate::pcs::MlPcs;
 use crate::sumcheck::{verifier_sumcheck_round, ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 
-use super::basefold::{build_merkle, fold_pair, verify_mt_leaf, MlParams, MERKLE_ARITY};
+use super::common::{build_merkle, fold_pair, verify_mt_leaf, MlParams, MERKLE_ARITY};
 
-/// WHIR-specific parameters. **Placeholder / not soundness-calibrated** (see the
-/// module docs): a single fixed folding factor.
+/// WHIR-specific parameters.
 #[derive(Debug, Clone, Copy)]
 pub struct WhirParams {
     /// Folding factor per block: each block folds `k` variables at once.
@@ -79,6 +80,24 @@ pub fn num_fold_rounds(n: usize, k: usize, log_final_poly_len: usize) -> usize {
         r -= 1;
     }
     r.max(1)
+}
+
+/// Per-block fold schedule (in bits) for an `n`-variate opening — the
+/// multilinear analogue of the univariate stark_struct steps. The pinned
+/// `whir_fold_schedule` when non-empty (validated against `n`), else uniform
+/// `WhirParams::default().folding_factor` blocks via [`num_fold_rounds`].
+/// Public so setup and soundness tooling mirror the exact prover schedule.
+pub fn fold_schedule(params: &MlParams, n: usize) -> Result<Vec<usize>, MlError> {
+    if params.whir_fold_schedule.is_empty() {
+        let k = WhirParams::for_params(params).folding_factor.min(n.max(1));
+        return Ok(vec![k; num_fold_rounds(n, k, params.log_final_poly_len)]);
+    }
+    let schedule = params.whir_fold_schedule.clone();
+    let total: usize = schedule.iter().sum();
+    if schedule.contains(&0) || total > n {
+        return Err(MlError::Malformed(format!("invalid whir_fold_schedule {schedule:?} for {n} vars")));
+    }
+    Ok(schedule)
 }
 
 /// A WHIR commitment to a stage matrix: the RS codewords over the round-0 domain
@@ -162,7 +181,7 @@ fn unpack_ext_kary(leaf: &[Goldilocks], k: usize) -> Vec<Ext> {
 pub(crate) fn fold_codeword_kary(vals: &[Ext], n0_bits: usize, start_level: usize, r: &[Ext]) -> Vec<Ext> {
     let mut cur = vals.to_vec();
     for (i, &ri) in r.iter().enumerate() {
-        cur = super::basefold::fold_codeword(&cur, n0_bits, start_level + i, ri);
+        cur = super::common::fold_codeword(&cur, n0_bits, start_level + i, ri);
     }
     cur
 }
@@ -207,8 +226,26 @@ pub struct WhirBlock {
     pub ood_answer: Option<Ext>,
     /// Merkle root of the re-encoded oracle `f_i`; `None` on the last block.
     pub fold_root: Option<[Goldilocks; 4]>,
-    /// `t` query openings against `f_{i-1}`.
+    /// Proof-of-work nonce grinding this block's query indices
+    /// (0 when `grinding_bits == 0`).
+    pub pow_nonce: u64,
+    /// `tᵢ` query openings against `f_{i-1}`.
     pub query_openings: Vec<WhirOracleOpening>,
+}
+
+/// Per-block query counts: the schedule pinned in `params`, or uniform
+/// `n_queries` when no schedule is set.
+fn block_query_counts(params: &MlParams, n_rounds: usize) -> Result<Vec<usize>, MlError> {
+    if params.whir_query_schedule.is_empty() {
+        Ok(vec![params.n_queries; n_rounds])
+    } else if params.whir_query_schedule.len() == n_rounds {
+        Ok(params.whir_query_schedule.clone())
+    } else {
+        Err(MlError::Malformed(format!(
+            "whir_query_schedule has {} entries, expected {n_rounds} fold rounds",
+            params.whir_query_schedule.len()
+        )))
+    }
 }
 
 /// A WHIR opening proof.
@@ -233,7 +270,8 @@ impl MlPcs for Whir {
         let n = columns[0].len();
         assert!(columns.iter().all(|c| c.len() == n));
 
-        let k = WhirParams::for_params(params).folding_factor;
+        // The commitment's leaf packing serves block 1's queries: k = k₁.
+        let k = fold_schedule(params, n.trailing_zeros() as usize).expect("invalid fold schedule")[0];
         let codewords: Vec<Vec<Goldilocks>> = encode_columns(columns, params.log_blowup);
         let n0 = codewords[0].len();
         assert!(
@@ -283,15 +321,14 @@ impl MlPcs for Whir {
         _phi_codeword: Vec<Ext>,
         matrices: &[&WhirCommitment],
     ) -> WhirOpeningProof {
-        assert_eq!(params.grinding_bits, 0, "grinding is a placeholder (0) in WHIR v1");
         let n = phi_table.len().trailing_zeros() as usize;
         assert_eq!(point.len(), n);
         let n0_bits = params.n0_bits(n);
         assert!(n0_bits <= 32, "domain 2^{n0_bits} exceeds the 2-adic root table");
-        let k = WhirParams::for_params(params).folding_factor;
-        let n_rounds = num_fold_rounds(n, k, params.log_final_poly_len);
-        let fold_vars = n_rounds * k;
-        let t = params.n_queries;
+        let ks = fold_schedule(params, n).expect("invalid fold schedule");
+        let n_rounds = ks.len();
+        let fold_vars: usize = ks.iter().sum();
+        let schedule = block_query_counts(params, n_rounds).expect("invalid query schedule");
 
         let mut oracle = ProductOracle::new(phi_table, eq_evals(point));
         let mut blocks: Vec<WhirBlock> = Vec::with_capacity(n_rounds);
@@ -301,7 +338,10 @@ impl MlPcs for Whir {
         // (`Φ`, block 1); `Some((leaves, tree, dom_bits))` = a re-encoded ext oracle.
         let mut prev_fold: Option<(Vec<Vec<Goldilocks>>, MerkleTree, usize)> = None;
 
+        // Variables folded so far: Σ_{j<i} k_j entering block i.
+        let mut folded = 0usize;
         for i in 1..=n_rounds {
+            let k = ks[i - 1];
             let prev_dom_bits = if i == 1 { n0_bits } else { prev_fold.as_ref().unwrap().2 };
 
             // (1) k degree-2 sumcheck rounds.
@@ -316,7 +356,8 @@ impl MlPcs for Whir {
                 oracle.bind(a);
                 alphas.push(a);
             }
-            let m_i = n - i * k;
+            folded += k;
+            let m_i = n - folded;
 
             // (2) STIR re-encode + commit f_i (blocks < R), or send final_poly (last).
             let mut ood_answer = None;
@@ -324,11 +365,12 @@ impl MlPcs for Whir {
             let mut committed: Option<(Vec<Vec<Goldilocks>>, MerkleTree, usize)> = None;
             let mut z0: Option<Vec<Ext>> = None;
             if i < n_rounds {
-                let blowup_i = params.log_blowup + i * (k - 1);
+                let blowup_i = params.log_blowup + (folded - i);
                 let cw_i = encode_column_ext(&oracle.a, blowup_i);
                 let dom_bits_i = n0_bits - i;
                 debug_assert_eq!(cw_i.len(), 1usize << dom_bits_i);
-                let leaves_i = pack_ext_kary(&cw_i, k);
+                // The new tree's leaf packing serves block i+1's queries: k_{i+1}.
+                let leaves_i = pack_ext_kary(&cw_i, ks[i]);
                 let tree_i = build_merkle(&leaves_i, MERKLE_ARITY, params.hash);
                 transcript.absorb_root(&tree_i.root());
                 fold_root = Some(tree_i.root());
@@ -344,10 +386,13 @@ impl MlPcs for Whir {
                 transcript.absorb_exts(&final_poly);
             }
 
-            // (3) Batching randomness.
+            // (3) Grinding, then batching randomness. The nonce is absorbed
+            // before γ, so both γ and the query positions depend on it.
+            let pow_nonce = transcript.grind(params.grinding_bits);
             let gamma = transcript.challenge();
 
             // (4) Queries on f_{i-1}; accumulate the γ-power kernels into `oracle.b`.
+            let t = schedule[i - 1];
             let positions = transcript.query_indices(t as u64, (prev_dom_bits - k) as u64);
             let mut query_openings = Vec::with_capacity(positions.len());
             for &p in &positions {
@@ -386,7 +431,7 @@ impl MlPcs for Whir {
                 }
             }
 
-            blocks.push(WhirBlock { round_polys, ood_answer, fold_root, query_openings });
+            blocks.push(WhirBlock { round_polys, ood_answer, fold_root, pow_nonce, query_openings });
             prev_fold = committed;
         }
 
@@ -416,15 +461,13 @@ impl MlPcs for Whir {
         column_coeffs: &[Ext],
         point: &[Ext],
     ) -> Result<Vec<Ext>, MlError> {
-        assert_eq!(params.grinding_bits, 0, "grinding is a placeholder (0) in WHIR v1");
         let n = n_vars;
         let n0_bits = params.n0_bits(n);
         let total_cols: usize = stage_n_cols.iter().sum();
-        let k = WhirParams::for_params(params).folding_factor;
-        let n_rounds = num_fold_rounds(n, k, params.log_final_poly_len);
-        let fold_vars = n_rounds * k;
-        let t = params.n_queries;
-        let group = 1usize << k;
+        let ks = fold_schedule(params, n)?;
+        let n_rounds = ks.len();
+        let fold_vars: usize = ks.iter().sum();
+        let schedule = block_query_counts(params, n_rounds)?;
 
         // Structural checks.
         if proof.blocks.len() != n_rounds {
@@ -458,7 +501,11 @@ impl MlPcs for Whir {
         let mut prev_fold_root: Option<[Goldilocks; 4]> = None;
         let mut prev_dom_bits = n0_bits;
 
+        // Variables folded so far: Σ_{j<i} k_j entering block i.
+        let mut folded = 0usize;
         for i in 1..=n_rounds {
+            let k = ks[i - 1];
+            let group = 1usize << k;
             let block = &proof.blocks[i - 1];
             if block.round_polys.len() != k {
                 return Err(MlError::Malformed(format!("block {i}: expected {k} round polys")));
@@ -474,7 +521,8 @@ impl MlPcs for Whir {
                 rs.push(a);
                 alphas.push(a);
             }
-            let m_i = n - i * k;
+            folded += k;
+            let m_i = n - folded;
 
             // (2) commit / final.
             let mut z0: Option<Vec<Ext>> = None;
@@ -494,10 +542,14 @@ impl MlPcs for Whir {
                 transcript.absorb_exts(&proof.final_poly);
             }
 
-            // (3) γ.
+            // (3) Grinding, then γ — mirrors the prover's transcript order.
+            if !transcript.verify_grind(block.pow_nonce, params.grinding_bits) {
+                return Err(MlError::FinalCheck(format!("block {i}: proof-of-work check failed")));
+            }
             let gamma = transcript.challenge();
 
             // (4) queries on f_{i-1}: verify openings, fold to y_j, accumulate.
+            let t = schedule[i - 1];
             let positions = transcript.query_indices(t as u64, (prev_dom_bits - k) as u64);
             if block.query_openings.len() != positions.len() {
                 return Err(MlError::Malformed(format!("block {i}: query count mismatch")));
@@ -507,7 +559,7 @@ impl MlPcs for Whir {
             let mut gpow = gamma;
             if let (Some(z), Some(y0)) = (&z0, block.ood_answer) {
                 claim += gpow * y0;
-                weight.push(Term { offset: i * k, coeff: gpow, kind: Kind::Eq(z.clone()) });
+                weight.push(Term { offset: folded, coeff: gpow, kind: Kind::Eq(z.clone()) });
             }
 
             for (&p, opening) in positions.iter().zip(block.query_openings.iter()) {
@@ -561,7 +613,7 @@ impl MlPcs for Whir {
                 gpow *= gamma;
                 claim += gpow * y_j;
                 let zj = Ext::from_base(domain_point(prev_dom_bits, k, p));
-                weight.push(Term { offset: i * k, coeff: gpow, kind: Kind::Pow(zj) });
+                weight.push(Term { offset: folded, coeff: gpow, kind: Kind::Pow(zj) });
             }
 
             prev_fold_root = block.fold_root;
@@ -619,6 +671,8 @@ mod tests {
         MlParams {
             log_blowup: 2,
             n_queries,
+            whir_query_schedule: vec![],
+            whir_fold_schedule: vec![],
             log_final_poly_len: log_final,
             grinding_bits: 0,
             univariate_skip_bits: 0,
@@ -729,6 +783,26 @@ mod tests {
         let s = setup(n, &stage_cols, &p);
         let proof = open(n, &s, &p);
         // R = ceil((13-1)/4)=3 clamped to 3*4=12<=13 ⇒ R=3, tail=1.
+        let rs = verify(n, &s, &p, &proof, s.sigma).expect("must verify");
+        assert_eq!(rs.len(), n);
+    }
+
+    /// Roundtrip with a pinned non-uniform fold schedule (and a tail round).
+    #[test]
+    fn opening_roundtrip_non_uniform_folds() {
+        let n = 12;
+        let p = MlParams { whir_fold_schedule: vec![4, 3, 2, 2], ..params(4, 8) };
+        let stage_cols = vec![
+            (0..3).map(|_| random_col(1 << n)).collect::<Vec<_>>(),
+            (0..2).map(|_| random_col(1 << n)).collect::<Vec<_>>(),
+        ];
+        let s = setup(n, &stage_cols, &p);
+        let proof = open(n, &s, &p);
+        // Σ folds = 11 ⇒ final poly of 2 values, tail = 1 round.
+        assert_eq!(proof.blocks.len(), 4);
+        assert_eq!(proof.blocks[0].round_polys.len(), 4);
+        assert_eq!(proof.blocks[1].round_polys.len(), 3);
+        assert_eq!(proof.final_poly.len(), 2);
         let rs = verify(n, &s, &p, &proof, s.sigma).expect("must verify");
         assert_eq!(rs.len(), n);
     }

@@ -6,7 +6,7 @@ use crate::error::MlError;
 use crate::hypercube::Ext;
 use crate::transcript::MlTranscript;
 
-use super::basefold::MlParams;
+use super::common::MlParams;
 
 /// A multilinear polynomial commitment scheme: commit base-field column
 /// matrices and prove/verify the batched single-point opening

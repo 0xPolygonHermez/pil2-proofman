@@ -41,7 +41,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
-use proofman_multilinear::{verify_air, Ext};
+use proofman_multilinear::{verify_air, Ext, MlPcs};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
@@ -4596,7 +4596,8 @@ where
                     let (cols, _consts, ir) =
                         Self::ml_prepare_stage1(&pctx, &sctx, &const_pols, &aux_trace, instance_id, &ml_ir_cache)?;
                     let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
-                    let root = proofman_multilinear::commit_matrix(&refs, &ir.params).root();
+                    let commitment = proofman_multilinear::Pcs::commit(&refs, &ir.params);
+                    let root = proofman_multilinear::Pcs::commitment_root(&commitment);
                     Self::ml_record_contribution(
                         &pctx,
                         &sctx,
