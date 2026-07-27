@@ -1501,9 +1501,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
     PROOFMAN_SUMCHECK("contrib_after_lde", d_aux_trace + offset_dst, NExtended * nCols, stream);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on the
-    // small domain) -- ColMajorTiled for tiled AIRs (e.g. Keccakf cm1), else ColMajor. Hardcoding
-    // ColMajor here made the tiled contribution root read uninitialised in-tile padding -> non-det.
+    // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
+    // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution
+    // root read uninitialised in-tile padding -> non-det; keep the shared predicate.
     buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
     CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
@@ -1574,8 +1574,8 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
-    // prepare_blocks transposes const pols into fixedLayout() (ColMajorTiled) on the host -- this is the
-    // input layout calculate_const_tree_gpu (via ldeTiled) expects. Restores pre-1.0.0-beta behavior.
+    // prepare_blocks transposes const pols into fixedLayout() (ColMajor) on the host -- this is the
+    // input layout calculate_const_tree_gpu (via ldeColMajor) expects.
     fromRowMajorToColMajor(N, nCols, d_pol, d_aux, fixedLayout(), stream);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
@@ -1617,8 +1617,8 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     cudaMemset(d_customCommitsTree, 0, treeSize * sizeof(gl64_t));
     cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
-    // Custom commits are a fixed/preprocessed section -> fixedLayout() (ColMajorTiled), restoring the
-    // pre-1.0.0-beta GPU format. Transpose row-major input straight to tiled.
+    // Custom commits are a fixed/preprocessed section -> fixedLayout() (ColMajor). Transpose the
+    // row-major input into the storage layout.
     fromRowMajorToColMajor(N, nCols, d_buffer, d_customCommitsPols, fixedLayout(), stream);
 
     Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
@@ -1627,8 +1627,9 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
 
     NTTGoldilocksGPU ntt;
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    // ldeTiled directly: plain ntt.LDE would dispatch to sppark (flat) for custom dims. Out-of-place.
-    ntt.ldeTiled((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream);
+    // The small-domain pols were copied to the host above, so preserve_src=false is fine even where
+    // the serial flow runs its iNTT in place on d_customCommitsPols.
+    ntt.ldeColMajor((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream, false, nullptr);
     buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_customCommitsTree, nCols, 1ULL << nBitsExt, fixedLayout(), stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
@@ -1685,10 +1686,9 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     NTTGoldilocksGPU ntt;
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
-    // Const tree uses fixedLayout() (ColMajorTiled), restoring the pre-sppark (pre-1.0.0-beta) GPU format
-    // so the produced .consttree_gpu matches that baseline. Call ldeTiled directly: plain ntt.LDE
-    // would dispatch to sppark (flat) for const dims. It is out-of-place so src stays intact.
-    ntt.ldeTiled((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream);
+    // Const tree uses fixedLayout() (ColMajor). d_fixedPols is a throwaway copy of the host const
+    // pols, so preserve_src=false is fine even where the serial flow runs its iNTT in place on it.
+    ntt.ldeColMajor((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream, false, nullptr);
     buildMerkleTreeGPU(starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)d_fixedTree, starkInfo.nConstants, 1ULL << starkInfo.starkStruct.nBitsExt, fixedLayout(), stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;

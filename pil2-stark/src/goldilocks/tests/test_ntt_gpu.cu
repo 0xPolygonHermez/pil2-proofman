@@ -329,8 +329,8 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     NTTGoldilocksGPU::freeConstants();
 }
 
-// Keccakf-like ColMajorTiled stage-1 flow: nBits=17, nCols>500 -> resolveLayout returns ColMajorTiled,
-// so the trace is stored ColMajorTiled, LDE runs the NATIVE tiled path, and the Merkle reads tiled.
+// Keccakf-like ColMajorTiled stage-1 flow through the legacy tiled reference backend (called
+// directly: resolveLayout is always ColMajor now, so the dispatch no longer selects it).
 // (1) GPU root must match CPU LDE + merkletree_seq (row-major reference). (2) The GPU root must be
 // DETERMINISTIC across two independent runs (catches uninitialised in-tile padding reads).
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
@@ -341,8 +341,6 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
     constexpr uint64_t nRows_ext  = 1ULL << n_bits_ext;
     constexpr uint64_t nCols      = 600;          // > 500 -> ColMajorTiled
     constexpr uint32_t arity      = 3;
-
-    ASSERT_EQ(resolveLayout(n_bits, nCols), Layout::ColMajorTiled) << "test must exercise the tiled path";
 
     std::vector<Goldilocks::Element> h_input(nRows * nCols);
     for (uint64_t i = 0; i < nRows * nCols; i++)
@@ -382,7 +380,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
         // row-major -> ColMajorTiled storage
         fromRowMajorToColMajor(nRows, nCols, d_flat, d_tiled, Layout::ColMajorTiled, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
-        gpu_ntt.LDE(d_lde, 0, d_tiled, 0, n_bits, n_bits_ext, nCols, timer, stream);
+        gpu_ntt.ldeTiled(d_lde, d_tiled, n_bits, n_bits_ext, nCols, stream);
         Poseidon2GoldilocksGPU<12>::merkletree(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde, nCols, nRows_ext, Layout::ColMajorTiled, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
         std::vector<Goldilocks::Element> &dst = (run == 0) ? root_run0 : root_run1;

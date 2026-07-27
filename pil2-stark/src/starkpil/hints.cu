@@ -57,7 +57,7 @@ void getPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
     uint64_t rowOffset = setupCtx.starkInfo.openingPoints[rowOffsetIndex];
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t dim = polInfo.dim;
-    // cm follows resolveLayout; const and custom commits follow fixedLayout() (ColMajorTiled),
+    // cm follows resolveLayout; const and custom commits follow fixedLayout(),
     // matching write_custom_commit_gpu and the expressions/FRI/eval readers.
     Layout layout = (type == "cm") ? resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols)
                   : (type == "const" || type == "custom") ? fixedLayout()

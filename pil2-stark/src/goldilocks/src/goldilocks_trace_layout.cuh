@@ -1,9 +1,9 @@
 #ifndef __DATA_LAYOUT_CUH__
 #define __DATA_LAYOUT_CUH__
 
-// GPU polynomial memory layouts. getBufferOffset is the prover's storage accessor (ColMajor flat by
-// default, ColMajorTiled for the native NTT path -- see resolveLayout); the RowMajor / RowMajorPacked
-// variants are the within-tile orderings the native NTT butterfly/LDE kernels use internally.
+// GPU polynomial memory layouts. getBufferOffset is the prover's storage accessor (ColMajor flat
+// everywhere -- see resolveLayout/fixedLayout); the ColMajorTiled / RowMajor / RowMajorPacked variants
+// remain for the legacy tiled NTT backend kept as an env-gated reference.
 
 #include <stdint.h>
 
@@ -16,43 +16,42 @@
 //   - RowMajor      : element (row,col) at row*nCols + col (contiguous columns per row).
 //   - ColMajor      : FLAT column-major, (row,col) at col*nRows + row (each column one contiguous run).
 //                     sppark's native per-column format -> LDE/computeQ run in place, no transpose.
-//   - ColMajorTiled : column-major WITHIN TILE_HEIGHT x TILE_WIDTH tiles; the layout the native
-//                     (non-sppark) NTT path operates on.
-// A committed section is stored ColMajor (flat, sppark) by default and ColMajorTiled (native NTT) only
-// for small high-column AIRs where the native path is faster -- see resolveLayout. Const and custom
-// commits are stored ColMajorTiled -- see fixedLayout(). getBufferOffset defaults to ColMajor so the
+//   - ColMajorTiled : column-major WITHIN TILE_HEIGHT x TILE_WIDTH tiles; the layout the legacy tiled
+//                     NTT backend operates on (reference only, no longer selected).
+// Every section -- committed (resolveLayout), const and custom commits (fixedLayout) -- is stored
+// ColMajor and served by the in-house ColMajor NTT engine. getBufferOffset defaults to ColMajor so the
 // flat call sites are unchanged.
 enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 
-// The storage layout of a committed section, a pure function of its small-domain size (nBits) and
-// column count. Writer (commit LDE + Merkle), readers (expression load__), NTT, the row-major->storage
-// transpose, AND the commit-Merkle / FRI / opening-eval kernels in starks_gpu.cu all call this with the
-// SAME (nBits, nCols), so they always agree without storing the choice. Native tiled wins for small
-// domains with many columns; everything else uses flat (sppark).
-// FORCE_TILED_LAYOUT: benchmark switch forcing every committed section through the native tiled
-// NTT. Must match cm_layout()/store_qq() in setup/exps-codegen/src/emit.rs; rebuild the C++ AND
-// regenerate the exps kernels (gen-exps) together, or readers/writers disagree -> wrong proofs.
+// The storage layout of a committed section. Writer (commit LDE + Merkle), readers (expression
+// load__), NTT, the row-major->storage transpose, AND the commit-Merkle / FRI / opening-eval kernels
+// in starks_gpu.cu all call this with the SAME (nBits, nCols), so they always agree without storing
+// the choice. Always ColMajor since the in-house ColMajor NTT engine (ntt_goldilocks.cu) matched or
+// beat the tiled backend at every shape; must match cm_layout()/store_qq() in
+// setup/exps-codegen/src/emit.rs -- a change here requires regenerating the exps kernels (gen-exps),
+// or readers/writers disagree -> wrong proofs.
 __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_t nCols) {
-#ifdef FORCE_TILED_LAYOUT
     (void)nBits; (void)nCols;
-    return Layout::ColMajorTiled;
-#else
-    return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
-#endif
+    return Layout::ColMajor;
 }
 
-// Single source of truth for CUDA-graph capturability of the NTT/LDE/computeQ path: only the native
-// (ColMajorTiled) backend is pure kernels; the flat (ColMajor) backend delegates to sppark (own stream
-// + host sync), which is illegal to capture. The LDE/computeQ dispatch and the capture guards in
-// starks_gpu.cu both gate on THIS, so "runs the native path" and "is capturable" can never drift apart.
+// Single source of truth for CUDA-graph capturability of the NTT/LDE/computeQ path: only the legacy
+// tiled (ColMajorTiled) backend was validated under graph capture, so with resolveLayout always
+// ColMajor this is now constantly false and the graph path is dormant. (The ColMajor engine is pure
+// kernels but has not been audited for capture -- e.g. its nullptr-scratch fallback cudaMallocAsync.)
+// The LDE/computeQ dispatch and the capture guards in starks_gpu.cu both gate on THIS, so they can
+// never drift apart.
 __host__ __device__ __forceinline__ bool isGraphCapturableLayout(uint64_t nBits, uint64_t nCols) {
     return resolveLayout(nBits, nCols) == Layout::ColMajorTiled;
 }
 
 // Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
-// source of truth so every producer and consumer agrees. ColMajorTiled matches pre-1.0.0-beta behavior.
+// source of truth so every producer and consumer agrees. ColMajor like the committed sections.
+// CAUTION: the on-disk GPU cache files bake this layout (.consttree_gpu, RecursiveF .const_gpu, the
+// zisk ROM custom-commit cache) and their validity checks are size/root based, which cannot detect a
+// layout change -- if this function ever changes, those caches must be deleted so they regenerate.
 __host__ __device__ __forceinline__ Layout fixedLayout() {
-    return Layout::ColMajorTiled;
+    return Layout::ColMajor;
 }
 
 // (row,col) offset for the given layout. Default ColMajor (flat): col*nRows + row.

@@ -1630,7 +1630,8 @@ void NTTGoldilocksGPU::ldeTiled(gl64_t* d_dst_, gl64_t* d_src_,
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
 }
 
-// LDE: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
+// LDE: ColMajor engine everywhere (resolveLayout is always ColMajor; the tiled branch is kept only
+// for the legacy reference backend and is currently unreachable).
 void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
                            gl64_t* d_src, uint64_t offset_src,
                            uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
