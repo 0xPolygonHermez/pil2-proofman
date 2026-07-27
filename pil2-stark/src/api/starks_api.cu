@@ -1575,7 +1575,7 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
     // prepare_blocks transposes const pols into fixedLayout() (ColMajorTiled) on the host -- this is the
-    // input layout calculate_const_tree_gpu (via ldeNativeTiled) expects. Restores pre-1.0.0-beta behavior.
+    // input layout calculate_const_tree_gpu (via ldeTiled) expects. Restores pre-1.0.0-beta behavior.
     fromRowMajorToColMajor(N, nCols, d_pol, d_aux, fixedLayout(), stream);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
@@ -1627,8 +1627,8 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
 
     NTTGoldilocksGPU ntt;
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    // ldeNativeTiled directly: plain ntt.LDE would dispatch to sppark (flat) for custom dims. Out-of-place.
-    ntt.ldeNativeTiled((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream);
+    // ldeTiled directly: plain ntt.LDE would dispatch to sppark (flat) for custom dims. Out-of-place.
+    ntt.ldeTiled((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream);
     buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_customCommitsTree, nCols, 1ULL << nBitsExt, fixedLayout(), stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
@@ -1686,9 +1686,9 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
     // Const tree uses fixedLayout() (ColMajorTiled), restoring the pre-sppark (pre-1.0.0-beta) GPU format
-    // so the produced .consttree_gpu matches that baseline. Call ldeNativeTiled directly: plain ntt.LDE
+    // so the produced .consttree_gpu matches that baseline. Call ldeTiled directly: plain ntt.LDE
     // would dispatch to sppark (flat) for const dims. It is out-of-place so src stays intact.
-    ntt.ldeNativeTiled((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream);
+    ntt.ldeTiled((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream);
     buildMerkleTreeGPU(starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)d_fixedTree, starkInfo.nConstants, 1ULL << starkInfo.starkStruct.nBitsExt, fixedLayout(), stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;

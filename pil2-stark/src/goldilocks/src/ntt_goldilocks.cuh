@@ -136,7 +136,7 @@ public:
     }
 
     // LDE dispatches on resolveLayout(nBits, nCols): ColMajor -> ldeSppark (flat), ColMajorTiled ->
-    // ldeNativeTiled. The two backends are also exposed directly so tests/benches can run a given size
+    // ldeTiled. The two backends are also exposed directly so tests/benches can run a given size
     // through either path and compare (they produce identical ColMajor-storage output for ColMajor input
     // / ColMajorTiled-storage output for ColMajorTiled input -- see test_ntt_gpu equivalence test).
     void LDE(gl64_t* d_dst, uint64_t offset_dst,
@@ -149,8 +149,12 @@ public:
     void ldeSppark(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                    cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr);
     // native tiled backend: ColMajorTiled in/out, pure kernels (graph-capturable). d_src_/d_dst_ disjoint.
-    void ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+    void ldeTiled(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                         cudaStream_t stream);
+
+    // In-house ColMajor LDE
+    void ldeColMajor(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+                 cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr);
 
     // computeQ dispatches on resolveLayout(nBits, nCols): ColMajor -> computeQSppark, else
     // computeQNativeTiled. Backends exposed directly for tests/benches.
@@ -168,10 +172,6 @@ public:
                              uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream);
 
     void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
-
-    // Flat (ColMajor) DIT butterfly pass, one column at a time. WIP backend: exposed for
-    // benchmarking/validation against the tiled path before it is wired into LDE().
-    void nttDitFlatCols(gl64_t *data, uint64_t nBits, uint64_t nCols, bool inverse, bool bitRev, bool batchCols, cudaStream_t stream);
 
     // INTT dispatches on resolveLayout: ColMajor -> inttSppark, ColMajorTiled -> inttNativeTiled.
     void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);

@@ -19,13 +19,6 @@ extern "C" {
 void sppark_lde_flat(void* d_dst, void* d_src, uint32_t lg_n, uint32_t lg_next, uint32_t nCols,
                      bool preserve_src, void* preserve_scratch, void* caller_stream);
 
-// Column-chunked variant of sppark_lde_flat: identical per-column results, but each kernel
-// launch covers an L2-sized CHUNK of columns (gridDim.y) instead of one -- fixes the
-// occupancy collapse of serial per-column launches at small domains. Requires preserve_src
-// + a non-null preserve_scratch (falls back to the serial path otherwise).
-void sppark_lde_flat_batched(void* d_dst, void* d_src, uint32_t lg_n, uint32_t lg_next, uint32_t nCols,
-                             bool preserve_src, void* preserve_scratch, void* caller_stream);
-
 // computeQ: iNTT(ext) each q column -> coset shift + zero-pad into cmQ -> NTT(ext) each cmQ column.
 // q and cmQ are disjoint flat regions of the arena at off_q / off_cmQ (in elements).
 void sppark_computeq_flat(void* d_aux, uint64_t off_cmQ, uint64_t off_q,
