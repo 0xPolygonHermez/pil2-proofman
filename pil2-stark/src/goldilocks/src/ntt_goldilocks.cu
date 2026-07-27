@@ -1098,6 +1098,48 @@ __global__ void nttCopyToDestinationTailsKernel(gl64_t *dst_base, const gl64_t *
         dst[i] = src[i];
 }
 
+// In-place bit-reversal permutation of each column (gridDim.y selects the column).
+// Each (i, rev(i)) pair is swapped once, by its lower-indexed side. Combined with a
+// DIT run this forms the NN-order (natural in -> natural out) transform.
+__global__ void nttBitRevColMajorKernel(gl64_t *base, size_t col_stride, uint32_t lg)
+{
+    gl64_t *col = base + (size_t)blockIdx.y * col_stride;
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= (1u << lg))
+        return;
+    uint32_t j = nttBitRev(i, lg);
+    if (i < j) {
+        gl64_t t = col[i];
+        col[i] = col[j];
+        col[j] = t;
+    }
+}
+
+// Coset shift + zero-pad for computeQ: reads qDim columns of q coefficients (length NExt,
+// only the first N meaningful after the iNTT of a degree-<N polynomial) and writes
+// qDeg*qDim columns of cmQ:
+//   cmQ[p*qDim + k][row] = q[k][row + p*N] * shiftIn^p   for row < N
+//   cmQ[p*qDim + k][row] = 0                             for row >= N
+// shiftIn is a BASE-FIELD scalar, so the cubic-extension element scales component-wise.
+__global__ void nttCosetShiftQKernel(const gl64_t *q, gl64_t *cmQ, uint32_t N, uint32_t Next,
+                                     uint32_t qDeg, uint32_t qDim, uint64_t shiftIn)
+{
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= Next)
+        return;
+    gl64_t shift = gl64_t(shiftIn);
+    gl64_t s = gl64_t(uint64_t(1));
+    for (uint32_t p = 0; p < qDeg; p++) {
+        for (uint32_t k = 0; k < qDim; k++) {
+            uint32_t outcol = p * qDim + k;
+            gl64_t v = (row < N) ? q[(uint64_t)k * Next + (row + (uint64_t)p * N)] * s
+                                 : gl64_t(uint64_t(0));
+            cmQ[(uint64_t)outcol * Next + row] = v;
+        }
+        s = shift * s;
+    }
+}
+
 // ---- per-device twiddle tables (host-generated once, lazily) ----
 
 namespace {
@@ -1298,6 +1340,46 @@ struct NttRun {
     }
 };
 
+
+// NN-order (natural in -> natural out) transform: bit-reversal permutation + DIT run.
+// inverse=true uses the inverse-direction tables and applies the 1/N scaling.
+void nttTransformNN(gl64_t *base, size_t col_stride, unsigned ncols, int lg,
+                    bool inverse, const NttTables &t, cudaStream_t s)
+{
+    uint32_t N = 1u << lg;
+    uint32_t thr = 256;
+    uint32_t blk = (N + thr - 1) / thr;
+    nttBitRevColMajorKernel<<<dim3(blk, ncols), thr, 0, s>>>(base, col_stride, (uint32_t)lg);
+    CHECKCUDAERR(cudaGetLastError());
+    NttRun{base, col_stride, ncols, lg, inverse, t, s, true}.run();
+}
+
+// Column-chunk size that keeps a transform's steps L2-resident between launches
+// (same policy as ldeColMajor; ~60% budget leaves room for tables and other traffic).
+uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
+{
+    int dev = 0, l2Bytes = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
+        l2Bytes = 32 << 20;
+    uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / colBytes);
+    if (chunk < 1) chunk = 1;
+    if (chunk > nCols) chunk = (uint32_t)nCols;
+    return chunk;
+}
+
+// One runtime switch for all three dispatches (LDE / INTT / computeQ):
+// PROOFMAN_NTT_SPPARK=1 selects the sppark-backed reference implementations.
+// Magic static: C++11 guarantees thread-safe one-time initialization.
+bool nttUseSppark()
+{
+    static const bool v = [] {
+        const char *e = getenv("PROOFMAN_NTT_SPPARK");
+        return e && e[0] == '1';
+    }();
+    return v;
+}
+
 } // anonymous namespace
 
 // ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt) per column. Columns are
@@ -1391,6 +1473,57 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         CHECKCUDAERR(cudaFreeAsync(scratch, stream));
 }
 
+// ColMajor in-place INTT of nCols flat columns of 2^nBits rows (column c at dst + c*N).
+// NN order (natural in/out), matching the reference flow. Used for the LEv vector.
+void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBits <= NTT_MAX_LG);
+    const NttTables &ti = nttEnsureTables(true);
+    size_t N = (size_t)1 << nBits;
+
+    uint32_t chunk = nttL2ChunkCols(N * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        nttTransformNN(dst + (size_t)c0 * N, N, nc, (int)nBits, true, ti, stream);
+    }
+}
+
+// ColMajor computeQ: iNTT(NN) each q column over the extended domain -> coset shift +
+// zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column. Same flow and results
+// as the sppark reference (computeQSppark), on the in-house engine.
+void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                                        Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                                        uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
+{
+    assert(nBitsExt <= NTT_MAX_LG);
+    const NttTables &tf = nttEnsureTables(false);
+    const NttTables &ti = nttEnsureTables(true);
+
+    gl64_t *d_q = d_aux_trace + offset_q;       // flat, qDim cols, NExt rows
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;   // flat, nCols cols, NExt rows
+    uint32_t N = 1u << nBits;
+    uint32_t Next = 1u << nBitsExt;
+
+    uint32_t chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), qDim);
+    for (uint32_t c0 = 0; c0 < qDim; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= qDim) ? chunk : (uint32_t)(qDim - c0);
+        nttTransformNN(d_q + (size_t)c0 * Next, Next, nc, (int)nBitsExt, true, ti, stream);
+    }
+
+    uint32_t thr = 256;
+    uint32_t blk = (Next + thr - 1) / thr;
+    nttCosetShiftQKernel<<<blk, thr, 0, stream>>>(d_q, d_cmQ, N, Next, (uint32_t)qDeg, (uint32_t)qDim, shiftIn.fe);
+    CHECKCUDAERR(cudaGetLastError());
+
+    chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        nttTransformNN(d_cmQ + (size_t)c0 * Next, Next, nc, (int)nBitsExt, false, tf, stream);
+    }
+}
+
 
 // =============================================================================
 // Class methods
@@ -1406,8 +1539,8 @@ void NTTGoldilocksGPU::computeQSppark(uint64_t offset_cmQ, uint64_t offset_q, ui
                          (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, (void *)stream);
 }
 
-// Native tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
-void NTTGoldilocksGPU::computeQNativeTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+// Tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
+void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                            Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                            uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream)
 {
@@ -1457,9 +1590,12 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
     }
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+        if (nttUseSppark())
+            computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+        else
+            computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
     } else {
-        computeQNativeTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
+        computeQTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
     }
 
     TimerStopCategoryGPU(timer, NTT);
@@ -1473,7 +1609,7 @@ void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
     sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
 }
 
-// Native tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
+// Tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
 // columnMajorToPacked -> DIF(INTT+zero-pad) -> DIT(NTT) -> rowMajorToColumnMajor. Pure kernels (capturable).
 void NTTGoldilocksGPU::ldeTiled(gl64_t* d_dst_, gl64_t* d_src_,
                                       uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, cudaStream_t stream)
@@ -1516,15 +1652,9 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
     gl64_t *d_src_ = &d_src[offset_src];
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        // ColMajor: the in-house engine by default; PROOFMAN_LDE_SPPARK=1
-        // selects the sppark-backed reference implementation for comparison.
-        // Magic static: C++11 guarantees thread-safe one-time initialization,
-        // so concurrent first callers cannot race on it.
-        static const bool use_sppark = [] {
-            const char *e = getenv("PROOFMAN_LDE_SPPARK");
-            return e && e[0] == '1';
-        }();
-        if (use_sppark)
+        // ColMajor: the in-house engine by default; PROOFMAN_NTT_SPPARK=1 selects
+        // the sppark-backed reference implementations (all three dispatches).
+        if (nttUseSppark())
             ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
         else
             ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
@@ -1565,9 +1695,9 @@ void NTTGoldilocksGPU::inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, c
     sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols, (void *)stream);
 }
 
-// Native tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
+// Tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
 // (inverse), transpose back. Pure kernels (capturable).
-void NTTGoldilocksGPU::inttNativeTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+void NTTGoldilocksGPU::inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
     uint64_t N = 1 << nBits;
     dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
@@ -1593,9 +1723,12 @@ void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStr
     }
 
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        inttSppark(dst, nBits, nCols, stream);
+        if (nttUseSppark())
+            inttSppark(dst, nBits, nCols, stream);
+        else
+            inttColMajor(dst, nBits, nCols, stream);
     } else {
-        inttNativeTiled(dst, nBits, nCols, stream);
+        inttTiled(dst, nBits, nCols, stream);
     }
 }
 
