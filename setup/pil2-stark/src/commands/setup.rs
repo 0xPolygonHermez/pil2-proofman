@@ -431,13 +431,15 @@ pub(crate) fn ml_params(
             field_size,
             trace_length: 1u32 << n_bits,
             rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - n_bits)) as f64,
-            folding_factors: vec![k as u32; n_rounds],
+            log_folding_factors: vec![k as u32; n_rounds],
             batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
             batching: security::pcs::Batching::Powers,
             constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
             max_grinding_bits_query: 0,
             use_max_grinding_bits_query: false,
             tree_arity: 4,
+            hash_size_bits: 256,
+            base_field_bits: 64,
             target_security_bits: TARGET_SECURITY_BITS as u64,
             regime,
         },

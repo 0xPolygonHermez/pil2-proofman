@@ -311,10 +311,11 @@ pub fn build_fri(stark_struct: &StarkStruct, batch_size: u64) -> security::pcs::
         rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
         batch_size,
         batching: security::pcs::Batching::Powers,
-        folding_factors: folding_bits.iter().map(|&b| 1u32 << b).collect(),
+        log_folding_factors: folding_bits.iter().map(|&b| b as u32).collect(),
         max_grinding_bits_query: stark_struct.pow_bits as u64,
         use_max_grinding_bits_query: true,
         tree_arity: stark_struct.merkle_tree_arity as u64,
+        hash_size_bits: 256,
         target_security_bits: 128,
         regime: security::regimes::DecodingRegime::Jbr,
     })

@@ -254,8 +254,9 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
     let rate = 1.0 / (1 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
     let batch_size = (setup.stark_info.ev_map.len() as u64).max(1);
     let batching = Batching::Powers;
-    let fri_folding_factors: Vec<u64> =
-        stark_struct.steps.windows(2).map(|pair| 1 << (pair[0].n_bits - pair[1].n_bits)).collect();
+    let fri_folding_bits: Vec<u32> =
+        stark_struct.steps.windows(2).map(|pair| (pair[0].n_bits - pair[1].n_bits) as u32).collect();
+    let fri_folding_factors: Vec<u64> = fri_folding_bits.iter().map(|&b| 1u64 << b).collect();
     let fri_early_stop_degree = 1u64 << stark_struct.steps.last().unwrap().n_bits;
 
     // Rebuild the solved FRI PCS from the free parameters stored in the
@@ -267,10 +268,11 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         rate,
         batch_size,
         batching,
-        folding_factors: fri_folding_factors.iter().map(|&f| f as u32).collect(),
+        log_folding_factors: fri_folding_bits.clone(),
         max_grinding_bits_query: stark_struct.pow_bits,
         use_max_grinding_bits_query: true,
         tree_arity: stark_struct.merkle_tree_arity,
+        hash_size_bits: 256,
         target_security_bits: 128,
         regime: DecodingRegime::Jbr,
     });
@@ -346,13 +348,15 @@ pub fn get_multilinear_air_info<F: PrimeField64>(setup: &Setup<F>) -> Option<MlT
             field_size: security::goldilocks_safe_extension_field_size(),
             trace_length: 1u32 << n_bits,
             rate: f64::exp2(-(params.log_blowup as f64)),
-            folding_factors: vec![k as u32; n_rounds],
+            log_folding_factors: vec![k as u32; n_rounds],
             batch_size: air_ir.total_cols().max(1) as u64, // columns batched by δ into Φ
             batching: Batching::Powers,
             constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
             max_grinding_bits_query: params.grinding_bits as u64,
             use_max_grinding_bits_query: true,
             tree_arity: 4, // the multilinear prover's MERKLE_ARITY
+            hash_size_bits: 256,
+            base_field_bits: 64,
             target_security_bits: 128,
             regime: DecodingRegime::Jbr,
         },

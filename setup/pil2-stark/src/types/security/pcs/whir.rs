@@ -1,7 +1,9 @@
 use crate::types::security::pcs::types::apply_grinding;
 
 use super::super::regimes::{DecodingRegime, ProximityGapsRegime};
-use super::types::{Batching, Pcs, bits_of_security_from_error, merkle_path_hashes, security_from_error};
+use super::types::{
+    Batching, Pcs, bits_of_security_from_error, coset_opening_hashes, merkle_opening_size_bits, security_from_error,
+};
 
 /// Configuration for the WHIR PCS.
 #[derive(Clone, Debug)]
@@ -18,7 +20,7 @@ pub struct WhirConfig {
     pub batch_size: u64,
     /// Per-iteration folding factors `kᵢ`, in bits: iteration `i` folds
     /// `2^kᵢ` variables.
-    pub folding_factors: Vec<u32>,
+    pub log_folding_factors: Vec<u32>,
     /// Constraint degree `d = max(d*, 3)`, `d* = 1 + deg_Z(w̃) + max_i{deg_{X_i}(w̃)}`.
     pub constraint_degree: u64,
     /// The maximum number of grinding bits allowed.
@@ -27,6 +29,12 @@ pub struct WhirConfig {
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle trees used in WHIR.
     pub tree_arity: u64,
+    /// The output length of the Merkle-tree hash, in bits.
+    pub hash_size_bits: u64,
+    /// Base-field element size in bits. The initial oracle f₀ is over the
+    /// base field; folded oracles, sumcheck polynomials and OOD replies take
+    /// full extension elements (log2(field_size) bits).
+    pub base_field_bits: u64,
     /// The target security level in bits.
     pub target_security_bits: u64,
     /// The decoding regime kind. The gap-widening factor `alpha` is deduced.
@@ -56,15 +64,14 @@ pub struct Whir {
     cfg: WhirConfig,
     /// `log2(1/ρᵢ)` — per-iteration inverse rates (length `M+1`).
     log_inv_rates: Vec<u32>,
-    /// h = log2(trace_length), exact.
+    /// h = log2(trace_length).
     log_trace: u32,
-    /// Domain size after low-degree extension: D = trace_length << k, exact.
-    domain_size: u32,
     /// Number of iterations `M`.
     num_rounds: usize,
-    /// dimension of the (partially folded) code entering commit round i,
-    /// i.e. trace_length / Π_{j<=i} folding_factors[j].
+    /// log2(2^{mᵢ})` — per-iteration log-dimensions (length `M+1`).
     log_round_dimensions: Vec<u32>,
+    /// Domain size at which folding stops.
+    early_stop_degree: u32,
     /// Security parameters.
     sec_params: WhirSecurityParams,
     /// Gap-widening factor for the regime.
@@ -94,7 +101,7 @@ impl Whir {
             // Each iteration has a sumcheck phase with exactly kᵢ rounds.
             assert_eq!(
                 g.len(),
-                whir.cfg.folding_factors[i] as usize,
+                whir.cfg.log_folding_factors[i] as usize,
                 "Iteration {i}: expected one folding grinding entry per sumcheck round"
             );
         }
@@ -105,35 +112,36 @@ impl Whir {
 
     /// Structural validation shared by both constructors.
     fn validate(cfg: WhirConfig) -> Self {
-        let num_rounds = cfg.folding_factors.len();
+        let num_rounds = cfg.log_folding_factors.len();
 
         // ρ = 2^-k.
         let k = -cfg.rate.log2();
-        assert!(k >= 1.0 && k <= 32.0 && cfg.rate == f64::exp2(-k), "ρ must be an exact power of two");
+        assert!((1.0..=32.0).contains(&k) && cfg.rate == f64::exp2(-k), "ρ must be an exact power of two");
         let log_inv_rate = k as u32;
 
         // trace_length = 2^h.
-        let h = cfg.trace_length.trailing_zeros();
-        assert!(h >= 1 && h <= 32 && cfg.trace_length == 1 << h, "trace_length must be an exact power of two");
-        let log_trace = h as u32;
+        let log_trace = cfg.trace_length.trailing_zeros();
+        assert!(
+            (1..=32).contains(&log_trace) && cfg.trace_length == 1 << log_trace,
+            "trace_length must be an exact power of two"
+        );
 
         // Domain size n = trace_length / ρ = trace_length << k.
         assert!(log_trace + log_inv_rate < 32, "domain size overflowed u32");
-        let domain_size = (cfg.trace_length as u32) << log_inv_rate;
 
         // d = max(d*, 3), where d* = 1 + deg_Z(w̃) + max_i{deg_{X_i}(w̃)}.
         assert!(cfg.constraint_degree >= 3, "Constraint degree must be >= 3");
         assert!(cfg.batch_size >= 1, "Batch size must be at least 1");
         assert!(num_rounds >= 1, "Must have at least 1 iteration");
-        assert!(cfg.folding_factors.iter().all(|&k| k >= 1), "Every folding factor must be >= 1 to reduce degree");
+        assert!(cfg.log_folding_factors.iter().all(|&k| k >= 1), "Every folding factor must be >= 1 to reduce degree");
 
         // Ensure the final polynomial does not end up with a negative number
         // of variables: m₀ >= Σᵢ kᵢ.
-        let total_reduction: u32 = cfg.folding_factors.iter().sum();
+        let total_reduction: u32 = cfg.log_folding_factors.iter().sum();
         assert!(
-            total_reduction <= h,
+            total_reduction <= log_trace,
             "Reducing {} variables by {total_reduction} (sum of folding factors) leaves a negative number of variables",
-            h,
+            log_trace,
         );
 
         // Compute the per-iteration log-degree m_i and log-inverse-rate μᵢ.
@@ -143,19 +151,20 @@ impl Whir {
         //   μ_{i+1}  = μ_i + (k_i - 1)  (domain halves; degree drops by 2^{k_i})
         let mut log_round_dimensions = Vec::with_capacity(num_rounds + 1);
         let mut log_inv_rates = Vec::with_capacity(num_rounds + 1);
-        log_round_dimensions.push(h);
+        log_round_dimensions.push(log_trace);
         log_inv_rates.push(log_inv_rate);
         for i in 0..num_rounds {
-            let k_i = cfg.folding_factors[i];
+            let k_i = cfg.log_folding_factors[i];
             log_round_dimensions.push(log_round_dimensions[i] - k_i);
             log_inv_rates.push(log_inv_rates[i] + (k_i - 1));
         }
+        let early_stop_degree = 1 << log_round_dimensions[num_rounds];
 
         let empty = WhirSecurityParams {
             num_queries: vec![0; num_rounds],
             num_ood_samples: vec![0; num_rounds - 1],
             grinding_bits_batching: 0,
-            grinding_bits_folding: cfg.folding_factors.iter().map(|&k| vec![0u32; k as usize]).collect(),
+            grinding_bits_folding: cfg.log_folding_factors.iter().map(|&k| vec![0u32; k as usize]).collect(),
             grinding_bits_queries: vec![0; num_rounds],
             grinding_bits_ood: vec![0; num_rounds - 1],
         };
@@ -164,9 +173,9 @@ impl Whir {
             cfg,
             log_inv_rates,
             log_trace,
-            domain_size,
             num_rounds,
             log_round_dimensions,
+            early_stop_degree,
             sec_params: empty,
             alpha: 0.0,
         }
@@ -203,7 +212,7 @@ impl Whir {
         // Folding grinding.
         let mut grinding_bits_folding = Vec::with_capacity(m);
         for i in 0..m {
-            let len = self.cfg.folding_factors[i];
+            let len = self.cfg.log_folding_factors[i];
             let mut bits = vec![0u32; len as usize];
             for s in 1..=len {
                 bits[(s - 1) as usize] = deficit(self.fold_error(regime, i, s, 0));
@@ -271,15 +280,71 @@ impl Whir {
         }
     }
 
-    /// Approximate verifier hash count per query at iteration i, used to
-    /// bound the grinding bits worth spending (grinding beyond the per-query
-    /// cost is wasteful). A query opens one coset of `2^kᵢ` leaves plus a
-    /// Merkle path in iteration i's tree.
+    /// Approximate verifier hash count per query: one coset opening in the
+    /// iteration's tree.
     fn query_num_hashes(&self, iteration: usize) -> f64 {
-        let k = self.cfg.folding_factors[iteration];
+        let k = self.cfg.log_folding_factors[iteration];
         let log_domain = self.log_round_dimensions[iteration] + self.log_inv_rates[iteration];
-        let n_leafs = f64::exp2((log_domain - k) as f64);
-        f64::exp2(k as f64) + merkle_path_hashes(self.cfg.tree_arity, n_leafs)
+        coset_opening_hashes(log_domain, k, self.cfg.tree_arity)
+    }
+
+    /// Total Merkle openings in the query phase: each query opens one coset
+    /// in its own iteration's tree only.
+    pub fn num_merkle_openings(&self) -> u64 {
+        self.sec_params.num_queries.iter().sum()
+    }
+
+    /// Approximate verifier hashes spent on the query phases (upper bound:
+    /// shared path prefixes across queries are not deduplicated).
+    pub fn total_query_hashes(&self) -> f64 {
+        self.sec_params.num_queries.iter().enumerate().map(|(i, &t)| t as f64 * self.query_num_hashes(i)).sum()
+    }
+
+    /// Estimated worst-case proof size in bits: per-iteration roots, sumcheck polynomials and
+    /// OOD replies, the decision-phase openings, and the final polynomial in
+    /// clear.
+    pub fn proof_size_bits(&self) -> u64 {
+        let ext_bits = self.cfg.field_size.log2().round() as u64;
+        let hash = self.cfg.hash_size_bits;
+        let d = self.cfg.constraint_degree;
+        let mut size = 0.0;
+
+        // Initial commitment root.
+        size += hash as f64;
+
+        // Sumcheck: kᵢ univariate polynomials per iteration, each of degree
+        // < d, sent as d − 1 evaluations (Gruen 2024 §3.1: the verifier
+        // recovers h(1) from the running claim h(0) + h(1)).
+        for i in 0..self.num_rounds {
+            size += (self.cfg.log_folding_factors[i] as u64 * (d - 1) * ext_bits) as f64;
+        }
+
+        // Inner iterations: one root and the OOD replies each.
+        for i in 1..self.num_rounds {
+            size += hash as f64;
+            size += (self.sec_params.num_ood_samples[i - 1] * ext_bits) as f64;
+        }
+
+        // Final polynomial in clear: 2^{m_M} coefficients.
+        size += (self.early_stop_degree as u64 * ext_bits) as f64;
+
+        // Decision phase: tᵢ coset openings in iteration i's tree. Iteration
+        // 0's leaves hold all batch_size columns over the base field; later
+        // iterations one extension-field coset of 2^{kᵢ} values.
+        for i in 0..self.num_rounds {
+            let k = self.cfg.log_folding_factors[i];
+            let log_domain = self.log_round_dimensions[i] + self.log_inv_rates[i];
+            let n_leafs = f64::exp2((log_domain - k) as f64);
+            let (tuple_size, element_bits) = if i == 0 {
+                ((1u64 << k) * self.cfg.batch_size, self.cfg.base_field_bits)
+            } else {
+                (1u64 << k, ext_bits)
+            };
+            size += self.sec_params.num_queries[i] as f64
+                * merkle_opening_size_bits(n_leafs, tuple_size, element_bits, self.cfg.tree_arity, hash);
+        }
+
+        size.round() as u64
     }
 
     /// Whether every component meets the configured target.
@@ -307,7 +372,7 @@ impl Whir {
         }
 
         // Initial iteration (i=0): only folding (sumcheck).
-        for s in 1..=self.cfg.folding_factors[0] {
+        for s in 1..=self.cfg.log_folding_factors[0] {
             let grinding_bits = sec.grinding_bits_folding[0][(s - 1) as usize];
             let error = self.fold_error(regime, 0, s, grinding_bits);
             out.push((format!("fold(i=0,s={s})"), bits_of_security_from_error(error)));
@@ -328,7 +393,7 @@ impl Whir {
             out.push((format!("shift(i={i})"), bits_of_security_from_error(shift_error)));
 
             // SumCheck folding errors.
-            for s in 1..=self.cfg.folding_factors[i] {
+            for s in 1..=self.cfg.log_folding_factors[i] {
                 let grinding_bits = sec.grinding_bits_folding[i][(s - 1) as usize];
                 let error = self.fold_error(regime, i, s, grinding_bits);
                 out.push((format!("fold(i={i},s={s})"), bits_of_security_from_error(error)));
@@ -358,7 +423,7 @@ impl Whir {
     /// Error from the folding step at iteration i, round s.
     fn fold_error(&self, regime: &dyn ProximityGapsRegime, iteration: usize, round: u32, grinding_bits: u32) -> f64 {
         assert!(iteration < self.num_rounds, "Iteration index out of bounds");
-        let ff = self.cfg.folding_factors[iteration];
+        let ff = self.cfg.log_folding_factors[iteration];
         assert!(
             round >= 1 && round <= ff,
             "Round index out of bounds for iteration {iteration}: got {round}, expected 1..={ff}"
@@ -436,9 +501,9 @@ impl Whir {
     fn code_for(&self, iteration: usize, round: u32) -> (f64, u32) {
         assert!(iteration < self.num_rounds, "Iteration index out of bounds");
         assert!(
-            round <= self.cfg.folding_factors[iteration],
+            round <= self.cfg.log_folding_factors[iteration],
             "Round index out of bounds for iteration {iteration}: got {round}, expected 0..={}",
-            self.cfg.folding_factors[iteration]
+            self.cfg.log_folding_factors[iteration]
         );
 
         let log_dimension = self.log_round_dimensions[iteration] as i64 - round as i64;
@@ -457,11 +522,15 @@ impl Whir {
         assert!(iteration < self.num_rounds, "Iteration index out of bounds");
 
         let mut min_pp = 1.0f64;
-        for s in 0..=self.cfg.folding_factors[iteration] {
+        for s in 0..=self.cfg.log_folding_factors[iteration] {
             let (rate, _) = self.code_for(iteration, s);
             min_pp = min_pp.min(regime.proximity_parameter(&rate));
         }
         min_pp
+    }
+
+    pub fn config(&self) -> &WhirConfig {
+        &self.cfg
     }
 
     /// The solved regime.
@@ -479,38 +548,56 @@ impl Whir {
         self.alpha
     }
 
-    pub fn rate(&self) -> f64 {
-        self.cfg.rate
+    pub fn proximity_gap(&self) -> f64 {
+        self.regime().gap(&self.cfg.rate)
     }
 
-    pub fn dimension(&self) -> u32 {
-        self.cfg.trace_length
-    }
-
-    pub fn num_iterations(&self) -> usize {
-        self.num_rounds
-    }
-
-    pub fn config(&self) -> &WhirConfig {
-        &self.cfg
+    pub fn proximity_parameter(&self) -> f64 {
+        self.regime().proximity_parameter(&self.cfg.rate)
     }
 
     /// Description of the parameters of the PCS (Markdown code block).
     pub fn parameter_summary(&self) -> String {
+        let trace_length = "2^".to_string() + &self.log_trace.to_string();
+        let rate = "1/2^".to_string() + &self.log_inv_rates[0].to_string() + " = " + &self.cfg.rate.to_string();
+        let domain_size = "2^".to_string() + &(self.log_trace + self.log_inv_rates[0]).to_string();
+        let folding_factors = "[".to_string()
+            + &self
+                .cfg
+                .log_folding_factors
+                .iter()
+                .map(|&k| "2^".to_string() + &k.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+            + "]";
+        let early_stop_degree = "2^".to_string() + &(self.early_stop_degree as f64).log2().round().to_string();
         let params: Vec<(&str, String)> = vec![
-            ("rho", self.cfg.rate.to_string()),
-            ("folding_factors (bits)", format!("{:?}", self.cfg.folding_factors)),
-            ("batch_size", self.cfg.batch_size.to_string()),
-            ("batching", self.cfg.batching.to_string()),
-            ("constraint_degree", self.cfg.constraint_degree.to_string()),
-            ("regime", format!("{:?} (alpha = {})", self.cfg.regime, self.alpha)),
-            ("target_security_bits", self.cfg.target_security_bits.to_string()),
-            ("num_queries (deduced)", format!("{:?}", self.sec_params.num_queries)),
-            ("num_ood_samples (deduced)", format!("{:?}", self.sec_params.num_ood_samples)),
-            ("grinding_queries (deduced)", format!("{:?}", self.sec_params.grinding_bits_queries)),
-            ("grinding_batching (deduced)", self.sec_params.grinding_bits_batching.to_string()),
-            ("grinding_folding (deduced)", format!("{:?}", self.sec_params.grinding_bits_folding)),
-            ("grinding_ood (deduced)", format!("{:?}", self.sec_params.grinding_bits_ood)),
+            ("Target Security Bits", self.cfg.target_security_bits.to_string()),
+            ("Regime", format!("{:?} (𝛼 = {})", self.cfg.regime, self.alpha)),
+            ("Trace Length", trace_length),
+            ("Rate", rate),
+            ("Domain Size", domain_size),
+            ("Batch Size", self.cfg.batch_size.to_string()),
+            ("Batching", self.cfg.batching.to_string()),
+            ("Rounds", self.num_rounds.to_string()),
+            ("Folding Factors", folding_factors),
+            ("Early Stop Degree", early_stop_degree),
+            ("N Queries", format!("{:?}", self.sec_params.num_queries)),
+            ("N OOD Samples", format!("{:?}", self.sec_params.num_ood_samples)),
+            ("Grinding Bits Batching", self.sec_params.grinding_bits_batching.to_string()),
+            ("Grinding Bits Folding", format!("{:?}", self.sec_params.grinding_bits_folding)),
+            ("Grinding Bits OOD", format!("{:?}", self.sec_params.grinding_bits_ood)),
+            ("Grinding Bits Queries", format!("{:?}", self.sec_params.grinding_bits_queries)),
+            (
+                "N Merkle Openings",
+                format!(
+                    "{} = {}",
+                    self.sec_params.num_queries.iter().map(u64::to_string).collect::<Vec<_>>().join(" + "),
+                    self.num_merkle_openings()
+                ),
+            ),
+            ("Total Query Hashes (approx)", format!("{:.0}", self.total_query_hashes())),
+            ("Proof Size (worst case)", format!("{:.0} KiB", self.proof_size_bits() as f64 / 8192.0)),
         ];
 
         let key_width = params.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
@@ -541,16 +628,20 @@ impl Pcs for Whir {
         Whir::security_levels(self)
     }
 
-    fn rate(&self) -> f64 {
-        Whir::rate(self)
-    }
-
-    fn dimension(&self) -> u32 {
-        Whir::dimension(self)
-    }
-
     fn parameter_summary(&self) -> String {
         Whir::parameter_summary(self)
+    }
+
+    fn num_merkle_openings(&self) -> u64 {
+        Whir::num_merkle_openings(self)
+    }
+
+    fn total_query_hashes(&self) -> f64 {
+        Whir::total_query_hashes(self)
+    }
+
+    fn proof_size_bits(&self) -> u64 {
+        Whir::proof_size_bits(self)
     }
 }
 
@@ -572,13 +663,15 @@ mod tests {
             rate,
             batching: Batching::Powers,
             batch_size,
-            folding_factors,
+            log_folding_factors: folding_factors,
             // w̃(Z,X) = Z·eq(X,z)
             // d* = 1 + deg_Z(w̃) + max_i{deg_{X_i}(w̃)} = 1 + 1 + 1 = 3
             constraint_degree: 3,
             max_grinding_bits_query,
             use_max_grinding_bits_query: true,
             tree_arity: 4,
+            hash_size_bits: 256,
+            base_field_bits: 64,
             target_security_bits: 128,
             regime: DecodingRegime::Jbr,
         }
@@ -587,6 +680,10 @@ mod tests {
     #[test]
     fn test_main_params() {
         let whir = Whir::new(test_config(1 << 22, 0.5, 61, vec![3, 3, 3, 3, 3, 3], 16));
+
+        assert_eq!(whir.num_merkle_openings(), 431);
+        assert_eq!(whir.total_query_hashes().round(), 15_853.0);
+
         assert_eq!(whir.alpha(), 0.0);
 
         let levels = whir.security_levels();
@@ -696,5 +793,359 @@ mod tests {
         assert_eq!(grinding_bits_ood[2], 0, "grinding_bits_ood mismatch for iteration 3: got {}", grinding_bits_ood[2]);
         assert_eq!(grinding_bits_ood[3], 0, "grinding_bits_ood mismatch for iteration 4: got {}", grinding_bits_ood[3]);
         assert_eq!(grinding_bits_ood[4], 0, "grinding_bits_ood mismatch for iteration 5: got {}", grinding_bits_ood[4]);
+    }
+
+    #[test]
+    fn test_dma_params() {
+        let whir = Whir::new(test_config(1 << 21, 0.5, 46, vec![3, 3, 3, 3, 3, 2], 16));
+
+        assert_eq!(whir.num_merkle_openings(), 431);
+        assert_eq!(whir.total_query_hashes().round(), 15_438.0);
+
+        assert_eq!(whir.alpha(), 0.0);
+
+        let levels = whir.security_levels();
+        let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
+        assert_eq!(level("batching"), 129);
+        assert_eq!(level("fold(i=0,s=1)"), 136);
+        assert_eq!(level("fold(i=0,s=2)"), 137);
+        assert_eq!(level("fold(i=0,s=3)"), 138);
+        assert_eq!(level("ood(i=1)"), 157);
+        assert_eq!(level("shift(i=1)"), 128);
+        assert_eq!(level("fold(i=1,s=1)"), 139);
+        assert_eq!(level("fold(i=1,s=2)"), 140);
+        assert_eq!(level("fold(i=1,s=3)"), 141);
+        assert_eq!(level("ood(i=2)"), 158);
+        assert_eq!(level("shift(i=2)"), 128);
+        assert_eq!(level("fold(i=2,s=1)"), 142);
+        assert_eq!(level("fold(i=2,s=2)"), 143);
+        assert_eq!(level("fold(i=2,s=3)"), 144);
+        assert_eq!(level("ood(i=3)"), 159);
+        assert_eq!(level("shift(i=3)"), 129);
+        assert_eq!(level("fold(i=3,s=1)"), 144);
+        assert_eq!(level("fold(i=3,s=2)"), 145);
+        assert_eq!(level("fold(i=3,s=3)"), 146);
+        assert_eq!(level("ood(i=4)"), 160);
+        assert_eq!(level("shift(i=4)"), 129);
+        assert_eq!(level("fold(i=4,s=1)"), 147);
+        assert_eq!(level("fold(i=4,s=2)"), 148);
+        assert_eq!(level("fold(i=4,s=3)"), 149);
+        assert_eq!(level("ood(i=5)"), 161);
+        assert_eq!(level("shift(i=5)"), 130);
+        assert_eq!(level("fold(i=5,s=1)"), 149);
+        assert_eq!(level("fold(i=5,s=2)"), 150);
+        assert_eq!(level("final"), 132);
+        assert_eq!(whir.total_security_bits(), 128);
+
+        let sec = whir.security_params();
+        assert_eq!(
+            sec.grinding_bits_batching, 0,
+            "grinding_bits_batching mismatch: got {}",
+            sec.grinding_bits_batching
+        );
+
+        let num_queries = &sec.num_queries;
+        assert!(num_queries.len() == 6, "Expected 6 iterations, got {}", num_queries.len());
+        assert_eq!(num_queries[0], 228, "nQueries mismatch: got {}", num_queries[0]);
+        assert_eq!(num_queries[1], 76, "nQueries mismatch: got {}", num_queries[1]);
+        assert_eq!(num_queries[2], 46, "nQueries mismatch: got {}", num_queries[2]);
+        assert_eq!(num_queries[3], 33, "nQueries mismatch: got {}", num_queries[3]);
+        assert_eq!(num_queries[4], 26, "nQueries mismatch: got {}", num_queries[4]);
+        assert_eq!(num_queries[5], 22, "nQueries mismatch: got {}", num_queries[5]);
+
+        let num_ood_samples = &sec.num_ood_samples;
+        assert!(num_ood_samples.len() == 5, "Expected 5 iterations, got {}", num_ood_samples.len());
+        assert_eq!(num_ood_samples[0], 1, "nOOD mismatch: got {}", num_ood_samples[0]);
+        assert_eq!(num_ood_samples[1], 1, "nOOD mismatch: got {}", num_ood_samples[1]);
+        assert_eq!(num_ood_samples[2], 1, "nOOD mismatch: got {}", num_ood_samples[2]);
+        assert_eq!(num_ood_samples[3], 1, "nOOD mismatch: got {}", num_ood_samples[3]);
+        assert_eq!(num_ood_samples[4], 1, "nOOD mismatch: got {}", num_ood_samples[4]);
+
+        let grinding_bits_folding = &sec.grinding_bits_folding;
+        assert!(grinding_bits_folding.len() == 6, "Expected 6 iterations, got {}", grinding_bits_folding.len());
+        for (i, g) in grinding_bits_folding.iter().enumerate() {
+            for s in 0..g.len() {
+                assert_eq!(g[s], 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {}", s + 1, g[s]);
+            }
+        }
+
+        let grinding_bits_queries = &sec.grinding_bits_queries;
+        assert!(grinding_bits_queries.len() == 6, "Expected 6 iterations, got {}", grinding_bits_queries.len());
+        assert_eq!(
+            grinding_bits_queries[0], 16,
+            "grinding_bits_queries mismatch for iteration 0: got {}",
+            grinding_bits_queries[0]
+        );
+        assert_eq!(
+            grinding_bits_queries[1], 16,
+            "grinding_bits_queries mismatch for iteration 1: got {}",
+            grinding_bits_queries[1]
+        );
+        assert_eq!(
+            grinding_bits_queries[2], 16,
+            "grinding_bits_queries mismatch for iteration 2: got {}",
+            grinding_bits_queries[2]
+        );
+        assert_eq!(
+            grinding_bits_queries[3], 16,
+            "grinding_bits_queries mismatch for iteration 3: got {}",
+            grinding_bits_queries[3]
+        );
+        assert_eq!(
+            grinding_bits_queries[4], 16,
+            "grinding_bits_queries mismatch for iteration 4: got {}",
+            grinding_bits_queries[4]
+        );
+        assert_eq!(
+            grinding_bits_queries[5], 16,
+            "grinding_bits_queries mismatch for iteration 5: got {}",
+            grinding_bits_queries[5]
+        );
+
+        let grinding_bits_ood = &sec.grinding_bits_ood;
+        assert!(grinding_bits_ood.len() == 5, "Expected 5 iterations, got {}", grinding_bits_ood.len());
+        assert_eq!(grinding_bits_ood[0], 0, "grinding_bits_ood mismatch for iteration 1: got {}", grinding_bits_ood[0]);
+        assert_eq!(grinding_bits_ood[1], 0, "grinding_bits_ood mismatch for iteration 2: got {}", grinding_bits_ood[1]);
+        assert_eq!(grinding_bits_ood[2], 0, "grinding_bits_ood mismatch for iteration 3: got {}", grinding_bits_ood[2]);
+        assert_eq!(grinding_bits_ood[3], 0, "grinding_bits_ood mismatch for iteration 4: got {}", grinding_bits_ood[3]);
+        assert_eq!(grinding_bits_ood[4], 0, "grinding_bits_ood mismatch for iteration 5: got {}", grinding_bits_ood[4]);
+    }
+
+    #[test]
+    fn test_keccakf_params() {
+        let whir = Whir::new(test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23));
+
+        assert_eq!(whir.num_merkle_openings(), 358);
+        assert_eq!(whir.total_query_hashes().round(), 10_928.0);
+
+        assert_eq!(whir.alpha(), 0.0);
+
+        let levels = whir.security_levels();
+        let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
+        assert_eq!(level("batching"), 128);
+        assert_eq!(level("fold(i=0,s=1)"), 140);
+        assert_eq!(level("fold(i=0,s=2)"), 141);
+        assert_eq!(level("fold(i=0,s=3)"), 142);
+        assert_eq!(level("ood(i=1)"), 161);
+        assert_eq!(level("shift(i=1)"), 128);
+        assert_eq!(level("fold(i=1,s=1)"), 143);
+        assert_eq!(level("fold(i=1,s=2)"), 144);
+        assert_eq!(level("fold(i=1,s=3)"), 145);
+        assert_eq!(level("ood(i=2)"), 162);
+        assert_eq!(level("shift(i=2)"), 128);
+        assert_eq!(level("fold(i=2,s=1)"), 146);
+        assert_eq!(level("fold(i=2,s=2)"), 147);
+        assert_eq!(level("fold(i=2,s=3)"), 148);
+        assert_eq!(level("ood(i=3)"), 163);
+        assert_eq!(level("shift(i=3)"), 129);
+        assert_eq!(level("fold(i=3,s=1)"), 148);
+        assert_eq!(level("fold(i=3,s=2)"), 149);
+        assert_eq!(level("fold(i=3,s=3)"), 150);
+        assert_eq!(level("final"), 129);
+        assert_eq!(whir.total_security_bits(), 128);
+
+        let sec = whir.security_params();
+        assert_eq!(sec.num_queries, vec![213, 71, 43, 31]);
+        assert_eq!(sec.num_ood_samples, vec![1; 3]);
+        assert_eq!(sec.grinding_bits_batching, 1, "batching deficit should be 1 bit");
+        assert_eq!(sec.grinding_bits_folding, vec![vec![0; 3]; 4]);
+        assert_eq!(sec.grinding_bits_queries, vec![23; 4]);
+        assert_eq!(sec.grinding_bits_ood, vec![0; 3]);
+    }
+
+    #[test]
+    fn test_poseidon2_params() {
+        let whir = Whir::new(test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16));
+
+        assert_eq!(whir.num_merkle_openings(), 262);
+        assert_eq!(whir.total_query_hashes().round(), 8_015.0);
+
+        assert_eq!(whir.alpha(), 0.0);
+
+        let levels = whir.security_levels();
+        let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
+        assert_eq!(level("batching"), 131);
+        assert_eq!(level("fold(i=0,s=1)"), 140);
+        assert_eq!(level("fold(i=0,s=2)"), 141);
+        assert_eq!(level("fold(i=0,s=3)"), 142);
+        assert_eq!(level("ood(i=1)"), 160);
+        assert_eq!(level("shift(i=1)"), 128);
+        assert_eq!(level("fold(i=1,s=1)"), 143);
+        assert_eq!(level("fold(i=1,s=2)"), 144);
+        assert_eq!(level("fold(i=1,s=3)"), 145);
+        assert_eq!(level("ood(i=2)"), 161);
+        assert_eq!(level("shift(i=2)"), 128);
+        assert_eq!(level("fold(i=2,s=1)"), 146);
+        assert_eq!(level("fold(i=2,s=2)"), 147);
+        assert_eq!(level("fold(i=2,s=3)"), 148);
+        assert_eq!(level("ood(i=3)"), 162);
+        assert_eq!(level("shift(i=3)"), 128);
+        assert_eq!(level("fold(i=3,s=1)"), 148);
+        assert_eq!(level("fold(i=3,s=2)"), 149);
+        assert_eq!(level("fold(i=3,s=3)"), 150);
+        assert_eq!(level("ood(i=4)"), 163);
+        assert_eq!(level("shift(i=4)"), 129);
+        assert_eq!(level("fold(i=4,s=1)"), 151);
+        assert_eq!(level("fold(i=4,s=2)"), 152);
+        assert_eq!(level("final"), 132);
+        assert_eq!(whir.total_security_bits(), 128);
+
+        let sec = whir.security_params();
+        assert_eq!(
+            sec.grinding_bits_batching, 0,
+            "grinding_bits_batching mismatch: got {}",
+            sec.grinding_bits_batching
+        );
+
+        let num_queries = &sec.num_queries;
+        assert!(num_queries.len() == 5, "Expected 5 iterations, got {}", num_queries.len());
+        assert_eq!(num_queries[0], 114, "nQueries mismatch: got {}", num_queries[0]);
+        assert_eq!(num_queries[1], 57, "nQueries mismatch: got {}", num_queries[1]);
+        assert_eq!(num_queries[2], 38, "nQueries mismatch: got {}", num_queries[2]);
+        assert_eq!(num_queries[3], 29, "nQueries mismatch: got {}", num_queries[3]);
+        assert_eq!(num_queries[4], 24, "nQueries mismatch: got {}", num_queries[4]);
+
+        let num_ood_samples = &sec.num_ood_samples;
+        assert!(num_ood_samples.len() == 4, "Expected 4 iterations, got {}", num_ood_samples.len());
+        assert_eq!(num_ood_samples[0], 1, "nOOD mismatch: got {}", num_ood_samples[0]);
+        assert_eq!(num_ood_samples[1], 1, "nOOD mismatch: got {}", num_ood_samples[1]);
+        assert_eq!(num_ood_samples[2], 1, "nOOD mismatch: got {}", num_ood_samples[2]);
+        assert_eq!(num_ood_samples[3], 1, "nOOD mismatch: got {}", num_ood_samples[3]);
+
+        let grinding_bits_folding = &sec.grinding_bits_folding;
+        assert!(grinding_bits_folding.len() == 5, "Expected 5 iterations, got {}", grinding_bits_folding.len());
+        for (i, g) in grinding_bits_folding.iter().enumerate() {
+            for s in 0..g.len() {
+                assert_eq!(g[s], 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {}", s + 1, g[s]);
+            }
+        }
+
+        let grinding_bits_queries = &sec.grinding_bits_queries;
+        assert!(grinding_bits_queries.len() == 5, "Expected 5 iterations, got {}", grinding_bits_queries.len());
+        assert_eq!(
+            grinding_bits_queries[0], 16,
+            "grinding_bits_queries mismatch for iteration 0: got {}",
+            grinding_bits_queries[0]
+        );
+        assert_eq!(
+            grinding_bits_queries[1], 16,
+            "grinding_bits_queries mismatch for iteration 1: got {}",
+            grinding_bits_queries[1]
+        );
+        assert_eq!(
+            grinding_bits_queries[2], 16,
+            "grinding_bits_queries mismatch for iteration 2: got {}",
+            grinding_bits_queries[2]
+        );
+        assert_eq!(
+            grinding_bits_queries[3], 16,
+            "grinding_bits_queries mismatch for iteration 3: got {}",
+            grinding_bits_queries[3]
+        );
+        assert_eq!(
+            grinding_bits_queries[4], 16,
+            "grinding_bits_queries mismatch for iteration 4: got {}",
+            grinding_bits_queries[4]
+        );
+
+        let grinding_bits_ood = &sec.grinding_bits_ood;
+        assert!(grinding_bits_ood.len() == 4, "Expected 4 iterations, got {}", grinding_bits_ood.len());
+        assert_eq!(grinding_bits_ood[0], 0, "grinding_bits_ood mismatch for iteration 1: got {}", grinding_bits_ood[0]);
+        assert_eq!(grinding_bits_ood[1], 0, "grinding_bits_ood mismatch for iteration 2: got {}", grinding_bits_ood[1]);
+        assert_eq!(grinding_bits_ood[2], 0, "grinding_bits_ood mismatch for iteration 3: got {}", grinding_bits_ood[2]);
+        assert_eq!(grinding_bits_ood[3], 0, "grinding_bits_ood mismatch for iteration 4: got {}", grinding_bits_ood[3]);
+    }
+
+    #[test]
+    fn test_recursive2_params() {
+        let whir = Whir::new(test_config(1 << 17, 0.125, 145, vec![3, 3, 3, 3, 3], 20));
+
+        assert_eq!(whir.num_merkle_openings(), 195);
+        assert_eq!(whir.total_query_hashes().round(), 6_321.0);
+
+        assert_eq!(whir.alpha(), 0.0);
+
+        let levels = whir.security_levels();
+        let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
+        assert_eq!(level("batching"), 132);
+        assert_eq!(level("fold(i=0,s=1)"), 140);
+        assert_eq!(level("fold(i=0,s=2)"), 141);
+        assert_eq!(level("fold(i=0,s=3)"), 142);
+        assert_eq!(level("ood(i=1)"), 159);
+        assert_eq!(level("shift(i=1)"), 128);
+        assert_eq!(level("fold(i=1,s=1)"), 143);
+        assert_eq!(level("fold(i=1,s=2)"), 144);
+        assert_eq!(level("fold(i=1,s=3)"), 145);
+        assert_eq!(level("ood(i=2)"), 160);
+        assert_eq!(level("shift(i=2)"), 128);
+        assert_eq!(level("fold(i=2,s=1)"), 145);
+        assert_eq!(level("fold(i=2,s=2)"), 146);
+        assert_eq!(level("fold(i=2,s=3)"), 147);
+        assert_eq!(level("ood(i=3)"), 161);
+        assert_eq!(level("shift(i=3)"), 130);
+        assert_eq!(level("fold(i=3,s=1)"), 148);
+        assert_eq!(level("fold(i=3,s=2)"), 149);
+        assert_eq!(level("fold(i=3,s=3)"), 150);
+        assert_eq!(level("ood(i=4)"), 162);
+        assert_eq!(level("shift(i=4)"), 129);
+        assert_eq!(level("fold(i=4,s=1)"), 150);
+        assert_eq!(level("fold(i=4,s=2)"), 151);
+        assert_eq!(level("fold(i=4,s=3)"), 152);
+        assert_eq!(level("final"), 131);
+        assert_eq!(whir.total_security_bits(), 128);
+
+        let sec = whir.security_params();
+        assert_eq!(sec.num_queries, vec![73, 44, 32, 25, 21]);
+        assert_eq!(sec.num_ood_samples, vec![1; 4]);
+        assert_eq!(sec.grinding_bits_batching, 0);
+        assert_eq!(sec.grinding_bits_folding, vec![vec![0; 3]; 5]);
+        assert_eq!(sec.grinding_bits_queries, vec![20; 5]);
+        assert_eq!(sec.grinding_bits_ood, vec![0; 4]);
+    }
+
+    #[test]
+    fn test_final_params() {
+        let whir = Whir::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
+
+        assert_eq!(whir.num_merkle_openings(), 109);
+        assert_eq!(whir.total_query_hashes().round(), 4_438.0);
+
+        assert_eq!(whir.alpha(), 0.0);
+
+        let levels = whir.security_levels();
+        let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
+        assert_eq!(level("batching"), 133);
+        assert_eq!(level("fold(i=0,s=1)"), 141);
+        assert_eq!(level("fold(i=0,s=2)"), 142);
+        assert_eq!(level("fold(i=0,s=3)"), 143);
+        assert_eq!(level("fold(i=0,s=4)"), 144);
+        assert_eq!(level("ood(i=1)"), 158);
+        assert_eq!(level("shift(i=1)"), 128);
+        assert_eq!(level("fold(i=1,s=1)"), 144);
+        assert_eq!(level("fold(i=1,s=2)"), 145);
+        assert_eq!(level("fold(i=1,s=3)"), 146);
+        assert_eq!(level("fold(i=1,s=4)"), 147);
+        assert_eq!(level("ood(i=2)"), 159);
+        assert_eq!(level("shift(i=2)"), 131);
+        assert_eq!(level("fold(i=2,s=1)"), 147);
+        assert_eq!(level("fold(i=2,s=2)"), 148);
+        assert_eq!(level("fold(i=2,s=3)"), 149);
+        assert_eq!(level("fold(i=2,s=4)"), 150);
+        assert_eq!(level("ood(i=3)"), 160);
+        assert_eq!(level("shift(i=3)"), 133);
+        assert_eq!(level("fold(i=3,s=1)"), 145);
+        assert_eq!(level("fold(i=3,s=2)"), 146);
+        assert_eq!(level("fold(i=3,s=3)"), 147);
+        assert_eq!(level("fold(i=3,s=4)"), 148);
+        assert_eq!(level("final"), 132);
+        assert_eq!(whir.total_security_bits(), 128);
+
+        let sec = whir.security_params();
+        assert_eq!(sec.num_queries, vec![43, 28, 21, 17]);
+        assert_eq!(sec.num_ood_samples, vec![1; 3]);
+        assert_eq!(sec.grinding_bits_batching, 0);
+        assert_eq!(sec.grinding_bits_folding, vec![vec![0; 4]; 4]);
+        assert_eq!(sec.grinding_bits_queries, vec![22; 4]);
+        assert_eq!(sec.grinding_bits_ood, vec![0; 3]);
     }
 }

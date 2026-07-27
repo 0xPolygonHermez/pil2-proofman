@@ -1,5 +1,8 @@
 use super::super::regimes::{DecodingRegime, ProximityGapsRegime};
-use super::types::{Batching, Pcs, apply_grinding, bits_of_security_from_error, security_from_error, merkle_path_hashes};
+use super::types::{
+    Batching, Pcs, apply_grinding, bits_of_security_from_error, coset_opening_hashes, merkle_opening_size_bits,
+    security_from_error,
+};
 
 /// Configuration for the FRI PCS.
 #[derive(Clone, Debug)]
@@ -16,14 +19,16 @@ pub struct FriConfig {
     pub batching: Batching,
     /// Number of polynomials batched.
     pub batch_size: u64,
-    /// FRI folding factors, one per round. Each must be a power of two.
-    pub folding_factors: Vec<u32>,
+    /// Per-round folding factors `kᵢ`, in bits: round `i` folds by `2^kᵢ`.
+    pub log_folding_factors: Vec<u32>,
     /// The maximum number of grinding bits allowed.
     pub max_grinding_bits_query: u64,
     /// Whether to use the maximum number of grinding bits.
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle tree used in FRI.
     pub tree_arity: u64,
+    /// The output length of the Merkle-tree hash, in bits.
+    pub hash_size_bits: u64,
     /// The target security level in bits.
     pub target_security_bits: u64,
 }
@@ -49,14 +54,12 @@ pub struct Fri {
     log_inv_rate: u32,
     /// h = log2(trace_length), exact.
     log_trace: u32,
-    /// Domain size after low-degree extension: D = trace_length << k, exact.
-    domain_size: u32,
     /// Number of FRI folding rounds.
     num_rounds: usize,
-    /// dimension of the (partially folded) code entering commit round i,
-    /// i.e. trace_length / Π_{j<=i} folding_factors[j].
-    round_dimensions: Vec<u32>,
-    /// Domain size at which folding stops.
+    /// `log2(2^{mᵢ})` — per-round log-dimensions (length `rounds + 1`):
+    /// entry i is the log-dimension of the code entering round i.
+    log_round_dimensions: Vec<u32>,
+    /// Dimension (final polynomial length) at which folding stops.
     early_stop_degree: u32,
     /// Security parameters.
     sec_params: FriSecurityParams,
@@ -86,12 +89,12 @@ impl Fri {
 
     /// Structural validation shared by both constructors.
     fn validate(cfg: FriConfig) -> Self {
-        let num_rounds = cfg.folding_factors.len();
+        let num_rounds = cfg.log_folding_factors.len();
         assert!(num_rounds > 0, "FRI must have at least one folding round (folding_factors non-empty)");
 
         // ρ = 2^-k.
         let k = (-cfg.rate.log2()).round();
-        assert!(k >= 1.0 && k <= 32.0 && cfg.rate == f64::exp2(-k), "ρ must be an exact power of two");
+        assert!((1.0..=32.0).contains(&k) && cfg.rate == f64::exp2(-k), "ρ must be an exact power of two");
         let log_inv_rate = k as u32;
 
         // trace_length = 2^h.
@@ -100,25 +103,25 @@ impl Fri {
 
         // Domain size n = trace_length / ρ = trace_length << k.
         assert!(log_trace + log_inv_rate < 32, "domain size overflowed u32");
-        let domain_size = (cfg.trace_length as u32) << log_inv_rate;
 
-        // Folding schedule validation, plus precomputation of per-round code dimensions.
-        let mut n = domain_size;
-        let mut dim = cfg.trace_length;
-        let mut round_dimensions = Vec::with_capacity(num_rounds);
-        for (round, &factor) in cfg.folding_factors.iter().enumerate() {
-            assert!(factor.is_power_of_two(), "folding factor must be a power of two");
+        // Folding schedule validation, plus the per-round log-dimensions mᵢ.
+        //
+        // Recurrence:
+        //   m_{i+1} = m_i - k_i   (folding by 2^{k_i}; the rate is unchanged)
+        let mut log_round_dimensions = Vec::with_capacity(num_rounds + 1);
+        log_round_dimensions.push(log_trace);
+        for (round, &k_i) in cfg.log_folding_factors.iter().enumerate() {
+            assert!(k_i >= 1, "Every folding factor must be >= 1");
             assert!(
-                n % factor == 0 && dim % factor == 0,
-                "folding overflows domain: round {}, remaining {}, factor {}",
+                k_i <= log_round_dimensions[round],
+                "folding overflows dimension: round {}, remaining 2^{}, folding 2^{}",
                 round,
-                n,
-                factor
+                log_round_dimensions[round],
+                k_i
             );
-            n /= factor;
-            dim /= factor;
-            round_dimensions.push(dim);
+            log_round_dimensions.push(log_round_dimensions[round] - k_i);
         }
+        let early_stop_degree = 1u32 << log_round_dimensions[num_rounds];
 
         let empty = FriSecurityParams {
             n_queries: 0,
@@ -131,10 +134,9 @@ impl Fri {
             cfg,
             log_inv_rate,
             log_trace,
-            domain_size,
             num_rounds,
-            round_dimensions,
-            early_stop_degree: n,
+            log_round_dimensions,
+            early_stop_degree,
             sec_params: empty,
             alpha: 0.0,
         }
@@ -169,10 +171,10 @@ impl Fri {
 
         // Folding grinding.
         let grinding_bits_folding =
-            (0..self.num_rounds).map(|round| deficit(self.commit_phase_error(round, regime, 0))).collect();
+            (0..self.num_rounds).map(|round| deficit(self.fold_error(regime, round, 0))).collect();
 
         // Security contributed by a single query.
-        let single_query_error = self.query_phase_error(regime, 1, 0);
+        let single_query_error = self.query_error(regime, 1, 0);
         let security_per_query = security_from_error(single_query_error);
 
         // Hash count per query
@@ -209,18 +211,63 @@ impl Fri {
             .all(|(_, bits)| bits as u64 >= self.cfg.target_security_bits)
     }
 
-    /// Approximate verifier hash count per query, used to bound the grinding
-    /// bits worth spending (grinding beyond the per-query cost is wasteful).
-    /// Per round the verifier opens one coset of `factor` leaves plus a
-    /// Merkle path in that round's tree.
+    /// Approximate verifier hash count per query: one coset opening in each
+    /// round's tree.
     fn query_num_hashes(&self) -> f64 {
-        let mut n_leafs = self.domain_size as f64;
-        let mut total = 0.0;
-        for &factor in &self.cfg.folding_factors {
-            n_leafs /= factor as f64;
-            total += factor as f64 + merkle_path_hashes(self.cfg.tree_arity, n_leafs);
+        (0..self.num_rounds)
+            .map(|round| {
+                let k = self.cfg.log_folding_factors[round];
+                let log_domain = self.log_round_dimensions[round] + self.log_inv_rate;
+                coset_opening_hashes(log_domain, k, self.cfg.tree_arity)
+            })
+            .sum()
+    }
+
+    /// Total Merkle openings in the query phase: each query opens one coset
+    /// in every round's tree.
+    pub fn num_merkle_openings(&self) -> u64 {
+        self.sec_params.n_queries * self.num_rounds as u64
+    }
+
+    /// Approximate verifier hashes spent on the query phase.
+    pub fn total_query_hashes(&self) -> f64 {
+        self.sec_params.n_queries as f64 * self.query_num_hashes()
+    }
+
+    /// Estimated worst-case proof size in bits
+    /// : one root per tree, per query one opening
+    /// per tree, and the final polynomial in clear. The initial batched
+    /// oracle is one tree whose leaves hold all `batch_size` values at a
+    /// position (extension-field elements, conservatively).
+    pub fn proof_size_bits(&self) -> u64 {
+        let ext_bits = self.cfg.field_size.log2().round() as u64;
+        let hash = self.cfg.hash_size_bits;
+        let t = self.sec_params.n_queries as f64;
+        let mut size = 0.0;
+
+        // Initial round: root + per query one leaf with the batch_size functions.
+        let log_domain = self.log_trace + self.log_inv_rate;
+        size += hash as f64;
+        size += t * merkle_opening_size_bits(
+            f64::exp2(log_domain as f64),
+            self.cfg.batch_size,
+            ext_bits,
+            self.cfg.tree_arity,
+            hash,
+        );
+
+        // Folding rounds: root + per query one coset leaf of 2^{kᵢ} values.
+        for (round, &k) in self.cfg.log_folding_factors.iter().enumerate() {
+            let log_domain = self.log_round_dimensions[round] + self.log_inv_rate;
+            let n_leafs = f64::exp2((log_domain - k) as f64);
+            size += hash as f64;
+            size += t * merkle_opening_size_bits(n_leafs, 1u64 << k, ext_bits, self.cfg.tree_arity, hash);
         }
-        total
+
+        // Final polynomial in clear.
+        size += (self.early_stop_degree as u64 * ext_bits) as f64;
+
+        size.round() as u64
     }
 
     /// PCS-specific security levels, in bits, phase by phase.
@@ -236,31 +283,24 @@ impl Fri {
     ) -> Vec<(String, u32)> {
         let mut bits = Vec::with_capacity(self.num_rounds + 2);
 
-        // Batching phase; absent when there is only one function to commit.
+        // Batching step.
         if self.cfg.batch_size > 1 {
-            bits.push((
-                "batching".to_string(),
-                bits_of_security_from_error(self.batching_error(regime, sec_params.grinding_bits_batching)),
-            ));
+            let grinding_bits = sec_params.grinding_bits_batching;
+            let error = self.batching_error(regime, grinding_bits);
+            bits.push(("batching".to_string(), bits_of_security_from_error(error)));
         }
 
-        // Commit phase: one entry per folding round.
+        // Folding step.
         for i in 0..self.num_rounds {
-            bits.push((
-                format!("fold(i={})", i),
-                bits_of_security_from_error(self.commit_phase_error(i, regime, sec_params.grinding_bits_folding[i])),
-            ));
+            let grinding_bits = sec_params.grinding_bits_folding[i];
+            let error = self.fold_error(regime, i, grinding_bits);
+            bits.push((format!("fold(i={})", i), bits_of_security_from_error(error)));
         }
 
-        // Query phase.
-        bits.push((
-            "query".to_string(),
-            bits_of_security_from_error(self.query_phase_error(
-                regime,
-                sec_params.n_queries,
-                sec_params.grinding_bits_query,
-            )),
-        ));
+        // Query step.
+        let grinding_bits = sec_params.grinding_bits_query;
+        let error = self.query_error(regime, sec_params.n_queries, grinding_bits);
+        bits.push(("query".to_string(), bits_of_security_from_error(error)));
 
         bits
     }
@@ -279,16 +319,16 @@ impl Fri {
         apply_grinding(epsilon, grinding_bits)
     }
 
-    /// Error from round `round` of the commit phase.
-    fn commit_phase_error(&self, round: usize, regime: &dyn ProximityGapsRegime, grinding_bits: u32) -> f64 {
+    /// Error from the folding step at round i.
+    fn fold_error(&self, regime: &dyn ProximityGapsRegime, round: usize, grinding_bits: u32) -> f64 {
         let rate = self.cfg.rate;
-        let dimension = self.round_dimensions[round];
-        let epsilon = regime.error_powers(&rate, dimension, self.cfg.folding_factors[round] as u64);
+        let dimension = 1u32 << self.log_round_dimensions[round + 1];
+        let epsilon = regime.error_powers(&rate, dimension, 1u64 << self.cfg.log_folding_factors[round]);
         apply_grinding(epsilon, grinding_bits)
     }
 
     /// Error from the FRI query phase.
-    fn query_phase_error(&self, regime: &dyn ProximityGapsRegime, n_queries: u64, grinding_bits: u32) -> f64 {
+    fn query_error(&self, regime: &dyn ProximityGapsRegime, n_queries: u64, grinding_bits: u32) -> f64 {
         // query error: (1 − γ)^t, where γ is the proximity parameter and
         // t the number of queries.
         let pp = regime.proximity_parameter(&self.cfg.rate);
@@ -296,19 +336,13 @@ impl Fri {
         apply_grinding(error, grinding_bits)
     }
 
+    pub fn config(&self) -> &FriConfig {
+        &self.cfg
+    }
+
     /// The solved regime.
     pub fn regime(&self) -> Box<dyn ProximityGapsRegime> {
         self.cfg.regime.instantiate(self.cfg.field_size, self.alpha)
-    }
-
-    /// The gap η of the solved regime at this code's rate.
-    pub fn proximity_gap(&self) -> f64 {
-        self.regime().gap(&self.cfg.rate)
-    }
-
-    /// The proximity parameter γ of the solved regime at this code's rate.
-    pub fn proximity_parameter(&self) -> f64 {
-        self.regime().proximity_parameter(&self.cfg.rate)
     }
 
     /// The deduced security parameters (query count, grinding split).
@@ -321,53 +355,55 @@ impl Fri {
         self.alpha
     }
 
-    pub fn rate(&self) -> f64 {
-        self.cfg.rate
+    pub fn proximity_gap(&self) -> f64 {
+        self.regime().gap(&self.cfg.rate)
     }
 
-    pub fn log_inv_rate(&self) -> u32 {
-        self.log_inv_rate
-    }
-
-    pub fn dimension(&self) -> u32 {
-        self.cfg.trace_length
-    }
-
-    pub fn trace_length(&self) -> u32 {
-        self.cfg.trace_length
-    }
-
-    pub fn domain_size(&self) -> u32 {
-        self.domain_size
-    }
-
-    pub fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    pub fn config(&self) -> &FriConfig {
-        &self.cfg
+    pub fn proximity_parameter(&self) -> f64 {
+        self.regime().proximity_parameter(&self.cfg.rate)
     }
 
     /// Description of the parameters of the PCS (Markdown code block).
     pub fn parameter_summary(&self) -> String {
+        let trace_length = "2^".to_string() + &self.log_trace.to_string();
+        let rate = "1/2^".to_string() + &self.log_inv_rate.to_string() + " = " + &self.cfg.rate.to_string();
+        let domain_size = "2^".to_string() + &(self.log_trace + self.log_inv_rate).to_string();
+        let folding_factors = "[".to_string()
+            + &self
+                .cfg
+                .log_folding_factors
+                .iter()
+                .map(|&k| "2^".to_string() + &k.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+            + "]";
+        let early_stop_degree = "2^".to_string() + &(self.early_stop_degree as f64).log2().round().to_string();
         let params: Vec<(&str, String)> = vec![
-            ("rho", self.cfg.rate.to_string()),
-            ("k = -log2(rho)", self.log_inv_rate.to_string()),
-            ("trace_length", self.cfg.trace_length.to_string()),
-            ("h = log2(trace_length)", self.log_trace.to_string()),
-            ("domain_size D = trace_length / rho", self.domain_size.to_string()),
-            ("batch_size", self.cfg.batch_size.to_string()),
-            ("batching", self.cfg.batching.to_string()),
-            ("FRI_folding_factors", format!("{:?}", self.cfg.folding_factors)),
-            ("FRI_early_stop_degree", self.early_stop_degree.to_string()),
-            ("FRI_rounds_n", self.num_rounds.to_string()),
-            ("regime", format!("{:?} (alpha = {})", self.cfg.regime, self.alpha)),
-            ("target_security_bits", self.cfg.target_security_bits.to_string()),
-            ("n_queries (deduced)", self.sec_params.n_queries.to_string()),
-            ("grinding_query (deduced)", self.sec_params.grinding_bits_query.to_string()),
-            ("grinding_batching (deduced)", self.sec_params.grinding_bits_batching.to_string()),
-            ("grinding_folding (deduced)", format!("{:?}", self.sec_params.grinding_bits_folding)),
+            ("Target Security Bits", self.cfg.target_security_bits.to_string()),
+            ("Regime", format!("{:?} (𝛼 = {})", self.cfg.regime, self.alpha)),
+            ("Trace Length", trace_length),
+            ("Rate", rate),
+            ("Domain Size", domain_size),
+            ("Batch Size", self.cfg.batch_size.to_string()),
+            ("Batching", self.cfg.batching.to_string()),
+            ("Rounds", self.num_rounds.to_string()),
+            ("Folding Factors", folding_factors),
+            ("Early Stop Degree", early_stop_degree),
+            ("N Queries", self.sec_params.n_queries.to_string()),
+            ("Grinding Bits Batching", self.sec_params.grinding_bits_batching.to_string()),
+            ("Grinding Bits Folding", format!("{:?}", self.sec_params.grinding_bits_folding)),
+            ("Grinding Bits Query", self.sec_params.grinding_bits_query.to_string()),
+            (
+                "N Merkle Openings",
+                format!(
+                    "{} per round x {} rounds = {}",
+                    self.sec_params.n_queries,
+                    self.num_rounds,
+                    self.num_merkle_openings()
+                ),
+            ),
+            ("Total Query Hashes (approx)", format!("{:.0}", self.total_query_hashes())),
+            ("Proof Size (worst case)", format!("{:.0} KiB", self.proof_size_bits() as f64 / 8192.0)),
         ];
 
         let key_width = params.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
@@ -389,16 +425,20 @@ impl Pcs for Fri {
         Fri::security_levels(self)
     }
 
-    fn rate(&self) -> f64 {
-        Fri::rate(self)
-    }
-
-    fn dimension(&self) -> u32 {
-        Fri::dimension(self)
-    }
-
     fn parameter_summary(&self) -> String {
         Fri::parameter_summary(self)
+    }
+
+    fn num_merkle_openings(&self) -> u64 {
+        Fri::num_merkle_openings(self)
+    }
+
+    fn total_query_hashes(&self) -> f64 {
+        Fri::total_query_hashes(self)
+    }
+
+    fn proof_size_bits(&self) -> u64 {
+        Fri::proof_size_bits(self)
     }
 }
 
@@ -420,10 +460,11 @@ mod tests {
             rate,
             batching: Batching::Powers,
             batch_size,
-            folding_factors: folding_bits.iter().map(|&b| 1u32 << b).collect(),
+            log_folding_factors: folding_bits,
             max_grinding_bits_query,
             use_max_grinding_bits_query: true,
             tree_arity: 4,
+            hash_size_bits: 256,
             target_security_bits: 128,
             regime: DecodingRegime::Jbr,
         }
@@ -432,6 +473,10 @@ mod tests {
     #[test]
     fn test_main_params() {
         let fri = Fri::new(test_config(1 << 22, 0.5, 61, vec![3, 3, 3, 3, 3, 3], 16));
+
+        assert_eq!(fri.num_merkle_openings(), 1368);
+        assert_eq!(fri.total_query_hashes().round(), 37_620.0);
+
         assert_eq!(fri.alpha(), 0.0);
 
         let levels = fri.security_levels();
@@ -458,6 +503,9 @@ mod tests {
         let fri = Fri::new(test_config(1 << 21, 0.5, 46, vec![3, 3, 3, 3, 3, 2], 16));
         assert_eq!(fri.alpha(), 0.0);
 
+        assert_eq!(fri.num_merkle_openings(), 1368);
+        assert_eq!(fri.total_query_hashes().round(), 35_340.0);
+
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
         assert_eq!(level("batching"), 129);
@@ -482,6 +530,9 @@ mod tests {
         let fri = Fri::new(test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23));
         assert_eq!(fri.alpha(), 0.0);
 
+        assert_eq!(fri.num_merkle_openings(), 852);
+        assert_eq!(fri.total_query_hashes().round(), 20_874.0);
+
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
         assert_eq!(level("batching"), 128);
@@ -503,6 +554,9 @@ mod tests {
     fn test_poseidon2_params() {
         let fri = Fri::new(test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16));
         assert_eq!(fri.alpha(), 0.0);
+
+        assert_eq!(fri.num_merkle_openings(), 570);
+        assert_eq!(fri.total_query_hashes().round(), 13_338.0);
 
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
@@ -527,6 +581,9 @@ mod tests {
         let fri = Fri::new(test_config(1 << 17, 0.125, 145, vec![3, 3, 3, 3, 3], 20));
         assert_eq!(fri.alpha(), 0.0);
 
+        assert_eq!(fri.num_merkle_openings(), 365);
+        assert_eq!(fri.total_query_hashes().round(), 9_271.0);
+
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
         assert_eq!(level("batching"), 132);
@@ -549,6 +606,9 @@ mod tests {
     fn test_final_params() {
         let fri = Fri::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
         assert_eq!(fri.alpha(), 0.0);
+
+        assert_eq!(fri.num_merkle_openings(), 172);
+        assert_eq!(fri.total_query_hashes().round(), 5_848.0);
 
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;

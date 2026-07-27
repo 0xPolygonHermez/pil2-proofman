@@ -109,7 +109,7 @@ impl ProximityGapsRegime for UniqueDecodingRegime {
         // [BCHKS25] Corollary 1.4 with γ = δ/2 − η.
         let pp = self.proximity_parameter(rate);
         let n = dimension as f64 / rate;
-        (pp * n + 1.0) / &self.field_size
+        (pp * n + 1.0) / self.field_size
     }
 }
 
@@ -132,14 +132,8 @@ impl JohnsonBoundRegime {
         // `m = max(⌈√ρ / (2η)⌉, 3)` [BCHKS25] Theorem 4.2. The factor of 2 that the
         // statement of Theorem 4.2 omits is a confirmed typo.
         let two_gap = 2.0 * gap;
-        let m_ceil = (rate.clone().sqrt() / two_gap).ceil() as u64;
+        let m_ceil = (rate.sqrt() / two_gap).ceil() as u64;
         m_ceil.max(3)
-    }
-
-    /// Given a multiplicity `m`, returns the gap `η` that would yield it.
-    fn get_gap_from_mul(&self, rate: &f64, m: u64) -> f64 {
-        // `η = √ρ / (2m)` [BCHKS25] Theorem 4.2.
-        rate.clone().sqrt() / (2.0 * m as f64)
     }
 }
 
@@ -192,6 +186,6 @@ impl ProximityGapsRegime for JohnsonBoundRegime {
         // Second fraction: (m + 1/2) / √ρ
         let second_fraction = m_shifted / sqrt_rate;
 
-        (first_fraction + second_fraction) / &self.field_size
+        (first_fraction + second_fraction) / self.field_size
     }
 }

@@ -20,14 +20,14 @@ pub trait Pcs {
         self.security_levels().into_iter().map(|(_, b)| b).min().unwrap_or(0)
     }
 
-    // /// Estimated proof size in bits.
-    // fn proof_size_bits(&self) -> u64;
+    /// Total Merkle openings.
+    fn num_merkle_openings(&self) -> u64;
 
-    /// The code dimension k.
-    fn dimension(&self) -> u32;
+    /// Approximate verifier hashes spent.
+    fn total_query_hashes(&self) -> f64;
 
-    /// The code rate ρ.
-    fn rate(&self) -> f64;
+    /// Estimated worst-case proof size in bits.
+    fn proof_size_bits(&self) -> u64;
 
     /// Description of the parameters of the PCS.
     fn parameter_summary(&self) -> String;
@@ -79,4 +79,27 @@ pub fn apply_grinding(epsilon: f64, grinding_bits: u32) -> f64 {
 /// Hashes to verify one Merkle path in a tree of `n_leafs` leaves.
 pub fn merkle_path_hashes(tree_arity: u64, n_leafs: f64) -> f64 {
     (tree_arity as f64 - 1.0) * (n_leafs.log2() / (tree_arity as f64).log2()).ceil()
+}
+
+/// Approximate verifier hashes for one query opening in a tree over a domain
+/// of `2^log_domain` points packed in cosets of size `2^k`: hash the coset
+/// leaf plus verify one Merkle path.
+pub fn coset_opening_hashes(log_domain: u32, k: u32, tree_arity: u64) -> f64 {
+    let n_leafs = f64::exp2((log_domain - k) as f64);
+    f64::exp2(k as f64) + merkle_path_hashes(tree_arity, n_leafs)
+}
+
+/// Size in bits of one Merkle opening in a tree of `n_leafs` leaves, each
+/// holding a tuple of `tuple_size` elements of `element_size_bits`: the leaf
+/// tuple itself plus its authentication path ((arity − 1) digests per level).
+/// Worst case: shared path prefixes across openings are not deduplicated.
+pub fn merkle_opening_size_bits(
+    n_leafs: f64,
+    tuple_size: u64,
+    element_size_bits: u64,
+    tree_arity: u64,
+    hash_size_bits: u64,
+) -> f64 {
+    let depth = (n_leafs.log2() / (tree_arity as f64).log2()).ceil();
+    (tuple_size * element_size_bits) as f64 + (tree_arity - 1) as f64 * depth * hash_size_bits as f64
 }
