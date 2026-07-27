@@ -261,7 +261,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     }
 
     let new_proof = create_buffer_fast(new_proof_size as usize);
-    Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
+    Ok(Proof::new(witness.proof_type, witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
 }
 
 /// Writes a vadcop-final proof's public section `[n_publics | publics(n_publics)]`.
@@ -386,7 +386,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         pctx.get_device_buffers_ptr(),
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
-        witness.proof_type.clone().into(),
+        witness.proof_type.into(),
         force_recursive_stream,
         "",
         reserved_stream, // scheduler-reserved stream, or u64::MAX for one-off internal selection
@@ -606,7 +606,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = pctx.get_device_buffers_ptr() as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
 
     let calculate_fixed_tree_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
@@ -700,7 +700,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = pctx.get_device_buffers_ptr() as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
 
     let calculate_fixed_tree_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
@@ -858,7 +858,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = d_buffers as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
     let calc_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
             p_setup_addr as *mut c_void,
@@ -947,7 +947,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         d_buffers,
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
-        setup.setup_type.clone().into(),
+        setup.setup_type.into(),
         false,
         recurser_id, // disambiguates recurser setups sharing (0,0,"recursive2")
         u64::MAX,    // one-off launch: reserve stream internally

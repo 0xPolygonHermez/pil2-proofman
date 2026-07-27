@@ -203,7 +203,7 @@ impl ProveRecursiveCmd {
         // buffer under the same proofType gen_recursive_proof_c uses. Mirrors
         // proofman::utils::load_device_setups / load_device_const_pols (the aggregation
         // branch), but for the single AIR we are proving.
-        let proof_type_str: &str = (*proof_type).clone().into();
+        let proof_type_str: &str = (*proof_type).into();
         let d_buffers = pctx.get_device_buffers_ptr();
         load_device_setup_c(
             airgroup_id as u64,

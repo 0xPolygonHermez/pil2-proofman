@@ -1973,14 +1973,20 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                         d_buffers->streamsData[i].mutex_stream_selection.unlock();
                         continue;
                     }
-                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
+                    // Ran to completion but not yet harvested: free to take, and its
+                    // const-tree is still loaded. Queried once and reused by the warm test.
+                    const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
+                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained) {
                         uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
 
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
                         }
-                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3);
+                        // status==0 is deliberately absent: the only path to it
+                        // (reset_device_streams_gpu) calls invalidateContext() first, so the
+                        // key comparison below can never match an unused stream anyway.
+                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==3 || drained);
                         if (warm) {
                             // Sticky warm choice: keep the stream already holding this
                             // (airgroup,air,type) so reuse_constants hits; not clobbered by a
@@ -2015,14 +2021,20 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                         d_buffers->streamsData[i].mutex_stream_selection.unlock();
                         continue;
                     }
-                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
+                    // Ran to completion but not yet harvested: free to take, and its
+                    // const-tree is still loaded. Queried once and reused by the warm test.
+                    const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
+                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained) {
                         uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
 
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
                         }
-                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3);
+                        // status==0 is deliberately absent: the only path to it
+                        // (reset_device_streams_gpu) calls invalidateContext() first, so the
+                        // key comparison below can never match an unused stream anyway.
+                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==3 || drained);
                         if (warm) {
                             // Sticky warm choice: keep the stream already holding this
                             // (airgroup,air,type) so reuse_constants hits; not clobbered by a
@@ -2080,9 +2092,9 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
     }
 }
 
-// extern "C" entry for the Rust scheduler: reserve a stream, then pass it to
+// GPU backend entry for the Rust scheduler: reserve a stream, then pass it to
 // gen_*_proof(..., streamId_). Returns UINT32_MAX when nothing is free (caller retries).
-extern "C" uint32_t reserve_best_stream_nonblock(void* d_buffers_, uint64_t airgroupId, uint64_t airId, char* proofType, bool recursive, bool force_recursive){
+uint32_t reserve_best_stream_nonblock_gpu(void* d_buffers_, uint64_t airgroupId, uint64_t airId, char* proofType, bool recursive, bool force_recursive){
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
     return reserve_best_stream_scan(d_buffers, airgroupId, airId, std::string(proofType), recursive, force_recursive);
 }
@@ -2090,7 +2102,7 @@ extern "C" uint32_t reserve_best_stream_nonblock(void* d_buffers_, uint64_t airg
 // Warm-affinity fast path: reserve `streamId` IFF free right now (and a recursive stream
 // for a forced request). Returns 1 on success, 0 otherwise. Same lock order as
 // reserve_best_stream_scan (gsel, then per-stream try_lock) so they can't deadlock.
-extern "C" uint32_t reserve_stream_if_free(void* d_buffers_, uint32_t streamId, bool force_recursive){
+uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, bool force_recursive){
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
     if (streamId >= d_buffers->n_total_streams) return 0;
     StreamData& sd = d_buffers->streamsData[streamId];

@@ -1763,7 +1763,7 @@ where
                 "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
             )));
         }
-        let proof_type: &str = setup.setup_type.clone().into();
+        let proof_type: &str = setup.setup_type.into();
         let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
         load_device_setup_c(
             0,
@@ -2800,24 +2800,19 @@ where
                         loop {
                             if !force_recursive_stream {
                                 // Drain ready stored basics into the key-affinity queue.
-                                loop {
-                                    match proofs_rx.try_recv() {
-                                        Ok(id) => match pctx_clone.dctx_get_instance_info(id) {
-                                            Ok((ag, air)) => {
-                                                // Mark resident-tree basics (preallocated const-tree)
-                                                // so the scheduler treats them as filler.
-                                                let resident = sctx_clone
-                                                    .get_setup(ag, air)
-                                                    .map(|s| s.preallocate)
-                                                    .unwrap_or(false);
-                                                guard.push_basic(id, ag, air, resident);
-                                            }
-                                            Err(e) => {
-                                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                                return;
-                                            }
-                                        },
-                                        Err(_) => break,
+                                while let Ok(id) = proofs_rx.try_recv() {
+                                    match pctx_clone.dctx_get_instance_info(id) {
+                                        Ok((ag, air)) => {
+                                            // Mark resident-tree basics (preallocated const-tree)
+                                            // so the scheduler treats them as filler.
+                                            let resident =
+                                                sctx_clone.get_setup(ag, air).map(|s| s.preallocate).unwrap_or(false);
+                                            guard.push_basic(id, ag, air, resident);
+                                        }
+                                        Err(e) => {
+                                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                            return;
+                                        }
                                     }
                                 }
                             }
@@ -2962,20 +2957,20 @@ where
                             break;
                         }
                     };
-                    let new_proof_type_str: &str = new_proof.proof_type.clone().into();
+                    let new_proof_type_str: &str = new_proof.proof_type.into();
 
-                    let new_proof_type = &new_proof.proof_type.clone();
+                    let new_proof_type = new_proof.proof_type;
 
                     let id = new_proof.global_idx.unwrap();
-                    if *new_proof_type == ProofType::Recursive2 {
+                    if new_proof_type == ProofType::Recursive2 {
                         recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
-                    } else if *new_proof_type == ProofType::Compressor {
+                    } else if new_proof_type == ProofType::Compressor {
                         *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
-                    } else if *new_proof_type == ProofType::Recursive1 {
+                    } else if new_proof_type == ProofType::Recursive1 {
                         *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
 
-                    if *new_proof_type == ProofType::Recursive2 {
+                    if new_proof_type == ProofType::Recursive2 {
                         let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
                         let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
@@ -2995,7 +2990,7 @@ where
                             cancellation_info_clone.write().unwrap().cancel(Some(e));
                             break;
                         }
-                    } else if *new_proof_type == ProofType::Compressor {
+                    } else if new_proof_type == ProofType::Compressor {
                         let compressor_lock = compressor_proofs_clone[id].read().unwrap();
                         let new_proof_ref = compressor_lock.as_ref().unwrap();
                         if let Err(e) = generate_recursive_proof(

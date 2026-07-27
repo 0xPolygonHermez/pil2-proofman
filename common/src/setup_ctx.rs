@@ -444,7 +444,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_n_bits_ext,
             total_const_pols_size,
             total_const_tree_size,
-            setup_type: setup_type.clone(),
+            setup_type: *setup_type,
         })
     }
 

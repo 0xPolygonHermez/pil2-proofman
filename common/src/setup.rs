@@ -400,7 +400,7 @@ impl<F: PrimeField64> Setup<F> {
             exec_data,
             n_adds,
             setup_path: setup_path.to_path_buf().clone(),
-            setup_type: setup_type.clone(),
+            setup_type: *setup_type,
             air_name: air_info.name.clone(),
             const_pols_path,
             const_pols_tree_path,

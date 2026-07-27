@@ -45,6 +45,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
 void get_stream_proofs_gpu(void *d_buffers_);
 void get_stream_proofs_non_blocking_gpu(void *d_buffers_);
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId);
+uint32_t reserve_best_stream_nonblock_gpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
+uint32_t reserve_stream_if_free_gpu(void *d_buffers_, uint32_t streamId, bool force_recursive);
 uint64_t gen_recursive_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
 void *gen_recursive_proof_final_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
@@ -98,6 +100,8 @@ StarksBackend cpu_backend = []() {
     backend.get_stream_proofs = nullptr;
     backend.get_stream_proofs_non_blocking = nullptr;
     backend.get_stream_id_proof = nullptr;
+    backend.reserve_best_stream_nonblock = nullptr;       // default: UINT32_MAX (no streams)
+    backend.reserve_stream_if_free = nullptr;             // default: 0 (not reserved)
     backend.gen_recursive_proof = gen_recursive_proof_cpu;
     backend.gen_recursive_proof_final = gen_recursive_proof_final_cpu;
     backend.calculate_const_tree_fixed = nullptr;
@@ -151,6 +155,8 @@ StarksBackend gpu_backend = []() {
     backend.get_stream_proofs = get_stream_proofs_gpu;
     backend.get_stream_proofs_non_blocking = get_stream_proofs_non_blocking_gpu;
     backend.get_stream_id_proof = get_stream_id_proof_gpu;
+    backend.reserve_best_stream_nonblock = reserve_best_stream_nonblock_gpu;
+    backend.reserve_stream_if_free = reserve_stream_if_free_gpu;
     backend.gen_recursive_proof = gen_recursive_proof_gpu;
     backend.gen_recursive_proof_final = gen_recursive_proof_final_gpu;
     backend.calculate_const_tree_fixed = calculate_const_tree_fixed_gpu;
@@ -280,6 +286,20 @@ void get_stream_proofs_non_blocking(void *d_buffers_) {
 void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->get_stream_id_proof) backend->get_stream_id_proof(d_buffers_, streamId);
+}
+
+// No streams on CPU: report "nothing reserved" so a caller that ever reaches here falls
+// back instead of believing it owns stream 0. Today the Rust scheduler is GPU-only.
+uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (!backend->reserve_best_stream_nonblock) return UINT32_MAX;
+    return backend->reserve_best_stream_nonblock(d_buffers_, airgroupId, airId, proofType, recursive, force_recursive);
+}
+
+uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (!backend->reserve_stream_if_free) return 0;
+    return backend->reserve_stream_if_free(d_buffers_, streamId, force_recursive);
 }
 
 uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_) {
