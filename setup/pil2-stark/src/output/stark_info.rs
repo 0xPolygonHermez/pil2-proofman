@@ -283,7 +283,7 @@ pub fn build_starkinfo_output(
         security: Some(SecurityInfo {
             proximity_gap: fri.proximity_gap(),
             proximity_parameter: fri.proximity_parameter(),
-            regime: fri.regime_identifier().to_string(),
+            regime: fri.regime().identifier().to_string(),
         }),
     }
 }
@@ -312,9 +312,8 @@ pub fn build_fri(stark_struct: &StarkStruct, batch_size: u64) -> security::pcs::
         batch_size,
         batching: security::pcs::Batching::Powers,
         folding_factors: folding_bits.iter().map(|&b| 1u32 << b).collect(),
-        early_stop_degree: 1u32 << stark_struct.steps.last().expect("stark struct needs steps").n_bits,
-        max_grinding_bits: stark_struct.pow_bits as u64,
-        use_max_grinding_bits: true,
+        max_grinding_bits_query: stark_struct.pow_bits as u64,
+        use_max_grinding_bits_query: true,
         tree_arity: stark_struct.merkle_tree_arity as u64,
         target_security_bits: 128,
         regime: security::regimes::DecodingRegime::Jbr,

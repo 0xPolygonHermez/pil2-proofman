@@ -1,6 +1,4 @@
-/// Which decoding regime to instantiate. This is the *kind* of regime, known
-/// upfront; the concrete [`ProximityGapsRegime`] also needs the gap-widening
-/// factor `alpha`, which is deduced (searched over) by the PCS solvers.
+/// Which decoding regime to instantiate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodingRegime {
     /// Johnson bound regime (JBR).
@@ -10,12 +8,11 @@ pub enum DecodingRegime {
 }
 
 impl DecodingRegime {
-    /// Instantiate a concrete regime. `alpha` widens the JBR gap and is
-    /// ignored by UDR (whose gap is fixed at δ/20).
+    /// Instantiate a concrete regime.
     pub fn instantiate(&self, field_size: f64, alpha: f64) -> Box<dyn ProximityGapsRegime> {
         match self {
             DecodingRegime::Jbr => Box::new(JohnsonBoundRegime::new(field_size, alpha)),
-            DecodingRegime::Udr => Box::new(UniqueDecodingRegime::new(field_size)),
+            DecodingRegime::Udr => Box::new(UniqueDecodingRegime::new(field_size, alpha)),
         }
     }
 }
@@ -68,11 +65,13 @@ pub trait ProximityGapsRegime {
 pub struct UniqueDecodingRegime {
     /// Field size |F|.
     field_size: f64,
+    /// Gap-widening factor.
+    alpha: f64,
 }
 
 impl UniqueDecodingRegime {
-    pub fn new(field_size: f64) -> Self {
-        Self { field_size }
+    pub fn new(field_size: f64, alpha: f64) -> Self {
+        Self { field_size, alpha }
     }
 }
 
@@ -93,7 +92,8 @@ impl ProximityGapsRegime for UniqueDecodingRegime {
     fn gap(&self, rate: &f64) -> f64 {
         // Something small that makes γ ∈ [δ/3, δ/2 - η] (see [BCHKS25] Corollary 1.4).
         let minimum_distance = 1.0 - rate;
-        let gap = minimum_distance / 20.0;
+        let base_correction = minimum_distance / 20.0;
+        let gap = base_correction * (1.0 + self.alpha);
 
         // γ ∈ [δ/3, δ/2 - η] <=> δ/2 - η > δ/3 <=> η < δ/6
         assert!(gap < minimum_distance / 6.0, "Gap must be smaller than δ/6 in UDR");
@@ -126,13 +126,20 @@ impl JohnsonBoundRegime {
         Self { field_size, alpha }
     }
 
-    /// The multiplicity parameter `m` of the Guruswami–Sudan list decoder (JBR):
-    /// `m = max(⌈√ρ / (2η)⌉, 3)` [BCHKS25] Theorem 4.2. The factor of 2 that the
-    /// statement of Theorem 4.2 omits is a confirmed typo.
-    fn jbr_multiplicity(&self, rate: &f64) -> u64 {
-        let two_gap = 2.0 * self.gap(rate);
+    /// The multiplicity parameter `m` of the Guruswami–Sudan list decoder
+    /// from the gap.
+    fn get_mul_from_gap(&self, rate: &f64, gap: f64) -> u64 {
+        // `m = max(⌈√ρ / (2η)⌉, 3)` [BCHKS25] Theorem 4.2. The factor of 2 that the
+        // statement of Theorem 4.2 omits is a confirmed typo.
+        let two_gap = 2.0 * gap;
         let m_ceil = (rate.clone().sqrt() / two_gap).ceil() as u64;
         m_ceil.max(3)
+    }
+
+    /// Given a multiplicity `m`, returns the gap `η` that would yield it.
+    fn get_gap_from_mul(&self, rate: &f64, m: u64) -> f64 {
+        // `η = √ρ / (2m)` [BCHKS25] Theorem 4.2.
+        rate.clone().sqrt() / (2.0 * m as f64)
     }
 }
 
@@ -159,10 +166,7 @@ impl ProximityGapsRegime for JohnsonBoundRegime {
         // γ ∈ [δ/2, 1 - √(1-δ) - η] <=> 1 - √(1-δ) - η > δ/2 <=> η < 1 - √(1-δ) - δ/2
         let minimum_distance = 1.0 - rate;
         let delta_half = minimum_distance / 2.0;
-        assert!(
-            gap < self.decoding_radius(rate) - delta_half,
-            "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR"
-        );
+        assert!(gap < self.decoding_radius(rate) - delta_half, "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR");
         gap
     }
 
@@ -176,7 +180,7 @@ impl ProximityGapsRegime for JohnsonBoundRegime {
     fn error_linear(&self, rate: &f64, dimension: u32) -> f64 {
         // Theorem 4.2 from [BCHKS25].
         let sqrt_rate = rate.sqrt();
-        let m = self.jbr_multiplicity(rate);
+        let m = self.get_mul_from_gap(rate, self.gap(rate));
         let m_shifted = m as f64 + 0.5;
 
         // First fraction: (2·(m + 1/2)⁵ + 3·(m + 1/2)·γ·ρ)·n / (3·ρ·√ρ)

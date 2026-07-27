@@ -268,9 +268,8 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         batch_size,
         batching,
         folding_factors: fri_folding_factors.iter().map(|&f| f as u32).collect(),
-        early_stop_degree: fri_early_stop_degree as u32,
-        max_grinding_bits: stark_struct.pow_bits,
-        use_max_grinding_bits: true,
+        max_grinding_bits_query: stark_struct.pow_bits,
+        use_max_grinding_bits_query: true,
         tree_arity: stark_struct.merkle_tree_arity,
         target_security_bits: 128,
         regime: DecodingRegime::Jbr,
@@ -310,7 +309,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             fri_folding_factors,
             fri_early_stop_degree,
             grinding_query_phase: stark_struct.pow_bits,
-            regime: fri.regime_identifier().to_string(),
+            regime: fri.regime().identifier().to_string(),
             security_bits,
             security_levels,
             proof_size: format_bytes(setup.proof_size as f64 * 8.0),
@@ -345,13 +344,15 @@ pub fn get_multilinear_air_info<F: PrimeField64>(setup: &Setup<F>) -> Option<MlT
     let whir = Whir::with_security_params(
         WhirConfig {
             field_size: security::goldilocks_safe_extension_field_size(),
-            num_variables: n_bits as u32,
-            log_inv_rate: params.log_blowup as u32,
+            trace_length: 1u32 << n_bits,
+            rate: f64::exp2(-(params.log_blowup as f64)),
             folding_factors: vec![k as u32; n_rounds],
             batch_size: air_ir.total_cols().max(1) as u64, // columns batched by δ into Φ
             batching: Batching::Powers,
             constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
-            grinding_bits: params.grinding_bits as u32,
+            max_grinding_bits_query: params.grinding_bits as u64,
+            use_max_grinding_bits_query: true,
+            tree_arity: 4, // the multilinear prover's MERKLE_ARITY
             target_security_bits: 128,
             regime: DecodingRegime::Jbr,
         },

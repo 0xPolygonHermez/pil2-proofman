@@ -416,8 +416,8 @@ pub(crate) fn ml_params(
     // query-hungriest); `n_queries` is uniform across blocks.
     let field_size = security::goldilocks_safe_extension_field_size();
     let regime = security::regimes::DecodingRegime::Jbr;
-    let bits_per_query = security::pcs::whir_query_bits(field_size, log_blowup as u32, regime);
-    let n_queries = (TARGET_SECURITY_BITS as f64 / bits_per_query).ceil().max(1.0) as usize;
+    let security_per_query = security::pcs::whir_security_per_query(field_size, log_blowup as u32, regime);
+    let n_queries = (TARGET_SECURITY_BITS as f64 / security_per_query).ceil().max(1.0) as usize;
 
     // Sanity-check the full WHIR PCS soundness at this query count (all
     // components: batching / folding / OOD / shift / final). The query-
@@ -429,13 +429,15 @@ pub(crate) fn ml_params(
     let whir = security::pcs::Whir::with_security_params(
         security::pcs::WhirConfig {
             field_size,
-            num_variables: n_bits as u32,
-            log_inv_rate: log_blowup as u32,
+            trace_length: 1u32 << n_bits,
+            rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - n_bits)) as f64,
             folding_factors: vec![k as u32; n_rounds],
             batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
             batching: security::pcs::Batching::Powers,
             constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
-            grinding_bits: 0,
+            max_grinding_bits_query: 0,
+            use_max_grinding_bits_query: false,
+            tree_arity: 4,
             target_security_bits: TARGET_SECURITY_BITS as u64,
             regime,
         },
@@ -460,6 +462,7 @@ pub(crate) fn ml_params(
     proofman_multilinear::MlParams {
         log_blowup,
         n_queries,
+        whir_query_schedule: vec![],
         log_final_poly_len,
         grinding_bits: 0,
         univariate_skip_bits,

@@ -66,21 +66,17 @@ pub fn bits_of_security_from_error(epsilon: f64) -> u32 {
     (-epsilon.log2()).floor().max(0.0) as u32
 }
 
-/// Bits of security from log2 of an error probability. Use this (and
-/// log2-space arithmetic) whenever the error itself can underflow `f64`,
-/// e.g. `(1-δ)^t` with many high-value queries.
-pub fn bits_of_security_from_log2_error(log2_epsilon: f64) -> u32 {
-    debug_assert!(log2_epsilon.is_finite(), "invalid log2 error {log2_epsilon}");
-    (-log2_epsilon).floor().max(0.0) as u32
-}
-
-/// log2(2^a + 2^b) for log2-space `a`, `b` (log-sum-exp).
-pub fn log2_add(a: f64, b: f64) -> f64 {
-    let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
-    hi + (1.0 + f64::exp2(lo - hi)).log2()
+pub fn security_from_error(epsilon: f64) -> f64 {
+    debug_assert!(epsilon > 0.0 && epsilon.is_finite(), "invalid error {epsilon}");
+    -epsilon.log2()
 }
 
 /// ε ↦ ε · 2^-g. exp2 of an integer is exact, so no precision is lost.
 pub fn apply_grinding(epsilon: f64, grinding_bits: u32) -> f64 {
     epsilon * f64::exp2(-(grinding_bits as f64))
+}
+
+/// Hashes to verify one Merkle path in a tree of `n_leafs` leaves.
+pub fn merkle_path_hashes(tree_arity: u64, n_leafs: f64) -> f64 {
+    (tree_arity as f64 - 1.0) * (n_leafs.log2() / (tree_arity as f64).log2()).ceil()
 }
