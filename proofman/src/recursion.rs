@@ -287,6 +287,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_tree: &[F],
     const_pols: &[F],
     force_recursive_stream: bool,
+    reserved_stream: u64,
     calculate_fixed_tree_handle: Option<std::thread::JoinHandle<()>>,
 ) -> ProofmanResult<(u64, Vec<F>)> {
     timer_start_debug!(
@@ -367,6 +368,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         handle.join().map_err(|_| ProofmanError::ProofmanError("Failed to calculate fixed tree".into()))?;
     }
 
+    // `reserved_stream`: scheduler-reserved stream, or `u64::MAX` to select internally
+    // (one-off launches — outer aggregation, vadcop_final, recursers).
     let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
@@ -386,6 +389,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.proof_type.clone().into(),
         force_recursive_stream,
         "",
+        reserved_stream, // scheduler-reserved stream, or u64::MAX for one-off internal selection
     );
 
     // Trace H2D is async: gate buffer reuse on the stream's commit event so a
@@ -529,6 +533,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             const_tree,
                             const_pols,
                             false,
+                            u64::MAX, // one-off launch: reserve stream internally
                             None,
                         )?;
 
@@ -662,6 +667,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         false,
+        u64::MAX, // one-off launch: reserve stream internally
         Some(calculate_fixed_tree_handle),
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
@@ -730,6 +736,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         false,
+        u64::MAX, // one-off launch: reserve stream internally
         Some(calculate_fixed_tree_handle),
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
@@ -943,6 +950,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         setup.setup_type.clone().into(),
         false,
         recurser_id, // disambiguates recurser setups sharing (0,0,"recursive2")
+        u64::MAX,    // one-off launch: reserve stream internally
     );
     get_stream_id_proof_c(d_buffers, stream_id);
     timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);

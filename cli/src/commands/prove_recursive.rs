@@ -301,6 +301,7 @@ impl ProveRecursiveCmd {
             proof_type_str,
             false,
             "",
+            u64::MAX, // one-off launch: reserve stream internally
         );
 
         // The recursive prover writes its output asynchronously; the result is only in

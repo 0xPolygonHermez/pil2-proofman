@@ -1303,22 +1303,3 @@ pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) ->
 
     Ok(contents.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
 }
-
-pub fn deterministic_shuffle<T>(slice: &mut [T], seed: u64) {
-    let len = slice.len();
-    if len <= 1 {
-        return;
-    }
-
-    const A: u64 = 1103515245;
-    const C: u64 = 12345;
-    const M: u64 = 1 << 31;
-
-    let mut state = seed;
-
-    for i in (1..len).rev() {
-        state = state.wrapping_mul(A).wrapping_add(C) % M;
-        let j = (state as usize) % (i + 1);
-        slice.swap(i, j);
-    }
-}

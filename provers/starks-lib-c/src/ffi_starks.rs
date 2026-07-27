@@ -1035,6 +1035,7 @@ pub fn gen_recursive_proof_c(
     proof_type: &str,
     force_recursive_stream: bool,
     recurser_id: &str,
+    stream_id: u64,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1071,8 +1072,29 @@ pub fn gen_recursive_proof_c(
             proof_type_ptr,
             force_recursive_stream,
             recurser_id_ptr,
+            stream_id,
         )
     }
+}
+
+/// Scheduler: reserve the best free stream for this key without blocking.
+/// Returns `u32::MAX` when nothing is free right now (caller retries).
+pub fn reserve_best_stream_nonblock_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    recursive: bool,
+    force_recursive: bool,
+) -> u32 {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe { reserve_best_stream_nonblock(d_buffers, airgroup_id, air_id, proof_type_ptr, recursive, force_recursive) }
+}
+
+/// Scheduler warm fast path: reserve `stream_id` iff it is free right now. Returns true on success.
+pub fn reserve_stream_if_free_c(d_buffers: *mut c_void, stream_id: u32, force_recursive: bool) -> bool {
+    unsafe { reserve_stream_if_free(d_buffers, stream_id, force_recursive) != 0 }
 }
 
 pub fn calculate_const_tree_fixed_c(

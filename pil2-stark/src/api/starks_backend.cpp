@@ -18,7 +18,7 @@ void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32
 void use_packed_trace_cpu(void *d_buffers_, bool packed);
 void free_device_buffers_cpu(void *d_buffers);
 void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
-uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id);
+uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
 void *gen_recursive_proof_final_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void *init_final_snark_prover_cpu(char* zkeyFile, void* d_buffers_recursivef);
 void free_final_snark_prover_cpu(void *snark_prover);
@@ -45,7 +45,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
 void get_stream_proofs_gpu(void *d_buffers_);
 void get_stream_proofs_non_blocking_gpu(void *d_buffers_);
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId);
-uint64_t gen_recursive_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id);
+uint64_t gen_recursive_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
 void *gen_recursive_proof_final_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
@@ -282,9 +282,9 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     if (backend->get_stream_id_proof) backend->get_stream_id_proof(d_buffers_, streamId);
 }
 
-uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id) {
+uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->gen_recursive_proof(pSetupCtx, airgroupId, airId, instanceId, witness, aux_trace, pConstPols, pConstTree, pPublicInputs, proofBuffer, proof_file, vadcop, d_buffers, constPolsPath, constTreePath, proofType, force_recursive_stream, recurser_id);
+    return backend->gen_recursive_proof(pSetupCtx, airgroupId, airId, instanceId, witness, aux_trace, pConstPols, pConstTree, pPublicInputs, proofBuffer, proof_file, vadcop, d_buffers, constPolsPath, constTreePath, proofType, force_recursive_stream, recurser_id, streamId_);
 }
 
 void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers) {

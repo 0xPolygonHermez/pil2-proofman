@@ -664,8 +664,12 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
             return UINT64_MAX;
         }
         reserveStreamLocked(d_buffers, streamId); // mutex held by lock_guard above
+    } else if (streamId_ == UINT64_MAX) {
+        // No reservation supplied (one-off / non-scheduler caller): select internally.
+        streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
     } else {
-        streamId = selectStream(d_buffers, airgroupId, airId, proofType, false);
+        // Recompute path: the scheduler already reserved this stream (status=1).
+        streamId = (uint32_t)streamId_;
     }
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
@@ -720,7 +724,14 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     totalCopySize += setupCtx->starkInfo.airValuesSize;
     totalCopySize += FIELD_EXTENSION;
 
-    Goldilocks::Element aux_values[totalCopySize];
+    // Stage into the per-stream pinned region for an async copy (no stream sync);
+    // reuse gated by end_event on stream reselect. Runtime check survives NDEBUG.
+    if (totalCopySize > PINNED_AUX_VALUES_MAX) {
+        zklog.error("gen_proof_gpu: aux_values size " + std::to_string(totalCopySize) +
+                    " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
+        exitProcess();
+    }
+    Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values;
     uint64_t offset = 0;
     memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     offset += setupCtx->starkInfo.nPublics;
@@ -738,7 +749,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
     memcpy(aux_values + offset, (Goldilocks::Element *)globalChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+    CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
 
     gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
     gl64_t *d_const_tree;
@@ -817,7 +828,14 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     totalCopySize += setupCtx->starkInfo.airValuesSize;
     totalCopySize += 2 * FIELD_EXTENSION;
 
-    Goldilocks::Element aux_values[totalCopySize];
+    // Stage into the per-stream pinned region for an async copy (no stream sync);
+    // reuse gated by end_event on stream reselect. Runtime check survives NDEBUG.
+    if (totalCopySize > PINNED_AUX_VALUES_MAX) {
+        zklog.error("initialize_instance_gpu: aux_values size " + std::to_string(totalCopySize) +
+                    " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
+        exitProcess();
+    }
+    Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values;
     uint64_t offset = 0;
     memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     offset += setupCtx->starkInfo.nPublics;
@@ -835,7 +853,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     }
     memcpy(aux_values + offset, (Goldilocks::Element *)params->challenges, 2 * FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+    CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     
     gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
     
@@ -984,14 +1002,18 @@ void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
     collectStreamResult(d_buffers, streamId);
 }
 
-uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id)
+uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     bool aggregation = false;
     if(string(proofType) == "recursive1" || string(proofType) == "recursive2") {
         aggregation = true;
     }
-    uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, aggregation, force_recursive_stream);
+    // streamId_ == UINT64_MAX: select internally (one-off launches). Otherwise the scheduler
+    // already reserved this stream — use it directly.
+    uint32_t streamId = (streamId_ == UINT64_MAX)
+        ? selectStream(d_buffers, airgroupId, airId, proofType, aggregation, force_recursive_stream)
+        : (uint32_t)streamId_;
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
@@ -1029,13 +1051,22 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-    copy_to_device_in_chunks(d_buffers, pPublicInputs, (uint8_t*)(d_aux_trace + offsetPublicInputs), setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), streamId, timer);
+    // Stage publics into the per-stream pinned region for an async copy (no stream
+    // sync); reuse gated by end_event on stream reselect. Runtime check survives NDEBUG.
+    if (setupCtx->starkInfo.nPublics > PINNED_AUX_VALUES_MAX) {
+        zklog.error("gen_recursive_proof_gpu: nPublics " + std::to_string(setupCtx->starkInfo.nPublics) +
+                    " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
+        exitProcess();
+    }
+    Goldilocks::Element *pinned_publics = d_buffers->streamsData[streamId].pinned_aux_values;
+    memcpy(pinned_publics, pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+    CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), pinned_publics, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
 
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
     gl64_t *d_const_tree;
     if (air_instance_info->stored_tree) {
         d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
-    } else {        
+    } else {
         uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
 
@@ -1903,26 +1934,35 @@ void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffer
     return get_unified_buffer_gpu(d_buffers_);
 }
 
-uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
+// One non-blocking scan+pick+reserve pass (the body of selectStream's old while-loop).
+// Returns a reserved streamId (status=1), or UINT32_MAX if none is free right now. Lets the
+// Rust scheduler drive stream assignment; selectStream just retries this in a loop.
+uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
     uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
     uint32_t countUnusedStreams[d_buffers->n_gpus];
     int streamIdxGPU[d_buffers->n_gpus];
+    bool warmFoundGPU[d_buffers->n_gpus];
 
     for( uint32_t i = 0; i < d_buffers->n_gpus; i++){
         countUnusedStreams[i] = 0;
         countFreeStreamsGPU[i] = 0;
         streamIdxGPU[i] = -1;
+        warmFoundGPU[i] = false;
     }
 
     bool someFree = false;
-    uint32_t selectedStreamId = 0;
 
     std::vector<bool> streams_locked(d_buffers->n_total_streams, false);
 
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
 
-    while (!someFree){
-        // Re-read every iteration so a release by the borrower is picked up.
+    {
+        // Serialize the scan so this caller sees the full set of free streams
+        // (kills the fragmented try_lock race). Scoped to the scan only: released
+        // before the pick/reserve below, so the global lock is NEVER held across
+        // proof execution (the deadlock trap). Per-stream locks are still taken via
+        // try_lock, so this never blocks on harvest/reserve.
+        std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
         const bool firstGpuBorrowed = d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
         if (recursive) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -1939,13 +1979,20 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
-                            streamIdxGPU[gpuLocalId] = i;
                         }
-                        if (d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3)){
+                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3);
+                        if (warm) {
+                            // Sticky warm choice: keep the stream already holding this
+                            // (airgroup,air,type) so reuse_constants hits; not clobbered by a
+                            // later unused/free stream (the bug that killed affinity).
                             streamIdxGPU[gpuLocalId] = i;
-                        }
-                        if( streamIdxGPU[gpuLocalId] == -1 ){
-                            streamIdxGPU[gpuLocalId] = i;
+                            warmFoundGPU[gpuLocalId] = true;
+                        } else if (!warmFoundGPU[gpuLocalId]) {
+                            // No warm stream yet: prefer an unused (cold, no eviction) stream,
+                            // else any free one.
+                            if (d_buffers->streamsData[i].status==0 || streamIdxGPU[gpuLocalId] == -1) {
+                                streamIdxGPU[gpuLocalId] = i;
+                            }
                         }
                         someFree = true;
                         streams_locked[i] = true;
@@ -1954,10 +2001,12 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
                     }
                 }
             }
-            if(someFree) break;
         }
 
-        if (!recursive || !force_recursive) {
+        // Recursive requests that found a recursive stream skip this (someFree set);
+        // a non-forced recursive request with no free recursive stream falls back to
+        // non-recursive streams, exactly as the old while-loop did.
+        if (!someFree && (!recursive || !force_recursive)) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
                 if (firstGpuBorrowed && d_buffers->streamsData[i].gpuId == firstGpuId) continue;
                 if (!d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
@@ -1972,13 +2021,20 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
-                            streamIdxGPU[gpuLocalId] = i;
                         }
-                        if (d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3)){
+                        bool warm = d_buffers->streamsData[i].airgroupId == airgroupId && d_buffers->streamsData[i].airId == airId && d_buffers->streamsData[i].proofType == proofType && (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3);
+                        if (warm) {
+                            // Sticky warm choice: keep the stream already holding this
+                            // (airgroup,air,type) so reuse_constants hits; not clobbered by a
+                            // later unused/free stream (the bug that killed affinity).
                             streamIdxGPU[gpuLocalId] = i;
-                        }
-                        if( streamIdxGPU[gpuLocalId] == -1 ){
-                            streamIdxGPU[gpuLocalId] = i;
+                            warmFoundGPU[gpuLocalId] = true;
+                        } else if (!warmFoundGPU[gpuLocalId]) {
+                            // No warm stream yet: prefer an unused (cold, no eviction) stream,
+                            // else any free one.
+                            if (d_buffers->streamsData[i].status==0 || streamIdxGPU[gpuLocalId] == -1) {
+                                streamIdxGPU[gpuLocalId] = i;
+                            }
                         }
                         someFree = true;
                         streams_locked[i] = true;
@@ -1988,10 +2044,10 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
                 }
             }
         }
-
-        if (!someFree)
-            std::this_thread::sleep_for(std::chrono::microseconds(300)); 
     }
+
+    if (!someFree) return UINT32_MAX;  // nothing free this pass; caller retries
+
     // Most free streams wins; ties break on unused count. someFree guarantees a candidate.
     int bestGpu = -1;
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
@@ -2001,7 +2057,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
             bestGpu = i;
         }
     }
-    selectedStreamId = streamIdxGPU[bestGpu];
+    uint32_t selectedStreamId = streamIdxGPU[bestGpu];
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (streams_locked[i] && i != selectedStreamId) {
             d_buffers->streamsData[i].mutex_stream_selection.unlock();
@@ -2012,6 +2068,49 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
     d_buffers->streamsData[selectedStreamId].mutex_stream_selection.unlock();
 
     return selectedStreamId;
+}
+
+// Blocking wrapper: retry the scan until a stream is reserved. Used by the paths that
+// select internally (contributions/commit/setup, and one-off recursive launches).
+uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
+    for (;;) {
+        uint32_t s = reserve_best_stream_scan(d_buffers, airgroupId, airId, proofType, recursive, force_recursive);
+        if (s != UINT32_MAX) return s;
+        std::this_thread::sleep_for(std::chrono::microseconds(300));
+    }
+}
+
+// extern "C" entry for the Rust scheduler: reserve a stream, then pass it to
+// gen_*_proof(..., streamId_). Returns UINT32_MAX when nothing is free (caller retries).
+extern "C" uint32_t reserve_best_stream_nonblock(void* d_buffers_, uint64_t airgroupId, uint64_t airId, char* proofType, bool recursive, bool force_recursive){
+    DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
+    return reserve_best_stream_scan(d_buffers, airgroupId, airId, std::string(proofType), recursive, force_recursive);
+}
+
+// Warm-affinity fast path: reserve `streamId` IFF free right now (and a recursive stream
+// for a forced request). Returns 1 on success, 0 otherwise. Same lock order as
+// reserve_best_stream_scan (gsel, then per-stream try_lock) so they can't deadlock.
+extern "C" uint32_t reserve_stream_if_free(void* d_buffers_, uint32_t streamId, bool force_recursive){
+    DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
+    if (streamId >= d_buffers->n_total_streams) return 0;
+    StreamData& sd = d_buffers->streamsData[streamId];
+    // A forced recursive launch must stay on a recursive stream; refuse otherwise so
+    // the caller falls back to the cold scan.
+    if (force_recursive && !sd.recursive) return 0;
+    const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
+    if (d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire) && sd.gpuId == firstGpuId) return 0;
+
+    std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
+    if (!sd.mutex_stream_selection.try_lock()) return 0;
+    if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+        sd.mutex_stream_selection.unlock();
+        return 0;
+    }
+    bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess);
+    if (!free) { sd.mutex_stream_selection.unlock(); return 0; }
+    reserveStreamLocked(d_buffers, streamId);
+    sd.mutex_stream_selection.unlock();
+    return 1;
 }
 
 // Requires the caller to hold streamsData[streamId].mutex_stream_selection
