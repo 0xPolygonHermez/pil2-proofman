@@ -25,10 +25,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
 /// Master switch for per-proof debug logging of airgroup values, stage roots, and the
-/// challenge/contribution dump (`print_challenges`). Off by default; enable by setting
-/// the `PROOFMAN_DEBUG_CHALLENGES` env var. Read once so the hot recursive handler
-/// doesn't hit getenv per proof.
-static DEBUG_CHALLENGES: LazyLock<bool> = LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").is_ok());
+/// challenge/contribution dump (`print_challenges`). Off by default; enable with
+/// `PROOFMAN_DEBUG_CHALLENGES=1` (matching PROOFMAN_SUMCHECK: any other value, or unset,
+/// means off). Read once so the hot recursive handler doesn't hit getenv per proof.
+static DEBUG_CHALLENGES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").map(|v| v == "1").unwrap_or(false));
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
@@ -530,7 +531,6 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.memory_handler.reset()?;
         self.memory_handler_recursive_witness.reset()?;
-        self.pctx.reset_job_state();
 
         Ok(())
     }
@@ -960,6 +960,7 @@ where
         num_rows: usize,
         offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
+        let _computing = self.acquire_computing("get_instance_trace");
         if self.pctx.dctx_is_instance_calculated(instance_id) {
             return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
@@ -991,6 +992,7 @@ where
     }
 
     pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let _computing = self.acquire_computing("get_instance_air_values");
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
@@ -1564,18 +1566,20 @@ where
             &custom_commits_fixed_path,
         );
 
-        #[cfg(feature = "diagnostic")]
-        {
-            let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
-            if invalid_initialization {
-                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
-            }
-        }
-
         pctx.set_instance_stream_id(instance_id, stream_id);
 
         if !pctx.gpu {
             calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            #[cfg(feature = "diagnostic")]
+            {
+                let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
+                if invalid_initialization {
+                    return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
+                }
+            }
+        }
+
+        if !pctx.gpu {
             wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
             calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
         } else {
@@ -4328,6 +4332,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn gen_proof(
         proofs: &[RwLock<Option<Proof<F>>>],
         pctx: &ProofCtx<F>,

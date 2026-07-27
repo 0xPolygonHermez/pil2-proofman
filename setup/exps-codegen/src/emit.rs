@@ -31,12 +31,16 @@ __device__ __forceinline__ g3 cg_sub31(g3 x, gl64_t s){ g3 r; r.a=x.a-s; r.b=x.b
 __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.b; r.c=-y.c; return r; }
 "#;
 
-/// The C++ `Layout` enum value a committed section of `n_cols` columns is stored
-/// in, mirroring `resolveLayout(nBits, nCols)` in goldilocks_trace_layout.cuh.
-/// Keyed on the SMALL-domain nBits (not extended), exactly as the built-in
-/// expression evaluator does (expressions_gpu.cu: `nBits = 63 - clz(N)`).
+/// FORCE_TILED_LAYOUT=1 mirrors the `-DFORCE_TILED_LAYOUT` C++ build; the two MUST match, or the
+/// kernel reads committed sections in a layout the LDE/Merkle didn't write. See [`cm_layout`].
+fn force_tiled() -> bool {
+    std::env::var("FORCE_TILED_LAYOUT").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Committed-section layout the generated kernel reads, mirroring `resolveLayout(nBits,nCols)` in
+/// goldilocks_trace_layout.cuh. Keyed on small-domain nBits (not extended), like expressions_gpu.cu.
 fn cm_layout(n_bits: u64, n_cols: u64) -> &'static str {
-    if n_bits <= 17 && n_cols > 500 {
+    if force_tiled() || (n_bits <= 17 && n_cols > 500) {
         "Layout::ColMajorTiled"
     } else {
         "Layout::ColMajor"
@@ -148,12 +152,18 @@ fn emit_op(instr: &Instr, ir: &Ir, declared: &HashSet<u64>) -> (Vec<String>, boo
 
 /// The final write of `qq` into the q buffer (out_dim 3 vs base-field padded to 3).
 fn store_qq(out_dim: u64) -> &'static str {
-    // q (the cmQ output) has 3 cols, so resolveLayout(nBits,3) is always ColMajor
-    // (nCols <= 500) — matches how the cmQ commit/Merkle reads it back.
-    if out_dim == 3 {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajor)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajor)]=qq.c;"
-    } else {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
+    // q (the cmQ output) has 3 cols, so resolveLayout(nBits,3) is normally ColMajor
+    // (nCols <= 500) — matches how the cmQ commit/Merkle reads it back. Under
+    // FORCE_TILED_LAYOUT that decision flips with everything else (see cm_layout).
+    match (force_tiled(), out_dim == 3) {
+        (false, true) =>
+            "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajor)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajor)]=qq.c;",
+        (false, false) =>
+            "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0));",
+        (true, true) =>
+            "    q[OFF(row,0,NExt,3,Layout::ColMajorTiled)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajorTiled)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajorTiled)]=qq.c;",
+        (true, false) =>
+            "    q[OFF(row,0,NExt,3,Layout::ColMajorTiled)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajorTiled)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajorTiled)]=gl64_t(uint64_t(0));",
     }
 }
 

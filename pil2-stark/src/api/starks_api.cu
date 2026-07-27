@@ -26,6 +26,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
+#include "proofman_sumcheck.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 #include <algorithm>
@@ -38,6 +39,7 @@ void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
+
 
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
@@ -752,6 +754,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
 
 
+    proofman_sumcheck_set_context(instanceId, airgroupId, airId);
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, false, reuse_constants);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
@@ -791,6 +794,8 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].witnessResident = false;
 
+    proofman_sumcheck_set_context(instanceId, airgroupId, airId);
+
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
@@ -803,7 +808,8 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    
+    PROOFMAN_SUMCHECK("proof_before_unpack", dst, total_size / sizeof(uint64_t), stream);
+
     size_t totalCopySize = 0;
     totalCopySize += setupCtx->starkInfo.nPublics;
     totalCopySize += setupCtx->starkInfo.proofValuesSize;
@@ -844,6 +850,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), (gl64_t*)(d_aux_trace + offsetCm1), resolveLayout(setupCtx->starkInfo.starkStruct.nBits, nCols), stream);
     }
+    PROOFMAN_SUMCHECK("proof_after_unpack", d_aux_trace + offsetCm1, N * nCols, stream);
 
     return streamId;
 }
@@ -1361,6 +1368,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     d_buffers->streamsData[streamId].proofType = "witness";
     d_buffers->streamsData[streamId].witnessResident = true;
 
+    proofman_sumcheck_set_context(instanceId, airgroupId, airId);
+
     auto key = std::make_pair(airgroupId, airId);
     cudaSetDevice(gpuId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key]["basic"][gpuLocalId];
@@ -1382,7 +1391,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-    
+    PROOFMAN_SUMCHECK("contrib_before_unpack", dst, total_size / sizeof(uint64_t), stream);
+
     uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
 
     uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
@@ -1397,6 +1407,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     } else {
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offset_dst), (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
     }
+    PROOFMAN_SUMCHECK("contrib_after_unpack", d_aux_trace + offset_src, N * nCols, stream);
 
     uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
@@ -1486,7 +1497,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     }
 
+    PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
     ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+    PROOFMAN_SUMCHECK("contrib_after_lde", d_aux_trace + offset_dst, NExtended * nCols, stream);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on the
     // small domain) -- ColMajorTiled for tiled AIRs (e.g. Keccakf cm1), else ColMajor. Hardcoding

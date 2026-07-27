@@ -29,8 +29,16 @@ enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 // transpose, AND the commit-Merkle / FRI / opening-eval kernels in starks_gpu.cu all call this with the
 // SAME (nBits, nCols), so they always agree without storing the choice. Native tiled wins for small
 // domains with many columns; everything else uses flat (sppark).
+// FORCE_TILED_LAYOUT: benchmark switch forcing every committed section through the native tiled
+// NTT. Must match cm_layout()/store_qq() in setup/exps-codegen/src/emit.rs; rebuild the C++ AND
+// regenerate the exps kernels (gen-exps) together, or readers/writers disagree -> wrong proofs.
 __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_t nCols) {
+#ifdef FORCE_TILED_LAYOUT
+    (void)nBits; (void)nCols;
+    return Layout::ColMajorTiled;
+#else
     return (nBits <= 17 && nCols > 500) ? Layout::ColMajorTiled : Layout::ColMajor;
+#endif
 }
 
 // Single source of truth for CUDA-graph capturability of the NTT/LDE/computeQ path: only the native

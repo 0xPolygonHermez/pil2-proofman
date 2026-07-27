@@ -343,13 +343,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.mpi_ctx.reset();
     }
 
-    pub fn reset_job_state(&self) {
-        self.public_inputs.reset();
-        self.proof_values.reset();
-        self.challenges.reset();
-        self.global_challenge.reset();
-    }
-
     pub fn is_setup_partition_init(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_setup_partition_init()
@@ -542,9 +535,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+        dctx.instances_calculated[global_idx]
+            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+            .is_ok()
     }
 
     pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
@@ -1059,7 +1054,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn acquire_first_gpu_buffer(&self) {
         if self.gpu {
             acquire_first_gpu_buffer_c(self.d_buffers.get_ptr());
-            self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
