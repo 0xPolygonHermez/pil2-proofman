@@ -31,7 +31,12 @@ struct StarksBackend {
     void (*get_stream_proofs)(void *d_buffers_);
     void (*get_stream_proofs_non_blocking)(void *d_buffers_);
     void (*get_stream_id_proof)(void *d_buffers_, uint64_t streamId);
-    uint64_t (*gen_recursive_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id);
+    // Stream arbiter used by the Rust key-affinity scheduler. GPU backend only: the CPU
+    // backend has no streams, so these stay nullptr and the dispatchers return
+    // "nothing reserved" (UINT32_MAX / 0).
+    uint32_t (*reserve_best_stream_nonblock)(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
+    uint32_t (*reserve_stream_if_free)(void *d_buffers_, uint32_t streamId, bool force_recursive);
+    uint64_t (*gen_recursive_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
     void *(*gen_recursive_proof_final)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
     void (*calculate_const_tree_fixed)(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
 
@@ -40,7 +45,7 @@ struct StarksBackend {
     void (*unregister_host_memory)(void *ptr);
     // Wait for a stream's async commit (incl. the now-unsynced trace H2D) to
     // finish, so the shared trace buffer can be reused. GPU backend only.
-    void (*wait_stream_commit_done)(void *d_buffers, uint64_t stream_id);
+    void (*wait_trace_h2d_done)(void *d_buffers, uint64_t stream_id);
 
     // Device management
     void *(*gen_device_buffers)(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);

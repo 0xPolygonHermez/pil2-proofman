@@ -33,7 +33,7 @@ extern "C" {
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
     void unregister_host_memory(void *ptr);
-    void wait_stream_commit_done(void *d_buffers, uint64_t stream_id);
+    void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
@@ -114,13 +114,19 @@ extern "C" {
     // Gen proof && Recursive Proof
     // =================================================================================
     uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath);
-    uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id);
+    uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
     void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols);
     void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
     void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
     void get_stream_proofs(void *d_buffers_);
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
+    // Central arbiter: reserve the best free stream for (airgroupId,airId,proofType)
+    // without blocking. Returns UINT32_MAX if none is free right now.
+    uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
+    // Central arbiter warm fast path: reserve streamId iff it is free right now.
+    // Returns 1 on success, 0 otherwise.
+    uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive);
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
     // Final proof
