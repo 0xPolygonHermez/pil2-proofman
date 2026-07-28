@@ -35,6 +35,8 @@ use csv::Writer;
 use tokio_util::sync::CancellationToken;
 
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
+use proofman_common::phase1_trace::{self, ContribStep, Phase1Trace};
+use proofman_common::{timer_start_phase1, timer_stop_and_log_phase1};
 use proofman_verifier::VadcopFinalProof;
 use crate::{
     check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed,
@@ -2189,8 +2191,12 @@ where
 
             let first_contribution_logged = Arc::new(AtomicBool::new(false));
 
+            // None unless ZISK_TRACE_PHASE1=1; every use below is an Option check
+            let phase1_trace = Phase1Trace::new(self.pctx.get_worker_index().map(|w| w as i32).unwrap_or(-1));
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
+                let phase1_trace_clone = phase1_trace.clone();
                 let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
@@ -2206,6 +2212,11 @@ where
                 let aux_trace_arc = self.aux_trace.clone();
                 let const_pols_arc = self.const_pols.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
+                    // Time spent with no witness ready to commit: separates "this worker was
+                    // starved by the witness side" from "the commit itself was slow". Both the
+                    // clock read and the sched_getcpu happen only when tracing is on.
+                    let recv_wait =
+                        phase1_trace_clone.as_ref().map(|_| (std::time::Instant::now(), phase1_trace::current_cpu()));
                     match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                         Ok(instance_id) => {
                             if instance_id == usize::MAX {
@@ -2214,6 +2225,15 @@ where
                             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                                 break;
                             }
+                            if let (Some(t), Some((started, cpu_in))) = (phase1_trace_clone.as_ref(), recv_wait) {
+                                t.record(
+                                    instance_id,
+                                    ContribStep::QueueWait,
+                                    started,
+                                    cpu_in,
+                                    phase1_trace::current_cpu(),
+                                );
+                            }
                             // SAFETY: see comment above where aux_trace_arc/const_pols_arc are cloned.
                             let aux_trace_local: &mut [F] = unsafe {
                                 std::slice::from_raw_parts_mut(aux_trace_arc.as_ptr() as *mut F, aux_trace_arc.len())
@@ -2221,14 +2241,21 @@ where
                             let const_pols_local: &mut [F] = unsafe {
                                 std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
                             };
-                            let commit_stream_id = match Self::get_contribution_air(
-                                &pctx_clone,
-                                &sctx_clone,
-                                &roots_contributions_clone,
-                                &values_contributions_clone,
+                            let commit_stream_id = match phase1_trace::timed(
+                                &phase1_trace_clone,
                                 instance_id,
-                                aux_trace_local,
-                                const_pols_local,
+                                ContribStep::CommitWitness,
+                                || {
+                                    Self::get_contribution_air(
+                                        &pctx_clone,
+                                        &sctx_clone,
+                                        &roots_contributions_clone,
+                                        &values_contributions_clone,
+                                        instance_id,
+                                        aux_trace_local,
+                                        const_pols_local,
+                                    )
+                                },
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -2248,9 +2275,25 @@ where
                                 // commit ran on (returned by commit_witness) — the air_instance
                                 // stream_id is unset on the contributions path.
                                 if pctx_clone.gpu {
-                                    wait_stream_commit_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
+                                    // The one measurement that says GPU-wait vs CPU-side
+                                    phase1_trace::timed(
+                                        &phase1_trace_clone,
+                                        instance_id,
+                                        ContribStep::GpuStreamWait,
+                                        || {
+                                            wait_stream_commit_done_c(
+                                                pctx_clone.get_device_buffers_ptr(),
+                                                commit_stream_id,
+                                            )
+                                        },
+                                    );
                                 }
-                                memory_handler_clone.to_be_released_buffer(instance_id, false);
+                                phase1_trace::timed(
+                                    &phase1_trace_clone,
+                                    instance_id,
+                                    ContribStep::ReleaseBuffer,
+                                    || memory_handler_clone.to_be_released_buffer(instance_id, false),
+                                );
                             }
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -2297,7 +2340,13 @@ where
             let my_instances_no_tables =
                 my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
+            timer_start_phase1!(CONTRIB_WITNESS);
             timer_start_debug!(CALCULATING_WITNESS);
+            // §6.1: snapshot every thread's CPU time and PSI around the span that carries 92% of
+            // the straggler penalty, and switch the sampler to its dense interval
+            if let Some(t) = phase1_trace.as_ref() {
+                t.witness_span_begin();
+            }
             self.calculate_witness(
                 &my_instances_no_tables,
                 self.memory_handler.clone(),
@@ -2305,7 +2354,11 @@ where
                 options.minimal_memory,
                 false,
             )?;
+            if let Some(t) = phase1_trace.as_ref() {
+                t.witness_span_end();
+            }
             timer_stop_and_log_debug!(CALCULATING_WITNESS);
+            timer_stop_and_log_phase1!(CONTRIB_WITNESS);
 
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(None);
@@ -2313,6 +2366,8 @@ where
             }
             self.witness_tx.send(usize::MAX).ok();
 
+            // Was unbracketed: waits for the witness threads still in flight
+            timer_start_phase1!(CONTRIB_JOIN_WITNESS);
             if let Some(h) = witness_handler.lock().unwrap().take() {
                 h.join().unwrap();
             }
@@ -2322,9 +2377,11 @@ where
                     handle.join().unwrap();
                 }
             }
+            timer_stop_and_log_phase1!(CONTRIB_JOIN_WITNESS);
 
             drop(witness_handles);
 
+            timer_start_phase1!(CONTRIB_TABLES);
             timer_start_debug!(CALCULATING_TABLES);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();
@@ -2341,9 +2398,13 @@ where
             }
 
             timer_stop_and_log_debug!(CALCULATING_TABLES);
+            timer_stop_and_log_phase1!(CONTRIB_TABLES);
 
             self.pctx.set_proof_tx(None);
 
+            // Was unbracketed: drains the contribution workers, so it absorbs whatever GPU
+            // commit work is still in flight once the last witness has been queued
+            timer_start_phase1!(CONTRIB_DRAIN);
             for _ in 0..self.n_streams {
                 self.contributions_tx.send(usize::MAX).ok();
             }
@@ -2352,23 +2413,32 @@ where
             for handle in handles {
                 handle.join().unwrap();
             }
+            timer_stop_and_log_phase1!(CONTRIB_DRAIN);
 
             self.check_cancel(true)?;
 
             // get roots still in the gpu
+            timer_start_phase1!(CONTRIB_STREAM_PROOFS);
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+            timer_stop_and_log_phase1!(CONTRIB_STREAM_PROOFS);
 
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
+            timer_start_phase1!(CONTRIB_CHALLENGE);
             let internal_contribution = calculate_internal_contributions(
                 &self.pctx,
                 &self.roots_contributions,
                 &self.values_contributions,
                 *DEBUG_CHALLENGES,
             );
+            timer_stop_and_log_phase1!(CONTRIB_CHALLENGE);
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
+
+            if let Some(t) = phase1_trace.as_ref() {
+                t.finish(CALCULATING_CONTRIBUTIONS);
+            }
 
             let contributions_size = match self.pctx.global_info.curve {
                 CurveType::None => self.pctx.global_info.lattice_size.unwrap(),

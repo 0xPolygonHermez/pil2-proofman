@@ -18,6 +18,7 @@ pub mod custom_commits;
 pub mod constraints;
 pub mod fixed_cols;
 pub mod memory_handler;
+pub mod phase1_trace;
 pub mod packed_info;
 pub mod error_manager;
 

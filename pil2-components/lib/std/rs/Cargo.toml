@@ -24,3 +24,4 @@ serde_json.workspace = true
 
 [features]
 default = []
+phase1-trace = ["proofman-common/phase1-trace"]

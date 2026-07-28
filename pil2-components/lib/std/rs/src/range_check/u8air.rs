@@ -10,6 +10,7 @@ use rayon::{
     prelude::*,
 };
 use witness::WitnessComponent;
+use proofman_common::phase1_trace;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
 use crate::AirComponent;
@@ -28,6 +29,9 @@ pub struct U8Air<F: PrimeField64> {
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    // ZISK_TRACE_PHASE1, cached at construction: keeps the per-row `update` off
+    // any atomic/OnceLock load when tracing is off
+    traced: bool,
     // Persistent trace buffer slot. Pre-allocated in `new`; taken in `calculate_witness`
     // and refilled by `ProofCtx::free_instance_traces` via the reclaim registry.
     trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
@@ -60,6 +64,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air<F> {
             table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
             shared_tables,
+            traced: phase1_trace::COMPILED && phase1_trace::enabled(),
             trace_buffer,
         }))
     }
@@ -79,6 +84,22 @@ impl<F: PrimeField64> U8Air<F> {
         out.extend(values.iter().map(|&v| Self::get_global_row(v)));
     }
 
+    /// The contended atomic increment itself, shared by the plain and the traced loop below
+    #[inline(always)]
+    fn bump(&self, value: u8, multiplicity: u64) {
+        // Convert value to usize for bitwise operations
+        let value = value as usize;
+
+        // Identify to which sub-range the value belongs
+        let range_idx = value >> self.shift;
+
+        // Get the row index
+        let row_idx = value & self.mask;
+
+        // Update the multiplicity (col-major flat layout)
+        self.multiplicities[range_idx * self.num_rows + row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
     /// Core update function: Updates multiplicities for value/multiplicity pairs
     #[inline]
     fn update(&self, iter: impl Iterator<Item = (u8, u64)>) {
@@ -86,23 +107,37 @@ impl<F: PrimeField64> U8Air<F> {
             return;
         }
 
+        if phase1_trace::COMPILED && self.traced {
+            return self.update_traced(iter);
+        }
+
         for (value, multiplicity) in iter {
             if multiplicity == 0 {
                 continue;
             }
-
-            // Convert value to usize for bitwise operations
-            let value = value as usize;
-
-            // Identify to which sub-range the value belongs
-            let range_idx = value >> self.shift;
-
-            // Get the row index
-            let row_idx = value & self.mask;
-
-            // Update the multiplicity (col-major flat layout)
-            self.multiplicities[range_idx * self.num_rows + row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+            self.bump(value, multiplicity);
         }
+    }
+
+    /// See `VirtualTableAir::update_traced`
+    #[cold]
+    fn update_traced(&self, iter: impl Iterator<Item = (u8, u64)>) {
+        // Reached once per table row by the single-row callers, so how this call is timed is
+        // decided from its size: see phase1_trace::mul_begin
+        let timing = phase1_trace::mul_begin(iter.size_hint().0);
+        let mut rows = 0u64;
+        let mut updates = 0u64;
+
+        for (value, multiplicity) in iter {
+            rows += 1;
+            if multiplicity == 0 {
+                continue;
+            }
+            updates += 1;
+            self.bump(value, multiplicity);
+        }
+
+        phase1_trace::mul_end(timing, rows, updates);
     }
 
     /// Update a single value with a multiplicity
@@ -155,9 +190,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for U8Air<F> {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
+        let zeroing_started = phase1_trace::enabled().then(std::time::Instant::now);
         self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
+        if let Some(started) = zeroing_started {
+            phase1_trace::mul_stats().record_zeroing(self.multiplicities.len() as u64, started.elapsed());
+        }
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())
     }

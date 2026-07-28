@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use fields::PrimeField64;
 
 use witness::WitnessComponent;
+use proofman_common::phase1_trace;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, ProofmanError, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
@@ -34,6 +35,9 @@ pub struct VirtualTableAir<F: PrimeField64> {
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    // ZISK_TRACE_PHASE1, cached at construction: keeps the per-row `update` off
+    // any atomic/OnceLock load when tracing is off
+    traced: bool,
     // Persistent trace buffer slot. Pre-allocated in `StdVirtualTable::new`; taken in
     // `calculate_witness` and refilled by `ProofCtx::free_instance_traces`.
     trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
@@ -128,6 +132,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
                 shared_tables,
+                traced: phase1_trace::COMPILED && phase1_trace::enabled(),
                 trace_buffer,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
@@ -202,30 +207,64 @@ impl<F: PrimeField64> VirtualTableAir<F> {
         }
     }
 
+    /// The contended atomic increment itself, shared by the plain and the traced loop below so
+    /// there is only ever one copy of it
+    #[inline(always)]
+    fn bump(&self, table_offset: u64, row: u64, multiplicity: u64) {
+        // Get the offset
+        let offset = table_offset + row;
+
+        // Map it to the appropriate multiplicity
+        let sub_table_idx = offset >> self.shift;
+
+        // Get the row index
+        let row_idx = offset & self.mask;
+
+        // Update the multiplicity (col-major flat layout)
+        self.multiplicities[sub_table_idx as usize * self.num_rows + row_idx as usize]
+            .fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
     /// Core update function: Updates multiplicities for row/multiplicity pairs
     fn update(&self, table_offset: u64, iter: impl Iterator<Item = (u64, u64)>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
 
+        // Off by default; when on, the loop below is left untouched and the traced twin runs
+        // instead, so nothing is added to this hot path in a normal build
+        if phase1_trace::COMPILED && self.traced {
+            return self.update_traced(table_offset, iter);
+        }
+
         for (row, multiplicity) in iter {
             if multiplicity == 0 {
                 continue;
             }
-
-            // Get the offset
-            let offset = table_offset + row;
-
-            // Map it to the appropriate multiplicity
-            let sub_table_idx = offset >> self.shift;
-
-            // Get the row index
-            let row_idx = offset & self.mask;
-
-            // Update the multiplicity (col-major flat layout)
-            self.multiplicities[sub_table_idx as usize * self.num_rows + row_idx as usize]
-                .fetch_add(multiplicity, Ordering::Relaxed);
+            self.bump(table_offset, row, multiplicity);
         }
+    }
+
+    /// `update` plus the accounting that says how much of phase 1 goes into contended
+    /// `fetch_add`s, and whether the calling thread sat on a P-core or an E-core
+    #[cold]
+    fn update_traced(&self, table_offset: u64, iter: impl Iterator<Item = (u64, u64)>) {
+        // Reached once per table row by the single-row callers, so how this call is timed is
+        // decided from its size: see phase1_trace::mul_begin
+        let timing = phase1_trace::mul_begin(iter.size_hint().0);
+        let mut rows = 0u64;
+        let mut updates = 0u64;
+
+        for (row, multiplicity) in iter {
+            rows += 1;
+            if multiplicity == 0 {
+                continue;
+            }
+            updates += 1;
+            self.bump(table_offset, row, multiplicity);
+        }
+
+        phase1_trace::mul_end(timing, rows, updates);
     }
 
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
@@ -268,9 +307,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
         }
 
         self.calculated.store(false, Ordering::Relaxed);
+        let zeroing_started = phase1_trace::enabled().then(std::time::Instant::now);
         self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
+        if let Some(started) = zeroing_started {
+            phase1_trace::mul_stats().record_zeroing(self.multiplicities.len() as u64, started.elapsed());
+        }
 
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())

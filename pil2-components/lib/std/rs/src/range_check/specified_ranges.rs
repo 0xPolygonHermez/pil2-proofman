@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use fields::PrimeField64;
 
 use witness::WitnessComponent;
+use proofman_common::phase1_trace;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
@@ -31,6 +32,9 @@ pub struct SpecifiedRanges<F: PrimeField64> {
     calculated: AtomicBool,
     ranges: Vec<SpecifiedRange>,
     shared_tables: bool,
+    // ZISK_TRACE_PHASE1, cached at construction: keeps the per-row `update` off
+    // any atomic/OnceLock load when tracing is off
+    traced: bool,
     // Persistent trace buffer slot. Pre-allocated in `new`; taken in `calculate_witness`
     // and refilled by `ProofCtx::free_instance_traces` via the reclaim registry.
     trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
@@ -118,6 +122,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges<F> {
             calculated: AtomicBool::new(false),
             ranges,
             shared_tables,
+            traced: phase1_trace::COMPILED && phase1_trace::enabled(),
             trace_buffer,
         }))
     }
@@ -138,6 +143,25 @@ impl<F: PrimeField64> SpecifiedRanges<F> {
         out.extend(values.iter().map(|&v| Self::get_global_row(range_min, v)));
     }
 
+    /// The contended atomic increment itself, shared by the plain and the traced loop below
+    #[inline(always)]
+    fn bump(&self, table_offset: usize, range_min: i64, value: i64, multiplicity: u64) {
+        // Get the value offset
+        let val_offset = (value - range_min) as usize;
+
+        // Get the overall offset
+        let offset = table_offset + val_offset;
+
+        // Get the multiplicity index
+        let mul_idx = offset >> self.shift;
+
+        // Get the row index
+        let row_idx = offset & self.mask;
+
+        // Update the multiplicity (col-major flat layout)
+        self.multiplicities[mul_idx * self.num_rows + row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
     /// Core update function: Updates multiplicities for value/multiplicity pairs
     #[inline]
     fn update(&self, table_offset: usize, range_min: i64, iter: impl Iterator<Item = (i64, u64)>) {
@@ -145,26 +169,37 @@ impl<F: PrimeField64> SpecifiedRanges<F> {
             return;
         }
 
+        if phase1_trace::COMPILED && self.traced {
+            return self.update_traced(table_offset, range_min, iter);
+        }
+
         for (value, multiplicity) in iter {
             if multiplicity == 0 {
                 continue;
             }
-
-            // Get the value offset
-            let val_offset = (value - range_min) as usize;
-
-            // Get the overall offset
-            let offset = table_offset + val_offset;
-
-            // Get the multiplicity index
-            let mul_idx = offset >> self.shift;
-
-            // Get the row index
-            let row_idx = offset & self.mask;
-
-            // Update the multiplicity (col-major flat layout)
-            self.multiplicities[mul_idx * self.num_rows + row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+            self.bump(table_offset, range_min, value, multiplicity);
         }
+    }
+
+    /// See `VirtualTableAir::update_traced`
+    #[cold]
+    fn update_traced(&self, table_offset: usize, range_min: i64, iter: impl Iterator<Item = (i64, u64)>) {
+        // Reached once per table row by the single-row callers, so how this call is timed is
+        // decided from its size: see phase1_trace::mul_begin
+        let timing = phase1_trace::mul_begin(iter.size_hint().0);
+        let mut rows = 0u64;
+        let mut updates = 0u64;
+
+        for (value, multiplicity) in iter {
+            rows += 1;
+            if multiplicity == 0 {
+                continue;
+            }
+            updates += 1;
+            self.bump(table_offset, range_min, value, multiplicity);
+        }
+
+        phase1_trace::mul_end(timing, rows, updates);
     }
 
     /// Update a single value with a multiplicity
@@ -222,9 +257,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for SpecifiedR
         }
 
         self.calculated.store(false, Ordering::Relaxed);
+        let zeroing_started = phase1_trace::enabled().then(std::time::Instant::now);
         self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
+        if let Some(started) = zeroing_started {
+            phase1_trace::mul_stats().record_zeroing(self.multiplicities.len() as u64, started.elapsed());
+        }
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())
     }

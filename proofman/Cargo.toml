@@ -41,3 +41,4 @@ mpi = { workspace = true, optional = true }
 default = ["mpi"]
 mpi = ["dep:mpi", "proofman-common/mpi"]
 diagnostic = ["proofman-macros/diagnostic", "proofman-common/diagnostic"]
+phase1-trace = ["proofman-common/phase1-trace", "pil-std-lib/phase1-trace"]

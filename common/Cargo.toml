@@ -42,3 +42,6 @@ default = ["mpi"]
 mpi = ["dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
 cpu-only = ["proofman-starks-lib-c/cpu-only"]
+# Compiles in the per-row multiplicity-table accounting of phase-1 tracing. Without it that
+# gate is a `const false` and folds away; ZISK_TRACE_PHASE1 still drives everything else.
+phase1-trace = []
