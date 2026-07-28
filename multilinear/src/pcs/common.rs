@@ -4,7 +4,6 @@
 use crate::encoding::domain_point;
 use crate::error::MlError;
 use crate::hypercube::Ext;
-use crate::merkle::MerkleTree;
 use fields::{Field, Goldilocks, Poseidon2_16};
 
 pub const MERKLE_ARITY: u64 = 4;
@@ -33,13 +32,6 @@ impl MlHashFamily {
             other => Err(MlError::Unsupported(format!("hash family '{other}'"))),
         }
     }
-}
-
-/// Build a Merkle tree over `leaves` with the given hash family, offloading to
-/// the C++ AVX/threaded backend.
-#[inline]
-pub(crate) fn build_merkle(leaves: &[Vec<Goldilocks>], arity: u64, hash: MlHashFamily) -> MerkleTree {
-    MerkleTree::from_ffi(leaves, arity, hash)
 }
 
 /// Verify a Merkle path against `root` for the selected hash family.

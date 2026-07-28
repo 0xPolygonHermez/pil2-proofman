@@ -110,6 +110,29 @@ pub(crate) fn for_each_chunk_mut<T>(items: &mut [T], f: impl Fn(usize, &mut [T])
     f(0, items);
 }
 
+/// Like [`for_each_chunk_mut`] but with chunk boundaries aligned to a
+/// multiple of `align` elements (for row-major matrices: `align` = row width).
+#[cfg(feature = "parallel")]
+pub(crate) fn for_each_chunk_aligned_mut<T: Send>(
+    items: &mut [T],
+    align: usize,
+    f: impl Fn(usize, &mut [T]) + Sync + Send,
+) {
+    debug_assert!(align >= 1 && items.len().is_multiple_of(align));
+    if items.len() < SEQ_THRESHOLD {
+        f(0, items);
+    } else {
+        let raw = items.len().div_ceil(rayon::current_num_threads() * 4).max(1024);
+        let chunk = raw.div_ceil(align) * align;
+        items.par_chunks_mut(chunk).enumerate().for_each(|(c, ch)| f(c * chunk, ch));
+    }
+}
+#[cfg(not(feature = "parallel"))]
+pub(crate) fn for_each_chunk_aligned_mut<T>(items: &mut [T], align: usize, f: impl Fn(usize, &mut [T])) {
+    debug_assert!(align >= 1 && items.len().is_multiple_of(align));
+    f(0, items);
+}
+
 /// Element-wise `f(&mut a[i], &mut b[i])` over two equal-length slices,
 /// chunked in parallel when large.
 #[cfg(feature = "parallel")]

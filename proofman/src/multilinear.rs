@@ -176,20 +176,19 @@ impl<F: PrimeField64> MlSetupCache<F> {
     }
 }
 
-/// Split a row-major trace buffer into base-field columns.
-pub fn trace_to_columns<F: PrimeField64>(trace: &[F], num_rows: usize, n_cols: usize) -> Vec<Vec<Goldilocks>> {
+/// Split a row-major trace buffer into base-field columns (columns transpose
+/// in parallel).
+pub fn trace_to_columns<F: PrimeField64 + Sync>(trace: &[F], num_rows: usize, n_cols: usize) -> Vec<Vec<Goldilocks>> {
+    use rayon::prelude::*;
     assert!(
         trace.len() >= num_rows * n_cols,
         "trace buffer too small: {} < {num_rows} rows x {n_cols} cols",
         trace.len()
     );
-    let mut cols = vec![Vec::with_capacity(num_rows); n_cols];
-    for row in 0..num_rows {
-        for (c, col) in cols.iter_mut().enumerate() {
-            col.push(Goldilocks::new(trace[row * n_cols + c].as_canonical_u64()));
-        }
-    }
-    cols
+    (0..n_cols)
+        .into_par_iter()
+        .map(|c| (0..num_rows).map(|row| Goldilocks::new(trace[row * n_cols + c].as_canonical_u64())).collect())
+        .collect()
 }
 
 /// Load the raw (CPU) `.const` file: headerless little-endian u64s, row-major.

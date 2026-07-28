@@ -69,8 +69,6 @@ impl MerkleTree {
     pub fn from_ffi(leaves: &[Vec<Goldilocks>], arity: u64, hash: crate::pcs::MlHashFamily) -> Self {
         use fields::PrimeField64;
         assert!(!leaves.is_empty());
-        debug_assert_eq!(arity, 4, "C++ GL merkletree uses sponge width 16 == arity 4");
-        let num_rows = leaves.len() as u64;
         let width = leaves[0].len();
         assert!(leaves.iter().all(|l| l.len() == width), "leaves must have uniform width");
 
@@ -79,6 +77,16 @@ impl MerkleTree {
         for leaf in leaves {
             input.extend(leaf.iter().map(|v| v.as_canonical_u64()));
         }
+        Self::from_flat_u64(&input, width, arity, hash)
+    }
+
+    /// [`from_ffi`](Self::from_ffi) over a flat row-major leaf buffer that is
+    /// already canonical `u64` (e.g. straight from the C++ NTT) — the C++
+    /// kernel hashes it with zero intermediate copies.
+    pub fn from_flat_u64(input: &[u64], width: usize, arity: u64, hash: crate::pcs::MlHashFamily) -> Self {
+        assert!(width > 0 && !input.is_empty() && input.len().is_multiple_of(width));
+        debug_assert_eq!(arity, 4, "C++ GL merkletree uses sponge width 16 == arity 4");
+        let num_rows = (input.len() / width) as u64;
 
         // Full node buffer (all levels including per-level padding).
         let num_nodes = tree_num_nodes(num_rows, arity);
@@ -91,17 +99,17 @@ impl MerkleTree {
 
         // Slice the flat buffer into per-level (unpadded) digests — the layout
         // `path`/`root` expect. Mirrors `fields::partial_merkle_tree`'s walk.
-        let flat: Vec<Goldilocks> = nodes.into_iter().map(Goldilocks::new).collect();
         let cells = |n: u64| (n * DIGEST_CELLS as u64) as usize;
+        let digests = |range: core::ops::Range<usize>| nodes[range].iter().map(|&v| Goldilocks::new(v)).collect();
         let mut levels: Vec<Vec<Goldilocks>> = Vec::new();
         let mut pending = num_rows;
         let mut start = 0usize;
-        levels.push(flat[start..start + cells(pending)].to_vec());
+        levels.push(digests(start..start + cells(pending)));
         while pending > 1 {
             let extra = (arity - (pending % arity)) % arity;
             let next_n = pending.div_ceil(arity);
             start += cells(pending + extra);
-            levels.push(flat[start..start + cells(next_n)].to_vec());
+            levels.push(digests(start..start + cells(next_n)));
             pending = next_n;
         }
 

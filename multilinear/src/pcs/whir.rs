@@ -38,7 +38,7 @@
 
 use fields::Goldilocks;
 
-use crate::encoding::{domain_point, encode_column_ext, encode_columns};
+use crate::encoding::{domain_point, encode_column_ext, encode_columns_rows};
 use crate::eq::{eq_eval, eq_evals, pow_eval};
 use crate::error::MlError;
 use crate::hypercube::{mle_eval, Ext};
@@ -47,7 +47,7 @@ use crate::pcs::MlPcs;
 use crate::sumcheck::{verifier_sumcheck_round, ProductOracle, SumcheckOracle};
 use crate::transcript::MlTranscript;
 
-use super::common::{build_merkle, fold_pair, verify_mt_leaf, MlParams, MERKLE_ARITY};
+use super::common::{fold_pair, verify_mt_leaf, MlParams, MERKLE_ARITY};
 
 /// WHIR-specific parameters.
 #[derive(Debug, Clone, Copy)]
@@ -100,11 +100,16 @@ pub fn fold_schedule(params: &MlParams, n: usize) -> Result<Vec<usize>, MlError>
     Ok(schedule)
 }
 
-/// A WHIR commitment to a stage matrix: the RS codewords over the round-0 domain
-/// plus a Merkle tree over `2^k`-packed fold-fiber leaves.
+/// A WHIR commitment to a stage matrix: a Merkle tree over `2^k`-packed
+/// fold-fiber leaves, kept as one **flat row-major canonical-`u64` buffer**
+/// (leaf `j` = `leaves[j·leaf_width..(j+1)·leaf_width]` =
+/// `[cw_c[j + t·half] per column c, for t in 0..2^k]`, `half` = leaf count).
+/// The flat layout comes straight from the C++ NTT output with a single
+/// parallel gather — no per-column codeword copy exists on the hot path.
 pub struct WhirCommitment {
-    pub codewords: Vec<Vec<Goldilocks>>,
-    pub leaves: Vec<Vec<Goldilocks>>,
+    pub leaves: Vec<u64>,
+    pub leaf_width: usize,
+    pub n_cols: usize,
     pub tree: MerkleTree,
     pub n0_bits: usize,
     pub folding_factor: usize,
@@ -116,13 +121,39 @@ impl WhirCommitment {
     }
 
     pub fn n_cols(&self) -> usize {
-        self.codewords.len()
+        self.n_cols
     }
 
-    /// Serialize as a `.mlconst.bin` proving-key artifact. Stores only the
-    /// codewords + tree + shape; the `2^k`-packed leaves are rebuilt on load.
+    /// Leaf `j` as field elements (a query opening: `2^k` positions × columns).
+    pub fn leaf(&self, j: u64) -> Vec<Goldilocks> {
+        let s = j as usize * self.leaf_width;
+        self.leaves[s..s + self.leaf_width].iter().map(|&v| Goldilocks::new(v)).collect()
+    }
+
+    /// Per-column codewords, reassembled from the packed leaves — setup-time
+    /// only (`.mlconst.bin` serialization keeps the column-major format).
+    fn codewords(&self) -> Vec<Vec<Goldilocks>> {
+        let half = self.leaves.len() / self.leaf_width;
+        let n0 = 1usize << self.n0_bits;
+        debug_assert_eq!(half << self.folding_factor, n0);
+        (0..self.n_cols)
+            .map(|c| {
+                (0..n0)
+                    .map(|i| {
+                        let (t, j) = (i / half, i % half);
+                        Goldilocks::new(self.leaves[j * self.leaf_width + t * self.n_cols + c])
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Serialize as a `.mlconst.bin` proving-key artifact. Stores the
+    /// column-major codewords + tree + shape (the historical format); the
+    /// `2^k`-packed leaves are rebuilt on load.
     pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
-        let payload = (self.n0_bits, self.folding_factor, &self.codewords, &self.tree);
+        let codewords = self.codewords();
+        let payload = (self.n0_bits, self.folding_factor, &codewords, &self.tree);
         let bytes = bincode::serde::encode_to_vec(payload, bincode::config::standard())
             .map_err(|e| MlError::Io(format!("serializing WHIR commitment: {e}")))?;
         std::fs::write(path, bytes).map_err(|e| MlError::Io(format!("writing {}: {e}", path.display())))
@@ -134,28 +165,62 @@ impl WhirCommitment {
         let ((n0_bits, folding_factor, codewords, tree), _): ((usize, usize, Vec<Vec<Goldilocks>>, MerkleTree), _) =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
                 .map_err(|e| MlError::Io(format!("decoding WHIR commitment: {e}")))?;
-        let leaves = pack_base_kary(&codewords, folding_factor);
-        Ok(WhirCommitment { codewords, leaves, tree, n0_bits, folding_factor })
+        let n_cols = codewords.len();
+        let (leaves, leaf_width) = pack_base_kary_flat(&codewords, folding_factor);
+        Ok(WhirCommitment { leaves, leaf_width, n_cols, tree, n0_bits, folding_factor })
     }
 }
 
-/// Pack base-field RS codewords into `2^k`-ary Merkle leaves:
-/// `leaves[j] = [cw[j + t·half] for t in 0..2^k, per column]`, `half = N/2^k`.
-fn pack_base_kary(codewords: &[Vec<Goldilocks>], k: usize) -> Vec<Vec<Goldilocks>> {
+/// Pack column-major base-field codewords into flat `2^k`-ary Merkle leaves
+/// (see [`WhirCommitment`] for the layout). Load-path / test helper — the
+/// commit hot path gathers the same layout from the row-major NTT output.
+fn pack_base_kary_flat(codewords: &[Vec<Goldilocks>], k: usize) -> (Vec<u64>, usize) {
+    use fields::PrimeField64;
+    let ncols = codewords.len();
     let group = 1usize << k;
     let half = codewords[0].len() / group;
-    crate::par::map_range(half, |j| {
-        let mut leaf = Vec::with_capacity(group * codewords.len());
-        for t in 0..group {
-            for cw in codewords {
-                leaf.push(cw[j + t * half]);
+    let width = group * ncols;
+    let mut out = vec![0u64; codewords[0].len() * ncols];
+    crate::par::for_each_chunk_aligned_mut(&mut out, width, |start, chunk| {
+        let first = start / width;
+        for (local, leaf) in chunk.chunks_exact_mut(width).enumerate() {
+            let j = first + local;
+            for t in 0..group {
+                for (c, cw) in codewords.iter().enumerate() {
+                    leaf[t * ncols + c] = cw[j + t * half].as_canonical_u64();
+                }
             }
         }
-        leaf
-    })
+    });
+    (out, width)
 }
 
-/// Pack an extension codeword into `2^k`-ary Merkle leaves (3 Goldilocks per value).
+/// Pack an extension codeword into flat `2^k`-ary Merkle leaves (3 canonical
+/// `u64` per value): leaf `j` = `[vals[j + t·half].limbs for t in 0..2^k]`.
+fn pack_ext_kary_flat(vals: &[Ext], k: usize) -> (Vec<u64>, usize) {
+    use fields::PrimeField64;
+    let group = 1usize << k;
+    let half = vals.len() / group;
+    let width = group * 3;
+    let mut out = vec![0u64; vals.len() * 3];
+    crate::par::for_each_chunk_aligned_mut(&mut out, width, |start, chunk| {
+        let first = start / width;
+        for (local, leaf) in chunk.chunks_exact_mut(width).enumerate() {
+            let j = first + local;
+            for t in 0..group {
+                let v = &vals[j + t * half];
+                for (d, limb) in v.value.iter().enumerate() {
+                    leaf[3 * t + d] = limb.as_canonical_u64();
+                }
+            }
+        }
+    });
+    (out, width)
+}
+
+/// Pack an extension codeword into per-leaf vectors (test reference for
+/// [`pack_ext_kary_flat`]).
+#[cfg(test)]
 fn pack_ext_kary(vals: &[Ext], k: usize) -> Vec<Vec<Goldilocks>> {
     let group = 1usize << k;
     let half = vals.len() / group;
@@ -168,8 +233,22 @@ fn pack_ext_kary(vals: &[Ext], k: usize) -> Vec<Vec<Goldilocks>> {
     })
 }
 
+#[cfg(test)]
 fn unpack_ext_kary(leaf: &[Goldilocks], k: usize) -> Vec<Ext> {
     (0..(1usize << k)).map(|t| Ext::from_array(&leaf[3 * t..3 * t + 3])).collect()
+}
+
+/// Extension fold fiber from a flat leaf slice (canonical `u64` limbs).
+fn unpack_ext_flat(leaf: &[u64], k: usize) -> Vec<Ext> {
+    (0..(1usize << k))
+        .map(|t| {
+            Ext::from_array(&[
+                Goldilocks::new(leaf[3 * t]),
+                Goldilocks::new(leaf[3 * t + 1]),
+                Goldilocks::new(leaf[3 * t + 2]),
+            ])
+        })
+        .collect()
 }
 
 /// Fold an extension codeword by `2^k` in one block (used by tests).
@@ -268,20 +347,37 @@ impl MlPcs for Whir {
         assert!(!columns.is_empty());
         let n = columns[0].len();
         assert!(columns.iter().all(|c| c.len() == n));
+        let ncols = columns.len();
 
         // The commitment's leaf packing serves block 1's queries: k = k₁.
         let k = fold_schedule(params, n.trailing_zeros() as usize).expect("invalid fold schedule")[0];
-        let codewords: Vec<Vec<Goldilocks>> = encode_columns(columns, params.log_blowup);
-        let n0 = codewords[0].len();
+        // Row-major extended matrix straight from the batched C++ NTT.
+        let rows = encode_columns_rows(columns, params.log_blowup);
+        let n0 = rows.len() / ncols;
         assert!(
             n0 >= (1 << k) && n0.is_multiple_of(1 << k),
             "round-0 domain 2^{} too small for folding factor {k}",
             n0.trailing_zeros()
         );
 
-        let leaves = pack_base_kary(&codewords, k);
-        let tree = build_merkle(&leaves, MERKLE_ARITY, params.hash);
-        WhirCommitment { codewords, leaves, tree, n0_bits: n0.trailing_zeros() as usize, folding_factor: k }
+        // Gather the 2^k fold fibers into flat leaves: leaf `j`, segment `t`
+        // is row `j + t·half` — a contiguous `ncols` strip of the NTT output.
+        let group = 1usize << k;
+        let half = n0 / group;
+        let leaf_width = group * ncols;
+        let mut leaves = vec![0u64; n0 * ncols];
+        crate::par::for_each_chunk_aligned_mut(&mut leaves, leaf_width, |start, chunk| {
+            let first = start / leaf_width;
+            for (local, leaf) in chunk.chunks_exact_mut(leaf_width).enumerate() {
+                let j = first + local;
+                for t in 0..group {
+                    let row = (j + t * half) * ncols;
+                    leaf[t * ncols..(t + 1) * ncols].copy_from_slice(&rows[row..row + ncols]);
+                }
+            }
+        });
+        let tree = MerkleTree::from_flat_u64(&leaves, leaf_width, MERKLE_ARITY, params.hash);
+        WhirCommitment { leaves, leaf_width, n_cols: ncols, tree, n0_bits: n0.trailing_zeros() as usize, folding_factor: k }
     }
 
     fn commitment_root(commitment: &WhirCommitment) -> [Goldilocks; 4] {
@@ -317,14 +413,15 @@ impl MlPcs for Whir {
         let mut final_poly: Vec<Ext> = Vec::new();
 
         // The oracle `f_{i-1}` that block `i` queries: `None` = the stage matrices
-        // (`Φ`, block 1); `Some((leaves, tree, dom_bits))` = a re-encoded ext oracle.
-        let mut prev_fold: Option<(Vec<Vec<Goldilocks>>, MerkleTree, usize)> = None;
+        // (`Φ`, block 1); `Some((flat leaves, leaf width, tree, dom_bits))` = a
+        // re-encoded ext oracle.
+        let mut prev_fold: Option<(Vec<u64>, usize, MerkleTree, usize)> = None;
 
         // Variables folded so far: Σ_{j<i} k_j entering block i.
         let mut folded = 0usize;
         for i in 1..=n_rounds {
             let k = ks[i - 1];
-            let prev_dom_bits = if i == 1 { n0_bits } else { prev_fold.as_ref().unwrap().2 };
+            let prev_dom_bits = if i == 1 { n0_bits } else { prev_fold.as_ref().unwrap().3 };
 
             // (1) k degree-2 sumcheck rounds.
             let mut round_polys = Vec::with_capacity(k);
@@ -344,7 +441,7 @@ impl MlPcs for Whir {
             // (2) STIR re-encode + commit f_i (blocks < R), or send final_poly (last).
             let mut ood_answer = None;
             let mut fold_root = None;
-            let mut committed: Option<(Vec<Vec<Goldilocks>>, MerkleTree, usize)> = None;
+            let mut committed: Option<(Vec<u64>, usize, MerkleTree, usize)> = None;
             let mut ood_eq: Option<Vec<Ext>> = None;
             if i < n_rounds {
                 let blowup_i = params.log_blowup + (folded - i);
@@ -352,8 +449,8 @@ impl MlPcs for Whir {
                 let dom_bits_i = n0_bits - i;
                 debug_assert_eq!(cw_i.len(), 1usize << dom_bits_i);
                 // The new tree's leaf packing serves block i+1's queries: k_{i+1}.
-                let leaves_i = pack_ext_kary(&cw_i, ks[i]);
-                let tree_i = build_merkle(&leaves_i, MERKLE_ARITY, params.hash);
+                let (leaves_i, width_i) = pack_ext_kary_flat(&cw_i, ks[i]);
+                let tree_i = MerkleTree::from_flat_u64(&leaves_i, width_i, MERKLE_ARITY, params.hash);
                 transcript.absorb_root(&tree_i.root());
                 fold_root = Some(tree_i.root());
                 // OOD on g_i: evaluate as `Σ_b a(b)·eq(b, z)` so the eq table is
@@ -372,7 +469,7 @@ impl MlPcs for Whir {
                 transcript.absorb_ext(&y0);
                 ood_answer = Some(y0);
                 ood_eq = Some(eqz);
-                committed = Some((leaves_i, tree_i, dom_bits_i));
+                committed = Some((leaves_i, width_i, tree_i, dom_bits_i));
             } else {
                 final_poly = oracle.a.clone();
                 transcript.absorb_exts(&final_poly);
@@ -391,14 +488,14 @@ impl MlPcs for Whir {
                 match &prev_fold {
                     None => {
                         // Block 1: open each stage matrix.
-                        let leaves: Vec<Vec<Goldilocks>> =
-                            matrices.iter().map(|m| m.leaves[p as usize].clone()).collect();
+                        let leaves: Vec<Vec<Goldilocks>> = matrices.iter().map(|m| m.leaf(p)).collect();
                         let paths: Vec<Vec<Vec<Goldilocks>>> = matrices.iter().map(|m| m.tree.path(p)).collect();
                         query_openings.push(WhirOracleOpening::Stage { leaves, paths });
                     }
-                    Some((leaves, tree, _)) => {
+                    Some((leaves, width, tree, _)) => {
+                        let s = p as usize * width;
                         query_openings.push(WhirOracleOpening::Fold {
-                            leaf: unpack_ext_kary(&leaves[p as usize], k),
+                            leaf: unpack_ext_flat(&leaves[s..s + width], k),
                             path: tree.path(p),
                         });
                     }
@@ -901,14 +998,16 @@ mod tests {
         let mut s = setup(n, &stage_cols, &p);
         // Corrupt the committed codeword and rebuild the tree/leaves + root so paths
         // still verify but the folded values disagree with the honest claim.
-        let n0 = s.mats[0].codewords[0].len();
+        let mut codewords = s.mats[0].codewords();
+        let n0 = codewords[0].len();
         for j in 0..n0 / 2 {
-            s.mats[0].codewords[0][j] += Goldilocks::ONE;
+            codewords[0][j] += Goldilocks::ONE;
         }
         let k = s.mats[0].folding_factor;
-        let leaves = pack_base_kary(&s.mats[0].codewords, k);
-        s.mats[0].tree = build_merkle(&leaves, MERKLE_ARITY, p.hash);
+        let (leaves, leaf_width) = pack_base_kary_flat(&codewords, k);
+        s.mats[0].tree = MerkleTree::from_flat_u64(&leaves, leaf_width, MERKLE_ARITY, p.hash);
         s.mats[0].leaves = leaves;
+        s.mats[0].leaf_width = leaf_width;
         s.roots[0] = s.mats[0].root();
         // Note: `s.phi_table`/claims are the *honest* ones (from the clean columns),
         // so the corrupted commitment must be rejected by the query fold check.

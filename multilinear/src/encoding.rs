@@ -15,12 +15,12 @@ pub fn encode_column(col: &[Goldilocks], log_blowup: usize) -> Vec<Goldilocks> {
     coset_lde(col, n_bits, log_blowup, 1)
 }
 
-/// RS-encode a whole matrix of equal-length base-field columns, returning one
-/// codeword per column, via a single batched call into the C++ AVX/threaded NTT.
-///
-/// Interleaves the columns row-major into canonical `u64`, runs the C++ coset
-/// NTT once (`num_cols` batched), then de-interleaves the extended codewords.
-pub fn encode_columns(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<Vec<Goldilocks>> {
+/// RS-encode a whole matrix of equal-length base-field columns via a single
+/// batched call into the C++ AVX/threaded NTT, returning the **row-major**
+/// extended codeword matrix (`out[i·ncols + c]` = codeword `c` at position
+/// `i`) as canonical `u64` — the layout the NTT produces and the Merkle leaf
+/// packing consumes, so no transpose happens on the hot path.
+pub fn encode_columns_rows(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<u64> {
     use fields::PrimeField64;
     assert!(!columns.is_empty());
     let n = columns[0].len();
@@ -28,16 +28,32 @@ pub fn encode_columns(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<Vec<G
     let ncols = columns.len();
     let n_ext = n << log_blowup;
 
+    // Parallel interleave into the NTT's row-major canonical layout.
     let mut input = vec![0u64; n * ncols];
-    for (c, col) in columns.iter().enumerate() {
-        for (j, &v) in col.iter().enumerate() {
-            input[j * ncols + c] = v.as_canonical_u64();
+    crate::par::for_each_chunk_aligned_mut(&mut input, ncols, |start, chunk| {
+        let first_row = start / ncols;
+        for (local, row) in chunk.chunks_exact_mut(ncols).enumerate() {
+            let j = first_row + local;
+            for (c, col) in columns.iter().enumerate() {
+                row[c] = col[j].as_canonical_u64();
+            }
         }
-    }
+    });
     let mut out = vec![0u64; n_ext * ncols];
     proofman_starks_lib_c::ntt_coset_lde_c(out.as_mut_ptr(), input.as_ptr(), ncols as u64, n as u64, n_ext as u64);
+    out
+}
 
-    (0..ncols).map(|c| (0..n_ext).map(|i| Goldilocks::new(out[i * ncols + c])).collect()).collect()
+/// RS-encode a whole matrix of equal-length base-field columns, returning one
+/// codeword per column (column-major). Wrapper over [`encode_columns_rows`]
+/// for callers that need per-column codewords (the extension re-encode and
+/// the `.mlconst.bin` load path); the commit hot path uses the row-major form
+/// directly.
+pub fn encode_columns(columns: &[&[Goldilocks]], log_blowup: usize) -> Vec<Vec<Goldilocks>> {
+    let n_ext = columns[0].len() << log_blowup;
+    let ncols = columns.len();
+    let out = encode_columns_rows(columns, log_blowup);
+    crate::par::map_range(ncols, |c| (0..n_ext).map(|i| Goldilocks::new(out[i * ncols + c])).collect())
 }
 
 /// RS-encode an **extension-field** column (given as `Ext` hypercube values /
