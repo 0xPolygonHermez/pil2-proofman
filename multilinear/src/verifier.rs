@@ -343,6 +343,8 @@ mod tests {
             log_final_poly_len: 2,
             grinding_bits: 0,
             univariate_skip_bits: 0,
+            target_security_bits: 128,
+            n_ood_samples: 1,
             hash: crate::MlHashFamily::Poseidon2,
         }
     }

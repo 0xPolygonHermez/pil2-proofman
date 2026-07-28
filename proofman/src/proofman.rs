@@ -4060,8 +4060,10 @@ where
             let ss = &setup.stark_info.stark_struct;
             let si = &setup.stark_info;
             let log_blowup = ss.n_bits_ext - ss.n_bits;
-            // FRI folding factors between consecutive domain sizes.
-            let factors: Vec<u64> = ss.steps.windows(2).map(|w| 1u64 << (w[0].n_bits - w[1].n_bits)).collect();
+            // FRI folding factors (in bits) between consecutive domain sizes.
+            let fold_bits: Vec<u64> = ss.steps.windows(2).map(|w| w[0].n_bits - w[1].n_bits).collect();
+            let folding_factors =
+                format!("[{}]", fold_bits.iter().map(|k| format!("2^{k}")).collect::<Vec<_>>().join(", "));
             let early_stop = ss.steps.last().map(|s| s.n_bits).unwrap_or(0);
             // FRI batch = every committed base column opened at the query points
             // (all witness stages + fixed columns).
@@ -4069,28 +4071,30 @@ where
                 + si.n_constants;
             tracing::debug!(
                 "Parameters [{}]:\n\
-                 \x20   Proof System:            (Univariate) DEEP-ALI\n\
+                 \x20   Proof System:            Univariate\n\
                  \x20   PCS:                     FRI\n\
-                 \x20   Hash:                    {}\n\
-                 \x20   Number of queries:       {}\n\
-                 \x20   Grinding query phase:    {} bits\n\
-                 \x20   Field:                   Goldilocks³\n\
-                 \x20   Trace length (H):        2^{}\n\
-                 \x20   Code Domain (H·ρ⁻¹):     2^{}\n\
-                 \x20   Rate (ρ):                2^-{log_blowup}\n\
-                 \x20   FRI rounds:              {}\n\
-                 \x20   FRI folding factors:     {:?}\n\
-                 \x20   FRI early stop degree:   2^{early_stop}\n\
-                 \x20   Batch size:              {batch}\n\
-                 \x20   Number of constraints:   {}",
+                 \x20   Hash Function:           {}\n\
+                 \x20   Field:                   Goldilocks\n\
+                 \x20   Field Extension:         Cubic\n\
+                 \x20   Target Security Bits:    {}\n\
+                 \x20   Trace Length:            2^{}\n\
+                 \x20   Rate:                    1/2^{log_blowup}\n\
+                 \x20   Domain Size:             2^{}\n\
+                 \x20   Batch Size:              {batch}\n\
+                 \x20   Rounds:                  {}\n\
+                 \x20   Folding Factors:         {folding_factors}\n\
+                 \x20   Early Stop Degree:       2^{early_stop}\n\
+                 \x20   N Queries:               {}\n\
+                 \x20   Grinding Bits Query:     {}\n\
+                 \x20   Number of Constraints:   {}",
                 pctx.global_info.airs[airgroup_id][air_id].name,
                 pctx.global_info.hash,
-                ss.n_queries,
-                ss.pow_bits,
+                ss.target_security_bits,
                 ss.n_bits,
                 ss.n_bits_ext,
-                factors.len(),
-                factors,
+                fold_bits.len(),
+                ss.n_queries,
+                ss.pow_bits,
                 get_n_constraints_c(p_setup),
             );
         }

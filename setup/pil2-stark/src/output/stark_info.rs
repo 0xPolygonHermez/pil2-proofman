@@ -43,6 +43,7 @@ pub fn build_starkinfo_output(
         verification_hash_type: stark_struct.verification_hash_type.clone(),
         steps,
         n_queries: fri.security_params().n_queries as usize,
+        target_security_bits: fri.config().target_security_bits as usize,
     };
 
     let boundaries: Vec<BoundaryOutput> = {

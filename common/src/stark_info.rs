@@ -53,6 +53,12 @@ pub struct StarkStruct {
     pub steps: Vec<StepStruct>,
     #[serde(rename = "powBits")]
     pub pow_bits: u64,
+    #[serde(rename = "targetSecurityBits", default = "default_target_security_bits")]
+    pub target_security_bits: u64,
+}
+
+fn default_target_security_bits() -> u64 {
+    128
 }
 
 #[allow(dead_code)]

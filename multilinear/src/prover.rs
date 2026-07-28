@@ -104,6 +104,13 @@ pub fn prove_air(
     {
         return Err(MlError::Malformed("custom commit shape mismatch".into()));
     }
+    if ir.params.n_ood_samples != 1 {
+        // The setup's security accounting must match what the protocol draws.
+        return Err(MlError::Unsupported(format!(
+            "params pin {} OOD samples per block; the protocol implements exactly 1",
+            ir.params.n_ood_samples
+        )));
+    }
 
     let airgroup_id = ir.airgroup_id;
     let air_id = ir.air_id;
@@ -114,36 +121,42 @@ pub fn prove_air(
     let params = &ir.params;
 
     {
-        let num_folds = params.num_folds(m.max(1));
         let every_row = ir.constraints.iter().filter(|c| c.boundary == crate::ir::Boundary::EveryRow).count();
         let bus_terms = ir.bus.as_ref().map(|b| b.terms.len() + b.scalar_terms.len()).unwrap_or(0);
+        let ks = crate::pcs::fold_schedule(params, m.max(1)).unwrap_or_default();
+        let n_rounds = ks.len();
+        let queries = crate::pcs::block_query_counts(params, n_rounds).unwrap_or_default();
+        let folding_factors = format!("[{}]", ks.iter().map(|k| format!("2^{k}")).collect::<Vec<_>>().join(", "));
         tracing::debug!(
             "Parameters [{}]:\n\
-             \x20   Proof System:            (Multilinear) SumCheck + LogUp-GKR\n\
+             \x20   Proof System:            Multilinear\n\
              \x20   PCS:                     WHIR\n\
-             \x20   Hash:                    {}\n\
-             \x20   Number of queries:       {}\n\
-             \x20   Grinding query phase:    {} bits\n\
-             \x20   Field:                   Goldilocks³\n\
-             \x20   Trace length (H):        2^{m}\n\
-             \x20   Code Domain (H·ρ⁻¹):     2^{}\n\
-             \x20   Rate (ρ):                2^-{}\n\
-             \x20   FRI rounds:              {num_folds}\n\
-             \x20   FRI folding factors:     {:?}\n\
-             \x20   FRI early stop degree:   2^{}\n\
-             \x20   Batch size:              {}\n\
-             \x20   Number of constraints:   {every_row}\n\
-             \x20   Number of bus arguments: {bus_terms}\n\
-             \x20   Univariate skip (bits):  {}",
+             \x20   Hash Function:           {}\n\
+             \x20   Field:                   Goldilocks\n\
+             \x20   Field Extension:         Cubic\n\
+             \x20   Target Security Bits:    {}\n\
+             \x20   Trace Length:            2^{m}\n\
+             \x20   Rate:                    1/2^{}\n\
+             \x20   Domain Size:             2^{}\n\
+             \x20   Batch Size:              {}\n\
+             \x20   Rounds:                  {n_rounds}\n\
+             \x20   Folding Factors:         {folding_factors}\n\
+             \x20   Early Stop Degree:       2^{}\n\
+             \x20   N Queries:               {queries:?}\n\
+             \x20   N OOD Samples:           {:?}\n\
+             \x20   Grinding Bits Queries:   {:?}\n\
+             \x20   Number of Constraints:   {every_row}\n\
+             \x20   Number of Bus Arguments: {bus_terms}\n\
+             \x20   Univariate Skip Bits:  {}",
             ir.name,
             params.hash.id(),
-            params.n_queries,
-            params.grinding_bits,
-            m + params.log_blowup,
+            params.target_security_bits,
             params.log_blowup,
-            vec![2usize; num_folds],
-            params.log_final_poly_len,
+            m + params.log_blowup,
             ir.total_cols(),
+            params.log_final_poly_len,
+            vec![params.n_ood_samples; n_rounds.saturating_sub(1)],
+            vec![params.grinding_bits; n_rounds],
             params.univariate_skip_bits,
         );
     }

@@ -397,14 +397,8 @@ pub(crate) fn ml_params(
     total_cols: usize,
     hash: proofman_multilinear::MlHashFamily,
 ) -> proofman_multilinear::MlParams {
-    // The PCS is WHIR. Its opening folds `k` variables per block (matching the
-    // prover's `WhirParams::default().folding_factor`) and the domain halves
-    // once per block, so the rate improves by `2^{k-1}` each block. Each block
-    // grinds `pow_bits` and draws its own per-block query count, sized from
-    // the WHIR query-phase soundness bound at that block's rate (soundcalc's
-    // `pcs/whir.py`, ported to `security.rs`).
-    const WHIR_FOLDING_FACTOR: usize = 4;
     const TARGET_SECURITY_BITS: usize = 128;
+    const N_OOD_SAMPLES: usize = 1;
 
     // Rate: reuse the AIR's configured blowup (at least 1).
     let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
@@ -416,67 +410,64 @@ pub(crate) fn ml_params(
         let total: usize = step_bits.iter().sum();
         (step_bits, n_bits - total)
     } else {
-        // No univariate steps to mirror: uniform fallback, folding down to a
-        // small in-clear final polynomial.
-        let log_final_poly_len = 4usize.min(n_bits.saturating_sub(1));
-        let k = WHIR_FOLDING_FACTOR.min(n_bits.max(1));
-        (vec![k; whir_num_fold_rounds(n_bits, k, log_final_poly_len)], log_final_poly_len)
+        panic!(
+            "stark_struct.steps must be non-empty and sum to ≤ n_bits ({} > {})",
+            step_bits.iter().sum::<usize>(),
+            n_bits
+        )
     };
     let n_rounds = fold_bits.len();
 
-    // Per-block query counts. Block `i` queries the oracle at rate
-    // `2^-mu_i` with `mu_i = log_blowup + Σ_{j<i}(k_j − 1)` — the domain
-    // halves once per block while the message shrinks by `2^{k_j}` (this
-    // mirrors the prover's `blowup_i = log_blowup + (folded − i)` in
-    // `multilinear/src/pcs/whir.rs`). The rate improves every block, so
-    // later blocks need far fewer queries for the same soundness.
+    // Solve for the security parameters.
     let field_size = security::goldilocks_safe_extension_field_size();
     let regime = security::regimes::DecodingRegime::Jbr;
-    // Grinding: mirror the univariate pow bits; each WHIR block grinds the
-    // same budget before drawing its query indices.
     let grinding_bits = stark_struct.pow_bits;
-    let mut mu = log_blowup as u32;
-    let mut query_schedule = Vec::with_capacity(n_rounds);
-    for &k in &fold_bits {
-        let per_query = security::pcs::whir_security_per_query(field_size, mu, regime);
-        let t = ((TARGET_SECURITY_BITS as f64 - grinding_bits as f64) / per_query).ceil().max(1.0) as usize;
-        query_schedule.push(t);
-        mu += k as u32 - 1;
-    }
+    let whir = security::pcs::Whir::new(security::pcs::WhirConfig {
+        field_size,
+        trace_length: 1u32 << n_bits,
+        rate: 1.0 / (1u64 << log_blowup) as f64,
+        log_folding_factors: fold_bits.iter().map(|&b| b as u32).collect(),
+        batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
+        batching: security::pcs::Batching::Powers,
+        constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
+        max_grinding_bits_query: grinding_bits as u64,
+        use_max_grinding_bits_query: true,
+        tree_arity: 4,
+        hash_size_bits: 256,
+        base_field_bits: 64,
+        target_security_bits: TARGET_SECURITY_BITS as u64,
+        regime,
+    });
+    let solved = whir.security_params();
+
+    // Pin only what the runtime implements, and fail/warn on the rest so the
+    // deduced security level cannot silently rely on unimplemented phases.
+    let query_schedule: Vec<usize> = solved.num_queries.iter().map(|&t| t as usize).collect();
+    assert_eq!(query_schedule.len(), n_rounds, "solver iteration count must match the fold schedule");
     // Uniform fallback / display value: block 0 is the query-hungriest.
     let n_queries = query_schedule[0];
-
-    // Sanity-check the full WHIR PCS soundness at this query count (all
-    // components: batching / folding / OOD / shift / final). The query-
-    // independent components (list-decoding) depend only on the rate; if they
-    // fall below target the fix is a lower rate (higher blowup), not more
-    // queries — surface that here rather than silently under-securing.
-    let whir = security::pcs::Whir::with_security_params(
-        security::pcs::WhirConfig {
-            field_size,
-            trace_length: 1u32 << n_bits,
-            rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - n_bits)) as f64,
-            log_folding_factors: fold_bits.iter().map(|&b| b as u32).collect(),
-            batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
-            batching: security::pcs::Batching::Powers,
-            constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
-            max_grinding_bits_query: 0,
-            use_max_grinding_bits_query: false,
-            tree_arity: 4,
-            hash_size_bits: 256,
-            base_field_bits: 64,
-            target_security_bits: TARGET_SECURITY_BITS as u64,
-            regime,
-        },
-        security::pcs::WhirSecurityParams {
-            num_queries: query_schedule.iter().map(|&t| t as u64).collect(),
-            num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
-            grinding_bits_batching: 0,
-            grinding_bits_folding: fold_bits.iter().map(|&b| vec![0u32; b]).collect(),
-            grinding_bits_queries: vec![grinding_bits as u32; n_rounds],
-            grinding_bits_ood: vec![0u32; n_rounds.saturating_sub(1)],
-        },
+    assert!(
+        solved.num_ood_samples.iter().all(|&w| w == N_OOD_SAMPLES as u64),
+        "solver requires {:?} OOD samples but the runtime draws exactly {N_OOD_SAMPLES} per block",
+        solved.num_ood_samples,
     );
+    assert!(
+        solved.grinding_bits_queries.iter().all(|&g| g == grinding_bits as u32),
+        "solver requires query grinding {:?} but the runtime grinds {grinding_bits} bits per block",
+        solved.grinding_bits_queries,
+    );
+    if solved.grinding_bits_batching != 0
+        || solved.grinding_bits_folding.iter().flatten().any(|&g| g != 0)
+        || solved.grinding_bits_ood.iter().any(|&g| g != 0)
+    {
+        tracing::warn!(
+            "WHIR solver prescribes batching/folding/OOD grinding (batching {}, folding {:?}, ood {:?}) that the \
+             runtime does not implement; the achieved security is below the solver's accounting. n_bits={n_bits}.",
+            solved.grinding_bits_batching,
+            solved.grinding_bits_folding,
+            solved.grinding_bits_ood,
+        );
+    }
     let achieved = security::pcs::Pcs::total_security_bits(&whir) as i64;
     if achieved < TARGET_SECURITY_BITS as i64 {
         tracing::warn!(
@@ -494,21 +485,10 @@ pub(crate) fn ml_params(
         log_final_poly_len,
         grinding_bits,
         univariate_skip_bits,
+        target_security_bits: TARGET_SECURITY_BITS,
+        n_ood_samples: N_OOD_SAMPLES,
         hash,
     }
-}
-
-/// Number of WHIR fold blocks `R` — mirrors `proofman_multilinear`'s
-/// `num_fold_rounds` so `ml_params` sizes queries for the same schedule the
-/// prover uses (fold `k` vars per block until ≤ `log_final_poly_len` remain).
-fn whir_num_fold_rounds(n: usize, k: usize, log_final_poly_len: usize) -> usize {
-    assert!(k >= 1 && k <= n, "folding factor {k} out of range for {n} vars");
-    let target = n.saturating_sub(log_final_poly_len);
-    let mut r = target.div_ceil(k).max(1);
-    while r * k > n {
-        r -= 1;
-    }
-    r.max(1)
 }
 
 /// Build the multilinear prover's fixed-column commitment `<AIR>.mlconst.bin`

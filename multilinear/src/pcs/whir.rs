@@ -231,7 +231,7 @@ pub struct WhirBlock {
 
 /// Per-block query counts: the schedule pinned in `params`, or uniform
 /// `n_queries` when no schedule is set.
-fn block_query_counts(params: &MlParams, n_rounds: usize) -> Result<Vec<usize>, MlError> {
+pub(crate) fn block_query_counts(params: &MlParams, n_rounds: usize) -> Result<Vec<usize>, MlError> {
     if params.whir_query_schedule.is_empty() {
         Ok(vec![params.n_queries; n_rounds])
     } else if params.whir_query_schedule.len() != n_rounds {
@@ -678,6 +678,8 @@ mod tests {
             log_final_poly_len: log_final,
             grinding_bits: 0,
             univariate_skip_bits: 0,
+            target_security_bits: 128,
+            n_ood_samples: 1,
             hash: MlHashFamily::Poseidon2,
         }
     }

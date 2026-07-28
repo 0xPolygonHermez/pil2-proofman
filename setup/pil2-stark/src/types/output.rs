@@ -55,6 +55,12 @@ pub struct StarkStructOutput {
     pub verification_hash_type: String,
     pub steps: Vec<StepOutput>,
     pub n_queries: usize,
+    #[serde(default = "default_target_security_bits")]
+    pub target_security_bits: usize,
+}
+
+fn default_target_security_bits() -> usize {
+    128
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

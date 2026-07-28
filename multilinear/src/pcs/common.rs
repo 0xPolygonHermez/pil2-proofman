@@ -92,6 +92,13 @@ pub struct MlParams {
     /// rounds into one univariate round over a size-`2^ℓ` subgroup.
     /// `0` disables the skip. Must be `≤ n_bits`.
     pub univariate_skip_bits: usize,
+    /// The security target (bits) the setup derived this parameter set for —
+    /// informational (the schedule above is what enforces it).
+    pub target_security_bits: usize,
+    /// Out-of-domain samples per non-final WHIR block. The runtime protocol
+    /// implements exactly 1; pinned here so the setup's security accounting
+    /// and the prover cannot silently disagree.
+    pub n_ood_samples: usize,
     /// Hash family for the transcript, Merkle trees and grinding.
     pub hash: MlHashFamily,
 }
@@ -107,6 +114,8 @@ impl Default for MlParams {
             log_final_poly_len: 4,
             grinding_bits: 0,
             univariate_skip_bits: 0,
+            target_security_bits: 128,
+            n_ood_samples: 1,
             hash: MlHashFamily::Poseidon2,
         }
     }
