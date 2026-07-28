@@ -171,7 +171,7 @@ static void LDE_GPU_BENCH(benchmark::State &state)
 
 // Time one backend over `iters` launches with CUDA events; returns total ms. Lays `d_src` out in the
 // backend's own storage layout first. Caller owns the buffers.
-static double timeLdeBackend(bool native, NTTGoldilocksGPU &gpu_ntt,
+static double timeLdeBackend(int native, NTTGoldilocksGPU &gpu_ntt,
                              gl64_t *d_flat, gl64_t *d_src, gl64_t *d_dst,
                              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                              cudaStream_t stream, int iters)
@@ -184,8 +184,9 @@ static double timeLdeBackend(bool native, NTTGoldilocksGPU &gpu_ntt,
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     auto run = [&]() {
-        if (native) gpu_ntt.ldeNativeTiled(d_dst, d_src, nBits, nBitsExt, nCols, stream);
-        else        gpu_ntt.ldeSppark(d_dst, d_src, nBits, nBitsExt, nCols, stream);
+        if (native == 1)      gpu_ntt.ldeTiled(d_dst, d_src, nBits, nBitsExt, nCols, stream);
+        else if (native == 2) gpu_ntt.ldeColMajor(d_dst, d_src, nBits, nBitsExt, nCols, stream);
+        else                  gpu_ntt.ldeSppark(d_dst, d_src, nBits, nBitsExt, nCols, stream);
     };
     run();  // warm up
     CHECKCUDAERR(cudaStreamSynchronize(stream));

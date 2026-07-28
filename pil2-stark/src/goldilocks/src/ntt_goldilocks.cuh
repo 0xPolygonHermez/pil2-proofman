@@ -135,10 +135,10 @@ public:
         checkKernelDims();
     }
 
-    // LDE dispatches on resolveLayout(nBits, nCols): ColMajor -> ldeSppark (flat), ColMajorTiled ->
-    // ldeNativeTiled. The two backends are also exposed directly so tests/benches can run a given size
-    // through either path and compare (they produce identical ColMajor-storage output for ColMajor input
-    // / ColMajorTiled-storage output for ColMajorTiled input -- see test_ntt_gpu equivalence test).
+    // LDE runs the in-house ColMajor engine (ldeColMajor); PROOFMAN_NTT_SPPARK=1 selects the
+    // sppark-backed reference instead. The backends are also exposed directly so tests/benches can
+    // run a given size through any path and compare (identical logical output on each backend's own
+    // storage layout -- see test_ntt_gpu equivalence test).
     void LDE(gl64_t* d_dst, uint64_t offset_dst,
              gl64_t* d_src, uint64_t offset_src,
              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
@@ -149,11 +149,15 @@ public:
     void ldeSppark(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                    cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr);
     // native tiled backend: ColMajorTiled in/out, pure kernels (graph-capturable). d_src_/d_dst_ disjoint.
-    void ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+    void ldeTiled(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                         cudaStream_t stream);
 
-    // computeQ dispatches on resolveLayout(nBits, nCols): ColMajor -> computeQSppark, else
-    // computeQNativeTiled. Backends exposed directly for tests/benches.
+    // In-house ColMajor LDE
+    void ldeColMajor(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+                 cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr);
+
+    // computeQ runs the in-house ColMajor engine (computeQColMajor); PROOFMAN_NTT_SPPARK=1 selects
+    // the sppark-backed reference instead. Backends exposed directly for tests/benches.
     void computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                   Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                   uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
@@ -163,16 +167,19 @@ public:
                         Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                         uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream);
     // native tiled backend (ColMajorTiled): pure kernels (graph-capturable).
-    void computeQNativeTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+    void computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                              Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                              uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream);
+    void computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                          Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                          uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream);
 
     void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
-    // INTT dispatches on resolveLayout: ColMajor -> inttSppark, ColMajorTiled -> inttNativeTiled.
     void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
     void inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);       // ColMajor
-    void inttNativeTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled
+    void inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled
+    void inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
     static void initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
 

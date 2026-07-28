@@ -67,11 +67,8 @@
 
 // --- Forward declarations ---
 
-__global__ void nttDitButterflyFlat8Kernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max);
 __global__ void nttDitButterflyKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize);
 __global__ void nttDifButterflyPackedKernel( gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t blowupFactor);
-__global__ void nttDitButterflyFlatKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize);
-__global__ void bitReversalFlatKernel(gl64_t *data, uint32_t log_domain_size, uint32_t nCols);
 __global__ void evalTwiddleSmallKernel(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void evalTwiddleFirstKernel(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void evalTwiddleSecondKernel(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
@@ -80,7 +77,6 @@ __global__ void evalCosetShiftSmallKernel(gl64_t *r, uint32_t log_domain_size);
 __global__ void evalCosetShiftFirstKernel(gl64_t *r, uint32_t log_domain_size);
 __global__ void evalCosetShiftSecondKernel(gl64_t *r, uint32_t log_domain_size);
 void evalCosetShifts(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream);
-void nttFlat( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void nttDit( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void nttDifLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void nttDitLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
@@ -423,6 +419,7 @@ __global__ void nttDitButterflyKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_
     }
 
     // Store tile back, with INTT scaling on final stage
+    // Store tile back, with INTT scaling on final stage
     if(inverse && (base_step + n_loc_steps) >= log_domain_size_in){
         gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size_in]);
         if(extend) inv_factor = inv_factor * d_r[row];
@@ -624,6 +621,911 @@ void nttDitLde( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl6
 }
 
 // =============================================================================
+// ColMajor NTT engine
+//
+// Mixed-radix NTT/LDE on column-major storage. The butterflies are the classic
+// register-resident mixed-radix design: the working set lives in registers,
+// stages 1-5 exchange partners with warp shuffles, wider stages go through
+// shared memory, and per-thread positioning roots come from windowed tables,
+// derived incrementally. Kernels are column-batched (gridDim.y) and the driver
+// chunks columns to L2 so a transform's steps stay cache-resident between
+// launches.
+// =============================================================================
+
+#define NTT_MAX_LG   28                    // max supported log2 domain (mirrors table depth)
+#define NTT_LG_WIN   7                     // log2 of a partial-twiddle window
+#define NTT_WIN_SIZE 128                   // 1 << NTT_LG_WIN
+#define NTT_WIN_NUM  4                     // ceil(NTT_MAX_LG / NTT_LG_WIN)
+#define NTT_PO_WINS  (NTT_MAX_LG - 15)    // z-step-root windows (one per sub-transform size)
+#define NTT_RADIX_BLOB (512 + 256 + 128 + 64 + 32)
+#define NTT_MAX_DEVS 64
+
+__device__ __forceinline__ uint32_t nttBitRev(uint32_t i, uint32_t nbits)
+{
+    return __brev(i) >> (32 - nbits);
+}
+
+// Positioning roots for a butterfly pair: product of window-table entries so a
+// single table of NTT_WIN_NUM x NTT_WIN_SIZE covers exponents < 2^NTT_MAX_LG.
+__device__ __forceinline__ void nttIntermediateRoots(gl64_t &root0, gl64_t &root1,
+                                                     uint32_t idx0, uint32_t idx1,
+                                                     const gl64_t (*roots)[NTT_WIN_SIZE])
+{
+    int win = (NTT_WIN_NUM - 1) * NTT_LG_WIN;
+    int off = (NTT_WIN_NUM - 1);
+    uint32_t idxo = idx0 | idx1;
+    uint32_t mask = ((uint32_t)1 << win) - 1;
+
+    root0 = roots[off][idx0 >> win];
+    root1 = roots[off][idx1 >> win];
+    #pragma unroll 1
+    while (off-- && (idxo & mask)) {
+        win -= NTT_LG_WIN;
+        mask >>= NTT_LG_WIN;
+        root0 *= roots[off][(idx0 >> win) % NTT_WIN_SIZE];
+        root1 *= roots[off][(idx1 >> win) % NTT_WIN_SIZE];
+    }
+}
+
+// Coalesced z_count-element load/store: consecutive lanes read consecutive
+// addresses, then a warp-level shared transpose hands each lane its strided set.
+template<int z_count>
+__device__ __forceinline__ void nttCoalescedLoad(gl64_t r[z_count], const gl64_t *inout,
+                                                 uint32_t idx, uint32_t stage)
+{
+    const uint32_t x = threadIdx.x & (z_count - 1);
+    idx &= ~((uint32_t)(z_count - 1) << stage);
+    idx += x;
+    #pragma unroll
+    for (int z = 0; z < z_count; z++, idx += (uint32_t)1 << stage)
+        r[z] = inout[idx];
+}
+
+template<int z_count>
+__device__ __forceinline__ void nttTranspose(gl64_t r[z_count])
+{
+    extern __shared__ int nttTransposeShm[];
+    gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(nttTransposeShm);
+
+    const uint32_t x = threadIdx.x & (z_count - 1);
+    const uint32_t y = threadIdx.x & ~(z_count - 1);
+
+    #pragma unroll
+    for (int z = 0; z < z_count; z++)
+        xchg[y + z][x] = r[z];
+    __syncwarp();
+    #pragma unroll
+    for (int z = 0; z < z_count; z++)
+        r[z] = xchg[y + x][z];
+}
+
+template<int z_count>
+__device__ __forceinline__ void nttCoalescedStore(gl64_t *inout, uint32_t idx,
+                                                  const gl64_t r[z_count], uint32_t stage)
+{
+    const uint32_t x = threadIdx.x & (z_count - 1);
+    idx &= ~((uint32_t)(z_count - 1) << stage);
+    idx += x;
+    #pragma unroll
+    for (int z = 0; z < z_count; z++, idx += (uint32_t)1 << stage)
+        inout[idx] = r[z];
+}
+
+// DIT (decimation-in-time) step: bit-reversed input order, natural output -- the
+// forward NTT of the LDE. gridDim.y selects the column (stride col_stride elements).
+template<int z_count, bool coalesced = false>
+__launch_bounds__(768, 1) __global__
+void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
+                          const uint32_t stage, const uint32_t iterations,
+                          gl64_t *d_base, const size_t col_stride,
+                          const gl64_t (*d_partialRoots)[NTT_WIN_SIZE],
+                          const gl64_t (*d_zStepRoots)[1024],
+                          const gl64_t *d_radix6, const gl64_t *d_radixX,
+                          bool is_intt, const uint64_t domain_inv)
+{
+    gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
+    extern __shared__ int nttShm[];
+    gl64_t *shared_exchange = reinterpret_cast<gl64_t *>(nttShm);
+
+    uint32_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+
+    const uint32_t diff_mask = (1 << (iterations - 1)) - 1;
+    const uint32_t inp_mask = ((uint32_t)1 << stage) - 1;
+    const uint32_t out_mask = ((uint32_t)1 << (stage + iterations - 1)) - 1;
+
+    const uint32_t tiz = (tid & ~diff_mask) * z_count + (tid & diff_mask);
+    const uint32_t thread_ntt_pos = (tiz >> (iterations - 1)) & inp_mask;
+
+    uint32_t idx0 = (tiz & ~out_mask) | ((tiz << stage) & out_mask);
+    idx0 = idx0 * 2 + thread_ntt_pos;
+    uint32_t idx1 = idx0 + ((uint32_t)1 << stage);
+
+    gl64_t r[2][z_count];
+
+    if (coalesced) {
+        nttCoalescedLoad<z_count>(r[0], d_inout, idx0, stage + 1);
+        nttCoalescedLoad<z_count>(r[1], d_inout, idx1, stage + 1);
+        nttTranspose<z_count>(r[0]);
+        __syncwarp();
+        nttTranspose<z_count>(r[1]);
+    } else {
+        uint32_t z_shift = inp_mask == 0 ? iterations : 0;
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            r[0][z] = d_inout[idx0 + (z << z_shift)];
+            r[1][z] = d_inout[idx1 + (z << z_shift)];
+        }
+    }
+
+    if (stage != 0) {
+        uint32_t thread_ntt_idx = (tiz & diff_mask) * 2;
+        uint32_t nbits = NTT_MAX_LG - stage;
+        uint32_t idx0r = nttBitRev(thread_ntt_idx, nbits);
+        uint32_t root_idx0 = idx0r * thread_ntt_pos;
+        uint32_t root_idx1 = root_idx0 + (thread_ntt_pos << (nbits - 1));
+
+        gl64_t first_root, second_root;
+        nttIntermediateRoots(first_root, second_root, root_idx0, root_idx1, d_partialRoots);
+        r[0][0] = r[0][0] * first_root;
+        r[1][0] = r[1][0] * second_root;
+
+        if (z_count > 1) {
+            uint32_t off = nbits >= 10 ? (nbits - 10) : 0;
+            uint32_t scale = nbits >= 10 ? 0 : (10 - nbits);
+
+            thread_ntt_idx <<= scale;
+            gl64_t first_root_z = d_zStepRoots[off][thread_ntt_idx];
+            gl64_t second_root_z = d_zStepRoots[off][thread_ntt_idx + (1 << scale)];
+
+            #pragma unroll
+            for (int z = 1; z < z_count; z++) {
+                first_root *= first_root_z;
+                second_root *= second_root_z;
+                r[0][z] = r[0][z] * first_root;
+                r[1][z] = r[1][z] * second_root;
+            }
+        }
+    }
+
+    #pragma unroll
+    for (int z = 0; z < z_count; z++) {
+        gl64_t t = r[1][z];
+        r[1][z] = r[0][z] - t;
+        r[0][z] = r[0][z] + t;
+    }
+
+    #pragma unroll 1
+    for (uint32_t s = 1; s < min(iterations, 6u); s++) {
+        uint32_t laneMask = 1 << (s - 1);
+        uint32_t thrdMask = (1 << s) - 1;
+        uint32_t rank = threadIdx.x & thrdMask;
+        bool pos = rank < laneMask;
+
+        gl64_t root = d_radix6[rank << (6 - (s + 1))];
+
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = gl64_t::csel(r[1][z], r[0][z], pos);
+            t.shfl_bfly(laneMask);
+            r[0][z] = gl64_t::csel(r[0][z], t, pos);
+            r[1][z] = gl64_t::csel(t, r[1][z], pos);
+
+            t = root * r[1][z];
+            r[1][z] = r[0][z] - t;
+            r[0][z] = r[0][z] + t;
+        }
+    }
+
+    #pragma unroll 1
+    for (uint32_t s = 6; s < iterations; s++) {
+        uint32_t laneMask = 1 << (s - 1);
+        uint32_t thrdMask = (1 << s) - 1;
+        uint32_t rank = threadIdx.x & thrdMask;
+        bool pos = rank < laneMask;
+
+        gl64_t root = d_radixX[rank << (radix - (s + 1))];
+
+        gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(shared_exchange);
+
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = gl64_t::csel(r[1][z], r[0][z], pos);
+            xchg[threadIdx.x][z] = t;
+        }
+        __syncthreads();
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = xchg[threadIdx.x ^ laneMask][z];
+            r[0][z] = gl64_t::csel(r[0][z], t, pos);
+            r[1][z] = gl64_t::csel(t, r[1][z], pos);
+
+            t = root * r[1][z];
+            r[1][z] = r[0][z] - t;
+            r[0][z] = t + r[0][z];
+        }
+        __syncthreads();
+    }
+
+    if (is_intt && (stage + iterations) == lg_domain_size) {
+        gl64_t dsi = gl64_t(domain_inv);
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            r[0][z] = r[0][z] * dsi;
+            r[1][z] = r[1][z] * dsi;
+        }
+    }
+
+    // rotate "iterations" bits of the output indices
+    uint32_t mask = (uint32_t)((1 << iterations) - 1) << stage;
+    uint32_t rotw = idx0 & mask;
+    rotw = (rotw >> 1) | (rotw << (iterations - 1));
+    idx0 = (idx0 & ~mask) | (rotw & mask);
+    rotw = idx1 & mask;
+    rotw = (rotw >> 1) | (rotw << (iterations - 1));
+    idx1 = (idx1 & ~mask) | (rotw & mask);
+
+    if (coalesced) {
+        nttTranspose<z_count>(r[0]);
+        __syncwarp();
+        nttTranspose<z_count>(r[1]);
+        nttCoalescedStore<z_count>(d_inout, idx0, r[0], stage);
+        nttCoalescedStore<z_count>(d_inout, idx1, r[1], stage);
+    } else {
+        uint32_t z_shift = inp_mask == 0 ? iterations : 0;
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            d_inout[idx0 + (z << z_shift)] = r[0][z];
+            d_inout[idx1 + (z << z_shift)] = r[1][z];
+        }
+    }
+}
+
+// DIF (decimation-in-frequency) step: natural input order, bit-reversed output --
+// the iNTT of the LDE. gridDim.y selects the column.
+template<int z_count, bool coalesced = false>
+__launch_bounds__(768, 1) __global__
+void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
+                          const uint32_t stage, const uint32_t iterations,
+                          gl64_t *d_base, const size_t col_stride,
+                          const gl64_t (*d_partialRoots)[NTT_WIN_SIZE],
+                          const gl64_t (*d_zStepRoots)[1024],
+                          const gl64_t *d_radix6, const gl64_t *d_radixX,
+                          bool is_intt, const uint64_t domain_inv)
+{
+    gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
+    extern __shared__ int nttShm[];
+    gl64_t *shared_exchange = reinterpret_cast<gl64_t *>(nttShm);
+
+    uint32_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+
+    const uint32_t diff_mask = (1 << (iterations - 1)) - 1;
+    const uint32_t inp_mask = ((uint32_t)1 << (stage - 1)) - 1;
+    const uint32_t out_mask = ((uint32_t)1 << (stage - iterations)) - 1;
+
+    const uint32_t tiz = (tid & ~diff_mask) * z_count + (tid & diff_mask);
+
+    uint32_t idx0 = (tiz & ~inp_mask) * 2;
+    idx0 += (tiz << (stage - iterations)) & inp_mask;
+    idx0 += (tiz >> (iterations - 1)) & out_mask;
+    uint32_t idx1 = idx0 + ((uint32_t)1 << (stage - 1));
+
+    gl64_t r[2][z_count];
+
+    if (coalesced) {
+        nttCoalescedLoad<z_count>(r[0], d_inout, idx0, stage - iterations);
+        nttCoalescedLoad<z_count>(r[1], d_inout, idx1, stage - iterations);
+        nttTranspose<z_count>(r[0]);
+        __syncwarp();
+        nttTranspose<z_count>(r[1]);
+    } else {
+        uint32_t z_shift = out_mask == 0 ? iterations : 0;
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            r[0][z] = d_inout[idx0 + (z << z_shift)];
+            r[1][z] = d_inout[idx1 + (z << z_shift)];
+        }
+    }
+
+    #pragma unroll 1
+    for (uint32_t s = iterations; --s >= 6;) {
+        uint32_t laneMask = 1 << (s - 1);
+        uint32_t thrdMask = (1 << s) - 1;
+        uint32_t rank = threadIdx.x & thrdMask;
+        bool pos = rank < laneMask;
+
+        gl64_t root = d_radixX[rank << (radix - (s + 1))];
+
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = root * (r[0][z] - r[1][z]);
+            r[0][z] = r[0][z] + r[1][z];
+            r[1][z] = t;
+        }
+        __syncthreads();
+
+        gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(shared_exchange);
+
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = gl64_t::csel(r[1][z], r[0][z], pos);
+            xchg[threadIdx.x][z] = t;
+        }
+        __syncthreads();
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = xchg[threadIdx.x ^ laneMask][z];
+            r[0][z] = gl64_t::csel(r[0][z], t, pos);
+            r[1][z] = gl64_t::csel(t, r[1][z], pos);
+        }
+    }
+
+    #pragma unroll 1
+    for (uint32_t s = min(iterations, 6u); --s >= 1;) {
+        uint32_t laneMask = 1 << (s - 1);
+        uint32_t thrdMask = (1 << s) - 1;
+        uint32_t rank = threadIdx.x & thrdMask;
+        bool pos = rank < laneMask;
+
+        gl64_t root = d_radix6[rank << (6 - (s + 1))];
+
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = root * (r[0][z] - r[1][z]);
+            r[0][z] = r[0][z] + r[1][z];
+            r[1][z] = t;
+
+            t = gl64_t::csel(r[1][z], r[0][z], pos);
+            t.shfl_bfly(laneMask);
+            r[0][z] = gl64_t::csel(r[0][z], t, pos);
+            r[1][z] = gl64_t::csel(t, r[1][z], pos);
+        }
+    }
+
+    #pragma unroll
+    for (int z = 0; z < z_count; z++) {
+        gl64_t t = r[0][z] - r[1][z];
+        r[0][z] = r[0][z] + r[1][z];
+        r[1][z] = t;
+    }
+
+    if (stage - iterations != 0) {
+        uint32_t thread_ntt_pos = (tiz & inp_mask) >> (iterations - 1);
+        uint32_t thread_ntt_idx = (tiz & diff_mask) * 2;
+        uint32_t nbits = NTT_MAX_LG - (stage - iterations);
+        uint32_t idx0r = nttBitRev(thread_ntt_idx, nbits);
+        uint32_t root_idx0 = idx0r * thread_ntt_pos;
+        uint32_t root_idx1 = root_idx0 + (thread_ntt_pos << (nbits - 1));
+
+        gl64_t first_root, second_root;
+        nttIntermediateRoots(first_root, second_root, root_idx0, root_idx1, d_partialRoots);
+        r[0][0] = r[0][0] * first_root;
+        r[1][0] = r[1][0] * second_root;
+
+        if (z_count > 1) {
+            uint32_t off = nbits >= 10 ? (nbits - 10) : 0;
+            uint32_t scale = nbits >= 10 ? 0 : (10 - nbits);
+
+            thread_ntt_idx <<= scale;
+            gl64_t first_root_z = d_zStepRoots[off][thread_ntt_idx];
+            gl64_t second_root_z = d_zStepRoots[off][thread_ntt_idx + (1 << scale)];
+
+            #pragma unroll
+            for (int z = 1; z < z_count; z++) {
+                first_root *= first_root_z;
+                second_root *= second_root_z;
+                r[0][z] = r[0][z] * first_root;
+                r[1][z] = r[1][z] * second_root;
+            }
+        }
+    }
+
+    if (is_intt && stage == iterations) {
+        gl64_t dsi = gl64_t(domain_inv);
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            r[0][z] = r[0][z] * dsi;
+            r[1][z] = r[1][z] * dsi;
+        }
+    }
+
+    uint32_t mask = (uint32_t)((1 << iterations) - 1) << (stage - iterations);
+    uint32_t rotw = idx0 & mask;
+    rotw = (rotw << 1) | (rotw >> (iterations - 1));
+    idx0 = (idx0 & ~mask) | (rotw & mask);
+    rotw = idx1 & mask;
+    rotw = (rotw << 1) | (rotw >> (iterations - 1));
+    idx1 = (idx1 & ~mask) | (rotw & mask);
+
+    if (coalesced) {
+        nttTranspose<z_count>(r[0]);
+        __syncwarp();
+        nttTranspose<z_count>(r[1]);
+        nttCoalescedStore<z_count>(d_inout, idx0, r[0], stage - iterations + 1);
+        nttCoalescedStore<z_count>(d_inout, idx1, r[1], stage - iterations + 1);
+    } else {
+        uint32_t z_shift = out_mask == 0 ? iterations : 0;
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            d_inout[idx0 + (z << z_shift)] = r[0][z];
+            d_inout[idx1 + (z << z_shift)] = r[1][z];
+        }
+    }
+}
+
+// Coset spread: reads the iNTT result (bit-reversed order), multiplies by
+// gen^bit_rev(idx) from the windowed coset-power table, writes to out[idx<<blowup]
+// and zero-fills the blowup gaps (out = the destination column). in/out must be disjoint.
+__global__ void nttCosetSpreadKernel(gl64_t *out, const gl64_t *in,
+                                     const gl64_t (*cosetPows)[NTT_WIN_SIZE],
+                                     uint32_t lg_domain_size, uint32_t lg_blowup)
+{
+    uint32_t domain_size = 1u << lg_domain_size;
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= domain_size)
+        return;
+
+    uint32_t blowup = 1u << lg_blowup;
+    gl64_t r = in[idx];
+
+    uint32_t pow = nttBitRev(idx, lg_domain_size);
+    // coset root = gen^pow, assembled from the windowed powers
+    gl64_t root = cosetPows[0][pow % NTT_WIN_SIZE];
+    #pragma unroll
+    for (int o = 1; o < NTT_WIN_NUM; o++) {
+        uint32_t w = (pow >> (o * NTT_LG_WIN)) % NTT_WIN_SIZE;
+        if (w)
+            root *= cosetPows[o][w];
+    }
+    r = r * root;
+
+    size_t base = (size_t)idx << lg_blowup;
+    out[base] = r;
+    gl64_t zero = gl64_t(uint64_t(0));
+    for (uint32_t j = 1; j < blowup; j++)
+        out[base + j] = zero;
+}
+
+// Copy a chunk's source columns into the TAIL N elements of each destination
+// column (the iNTT then runs in place on the tails; src is never written).
+__global__ void nttCopyToDestinationTailsKernel(gl64_t *dst_base, const gl64_t *src_base,
+                                    uint32_t lg_n, size_t dst_stride)
+{
+    const size_t N = (size_t)1 << lg_n;
+    const gl64_t *src = src_base + (size_t)blockIdx.y * N;
+    gl64_t *dst = dst_base + (size_t)blockIdx.y * dst_stride + (dst_stride - N);
+    for (size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x; i < N;
+         i += (size_t)gridDim.x * blockDim.x)
+        dst[i] = src[i];
+}
+
+// In-place bit-reversal permutation of each column (gridDim.y selects the column).
+// Each (i, rev(i)) pair is swapped once, by its lower-indexed side. Combined with a
+// DIT run this forms the NN-order (natural in -> natural out) transform.
+__global__ void nttBitRevColMajorKernel(gl64_t *base, size_t col_stride, uint32_t lg)
+{
+    gl64_t *col = base + (size_t)blockIdx.y * col_stride;
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= (1u << lg))
+        return;
+    uint32_t j = nttBitRev(i, lg);
+    if (i < j) {
+        gl64_t t = col[i];
+        col[i] = col[j];
+        col[j] = t;
+    }
+}
+
+// Coset shift + zero-pad for computeQ: reads qDim columns of q coefficients (length NExt,
+// only the first N meaningful after the iNTT of a degree-<N polynomial) and writes
+// qDeg*qDim columns of cmQ:
+//   cmQ[p*qDim + k][row] = q[k][row + p*N] * shiftIn^p   for row < N
+//   cmQ[p*qDim + k][row] = 0                             for row >= N
+// shiftIn is a BASE-FIELD scalar, so the cubic-extension element scales component-wise.
+__global__ void nttCosetShiftQKernel(const gl64_t *q, gl64_t *cmQ, uint32_t N, uint32_t Next,
+                                     uint32_t qDeg, uint32_t qDim, uint64_t shiftIn)
+{
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= Next)
+        return;
+    gl64_t shift = gl64_t(shiftIn);
+    gl64_t s = gl64_t(uint64_t(1));
+    for (uint32_t p = 0; p < qDeg; p++) {
+        for (uint32_t k = 0; k < qDim; k++) {
+            uint32_t outcol = p * qDim + k;
+            gl64_t v = (row < N) ? q[(uint64_t)k * Next + (row + (uint64_t)p * N)] * s
+                                 : gl64_t(uint64_t(0));
+            cmQ[(uint64_t)outcol * Next + row] = v;
+        }
+        s = shift * s;
+    }
+}
+
+// ---- per-device twiddle tables (host-generated once, lazily) ----
+
+namespace {
+
+struct NttTables {
+    gl64_t *base = nullptr;      // one allocation: partialRoots | cosetPows | zStepRoots | radix blob
+    gl64_t *partialRoots;        // [NTT_WIN_NUM][NTT_WIN_SIZE] windowed powers of the master root
+    gl64_t *cosetPows;           // [NTT_WIN_NUM][NTT_WIN_SIZE] windowed powers of the coset generator
+    gl64_t *zStepRoots;          // [NTT_PO_WINS][1024] step roots between consecutive z-slots
+                                 // (slot z+1's positioning exponent = slot z's + a fixed delta;
+                                 //  one multiply by this root advances a slot -- see the
+                                 //  first_root *= first_root_z chains in the kernels)
+    gl64_t *radixTwiddles[5];    // per-radix stage twiddles, radix6..radix10: table r-6 holds
+                                 // the first 2^(r-1) powers of w_{2^r}; radixTwiddles[0] also
+                                 // serves the shuffle stages (1-5) of every launch
+};
+
+NttTables nttTbl[2][NTT_MAX_DEVS];   // [inverse][device]
+uint64_t    nttDomainSizeInv[NTT_MAX_LG + 1];    // host copy of domain-size inverses
+bool        nttDomainSizeInvReady = false;
+std::mutex  nttTablesMutex;
+
+uint64_t nttHostMul(uint64_t a, uint64_t b)
+{
+    return Goldilocks::toU64(Goldilocks::mul(Goldilocks::fromU64(a), Goldilocks::fromU64(b)));
+}
+
+uint64_t nttHostPow(uint64_t base, uint64_t e)
+{
+    uint64_t acc = 1;
+    while (e) {
+        if (e & 1) acc = nttHostMul(acc, base);
+        base = nttHostMul(base, base);
+        e >>= 1;
+    }
+    return acc;
+}
+
+// Build one direction's tables for the CURRENT device. Roots come from the
+// omegas[] / omegas_inv[] constants of this TU (single source of truth).
+void nttBuildTables(NttTables &t, bool inverse)
+{
+    const size_t partial_n = (size_t)NTT_WIN_NUM * NTT_WIN_SIZE;
+    const size_t plus_n = (size_t)NTT_PO_WINS * 1024;
+    const size_t total = 2 * partial_n + plus_n + NTT_RADIX_BLOB;
+
+    uint64_t om[NTT_MAX_LG + 1];
+    CHECKCUDAERR(cudaMemcpyFromSymbol(om, inverse ? omegas_inv : omegas, sizeof(om)));
+
+    std::vector<uint64_t> h(total);
+    uint64_t *hp = h.data();
+
+    // partial windows of the max-domain root: partial[o][k] = root^(k << (o*LG_WIN))
+    uint64_t root = om[NTT_MAX_LG];
+    for (int o = 0; o < NTT_WIN_NUM; o++)
+        for (uint64_t k = 0; k < NTT_WIN_SIZE; k++)
+            hp[o * NTT_WIN_SIZE + k] = nttHostPow(root, k << (o * NTT_LG_WIN));
+    hp += partial_n;
+
+    // coset-generator windows (SHIFT = 7 / its inverse), same window scheme
+    uint64_t gen = COSET_SHIFT;
+    if (inverse)
+        gen = nttHostPow(gen, 0xFFFFFFFF00000001ULL - 2);   // Fermat inverse
+    for (int o = 0; o < NTT_WIN_NUM; o++)
+        for (uint64_t k = 0; k < NTT_WIN_SIZE; k++)
+            hp[o * NTT_WIN_SIZE + k] = nttHostPow(gen, k << (o * NTT_LG_WIN));
+    hp += partial_n;
+
+    // z-step roots: zStepRoots[o][k] = root^(bit_rev(k,10) << o) -- the exponent DELTA
+    // between consecutive z-slots of one thread, per sub-transform size o
+    for (int o = 0; o < NTT_PO_WINS; o++)
+        for (uint32_t k = 0; k < 1024; k++) {
+            uint32_t kr = 0;
+            for (int b = 0; b < 10; b++) kr |= ((k >> b) & 1u) << (9 - b);
+            hp[o * 1024 + k] = nttHostPow(root, (uint64_t)kr << o);
+        }
+    hp += plus_n;
+
+    // radix twiddle blob: [radix10(512) | radix9(256) | radix8(128) | radix7(64) | radix6(32)]
+    size_t off = 0;
+    for (int rad = 10; rad >= 6; rad--) {
+        uint64_t w = om[rad];
+        size_t n = (size_t)1 << (rad - 1);
+        for (size_t k = 0; k < n; k++)
+            hp[off + k] = nttHostPow(w, k);
+        off += n;
+    }
+
+    CHECKCUDAERR(cudaMalloc(&t.base, total * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemcpy(t.base, h.data(), total * sizeof(gl64_t), cudaMemcpyHostToDevice));
+
+    t.partialRoots = t.base;
+    t.cosetPows = t.partialRoots + partial_n;
+    t.zStepRoots = t.cosetPows + partial_n;
+    gl64_t *radix = t.zStepRoots + plus_n;
+    t.radixTwiddles[4] = radix;              // radix10
+    t.radixTwiddles[3] = t.radixTwiddles[4] + 512;      // radix9
+    t.radixTwiddles[2] = t.radixTwiddles[3] + 256;      // radix8
+    t.radixTwiddles[1] = t.radixTwiddles[2] + 128;      // radix7
+    t.radixTwiddles[0] = t.radixTwiddles[1] + 64;       // radix6
+}
+
+const NttTables &nttEnsureTables(bool inverse)
+{
+    int dev = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    assert(dev < NTT_MAX_DEVS);
+    NttTables &t = nttTbl[inverse ? 1 : 0][dev];
+
+    std::lock_guard<std::mutex> lk(nttTablesMutex);
+    if (!t.base) {
+        if (!nttDomainSizeInvReady) {
+            uint64_t inv2 = 0x7FFFFFFF80000001ULL;   // 2^-1 mod p
+            nttDomainSizeInv[0] = 1;
+            for (int k = 1; k <= NTT_MAX_LG; k++)
+                nttDomainSizeInv[k] = nttHostMul(nttDomainSizeInv[k - 1], inv2);
+            nttDomainSizeInvReady = true;
+        }
+        NttTables fresh;
+        nttBuildTables(fresh, inverse);
+        t = fresh;
+    }
+    return t;
+}
+
+// Step launcher: same radix/config policy for DIT and DIF; gridDim.y = ncols.
+struct NttRun {
+    gl64_t *base;          // column 0 of the run
+    size_t col_stride;     // ELEMENTS between consecutive columns' bases
+    unsigned ncols;        // columns batched per launch (gridDim.y)
+    int lg;                // log2 domain size of the transform
+    bool is_intt;          // apply 1/N scaling on the final step
+    const NttTables &t;    // twiddle tables (forward or inverse direction)
+    cudaStream_t s;
+    bool dit;              // true = DIT (rev->nat, the NTT), false = DIF (nat->rev, the iNTT)
+    int stage = 0;         // internal cursor, set by run() -- callers omit it
+
+    void step(int iterations)
+    {
+        assert(iterations <= 10);
+        const int radix = iterations < 6 ? 6 : iterations;
+
+        uint32_t num_threads = (uint32_t)1 << (lg - 1);
+        uint32_t block_size = 1 << (radix - 1);
+        block_size = (num_threads <= block_size) ? num_threads : block_size;
+        uint32_t num_blocks = (num_threads + block_size - 1) / block_size;
+
+        // Z (z-count): independent butterfly pairs each thread carries in registers
+        // (r[2][Z] = 8 field elements). Chosen so 4 consecutive 8-byte elements = 32 B
+        // = exactly one memory sector: the coalesced load moves full sectors with no
+        // waste, and the positioning roots are derived once per thread then extended
+        // to the other Z-1 slots with one multiply each (the zStepRoots tables).
+        // Grid and shared memory scale with it: num_blocks/Z blocks, Z*shared_sz bytes.
+        const int Z = 4;
+        size_t shared_sz = sizeof(gl64_t) << (radix - 1);
+
+#ifdef NTT_ARGS
+#error "NTT_ARGS is already defined -- rename one of the two definitions"
+#endif
+        #define NTT_ARGS (uint32_t)radix, (uint32_t)lg, (uint32_t)stage, (uint32_t)iterations, \
+                base, col_stride, (const gl64_t(*)[NTT_WIN_SIZE])t.partialRoots, \
+                (const gl64_t(*)[1024])t.zStepRoots, t.radixTwiddles[0], t.radixTwiddles[radix-6], is_intt, nttDomainSizeInv[lg]
+        if (dit) {
+            if (num_blocks < (uint32_t)Z)
+                nttDitColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
+            else if (stage == 0 || lg < 12)
+                nttDitColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+            else
+                nttDitColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+            stage += iterations;
+        } else {
+            if (num_blocks < (uint32_t)Z)
+                nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
+            else if (stage == iterations || lg < 12)
+                nttDifColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+            else
+                nttDifColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+            stage -= iterations;
+        }
+        #undef NTT_ARGS
+        CHECKCUDAERR(cudaGetLastError());
+    }
+
+    void run()
+    {
+        stage = dit ? 0 : lg;
+        if (lg <= 10) { step(lg); }
+        else if (lg <= 18) {
+            int st = lg / 2;
+            if (dit) { step(st + lg % 2); step(st); }
+            else     { step(st); step(st + lg % 2); }
+        } else if (lg <= 30) {
+            // lg == 29 treated to avoid 9,9,11 split
+            int st = lg / 3, rem = lg % 3;
+            if (dit) { step(st); step(st + (lg == 29)); step(st + (lg == 29 ? 1 : rem)); }
+            else     { step(st + (lg == 29 ? 1 : rem)); step(st + (lg == 29)); step(st); }
+        } else { assert(false); }
+    }
+};
+
+
+// NN-order (natural in -> natural out) transform: bit-reversal permutation + DIT run.
+// inverse=true uses the inverse-direction tables and applies the 1/N scaling.
+void nttTransformNN(gl64_t *base, size_t col_stride, unsigned ncols, int lg,
+                    bool inverse, const NttTables &t, cudaStream_t s)
+{
+    uint32_t N = 1u << lg;
+    uint32_t thr = 256;
+    uint32_t blk = (N + thr - 1) / thr;
+    nttBitRevColMajorKernel<<<dim3(blk, ncols), thr, 0, s>>>(base, col_stride, (uint32_t)lg);
+    CHECKCUDAERR(cudaGetLastError());
+    NttRun{base, col_stride, ncols, lg, inverse, t, s, true}.run();
+}
+
+// Column-chunk size that keeps a transform's steps L2-resident between launches
+// (same policy as ldeColMajor; ~60% budget leaves room for tables and other traffic).
+uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
+{
+    int dev = 0, l2Bytes = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
+        l2Bytes = 32 << 20;
+    uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / colBytes);
+    if (chunk < 1) chunk = 1;
+    if (chunk > nCols) chunk = (uint32_t)nCols;
+    return chunk;
+}
+
+// One runtime switch for all three dispatches (LDE / INTT / computeQ):
+// PROOFMAN_NTT_SPPARK=1 selects the sppark-backed reference implementations.
+// Magic static: C++11 guarantees thread-safe one-time initialization.
+bool nttUseSppark()
+{
+    static const bool v = [] {
+        const char *e = getenv("PROOFMAN_NTT_SPPARK");
+        return e && e[0] == '1';
+    }();
+    return v;
+}
+
+} // anonymous namespace
+
+// ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt) per column. Columns are
+// processed in L2-sized chunks with column-batched kernel launches; when the
+// chunk degenerates to a single column (large domains, already occupancy-
+// saturated) the driver switches to the cheaper scratch-staged serial flow,
+// which avoids the batched flow's extra tail->scratch staging copy.
+void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
+                                   uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+                                   cudaStream_t stream, bool preserve_src, gl64_t *preserve_scratch)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBitsExt > nBits && nBitsExt <= NTT_MAX_LG);
+
+    const NttTables &tf = nttEnsureTables(false);
+    const NttTables &ti = nttEnsureTables(true);
+
+    size_t N = (size_t)1 << nBits;
+    size_t Next = (size_t)1 << nBitsExt;
+    uint32_t lg_blowup = (uint32_t)(nBitsExt - nBits);
+
+    // Queried per call: cudaGetDevice is a thread-local read and the attribute lookup
+    // costs ~1us -- noise next to a millisecond-scale LDE, and it keeps this free of
+    // shared mutable state.
+    int dev = 0, l2Bytes = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
+        l2Bytes = 32 << 20;
+    uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / (Next * sizeof(gl64_t)));
+    if (chunk > nCols) chunk = (uint32_t)nCols;
+
+    // The batched flow stages each column's iNTT result (in the destination tail)
+    // through scratch for the spread. The serial flow needs it only to preserve src.
+    gl64_t *scratch = preserve_scratch;
+    bool own_scratch = false;
+    if (scratch == nullptr && (preserve_src || chunk >= 2)) {
+        CHECKCUDAERR(cudaMallocAsync(&scratch, N * sizeof(gl64_t), stream));
+        own_scratch = true;
+    }
+
+    uint32_t sthr = 256;
+    uint32_t sblk = (uint32_t)((N + sthr - 1) / sthr);
+
+    if (chunk >= 2) {
+        // batched: copy chunk cols to the destination-column tails -> batched DIF-iNTT
+        // -> per-column spread (tail -> scratch -> dest column) -> batched DIT-NTT
+        for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+            uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+            gl64_t *dchunk = d_dst_ + (size_t)c0 * Next;
+
+            uint32_t cblk = (uint32_t)std::min<size_t>((N + 255) / 256, 4096);
+            nttCopyToDestinationTailsKernel<<<dim3(cblk, nc), 256, 0, stream>>>(dchunk, d_src_ + (size_t)c0 * N,
+                                                                   (uint32_t)nBits, Next);
+            CHECKCUDAERR(cudaGetLastError());
+
+            NttRun{dchunk + (Next - N), Next, nc, (int)nBits, true, ti, stream, false}.run();
+
+            for (uint32_t c = 0; c < nc; c++) {
+                gl64_t *dstCol = dchunk + (size_t)c * Next;
+                CHECKCUDAERR(cudaMemcpyAsync(scratch, dstCol + (Next - N), N * sizeof(gl64_t),
+                                             cudaMemcpyDeviceToDevice, stream));
+                nttCosetSpreadKernel<<<sblk, sthr, 0, stream>>>(dstCol, scratch,
+                    (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup);
+                CHECKCUDAERR(cudaGetLastError());
+            }
+
+            NttRun{dchunk, Next, nc, (int)nBitsExt, false, tf, stream, true}.run();
+        }
+    } else {
+        // serial per column: iNTT on scratch (or in place on src when the caller
+        // allows trashing it) -> spread -> DIT-NTT on the destination column
+        for (uint32_t c = 0; c < nCols; c++) {
+            gl64_t *srcCol = d_src_ + (size_t)c * N;
+            gl64_t *dstCol = d_dst_ + (size_t)c * Next;
+            gl64_t *inttCol = srcCol;            
+            if (preserve_src) {
+                CHECKCUDAERR(cudaMemcpyAsync(scratch, srcCol, N * sizeof(gl64_t),
+                                             cudaMemcpyDeviceToDevice, stream));
+                inttCol = scratch;
+            }
+            NttRun{inttCol, N, 1, (int)nBits, true, ti, stream, false}.run();
+            nttCosetSpreadKernel<<<sblk, sthr, 0, stream>>>(dstCol, inttCol,
+                (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup);
+            CHECKCUDAERR(cudaGetLastError());
+            NttRun{dstCol, Next, 1, (int)nBitsExt, false, tf, stream, true}.run();
+        }
+    }
+
+    if (own_scratch)
+        CHECKCUDAERR(cudaFreeAsync(scratch, stream));
+}
+
+// ColMajor in-place INTT of nCols flat columns of 2^nBits rows (column c at dst + c*N).
+// NN order (natural in/out), matching the reference flow. Used for the LEv vector.
+void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBits <= NTT_MAX_LG);
+    const NttTables &ti = nttEnsureTables(true);
+    size_t N = (size_t)1 << nBits;
+
+    uint32_t chunk = nttL2ChunkCols(N * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        nttTransformNN(dst + (size_t)c0 * N, N, nc, (int)nBits, true, ti, stream);
+    }
+}
+
+// ColMajor computeQ: iNTT(NN) each q column over the extended domain -> coset shift +
+// zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column. Same flow and results
+// as the sppark reference (computeQSppark), on the in-house engine.
+void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                                        Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                                        uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
+{
+    assert(nBitsExt <= NTT_MAX_LG);
+    const NttTables &tf = nttEnsureTables(false);
+    const NttTables &ti = nttEnsureTables(true);
+
+    gl64_t *d_q = d_aux_trace + offset_q;       // flat, qDim cols, NExt rows
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;   // flat, nCols cols, NExt rows
+    uint32_t N = 1u << nBits;
+    uint32_t Next = 1u << nBitsExt;
+
+    uint32_t chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), qDim);
+    for (uint32_t c0 = 0; c0 < qDim; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= qDim) ? chunk : (uint32_t)(qDim - c0);
+        nttTransformNN(d_q + (size_t)c0 * Next, Next, nc, (int)nBitsExt, true, ti, stream);
+    }
+
+    uint32_t thr = 256;
+    uint32_t blk = (Next + thr - 1) / thr;
+    nttCosetShiftQKernel<<<blk, thr, 0, stream>>>(d_q, d_cmQ, N, Next, (uint32_t)qDeg, (uint32_t)qDim, shiftIn.fe);
+    CHECKCUDAERR(cudaGetLastError());
+
+    chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        nttTransformNN(d_cmQ + (size_t)c0 * Next, Next, nc, (int)nBitsExt, false, tf, stream);
+    }
+}
+
+
+// =============================================================================
 // Class methods
 // =============================================================================
 
@@ -637,8 +1539,8 @@ void NTTGoldilocksGPU::computeQSppark(uint64_t offset_cmQ, uint64_t offset_q, ui
                          (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, (void *)stream);
 }
 
-// Native tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
-void NTTGoldilocksGPU::computeQNativeTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+// Tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
+void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                            Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                            uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream)
 {
@@ -688,9 +1590,12 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
     }
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+        if (nttUseSppark())
+            computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+        else
+            computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
     } else {
-        computeQNativeTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
+        computeQTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
     }
 
     TimerStopCategoryGPU(timer, NTT);
@@ -704,9 +1609,9 @@ void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
     sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
 }
 
-// Native tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
+// Tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
 // columnMajorToPacked -> DIF(INTT+zero-pad) -> DIT(NTT) -> rowMajorToColumnMajor. Pure kernels (capturable).
-void NTTGoldilocksGPU::ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_,
+void NTTGoldilocksGPU::ldeTiled(gl64_t* d_dst_, gl64_t* d_src_,
                                       uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, cudaStream_t stream)
 {
     uint64_t size = 1 << nBits;
@@ -725,7 +1630,8 @@ void NTTGoldilocksGPU::ldeNativeTiled(gl64_t* d_dst_, gl64_t* d_src_,
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
 }
 
-// LDE: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
+// LDE: ColMajor engine everywhere (resolveLayout is always ColMajor; the tiled branch is kept only
+// for the legacy reference backend and is currently unreachable).
 void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
                            gl64_t* d_src, uint64_t offset_src,
                            uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
@@ -747,9 +1653,14 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
     gl64_t *d_src_ = &d_src[offset_src];
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
+        // ColMajor: the in-house engine by default; PROOFMAN_NTT_SPPARK=1 selects
+        // the sppark-backed reference implementations (all three dispatches).
+        if (nttUseSppark())
+            ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
+        else
+            ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
     } else {
-        ldeNativeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);
+        ldeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);
     }
     TimerStopCategoryGPU(timer, NTT);
 }
@@ -785,9 +1696,9 @@ void NTTGoldilocksGPU::inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, c
     sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols, (void *)stream);
 }
 
-// Native tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
+// Tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
 // (inverse), transpose back. Pure kernels (capturable).
-void NTTGoldilocksGPU::inttNativeTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+void NTTGoldilocksGPU::inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
     uint64_t N = 1 << nBits;
     dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
@@ -813,9 +1724,12 @@ void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStr
     }
 
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        inttSppark(dst, nBits, nCols, stream);
+        if (nttUseSppark())
+            inttSppark(dst, nBits, nCols, stream);
+        else
+            inttColMajor(dst, nBits, nCols, stream);
     } else {
-        inttNativeTiled(dst, nBits, nCols, stream);
+        inttTiled(dst, nBits, nCols, stream);
     }
 }
 
@@ -935,218 +1849,4 @@ void NTTGoldilocksGPU::freeConstants() {
     d_r = nullptr;
     maxLogDomainSize = 0;
     nGPUs_available = 0;
-}
-
-// =============================================================================
-// Reference/debug NTT (flat layout, not used in production)
-// =============================================================================
-
-#define TPB_NTT 16
-
-// Single-stage DIT butterfly, flat layout, one thread per (butterfly, col).
-// Naive reference implementation for debugging.
-// Launch: <<<domainSize/2, nCols>>>
-__global__ void nttDitButterflyFlatKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize)
-{
-    uint32_t i = blockIdx.x;
-    uint32_t col = threadIdx.x;
-
-    if (i < domain_size / 2 && col < nCols)
-    {
-        uint32_t group_size = 1 << stage;
-        uint32_t group = i >> stage;
-        uint32_t group_pos = i & (group_size - 1);
-        uint32_t index1 = (group << (stage + 1)) + group_pos;
-        uint32_t index2 = index1 + group_size;
-        gl64_t factor = twiddles[group_pos * ((1 << maxLogDomainSize) >> (stage + 1))];
-        gl64_t odd_sub = gl64_t((uint64_t)data[index2 * nCols + col]) * factor;
-        gl64_t result1 = gl64_t((uint64_t)data[index1 * nCols + col]) + odd_sub;
-        gl64_t result2 = gl64_t((uint64_t)data[index1 * nCols + col]) - odd_sub;
-
-        if(inverse && stage == log_domain_size - 1){
-            gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size]);
-            if(extend) {
-                result1 *= inv_factor * d_r[index1];
-                result2 *= inv_factor * d_r[index2];
-            } else {
-                result1 *= inv_factor;
-                result2 *= inv_factor;
-            }
-        }
-
-        data[index1 * nCols + col] = result1;
-        data[index2 * nCols + col] = result2;
-    }
-}
-
-// 8-step DIT butterfly, flat layout, 1KB shared memory tile.
-// Processes 4 columns at a time in an outer loop.
-// Launch: <<<domainSize/256, 256>>>
-__global__ void nttDitButterflyFlat8Kernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max)
-{
-    __shared__ gl64_t tile[1024];
-
-    uint32_t n_loc_steps = min(log_domain_size - base_step, 8);
-    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
-
-    uint32_t groupSize = 1 << base_step;
-    uint32_t nGroups = domain_size / groupSize;
-    uint32_t low_bits = row / nGroups;
-    uint32_t high_bits = row % nGroups;
-    row = high_bits * groupSize + low_bits;
-
-    uint32_t remaining_high_bits = log_domain_size - (base_step+1);
-    uint32_t high_mask = (1 << remaining_high_bits) - 1;
-
-    for(int col_base = col_min; col_base <= col_max; col_base +=4){
-
-        tile[threadIdx.x*4] = data[row*nCols + col_base];
-        if(col_base + 3 < nCols){
-            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
-            tile[threadIdx.x*4+2] = data[row*nCols + col_base+2];
-            tile[threadIdx.x*4+3] = data[row*nCols + col_base+3];
-        } else if(col_base + 2 < nCols){
-            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
-            tile[threadIdx.x*4+2] = data[row*nCols + col_base+2];
-        } else if(col_base + 1 < nCols){
-            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
-        }
-
-        __syncthreads();
-
-        for(int loc_step=0; loc_step<n_loc_steps; loc_step++){
-            uint32_t i = threadIdx.x;
-            if (threadIdx.x < 128){
-                uint32_t group_size = 1 << loc_step;
-                uint32_t group = i >> loc_step;
-                uint32_t group_pos = i & (group_size - 1);
-                uint32_t index1 = (group << (loc_step + 1)) + group_pos;
-                uint32_t index2 = index1 + group_size;
-                gl64_t factor;
-                {
-                    uint32_t gs = base_step + loc_step;
-                    uint32_t ggs = 1 << gs;
-                    uint32_t ggp =(blockIdx.x << 7) + i;
-                    ggp = ((ggp & high_mask)<< base_step) + (ggp >> remaining_high_bits);
-                    ggp = ggp & (ggs - 1);
-                    factor = twiddles[ggp*((1 << maxLogDomainSize) >> (gs + 1))];
-                }
-
-                index1 = index1 << 2;
-                index2 = index2 << 2;
-                gl64_t odd_sub = tile[index2] * factor;
-                tile[index2] = tile[index1] - odd_sub;
-                tile[index1] = tile[index1] + odd_sub;
-
-                index1 = index1 + 1;
-                index2 = index2 + 1;
-                odd_sub = tile[index2] * factor;
-                tile[index2] = tile[index1] - odd_sub;
-                tile[index1] = tile[index1] + odd_sub;
-
-                index1 = index1 + 1;
-                index2 = index2 + 1;
-                odd_sub = tile[index2] * factor;
-                tile[index2] = tile[index1] - odd_sub;
-                tile[index1] = tile[index1] + odd_sub;
-
-                index1 = index1 + 1;
-                index2 = index2 + 1;
-                odd_sub = tile[index2] * factor;
-                tile[index2] = tile[index1] - odd_sub;
-                tile[index1] = tile[index1] + odd_sub;
-            }
-            __syncthreads();
-        }
-        if(inverse && (base_step + n_loc_steps) >= log_domain_size){
-            gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size]);
-            if(extend) inv_factor = inv_factor * d_r[row];
-            data[row*nCols + col_base] = tile[threadIdx.x*4] * inv_factor;
-            if(col_base + 3 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
-                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
-                data[row*nCols + col_base+3] = tile[threadIdx.x*4+3] * inv_factor;
-            } else if(col_base + 2 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
-                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
-            } else if(col_base + 1 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
-            }
-        }else{
-            data[row*nCols + col_base] = tile[threadIdx.x*4];
-            if(col_base + 3 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
-                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2];
-                data[row*nCols + col_base+3] = tile[threadIdx.x*4+3];
-            } else if(col_base + 2 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
-                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2];
-            } else if(col_base + 1 < nCols){
-                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
-            }
-        }
-    }
-}
-
-// Bit-reversal permutation on flat (non-tiled) data.
-// Launch: <<<8192, TPB_NTT>>>
-__global__ void bitReversalFlatKernel(gl64_t *data, uint32_t log_domain_size, uint32_t nCols)
-{
-    uint64_t row = blockIdx.x;
-    uint64_t col = threadIdx.x;
-    uint64_t domain_size = 1 << log_domain_size;
-
-    for (uint64_t r = row; r < domain_size; r += gridDim.x)
-    {
-        uint64_t rowr = __brev(r) >> (32 - log_domain_size);
-        if (rowr > r)
-        {
-            for (uint64_t c = col; c < nCols; c += blockDim.x)
-            {
-                gl64_t tmp = data[r * nCols + c];
-                data[r * nCols + c] = data[rowr * nCols + c];
-                data[rowr * nCols + c] = tmp;
-            }
-        }
-    }
-}
-
-// Flat NTT driver (reference/debug). Uses flat bit-reversal + flat butterfly kernels.
-// Not used in production — kept for debugging and testing.
-void nttFlat( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
-{
-    assert(log_domain_size >= 1 && "Domain size must be >= 2 for NTT");
-    uint32_t domain_size = 1 << log_domain_size;
-
-    dim3 blockDim;
-    dim3 gridDim;
-
-    blockDim = dim3(TPB_NTT);
-    gridDim = dim3(8192);
-    bitReversalFlatKernel<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size, nCols);
-    CHECKCUDAERR(cudaGetLastError());
-
-    int device_id;
-    cudaGetDevice(&device_id);
-    if (d_fwd_twiddle_factors[device_id] == nullptr || d_inv_twiddle_factors[device_id] == nullptr)
-    {
-        fprintf(stderr, "[NTT] ERROR: Twiddle factors not initialized for device %d. Did you call initConstants()?\n", device_id);
-        abort();
-    }
-
-    gl64_t *d_twiddles = inverse ? d_inv_twiddle_factors[device_id] : d_fwd_twiddle_factors[device_id];
-    gl64_t *d_r = d_r_[device_id];
-
-    if(log_domain_size >= 8) {
-         for(uint32_t step = 0; step < log_domain_size; step+=8){
-                nttDitButterflyFlat8Kernel<<<domain_size / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size, log_domain_size, nCols, step, true, inverse, extend, maxLogDomainSize, 0, nCols-1);
-                CHECKCUDAERR(cudaGetLastError());
-        }
-    } else {
-        for (uint32_t stage = 0; stage < log_domain_size; stage++)
-        {
-            nttDitButterflyFlatKernel<<<domain_size / 2, nCols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size, log_domain_size, nCols, inverse, extend, maxLogDomainSize);
-            CHECKCUDAERR(cudaGetLastError());
-        }
-    }
 }

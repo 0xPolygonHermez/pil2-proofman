@@ -117,7 +117,7 @@ void unpack_fixed(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_FIXED);
-    // Const pols are stored fixedLayout() (ColMajorTiled) -- uniform-native prover.
+    // Const pols are stored fixedLayout() (ColMajor).
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
@@ -325,13 +325,12 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // Const sections are stored fixedLayout() (ColMajorTiled) -- uniform-native prover. Call the native
-    // tiled LDE directly: it is out-of-place (reads src, writes dst), so the small-domain const pols
-    // (reread by every expression as const operands) stay intact -- no preserve_src/preserve_scratch dance
-    // needed. Merkle build reads dst in the same layout the LDE wrote. (resolveLayout would pick sppark for
-    // const's nBits/nCols, so we bypass it.)
+    // Const sections are stored fixedLayout() (ColMajor). preserve_src=true: the small-domain const
+    // pols are reread by every expression as const operands, so the LDE must not run its iNTT in place
+    // on them (scratch=nullptr -> the engine stages through an internal cudaMallocAsync buffer).
+    // Merkle build reads dst in the same layout the LDE wrote.
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeNativeTiled((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream);
+    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, true, nullptr);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
@@ -956,13 +955,13 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         }
         else if (k == nStages + 1)
         {
-            // Const tree leaves were written fixedLayout() (ColMajorTiled) by extendAndMerkelizeFixed.
+            // Const tree leaves were written fixedLayout() by extendAndMerkelizeFixed.
             getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            // Custom commit tree leaves were written fixedLayout() (ColMajorTiled) by write_custom_commit_gpu.
+            // Custom commit tree leaves were written fixedLayout() by write_custom_commit_gpu.
             getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         }
     }

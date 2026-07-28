@@ -376,7 +376,7 @@ __device__ __forceinline__ void load__(
             : dParams->pConstPolsAddress;
 
         const uint64_t nCols0 = dArgs->mapSectionsN[0];
-        // Const sections are stored fixedLayout() (ColMajorTiled) -- match the const-tree build's layout.
+        // Const sections are stored fixedLayout() (ColMajor) -- match the const-tree build's layout.
         const Layout lytC = fixedLayout();
         const uint64_t pos = usePack256
             ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0, lytC)
@@ -390,7 +390,7 @@ __device__ __forceinline__ void load__(
     // Trace and aux_trace (committed pols). A committed section's storage layout is resolveLayout(nBits,
     // sectionNCols) keyed on the AIR's small-domain nBits = log2(N) -- identical to what the commit/LDE
     // and Merkle used, so reads agree with writes. ColMajor (flat) puts a column's 3 extension
-    // components domainSize apart; ColMajorTiled addresses each component via getBufferOffset.
+    // components domainSize apart; other layouts address each component via getBufferOffset.
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
@@ -423,7 +423,7 @@ __device__ __forceinline__ void load__(
             out2 = nullptr;
             return;
         } else {
-            // dim==3 general (incl. ColMajorTiled): each component addressed independently.
+            // dim==3 general (non-ColMajor layouts): each component addressed independently.
             const uint64_t pos0 = usePack256
                     ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
                     : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
@@ -448,7 +448,7 @@ __device__ __forceinline__ void load__(
         out2 = nullptr;
         return;
     }
-    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajorTiled).
+    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajor).
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
@@ -541,7 +541,7 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         Goldilocks::Element *slot = &destVals[k * FIELD_EXTENSION * blockDim.x];
         if (d_destParams[k].op == opType::const_)
         {
-            // Const stored fixedLayout() (ColMajorTiled) -- match the const-tree build.
+            // Const stored fixedLayout() (ColMajor) -- match the const-tree build.
             uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, fixedLayout());
             slot[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
