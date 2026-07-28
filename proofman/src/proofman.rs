@@ -4563,7 +4563,7 @@ where
             options.gpu,
         )?);
 
-        pctx.set_weights(&sctx)?;
+        pctx.set_weights(&sctx, &setups_vadcop)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) = pctx.set_device_buffers(
             &sctx,
