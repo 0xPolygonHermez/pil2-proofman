@@ -375,12 +375,6 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-NVCCFLAGS_GL := $(filter-out -DFEATURE_BN254,$(NVCCFLAGS)) -DFEATURE_GOLDILOCKS -DGOLDILOCKS_ZISK
-
-$(BUILD_DIR_GPU)/./src/goldilocks/src/sppark_lde.cu.o: ./src/goldilocks/src/sppark_lde.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS_GL) $(CPPFLAGS) -c $< -o $@
-
 $(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@

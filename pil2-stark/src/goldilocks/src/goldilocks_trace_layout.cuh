@@ -3,7 +3,7 @@
 
 // GPU polynomial memory layouts. getBufferOffset is the prover's storage accessor (ColMajor flat
 // everywhere -- see resolveLayout/fixedLayout); the ColMajorTiled / RowMajor / RowMajorPacked variants
-// remain for the legacy tiled NTT backend kept as an env-gated reference.
+// remain for the legacy tiled NTT backend kept as a directly callable reference for tests/benches.
 
 #include <stdint.h>
 
@@ -15,7 +15,8 @@
 // Merkle/linear-hash kernels (which pass it straight through to getBufferOffset):
 //   - RowMajor      : element (row,col) at row*nCols + col (contiguous columns per row).
 //   - ColMajor      : FLAT column-major, (row,col) at col*nRows + row (each column one contiguous run).
-//                     sppark's native per-column format -> LDE/computeQ run in place, no transpose.
+//                     The ColMajor NTT engine's per-column format -> LDE/computeQ run in place, no
+//                     transpose.
 //   - ColMajorTiled : column-major WITHIN TILE_HEIGHT x TILE_WIDTH tiles; the layout the legacy tiled
 //                     NTT backend operates on (reference only, no longer selected).
 // Every section -- committed (resolveLayout), const and custom commits (fixedLayout) -- is stored

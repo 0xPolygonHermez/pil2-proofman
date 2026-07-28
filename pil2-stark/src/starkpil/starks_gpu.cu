@@ -252,10 +252,10 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
 #ifdef USE_CUDA_GRAPH
     CudaGraphCache *graphCache = cudagraph::current();
-    // Only the native (ColMajorTiled) LDE is graph-capturable: the flat (ColMajor) path delegates to
-    // sppark, which runs the NTT on its own private stream (joined to the caller via events) --
-    // cross-stream work mid single-stream capture is illegal. isGraphCapturableLayout is the shared
-    // predicate the LDE dispatch also uses, so capture can never target the sppark path.
+    // Only the legacy tiled (ColMajorTiled) LDE was validated under graph capture; the ColMajor
+    // engine has not been (e.g. its nullptr-scratch fallback uses cudaMallocAsync). With resolveLayout
+    // always ColMajor this is constantly false and the graph path is dormant. isGraphCapturableLayout
+    // is the shared predicate the LDE dispatch also uses, so the two can never drift apart.
     bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
     if (graphCache && capturable && !skipRecalculation && nCols > 0) {
         uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
@@ -363,9 +363,9 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
         NTTGoldilocksGPU nttExtended;
 
 #ifdef USE_CUDA_GRAPH
-        // Only the native (ColMajorTiled) computeQ is graph-capturable; the flat (ColMajor) path uses
-        // sppark (host sync + own stream), illegal mid-capture. isGraphCapturableLayout is the shared
-        // predicate the computeQ dispatch also uses, so capture can never target the sppark path.
+        // Only the legacy tiled (ColMajorTiled) computeQ was validated under graph capture; with
+        // resolveLayout always ColMajor this is constantly false and the graph path is dormant.
+        // isGraphCapturableLayout is the shared predicate the computeQ dispatch also uses.
         bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
         if (cudagraph::aggressive() && capturable) {
             CudaGraphCache *graphCache = cudagraph::current();
@@ -563,8 +563,7 @@ __global__ void computeEvals_v2(
         gl64_t *pol;
         // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
         // (1) and fixed/const (2) follow fixedLayout(). d_LEv follows resolveLayout keyed on ITS OWN
-        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it, so it works
-        // under both sppark (ColMajor) and non-sppark (ColMajorTiled).
+        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it.
         Layout levLayout = resolveLayout(63 - __clzll(N), openingsSize * FIELD_EXTENSION);
         Layout polLayout;
         if (evalInfo.type == 0)

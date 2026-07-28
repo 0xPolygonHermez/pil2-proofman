@@ -118,7 +118,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_intt_multicol)
     CHECKCUDAERR(cudaStreamCreate(&stream));
     TimerGPU timer(stream);
 
-    // INTT(nBits=16, nCols=4) resolves to Layout::ColMajor (flat, sppark): nCols <= 500. Lay the input
+    // INTT(nBits=16, nCols=4) resolves to Layout::ColMajor (flat). Lay the input
     // out the SAME way (fromRowMajorToColMajor with ColMajor) so the in-place transform reads it
     // correctly, then read the result back with the matching flat formula (col*nRows + row).
     gl64_t *d_flat, *d_colmajor;
@@ -413,10 +413,11 @@ static inline uint64_t hostTiledOffset(uint64_t row, uint64_t col, uint64_t nRow
     return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT + col_block * TILE_HEIGHT + row_block;
 }
 
-// Equivalence: the two LDE backends (sppark flat vs native tiled) must produce the SAME logical result
-// at the same dims, and both must equal the CPU LDE. Each backend is called directly (bypassing the
-// resolveLayout dispatch) on its own storage layout; results are reconstructed to row-major and compared.
-// One equivalence point: run both LDE backends at (n_bits, nCols) and assert sppark == native == CPU.
+// Equivalence: the two LDE backends (in-house ColMajor engine vs legacy tiled) must produce the SAME
+// logical result at the same dims, and both must equal the CPU LDE. Each backend is called directly
+// (bypassing the resolveLayout dispatch) on its own storage layout; results are reconstructed to
+// row-major and compared.
+// One equivalence point: run both LDE backends at (n_bits, nCols) and assert colMajor == tiled == CPU.
 static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t stream,
                                        uint64_t n_bits, uint64_t nCols)
 {
@@ -432,11 +433,10 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     NTT_Goldilocks cpu_ntt(nRows_ext);
     cpu_ntt.LDE(h_cpu.data(), h_input.data(), nRows_ext, nRows, nCols);
 
-    gl64_t *d_flat, *d_src_cm, *d_src_tiled, *d_dst_cm, *d_dst_tiled;
+    gl64_t *d_flat, *d_src_cm, *d_src_tiled, *d_dst_tiled;
     CHECKCUDAERR(cudaMalloc((void**)&d_flat,      nRows     * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_src_cm,    nRows     * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_src_tiled, nRows     * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_dst_cm,    nRows_ext * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_dst_tiled, nRows_ext * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_flat, h_input.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
@@ -445,41 +445,32 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     fromRowMajorToColMajor(nRows, nCols, d_flat, d_src_tiled, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    // In-house ColMajor engine (nttFlat) FIRST: it preserves d_src_cm, while ldeSppark with
-    // preserve_src=false (below) iNTTs the source in place and destroys it.
-    // preserve_src + null scratch also exercises nttFlat's internal staging allocation.
+    // preserve_src + null scratch exercises the engine's internal staging allocation.
     gl64_t *d_dst_colmajor;
     CHECKCUDAERR(cudaMalloc((void**)&d_dst_colmajor, nRows_ext * nCols * sizeof(gl64_t)));
     gpu_ntt.ldeColMajor(d_dst_colmajor, d_src_cm, n_bits, n_bits_ext, nCols, stream, true, nullptr);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    gpu_ntt.ldeSppark(d_dst_cm, d_src_cm, n_bits, n_bits_ext, nCols, stream);
     gpu_ntt.ldeTiled(d_dst_tiled, d_src_tiled, n_bits, n_bits_ext, nCols, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    std::vector<Goldilocks::Element> h_cm(nRows_ext * nCols), h_tiled(nRows_ext * nCols), h_colmajor(nRows_ext * nCols);
-    CHECKCUDAERR(cudaMemcpy(h_cm.data(),    d_dst_cm,    nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+    std::vector<Goldilocks::Element> h_tiled(nRows_ext * nCols), h_colmajor(nRows_ext * nCols);
     CHECKCUDAERR(cudaMemcpy(h_tiled.data(), d_dst_tiled, nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaMemcpy(h_colmajor.data(), d_dst_colmajor, nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaFree(d_dst_colmajor));
 
     for (uint64_t row = 0; row < nRows_ext; row++) {
         for (uint64_t col = 0; col < nCols; col++) {
-            uint64_t vSppark = Goldilocks::toU64(h_cm[col * nRows_ext + row]);              // ColMajor: col*nRows+row
-            uint64_t vTiled  = Goldilocks::toU64(h_tiled[hostTiledOffset(row, col, nRows_ext, nCols)]);
-            uint64_t vCpu    = Goldilocks::toU64(h_cpu[row * nCols + col]);
-            ASSERT_EQ(vSppark, vCpu)   << "sppark LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
-            ASSERT_EQ(vTiled,  vCpu)   << "native-tiled LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
-            ASSERT_EQ(vSppark, vTiled) << "sppark vs native-tiled LDE differ at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
-            uint64_t vColMajor = Goldilocks::toU64(h_colmajor[col * nRows_ext + row]);            // ColMajor, same layout as sppark
-            ASSERT_EQ(vColMajor, vSppark) << "ldeColMajor != sppark LDE at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            uint64_t vColMajor = Goldilocks::toU64(h_colmajor[col * nRows_ext + row]);   // ColMajor: col*nRows+row
+            uint64_t vTiled    = Goldilocks::toU64(h_tiled[hostTiledOffset(row, col, nRows_ext, nCols)]);
+            uint64_t vCpu      = Goldilocks::toU64(h_cpu[row * nCols + col]);
+            ASSERT_EQ(vColMajor, vCpu)   << "ldeColMajor != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            ASSERT_EQ(vTiled,    vCpu)   << "tiled LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            ASSERT_EQ(vColMajor, vTiled) << "ldeColMajor vs tiled LDE differ at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
         }
     }
 
     CHECKCUDAERR(cudaFree(d_flat));
     CHECKCUDAERR(cudaFree(d_src_cm));
     CHECKCUDAERR(cudaFree(d_src_tiled));
-    CHECKCUDAERR(cudaFree(d_dst_cm));
     CHECKCUDAERR(cudaFree(d_dst_tiled));
 }
 
@@ -506,7 +497,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_backends_equivalent)
             uint64_t N = 1ULL << n_bits, NExt = 1ULL << (n_bits + 2);
             size_t freeB = 0, totalB = 0;
             CHECKCUDAERR(cudaMemGetInfo(&freeB, &totalB));
-            size_t needB = (2 * N + 3 * NExt) * nCols * sizeof(gl64_t);   // flat+src + 3 dst buffers (sppark, tiled, nttFlat)
+            size_t needB = (3 * N + 2 * NExt) * nCols * sizeof(gl64_t);   // flat + 2 src + 2 dst buffers (tiled, colMajor)
             if (needB > (size_t)(0.85 * (double)freeB)) {
                 printf("[equiv] skip nBits=%lu nCols=%lu (does not fit)\n", (unsigned long)n_bits, (unsigned long)nCols);
                 continue;

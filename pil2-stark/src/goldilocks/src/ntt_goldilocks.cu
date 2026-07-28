@@ -4,10 +4,10 @@
  * This file implements the Number Theoretic Transform (NTT) on GPU for the
  * Goldilocks prime field (p = 2^64 - 2^32 + 1).
  *
- * This is the NATIVE, TILED backend, selected by resolveLayout (goldilocks_trace_layout.cuh) for
- * Layout::ColMajorTiled sections (small domain, many columns). The default Layout::ColMajor (flat
- * column-major) path is delegated to sppark instead -- see sppark_lde.cu; the LDE/computeQ/INTT methods
- * below branch on resolveLayout and only run the tiled kernels here when it returns ColMajorTiled.
+ * Two backends live here: the in-house ColMajor engine (ldeColMajor / inttColMajor /
+ * computeQColMajor -- the production path, resolveLayout is always Layout::ColMajor) and the legacy
+ * TILED backend (ldeTiled / inttTiled / computeQTiled, Layout::ColMajorTiled), kept as a directly
+ * callable reference for tests/benches but no longer selected by any dispatch.
  *
  * === Data Layouts (tiled path) ===
  *
@@ -59,9 +59,6 @@
 #include <mutex>
 
 #include "timer_gl.hpp"
-
-// sppark-backed flat-layout NTT primitives (defined in the isolated sppark_lde.cu TU).
-#include "sppark_lde.cuh"
 
 #define COSET_SHIFT 7
 
@@ -1368,18 +1365,6 @@ uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
     return chunk;
 }
 
-// One runtime switch for all three dispatches (LDE / INTT / computeQ):
-// PROOFMAN_NTT_SPPARK=1 selects the sppark-backed reference implementations.
-// Magic static: C++11 guarantees thread-safe one-time initialization.
-bool nttUseSppark()
-{
-    static const bool v = [] {
-        const char *e = getenv("PROOFMAN_NTT_SPPARK");
-        return e && e[0] == '1';
-    }();
-    return v;
-}
-
 } // anonymous namespace
 
 // ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt) per column. Columns are
@@ -1491,8 +1476,7 @@ void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols,
 }
 
 // ColMajor computeQ: iNTT(NN) each q column over the extended domain -> coset shift +
-// zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column. Same flow and results
-// as the sppark reference (computeQSppark), on the in-house engine.
+// zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column.
 void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                         Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                         uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
@@ -1529,16 +1513,6 @@ void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, 
 // Class methods
 // =============================================================================
 
-// sppark flat-layout computeQ backend (ColMajor). Host-syncs -> not graph-capturable.
-void NTTGoldilocksGPU::computeQSppark(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
-                                      Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
-                                      uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
-{
-    sppark_computeq_flat((void *)d_aux_trace, offset_cmQ, offset_q,
-                         (uint32_t)qDeg, (uint32_t)qDim, Goldilocks::toU64(shiftIn),
-                         (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, (void *)stream);
-}
-
 // Tiled computeQ backend (ColMajorTiled): iNTT(ext) -> coset shift -> NTT(ext). Pure kernels.
 void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                            Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
@@ -1569,8 +1543,9 @@ void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uin
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols, Layout::ColMajorTiled);
 }
 
-// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain.
-// Dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
+// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain. ColMajor engine
+// everywhere (resolveLayout is always ColMajor; the tiled branch is kept only for the legacy
+// reference backend and is currently unreachable).
 void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                 Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                 uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
@@ -1590,23 +1565,12 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
     }
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        if (nttUseSppark())
-            computeQSppark(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
-        else
-            computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+        computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
     } else {
         computeQTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
     }
 
     TimerStopCategoryGPU(timer, NTT);
-}
-
-// sppark flat-layout LDE backend (ColMajor in/out). Host-syncs -> not graph-capturable.
-void NTTGoldilocksGPU::ldeSppark(gl64_t* d_dst_, gl64_t* d_src_,
-                                 uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
-                                 cudaStream_t stream, bool preserve_src, gl64_t* preserve_scratch)
-{
-    sppark_lde_flat((void *)d_dst_, (void *)d_src_, (uint32_t)nBits, (uint32_t)nBitsExt, (uint32_t)nCols, preserve_src, (void *)preserve_scratch, (void *)stream);
 }
 
 // Tiled LDE backend (ColMajorTiled in/out; d_src_/d_dst_ disjoint -> out-of-place, src intact).
@@ -1653,12 +1617,7 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
     gl64_t *d_src_ = &d_src[offset_src];
 
     if (!isGraphCapturableLayout(nBits, nCols)) {
-        // ColMajor: the in-house engine by default; PROOFMAN_NTT_SPPARK=1 selects
-        // the sppark-backed reference implementations (all three dispatches).
-        if (nttUseSppark())
-            ldeSppark(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
-        else
-            ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
+        ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
     } else {
         ldeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);
     }
@@ -1690,12 +1649,6 @@ void NTTGoldilocksGPU::NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStre
     rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, layout);
 }
 
-// sppark flat-layout INTT backend (ColMajor in-place). Host-syncs -> not graph-capturable.
-void NTTGoldilocksGPU::inttSppark(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
-{
-    sppark_intt_flat((void*)dst, (uint32_t)nBits, (uint32_t)nCols, (void *)stream);
-}
-
 // Tiled INTT backend (ColMajorTiled in-place): transpose tiled-storage -> row-major, nttDit
 // (inverse), transpose back. Pure kernels (capturable).
 void NTTGoldilocksGPU::inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
@@ -1710,7 +1663,8 @@ void NTTGoldilocksGPU::inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cu
     rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
 }
 
-// Inverse NTT: dispatch on resolveLayout(nBits, nCols) to the sppark (flat) or native (tiled) backend.
+// Inverse NTT: ColMajor engine everywhere (resolveLayout is always ColMajor; the tiled branch is
+// kept only for the legacy reference backend and is currently unreachable).
 void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
     if (nCols == 0 || nBits == 0)
@@ -1724,10 +1678,7 @@ void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStr
     }
 
     if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        if (nttUseSppark())
-            inttSppark(dst, nBits, nCols, stream);
-        else
-            inttColMajor(dst, nBits, nCols, stream);
+        inttColMajor(dst, nBits, nCols, stream);
     } else {
         inttTiled(dst, nBits, nCols, stream);
     }
