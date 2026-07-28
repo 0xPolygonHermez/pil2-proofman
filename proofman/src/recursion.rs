@@ -395,7 +395,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     // Trace H2D is async: gate buffer reuse on the stream's commit event so a
     // concurrent take() can't overwrite `trace` mid-copy (as on the main path).
     if pctx.gpu {
-        wait_stream_commit_done_c(pctx.get_device_buffers_ptr(), stream_id);
+        wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id);
     }
     match setup.setup_type {
         ProofType::Compressor => memory_handler_recursive_witness.release_buffer_trace_compressor(trace),

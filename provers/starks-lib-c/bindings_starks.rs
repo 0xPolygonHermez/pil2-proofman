@@ -64,7 +64,7 @@ extern "C" {
 
     pub fn unregister_host_memory(ptr: *mut ::std::os::raw::c_void);
 
-    pub fn wait_stream_commit_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
+    pub fn wait_trace_h2d_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
 
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     

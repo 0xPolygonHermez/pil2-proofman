@@ -95,13 +95,16 @@ void unregister_host_memory_gpu(void *ptr) {
     }
 }
 
-// Block until the async commit on `streamId` (trace H2D + tiling + LDE + Merkle)
-// has finished on the GPU. The trace H2D is no longer synced at copy time (see
-// copy_direct_registered_h2d_if_enabled), so the host trace buffer must not be
-// reused until end_event fires, or the in-flight DMA reads recycled bytes. Called
-// from the buffer pool before reusing a shared trace buffer. No-op if the stream
-// has no outstanding commit (status != 2).
-void wait_stream_commit_done_gpu(void *d_buffers_, uint64_t streamId) {
+// Block until `streamId` has finished reading the caller's host trace buffer, i.e. until the
+// trace H2D completes. The copy is no longer synced at copy time (see
+// copy_direct_registered_h2d_if_enabled), so the buffer must not be recycled before that or the
+// in-flight DMA reads reused bytes. Called from the buffer pool before reusing a shared trace
+// buffer. No-op if the stream has no outstanding commit (status != 2).
+//
+// This waits on trace_copy_event, not end_event: the commit's LDE/Merkle work reads the device
+// copy, not the host buffer, so gating recycling on the whole commit held pool buffers for the
+// entire GPU pipeline and left witness threads queueing in take_buffer for them.
+void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     // Guard the C-ABI surface: an out-of-range streamId (e.g. from a future caller
@@ -110,7 +113,7 @@ void wait_stream_commit_done_gpu(void *d_buffers_, uint64_t streamId) {
     if (streamId >= d_buffers->n_total_streams) return;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     if (d_buffers->streamsData[streamId].status == 2) {
-        CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].end_event));
+        CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].trace_copy_event));
     }
 }
 

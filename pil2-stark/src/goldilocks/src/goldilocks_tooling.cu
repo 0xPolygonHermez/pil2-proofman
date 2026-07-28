@@ -19,10 +19,10 @@ static bool copy_direct_registered_h2d_if_enabled(const void *src, void *dst, ui
     // Only take the fast path when src is host memory the driver can DMA directly.
     if (attrs.type != cudaMemoryTypeHost) return false;
 
-    // No cudaStreamSynchronize: src (pool-pinned trace buffer) outlives this
-    // stream's end_event, on which the caller gates buffer reuse
-    // (wait_stream_commit_done). Syncing here would serialize the copy against the
-    // LDE/Merkle work (measured ~9.5s vs ~8.7s contributions).
+    // No cudaStreamSynchronize: the caller gates reuse of src (the pool-pinned trace buffer) on
+    // trace_copy_event, recorded by the caller right after this returns (wait_trace_h2d_done).
+    // Syncing here would serialize the copy against the LDE/Merkle work (measured ~9.5s vs ~8.7s
+    // contributions).
     CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
     return true;
 }
@@ -84,6 +84,9 @@ void copy_to_device_in_chunks(
     //  - small:  sub-threshold copy, one shot
     TimerStartCategoryGPU(timer, H2D_COPY);
     if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
+        // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
+        // gates recycling the host trace buffer (see wait_trace_h2d_done).
+        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
         TimerStopCategoryGPU(timer, H2D_COPY);
         return;
     }
@@ -133,6 +136,10 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    // Staged path: `src` was memcpy'd into the pinned staging buffer and the copies are already
+    // synced, so the host trace buffer is free here. Record anyway so the event always marks this
+    // commit's release point rather than leaving a stale record from an earlier one.
+    cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
     TimerStopCategoryGPU(timer, H2D_COPY);
 }
 

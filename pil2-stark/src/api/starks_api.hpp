@@ -33,7 +33,7 @@ extern "C" {
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
     void unregister_host_memory(void *ptr);
-    void wait_stream_commit_done(void *d_buffers, uint64_t stream_id);
+    void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);

@@ -204,9 +204,9 @@ pub fn unregister_host_memory_c(ptr: *mut c_void) {
 /// shared trace buffer whose async H2D copy rode that stream can be safely
 /// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
 /// `pctx.gpu`).
-pub fn wait_stream_commit_done_c(d_buffers: *mut c_void, stream_id: u64) {
+pub fn wait_trace_h2d_done_c(d_buffers: *mut c_void, stream_id: u64) {
     unsafe {
-        wait_stream_commit_done(d_buffers, stream_id);
+        wait_trace_h2d_done(d_buffers, stream_id);
     }
 }
 

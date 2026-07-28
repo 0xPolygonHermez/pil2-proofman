@@ -44,7 +44,7 @@ use crate::{
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
-    calculate_trace_instance_c, wait_stream_commit_done_c,
+    calculate_trace_instance_c, wait_trace_h2d_done_c,
 };
 
 use std::{
@@ -2248,7 +2248,7 @@ where
                                 // commit ran on (returned by commit_witness) — the air_instance
                                 // stream_id is unset on the contributions path.
                                 if pctx_clone.gpu {
-                                    wait_stream_commit_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
+                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
                                 }
                                 memory_handler_clone.to_be_released_buffer(instance_id, false);
                             }
@@ -2710,7 +2710,7 @@ where
                 // Trace H2D is async: wait on the proof's stream before recycling
                 // the shared buffer, else a concurrent take() overwrites it mid-copy.
                 if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
-                    wait_stream_commit_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
+                    wait_trace_h2d_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
                 }
                 if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
                     self.cancellation_info.write().unwrap().cancel(Some(e));
@@ -2885,10 +2885,7 @@ where
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
-                                    wait_stream_commit_done_c(
-                                        pctx_clone.get_device_buffers_ptr(),
-                                        proof_stream_id as u64,
-                                    );
+                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), proof_stream_id as u64);
                                 }
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                     cancellation_info_clone.write().unwrap().cancel(Some(e));
