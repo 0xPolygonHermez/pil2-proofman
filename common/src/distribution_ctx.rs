@@ -17,11 +17,25 @@ pub struct InstanceInfo {
     pub shared: bool,
     pub n_chunks: usize,
     pub weight: u64,
+    pub compressor_weight: u64, // Cost of the compressor proof it triggers, 0 if the air has none
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, table: bool, shared: bool, weight: u64) -> Self {
-        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight }
+    pub fn new(
+        airgroup_id: usize,
+        air_id: usize,
+        table: bool,
+        shared: bool,
+        weight: u64,
+        compressor_weight: u64,
+    ) -> Self {
+        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight }
+    }
+
+    /// Total cost this instance puts on its owner: its basic proof plus its compressor proof
+    #[inline]
+    pub fn total_weight(&self) -> u64 {
+        self.weight + self.compressor_weight
     }
 }
 
@@ -55,7 +69,7 @@ pub struct DistributionCtx {
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
     pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
-    pub partition_weight: Vec<u64>,   // Total computational weight per partition (does not include tables)
+    pub partition_weight: Vec<u64>,   // Weight per partition, basic + compressor (does not include tables)
     pub partition_compressor_count: Vec<u32>, // #compressor instances assigned to each partition
 
     // Process-level distribution
@@ -63,7 +77,7 @@ pub struct DistributionCtx {
     pub process_instances: Vec<usize>,       // Indexes of instances assigned to current process
     pub skipped_process_instances: Vec<usize>, // Indexes of instances assigned to current process but skipped for some reason
     pub process_count: Vec<usize>,             // #instances assigned to each process
-    pub process_weight: Vec<u64>,              // Total computational weight per process
+    pub process_weight: Vec<u64>,              // Weight per process, basic + compressor
     pub process_compressor_count: Vec<u32>,    // #compressor instances assigned to each process
 
     pub worker_index: i32, // Index of the current worker
@@ -480,7 +494,42 @@ impl DistributionCtx {
         None
     }
 
-    /// add an instance and assign it to a partition/process based only in the gid
+    /// Partition with the least accumulated cost, ties broken by #compressor instances (to spread
+    /// the recursive pipeline) and then by #instances. Cost must stay the primary criterion: the
+    /// compressor airs are also the heaviest ones, so ordering by compressor count first trades a
+    /// heavy compressor air (Keccakf) for a light one (Sha256f) as if they cost the same.
+    #[inline]
+    fn least_loaded_partition(&self, has_compressor: bool) -> usize {
+        let mut best_idx = 0;
+        let mut best_key = (u64::MAX, u32::MAX, u32::MAX);
+        for (i, &weight) in self.partition_weight.iter().enumerate() {
+            let compressors = if has_compressor { self.partition_compressor_count[i] } else { 0 };
+            let key = (weight, compressors, self.partition_count[i]);
+            if key < best_key {
+                best_key = key;
+                best_idx = i;
+            }
+        }
+        best_idx
+    }
+
+    /// Same criterion as `least_loaded_partition`, over the processes of this worker
+    #[inline]
+    fn least_loaded_process(&self, has_compressor: bool, counts: &[usize]) -> usize {
+        let mut best_idx = 0;
+        let mut best_key = (u64::MAX, u32::MAX, usize::MAX);
+        for (i, &weight) in self.process_weight.iter().enumerate() {
+            let compressors = if has_compressor { self.process_compressor_count[i] } else { 0 };
+            let key = (weight, compressors, counts[i]);
+            if key < best_key {
+                best_key = key;
+                best_idx = i;
+            }
+        }
+        best_idx
+    }
+
+    /// add an instance and assign it immediately to the least loaded partition/process
     /// the instance added is not a table
     #[inline]
     pub fn add_instance(
@@ -488,6 +537,7 @@ impl DistributionCtx {
         airgroup_id: usize,
         air_id: usize,
         weight: u64,
+        compressor_weight: u64,
         has_compressor: bool,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
@@ -495,27 +545,30 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
-        let partition_id = (gid % self.n_partitions) as u32;
+        let total_weight = weight + compressor_weight;
+        // Placed as created, without knowing the instances still to come: greedy least loaded.
+        // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
+        // only the instances of assign_instances() to compensate for it.
+        let partition_id = self.least_loaded_partition(has_compressor) as u32;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
-        self.partition_weight[partition_id as usize] += weight;
+        self.partition_weight[partition_id as usize] += total_weight;
         if has_compressor {
             self.partition_compressor_count[partition_id as usize] += 1;
         }
         let mut local_idx = 0;
         let mut owner = -1;
         if self.partition_mask[partition_id as usize] {
-            let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
-            let process_id = worker_instance_id % self.n_processes;
+            let process_id = self.least_loaded_process(has_compressor, &self.process_count);
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
-            self.process_weight[process_id] += weight;
+            self.process_weight[process_id] += total_weight;
             if has_compressor {
                 self.process_compressor_count[process_id] += 1;
             }
@@ -535,12 +588,18 @@ impl DistributionCtx {
     /// It will be assigned later by assign_instances()
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    pub fn add_instance_no_assign(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        compressor_weight: u64,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.instance_partition.push(-1);
@@ -556,7 +615,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -574,7 +633,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight, 0));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -592,7 +651,7 @@ impl DistributionCtx {
         let mut unassigned_instances = Vec::new();
         for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
             if partition_id == -1 {
-                unassigned_instances.push((gid, self.instances[gid].weight));
+                unassigned_instances.push((gid, self.instances[gid].total_weight()));
             }
         }
 
@@ -610,77 +669,24 @@ impl DistributionCtx {
             let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
             let has_compressor = compressor_airs.contains(&(airgroup_id, air_id));
 
-            // Select target partition: compressor-count-first for compressor airs, weight-first otherwise
-            let mut min_weight_idx = 0;
+            // Select target partition: least loaded first (see least_loaded_partition)
+            let min_weight_idx = self.least_loaded_partition(has_compressor);
             if has_compressor {
-                let mut min_compressors = u32::MAX;
-                let mut min_weight = u64::MAX;
-                for (i, &weight) in self.partition_weight.iter().enumerate() {
-                    let compressors = self.partition_compressor_count[i];
-                    if compressors < min_compressors
-                        || (compressors == min_compressors && weight < min_weight)
-                        || (compressors == min_compressors
-                            && weight == min_weight
-                            && self.partition_count[i] < self.partition_count[min_weight_idx])
-                    {
-                        min_compressors = compressors;
-                        min_weight = weight;
-                        min_weight_idx = i;
-                    }
-                }
                 self.partition_compressor_count[min_weight_idx] += 1;
-            } else {
-                let mut min_weight = u64::MAX;
-                for (i, &weight) in self.partition_weight.iter().enumerate() {
-                    if weight < min_weight {
-                        min_weight = weight;
-                        min_weight_idx = i;
-                    } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[min_weight_idx])
-                    {
-                        min_weight_idx = i;
-                    }
-                }
             }
 
             *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
             self.partition_count[min_weight_idx] += 1;
-            self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
+            self.partition_weight[min_weight_idx] += self.instances[*gid].total_weight();
             if self.partition_mask[min_weight_idx] {
-                // Select target process: compressor-count-first for compressor airs, weight-first otherwise
-                let mut min_weight_process_idx = 0;
+                // Select target process with the same criterion as the partition above
+                let min_weight_process_idx = self.least_loaded_process(has_compressor, &local_process_count);
                 if has_compressor {
-                    let mut min_compressors = u32::MAX;
-                    let mut min_weight = u64::MAX;
-                    for (i, &weight) in self.process_weight.iter().enumerate() {
-                        let compressors = self.process_compressor_count[i];
-                        if compressors < min_compressors
-                            || (compressors == min_compressors && weight < min_weight)
-                            || (compressors == min_compressors
-                                && weight == min_weight
-                                && local_process_count[i] < local_process_count[min_weight_process_idx])
-                        {
-                            min_compressors = compressors;
-                            min_weight = weight;
-                            min_weight_process_idx = i;
-                        }
-                    }
                     self.process_compressor_count[min_weight_process_idx] += 1;
-                } else {
-                    let mut min_weight = u64::MAX;
-                    for (i, &weight) in self.process_weight.iter().enumerate() {
-                        if weight < min_weight {
-                            min_weight = weight;
-                            min_weight_process_idx = i;
-                        } else if (min_weight == weight)
-                            && (local_process_count[i] < local_process_count[min_weight_process_idx])
-                        {
-                            min_weight_process_idx = i;
-                        }
-                    }
                 }
 
                 local_process_count[min_weight_process_idx] += 1;
-                self.process_weight[min_weight_process_idx] += self.instances[*gid].weight;
+                self.process_weight[min_weight_process_idx] += self.instances[*gid].total_weight();
                 instances_assigned_process[min_weight_process_idx]
                     .entry((airgroup_id, air_id))
                     .and_modify(|c| *c += 1)
@@ -763,16 +769,7 @@ impl DistributionCtx {
         self.n_tables = 0;
         for (table_idx, table) in self.aux_tables.iter().enumerate() {
             if table.shared {
-                let mut min_weight = u64::MAX;
-                let mut process_id = 0;
-                for (i, &weight) in self.process_weight.iter().enumerate() {
-                    if weight < min_weight {
-                        min_weight = weight;
-                        process_id = i;
-                    } else if (min_weight == weight) && (self.process_count[i] < self.process_count[process_id]) {
-                        process_id = i;
-                    }
-                }
+                let process_id = self.least_loaded_process(false, &self.process_count);
                 let gid = self.instances.len();
                 self.instances.push(*table);
                 self.instances_calculated.push(AtomicBool::new(false));
@@ -792,7 +789,14 @@ impl DistributionCtx {
             } else {
                 for rank in 0..self.n_processes {
                     let gid = self.instances.len();
-                    self.instances.push(InstanceInfo::new(table.airgroup_id, table.air_id, true, false, table.weight));
+                    self.instances.push(InstanceInfo::new(
+                        table.airgroup_id,
+                        table.air_id,
+                        true,
+                        false,
+                        table.weight,
+                        0,
+                    ));
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                     self.n_instances += 1;
                     self.n_tables += 1;
