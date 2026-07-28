@@ -68,9 +68,9 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     stream_warm: HashMap<usize, Key>,
 }
 
-// SAFETY: `d_buffers` is the opaque handle already shared across worker threads and only
-// passed back to the C FFI, never dereferenced in Rust. Other fields are Mutex-guarded.
-unsafe impl<F: PrimeField64> Send for RecursiveScheduler<F> {}
+// `Send` is derived, not asserted: `d_buffers` is stored as a `usize` (the opaque handle is only
+// ever handed back to the C FFI, never dereferenced in Rust) and `PrimeField64: Field: Send`, so
+// the auto impl covers the whole struct and the `F: Send` requirement stays compiler-checked.
 
 impl<F: PrimeField64> RecursiveScheduler<F> {
     pub fn new(d_buffers: *mut c_void) -> Self {
