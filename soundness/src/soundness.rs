@@ -388,14 +388,21 @@ pub fn get_multilinear_air_info<F: PrimeField64>(setup: &Setup<F>) -> Option<MlT
         regime: DecodingRegime::Jbr,
     });
     let solved = whir.security_params();
-    if solved.num_queries.first() != Some(&(params.n_queries as u64))
+    // The schedule the runtime actually uses: the pinned per-block schedule,
+    // or uniform `n_queries` when empty (mirrors `block_query_counts`).
+    let pinned_queries: Vec<u64> = if params.whir_query_schedule.is_empty() {
+        vec![params.n_queries as u64; fold_bits.len()]
+    } else {
+        params.whir_query_schedule.iter().map(|&t| t as u64).collect()
+    };
+    if solved.num_queries != pinned_queries
         || solved.grinding_bits_queries.first() != Some(&(params.grinding_bits as u32))
     {
         tracing::warn!(
-            "{}: mlinfo pins {} uniform queries / {} pow bits, but the soundness formulas deduce {:?} / {:?}; \
+            "{}: mlinfo pins queries {:?} / {} pow bits, but the soundness formulas deduce {:?} / {:?}; \
              the setup may predate the current formulas",
             setup.air_name,
-            params.n_queries,
+            pinned_queries,
             params.grinding_bits,
             solved.num_queries,
             solved.grinding_bits_queries,

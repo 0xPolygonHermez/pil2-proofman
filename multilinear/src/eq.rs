@@ -125,17 +125,18 @@ pub fn eq_eval(a: &[Ext], b: &[Ext]) -> Ext {
 /// for all `i ∈ [0, 2^n)`.
 pub fn eq_evals(point: &[Ext]) -> Vec<Ext> {
     let n = point.len();
-    let mut t = Vec::with_capacity(1 << n);
-    t.push(Ext::ONE);
+    let mut t = vec![Ext::ZERO; 1 << n];
+    t[0] = Ext::ONE;
     for (j, &r) in point.iter().enumerate() {
         let len = 1 << j;
-        t.resize(2 * len, Ext::ZERO);
-        for i in (0..len).rev() {
-            let v = t[i];
-            let hi = v * r;
-            t[i + len] = hi;
-            t[i] = v - hi;
-        }
+        // Doubling step over disjoint halves (`hi = lo·r`, `lo -= hi`); the
+        // large late stages run chunked in parallel.
+        let (lo, rest) = t.split_at_mut(len);
+        let hi = &mut rest[..len];
+        crate::par::zip2_for_each_mut(lo, hi, |v, h| {
+            *h = *v * r;
+            *v -= *h;
+        });
     }
     t
 }
@@ -149,17 +150,14 @@ pub fn eq_evals(point: &[Ext]) -> Vec<Ext> {
 /// evaluation the fold produces (unlike [`eq_evals`], which gives the
 /// *multilinear* evaluation used for out-of-domain points).
 pub fn pow_evals(z: Ext, m: usize) -> Vec<Ext> {
-    let mut t = Vec::with_capacity(1 << m);
-    t.push(Ext::ONE);
+    let mut t = vec![Ext::ZERO; 1 << m];
+    t[0] = Ext::ONE;
     let mut zp = z; // z^{2^d}
     for d in 0..m {
         let len = 1 << d;
-        t.resize(2 * len, Ext::ZERO);
-        for i in (0..len).rev() {
-            let v = t[i];
-            t[i + len] = v * zp;
-            t[i] = v;
-        }
+        let (lo, rest) = t.split_at_mut(len);
+        let hi = &mut rest[..len];
+        crate::par::zip2_for_each_mut(lo, hi, |v, h| *h = *v * zp);
         zp = zp * zp;
     }
     t

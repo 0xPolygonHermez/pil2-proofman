@@ -39,7 +39,7 @@
 use fields::Goldilocks;
 
 use crate::encoding::{domain_point, encode_column_ext, encode_columns};
-use crate::eq::{eq_eval, eq_evals, pow_eval, pow_evals};
+use crate::eq::{eq_eval, eq_evals, pow_eval};
 use crate::error::MlError;
 use crate::hypercube::{mle_eval, Ext};
 use crate::merkle::MerkleTree;
@@ -144,32 +144,28 @@ impl WhirCommitment {
 fn pack_base_kary(codewords: &[Vec<Goldilocks>], k: usize) -> Vec<Vec<Goldilocks>> {
     let group = 1usize << k;
     let half = codewords[0].len() / group;
-    (0..half)
-        .map(|j| {
-            let mut leaf = Vec::with_capacity(group * codewords.len());
-            for t in 0..group {
-                for cw in codewords {
-                    leaf.push(cw[j + t * half]);
-                }
+    crate::par::map_range(half, |j| {
+        let mut leaf = Vec::with_capacity(group * codewords.len());
+        for t in 0..group {
+            for cw in codewords {
+                leaf.push(cw[j + t * half]);
             }
-            leaf
-        })
-        .collect()
+        }
+        leaf
+    })
 }
 
 /// Pack an extension codeword into `2^k`-ary Merkle leaves (3 Goldilocks per value).
 fn pack_ext_kary(vals: &[Ext], k: usize) -> Vec<Vec<Goldilocks>> {
     let group = 1usize << k;
     let half = vals.len() / group;
-    (0..half)
-        .map(|j| {
-            let mut leaf = Vec::with_capacity(group * 3);
-            for t in 0..group {
-                leaf.extend_from_slice(&vals[j + t * half].value);
-            }
-            leaf
-        })
-        .collect()
+    crate::par::map_range(half, |j| {
+        let mut leaf = Vec::with_capacity(group * 3);
+        for t in 0..group {
+            leaf.extend_from_slice(&vals[j + t * half].value);
+        }
+        leaf
+    })
 }
 
 fn unpack_ext_kary(leaf: &[Goldilocks], k: usize) -> Vec<Ext> {
@@ -238,13 +234,16 @@ pub struct WhirBlock {
 fn block_query_counts(params: &MlParams, n_rounds: usize) -> Result<Vec<usize>, MlError> {
     if params.whir_query_schedule.is_empty() {
         Ok(vec![params.n_queries; n_rounds])
-    } else if params.whir_query_schedule.len() == n_rounds {
-        Ok(params.whir_query_schedule.clone())
-    } else {
+    } else if params.whir_query_schedule.len() != n_rounds {
         Err(MlError::Malformed(format!(
             "whir_query_schedule has {} entries, expected {n_rounds} fold rounds",
             params.whir_query_schedule.len()
         )))
+    } else if params.whir_query_schedule.contains(&0) {
+        // A zero-query block would silently skip its proximity test.
+        Err(MlError::Malformed("whir_query_schedule contains a zero-query block".into()))
+    } else {
+        Ok(params.whir_query_schedule.clone())
     }
 }
 
@@ -297,28 +296,11 @@ impl MlPcs for Whir {
         WhirCommitment::load(path)
     }
 
-    fn combine_codewords(matrices: &[&WhirCommitment], coeffs: &[Ext]) -> Vec<Ext> {
-        let n0 = matrices[0].codewords[0].len();
-        let mut out = vec![Ext::ZERO; n0];
-        let mut idx = 0;
-        for m in matrices {
-            for cw in &m.codewords {
-                let c = coeffs[idx];
-                for (o, &v) in out.iter_mut().zip(cw.iter()) {
-                    *o += c * v;
-                }
-                idx += 1;
-            }
-        }
-        out
-    }
-
     fn open(
         params: &MlParams,
         transcript: &mut MlTranscript,
         phi_table: Vec<Ext>,
         point: &[Ext],
-        _phi_codeword: Vec<Ext>,
         matrices: &[&WhirCommitment],
     ) -> WhirOpeningProof {
         let n = phi_table.len().trailing_zeros() as usize;
@@ -363,7 +345,7 @@ impl MlPcs for Whir {
             let mut ood_answer = None;
             let mut fold_root = None;
             let mut committed: Option<(Vec<Vec<Goldilocks>>, MerkleTree, usize)> = None;
-            let mut z0: Option<Vec<Ext>> = None;
+            let mut ood_eq: Option<Vec<Ext>> = None;
             if i < n_rounds {
                 let blowup_i = params.log_blowup + (folded - i);
                 let cw_i = encode_column_ext(&oracle.a, blowup_i);
@@ -374,12 +356,22 @@ impl MlPcs for Whir {
                 let tree_i = build_merkle(&leaves_i, MERKLE_ARITY, params.hash);
                 transcript.absorb_root(&tree_i.root());
                 fold_root = Some(tree_i.root());
-                // OOD on g_i.
+                // OOD on g_i: evaluate as `Σ_b a(b)·eq(b, z)` so the eq table is
+                // shared with the batching step below.
                 let z = transcript.challenges(m_i);
-                let y0 = mle_eval(&oracle.a, &z);
+                let eqz = eq_evals(&z);
+                let y0 = crate::par::map_chunks(oracle.a.len(), |s, e| {
+                    let mut acc = Ext::ZERO;
+                    for (av, ev) in oracle.a[s..e].iter().zip(eqz[s..e].iter()) {
+                        acc += *av * *ev;
+                    }
+                    acc
+                })
+                .into_iter()
+                .sum::<Ext>();
                 transcript.absorb_ext(&y0);
                 ood_answer = Some(y0);
-                z0 = Some(z);
+                ood_eq = Some(eqz);
                 committed = Some((leaves_i, tree_i, dom_bits_i));
             } else {
                 final_poly = oracle.a.clone();
@@ -416,19 +408,29 @@ impl MlPcs for Whir {
             // OOD term (γ^1), then query terms (γ^2, γ^3, …) — same power schedule
             // whether or not this block has an OOD (last block skips the γ^1 slot).
             let mut gpow = gamma;
-            if let Some(z) = &z0 {
-                let eqz = eq_evals(z);
-                for (bv, ev) in oracle.b.iter_mut().zip(eqz.iter()) {
-                    *bv += gpow * *ev;
-                }
+            if let Some(eqz) = &ood_eq {
+                crate::par::zip_for_each_mut(&mut oracle.b, eqz, |bv, ev| *bv += gpow * *ev);
             }
-            for &p in &positions {
-                gpow *= gamma;
-                let zj = Ext::from_base(domain_point(prev_dom_bits, k, p));
-                let powz = pow_evals(zj, m_i);
-                for (bv, ev) in oracle.b.iter_mut().zip(powz.iter()) {
-                    *bv += gpow * *ev;
-                }
+            // Query kernels are power tables `pow(z_j)[i] = z_j^i`, so instead of
+            // materializing one 2^{m_i} table per query, accumulate all queries
+            // into each chunk of `b` directly, advancing `z_j^i` incrementally.
+            let query_weights: Vec<(Ext, Ext)> = positions
+                .iter()
+                .map(|&p| {
+                    gpow *= gamma;
+                    (gpow, Ext::from_base(domain_point(prev_dom_bits, k, p)))
+                })
+                .collect();
+            if !query_weights.is_empty() {
+                crate::par::for_each_chunk_mut(&mut oracle.b, |start, chunk| {
+                    for &(w, zj) in &query_weights {
+                        let mut zpow = zj.pow(start as u64) * w;
+                        for bv in chunk.iter_mut() {
+                            *bv += zpow;
+                            zpow *= zj;
+                        }
+                    }
+                });
             }
 
             blocks.push(WhirBlock { round_polys, ood_answer, fold_root, pow_nonce, query_openings });
@@ -741,8 +743,7 @@ mod tests {
             tp.absorb_ext(v);
         }
         let _ = tp.challenge();
-        let phi_codeword = Whir::combine_codewords(&refs, &s.coeffs);
-        Whir::open(p, &mut tp, s.phi_table.clone(), &s.lambda, phi_codeword, &refs)
+        Whir::open(p, &mut tp, s.phi_table.clone(), &s.lambda, &refs)
     }
 
     /// Verify with a transcript aligned to `setup`, using `sigma` (overridable for tamper tests).
@@ -805,6 +806,31 @@ mod tests {
         assert_eq!(proof.final_poly.len(), 2);
         let rs = verify(n, &s, &p, &proof, s.sigma).expect("must verify");
         assert_eq!(rs.len(), n);
+    }
+
+    /// Roundtrip with a pinned decreasing per-block query schedule.
+    #[test]
+    fn opening_roundtrip_query_schedule() {
+        let n = 12;
+        let p =
+            MlParams { whir_query_schedule: vec![8, 4, 2, 2], whir_fold_schedule: vec![4, 3, 2, 2], ..params(4, 8) };
+        let stage_cols = vec![
+            (0..3).map(|_| random_col(1 << n)).collect::<Vec<_>>(),
+            (0..2).map(|_| random_col(1 << n)).collect::<Vec<_>>(),
+        ];
+        let s = setup(n, &stage_cols, &p);
+        let proof = open(n, &s, &p);
+        assert_eq!(proof.blocks.iter().map(|b| b.query_openings.len()).collect::<Vec<_>>(), vec![8, 4, 2, 2]);
+        let rs = verify(n, &s, &p, &proof, s.sigma).expect("must verify");
+        assert_eq!(rs.len(), n);
+    }
+
+    /// Bad schedules are rejected: wrong length, or a zero-query block.
+    #[test]
+    fn invalid_query_schedules_rejected() {
+        assert!(block_query_counts(&MlParams { whir_query_schedule: vec![8, 4], ..params(4, 8) }, 3).is_err());
+        assert!(block_query_counts(&MlParams { whir_query_schedule: vec![8, 4, 0], ..params(4, 8) }, 3).is_err());
+        assert_eq!(block_query_counts(&params(4, 8), 3).unwrap(), vec![8, 8, 8]);
     }
 
     #[test]

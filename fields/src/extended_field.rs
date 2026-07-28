@@ -51,7 +51,7 @@ impl<F: Field> CubicExtensionField<F> {
 
     #[inline(always)]
     pub fn square(&self) -> Self {
-        Self { value: cubic_square(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_square(&self.value) }
     }
 
     #[inline]
@@ -75,7 +75,7 @@ impl<F: Field> CubicExtensionField<F> {
     }
 
     pub fn inverse(&self) -> Self {
-        Self { value: cubic_inv(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_inv(&self.value) }
     }
 
     pub fn from_base(x: F) -> Self {
@@ -191,9 +191,7 @@ impl<F: Field> Mul for CubicExtensionField<F> {
 
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        let a = self.value;
-        let b = rhs.value;
-        Self { value: cubic_mul(&a, &b).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&self.value, &rhs.value) }
     }
 }
 
@@ -240,9 +238,8 @@ impl<F: Field> Div for CubicExtensionField<F> {
 
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: Self) -> Self::Output {
-        let a = self.value;
         let b_inv = cubic_inv(&rhs.value);
-        Self { value: cubic_mul(&a, &b_inv).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&self.value, &b_inv) }
     }
 }
 
@@ -263,9 +260,22 @@ fn cubic_square<F: Field>(a: &[F]) -> [F; 3] {
 
 #[inline]
 fn cubic_mul<F: Field>(a: &[F], b: &[F]) -> [F; 3] {
-    let c0 = a[0] * b[0] + a[2] * b[1] + a[1] * b[2];
-    let c1 = a[1] * b[0] + a[0] * b[1] + a[2] * b[1] + a[1] * b[2] + a[2] * b[2];
-    let c2 = a[2] * b[0] + a[1] * b[1] + a[0] * b[2] + a[2] * b[2];
+    // Karatsuba (3-way): 6 base multiplies instead of the schoolbook 9, then
+    // reduce with u³ = u + 1 (d3·u³ → d3 + d3·u, d4·u⁴ → d4·u + d4·u²).
+    let m0 = a[0] * b[0];
+    let m1 = a[1] * b[1];
+    let m2 = a[2] * b[2];
+    let m01 = (a[0] + a[1]) * (b[0] + b[1]);
+    let m02 = (a[0] + a[2]) * (b[0] + b[2]);
+    let m12 = (a[1] + a[2]) * (b[1] + b[2]);
+
+    let d1 = m01 - m0 - m1;
+    let d2 = m02 - m0 - m2 + m1;
+    let d3 = m12 - m1 - m2;
+
+    let c0 = m0 + d3;
+    let c1 = d1 + d3 + m2;
+    let c2 = d2 + m2;
 
     [c0, c1, c2]
 }
@@ -288,10 +298,11 @@ fn cubic_inv<F: Field>(a: &[F]) -> [F; 3] {
     let ccc = cc * a[2];
 
     let t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
+    let t_inv = t.inverse();
 
-    let i0 = (bc + bb - aa - ac - ac - cc) * t.inverse();
-    let i1 = (ba - cc) * t.inverse();
-    let i2 = (ac + cc - bb) * t.inverse();
+    let i0 = (bc + bb - aa - ac - ac - cc) * t_inv;
+    let i1 = (ba - cc) * t_inv;
+    let i2 = (ac + cc - bb) * t_inv;
 
     [i0, i1, i2]
 }

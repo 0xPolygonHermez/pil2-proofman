@@ -51,25 +51,36 @@ impl SumcheckOracle for ProductOracle {
 
     fn round_evals(&self) -> Vec<Ext> {
         let half = self.a.len() / 2;
-        let (mut g0, mut g1, mut g2) = (Ext::ZERO, Ext::ZERO, Ext::ZERO);
-        for i in 0..half {
-            let a0 = self.a[2 * i];
-            let a1 = self.a[2 * i + 1];
-            let b0 = self.b[2 * i];
-            let b1 = self.b[2 * i + 1];
-            g0 += a0 * b0;
-            g1 += a1 * b1;
-            // value at X = 2 by linearity: v(2) = 2·v(1) − v(0)
-            let a2 = a1.double() - a0;
-            let b2 = b1.double() - b0;
-            g2 += a2 * b2;
+        // Parallel reduction over pairs; each chunk keeps private accumulators.
+        let partials = crate::par::map_chunks(half, |start, end| {
+            let (mut g0, mut g1, mut g2) = (Ext::ZERO, Ext::ZERO, Ext::ZERO);
+            for i in start..end {
+                let a0 = self.a[2 * i];
+                let a1 = self.a[2 * i + 1];
+                let b0 = self.b[2 * i];
+                let b1 = self.b[2 * i + 1];
+                g0 += a0 * b0;
+                g1 += a1 * b1;
+                // value at X = 2 by linearity: v(2) = 2·v(1) − v(0)
+                let a2 = a1.double() - a0;
+                let b2 = b1.double() - b0;
+                g2 += a2 * b2;
+            }
+            [g0, g1, g2]
+        });
+        let mut g = [Ext::ZERO; 3];
+        for p in partials {
+            for (gx, px) in g.iter_mut().zip(p.iter()) {
+                *gx += *px;
+            }
         }
-        vec![g0, g1, g2]
+        g.to_vec()
     }
 
     fn bind(&mut self, r: Ext) {
-        fold_mle(&mut self.a, r);
-        fold_mle(&mut self.b, r);
+        // Each fold streams sequentially (memory-bound); the two run in parallel.
+        let Self { a, b } = self;
+        crate::par::join(|| fold_mle(a, r), || fold_mle(b, r));
     }
 }
 

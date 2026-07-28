@@ -33,20 +33,14 @@ pub trait MlPcs {
     /// Load a commitment written by [`save_commitment`](MlPcs::save_commitment).
     fn load_commitment(path: &std::path::Path) -> Result<Self::Commitment, MlError>;
 
-    /// Codeword of `Φ = Σ_j coeffs[j]·col_j` over the committed matrices, in the
-    /// scheme's evaluation domain (folded together with the opening).
-    fn combine_codewords(matrices: &[&Self::Commitment], coeffs: &[Ext]) -> Vec<Ext>;
-
     /// Prove `Σ_b Φ(b)·eq(b, u) = σ`. `phi_table` is the hypercube MLE table of
-    /// `Φ` and `point` the evaluation point `u`; `phi_codeword` is `Φ`'s
-    /// codeword (from [`combine_codewords`](MlPcs::combine_codewords));
-    /// `matrices` are the commitments anchoring the query phase.
+    /// `Φ` and `point` the evaluation point `u`; `matrices` are the
+    /// commitments anchoring the query phase.
     fn open(
         params: &MlParams,
         transcript: &mut MlTranscript,
         phi_table: Vec<Ext>,
         point: &[Ext],
-        phi_codeword: Vec<Ext>,
         matrices: &[&Self::Commitment],
     ) -> Self::OpeningProof;
 

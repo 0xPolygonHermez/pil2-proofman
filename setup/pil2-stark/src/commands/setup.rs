@@ -398,10 +398,10 @@ pub(crate) fn ml_params(
     hash: proofman_multilinear::MlHashFamily,
 ) -> proofman_multilinear::MlParams {
     // The PCS is WHIR. Its opening folds `k` variables per block (matching the
-    // prover's `WhirParams::default().folding_factor`), the domain halves once
-    // per block (rate drops `2^{1-k}`), and every block does `n_queries` uniform
-    // in-domain queries with no grinding (WHIR v1 placeholders — see whir.rs).
-    // We size `n_queries` from the WHIR query-phase soundness bound (soundcalc's
+    // prover's `WhirParams::default().folding_factor`) and the domain halves
+    // once per block, so the rate improves by `2^{k-1}` each block. Each block
+    // grinds `pow_bits` and draws its own per-block query count, sized from
+    // the WHIR query-phase soundness bound at that block's rate (soundcalc's
     // `pcs/whir.py`, ported to `security.rs`).
     const WHIR_FOLDING_FACTOR: usize = 4;
     const TARGET_SECURITY_BITS: usize = 128;
@@ -424,16 +424,27 @@ pub(crate) fn ml_params(
     };
     let n_rounds = fold_bits.len();
 
-    // Per-query soundness at iteration 0 (the highest rate ⇒ smallest δ ⇒
-    // query-hungriest); `n_queries` is uniform across blocks.
+    // Per-block query counts. Block `i` queries the oracle at rate
+    // `2^-mu_i` with `mu_i = log_blowup + Σ_{j<i}(k_j − 1)` — the domain
+    // halves once per block while the message shrinks by `2^{k_j}` (this
+    // mirrors the prover's `blowup_i = log_blowup + (folded − i)` in
+    // `multilinear/src/pcs/whir.rs`). The rate improves every block, so
+    // later blocks need far fewer queries for the same soundness.
     let field_size = security::goldilocks_safe_extension_field_size();
     let regime = security::regimes::DecodingRegime::Jbr;
     // Grinding: mirror the univariate pow bits; each WHIR block grinds the
     // same budget before drawing its query indices.
     let grinding_bits = stark_struct.pow_bits;
-    let security_per_query = security::pcs::whir_security_per_query(field_size, log_blowup as u32, regime);
-    let n_queries =
-        ((TARGET_SECURITY_BITS as f64 - grinding_bits as f64) / security_per_query).ceil().max(1.0) as usize;
+    let mut mu = log_blowup as u32;
+    let mut query_schedule = Vec::with_capacity(n_rounds);
+    for &k in &fold_bits {
+        let per_query = security::pcs::whir_security_per_query(field_size, mu, regime);
+        let t = ((TARGET_SECURITY_BITS as f64 - grinding_bits as f64) / per_query).ceil().max(1.0) as usize;
+        query_schedule.push(t);
+        mu += k as u32 - 1;
+    }
+    // Uniform fallback / display value: block 0 is the query-hungriest.
+    let n_queries = query_schedule[0];
 
     // Sanity-check the full WHIR PCS soundness at this query count (all
     // components: batching / folding / OOD / shift / final). The query-
@@ -458,7 +469,7 @@ pub(crate) fn ml_params(
             regime,
         },
         security::pcs::WhirSecurityParams {
-            num_queries: vec![n_queries as u64; n_rounds],
+            num_queries: query_schedule.iter().map(|&t| t as u64).collect(),
             num_ood_samples: vec![1; n_rounds.saturating_sub(1)],
             grinding_bits_batching: 0,
             grinding_bits_folding: fold_bits.iter().map(|&b| vec![0u32; b]).collect(),
@@ -478,7 +489,7 @@ pub(crate) fn ml_params(
     proofman_multilinear::MlParams {
         log_blowup,
         n_queries,
-        whir_query_schedule: vec![],
+        whir_query_schedule: query_schedule,
         whir_fold_schedule: fold_bits,
         log_final_poly_len,
         grinding_bits,
@@ -573,6 +584,36 @@ mod tests {
         assert_eq!(o.exps_arch, "auto");
         assert_eq!(o.exps_cap, 40000);
         assert!(o.exps_chunk.is_none());
+    }
+
+    #[test]
+    fn ml_params_query_schedule_decreases_with_rate() {
+        // Rate 1/2 (blowup 1), folds [3,3,3,3] (steps 22→19→16→13→10),
+        // grinding 16, target 128: the per-block rates are 2^-1, 2^-3, 2^-5,
+        // 2^-7, so the schedule must match the security module's pinned
+        // solver values [228, 76, 46, 33].
+        let stark_struct = crate::types::stark_struct::StarkStruct {
+            n_bits: 22,
+            n_bits_ext: 23,
+            merkle_tree_arity: 4,
+            transcript_arity: 4,
+            merkle_tree_custom: false,
+            hash_commits: false,
+            verification_hash_type: "GL".to_string(),
+            last_level_verification: 0,
+            pow_bits: 16,
+            steps: [22, 19, 16, 13, 10]
+                .into_iter()
+                .map(|n_bits| crate::types::stark_struct::StarkStep { n_bits })
+                .collect(),
+            n_queries: 0,
+        };
+        let params = ml_params(&stark_struct, 22, 32, proofman_multilinear::MlHashFamily::Poseidon2);
+        assert_eq!(params.log_blowup, 1);
+        assert_eq!(params.whir_fold_schedule, vec![3, 3, 3, 3]);
+        assert_eq!(params.whir_query_schedule, vec![228, 76, 46, 33]);
+        assert_eq!(params.n_queries, 228);
+        assert_eq!(params.grinding_bits, 16);
     }
 
     #[test]

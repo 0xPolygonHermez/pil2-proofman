@@ -26,7 +26,8 @@ fn main() {
         let mut best = f64::INFINITY;
         for _ in 0..reps {
             let t = Instant::now();
-            let proof = prove_air(&ir, &witness, &consts, None, &[], &publics, &[], &[], &[], &[]).expect("prove_air");
+            let proof =
+                prove_air(&ir, &witness, &consts, None, &[], None, &publics, &[], &[], &[], &[]).expect("prove_air");
             std::hint::black_box(&proof);
             best = best.min(t.elapsed().as_secs_f64() * 1e3);
         }

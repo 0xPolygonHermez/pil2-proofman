@@ -534,43 +534,55 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
         let half = self.eq_suffix.len();
         let n_tables = self.tables.n_tables();
 
-        let mut g = vec![Ext::ZERO; n_evals];
-        let mut vals = vec![Val::zero(); n_tables];
-        let mut diffs = vec![Val::zero(); n_tables];
-        let mut temps: Vec<Val> = Vec::new();
+        // Parallel reduction over hypercube pairs: each chunk accumulates its
+        // own `g` with private scratch buffers, partials are summed at the end.
+        let partials = crate::par::map_chunks(half, |start, end| {
+            let mut g = vec![Ext::ZERO; n_evals];
+            let mut vals = vec![Val::zero(); n_tables];
+            let mut diffs = vec![Val::zero(); n_tables];
+            let mut temps: Vec<Val> = Vec::new();
 
-        for j in 0..half {
-            for k in 0..n_tables {
-                let v0 = self.tables.val(k, 2 * j);
-                vals[k] = v0;
-                diffs[k] = self.tables.val(k, 2 * j + 1) - v0;
-            }
+            for j in start..end {
+                for k in 0..n_tables {
+                    let v0 = self.tables.val(k, 2 * j);
+                    vals[k] = v0;
+                    diffs[k] = self.tables.val(k, 2 * j + 1) - v0;
+                }
 
-            let w = self.eq_suffix[j];
-            for (x, gx) in g.iter_mut().enumerate() {
-                if x > 0 {
-                    for (v, d) in vals.iter_mut().zip(diffs.iter()) {
-                        *v = *v + *d;
+                let w = self.eq_suffix[j];
+                for (x, gx) in g.iter_mut().enumerate() {
+                    if x > 0 {
+                        for (v, d) in vals.iter_mut().zip(diffs.iter()) {
+                            *v = *v + *d;
+                        }
                     }
+                    let src = TablePoint {
+                        ir: self.ir,
+                        wtn_index: &self.wtn_index,
+                        const_index: &self.const_index,
+                        custom_index: &self.custom_index,
+                        vals: &vals,
+                        publics: &self.publics,
+                        challenges: &self.challenges,
+                        air_values: &self.air_values,
+                        airgroup_values: &self.airgroup_values,
+                        proof_values: &self.proof_values,
+                    };
+                    eval_instrs(self.ir, &src, &mut temps);
+                    let mut c = Val::zero();
+                    for (root, wt) in &self.roots {
+                        c = c + Val::E(*wt) * operand_eval(self.ir, &src, &temps, root);
+                    }
+                    *gx += (Val::E(w) * c).to_ext();
                 }
-                let src = TablePoint {
-                    ir: self.ir,
-                    wtn_index: &self.wtn_index,
-                    const_index: &self.const_index,
-                    custom_index: &self.custom_index,
-                    vals: &vals,
-                    publics: &self.publics,
-                    challenges: &self.challenges,
-                    air_values: &self.air_values,
-                    airgroup_values: &self.airgroup_values,
-                    proof_values: &self.proof_values,
-                };
-                eval_instrs(self.ir, &src, &mut temps);
-                let mut c = Val::zero();
-                for (root, wt) in &self.roots {
-                    c = c + Val::E(*wt) * operand_eval(self.ir, &src, &temps, root);
-                }
-                *gx += (Val::E(w) * c).to_ext();
+            }
+            g
+        });
+
+        let mut g = vec![Ext::ZERO; n_evals];
+        for partial in partials {
+            for (gx, p) in g.iter_mut().zip(partial.iter()) {
+                *gx += *p;
             }
         }
         g
@@ -580,20 +592,18 @@ impl SumcheckOracle for ZerocheckOracle<'_> {
         match &mut self.tables {
             // First bind: folding base tables by an extension challenge yields
             // extension tables (`e0 + r·(e1−e0)`), so subsequent rounds run in `Ext`.
+            // Each table folds sequentially (streaming, memory-bound); tables
+            // fold in parallel.
             Tables::Base(base) => {
-                let ext: Vec<Vec<Ext>> = base
-                    .iter()
-                    .map(|t| {
-                        let half = t.len() / 2;
-                        (0..half).map(|i| Ext::from_base(t[2 * i]) + r * (t[2 * i + 1] - t[2 * i])).collect()
-                    })
-                    .collect();
+                let ext: Vec<Vec<Ext>> = crate::par::map_slice(base, |t| {
+                    let half = t.len() / 2;
+                    (0..half).map(|i| Ext::from_base(t[2 * i]) + r * (t[2 * i + 1] - t[2 * i])).collect()
+                });
                 self.tables = Tables::Ext(ext);
             }
             Tables::Ext(ext) => {
-                for t in ext.iter_mut() {
-                    fold_mle(t, r);
-                }
+                let work = ext.iter().map(|t| t.len()).sum();
+                crate::par::for_each_mut(ext, work, |t| fold_mle(t, r));
             }
         }
         // The suffix eq shrinks by one variable per round

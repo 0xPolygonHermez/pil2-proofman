@@ -256,13 +256,23 @@ pub struct RowSource<'a> {
     pub n_rows: usize,
 }
 
+impl RowSource<'_> {
+    /// Cyclic row shift; `n_rows` is a power of two, so the wrap is a mask
+    /// (two's-complement AND handles negative offsets).
+    #[inline(always)]
+    fn wrapped_row(&self, row_offset: i32) -> usize {
+        debug_assert!(self.n_rows.is_power_of_two());
+        ((self.row as i64 + row_offset as i64) & (self.n_rows as i64 - 1)) as usize
+    }
+}
+
 impl LeafSource for RowSource<'_> {
     fn witness(&self, stage: u8, col: u32, row_offset: i32) -> Val {
-        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        let r = self.wrapped_row(row_offset);
         Val::B(self.witness[(stage - 1) as usize][col as usize][r])
     }
     fn constant(&self, col: u32, row_offset: i32) -> Val {
-        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        let r = self.wrapped_row(row_offset);
         Val::B(self.consts[col as usize][r])
     }
     fn public(&self, idx: u32) -> Val {
@@ -281,7 +291,7 @@ impl LeafSource for RowSource<'_> {
         Val::E(self.proof_values[idx as usize])
     }
     fn custom(&self, commit: u8, col: u32, row_offset: i32) -> Val {
-        let r = (self.row as i64 + row_offset as i64).rem_euclid(self.n_rows as i64) as usize;
+        let r = self.wrapped_row(row_offset);
         Val::B(self.customs[commit as usize][col as usize][r])
     }
 }
@@ -304,14 +314,15 @@ pub fn check_constraints_on_trace(
 ) -> Result<(), MlError> {
     let n_rows = 1usize << ir.n_bits;
 
-    let mut temps = Vec::new();
-    for (c_idx, c) in ir.constraints.iter().enumerate() {
-        let rows: Box<dyn Iterator<Item = usize>> = match c.boundary {
-            crate::ir::Boundary::EveryRow => Box::new(0..n_rows),
-            crate::ir::Boundary::FirstRow => Box::new(core::iter::once(0)),
-            crate::ir::Boundary::LastRow => Box::new(core::iter::once(n_rows - 1)),
-        };
-        for row in rows {
+    // One pass of the full instruction list per row covers every constraint
+    // (boundary constraints are only read at their row), instead of one pass
+    // per (constraint, row). Rows are checked in parallel chunks; the failure
+    // at the lowest (row, constraint) is reported.
+    const CHUNK: usize = 1 << 12;
+    let n_chunks = n_rows.div_ceil(CHUNK);
+    let failures = crate::par::map_range(n_chunks, |chunk| {
+        let mut temps = Vec::new();
+        for row in chunk * CHUNK..((chunk + 1) * CHUNK).min(n_rows) {
             let src = RowSource {
                 witness,
                 consts,
@@ -325,11 +336,25 @@ pub fn check_constraints_on_trace(
                 n_rows,
             };
             eval_instrs(ir, &src, &mut temps);
-            let v = constraint_value(ir, &src, &temps, c_idx).to_ext();
-            if !v.is_zero() {
-                return Err(MlError::Constraint(format!("row {row}, value {v}"), c_idx));
+            for (c_idx, c) in ir.constraints.iter().enumerate() {
+                let applies = match c.boundary {
+                    crate::ir::Boundary::EveryRow => true,
+                    crate::ir::Boundary::FirstRow => row == 0,
+                    crate::ir::Boundary::LastRow => row == n_rows - 1,
+                };
+                if !applies {
+                    continue;
+                }
+                let v = constraint_value(ir, &src, &temps, c_idx).to_ext();
+                if !v.is_zero() {
+                    return Some((row, c_idx, v));
+                }
             }
         }
+        None
+    });
+    if let Some((row, c_idx, v)) = failures.into_iter().flatten().next() {
+        return Err(MlError::Constraint(format!("row {row}, value {v}"), c_idx));
     }
     Ok(())
 }

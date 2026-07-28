@@ -10,15 +10,15 @@
 //! Basefold commitment of the fixed columns, produced by `proofman-setup`
 //! alongside `.mlinfo.bin`. Reusing it skips re-encoding and re-hashing the
 //! const tree on every proof (and every instance of the same AIR). See
-//! [`ConstMatrixCache`]. Absent, the prover falls back to building the
-//! commitment itself, so older proving keys still work.
+//! [`MlSetupCache`]. Absent, the commitment is built once per AIR from the
+//! loaded columns, so older proving keys still work.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fields::{Field, Goldilocks, PrimeField64};
-use proofman_common::{ProofmanError, ProofmanResult, Setup};
+use proofman_common::{load_const_pols, ProofmanError, ProofmanResult, Setup};
 use proofman_multilinear::{AirIr, MlPcs, Pcs, PcsCommitment};
 
 /// Cache of loaded `.mlinfo.bin` artifacts, keyed by (airgroup_id, air_id).
@@ -50,36 +50,129 @@ impl AirIrCache {
     }
 }
 
-/// Cache of prebuilt fixed-column commitments (`.mlconst.bin`), keyed by
-/// (airgroup_id, air_id). The fixed columns are identical across all instances
-/// of an AIR, so building/loading the commitment once and sharing it avoids
-/// re-encoding + re-hashing the const tree on every proof. `None` for a key
-/// means the artifact is absent (older proving key), in which case the prover
-/// falls back to building the commitment itself.
-/// Cached commitment per (airgroup_id, air_id); `None` = artifact absent.
-type ConstMatrixEntry = Option<Arc<PcsCommitment>>;
-
-#[derive(Default)]
-pub struct ConstMatrixCache {
-    cache: Mutex<HashMap<(usize, usize), ConstMatrixEntry>>,
+/// Per-AIR fixed-column data, loaded once per run and shared by every
+/// instance: the row-major buffer in the FFI element type (consumed by
+/// `init_fixed` / the C++ stage-1 expression evaluator) and the column-major
+/// Goldilocks copy the multilinear prover consumes — both derived from a
+/// single read of the `.const` file.
+pub struct ConstData<F> {
+    pub row_major: Arc<Vec<F>>,
+    pub columns: Arc<Vec<Vec<Goldilocks>>>,
 }
 
-impl ConstMatrixCache {
-    pub fn get<F: PrimeField64>(&self, setup: &Setup<F>) -> ProofmanResult<Option<Arc<PcsCommitment>>> {
+/// Per-AIR custom-commit (e.g. ROM) fixed data: raw columns plus their PCS
+/// commitments, computed once per AIR and reused by every instance.
+pub struct CustomData {
+    pub columns: Vec<Vec<Vec<Goldilocks>>>,
+    pub commitments: Vec<PcsCommitment>,
+}
+
+/// All per-AIR artifacts reusable across instances and passes of one
+/// multilinear proving run: compiled IRs (`.mlinfo.bin`), fixed columns in
+/// both layouts, the fixed-column commitment (`.mlconst.bin` or built once),
+/// and custom-commit columns + commitments. All getters are thread-safe;
+/// entries are immutable once inserted.
+type AirCache<T> = Mutex<HashMap<(usize, usize), Arc<T>>>;
+
+pub struct MlSetupCache<F> {
+    irs: AirIrCache,
+    const_data: AirCache<ConstData<F>>,
+    const_matrices: AirCache<PcsCommitment>,
+    customs: AirCache<CustomData>,
+}
+
+impl<F> Default for MlSetupCache<F> {
+    fn default() -> Self {
+        Self {
+            irs: AirIrCache::default(),
+            const_data: Mutex::new(HashMap::new()),
+            const_matrices: Mutex::new(HashMap::new()),
+            customs: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<F: PrimeField64> MlSetupCache<F> {
+    /// The compiled [`AirIr`] of an AIR (`.mlinfo.bin`), loaded once per run.
+    pub fn ir(&self, setup: &Setup<F>) -> ProofmanResult<Arc<AirIr>> {
+        self.irs.get(setup)
+    }
+
+    /// Fixed columns of an AIR, read from the `.const` file once per run.
+    pub fn const_data(&self, setup: &Setup<F>, ir: &AirIr) -> ProofmanResult<Arc<ConstData<F>>> {
         let key = (setup.airgroup_id, setup.air_id);
-        if let Some(entry) = self.cache.lock().unwrap().get(&key) {
-            return Ok(entry.clone());
+        if let Some(d) = self.const_data.lock().unwrap().get(&key) {
+            return Ok(d.clone());
+        }
+        let n_rows = 1usize << ir.n_bits;
+        let n_cols = ir.n_const_cols as usize;
+        let mut row_major = vec![F::ZERO; setup.const_pols_size];
+        if setup.const_pols_size > 0 {
+            load_const_pols(setup, &mut row_major);
+        }
+        if row_major.len() < n_cols * n_rows {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "const buffer for {}: {} elements < {n_cols} cols × {n_rows} rows",
+                ir.name,
+                row_major.len()
+            )));
+        }
+        let mut columns = vec![vec![Goldilocks::ZERO; n_rows]; n_cols];
+        for row in 0..n_rows {
+            for (c, col) in columns.iter_mut().enumerate() {
+                col[row] = Goldilocks::new(row_major[row * n_cols + c].as_canonical_u64());
+            }
+        }
+        let data = Arc::new(ConstData { row_major: Arc::new(row_major), columns: Arc::new(columns) });
+        self.const_data.lock().unwrap().insert(key, data.clone());
+        Ok(data)
+    }
+
+    /// The fixed-column commitment of an AIR: the prebuilt `.mlconst.bin`
+    /// artifact when present, otherwise built once per run from the loaded
+    /// columns (older proving keys).
+    pub fn const_matrix(&self, setup: &Setup<F>, ir: &AirIr) -> ProofmanResult<Arc<PcsCommitment>> {
+        let key = (setup.airgroup_id, setup.air_id);
+        if let Some(m) = self.const_matrices.lock().unwrap().get(&key) {
+            return Ok(m.clone());
         }
         let path = setup.setup_path.with_extension("mlconst.bin");
-        let entry = if path.exists() {
-            Some(Arc::new(Pcs::load_commitment(&path).map_err(|e| {
+        let matrix = if path.exists() {
+            Pcs::load_commitment(&path).map_err(|e| {
                 ProofmanError::InvalidParameters(format!("loading fixed-column commitment {}: {e}", path.display()))
-            })?))
+            })?
         } else {
-            None
+            let data = self.const_data(setup, ir)?;
+            let refs: Vec<&[Goldilocks]> = data.columns.iter().map(|c| c.as_slice()).collect();
+            Pcs::commit(&refs, &ir.params)
         };
-        self.cache.lock().unwrap().insert(key, entry.clone());
-        Ok(entry)
+        let matrix = Arc::new(matrix);
+        self.const_matrices.lock().unwrap().insert(key, matrix.clone());
+        Ok(matrix)
+    }
+
+    /// Custom-commit columns and their commitments, loaded/committed once per
+    /// AIR. `paths` are the registered fixed-buffer files, in
+    /// `ir.custom_commits` order.
+    pub fn custom_data(&self, key: (usize, usize), ir: &AirIr, paths: &[PathBuf]) -> ProofmanResult<Arc<CustomData>> {
+        if let Some(d) = self.customs.lock().unwrap().get(&key) {
+            return Ok(d.clone());
+        }
+        let n_rows = 1usize << ir.n_bits;
+        let mut columns = Vec::with_capacity(ir.custom_commits.len());
+        for (cc, path) in ir.custom_commits.iter().zip(paths.iter()) {
+            columns.push(load_custom_columns(path, cc.n_cols as usize, n_rows)?);
+        }
+        let commitments = columns
+            .iter()
+            .map(|cols| {
+                let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+                Pcs::commit(&refs, &ir.params)
+            })
+            .collect();
+        let data = Arc::new(CustomData { columns, commitments });
+        self.customs.lock().unwrap().insert(key, data.clone());
+        Ok(data)
     }
 }
 

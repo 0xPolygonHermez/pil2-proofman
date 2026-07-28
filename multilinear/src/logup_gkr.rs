@@ -175,65 +175,79 @@ impl LayerOracle {
     /// current round polynomial.
     fn round_evals(&self) -> [Ext; 3] {
         let half = self.eq_suffix.len();
-        let mut h = [Ext::ZERO; 3];
+        // Parallel reduction over pairs; each chunk keeps a private `h`.
         // value at X = 2 by linearity: v(2) = 2·v(1) − v(0)
-        match &self.p {
-            PTables::Base(p0, p1) => {
-                for i in 0..half {
-                    let w = self.eq_suffix[i];
-                    let (a0, a1) = (p0[2 * i], p0[2 * i + 1]);
-                    let (b0, b1) = (p1[2 * i], p1[2 * i + 1]);
-                    let (c0, c1) = (self.q0[2 * i], self.q0[2 * i + 1]);
-                    let (d0, d1) = (self.q1[2 * i], self.q1[2 * i + 1]);
-                    let (a2, b2) = (a1 + a1 - a0, b1 + b1 - b0);
-                    let (c2, d2) = (c1 + c1 - c0, d1 + d1 - d0);
-                    h[0] += w * (d0 * a0 + c0 * b0 + self.lambda * (c0 * d0));
-                    h[1] += w * (d1 * a1 + c1 * b1 + self.lambda * (c1 * d1));
-                    h[2] += w * (d2 * a2 + c2 * b2 + self.lambda * (c2 * d2));
+        let partials = crate::par::map_chunks(half, |start, end| {
+            let mut h = [Ext::ZERO; 3];
+            match &self.p {
+                PTables::Base(p0, p1) => {
+                    for i in start..end {
+                        let w = self.eq_suffix[i];
+                        let (a0, a1) = (p0[2 * i], p0[2 * i + 1]);
+                        let (b0, b1) = (p1[2 * i], p1[2 * i + 1]);
+                        let (c0, c1) = (self.q0[2 * i], self.q0[2 * i + 1]);
+                        let (d0, d1) = (self.q1[2 * i], self.q1[2 * i + 1]);
+                        let (a2, b2) = (a1 + a1 - a0, b1 + b1 - b0);
+                        let (c2, d2) = (c1 + c1 - c0, d1 + d1 - d0);
+                        h[0] += w * (d0 * a0 + c0 * b0 + self.lambda * (c0 * d0));
+                        h[1] += w * (d1 * a1 + c1 * b1 + self.lambda * (c1 * d1));
+                        h[2] += w * (d2 * a2 + c2 * b2 + self.lambda * (c2 * d2));
+                    }
+                }
+                PTables::Ext(p0, p1) => {
+                    for i in start..end {
+                        let w = self.eq_suffix[i];
+                        let (a0, a1) = (p0[2 * i], p0[2 * i + 1]);
+                        let (b0, b1) = (p1[2 * i], p1[2 * i + 1]);
+                        let (c0, c1) = (self.q0[2 * i], self.q0[2 * i + 1]);
+                        let (d0, d1) = (self.q1[2 * i], self.q1[2 * i + 1]);
+                        let (a2, b2) = (a1 + a1 - a0, b1 + b1 - b0);
+                        let (c2, d2) = (c1 + c1 - c0, d1 + d1 - d0);
+                        h[0] += w * (a0 * d0 + b0 * c0 + self.lambda * (c0 * d0));
+                        h[1] += w * (a1 * d1 + b1 * c1 + self.lambda * (c1 * d1));
+                        h[2] += w * (a2 * d2 + b2 * c2 + self.lambda * (c2 * d2));
+                    }
                 }
             }
-            PTables::Ext(p0, p1) => {
-                for i in 0..half {
-                    let w = self.eq_suffix[i];
-                    let (a0, a1) = (p0[2 * i], p0[2 * i + 1]);
-                    let (b0, b1) = (p1[2 * i], p1[2 * i + 1]);
-                    let (c0, c1) = (self.q0[2 * i], self.q0[2 * i + 1]);
-                    let (d0, d1) = (self.q1[2 * i], self.q1[2 * i + 1]);
-                    let (a2, b2) = (a1 + a1 - a0, b1 + b1 - b0);
-                    let (c2, d2) = (c1 + c1 - c0, d1 + d1 - d0);
-                    h[0] += w * (a0 * d0 + b0 * c0 + self.lambda * (c0 * d0));
-                    h[1] += w * (a1 * d1 + b1 * c1 + self.lambda * (c1 * d1));
-                    h[2] += w * (a2 * d2 + b2 * c2 + self.lambda * (c2 * d2));
-                }
+            h
+        });
+        let mut h = [Ext::ZERO; 3];
+        for p in partials {
+            for (hx, px) in h.iter_mut().zip(p.iter()) {
+                *hx += *px;
             }
         }
         h
     }
 
     fn bind(&mut self, r: Ext) {
-        match &mut self.p {
-            // First bind: folding base tables by an extension challenge yields
-            // extension tables, so subsequent rounds run in `Ext`.
-            PTables::Base(p0, p1) => {
-                let promote = |t: &[Goldilocks]| -> Vec<Ext> {
-                    let half = t.len() / 2;
-                    (0..half).map(|i| Ext::from_base(t[2 * i]) + r * (t[2 * i + 1] - t[2 * i])).collect()
-                };
-                let (e0, e1) = (promote(p0), promote(p1));
-                self.p = PTables::Ext(e0, e1);
-            }
-            PTables::Ext(p0, p1) => {
-                fold_mle(p0, r);
-                fold_mle(p1, r);
-            }
-        }
-        fold_mle(&mut self.q0, r);
-        fold_mle(&mut self.q1, r);
-        let half = self.eq_suffix.len() / 2;
+        // The four tables fold in parallel; each fold streams sequentially.
+        let Self { p, q0, q1, eq_suffix, .. } = self;
+        crate::par::join(
+            || match p {
+                // First bind: folding base tables by an extension challenge yields
+                // extension tables, so subsequent rounds run in `Ext`.
+                PTables::Base(p0, p1) => {
+                    let promote = |t: &[Goldilocks]| -> Vec<Ext> {
+                        let half = t.len() / 2;
+                        (0..half).map(|i| Ext::from_base(t[2 * i]) + r * (t[2 * i + 1] - t[2 * i])).collect()
+                    };
+                    let (e0, e1) = crate::par::join(|| promote(p0), || promote(p1));
+                    *p = PTables::Ext(e0, e1);
+                }
+                PTables::Ext(p0, p1) => {
+                    crate::par::join(|| fold_mle(p0, r), || fold_mle(p1, r));
+                }
+            },
+            || {
+                crate::par::join(|| fold_mle(q0, r), || fold_mle(q1, r));
+            },
+        );
+        let half = eq_suffix.len() / 2;
         for i in 0..half {
-            self.eq_suffix[i] = self.eq_suffix[2 * i] + self.eq_suffix[2 * i + 1];
+            eq_suffix[i] = eq_suffix[2 * i] + eq_suffix[2 * i + 1];
         }
-        self.eq_suffix.truncate(half);
+        eq_suffix.truncate(half);
     }
 
     /// The split values `[p(0,ρ), p(1,ρ), q(0,ρ), q(1,ρ)]` once every round
@@ -419,37 +433,45 @@ fn build_bus_input(
     let mut p = vec![Goldilocks::ZERO; cap * n_rows];
     let mut q = vec![Ext::ONE; cap * n_rows];
 
-    let mut temps: Vec<Val> = Vec::new();
-    for row in 0..n_rows {
-        let src = RowSource {
-            witness,
-            consts,
-            customs,
-            publics,
-            challenges,
-            air_values,
-            airgroup_values,
-            proof_values,
-            row,
-            n_rows,
-        };
-        eval_instrs(ir, &src, &mut temps);
-        for (t, term) in bus.terms.iter().enumerate() {
-            // Numerators are `±sel`/`mul` expressions: base-field *values*,
-            // though the evaluator may carry them as extension elements (e.g.
-            // when a selector reads an air value, which `RowSource` always
-            // returns as `Ext`). Accept any base-embedded value.
-            let num = match operand_eval(ir, &src, &temps, &term.num) {
-                Val::B(x) => x,
-                Val::E(e) if e.value[1].is_zero() && e.value[2].is_zero() => e.value[0],
-                Val::E(_) => {
-                    return Err(MlError::Unsupported("bus term numerator must be a base-field value".into()));
-                }
+    // Rows write disjoint `cap`-sized blocks, so chunks of rows evaluate in
+    // parallel, each with its own scratch buffer.
+    const ROWS_PER_CHUNK: usize = 1 << 10;
+    crate::par::try_zip_chunks_mut(&mut p, &mut q, cap * ROWS_PER_CHUNK, |chunk_idx, pc, qc| {
+        let mut temps: Vec<Val> = Vec::new();
+        let first_row = chunk_idx * ROWS_PER_CHUNK;
+        for local in 0..pc.len() / cap {
+            let row = first_row + local;
+            let src = RowSource {
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                airgroup_values,
+                proof_values,
+                row,
+                n_rows,
             };
-            p[t + row * cap] = num;
-            q[t + row * cap] = operand_eval(ir, &src, &temps, &term.den).to_ext();
+            eval_instrs(ir, &src, &mut temps);
+            for (t, term) in bus.terms.iter().enumerate() {
+                // Numerators are `±sel`/`mul` expressions: base-field *values*,
+                // though the evaluator may carry them as extension elements (e.g.
+                // when a selector reads an air value, which `RowSource` always
+                // returns as `Ext`). Accept any base-embedded value.
+                let num = match operand_eval(ir, &src, &temps, &term.num) {
+                    Val::B(x) => x,
+                    Val::E(e) if e.value[1].is_zero() && e.value[2].is_zero() => e.value[0],
+                    Val::E(_) => {
+                        return Err(MlError::Unsupported("bus term numerator must be a base-field value".into()));
+                    }
+                };
+                pc[t + local * cap] = num;
+                qc[t + local * cap] = operand_eval(ir, &src, &temps, &term.den).to_ext();
+            }
         }
-    }
+        Ok(())
+    })?;
     Ok((p, q))
 }
 

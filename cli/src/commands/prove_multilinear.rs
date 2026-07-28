@@ -34,6 +34,10 @@ pub struct ProveMultilinearCmd {
     #[arg(short = 'y', long = "verify_proofs", default_value_t = false)]
     pub verify_proofs: bool,
 
+    /// Check every constraint over the full trace before proving (debug).
+    #[arg(short = 'd', long = "verify_constraints", default_value_t = false)]
+    pub verify_constraints: bool,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8,
@@ -65,6 +69,7 @@ impl ProveMultilinearCmd {
         let mut proof_options = ProofOptions::default();
         proof_options.multilinear();
         proof_options.verify_proofs = self.verify_proofs;
+        proof_options.verify_constraints = self.verify_constraints;
 
         match self.field {
             Field::Goldilocks => proofman.generate_proof(

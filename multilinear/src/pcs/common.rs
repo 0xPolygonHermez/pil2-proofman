@@ -152,15 +152,19 @@ pub fn fold_codeword(vals: &[Ext], n0_bits: usize, level: usize, r: Ext) -> Vec<
 }
 
 /// Compute the batched MLE table `Σ_j coeff_j · f_j` over the raw columns.
+/// Rows are independent, so the accumulation runs chunked in parallel.
 pub fn combine_columns(columns: &[&[Goldilocks]], coeffs: &[Ext]) -> Vec<Ext> {
     let n = columns[0].len();
-    let mut out = vec![Ext::ZERO; n];
-    for (col, &c) in columns.iter().zip(coeffs.iter()) {
-        for (o, &v) in out.iter_mut().zip(col.iter()) {
-            *o += c * v;
+    let chunks = crate::par::map_chunks(n, |start, end| {
+        let mut out = vec![Ext::ZERO; end - start];
+        for (col, &c) in columns.iter().zip(coeffs.iter()) {
+            for (o, &v) in out.iter_mut().zip(col[start..end].iter()) {
+                *o += c * v;
+            }
         }
-    }
-    out
+        out
+    });
+    chunks.concat()
 }
 
 /// Fold a single `(f(x), f(-x))` pair at domain position `j` of `level`.

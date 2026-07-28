@@ -55,10 +55,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::multilinear::{
-    ext_values_by_stage, load_const_columns, load_custom_columns, to_goldilocks, trace_to_columns, values_to_ext,
-    AirIrCache, ConstMatrixCache,
-};
+use crate::multilinear::{ext_values_by_stage, to_goldilocks, trace_to_columns, values_to_ext, MlSetupCache};
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
 
@@ -229,6 +226,28 @@ impl Drop for JoinAllGuard {
 }
 
 type InstanceBody = Arc<dyn Fn(usize) -> ProofmanResult<()> + Send + Sync>;
+
+/// One prepared pass-2 instance, handed from the (single) witness producer to
+/// the multilinear prover workers. Every field is owned or an immutable
+/// shared handle, so the job is self-contained.
+struct MlProveJob {
+    instance_id: usize,
+    /// Index into the per-process instance list (for the `-y` global check).
+    local_idx: usize,
+    air_instance_id: usize,
+    airgroup_id: usize,
+    air_id: usize,
+    ir: Arc<proofman_multilinear::AirIr>,
+    /// Witness columns per stage, extracted from the (already freed) trace.
+    witness: Vec<Vec<Vec<Goldilocks>>>,
+    consts: Arc<Vec<Vec<Goldilocks>>>,
+    const_matrix: Arc<proofman_multilinear::PcsCommitment>,
+    custom_data: Arc<crate::multilinear::CustomData>,
+    air_challenges: Vec<Ext>,
+    air_values: Vec<Ext>,
+    airgroup_values: Vec<Ext>,
+    proof_values: Vec<Ext>,
+}
 
 pub struct RootSlot<F>(std::cell::UnsafeCell<[F; 4]>);
 
@@ -1348,8 +1367,10 @@ where
         Ok(summary)
     }
 
-    /// Shared pass-1 orchestration.
-    fn run_contribution_pass(&self, body: InstanceBody) -> ProofmanResult<()> {
+    /// Shared pass-1 orchestration. `n_workers` bounds the contribution
+    /// worker pool (the univariate path passes `n_streams`; the multilinear
+    /// path uses its own CPU worker count).
+    fn run_contribution_pass(&self, body: InstanceBody, n_workers: usize) -> ProofmanResult<()> {
         let witness_done = Arc::new(Counter::new());
         self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
         let minimal_memory = true;
@@ -1357,12 +1378,12 @@ where
         // Spawn workers
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
-            n_streams: self.n_streams,
+            n_streams: n_workers,
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
 
-        for _ in 0..self.n_streams {
+        for _ in 0..n_workers {
             let contributions_rx_clone = self.contributions_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let body = body.clone();
@@ -1456,7 +1477,7 @@ where
 
         self.pctx.set_proof_tx(None);
 
-        for _ in 0..self.n_streams {
+        for _ in 0..n_workers {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
@@ -1522,7 +1543,7 @@ where
                 )
             })
         };
-        self.run_contribution_pass(body)?;
+        self.run_contribution_pass(body, self.n_streams)?;
 
         self.wcm.end(debug_info)?;
 
@@ -4534,19 +4555,113 @@ where
         Ok(stream_id)
     }
 
-    /// Store the per-instance contribution
-    ///     `values_hash` = `[vk(4) ‖ <root slot>(4) ‖ stage-1 air values]`.
-    /// (multilinear version)
-    fn ml_record_contribution(
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        roots_contributions: &[RootSlot<F>],
-        values_contributions: &[Mutex<Vec<F>>],
-        instance_id: usize,
-        root: &[Goldilocks; 4],
-    ) -> ProofmanResult<()> {
-        Self::record_contribution_values(pctx, sctx, values_contributions, instance_id)?;
+    /// Prove one prepared instance (worker side of the pass-2 pipeline):
+    /// `prove_air`, the pass-1 root cross-check, and the `-y` verification.
+    /// Self-contained — every input is owned by the job or read-only — so any
+    /// number run concurrently.
+    fn ml_prove_job(
+        &self,
+        job: MlProveJob,
+        publics: &[Goldilocks],
+        verify_proofs: bool,
+        check_root: bool,
+    ) -> ProofmanResult<(usize, Vec<F>)> {
+        let MlProveJob {
+            instance_id,
+            local_idx,
+            air_instance_id,
+            airgroup_id,
+            air_id,
+            ir,
+            witness,
+            consts,
+            const_matrix,
+            custom_data,
+            air_challenges,
+            air_values,
+            airgroup_values,
+            proof_values,
+        } = job;
 
+        timer_start_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
+        let mut proof = proofman_multilinear::prove_air(
+            &ir,
+            &witness,
+            &consts,
+            Some(&const_matrix),
+            &custom_data.columns,
+            Some(&custom_data.commitments),
+            publics,
+            &air_challenges,
+            &air_values,
+            &airgroup_values,
+            &proof_values,
+        )
+        .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
+        proof.global_instance_id = instance_id as u32;
+        timer_stop_and_log_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
+
+        // Cross-check against pass 1: the recomputed stage-1 root must match
+        // the contribution that entered the global challenge (an early,
+        // precise failure if witness regeneration is not deterministic).
+        if check_root {
+            let recorded = self.roots_contributions[instance_id].read();
+            let recomputed = &proof.stage_roots[0];
+            if recorded.iter().zip(recomputed.iter()).any(|(a, b)| a.as_canonical_u64() != b.as_canonical_u64()) {
+                return Err(ProofmanError::InvalidProof(format!(
+                    "instance {instance_id} ({}): stage-1 root differs from its pass-1 contribution \
+                     (non-deterministic witness?)",
+                    ir.name
+                )));
+            }
+        }
+
+        // `-y`: verify each proof against the same challenges the prover
+        // derived (via `calculate_global_challenge`).
+        let mut flat_airgroup_values = Vec::new();
+        if verify_proofs {
+            tracing::info!(
+                "    Verifying proof of {}: Instance #{} with global index #{}",
+                ir.name,
+                air_instance_id,
+                instance_id
+            );
+            if let Err(e) = verify_air(&ir, &proof, publics, None, Some(&air_challenges), Some(&proof_values)) {
+                tracing::info!(
+                    "··· {}",
+                    format!("\u{2717} Proof of {}: Instance #{air_instance_id} was not verified", ir.name)
+                        .bright_red()
+                        .bold()
+                );
+                return Err(ProofmanError::InvalidProof(format!(
+                    "instance {instance_id} ({}) failed multilinear verification: {e}",
+                    ir.name
+                )));
+            }
+            tracing::info!(
+                "    {}",
+                format!("\u{2713} Proof of {}: Instance #{air_instance_id} was verified", ir.name)
+                    .bright_green()
+                    .bold()
+            );
+
+            // Keep this instance's airgroup values (the bus contribution)
+            // for the global balance check after the loop.
+            flat_airgroup_values = proof
+                .airgroup_values
+                .iter()
+                .flat_map(|v| v.value.iter().map(|g| F::from_u64(g.as_canonical_u64())))
+                .collect();
+        }
+
+        Ok((local_idx, flat_airgroup_values))
+    }
+
+    /// Store the per-instance contribution root. The companion values hash
+    /// (`[vk(4) ‖ <root slot>(4) ‖ stage-1 air values]`) is recorded separately
+    /// via [`Self::record_contribution_values`], which must run before the
+    /// instance is freed (freeing clears the air values).
+    fn ml_record_contribution_root(roots_contributions: &[RootSlot<F>], instance_id: usize, root: &[Goldilocks; 4]) {
         // `roots_contributions` is an `Arc<Vec<[F;4]>>` written per-instance (each
         // instance_id is unique to one worker), mirroring how the univariate path
         // writes it through a raw pointer from `commit_witness_c`.
@@ -4554,7 +4669,6 @@ where
         for (i, &r) in root.iter().enumerate() {
             unsafe { *dst.add(i) = F::from_u64(r.as_canonical_u64()) };
         }
-        Ok(())
     }
 
     /// Generates one multilinear STARK proof per AIR instance.
@@ -4565,6 +4679,22 @@ where
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("generate_multilinear_proof");
+
+        // Per-AIR artifacts (IRs, fixed columns, fixed/custom commitments)
+        // shared by both passes and every instance of the run.
+        let ml_cache = Arc::new(MlSetupCache::<F>::default());
+
+        // CPU worker count for cross-instance concurrency (pass-1 commits and
+        // pass-2 proofs). Each in-flight instance holds its witness columns
+        // plus commitment/oracle tables (~5-6x the trace bytes), and rayon
+        // already parallelizes inside each proof, so a small pool covers the
+        // sequential portions without exhausting memory. `ML_STREAMS`
+        // overrides the default.
+        let ml_streams = std::env::var("ML_STREAMS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or_else(|| (self.max_num_threads / 16).clamp(2, 8));
 
         // Pass 1: witness computation + shared challenges computation.
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -4580,11 +4710,10 @@ where
                 let pctx = self.pctx.clone();
                 let sctx = self.sctx.clone();
                 let memory_handler = self.memory_handler.clone();
-                let const_pols = self.const_pols.clone();
                 let aux_trace = self.aux_trace.clone();
                 let seen = Arc::new(Mutex::new(std::collections::HashSet::<usize>::new()));
                 let ml_serial = Arc::new(Mutex::new(()));
-                let ml_ir_cache = Arc::new(AirIrCache::default());
+                let ml_cache = ml_cache.clone();
                 let roots_contributions = self.roots_contributions.clone();
                 let values_contributions = self.values_contributions.clone();
                 Arc::new(move |instance_id| {
@@ -4592,28 +4721,30 @@ where
                         tracing::warn!("multilinear: instance {instance_id} delivered twice, skipping");
                         return Ok(());
                     }
-                    let _guard = ml_serial.lock().unwrap();
-                    let (cols, _consts, ir) =
-                        Self::ml_prepare_stage1(&pctx, &sctx, &const_pols, &aux_trace, instance_id, &ml_ir_cache)?;
+                    // The guard serializes only the shared-scratch FFI section
+                    // (`ml_prepare_stage1` writes the process-wide aux_trace);
+                    // `cols` is an owned copy, so the trace is freed before the
+                    // commit and commits from different workers overlap. The
+                    // contribution values hash reads stage-1 air values, so it
+                    // is recorded before the free clears them.
+                    let (cols, ir) = {
+                        let _guard = ml_serial.lock().unwrap();
+                        let out = Self::ml_prepare_stage1(&pctx, &sctx, &ml_cache, &aux_trace, instance_id)?;
+                        Self::record_contribution_values(&pctx, &sctx, &values_contributions, instance_id)?;
+                        let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+                        if is_shared_buffer {
+                            memory_handler.release_buffer(witness_buffer)?;
+                        }
+                        out
+                    };
                     let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
                     let commitment = proofman_multilinear::Pcs::commit(&refs, &ir.params);
                     let root = proofman_multilinear::Pcs::commitment_root(&commitment);
-                    Self::ml_record_contribution(
-                        &pctx,
-                        &sctx,
-                        &roots_contributions,
-                        &values_contributions,
-                        instance_id,
-                        &root,
-                    )?;
-                    let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
-                    if is_shared_buffer {
-                        memory_handler.release_buffer(witness_buffer)?;
-                    }
+                    Self::ml_record_contribution_root(&roots_contributions, instance_id, &root);
                     Ok(())
                 })
             };
-            self.run_contribution_pass(body)?;
+            self.run_contribution_pass(body, ml_streams)?;
 
             let internal_contribution_u64 = self.aggregate_partial_contributions();
 
@@ -4665,18 +4796,13 @@ where
             .collect();
         instances.sort_unstable();
 
-        let ir_cache = Arc::new(AirIrCache::default());
         let irs: Vec<Arc<proofman_multilinear::AirIr>> = instances
             .iter()
             .map(|&id| {
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id)?;
-                ir_cache.get(self.sctx.get_setup(airgroup_id, air_id)?)
+                ml_cache.ir(self.sctx.get_setup(airgroup_id, air_id)?)
             })
             .collect::<ProofmanResult<_>>()?;
-
-        // Prebuilt fixed-column commitments from the proving key (`.mlconst.bin`),
-        // shared across all instances of an AIR.
-        let const_matrix_cache = ConstMatrixCache::default();
 
         // Allow pass 2 to recompute the witnesses: the manager skips instances
         // still flagged as calculated.
@@ -4693,142 +4819,70 @@ where
         let my_instances_all = self.pctx.dctx_get_process_instances();
         let mut airgroup_values_air_instances: Vec<Vec<F>> = vec![Vec::new(); my_instances_all.len()];
 
-        // Generate the proofs
+        // Generate the proofs: a single producer (this thread) runs the
+        // witness pipeline — all FFI and the shared aux_trace scratch stay
+        // here — while `ml_streams` workers prove/verify the prepared jobs
+        // concurrently. The bounded channel is the in-flight memory limiter.
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(GENERATING_INNER_PROOFS);
-        for (idx, &instance_id) in instances.iter().enumerate() {
-            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
-            let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-            let ir = irs[idx].clone();
-            let n_rows = 1usize << ir.n_bits;
 
-            timer_start_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
-            self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-            self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        let publics = to_goldilocks(&self.pctx.get_publics());
+        let verify_proofs = options.verify_proofs;
+        let check_roots = phase == ProvePhase::Full;
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-            let (stage1_cols, consts, _) = Self::ml_prepare_stage1(
-                &self.pctx,
-                &self.sctx,
-                &self.const_pols,
-                &self.aux_trace,
-                instance_id,
-                &ir_cache,
-            )?;
+        let (jobs_tx, jobs_rx) = crossbeam_channel::bounded::<MlProveJob>(ml_streams);
+        let (results_tx, results_rx) = crossbeam_channel::unbounded::<ProofmanResult<(usize, Vec<F>)>>();
 
-            let mut witness = vec![stage1_cols];
-            if ir.n_stages() >= 2 {
-                self.wcm.calculate_witness(2, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-                let steps_params = self.pctx.get_air_instance_params(instance_id, false);
-                calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+        let producer_result: ProofmanResult<()> = std::thread::scope(|scope| {
+            for _ in 0..ml_streams {
+                let jobs_rx = jobs_rx.clone();
+                let results_tx = results_tx.clone();
+                let cancel = cancel.clone();
+                let publics = &publics;
+                scope.spawn(move || {
+                    while let Ok(job) = jobs_rx.recv() {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+                        let res = self.ml_prove_job(job, publics, verify_proofs, check_roots);
+                        if res.is_err() {
+                            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if results_tx.send(res).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(results_tx);
 
-                for stage in 2..=ir.n_stages() {
-                    witness.push(Self::extract_stage_columns(&self.pctx, setup, instance_id, stage, &ir, n_rows)?);
+            for (idx, &instance_id) in instances.iter().enumerate() {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let job = self.ml_prepare_job(
+                    instance_id,
+                    irs[idx].clone(),
+                    &ml_cache,
+                    &challenges,
+                    &publics,
+                    options.verify_constraints,
+                )?;
+                if jobs_tx.send(job).is_err() {
+                    break;
                 }
             }
-            timer_stop_and_log_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
+            drop(jobs_tx);
+            Ok(())
+            // The scope joins the prover workers here.
+        });
+        producer_result?;
 
-            // Instance value messages, reassembled as extension elements.
-            let air_instance_id = self.pctx.dctx_find_air_instance_id(instance_id)?;
-            let airgroup_values = {
-                let vals = self.pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
-                values_to_ext(&vals, ir.airgroupvalue_stages.len(), true)?
-            };
-            let air_values = {
-                let air_instance = self.pctx.air_instances[instance_id].read().unwrap();
-                ext_values_by_stage(&air_instance.airvalues, &ir.airvalue_stages)?
-            };
-            // Proof values are proof-level prover messages, shared by every
-            // instance (stage-1 values already entered the global challenge).
-            let proof_values = ext_values_by_stage(&self.pctx.get_proof_values(), &ir.proofvalue_stages)?;
-
-            // Custom (fixed) commitments, e.g. ROMs: columns come from the
-            // buffer registered via --custom-commits.
-            let mut customs: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(ir.custom_commits.len());
-            for cc in &ir.custom_commits {
-                let path = self.pctx.get_custom_commits_fixed_buffer(&cc.name, true)?;
-                customs.push(load_custom_columns(&path, cc.n_cols as usize, n_rows)?);
-            }
-
-            let air_challenges = if ir.challenge_stages.len() == challenges.len() {
-                challenges.clone()
-            } else {
-                challenges[..ir.challenge_stages.len()].to_vec()
-            };
-
-            let publics = to_goldilocks(&self.pctx.get_publics());
-
-            proofman_multilinear::check_constraints_on_trace(
-                &ir,
-                &witness,
-                &consts,
-                &customs,
-                &publics,
-                &air_challenges,
-                &air_values,
-                &airgroup_values,
-                &proof_values,
-            )
-            .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
-
-            timer_start_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
-            let const_matrix = const_matrix_cache.get(setup)?;
-            let mut proof = proofman_multilinear::prove_air(
-                &ir,
-                &witness,
-                &consts,
-                const_matrix.as_deref(),
-                &customs,
-                &publics,
-                &air_challenges,
-                &air_values,
-                &airgroup_values,
-                &proof_values,
-            )
-            .map_err(|e| ProofmanError::InvalidProof(format!("multilinear prover failed: {e}")))?;
-            proof.global_instance_id = instance_id as u32;
-            timer_stop_and_log_debug!(ML_PROVE, "ML_PROVE_{} [{}:{}]", instance_id, airgroup_id, air_id);
-
-            // `-y`: verify each proof against the same challenges the prover
-            // derived (via `calculate_global_challenge`), reusing the live pctx.
-            if options.verify_proofs {
-                tracing::info!(
-                    "    Verifying proof of {}: Instance #{} with global index #{}",
-                    ir.name,
-                    air_instance_id,
-                    instance_id
-                );
-                if let Err(e) = verify_air(&ir, &proof, &publics, None, Some(&air_challenges), Some(&proof_values)) {
-                    tracing::info!(
-                        "··· {}",
-                        format!("\u{2717} Proof of {}: Instance #{air_instance_id} was not verified", ir.name)
-                            .bright_red()
-                            .bold()
-                    );
-                    return Err(ProofmanError::InvalidProof(format!(
-                        "instance {instance_id} ({}) failed multilinear verification: {e}",
-                        ir.name
-                    )));
-                }
-                tracing::info!(
-                    "    {}",
-                    format!("\u{2713} Proof of {}: Instance #{air_instance_id} was verified", ir.name)
-                        .bright_green()
-                        .bold()
-                );
-
-                // Keep this instance's airgroup values (the bus contribution)
-                // for the global balance check after the loop.
-                let flat: Vec<F> = proof
-                    .airgroup_values
-                    .iter()
-                    .flat_map(|v| v.value.iter().map(|g| F::from_u64(g.as_canonical_u64())))
-                    .collect();
-                airgroup_values_air_instances[self.pctx.dctx_get_instance_local_idx(instance_id)?] = flat;
-            }
-
-            let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
-            if is_shared_buffer {
-                self.memory_handler.release_buffer(witness_buffer)?;
+        for res in results_rx.iter() {
+            let (local_idx, flat_airgroup_values) = res?;
+            if !flat_airgroup_values.is_empty() {
+                airgroup_values_air_instances[local_idx] = flat_airgroup_values;
             }
         }
 
@@ -4854,23 +4908,142 @@ where
         }
     }
 
-    /// Complete stage 1 for one instance (aux buffers, C++ instance init,
-    /// expression-assigned columns) and extract its base columns + consts.
-    #[allow(clippy::type_complexity)]
+    /// Producer side of the pass-2 pipeline: run the witness stages for one
+    /// instance (all FFI + the shared `aux_trace` scratch stay on the calling
+    /// thread), gather every prover input into an owned [`MlProveJob`], and
+    /// free the instance — the pool buffer is released before the job is
+    /// dispatched so the next witness computation can start immediately.
     #[allow(clippy::too_many_arguments)]
+    fn ml_prepare_job(
+        &self,
+        instance_id: usize,
+        ir: Arc<proofman_multilinear::AirIr>,
+        ml_cache: &MlSetupCache<F>,
+        challenges: &[Ext],
+        publics: &[Goldilocks],
+        verify_constraints: bool,
+    ) -> ProofmanResult<MlProveJob> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let n_rows = 1usize << ir.n_bits;
+
+        timer_start_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
+        self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+
+        let (stage1_cols, _) = Self::ml_prepare_stage1(&self.pctx, &self.sctx, ml_cache, &self.aux_trace, instance_id)?;
+        let consts = ml_cache.const_data(setup, &ir)?.columns.clone();
+
+        let mut witness = vec![stage1_cols];
+        if ir.n_stages() >= 2 {
+            self.wcm.calculate_witness(2, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+            let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+            calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+
+            for stage in 2..=ir.n_stages() {
+                witness.push(Self::extract_stage_columns(&self.pctx, setup, instance_id, stage, &ir, n_rows)?);
+            }
+        }
+        timer_stop_and_log_debug!(ML_WITNESS, "ML_WITNESS_{} [{}:{}]", instance_id, airgroup_id, air_id);
+
+        // Instance value messages, reassembled as extension elements.
+        let air_instance_id = self.pctx.dctx_find_air_instance_id(instance_id)?;
+        let airgroup_values = {
+            let vals = self.pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
+            values_to_ext(&vals, ir.airgroupvalue_stages.len(), true)?
+        };
+        let air_values = {
+            let air_instance = self.pctx.air_instances[instance_id].read().unwrap();
+            ext_values_by_stage(&air_instance.airvalues, &ir.airvalue_stages)?
+        };
+        // Proof values are proof-level prover messages, shared by every
+        // instance (stage-1 values already entered the global challenge).
+        let proof_values = ext_values_by_stage(&self.pctx.get_proof_values(), &ir.proofvalue_stages)?;
+
+        // Custom (fixed) commitments, e.g. ROMs: columns come from the buffer
+        // registered via --custom-commits, loaded and committed once per AIR.
+        let custom_paths: Vec<std::path::PathBuf> = ir
+            .custom_commits
+            .iter()
+            .map(|cc| self.pctx.get_custom_commits_fixed_buffer(&cc.name, true))
+            .collect::<ProofmanResult<_>>()?;
+        let custom_data = ml_cache.custom_data((airgroup_id, air_id), &ir, &custom_paths)?;
+
+        let air_challenges = if ir.challenge_stages.len() == challenges.len() {
+            challenges.to_vec()
+        } else {
+            challenges[..ir.challenge_stages.len()].to_vec()
+        };
+
+        // Debug-only (`--verify-constraints`): interpret every constraint over
+        // the full trace before proving, mirroring the univariate
+        // verify-constraints mode. Skipped in production proving.
+        if verify_constraints {
+            proofman_multilinear::check_constraints_on_trace(
+                &ir,
+                &witness,
+                &consts,
+                &custom_data.columns,
+                publics,
+                &air_challenges,
+                &air_values,
+                &airgroup_values,
+                &proof_values,
+            )
+            .map_err(|e| ProofmanError::InvalidProof(format!("instance {instance_id} ({}): {e}", ir.name)))?;
+        }
+
+        let job = MlProveJob {
+            instance_id,
+            local_idx: self.pctx.dctx_get_instance_local_idx(instance_id)?,
+            air_instance_id,
+            airgroup_id,
+            air_id,
+            const_matrix: ml_cache.const_matrix(setup, &ir)?,
+            ir,
+            witness,
+            consts,
+            custom_data,
+            air_challenges,
+            air_values,
+            airgroup_values,
+            proof_values,
+        };
+
+        // All prover inputs are owned copies now: free the trace so the pool
+        // buffer unblocks the next witness computation.
+        let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
+        if is_shared_buffer {
+            self.memory_handler.release_buffer(witness_buffer)?;
+        }
+
+        Ok(job)
+    }
+
+    /// Complete stage 1 for one instance (aux buffers, C++ instance init,
+    /// expression-assigned columns) and extract its base columns.
+    ///
+    /// Touches the process-wide `aux_trace` scratch buffer through the FFI, so
+    /// callers must serialize invocations (pass 1 guards it with a mutex; the
+    /// pass-2 producer runs on a single thread).
+    #[allow(clippy::type_complexity)]
     fn ml_prepare_stage1(
         pctx: &Arc<ProofCtx<F>>,
         sctx: &Arc<SetupCtx<F>>,
-        const_pols: &Arc<Vec<F>>,
+        cache: &MlSetupCache<F>,
         aux_trace: &Arc<Vec<F>>,
         instance_id: usize,
-        ir_cache: &AirIrCache,
-    ) -> ProofmanResult<(Vec<Vec<Goldilocks>>, Vec<Vec<Goldilocks>>, Arc<proofman_multilinear::AirIr>)> {
+    ) -> ProofmanResult<(Vec<Vec<Goldilocks>>, Arc<proofman_multilinear::AirIr>)> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
-        let ir = ir_cache.get(setup)?;
+        let ir = cache.ir(setup)?;
 
-        Self::initialize_air_instance(pctx, sctx, instance_id, true, true, Some(const_pols), Some(aux_trace))?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, true, false, None, Some(aux_trace))?;
+        // Fixed columns for the C++ stage-1 expression evaluator: the per-AIR
+        // cached buffer, shared by every instance (replaces the per-instance
+        // load into the process-wide const scratch buffer).
+        let const_data = cache.const_data(setup, &ir)?;
+        pctx.air_instances[instance_id].write().unwrap().init_fixed(const_data.row_major.clone());
 
         let steps_params = pctx.get_air_instance_params(instance_id, false);
         let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
@@ -4914,10 +5087,7 @@ where
             trace_to_columns(&air_instance.trace, n_rows, air_instance.n_cols_trace)
         };
 
-        let consts =
-            load_const_columns(std::path::Path::new(&setup.const_pols_path), ir.n_const_cols as usize, n_rows)?;
-
-        Ok((cols, consts, ir))
+        Ok((cols, ir))
     }
 
     /// Extract the base columns of witness `stage` (≥ 2) from the instance's

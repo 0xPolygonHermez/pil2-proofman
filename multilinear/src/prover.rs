@@ -80,6 +80,7 @@ pub fn prove_air(
     consts: &[Vec<Goldilocks>],
     const_matrix: Option<&PcsCommitment>,
     customs: &[Vec<Vec<Goldilocks>>],
+    custom_matrices: Option<&[PcsCommitment]>,
     publics: &[Goldilocks],
     challenges: &[Ext],
     air_values: &[Ext],
@@ -195,16 +196,32 @@ pub fn prove_air(
     };
     transcript.absorb_root(&Pcs::commitment_root(const_matrix));
 
-    // Custom columns are computed once before the first proof and reused for all proofs of the same AIR instance.
-    let custom_matrices: Vec<PcsCommitment> = customs
-        .iter()
-        .map(|cols| {
-            let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
-            let matrix = Pcs::commit(&refs, params);
-            transcript.absorb_root(&Pcs::commitment_root(&matrix));
-            matrix
-        })
-        .collect();
+    // Custom (fixed) columns are setup-time constants; reuse precomputed
+    // commitments when supplied (once per AIR), otherwise build them here.
+    // Either way the roots are absorbed in `ir.custom_commits` order, so the
+    // transcript is identical.
+    let owned_custom_matrices: Vec<PcsCommitment>;
+    let custom_matrices: &[PcsCommitment] = match custom_matrices {
+        Some(ms) => {
+            if ms.len() != ir.custom_commits.len() {
+                return Err(MlError::Malformed("custom commitment count mismatch".into()));
+            }
+            ms
+        }
+        None => {
+            owned_custom_matrices = customs
+                .iter()
+                .map(|cols| {
+                    let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+                    Pcs::commit(&refs, params)
+                })
+                .collect();
+            &owned_custom_matrices
+        }
+    };
+    for matrix in custom_matrices {
+        transcript.absorb_root(&Pcs::commitment_root(matrix));
+    }
 
     // Stage commitments.
     let mut stage_matrices: Vec<PcsCommitment> = Vec::with_capacity(witness.len());
@@ -303,7 +320,7 @@ pub fn prove_air(
     // When s=0, K_{rot^0}(X,Y) = eq_m(X,Y), the identity kernel.
     let kernels = build_kernels(ir);
     let kernel_tables: Vec<Vec<Ext>> =
-        kernels.iter().map(|k| kernel_table(k, l, skip_gamma, &lambda_x, &bus_point)).collect();
+        crate::par::map_slice(&kernels, |k| kernel_table(k, l, skip_gamma, &lambda_x, &bus_point));
 
     // Compute the RHS of the linear relation:
     //      w_j^{(s)}(λ) = ∑_c w_j(c)·K_{rot^s}(c, λ)
@@ -314,20 +331,19 @@ pub fn prove_air(
         .chain(customs.iter().flat_map(|cols| cols.iter().map(|c| c.as_slice())))
         .collect();
 
-    let claims: Vec<Vec<Ext>> = all_cols
-        .iter()
-        .map(|col| {
-            kernels
-                .iter()
-                .zip(kernel_tables.iter())
-                .map(|(spec, table)| match spec {
-                    // Corner claims are plain trace reads; no need for the dot product.
-                    KernelSpec::Point(row) => Ext::from_base(col[*row as usize]),
-                    KernelSpec::Rot(_) | KernelSpec::BusRot(_) => dot_base_ext(col, table),
-                })
-                .collect()
-        })
-        .collect();
+    // Each (column, kernel) dot product streams sequentially; columns run in
+    // parallel.
+    let claims: Vec<Vec<Ext>> = crate::par::map_slice(&all_cols, |col| {
+        kernels
+            .iter()
+            .zip(kernel_tables.iter())
+            .map(|(spec, table)| match spec {
+                // Corner claims are plain trace reads; no need for the dot product.
+                KernelSpec::Point(row) => Ext::from_base(col[*row as usize]),
+                KernelSpec::Rot(_) | KernelSpec::BusRot(_) => dot_base_ext(col, table),
+            })
+            .collect()
+    });
 
     // Send w_j^{(s)}(λ) claims
     for row in &claims {
@@ -344,9 +360,7 @@ pub fn prove_air(
     let phi_table = combine_columns(&all_cols, &col_coeffs);
     let mut w_table = vec![Ext::ZERO; n_rows];
     for (wt, table) in kernel_weights.iter().zip(kernel_tables.iter()) {
-        for (o, v) in w_table.iter_mut().zip(table.iter()) {
-            *o += *wt * *v;
-        }
+        crate::par::zip_for_each_mut(&mut w_table, table, |o, v| *o += *wt * *v);
     }
 
     // Opening reduction: one plain sumcheck of `Σ_b Φ(b)·W(b) = σ` collapses
@@ -372,9 +386,8 @@ pub fn prove_air(
     let mut matrices: Vec<&PcsCommitment> = stage_matrices.iter().collect();
     matrices.push(const_matrix);
     matrices.extend(custom_matrices.iter());
-    let phi_codeword = Pcs::combine_codewords(&matrices, &col_coeffs);
 
-    let opening = Pcs::open(params, &mut transcript, phi_table, &u, phi_codeword, &matrices);
+    let opening = Pcs::open(params, &mut transcript, phi_table, &u, &matrices);
     timer_stop_and_log_debug!(ML_PROVE_OPENING);
 
     Ok(MlProof {

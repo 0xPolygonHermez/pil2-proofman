@@ -193,36 +193,35 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
-     --output-dir examples/fibonacci-square/build/proofs_cpu -y
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin -y
 ```
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
-&& cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build_ml.pil \
+&& cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build_gkr.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
 && cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build_ml \
+     -b ./examples/fibonacci-square/build_gkr \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build -p fibonacci-square \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
-     --proving-key examples/fibonacci-square/build_ml/provingKey/ \
-     --custom-commits rom=examples/fibonacci-square/build_ml/rom.bin \
+     --proving-key examples/fibonacci-square/build_gkr/provingKey/ \
+     --custom-commits rom=examples/fibonacci-square/build_gkr/rom.bin \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
-     --proving-key examples/fibonacci-square/build_ml/provingKey/ \
+     --proving-key examples/fibonacci-square/build_gkr/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build_ml/rom.bin -d \
+     --custom-commits rom=examples/fibonacci-square/build_gkr/rom.bin -d \
 && cargo run --bin proofman-cli prove-multilinear \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
-     --proving-key examples/fibonacci-square/build_ml/provingKey/ \
+     --proving-key examples/fibonacci-square/build_gkr/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build_ml/rom.bin -y
+     --custom-commits rom=examples/fibonacci-square/build_gkr/rom.bin -y
 ```
 
 **With recursion:**
