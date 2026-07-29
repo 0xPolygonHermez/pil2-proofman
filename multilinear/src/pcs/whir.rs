@@ -377,7 +377,14 @@ impl MlPcs for Whir {
             }
         });
         let tree = MerkleTree::from_flat_u64(&leaves, leaf_width, MERKLE_ARITY, params.hash);
-        WhirCommitment { leaves, leaf_width, n_cols: ncols, tree, n0_bits: n0.trailing_zeros() as usize, folding_factor: k }
+        WhirCommitment {
+            leaves,
+            leaf_width,
+            n_cols: ncols,
+            tree,
+            n0_bits: n0.trailing_zeros() as usize,
+            folding_factor: k,
+        }
     }
 
     fn commitment_root(commitment: &WhirCommitment) -> [Goldilocks; 4] {
