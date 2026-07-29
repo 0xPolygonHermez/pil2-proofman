@@ -47,7 +47,7 @@ ifeq ($(UNAME_S),Linux)
     BUILD_DIR_GPU := ./build_gpu
     CUDA_SRC_DIRS := ./src ../utils ./utils
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-    NVCCFLAGS := -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff -U STARK_POSEIDON1
+    NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -U STARK_POSEIDON1
 endif
 
 # Debug build flags
@@ -81,8 +81,6 @@ ifeq ($(UNAME_S),Linux)
 GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
                 $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o \
                 $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o \
-                $(BUILD_DIR_GPU)/src/sppark_lde.cu.o \
-                $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o \
                 $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o \
                 $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o \
@@ -129,19 +127,6 @@ $(BUILD_DIR)/benchs/%.o: benchs/%.cpp
 $(BUILD_DIR)/tests/%.o: $(TEST_DIR)/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
-
-SPPARK_DIR := ./../../external/sppark
-SPPARK_INC := -I$(SPPARK_DIR) -I$(SPPARK_DIR)/ff -I$(SPPARK_DIR)/util -I$(SPPARK_DIR)/ec
-# sppark's fr_t==gl64_t typedef is gated on FEATURE_GOLDILOCKS; the gl64_t backend needs the same
-# reduction/asm macros the top-level build passes (see NVCCFLAGS / NVCCFLAGS_GL there).
-SPPARK_DEFS := -DFEATURE_GOLDILOCKS -DGOLDILOCKS_PLONKY2 -DGL64_PARTIALLY_REDUCED -D__ADX__ -D__USE_ASSEMBLY__
-$(BUILD_DIR_GPU)/src/sppark_lde.cu.o: src/sppark_lde.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) $(NVCCFLAGS) $(SPPARK_INC) $(SPPARK_DEFS) -c $< --output-file $@
-
-$(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o: $(SPPARK_DIR)/util/all_gpus.cpp
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) $(NVCCFLAGS) $(SPPARK_INC) $(SPPARK_DEFS) -x cu -c $< --output-file $@
 
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)

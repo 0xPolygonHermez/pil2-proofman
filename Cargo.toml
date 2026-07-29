@@ -45,6 +45,7 @@ members = [
 
   # Examples
   "examples/fibonacci-square",
+  "examples/hashes",
   "examples/test-recursive",
   "macros-test",
 ]

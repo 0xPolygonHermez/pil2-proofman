@@ -14,7 +14,7 @@ __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilock
 __global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily);
 
 class TranscriptGL_GPU
 {
@@ -59,7 +59,7 @@ public:
     void getField(uint64_t *output, cudaStream_t stream);
     void getState(Goldilocks::Element* output, cudaStream_t stream);
     void getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream);
-    void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream);
+    void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* perm_scratch, cudaStream_t stream);
     static void init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint32_t arity_init);
     
 };

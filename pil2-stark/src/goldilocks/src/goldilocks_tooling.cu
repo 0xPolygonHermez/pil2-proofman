@@ -19,25 +19,11 @@ static bool copy_direct_registered_h2d_if_enabled(const void *src, void *dst, ui
     // Only take the fast path when src is host memory the driver can DMA directly.
     if (attrs.type != cudaMemoryTypeHost) return false;
 
-    // No cudaStreamSynchronize: src (pool-pinned trace buffer) outlives this
-    // stream's end_event, on which the caller gates buffer reuse
-    // (wait_stream_commit_done). Syncing here would serialize the copy against the
-    // LDE/Merkle work (measured ~9.5s vs ~8.7s contributions).
+    // No cudaStreamSynchronize: the caller gates reuse of src (the pool-pinned trace buffer) on
+    // trace_copy_event, recorded by the caller right after this returns (wait_trace_h2d_done).
+    // Syncing here would serialize the copy against the LDE/Merkle work (measured ~9.5s vs ~8.7s
+    // contributions).
     CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
-    return true;
-}
-
-// Small H2D copies don't need the 128MB double-buffered staging; routing them
-// through it makes a few-KB copy contend for the per-GPU pinned mutex behind a
-// GB-scale stage on another stream. Issue one async copy + sync (so a stack-local
-// source is safe on return) without `mutex_pinned`. Returns true if it handled it.
-static constexpr uint64_t SMALL_H2D_THRESHOLD = 2 * 1024 * 1024; // 2MB
-static bool copy_small_h2d_if_applicable(const void *src, void *dst, uint64_t total_size, cudaStream_t stream)
-{
-    if (total_size == 0) return true;
-    if (total_size > SMALL_H2D_THRESHOLD) return false;
-    CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
     return true;
 }
 
@@ -97,8 +83,10 @@ void copy_to_device_in_chunks(
     //  - direct: large + already host-pinned source
     //  - small:  sub-threshold copy, one shot
     TimerStartCategoryGPU(timer, H2D_COPY);
-    if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream) ||
-        copy_small_h2d_if_applicable(src, dst, total_size, stream)) {
+    if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
+        // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
+        // gates recycling the host trace buffer (see wait_trace_h2d_done).
+        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
         TimerStopCategoryGPU(timer, H2D_COPY);
         return;
     }
@@ -148,6 +136,10 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    // Staged path: `src` was memcpy'd into the pinned staging buffer and the copies are already
+    // synced, so the host trace buffer is free here. Record anyway so the event always marks this
+    // commit's release point rather than leaving a stale record from an earlier one.
+    cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
     TimerStopCategoryGPU(timer, H2D_COPY);
 }
 
@@ -160,7 +152,6 @@ void copy_to_device_in_chunks(
     cudaStream_t stream
 ){
     if (copy_direct_registered_h2d_if_enabled(src, dst, total_size_bytes, stream)) return;
-    if (copy_small_h2d_if_applicable(src, dst, total_size_bytes, stream)) return;
 
      uint64_t block_size = pinnedBufferSize/2;
     

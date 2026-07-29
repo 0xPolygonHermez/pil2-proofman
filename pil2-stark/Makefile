@@ -131,7 +131,7 @@ CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
 CUDA_GRAPH ?= 1
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
+NVCCFLAGS := --expt-relaxed-constexpr -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
              -I./external/sppark/ff -I./external/sppark -I./external/sppark/util -I./external/sppark/ec -I./external/blst/src \
              -DFEATURE_BN254 --diag-suppress 114
 ifeq ($(CUDA_GRAPH), 1)
@@ -375,12 +375,6 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-NVCCFLAGS_GL := $(filter-out -DFEATURE_BN254,$(NVCCFLAGS)) -DFEATURE_GOLDILOCKS -DGOLDILOCKS_PLONKY2
-
-$(BUILD_DIR_GPU)/./src/goldilocks/src/sppark_lde.cu.o: ./src/goldilocks/src/sppark_lde.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS_GL) $(CPPFLAGS) -c $< -o $@
-
 $(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@

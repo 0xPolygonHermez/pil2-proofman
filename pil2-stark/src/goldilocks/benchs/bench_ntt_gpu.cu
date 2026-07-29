@@ -164,14 +164,14 @@ static void LDE_GPU_BENCH(benchmark::State &state)
 
 // ===================================================================
 // LDE backend comparison -- a SINGLE benchmark that runs the same (nBits, nCols) through BOTH backends
-// directly (bypassing the resolveLayout dispatch) and reports them head-to-head, so each row shows
-// sppark vs native + the speedup. This is how we validate the resolveLayout threshold. Args: {nBits, nCols}.
-// Per-row counters: sppark_ms, native_ms, native_speedup (sppark/native; >1 means native is faster).
+// directly (bypassing the resolveLayout dispatch) and reports them head-to-head, so each row shows the
+// in-house ColMajor engine vs the legacy tiled backend + the speedup. Args: {nBits, nCols}.
+// Per-row counters: tiled_ms, colMajor_ms, colMajor_speedup (tiled/colMajor; >1 means colMajor faster).
 // ===================================================================
 
 // Time one backend over `iters` launches with CUDA events; returns total ms. Lays `d_src` out in the
 // backend's own storage layout first. Caller owns the buffers.
-static double timeLdeBackend(bool native, NTTGoldilocksGPU &gpu_ntt,
+static double timeLdeBackend(int native, NTTGoldilocksGPU &gpu_ntt,
                              gl64_t *d_flat, gl64_t *d_src, gl64_t *d_dst,
                              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                              cudaStream_t stream, int iters)
@@ -184,8 +184,8 @@ static double timeLdeBackend(bool native, NTTGoldilocksGPU &gpu_ntt,
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     auto run = [&]() {
-        if (native) gpu_ntt.ldeNativeTiled(d_dst, d_src, nBits, nBitsExt, nCols, stream);
-        else        gpu_ntt.ldeSppark(d_dst, d_src, nBits, nBitsExt, nCols, stream);
+        if (native == 1) gpu_ntt.ldeTiled(d_dst, d_src, nBits, nBitsExt, nCols, stream);
+        else             gpu_ntt.ldeColMajor(d_dst, d_src, nBits, nBitsExt, nCols, stream);
     };
     run();  // warm up
     CHECKCUDAERR(cudaStreamSynchronize(stream));
@@ -213,7 +213,7 @@ static void LDE_COMPARE_BENCH(benchmark::State &state)
     const uint64_t NExt     = 1ULL << nBitsExt;
 
     // Footprint = d_flat(N) + d_src(N) + d_dst(NExt) columns. Skip points that won't fit (extended
-    // buffer dominates). Leave headroom for sppark's twiddle tables.
+    // buffer dominates). Leave headroom for the twiddle tables.
     size_t freeB = 0, totalB = 0;
     CHECKCUDAERR(cudaMemGetInfo(&freeB, &totalB));
     size_t needB = (2 * N + NExt) * nCols * sizeof(gl64_t);
@@ -233,19 +233,19 @@ static void LDE_COMPARE_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaMalloc((void **)&d_src,  N    * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_dst,  NExt * nCols * sizeof(gl64_t)));
 
-    double sppark_ms = 0.0, native_ms = 0.0;
+    double colmajor_ms = 0.0, tiled_ms = 0.0;
     for (auto _ : state) {
-        sppark_ms = timeLdeBackend(/*native=*/false, gpu_ntt, d_flat, d_src, d_dst, nBits, nBitsExt, nCols, stream, 3);
-        native_ms = timeLdeBackend(/*native=*/true,  gpu_ntt, d_flat, d_src, d_dst, nBits, nBitsExt, nCols, stream, 3);
-        state.SetIterationTime((sppark_ms + native_ms) / 1e3);
+        colmajor_ms = timeLdeBackend(/*native=*/0, gpu_ntt, d_flat, d_src, d_dst, nBits, nBitsExt, nCols, stream, 3);
+        tiled_ms    = timeLdeBackend(/*native=*/1, gpu_ntt, d_flat, d_src, d_dst, nBits, nBitsExt, nCols, stream, 3);
+        state.SetIterationTime((colmajor_ms + tiled_ms) / 1e3);
     }
-    // How many times faster sppark is than native (e.g. 2.2 => sppark 2.2x faster;
-    // 0.85 => sppark slower). Google Benchmark renders counter columns alphabetically,
-    // so the leading "1_/2_/3_" prefixes force the order native, sppark, ratio.
-    const double sppark_speedup_x = (sppark_ms > 0.0) ? native_ms / sppark_ms : 0.0;
-    state.counters["1_native_ms"]      = native_ms;
-    state.counters["2_sppark_ms"]      = sppark_ms;
-    state.counters["3_sppark_speedup"] = sppark_speedup_x;
+    // How many times faster the ColMajor engine is than tiled (e.g. 1.5 => colMajor 1.5x faster;
+    // 0.85 => colMajor slower). Google Benchmark renders counter columns alphabetically,
+    // so the leading "1_/2_/3_" prefixes force the order tiled, colMajor, ratio.
+    const double colmajor_speedup_x = (colmajor_ms > 0.0) ? tiled_ms / colmajor_ms : 0.0;
+    state.counters["1_tiled_ms"]         = tiled_ms;
+    state.counters["2_colMajor_ms"]      = colmajor_ms;
+    state.counters["3_colMajor_speedup"] = colmajor_speedup_x;
 
     CHECKCUDAERR(cudaFree(d_flat));
     CHECKCUDAERR(cudaFree(d_src));
@@ -286,7 +286,7 @@ BENCHMARK(LDE_GPU_BENCH)
 #undef NCOLS_ARGS
 
 // LDE backend comparison: each row runs BOTH backends at one (nBits, nCols) and reports
-// sppark_ms / native_ms / native_speedup counters side by side.
+// tiled_ms / colMajor_ms / colMajor_speedup counters side by side.
 BENCHMARK(LDE_COMPARE_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->ArgNames({"nBits", "nCols"})

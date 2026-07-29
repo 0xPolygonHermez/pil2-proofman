@@ -1,0 +1,21 @@
+[package]
+name = "hashes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+proofman-common.workspace = true
+proofman-macros.workspace = true
+proofman.workspace = true
+witness.workspace = true
+pil-std-lib.workspace = true
+fields.workspace = true
+tracing.workspace = true
+rand.workspace = true

@@ -57,6 +57,156 @@ public:
 
 using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<8>;
 
+// ---------------------------------------------------------------------------
+// Lazy-reduction arithmetic
+//
+// The MDS matrices M_8/M_12/M_16 have tiny entries (<= 7 bits), yet the naive
+// path pays a full 64x64 modular multiply + reduction per term. Instead we
+// accumulate the raw products wide and do a single modular reduction per
+// dot product:
+//   - M (tiny constants): compile-time immediates, sum fits u128 -> reduce128
+//     (see the pos1_*_mimm_ helpers below).
+//   - full-width constants (P, S): 16 x 128-bit products need a carry limb
+//     (sum < 2^132) -> reduce160 (handles up to c*2^128 + 128 bits, c < 2^32),
+//     using 2^128 == -2^32 (mod p).
+// The reductions produce canonical results; inputs may be any u64.
+// ---------------------------------------------------------------------------
+
+// 2^64 mod p = 2^32 - 1 (the "epsilon" of the Goldilocks field): the
+// correction to apply whenever a value crosses the 2^64 boundary (borrow or
+// carry) during reduction.
+__device__ constexpr uint64_t POS1_EPSILON = 0xFFFFFFFFULL;
+
+// (hi*2^64 + lo) mod p, canonical. hi = hh*2^32 + hl:
+// v == lo - hh + hl*(2^32 - 1)  (mod p)
+__device__ __forceinline__ uint64_t pos1_reduce128_(uint64_t hi, uint64_t lo)
+{
+    uint32_t hh = (uint32_t)(hi >> 32);
+    uint32_t hl = (uint32_t)hi;
+    uint64_t t0 = lo - hh;
+    if (lo < hh) t0 -= POS1_EPSILON;          // borrow: the wrap added 2^64 == epsilon, take it back
+    uint64_t t1 = ((uint64_t)hl << 32) - hl;  // hl * (2^32 - 1), fits u64
+    uint64_t r = t0 + t1;
+    if (r < t1) r += POS1_EPSILON;            // carry: the wrap dropped 2^64 == epsilon, restore it
+    if (r >= GOLDILOCKS_PRIME) r -= GOLDILOCKS_PRIME;
+    return r;
+}
+
+// (c*2^128 + hi*2^64 + lo) mod p, canonical, using 2^128 == -2^32 (mod p).
+__device__ __forceinline__ uint64_t pos1_reduce160_(uint32_t c, uint64_t hi, uint64_t lo)
+{
+    uint64_t r = pos1_reduce128_(hi, lo);
+    uint64_t sub = ((uint64_t)c) << 32;
+    r = (r >= sub) ? (r - sub) : (r + GOLDILOCKS_PRIME - sub);
+    if (r >= GOLDILOCKS_PRIME) r -= GOLDILOCKS_PRIME;
+    return r;
+}
+
+// Dot product with full-width constants: u128 + carry-limb accumulation.
+template<uint32_t W>
+__device__ __forceinline__ uint64_t pos1_dot_wide_raw_(const uint64_t *s, const gl64_t *col, uint32_t stride)
+{
+    unsigned __int128 acc = (unsigned __int128)s[0] * col[0][0];
+    uint32_t cy = 0;
+#pragma unroll
+    for (uint32_t j = 1; j < W; ++j)
+    {
+        unsigned __int128 pr = (unsigned __int128)s[j] * col[j * stride][0];
+        acc += pr;
+        cy += (acc < pr);
+    }
+    return pos1_reduce160_(cy, (uint64_t)(acc >> 64), (uint64_t)acc);
+}
+
+// x + a*b with a single reduction. Bound: (2^64-1)^2 + (2^64-1) < 2^128.
+__device__ __forceinline__ uint64_t pos1_muladd_raw_(uint64_t x, uint64_t a, uint64_t b)
+{
+    unsigned __int128 v = (unsigned __int128)a * b + x;
+    return pos1_reduce128_((uint64_t)(v >> 64), (uint64_t)v);
+}
+
+// MDS dot product with the M matrix as COMPILE-TIME immediates: the M
+// entries are tiny (<= 7 bits) constexpr values, so with the row loop
+// expanded via template recursion every term is a multiply by a small
+// literal, which the compiler strength-reduces far below a runtime 64x64
+// product (entries equal to 1 become plain adds). The entry is extracted
+// through a constexpr function so it is frontend-evaluated -- no device-side
+// access to the host constexpr array.
+template<uint32_t W>
+__host__ __device__ constexpr uint64_t pos1_m_entry_(uint32_t j, uint32_t i)
+{
+    return PoseidonGoldilocksConstants::Poseidon1Tables<W>::M[j][i].fe;
+}
+
+template<uint32_t W, uint32_t I, uint32_t J = 0>
+__device__ __forceinline__ void pos1_dot_mimm_rows_(unsigned __int128 &acc, const uint64_t *s)
+{
+    if constexpr (J < W)
+    {
+        constexpr uint64_t m = pos1_m_entry_<W>(J, I);
+        if constexpr (m == 1)
+            acc += s[J];
+        else if constexpr (m != 0)
+            acc += (unsigned __int128)s[J] * m;
+        pos1_dot_mimm_rows_<W, I, J + 1>(acc, s);
+    }
+}
+
+template<uint32_t W, uint32_t I>
+__device__ __forceinline__ uint64_t pos1_dot_mimm_(const uint64_t *s)
+{
+    unsigned __int128 acc = 0;
+    pos1_dot_mimm_rows_<W, I>(acc, s);
+    return pos1_reduce128_((uint64_t)(acc >> 64), (uint64_t)acc);
+}
+
+// Immediate-MDS x state, shared-memory state. out[I] = sum_j M[j][I]*s[j]:
+// pos1_dot_mimm_rows_ recurses over the matrix rows J of one column, and
+// the _cols_ helpers recurse over the columns I (one per output word) -- both
+// compile-time so M[J][I] stays a literal.
+template<uint32_t W, uint32_t I = 0>
+__device__ __forceinline__ void pos1_mvp_smem_mimm_cols_(const uint64_t *s)
+{
+    if constexpr (I < W)
+    {
+        gl64_t r;
+        r[0] = pos1_dot_mimm_<W, I>(s);
+        scratchpad[I * blockDim.x + threadIdx.x] = r;
+        pos1_mvp_smem_mimm_cols_<W, I + 1>(s);
+    }
+}
+
+template<uint32_t W>
+__device__ __forceinline__ void pos1_mvp_smem_mimm_()
+{
+    uint64_t s[W];
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        s[i] = scratchpad[i * blockDim.x + threadIdx.x][0];
+    pos1_mvp_smem_mimm_cols_<W>(s);
+}
+
+// Immediate-MDS x state, register state.
+template<uint32_t W, uint32_t I = 0>
+__device__ __forceinline__ void pos1_mvp_mimm_cols_(gl64_t *state, const uint64_t *olds)
+{
+    if constexpr (I < W)
+    {
+        state[I][0] = pos1_dot_mimm_<W, I>(olds);
+        pos1_mvp_mimm_cols_<W, I + 1>(state, olds);
+    }
+}
+
+template<uint32_t W>
+__device__ __forceinline__ void pos1_mvp_mimm_(gl64_t *state)
+{
+    uint64_t olds[W];
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        olds[i] = state[i][0];
+    pos1_mvp_mimm_cols_<W>(state, olds);
+}
+
 template<uint32_t W>
 __device__ __forceinline__ void pos1_pow7_(gl64_t *x)
 {
@@ -105,28 +255,26 @@ __device__ __forceinline__ void pos1_pow7add_(gl64_t *x, const gl64_t *C)
 template<uint32_t W>
 __device__ __forceinline__ gl64_t pos1_dot_(const gl64_t *x, const gl64_t *C)
 {
-    gl64_t s0 = x[0] * C[0];
+    uint64_t s[W];
 #pragma unroll
-    for (int i = 1; i < (int)W; ++i)
-        s0 = s0 + x[i] * C[i];
-    return s0;
+    for (int i = 0; i < (int)W; ++i)
+        s[i] = x[i][0];
+    gl64_t r;
+    r[0] = pos1_dot_wide_raw_<W>(s, C, 1);
+    return r;
 }
 
 template<uint32_t W>
 __device__ __forceinline__ void pos1_mvp_(gl64_t *state, const gl64_t *mat)
 {
-    gl64_t old_state[W];
+    uint64_t old_state[W];
 #pragma unroll
     for (int i = 0; i < (int)W; ++i)
-        old_state[i] = state[i];
+        old_state[i] = state[i][0];
 
 #pragma unroll 1
     for (int i = 0; i < (int)W; ++i)
-    {
-        state[i] = mat[i] * old_state[0];
-        for (int j = 1; j < (int)W; ++j)
-            state[i] = state[i] + (mat[(int)W * j + i] * old_state[j]);
-    }
+        state[i][0] = pos1_dot_wide_raw_<W>(old_state, &mat[i], W);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,24 +297,26 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
         pos1_pow7add_<W>(state, &GPU_C_GL[(r + 1) * W]);
-        pos1_mvp_<W>(state, GPU_M_GL);
+        pos1_mvp_mimm_<W>(state);
     }
 
     // Transition into partial rounds: pow7+ARK, MVP(P).
     pos1_pow7add_<W>(state, &GPU_C_GL[HALF_F * W]);
     pos1_mvp_<W>(state, GPU_P_GL);
 
-    // Partial rounds.
+    // Partial rounds: dot + rank-1 update, both with lazy reduction.
     for (uint32_t r = 0; r < N_PART; ++r)
     {
         pow7(state[0]);
         state[0] = state[0] + GPU_C_GL[(HALF_F + 1) * W + r];
 
-        gl64_t s0 = pos1_dot_<W>(state, &GPU_S_GL[(W * 2 - 1) * r]);
+        const gl64_t *S_row = &GPU_S_GL[(W * 2 - 1) * r];
+        gl64_t s0 = pos1_dot_<W>(state, S_row);
 
-        gl64_t W_[W];
-        pos1_prod_<W>(W_, state[0], &GPU_S_GL[(W * 2 - 1) * r + W - 1]);
-        pos1_add_<W>(state, W_);
+        uint64_t a = state[0][0];
+#pragma unroll
+        for (uint32_t j = 1; j < W; ++j)
+            state[j][0] = pos1_muladd_raw_(state[j][0], a, S_row[W - 1 + j][0]);
         state[0] = s0;
     }
 
@@ -174,10 +324,10 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
         pos1_pow7add_<W>(state, &GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
-        pos1_mvp_<W>(state, GPU_M_GL);
+        pos1_mvp_mimm_<W>(state);
     }
     pos1_pow7_<W>(state);
-    pos1_mvp_<W>(state, GPU_M_GL);
+    pos1_mvp_mimm_<W>(state);
 
 }
 
@@ -227,25 +377,23 @@ __device__ __forceinline__ void pos1_pow7add_smem_(const gl64_t *C)
     }
 }
 
-// MDS × state in shared memory. Indexing matches pos1_mvp_ (mat[W*j + i],
+// P x state in shared memory. Indexing matches pos1_mvp_ (mat[W*j + i],
 // transposed). Outer loop kept at unroll-1 on purpose: fully unrolling it
 // spikes register use and drops occupancy.
 template<uint32_t W>
 __device__ __forceinline__ void pos1_mvp_smem_(const gl64_t *mat)
 {
-    gl64_t s[W];
+    uint64_t s[W];
 #pragma unroll
     for (uint32_t i = 0; i < W; ++i)
-        s[i] = scratchpad[i * blockDim.x + threadIdx.x];
+        s[i] = scratchpad[i * blockDim.x + threadIdx.x][0];
 
 #pragma unroll 1
     for (uint32_t i = 0; i < W; ++i)
     {
-        gl64_t acc = mat[i] * s[0];
-#pragma unroll
-        for (uint32_t j = 1; j < W; ++j)
-            acc = acc + (mat[W * j + i] * s[j]);
-        scratchpad[i * blockDim.x + threadIdx.x] = acc;
+        gl64_t r;
+        r[0] = pos1_dot_wide_raw_<W>(s, &mat[i], W);
+        scratchpad[i * blockDim.x + threadIdx.x] = r;
     }
 }
 
@@ -263,17 +411,17 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
         pos1_pow7add_smem_<W>(&GPU_C_GL[(r + 1) * W]);
-        pos1_mvp_smem_<W>(GPU_M_GL);
+        pos1_mvp_smem_mimm_<W>();
     }
 
     // Transition full round → MVP(P).
     pos1_pow7add_smem_<W>(&GPU_C_GL[HALF_F * W]);
     pos1_mvp_smem_<W>(GPU_P_GL);
 
-    // Partial rounds — fused dot + rank-1 loop. state[0] is rewritten every
-    // round, so keep it in a register across all rounds (read/write scratchpad
-    // once). Caching the full state in registers instead spikes register use
-    // and drops occupancy.
+    // Partial rounds — fused dot + rank-1 loop, both lazily reduced. state[0]
+    // is rewritten every round, so keep it in a register across all rounds
+    // (read/write scratchpad once). Caching the full state in registers
+    // instead spikes register use and drops occupancy.
     {
         gl64_t s0_reg = scratchpad[threadIdx.x];
 #pragma unroll 1
@@ -285,15 +433,21 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
             s0_reg = (x3 * x4) + GPU_C_GL[(HALF_F + 1) * W + r];
 
             const gl64_t *S_row = &GPU_S_GL[(W * 2 - 1) * r];
-            gl64_t acc = s0_reg * S_row[0];
+            uint64_t a = s0_reg[0];
+            unsigned __int128 acc = (unsigned __int128)a * S_row[0][0];
+            uint32_t cy = 0;
 #pragma unroll
             for (uint32_t j = 1; j < W; ++j)
             {
-                gl64_t sj = scratchpad[j * blockDim.x + threadIdx.x];
-                acc = acc + sj * S_row[j];
-                scratchpad[j * blockDim.x + threadIdx.x] = sj + s0_reg * S_row[W - 1 + j];
+                uint64_t sj = scratchpad[j * blockDim.x + threadIdx.x][0];
+                unsigned __int128 pr = (unsigned __int128)sj * S_row[j][0];
+                acc += pr;
+                cy += (acc < pr);
+                gl64_t nsj;
+                nsj[0] = pos1_muladd_raw_(sj, a, S_row[W - 1 + j][0]);
+                scratchpad[j * blockDim.x + threadIdx.x] = nsj;
             }
-            s0_reg = acc;
+            s0_reg[0] = pos1_reduce160_(cy, (uint64_t)(acc >> 64), (uint64_t)acc);
         }
         scratchpad[threadIdx.x] = s0_reg;
     }
@@ -303,10 +457,10 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
         pos1_pow7add_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
-        pos1_mvp_smem_<W>(GPU_M_GL);
+        pos1_mvp_smem_mimm_<W>();
     }
     pos1_pow7_smem_<W>();
-    pos1_mvp_smem_<W>(GPU_M_GL);
+    pos1_mvp_smem_mimm_<W>();
 
 }
 

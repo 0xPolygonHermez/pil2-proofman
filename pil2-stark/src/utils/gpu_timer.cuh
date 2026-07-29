@@ -22,7 +22,7 @@ class TimerGPU {
 public:
     std::unordered_map<std::string, TimerEntry> timers;
     std::unordered_map<std::string, std::vector<TimerEntry>> multiTimers;
-    std::unordered_map<std::string, TimerEntry*> activeCategoryTimers;
+    std::unordered_map<std::string, size_t> activeCategoryTimers;
     std::vector<std::string> order;
     cudaStream_t stream = nullptr;
 
@@ -68,17 +68,16 @@ public:
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
 #endif
-            return;
+            activeCategoryTimers.erase(name);
         }
 
         cudaEvent_t start, stop;
         if (!createEvent(start) || !createEvent(stop)) return;
 
-        multiTimers[name].emplace_back(TimerEntry{start, stop, -1.0f});
-        TimerEntry& entry = multiTimers[name].back();
-
-        activeCategoryTimers[name] = &entry;
-        cudaEventRecord(entry.start, stream);
+        auto& entries = multiTimers[name];
+        entries.emplace_back(TimerEntry{start, stop, -1.0f});
+        activeCategoryTimers[name] = entries.size() - 1;
+        cudaEventRecord(entries.back().start, stream);
     }
 
     void stopCategory(const std::string& name) {
@@ -89,14 +88,20 @@ public:
 #endif
             return;
         }
-        cudaEventRecord(it->second->stop, stream);
+        auto entriesIt = multiTimers.find(name);
+        if (entriesIt != multiTimers.end() && it->second < entriesIt->second.size()) {
+            cudaEventRecord(entriesIt->second[it->second].stop, stream);
+        }
         activeCategoryTimers.erase(it);
     }
 
     void syncAndCompute(const std::string& name) {
         auto& entry = timers.at(name);
         cudaEventSynchronize(entry.stop);
-        cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+        if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+            cudaGetLastError();   // clear sticky error
+            entry.timeMs = 0.0f;  // don't propagate garbage
+        }
     }
 
     float getTimeMs(const std::string& name) {
@@ -117,7 +122,10 @@ public:
         for (auto& entry : it->second) {
             if (entry.timeMs < 0.0f) {
                 cudaEventSynchronize(entry.stop);
-                cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                    cudaGetLastError();   // clear sticky error
+                    entry.timeMs = 0.0f;  // don't propagate garbage
+                }
             }
             total += entry.timeMs / 1000.0;
         }
@@ -138,7 +146,10 @@ public:
                 for (auto& entry : entries) {
                     if (entry.timeMs < 0.0f) {
                         cudaEventSynchronize(entry.stop);
-                        cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                        if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                            cudaGetLastError();   // clear sticky error
+                            entry.timeMs = 0.0f;  // don't propagate garbage
+                        }
                     }
                     total_sec += entry.timeMs / 1000.0;
                 }
@@ -155,10 +166,18 @@ public:
             for (auto& entry : entries) {
                 if (entry.timeMs < 0.0f) {
                     cudaEventSynchronize(entry.stop);
-                    cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                    if (cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop) != cudaSuccess) {
+                        cudaGetLastError();   // clear sticky error
+                        entry.timeMs = 0.0f;  // don't propagate garbage
+                    }
                 }
             }
         }
+    }
+
+    // Clear stale open categories so an aborted job can't leak state into the next.
+    void resetCategories() {
+        activeCategoryTimers.clear();
     }
 
     void clear() {
@@ -249,6 +268,8 @@ inline std::string makeTimerName(const std::string& base, int id) {
 
 #define TimerResetGPU(timer) (timer.clear())
 
+#define TimerResetCategoriesGPU(timer) (timer.resetCategories())
+
 #define TimerGetElapsedCategoryGPU(timer, category) \
     (timer.getCategoryTotalTimeSec(#category))
 
@@ -267,10 +288,12 @@ inline std::string makeTimerName(const std::string& base, int id) {
 #define TimerSyncAndLogAllGPU(timer, instance_id, airgroup_id, air_id)
 #define TimerSyncCategoriesGPU(timer)
 #define TimerResetGPU(timer)
+#define TimerResetCategoriesGPU(timer)
 #define TimerGetElapsedCategoryGPU(timer, category) 0.0
 #define TimerLogCategoryContributionsGPU(timer, total_name)
 #define TimerSyncCategoriesGPU(timer)
 #define TimerResetGPU(timer)
+#define TimerResetCategoriesGPU(timer)
 #define TimerGetElapsedCategoryGPU(timer, category) 0.0
 #define TimerLogCategoryContributionsGPU(timer, total_name)
 #endif

@@ -445,7 +445,7 @@ public:
         }
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 - starkInfo.starkStruct.lastLevelVerification : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
             j["s0_valsC"][i] = json::array();
@@ -489,7 +489,32 @@ public:
             }
         }
 
-        // TODO: LAST LEVELS IN JSON
+        if (starkInfo.starkStruct.lastLevelVerification != 0) {
+            uint64_t nNodesLastLevel = std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification);
+            auto emitLastLevels = [&](const std::string &name, ElementType *levels) {
+                j[name] = json::array();
+                for (uint64_t k = 0; k < nNodesLastLevel; k++) {
+                    if (nFieldElements == 1) {
+                        j[name][k] = toString(levels[k]);
+                    } else {
+                        j[name][k] = json::array();
+                        for (uint64_t l = 0; l < nFieldElements; l++) {
+                            j[name][k][l] = toString(levels[k * nFieldElements + l]);
+                        }
+                    }
+                }
+            };
+            for (uint64_t s = 0; s < nStages; ++s) {
+                emitLastLevels("s0_last_levels" + to_string(s + 1), last_levels[s]);
+            }
+            emitLastLevels("s0_last_levelsC", last_levels[starkInfo.nStages + 1]);
+            for (uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+                emitLastLevels("s0_last_levels_" + starkInfo.customCommits[c].name + "_0", last_levels[starkInfo.nStages + 2 + c]);
+            }
+            for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+                emitLastLevels("s" + std::to_string(step) + "_last_levels", fri.treesFRI[step - 1].last_levels.data());
+            }
+        }
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
             if(nFieldElements == 1) {
@@ -513,7 +538,7 @@ public:
                     j["s" + std::to_string(step) + "_vals"][i][l] = Goldilocks::toString(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
                 }
 
-                uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[step].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+                uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[step].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 - starkInfo.starkStruct.lastLevelVerification : std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
                 uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
                 for(uint64_t l = 0; l < nSiblings; ++l) {

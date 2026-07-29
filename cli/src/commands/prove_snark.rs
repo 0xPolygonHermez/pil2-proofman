@@ -59,7 +59,7 @@ impl ProveSnarkCmd {
         } else {
             let snark_wrapper: SnarkWrapper<Goldilocks> =
                 SnarkWrapper::new(&self.proving_key_snark, self.verbose.into(), true, self.gpu)?;
-            let snark_proof = snark_wrapper.generate_final_snark_proof(&proof)?;
+            let snark_proof = snark_wrapper.generate_final_snark_proof(&proof, None)?;
             snark_proof.save(self.output_dir.join("snark_proof.bin"))?;
             Ok(())
         }

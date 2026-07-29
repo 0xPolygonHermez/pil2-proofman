@@ -23,6 +23,22 @@
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+// The immediate-MDS path (pos1_dot_mimm_ and the pos1_mvp_*_mimm_ helpers)
+// accumulates raw 64-bit-state x constant products in a u128 with no carry
+// limb, which is only sound while every M entry is < 2^32. Check that
+// assumption at compile time.
+template<uint32_t W>
+static constexpr bool pos1MdsEntriesBelow32(const Goldilocks::Element (&m)[W][W])
+{
+    for (uint32_t i = 0; i < W; ++i)
+        for (uint32_t j = 0; j < W; ++j)
+            if (m[i][j].fe >= (1ULL << 32)) return false;
+    return true;
+}
+static_assert(pos1MdsEntriesBelow32<8>(PoseidonGoldilocksConstants::M8),  "Poseidon1 M8 entries must be < 2^32 for the lazy MDS path");
+static_assert(pos1MdsEntriesBelow32<12>(PoseidonGoldilocksConstants::M12), "Poseidon1 M12 entries must be < 2^32 for the lazy MDS path");
+static_assert(pos1MdsEntriesBelow32<16>(PoseidonGoldilocksConstants::M16), "Poseidon1 M16 entries must be < 2^32 for the lazy MDS path");
+
 // CUDA threads per block.
 #define TPB_POS1 128
 

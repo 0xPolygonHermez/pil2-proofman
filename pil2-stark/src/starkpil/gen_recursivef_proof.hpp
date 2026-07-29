@@ -86,7 +86,8 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     
     RawFr::Element verkey[nFieldElements];
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
-    
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
+
     starks.addTranscript(transcript, &verkey[0], nFieldElements);
     if(setupCtx.starkInfo.nPublics > 0) {
         if(!setupCtx.starkInfo.starkStruct.hashCommits) {

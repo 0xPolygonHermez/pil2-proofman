@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use super::types::{CustomGateUse, R1csFile};
-use super::super::utils::{addp, mulp, neg};
+use crate::plonk2pil::utils::{addp, mulp, neg};
 
 /// A PLONK constraint: [sl, sr, so, qM, qL, qR, qO, qC].
 pub type PlonkConstraint = [u64; 8];

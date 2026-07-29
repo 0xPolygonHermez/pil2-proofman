@@ -49,6 +49,12 @@ extern "C" {
         zkey_file: *const ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 
+    pub fn plonk_circuit_stats_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        n_constraints: *mut u64,
+        n_additions: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(
@@ -84,7 +90,7 @@ extern "C" {
 
     pub fn unregister_host_memory(ptr: *mut ::std::os::raw::c_void);
 
-    pub fn wait_stream_commit_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
+    pub fn wait_trace_h2d_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
 
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
@@ -115,7 +121,7 @@ extern "C" {
     );
     
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn calculate_words_per_row(
@@ -123,7 +129,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64, arity: u64);
+    pub fn init_gpu_setup(arity: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,
@@ -463,8 +469,25 @@ extern "C" {
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
         force_recursive_stream: bool,
+        recurser_id: *mut ::std::os::raw::c_char,
+        streamId_: u64,
     ) -> u64;
-    
+
+    pub fn reserve_best_stream_nonblock(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        force_recursive: bool,
+    ) -> u32;
+
+    pub fn reserve_stream_if_free(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        streamId: u32,
+        force_recursive: bool,
+    ) -> u32;
+
     pub fn calculate_const_tree_fixed(
         pSetupCtx_: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -689,6 +712,8 @@ extern "C" {
     pub fn acquire_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
     pub fn release_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
     pub fn is_first_gpu_buffer_borrowed(d_buffers: *mut ::std::os::raw::c_void) -> u32;
+    pub fn get_first_gpu_id(d_buffers: *mut ::std::os::raw::c_void) -> u32;
+    pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

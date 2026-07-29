@@ -114,10 +114,10 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
-    fn new(n_buffers: usize, buffer_size: usize, cancelled: Arc<AtomicBool>) -> Self {
+    fn new(n_buffers: usize, buffer_size: usize, pin: bool, cancelled: Arc<AtomicBool>) -> Self {
         let (sender, receiver) = bounded(n_buffers);
         let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
-        let registered_buffers: Vec<usize> = register_pool(&buffers);
+        let registered_buffers: Vec<usize> = if pin { register_pool(&buffers) } else { Vec::new() };
         for buffer in buffers {
             sender.send(buffer).unwrap();
         }
@@ -142,6 +142,29 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
     }
 
+    /// Non-blocking channel poll — returns a pooled buffer if one is immediately
+    /// available, else `None`. Used by callers (e.g. `MemoryHandler`) that must
+    /// interleave the channel with another wakeup source in a single loop and so
+    /// can't use the blocking `take()`.
+    fn try_take(&self) -> Option<Vec<F>> {
+        self.receiver.try_recv().ok()
+    }
+
+    /// A fresh, unpooled buffer of the pool's size. Used on the abort path to
+    /// unblock a waiter without drawing from the (possibly empty) channel.
+    fn fresh_buffer(&self) -> Vec<F> {
+        vec![F::ZERO; self.buffer_size]
+    }
+
+    /// Buffers currently sitting in the channel (not the pool capacity).
+    fn available(&self) -> usize {
+        self.receiver.len()
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
     fn release(&self, buffer: Vec<F>) -> ProofmanResult<()> {
         if buffer.len() != self.buffer_size {
             return Err(ProofmanError::ProofmanError(format!(
@@ -150,11 +173,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
                 self.buffer_size
             )));
         }
-        // On the abort path take() may hand out freshly-allocated buffers without
-        // drawing from the channel, so the live buffer count can exceed the channel
-        // capacity. A blocking send would then park forever on a full channel,
-        // reintroducing the teardown hang. Release best-effort when cancelled: the
-        // dropped buffer is freed normally and the pool is about to be torn down.
+        // On the abort path take() may hand out fresh buffers, so live buffers can
+        // exceed channel capacity; a blocking send would park forever. Release
+        // best-effort when cancelled. KNOWN HAZARD for the cancellation rework:
+        // dropping a REGISTERED buffer leaves a live cudaHostRegister on recycled
+        // pages — a later allocation there takes the un-gated direct-H2D fast path.
         if self.cancelled.load(Ordering::SeqCst) {
             let _ = self.sender.try_send(buffer);
             return Ok(());
@@ -233,52 +256,32 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for Pool<F> {
 pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     pctx: Arc<ProofCtx<F>>,
     instance_ids_to_be_released: Arc<SegQueue<(usize, bool)>>,
-    sender: Sender<Vec<F>>,
-    receiver: Receiver<Vec<F>>,
-    n_buffers: usize,
-    buffer_size: usize,
-    /// Distinct page-locked base pages the pool registered (see `Pool::registered_buffers`).
-    registered_buffers: Vec<usize>,
-    /// Set by `cancel()` on the abort path so the blocking `take_buffer` loop can
-    /// exit instead of spinning forever on a buffer that will never be released.
+    /// Channel + pinning + reset/Drop mechanics for the basic-trace buffers. The
+    /// instance-release side-channel below and the `pctx` coupling are the only
+    /// behavior layered on top of the shared pool.
+    pool: Pool<F>,
+    /// Set by `cancel()` on the abort path so the `take_buffer` loop can exit
+    /// instead of spinning forever on a buffer that will never be released. Shared
+    /// with `pool` so a single flag drives both the queue drain and the pooled
+    /// channel poll.
     cancelled: Arc<AtomicBool>,
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, n_buffers: usize, buffer_size: usize) -> Self {
-        let (tx_buffer_pool, rx_buffer_pool) = bounded(n_buffers);
         let instance_ids_to_be_released = Arc::new(SegQueue::new());
+        let cancelled = Arc::new(AtomicBool::new(false));
 
         // Page-lock the basic-trace buffer pool for direct H2D (pairs with the
-        // direct-copy fast path in goldilocks_tooling.cu). All-or-nothing (see
-        // register_pool). Relies on pool buffers never permanently escaping —
+        // direct-copy fast path in goldilocks_tooling.cu). The basic trace is an H2D
+        // source, so it is pinned. Relies on pool buffers never permanently escaping —
         // shared-buffer traces recycle the same Vec back, and `reset` enforces it.
-        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
-        let registered_buffers: Vec<usize> = register_pool(&buffers);
-        let registered_bytes: usize =
-            registered_buffers.len().saturating_mul(buffer_size).saturating_mul(std::mem::size_of::<F>());
-        for buffer in buffers {
-            tx_buffer_pool.send(buffer).unwrap();
-        }
+        let pool = Pool::new(n_buffers, buffer_size, true, cancelled.clone());
 
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
         tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
-        tracing::info!(
-            "MemoryHandler::registered {} basic-trace buffers ({}) for direct H2D",
-            registered_buffers.len(),
-            crate::format_bytes(registered_bytes as f64)
-        );
 
-        Self {
-            pctx,
-            sender: tx_buffer_pool,
-            receiver: rx_buffer_pool,
-            instance_ids_to_be_released,
-            n_buffers,
-            buffer_size,
-            registered_buffers,
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
+        Self { pctx, instance_ids_to_be_released, pool, cancelled }
     }
 
     /// Unblock any thread parked in `take_buffer`. Called on the abort path so a
@@ -298,60 +301,38 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     pub fn reset(&self) -> ProofmanResult<()> {
         self.empty_queue_to_be_released();
 
-        // On the abort path take_buffer hands out a fresh (unregistered) buffer to
-        // unblock workers, which may then be released back into the pool. The pool
-        // is about to be dropped, so don't run the integrity checks — they would
-        // mask the real cancellation error with a spurious invariant violation.
-        //
         // swap, not load: reset() must also re-arm the flag, which is otherwise
         // sticky. The distributed worker cancels as housekeeping before every job;
         // left set, the flag turns the next run's take_buffer into an unbounded
         // fresh allocator (OOM on large blocks). Safe to clear here: workers are
         // joined before reset() (see doc above), so nothing is parked on the flag.
+        //
+        // On the abort path (flag set) we skip pool.reset's integrity checks — they
+        // would mask the real cancellation error with a spurious invariant violation.
+        // Clearing the flag here also makes the subsequent pool.reset() a no-op guard;
+        // we return before calling it.
         if self.cancelled.swap(false, Ordering::SeqCst) {
             return Ok(());
         }
 
-        let mut valid_buffers: Vec<Vec<F>> = Vec::with_capacity(self.n_buffers);
-        while let Ok(buf) = self.receiver.try_recv() {
-            if buf.len() != self.buffer_size {
-                return Err(ProofmanError::ProofmanError(format!(
-                    "MemoryHandler::reset: buffer with unexpected size {} (expected {})",
-                    buf.len(),
-                    self.buffer_size
-                )));
-            }
-            valid_buffers.push(buf);
-        }
-
-        if valid_buffers.len() != self.n_buffers {
-            return Err(ProofmanError::ProofmanError(format!(
-                "MemoryHandler::reset: recovered {} of {} buffers; a buffer was not released",
-                valid_buffers.len(),
-                self.n_buffers
-            )));
-        }
-
-        for buf in valid_buffers.into_iter() {
-            self.sender.send(buf).unwrap();
-        }
-
-        Ok(())
+        // Buffer recovery + integrity checks live in the shared pool.
+        self.pool.reset()
     }
 
-    /// Take a basic-trace buffer. Polls both the channel and the soft-release SegQueue
-    /// every 10µs. A blocking `recv` won't work here: `to_be_released_buffer` enqueues
-    /// without sending to the channel, so a parked `recv` would miss those wakeups.
+    /// Take a basic-trace buffer. Polls both the pool channel and the soft-release
+    /// SegQueue every 10µs. The pool's blocking `take()` won't work here:
+    /// `to_be_released_buffer` enqueues without sending to the channel, so a parked
+    /// `recv` would miss those wakeups — hence the non-blocking `try_take` in the loop.
     pub fn take_buffer(&self) -> Vec<F> {
         loop {
-            if let Ok(buffer) = self.receiver.try_recv() {
+            if let Some(buffer) = self.pool.try_take() {
                 return buffer;
             }
             // Abort path: a buffer this loop is waiting on may never be released
             // (the proof errored before releasing it). Return a fresh buffer so the
             // worker unblocks and the process can tear down instead of spinning.
-            if self.cancelled.load(Ordering::SeqCst) {
-                return vec![F::ZERO; self.buffer_size];
+            if self.pool.is_cancelled() {
+                return self.pool.fresh_buffer();
             }
             if let Some((iid, remove_from_calculated)) = self.instance_ids_to_be_released.pop() {
                 if remove_from_calculated {
@@ -368,25 +349,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 
     pub fn release_buffer(&self, buffer: Vec<F>) -> ProofmanResult<()> {
-        if buffer.len() != self.buffer_size {
-            return Err(ProofmanError::ProofmanError(format!(
-                "MemoryHandler::Trying to release buffer with unexpected size {} (expected {}).",
-                buffer.len(),
-                self.buffer_size
-            )));
-        }
-        // On the abort path take_buffer may hand out freshly-allocated buffers
-        // without drawing from the channel, so the live buffer count can exceed the
-        // channel capacity. A blocking send would then park forever on a full
-        // channel, reintroducing the teardown hang. Release best-effort when
-        // cancelled: the dropped buffer is freed normally and the pool is about to
-        // be torn down.
-        if self.cancelled.load(Ordering::SeqCst) {
-            let _ = self.sender.try_send(buffer);
-            return Ok(());
-        }
-        self.sender.send(buffer).expect("Failed to send buffer back to pool");
-        Ok(())
+        self.pool.release(buffer)
     }
 
     pub fn to_be_released_buffer(&self, instance_id: usize, remove_from_calculated: bool) {
@@ -394,7 +357,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 
     pub fn get_n_buffers(&self) -> usize {
-        self.receiver.len()
+        self.pool.available()
     }
 
     pub fn empty_queue_to_be_released(&self) {
@@ -404,24 +367,12 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 }
 
-impl<F: PrimeField64 + Send + Sync + 'static> Drop for MemoryHandler<F> {
-    fn drop(&mut self) {
-        // Unregistration hinges on this Drop running, which only happens once the
-        // LAST Arc<MemoryHandler> is gone. Worker threads each hold a clone moved
-        // into their closure, so they must terminate and be joined first. A worker
-        // parked in take_buffer would never release its Arc — that is exactly what
-        // `cancel()` prevents on the abort path (it unblocks take_buffer so the
-        // thread exits and is joined). If you stop calling `cancel()` before
-        // joining, pinned pages may leak. (Under panic=abort no Drop runs at all;
-        // the OS reclaims the pages on process exit.)
-        //
-        // Runs before fields drop, so the pooled Vecs (still held by the channel)
-        // are alive while we unregister their pages.
-        for ptr in &self.registered_buffers {
-            unregister_host_memory_c(*ptr as *mut c_void);
-        }
-    }
-}
+// No explicit Drop: the `pool` field's `Pool::drop` unregisters the pinned pages
+// when the last Arc<MemoryHandler> is gone. That teardown still hinges on workers
+// being joined first — each holds a clone of the Arc, and a worker parked in
+// take_buffer would never release it. `cancel()` unblocks take_buffer on the abort
+// path so the thread exits and is joined; skip it and pinned pages may leak. (Under
+// panic=abort no Drop runs at all; the OS reclaims the pages on process exit.)
 
 pub trait BufferPool<F: PrimeField64>: Send + Sync
 where
@@ -454,10 +405,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         buffer_size_trace_compressor: usize,
     ) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let witness = Pool::new(n_buffers, buffer_size_witness, cancelled.clone());
-        let witness_compressor = Pool::new(n_buffers_compressor, buffer_size_witness_compressor, cancelled.clone());
-        let trace = Pool::new(n_buffers, buffer_size_trace, cancelled.clone());
-        let trace_compressor = Pool::new(n_buffers_compressor, buffer_size_trace_compressor, cancelled.clone());
+        let witness = Pool::new(n_buffers, buffer_size_witness, false, cancelled.clone());
+        let witness_compressor =
+            Pool::new(n_buffers_compressor, buffer_size_witness_compressor, false, cancelled.clone());
+        let trace = Pool::new(n_buffers, buffer_size_trace, true, cancelled.clone());
+        let trace_compressor = Pool::new(n_buffers_compressor, buffer_size_trace_compressor, true, cancelled.clone());
 
         let total = witness.total_bytes()
             + witness_compressor.total_bytes()

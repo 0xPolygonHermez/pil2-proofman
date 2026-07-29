@@ -1,0 +1,340 @@
+require "std_constants.pil"
+require "std_lookup.pil"
+
+// Precompile in charge of performing the SHA2-256 permutation 
+// For reference: Section 6.2 of https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf
+
+airtemplate Sha2(const int N = 2**8) {
+    /*
+       ═══════════════════════════════════════════════════════════════════════════
+       SHA2-256 FUNCTION SPECIFICATION
+       ═══════════════════════════════════════════════════════════════════════════
+
+       SHA2(state: [u32; 8], input: [u32; 16]) -> [u32; 8]
+
+        The computation comprises the following steps:
+
+            • Message scheduler:
+                for i in 0..15:
+                    w[i] := input[i]
+                for i in 16..63:
+                    s0 := (w[i-15] >>> 7) ^ (w[i-15] >>> 18) ^ (w[i-15] >> 3)
+                    s1 := (w[i-2] >>> 17) ^ (w[i-2] >>> 19) ^ (w[i-2] >> 10)
+                    w[i] := w[i-16] + s0 + w[i-7] + s1
+
+            • Variable initialization:
+                a := state[0]
+                b := state[1]
+                c := state[2]
+                d := state[3]
+                e := state[4]
+                f := state[5]
+                g := state[6]
+                h := state[7]
+
+            • Mixer:
+                for i in 0..63:
+                    s1 := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
+                    ch := (e & f) ^ ((~e) & g)
+                    temp1 := h + s1 + ch + k[i] + w[i]
+                    s0 := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
+                    maj := (a & b) ^ (a & c) ^ (b & c)
+                    temp2 := s0 + maj
+
+                    h := g
+                    g := f
+                    f := e
+                    e := d + temp1
+                    d := c
+                    c := b
+                    b := a
+                    a := temp1 + temp2
+
+            • Variable finalization:
+                state[0] := state[0] + a
+                state[1] := state[1] + b
+                state[2] := state[2] + c
+                state[3] := state[3] + d
+                state[4] := state[4] + e
+                state[5] := state[5] + f
+                state[6] := state[6] + g
+                state[7] := state[7] + h
+
+       ═══════════════════════════════════════════════════════════════════════════
+       EXECUTION TRACE LAYOUT
+       ═══════════════════════════════════════════════════════════════════════════
+
+           ROW    s0[0..32]     s1[0..32]        w[0..32]             STAGE
+        |  0   | 0bD₁D₂..D₃₂ | 0bH₁H₂..H₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
+        |  1   | 0bC₁C₂..C₃₂ | 0bG₁G₂..G₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      | 
+        |  2   | 0bB₁B₂..B₃₂ | 0bF₁F₂..F₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      | 
+        |  3   | 0bA₁A₂..A₃₂ | 0bE₁E₂..E₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
+        |----------------------------------------------------------------------------|
+        |  4   | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bM₁M₂.......M₃₂ |  MIXING & LOAD INPUT |      
+        |  ... |     ...     |     ...     |        ...       |         ...          |
+        |  19  | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bM₄₈₁M₄₈₂..M₅₁₂ |  MIXING & LOAD INPUT |
+        |----------------------------------------------------------------------------|
+        |  20  | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bX₁X₂.......X₃₂ |        MIXING        |
+        |  ... |     ...     |     ...     |        ...       |         ...          |
+        |  67  | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bX₁X₂.......X₃₂ |        MIXING        |
+        |----------------------------------------------------------------------------|
+        |  68  | 0bD₁D₂..D₃₂ | 0bH₁H₂..H₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
+        |  69  | 0bC₁C₂..C₃₂ | 0bG₁G₂..G₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
+        |  70  | 0bB₁B₂..B₃₂ | 0bF₁F₂..F₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
+        |  71  | 0bA₁A₂..A₃₂ | 0bE₁E₂..E₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
+    */
+
+    const int CLOCKS_LOAD_STATE  = 4;
+    const int CLOCKS_LOAD_INPUT  = 16;
+    const int CLOCKS_MIXING      = 48;
+    const int CLOCKS_WRITE_STATE = 4;
+    const int CLOCKS = CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT + CLOCKS_MIXING + CLOCKS_WRITE_STATE;
+
+    // Calculate usable capacity
+    const int NUM_NON_USABLE_ROWS = N % CLOCKS;
+    const int NUM_OPS;
+    if (NUM_NON_USABLE_ROWS == 0) {
+        // N is perfectly divisible by CLOCKS
+        if (N < CLOCKS) {
+            error(`N must be at least ${CLOCKS} to fit the SHA2-256 arithmetization, but received N=${N}`);
+        }
+
+        NUM_OPS = N / CLOCKS;
+    } else {
+        // N is not divisible by CLOCKS
+        if (N < 2*CLOCKS) {
+            error(`N must be at least ${2*CLOCKS} to fit the SHA2-256 arithmetization, but received N=${N}`);
+        }
+
+        // Subtract 1 because we can't fit a complete cycle in the remaining rows
+        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    }
+
+    const int NUM_SHA2 = NUM_OPS;
+    println(`The total number of SHA2-256's with N = ${N} is ${NUM_SHA2}`);
+
+    // Round constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
+    const int RC[64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+
+    // Argument identifiers
+    const int RANGE_CHECKER_ID = 252;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CLOCK SELECTORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    if (NUM_NON_USABLE_ROWS == 0) {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
+    } else {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
+    }
+
+    // Clock selectors for each row in the cycle
+    const expr CLK[CLOCKS];
+    for (int i = 0; i < CLOCKS; i++) {
+        CLK[i] = (i)'CLK_0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MAIN CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    col witness bits(1) s0[32];
+    col witness bits(1) s1[32];
+    col witness bits(1)  w[32];
+
+    // s0,s1 and w are bits
+    for (int i = 0; i < 32; i++) {
+        s0[i] * (1 - s0[i]) === 0;
+        s1[i] * (1 - s1[i]) === 0;
+        w[i] * (1 - w[i]) === 0;
+    }
+
+    int offset = 0;
+    const expr is_loading_state = clock_set(start: offset, end: offset + CLOCKS_LOAD_STATE);
+    offset += CLOCKS_LOAD_STATE;
+    const expr is_loading_input = clock_set(start: offset, end: offset + CLOCKS_LOAD_INPUT);
+    offset += CLOCKS_LOAD_INPUT;
+    const expr is_mixing        = clock_set(start: offset, end: offset + CLOCKS_MIXING);
+    offset += CLOCKS_MIXING;
+    const expr is_writing_state = clock_set(start: offset, end: offset + CLOCKS_WRITE_STATE);
+
+    const expr a[32],b[32],c[32],d[32],e[32],f[32],g[32],h[32];
+    const expr w2[32], w7[32], w15[32], w16[32];
+    for (int i = 0; i < 32; i++) {
+        a[i] = 's0[i];
+        b[i] = 2's0[i];
+        c[i] = 3's0[i];
+        d[i] = 4's0[i];
+
+        e[i] = 's1[i];
+        f[i] = 2's1[i];
+        g[i] = 3's1[i];
+        h[i] = 4's1[i];
+
+        w2[i] = 2'w[i];
+        w7[i] = 7'w[i];
+        w15[i] = 15'w[i];
+        w16[i] = 16'w[i];
+    }
+
+    // Compute the new message schedule value
+    const expr new_w_packed = compute_new_w(w2, w7, w15, w16);
+
+    // Compute the new state values
+    const expr k = clock_set_weighted(start: 0, end: CLOCKS_LOAD_INPUT + CLOCKS_MIXING, offset: CLOCKS_LOAD_STATE, weights: RC);
+    const expr new_state[2] = compute_new_state(a, b, c, d, e, f, g, h, w, k);
+    const expr new_s0_packed = new_state[0];
+    const expr new_s1_packed = new_state[1];
+
+    // We should prove that the unpacking of the new a/e/w values is correct.
+    // For the new a/e values, we add 6 and 5 32-bit numbers, respectively, and this
+    // generates numbers of at most 35 bits, since 2^34 < 5*(2^32-1),6*(2^32-1) < 2^35
+    // Similarly, for the new w value, we add 3 32-bit numbers, and this generates
+    // a number of at most 34 bits, since 2^33 < 3*(2^32-1) < 2^34
+    // We use the following columns to store the carry bits
+    col witness bits(3) new_s0_carry_bits;
+    col witness bits(3) new_s1_carry_bits;
+    col witness bits(2) new_w_carry_bits;
+    range_check_triple(a: new_s0_carry_bits, b: new_s1_carry_bits, c: new_w_carry_bits);
+
+    const expr s0_packed = pack_bits(s0);
+    const expr s1_packed = pack_bits(s1);
+    const expr w_packed = pack_bits(w);
+    s0_packed + new_s0_carry_bits * P2_32
+        - is_loading_state * s0_packed
+        - (is_loading_input + is_mixing) * new_s0_packed
+        - is_writing_state * ((CLOCKS_WRITE_STATE)'s0_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s0_packed) === 0;
+    s1_packed + new_s1_carry_bits * P2_32
+        - is_loading_state * s1_packed
+        - (is_loading_input + is_mixing) * new_s1_packed 
+        - is_writing_state * ((CLOCKS_WRITE_STATE)'s1_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s1_packed) === 0;
+    w_packed + new_w_carry_bits * P2_32
+        - is_loading_input * w_packed
+        - is_mixing * new_w_packed === 0;
+
+    // Given w[i-2], w[i-7], w[i-15], w[i-16], computes the new w[i] value
+    function compute_new_w(const expr w2[], const expr w7[], const expr w15[], const expr w16[]): expr {
+        // s0 := (w[i-15] >>> 7) ^ (w[i-15] >>> 18) ^ (w[i-15] >> 3)
+        // s1 := (w[i-2] >>> 17) ^ (w[i-2] >>> 19) ^ (w[i-2] >> 10)
+        // w[i] := w[i-16] + s0 + w[i-7] + s1
+        const expr s0[32] = xor(rotate_right(w15, 7), xor(rotate_right(w15, 18), shift_right(w15, 3)));
+        const expr s1[32] = xor(rotate_right(w2, 17), xor(rotate_right(w2, 19), shift_right(w2, 10)));
+        const expr new_w = pack_bits(s1) + pack_bits(w7) + pack_bits(s0) + pack_bits(w16);
+        return new_w;
+    }
+    
+    // Given a,b,c,d,e,f,g,h,w,k, computes the new a and e values
+    function compute_new_state(const expr a[], const expr b[], const expr c[], const expr d[],
+                            const expr e[], const expr f[], const expr g[], const expr h[], 
+                            const expr w[], const expr k): expr[] 
+    {
+        // s0 := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
+        // s1 := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
+        // ch := (e & f) ^ ((~e) & g)
+        // temp1 := h + s1 + ch + k[i] + w[i]
+        // maj := (a & b) ^ (a & c) ^ (b & c)
+        // temp2 := s0 + maj
+        // a := temp1 + temp2
+        // e := d + temp1
+        const expr s0[32] = xor(rotate_right(a, 2), xor(rotate_right(a, 13), rotate_right(a, 22)));
+        const expr s1[32] = xor(rotate_right(e, 6), xor(rotate_right(e, 11), rotate_right(e, 25)));
+        const expr t1 = pack_bits(h) + pack_bits(s1) + pack_bits(ch(e, f, g)) + k + pack_bits(w);
+        const expr t2 = pack_bits(s0) + pack_bits(maj(a, b, c));
+        const expr new_a = t1 + t2;
+        const expr new_e = pack_bits(d) + t1;
+        const expr result[2] = [new_a, new_e];
+        return result;
+    }
+
+    function xor(const expr a[], const expr b[]): expr[] {
+        const int len = length(a);
+        const expr result[len];
+        for (int i = 0; i < len; i++) {
+            result[i] = a[i] + b[i] - 2 * a[i] * b[i];
+        }
+        return result;
+    }
+
+    function rotate_right(const expr state[], const int n): expr[] {
+        const int len = length(state);
+        const expr result[len];
+        for (int i = 0; i < len; i++) {
+            if (i + n < len) {
+                result[i] = state[i + n];
+            } else {
+                result[i] = state[i + n - len];
+            }
+        }
+        return result;
+    }
+
+    function shift_right(const expr state[], const int n): expr[] {
+        const int len = length(state);
+        const expr result[len];
+        for (int i = 0; i < len; i++) {
+            if (i + n < len) {
+                result[i] = state[i + n];
+            } else {
+                result[i] = 0;
+            }
+        }
+        return result;
+    }
+
+    function maj(const expr a[], const expr b[], const expr c[]): expr[] {
+        const int len = length(a);
+        const expr result[len];
+        for (int i = 0; i < len; i++) {
+            result[i] = a[i] * b[i] * (1 - c[i]) +
+                        a[i] * (1 - b[i]) * c[i] +
+                        (1 - a[i]) * b[i] * c[i] +
+                        a[i] * b[i] * c[i];
+        }
+        return result;
+    }
+
+    function ch(const expr a[], const expr b[], const expr c[]): expr[] {
+        const int len = length(a);
+        const expr result[len];
+        for (int i = 0; i < len; i++) {
+            result[i] = a[i] * b[i] + (1 - a[i]) * c[i];
+        }
+        return result;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SHA2-256 RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int RANGE_CHECKER_SIZE = P2_8;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range1 (3 bits)
+    col fixed RANGE1 = [0..MASK_3]...;
+
+    // Range2 (3 bits)
+    col fixed RANGE2 = [0:P2_3..MASK_3:P2_3]...;
+
+    // Range3 (2 bits)
+    col fixed RANGE3 = [0:P2_6..MASK_2:P2_6]...;
+
+    col witness mul_range;
+    lookup_proves(RANGE_CHECKER_ID, [RANGE1, RANGE2, RANGE3], mul_range);
+
+    function range_check_triple(const expr a, const expr b, const expr c) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a, b, c]);
+    }
+}

@@ -10,4 +10,5 @@ MyLogFile.log
 .vscode/c_cpp_properties.json
 pil2-stark/lib-gpu/*
 package-lock.json
-node_modules/*
+setup/pil2-stark/node_modules/*
+node_modules

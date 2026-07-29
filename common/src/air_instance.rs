@@ -122,7 +122,7 @@ impl<F> TraceInfo<F> {
     }
 
     pub fn with_airgroup_values(mut self, airgroup_values: Vec<F>) -> Self {
-        self.air_values = Some(airgroup_values);
+        self.airgroup_values = Some(airgroup_values);
         self
     }
 }

@@ -40,7 +40,11 @@ void StarkInfo::load(json j)
         } else {
             starkStruct.merkleTreeCustom = false;
         }
-        starkStruct.lastLevelVerification = 0;
+        if(j["starkStruct"].contains("lastLevelVerification")) {
+            starkStruct.lastLevelVerification = j["starkStruct"]["lastLevelVerification"];
+        } else {
+            starkStruct.lastLevelVerification = 0;
+        }
     } else {
         starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
         starkStruct.transcriptArity = j["starkStruct"]["transcriptArity"];
@@ -522,6 +526,11 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
 
+        uint64_t permBits = starkStruct.steps.empty() ? 0 : starkStruct.steps[0].nBits;
+        uint64_t permNFields = (starkStruct.nQueries * permBits + 62) / 63;
+        mapOffsets[std::make_pair("fri_queries_perm", false)] = mapTotalN;
+        mapTotalN += permNFields;        
+
         maxTreeWidth = 0;
         for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
         {
@@ -658,6 +667,7 @@ void StarkInfo::setMapOffsets() {
             mapTotalN += numNodes;
         }
     }
+
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
 }

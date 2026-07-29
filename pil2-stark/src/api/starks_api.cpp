@@ -692,10 +692,6 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     mt.merkelize();
     mt.getRoot(rootGL);
 
-    if (proof_done_callback != nullptr) {
-        proof_done_callback(instanceId, "basic");
-    }
-
     return 0;
 }
 
@@ -837,7 +833,9 @@ void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     }
 }
 
-uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
+uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_) {
+    (void)recurser_id;
+    (void)streamId_;  // CPU backend has no streams
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
@@ -1226,5 +1224,18 @@ void ntt_coset_lde_gl(void *output, void *input, uint64_t num_cols, uint64_t num
 
     NTT_Goldilocks ntt(num_rows_ext);
     ntt.NTT(out, buf.data(), num_rows_ext, num_cols);
+}
+
+int plonk_circuit_stats_c(const char *r1cs_file, uint64_t *n_constraints, uint64_t *n_additions)
+{
+    try {
+        auto plonkSetup = new Plonk::PlonkSetup(AltBn128::Engine::engine);
+        plonkSetup->computeConstraintCounts(std::string(r1cs_file), *n_constraints, *n_additions);
+        delete plonkSetup;
+        return 0;
+    } catch (const std::exception &e) {
+        zklog.error(std::string("plonk_circuit_stats_c exception: ") + e.what());
+        return -1;
+    }
 }
 

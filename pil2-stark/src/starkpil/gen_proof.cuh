@@ -82,13 +82,22 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false) {
+    // Per-stream timer is reused: drop categories a prior aborted job left open.
+    TimerResetCategoriesGPU(timer);
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
 
 #ifdef USE_CUDA_GRAPH
+    // Point the thread-local capture cache at THIS stream's cache for the duration of the
+    // proof, and clear it on exit. Every capture region lives in this call tree, so clearing
+    // here means any future beginCapture reached from another path (with current() unset)
+    // faults loudly instead of silently reusing this stream's cache with another's buffers.
     cudagraph::current() = d_buffers->streamsData[stream_id].graph_cache.get();
     cudagraph::aggressive() = recursive;
     cudaGetLastError();
+    struct GraphCtxGuard {
+        ~GraphCtxGuard() { cudagraph::current() = nullptr; cudagraph::aggressive() = false; }
+    } graphCtxGuard;
 #endif
 
     uint64_t countId = 0;
@@ -450,7 +459,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartCategoryGPU(timer, FRI);
     d_transcript_helper->reset(stream);
     d_transcript_helper->put2(d_challenge, FIELD_EXTENSION, d_nonce, 1, stream);
-    d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
+    Goldilocks::Element *permScratch = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries_perm", false)];
+    d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, permScratch, stream);
 
 {
     bool graphHandled = false;
@@ -458,7 +468,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     {
         CudaGraphCache *graphCache = cudagraph::current();
         if (graphCache) {
-            uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
+            uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx ^ (uint64_t)(uintptr_t)d_const_tree;
             uint64_t key = CudaGraphCache::makeKey(0x515559ULL ^ ctxId, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps.size());
             if (graphCache->tryLaunch(key, stream)) {
                 graphHandled = true;

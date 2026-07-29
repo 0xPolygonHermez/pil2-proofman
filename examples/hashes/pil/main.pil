@@ -1,0 +1,9 @@
+require "sha2.pil"
+require "blake2b.pil"
+require "blake3.pil"
+
+airgroup Hashes {
+    Sha2(2**16);
+    Blake2b(2**16);
+    Blake3(2**20);
+}

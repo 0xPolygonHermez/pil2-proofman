@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use pil2_stark_setup::commands::compile_pil::{self as compile_pil_cmd, CompilePilOptions};
+use pil2_stark_setup::commands::gen_exps::{run_gen_exps, GenExpsOptions};
 use pil2_stark_setup::commands::rebuild_witness::{self as rebuild_witness_cmd, RebuildWitnessOptions};
 use pil2_stark_setup::commands::setup::{self, SetupOptions};
 use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
@@ -36,6 +37,9 @@ enum Commands {
     RebuildWitnessLibs(RebuildWitnessArgs),
     /// Compile a `.pil` source into a `.pilout` via the JS pil2-compiler.
     CompilePil(CompilePilArgs),
+    /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) for an
+    /// existing provingKey, without re-running setup. No-op if nvcc is absent.
+    GenExps(GenExpsArgs),
 }
 
 #[derive(Parser)]
@@ -202,6 +206,27 @@ struct SetupRecursiveTestArgs {
 
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
+
+    /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end.
+    /// No-op if nvcc is not on PATH.
+    #[arg(long, default_value_t = false)]
+    gen_exps: bool,
+
+    /// CUDA arch spec for --gen-exps: auto | major | "89,120" | sm_120.
+    #[arg(long, default_value = "auto")]
+    exps_arch: String,
+
+    /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
+    #[arg(long, default_value_t = 40000)]
+    exps_cap: usize,
+
+    /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.
+    #[arg(long)]
+    exps_chunk: Option<usize>,
+
+    /// pil2-stark source root for the nvcc includes (default: resolved automatically).
+    #[arg(long)]
+    exps_stark_src: Option<String>,
 }
 
 #[derive(Parser)]
@@ -231,6 +256,30 @@ struct CompilePilArgs {
     /// blowup on huge PILs (e.g. zisk.pil at ~9 M Keccakf constraints).
     #[arg(long = "no-proto-fixed-data")]
     no_proto_fixed_data: bool,
+}
+
+#[derive(Parser)]
+struct GenExpsArgs {
+    /// Path to an existing `provingKey/` directory (globbed for each AIR's
+    /// `*.starkinfo.json` + `*.expressionsinfo.json`).
+    #[arg(short = 'p', long = "proving-key")]
+    proving_key: String,
+
+    /// CUDA arch spec: auto | major | "89,120" | sm_120.
+    #[arg(long, default_value = "auto")]
+    exps_arch: String,
+
+    /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
+    #[arg(long, default_value_t = 40000)]
+    exps_cap: usize,
+
+    /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.
+    #[arg(long)]
+    exps_chunk: Option<usize>,
+
+    /// pil2-stark source root for the nvcc includes (default: resolved automatically).
+    #[arg(long)]
+    exps_stark_src: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -362,6 +411,7 @@ fn main() -> anyhow::Result<()> {
             if !proofman_common::hash_family::is_known_family(&args.hash) {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
+            let build_dir = args.build_dir.clone();
             let opts = SetupRecursiveTestOptions {
                 build_dir: args.build_dir,
                 circom_path: args.circom_path,
@@ -369,7 +419,21 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
                 hash: args.hash,
             };
-            recursive_test_cmd::run_setup_recursive_test(&opts)
+            recursive_test_cmd::run_setup_recursive_test(&opts)?;
+
+            // Optionally generate the per-AIR Q-expression CUDA kernels for the
+            // provingKey just produced. No-op when nvcc is absent.
+            if args.gen_exps {
+                let gen_opts = GenExpsOptions {
+                    proving_key: std::path::PathBuf::from(&build_dir).join("provingKey"),
+                    arch: args.exps_arch,
+                    cap: args.exps_cap,
+                    chunk: args.exps_chunk,
+                    stark_src: args.exps_stark_src.map(std::path::PathBuf::from),
+                };
+                run_gen_exps(&gen_opts)?;
+            }
+            Ok(())
         }
 
         Commands::CompilePil(args) => {
@@ -385,6 +449,19 @@ fn main() -> anyhow::Result<()> {
                 no_proto_fixed_data: args.no_proto_fixed_data,
             };
             compile_pil_cmd::run_compile_pil(&opts)
+        }
+
+        Commands::GenExps(args) => {
+            tracing::info!("proofman-setup gen-exps: starting");
+            tracing::info!("  proving-key: {}", args.proving_key);
+            let gen_opts = GenExpsOptions {
+                proving_key: std::path::PathBuf::from(&args.proving_key),
+                arch: args.exps_arch,
+                cap: args.exps_cap,
+                chunk: args.exps_chunk,
+                stark_src: args.exps_stark_src.map(std::path::PathBuf::from),
+            };
+            run_gen_exps(&gen_opts)
         }
     }
 }

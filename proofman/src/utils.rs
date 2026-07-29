@@ -1,5 +1,4 @@
 use fields::PrimeField64;
-use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::{
@@ -518,7 +517,7 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
     Ok(false)
 }
 
-fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
+pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
     if !setup.gpu {
         return Ok(());
     }
@@ -843,7 +842,7 @@ pub fn load_device_setups<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
-            let proof_type: &str = setup.setup_type.clone().into();
+            let proof_type: &str = setup.setup_type.into();
             if setup.gpu {
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
             }
@@ -866,7 +865,7 @@ pub fn load_device_setups<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                    let proof_type: &str = setup.setup_type.clone().into();
+                    let proof_type: &str = setup.setup_type.into();
                     if setup.gpu {
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                     }
@@ -886,7 +885,7 @@ pub fn load_device_setups<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                let proof_type: &str = setup.setup_type.clone().into();
+                let proof_type: &str = setup.setup_type.into();
                 if setup.gpu {
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 }
@@ -905,7 +904,7 @@ pub fn load_device_setups<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
-            let proof_type: &str = setup.setup_type.clone().into();
+            let proof_type: &str = setup.setup_type.into();
             if setup.gpu {
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
             }
@@ -921,7 +920,7 @@ pub fn load_device_setups<F: PrimeField64>(
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-        let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
+        let proof_type: &str = setup_vadcop_final.setup_type.into();
         if setup_vadcop_final.gpu {
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
@@ -936,7 +935,7 @@ pub fn load_device_setups<F: PrimeField64>(
         );
 
         let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.into();
         if setup_vadcop_final_compressed.gpu {
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
@@ -960,7 +959,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<u64> {
     let d_buffers = pctx.get_device_buffers_ptr();
 
     // Phase 2: Load all constant polynomials
@@ -968,7 +967,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
-            let proof_type: &str = setup.setup_type.clone().into();
+            let proof_type: &str = setup.setup_type.into();
             if setup.gpu {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -997,13 +996,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         }
     }
 
-    let mut _offset_aggregation = 0;
+    let mut offset_aggregation = 0;
     if aggregation {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                    let proof_type: &str = setup.setup_type.clone().into();
+                    let proof_type: &str = setup.setup_type.into();
                     if setup.gpu {
                         let const_pols_path = &setup.const_pols_path;
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -1015,7 +1014,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                         load_device_const_pols_c(
                             airgroup_id as u64,
                             air_id as u64,
-                            _offset_aggregation,
+                            offset_aggregation,
                             d_buffers,
                             const_pols_path,
                             setup.const_pols_size_packed as u64,
@@ -1024,9 +1023,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                             proof_type,
                             only_first_gpu,
                         );
-                        _offset_aggregation += setup.const_pols_size_packed as u64;
+                        offset_aggregation += setup.const_pols_size_packed as u64;
                         if load_tree {
-                            _offset_aggregation += setup.const_tree_size as u64;
+                            offset_aggregation += setup.const_tree_size as u64;
                         }
                     }
                 }
@@ -1036,7 +1035,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                let proof_type: &str = setup.setup_type.clone().into();
+                let proof_type: &str = setup.setup_type.into();
                 if setup.gpu {
                     let const_pols_path = &setup.const_pols_path;
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -1048,7 +1047,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     load_device_const_pols_c(
                         airgroup_id as u64,
                         air_id as u64,
-                        _offset_aggregation,
+                        offset_aggregation,
                         d_buffers,
                         const_pols_path,
                         setup.const_pols_size_packed as u64,
@@ -1057,9 +1056,9 @@ pub fn load_device_const_pols<F: PrimeField64>(
                         proof_type,
                         only_first_gpu,
                     );
-                    _offset_aggregation += setup.const_pols_size_packed as u64;
+                    offset_aggregation += setup.const_pols_size_packed as u64;
                     if load_tree {
-                        _offset_aggregation += setup.const_tree_size as u64;
+                        offset_aggregation += setup.const_tree_size as u64;
                     }
                 }
             }
@@ -1068,7 +1067,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
-            let proof_type: &str = setup.setup_type.clone().into();
+            let proof_type: &str = setup.setup_type.into();
             if setup.gpu {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -1080,7 +1079,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 load_device_const_pols_c(
                     airgroup_id as u64,
                     0_u64,
-                    _offset_aggregation,
+                    offset_aggregation,
                     d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
@@ -1089,15 +1088,15 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     proof_type,
                     only_first_gpu,
                 );
-                _offset_aggregation += setup.const_pols_size_packed as u64;
+                offset_aggregation += setup.const_pols_size_packed as u64;
                 if load_tree {
-                    _offset_aggregation += setup.const_tree_size as u64;
+                    offset_aggregation += setup.const_tree_size as u64;
                 }
             }
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-        let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
+        let proof_type: &str = setup_vadcop_final.setup_type.into();
         if setup_vadcop_final.gpu {
             let const_pols_path = &setup_vadcop_final.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -1109,7 +1108,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             load_device_const_pols_c(
                 0_u64,
                 0_u64,
-                _offset_aggregation,
+                offset_aggregation,
                 d_buffers,
                 const_pols_path,
                 setup_vadcop_final.const_pols_size_packed as u64,
@@ -1118,14 +1117,14 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 proof_type,
                 only_first_gpu,
             );
-            _offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
+            offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
             if load_tree {
-                _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
+                offset_aggregation += setup_vadcop_final.const_tree_size as u64;
             }
         }
 
         let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.into();
         if setup_vadcop_final_compressed.gpu {
             let const_pols_path = &setup_vadcop_final_compressed.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -1137,7 +1136,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             load_device_const_pols_c(
                 0_u64,
                 0_u64,
-                _offset_aggregation,
+                offset_aggregation,
                 d_buffers,
                 const_pols_path,
                 setup_vadcop_final_compressed.const_pols_size_packed as u64,
@@ -1146,65 +1145,57 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 proof_type,
                 only_first_gpu,
             );
-            _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
+            offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
             if load_tree {
-                _offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
+                offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
             }
         }
     }
-    Ok(())
+    Ok(offset_aggregation)
 }
 
 pub fn add_publics_circom<F: PrimeField64>(
     proof: &mut [u64],
     initial_index: usize,
     pctx: &ProofCtx<F>,
-    recursive2_verkey: &str,
-    add_root_agg: bool,
+    root_agg_verkey: Option<&[F]>,
 ) {
     let init_index = initial_index;
 
-    let publics = pctx.get_publics();
+    let publics = pctx.public_inputs.values.read().unwrap();
     for p in 0..pctx.global_info.n_publics {
-        proof[init_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+        proof[init_index + p] = publics[p].as_canonical_u64();
     }
 
-    let proof_values = pctx.get_proof_values();
+    let proof_values = pctx.proof_values.values.read().unwrap();
     let proof_values_map = pctx.global_info.proof_values_map.as_ref().unwrap();
     let mut p = 0;
     for (idx, proof_value_map) in proof_values_map.iter().enumerate() {
         if proof_value_map.stage == 1 {
-            proof[init_index + pctx.global_info.n_publics + 3 * idx] =
-                (proof_values[p].as_canonical_biguint()).to_u64().unwrap();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx] = proof_values[p].as_canonical_u64();
             proof[init_index + pctx.global_info.n_publics + 3 * idx + 1] = 0;
             proof[init_index + pctx.global_info.n_publics + 3 * idx + 2] = 0;
             p += 1;
         } else {
-            proof[init_index + pctx.global_info.n_publics + 3 * idx] =
-                (proof_values[p].as_canonical_biguint()).to_u64().unwrap();
-            proof[init_index + pctx.global_info.n_publics + 3 * idx + 1] =
-                (proof_values[p + 1].as_canonical_biguint()).to_u64().unwrap();
-            proof[init_index + pctx.global_info.n_publics + 3 * idx + 2] =
-                (proof_values[p + 2].as_canonical_biguint()).to_u64().unwrap();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx] = proof_values[p].as_canonical_u64();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 1] = proof_values[p + 1].as_canonical_u64();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 2] = proof_values[p + 2].as_canonical_u64();
             p += 3;
         }
     }
 
-    let global_challenge = pctx.get_global_challenge();
+    let global_challenge = pctx.global_challenge.values.read().unwrap();
     proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len()] =
-        (global_challenge[0].as_canonical_biguint()).to_u64().unwrap();
+        global_challenge[0].as_canonical_u64();
     proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 1] =
-        (global_challenge[1].as_canonical_biguint()).to_u64().unwrap();
+        global_challenge[1].as_canonical_u64();
     proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 2] =
-        (global_challenge[2].as_canonical_biguint()).to_u64().unwrap();
+        global_challenge[2].as_canonical_u64();
 
-    if add_root_agg {
-        let mut file = File::open(recursive2_verkey).expect("Unable to open file");
-        let mut json_str = String::new();
-        file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse json");
+    if let Some(vk) = root_agg_verkey {
         for i in 0..4 {
-            proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 3 + i] = vk[i];
+            proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 3 + i] =
+                vk[i].as_canonical_u64();
         }
     }
 }
@@ -1216,7 +1207,7 @@ pub fn add_publics_aggregation<F: PrimeField64>(
     n_publics: usize,
 ) {
     for p in 0..n_publics {
-        proof[initial_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+        proof[initial_index + p] = publics[p].as_canonical_u64();
     }
 }
 
@@ -1311,23 +1302,4 @@ pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) ->
     }
 
     Ok(contents.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
-}
-
-pub fn deterministic_shuffle<T>(slice: &mut [T], seed: u64) {
-    let len = slice.len();
-    if len <= 1 {
-        return;
-    }
-
-    const A: u64 = 1103515245;
-    const C: u64 = 12345;
-    const M: u64 = 1 << 31;
-
-    let mut state = seed;
-
-    for i in (1..len).rev() {
-        state = state.wrapping_mul(A).wrapping_add(C) % M;
-        let j = (state as usize) % (i + 1);
-        slice.swap(i, j);
-    }
 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c};
+use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
 use stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
@@ -121,7 +121,7 @@ pub fn gen_snark_setup(
     tracing::info!("Compiling recursivef...");
     let compile_rf = std::process::Command::new(config.circom_exec)
         .args([
-            "--O1",
+            "--O2",
             "--r1cs",
             "--prime",
             "goldilocks",
@@ -164,6 +164,7 @@ pub fn gen_snark_setup(
         airgroup_name: Some("Recursivef".to_string()),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
@@ -214,7 +215,10 @@ pub fn gen_snark_setup(
         blowup_factor: Some(6),
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
-        last_level_verification: Some(0),
+        // Diverges from JS (which never implemented lastLevelVerification for
+        // BN128): drop 2 Poseidon-BN128 levels per query per tree in the final
+        // circuit, checked against a 16-node (arity^2) published last level.
+        last_level_verification: Some(2),
         pow_bits: Some(19),
         ..Default::default()
     };
@@ -415,15 +419,27 @@ pub fn gen_snark_setup(
         fs::copy(&dat_src_final, final_dir.join("final.dat"))?;
     }
 
+    let r1cs_final = build_path.join("final.r1cs");
+    if !r1cs_final.exists() {
+        bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
+    }
+
+    if let Some((n_constraints, n_additions)) = get_plonk_circuit_stats_c(r1cs_final.to_str().unwrap()) {
+        let circuit_power = std::cmp::max(3, 64 - (n_constraints + 1).leading_zeros() as u64);
+        tracing::info!(
+            "Final circuit: {} plonk constraints, {} plonk additions (circuit power {}, domain size {})",
+            n_constraints,
+            n_additions,
+            circuit_power,
+            1u64 << circuit_power
+        );
+    }
+
     // Validate inputs for the zkey setup before launching parallel work.
     let powers_of_tau =
         config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
     if !std::path::Path::new(powers_of_tau).exists() {
         bail!("powers-of-tau file not found: {}", powers_of_tau);
-    }
-    let r1cs_final = build_path.join("final.r1cs");
-    if !r1cs_final.exists() {
-        bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
     }
     let zkey_final = final_dir.join("final.zkey");
 

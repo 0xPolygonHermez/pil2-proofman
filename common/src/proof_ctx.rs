@@ -1,8 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::RwLock,
-};
+use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{MpiCtx, ProofmanError};
@@ -13,14 +11,14 @@ use std::fs;
 use fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_unified_buffer_gpu_c,
-    get_unified_buffer_gpu_size_c,
+    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
+    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -32,6 +30,10 @@ pub struct Values<F> {
 impl<F: PrimeField64> Values<F> {
     pub fn new(n_values: usize) -> Self {
         Self { values: RwLock::new(vec![F::ZERO; n_values]) }
+    }
+
+    pub fn reset(&self) {
+        self.values.write().unwrap().fill(F::ZERO);
     }
 }
 
@@ -294,6 +296,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub global_info: GlobalInfo,
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
+    pub compressor_weights: HashMap<(usize, usize), u64>,
     pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
@@ -303,6 +306,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    pub reload_fixed_pols_gpu: Arc<AtomicBool>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -333,6 +337,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let n_challenges = global_info.n_challenges.iter().sum::<usize>();
 
         let weights = HashMap::new();
+        let compressor_weights = HashMap::new();
 
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
@@ -349,12 +354,14 @@ impl<F: PrimeField64> ProofCtx<F> {
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
+            compressor_weights,
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -494,23 +501,37 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    /// Estimated prover cost of a single proof of this setup
+    fn setup_weight(setup: &Setup<F>) -> u64 {
+        let mut total_cols = setup
+            .stark_info
+            .map_sections_n
+            .iter()
+            .filter(|(key, _)| *key != "const")
+            .map(|(_, value)| *value)
+            .sum::<u64>();
+        total_cols += 3; // FRI polinomial
+        let n_openings = setup.stark_info.opening_points.len() as u64;
+        // let n_ops_quotient = setup.n_operations_quotient;
+        // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+        (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext))
+    }
+
+    /// Cost of the basic proof of every air, plus the compressor proof it triggers if it has one.
+    /// Both are needed to balance instances: a compressor proof runs on the owner of its basic
+    /// proof, and its cost varies ~2x between airs in the current zisk proving key.
+    pub fn set_weights(&mut self, sctx: &SetupCtx<F>, setups_vadcop: &SetupsVadcop<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                let mut total_cols = setup
-                    .stark_info
-                    .map_sections_n
-                    .iter()
-                    .filter(|(key, _)| *key != "const")
-                    .map(|(_, value)| *value)
-                    .sum::<u64>();
-                total_cols += 3; // FRI polinomial
-                let n_openings = setup.stark_info.opening_points.len() as u64;
-                // let n_ops_quotient = setup.n_operations_quotient;
-                let weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
-                // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
-                self.weights.insert((airgroup_id, air_id), weight);
+                self.weights.insert((airgroup_id, air_id), Self::setup_weight(setup));
+
+                if self.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    if let Some(sctx_compressor) = setups_vadcop.sctx_compressor.as_ref() {
+                        let compressor_setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                        self.compressor_weights.insert((airgroup_id, air_id), Self::setup_weight(compressor_setup));
+                    }
+                }
             }
         }
         Ok(())
@@ -518,6 +539,11 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
+    }
+
+    /// 0 if the air has no compressor, or if the compressor setups are not loaded (no aggregation)
+    pub fn get_compressor_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        self.compressor_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
     }
 
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
@@ -569,9 +595,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+        dctx.instances_calculated[global_idx]
+            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+            .is_ok()
     }
 
     pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
@@ -678,14 +706,15 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        let has_compressor = self.global_info.get_air_has_compressor(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight, has_compressor)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -702,24 +731,13 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
-        let compressor_airs: HashSet<(usize, usize)> = self
-            .global_info
-            .airs
-            .iter()
-            .enumerate()
-            .flat_map(|(ag_id, airs)| {
-                airs.iter()
-                    .enumerate()
-                    .filter(|(_, air)| air.has_compressor.unwrap_or(false))
-                    .map(move |(a_id, _)| (ag_id, a_id))
-            })
-            .collect();
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(&compressor_airs)
+        dctx.assign_instances()
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
@@ -1095,10 +1113,22 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn get_gpu_buffer(&self) -> (usize, u64) {
+    /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via
+    /// `acquire_first_gpu_buffer`, does not touch the current device.
+    pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
         let device_buffers_ptr = self.d_buffers.get_ptr();
-        let gpu_buf_ptr = get_unified_buffer_gpu_c(device_buffers_ptr) as usize;
+        let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
         let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
         (gpu_buf_ptr, gpu_buf_size)
+    }
+
+    /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
+    /// points to. Not always 0 (NUMA can reorder). 0 when GPU mode is off.
+    pub fn first_gpu_id(&self) -> u32 {
+        if self.gpu {
+            get_first_gpu_id_c(self.d_buffers.get_ptr())
+        } else {
+            0
+        }
     }
 }
