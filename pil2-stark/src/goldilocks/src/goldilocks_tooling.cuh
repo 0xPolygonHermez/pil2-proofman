@@ -296,13 +296,17 @@ struct StreamData{
     Goldilocks::Element *pinned_aux_values;
 
     //runtime data
-    // Atomic: status is read (unlocked) by wait_stream_commit_done / callbacks while
+    // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
     // reserveStream/gen_proof write it, so a plain int would be a data race. The
     // atomic only removes UB on the individual load/store; the check-then-act
     // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
     // by holding mutex_stream_selection, not by the atomic.
     std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
+    // Marks the point where this stream stops reading the caller's host trace buffer, i.e. the
+    // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
+    // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
+    cudaEvent_t trace_copy_event;
     TimerGPU timer;
 
     TranscriptGL_GPU *transcript;
@@ -349,6 +353,7 @@ struct StreamData{
         localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
+        cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
@@ -393,9 +398,9 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
-        // end_event is created once in initialize() and destroyed in free();
-        // cudaEventRecord overwrites it on each use, so there is no need to
-        // destroy/recreate it on every per-instance reset.
+        // end_event / trace_copy_event are created once in initialize() and destroyed in free();
+        // cudaEventRecord overwrites them on each use, so there is no need to
+        // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
 
         root = nullptr;
@@ -419,6 +424,7 @@ struct StreamData{
 #endif
         cudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
+        cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
@@ -510,6 +516,9 @@ struct DeviceCommitBuffers
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
+
+    
+    std::mutex stream_selection_mutex;
 
     bool packedTrace = false;
 

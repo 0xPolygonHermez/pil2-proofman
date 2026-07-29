@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use fields::PrimeField64;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ProofType {
     #[default]
     Basic = 0,

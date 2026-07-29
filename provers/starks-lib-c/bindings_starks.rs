@@ -64,7 +64,7 @@ extern "C" {
 
     pub fn unregister_host_memory(ptr: *mut ::std::os::raw::c_void);
 
-    pub fn wait_stream_commit_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
+    pub fn wait_trace_h2d_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
 
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
@@ -95,7 +95,7 @@ extern "C" {
     );
     
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn calculate_words_per_row(
@@ -444,7 +444,23 @@ extern "C" {
         proofType: *mut ::std::os::raw::c_char,
         force_recursive_stream: bool,
         recurser_id: *mut ::std::os::raw::c_char,
+        streamId_: u64,
     ) -> u64;
+
+    pub fn reserve_best_stream_nonblock(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        force_recursive: bool,
+    ) -> u32;
+
+    pub fn reserve_stream_if_free(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        streamId: u32,
+        force_recursive: bool,
+    ) -> u32;
 
     pub fn calculate_const_tree_fixed(
         pSetupCtx_: *mut ::std::os::raw::c_void,
