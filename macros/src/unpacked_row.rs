@@ -18,13 +18,21 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
         quote! {}
     };
 
-    let unpacked_fields = get_unpacked_fields(fields);
+    let mut unpacked_fields = get_unpacked_fields(fields);
     let setter_getters = get_unpacked_setters_getters(fields);
 
     // Calculate the total number of F elements in the row
     let row_size = calculate_row_size(fields);
 
-    let default_field_exprs = get_default_field_exprs(fields);
+    let mut default_field_exprs = get_default_field_exprs(fields);
+
+    // A fixed-column row can have no fields at all.
+    if let Some(g) = generic {
+        if fields.is_empty() {
+            unpacked_fields.push(quote! { _phantom: std::marker::PhantomData<#g> });
+            default_field_exprs.push(quote! { _phantom: std::marker::PhantomData });
+        }
+    }
 
     quote! {
         #[repr(C)]
