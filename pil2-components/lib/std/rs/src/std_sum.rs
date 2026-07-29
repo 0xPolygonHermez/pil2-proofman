@@ -9,7 +9,11 @@ use witness::WitnessComponent;
 use proofman_common::{
     skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
 };
-use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields, update_airgroupvalue, HintFieldOptions};
+use fields::CubicExtensionField;
+use proofman_hints::{
+    acc_mul_hint_fields, get_hint_field, get_hint_ids_by_name, mul_hint_fields, set_hint_field_val,
+    update_airgroupvalue, HintFieldOptions, HintFieldOutput,
+};
 
 use crate::{
     get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, DebugData, DebugDataInfo, DebugDataFast,
@@ -65,6 +69,42 @@ impl<F: PrimeField64> StdSum<F> {
             _phantom: std::marker::PhantomData,
         }))
     }
+
+    /// Compute the instance's net bus contribution.
+    fn set_bus_result(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        instance_id: usize,
+        gkr_bus_hint: u64,
+    ) -> ProofmanResult<()> {
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let p_expressions_bin = setup.p_setup.p_expressions_bin;
+
+        let n_rows = 1usize << setup.stark_info.stark_struct.n_bits;
+        let mut total = HintFieldOutput::FieldExtended(CubicExtensionField { value: [F::ZERO; 3] });
+
+        for hint in get_hint_ids_by_name(p_expressions_bin, "gkr_sum_term") {
+            let num =
+                get_hint_field(pctx, setup, instance_id, hint as usize, "numerator", HintFieldOptions::default())?;
+            let den_inv =
+                get_hint_field(pctx, setup, instance_id, hint as usize, "denominator", HintFieldOptions::inverse())?;
+            for i in 0..n_rows {
+                total = total + num.get(i) * den_inv.get(i);
+            }
+        }
+
+        for hint in get_hint_ids_by_name(p_expressions_bin, "gkr_sum_direct_term") {
+            let num =
+                get_hint_field(pctx, setup, instance_id, hint as usize, "numerator", HintFieldOptions::default())?;
+            let den_inv =
+                get_hint_field(pctx, setup, instance_id, hint as usize, "denominator", HintFieldOptions::inverse())?;
+            total = total + num.get(0) * den_inv.get(0);
+        }
+
+        set_hint_field_val(pctx, sctx, instance_id, gkr_bus_hint, "result", total)?;
+        Ok(())
+    }
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
@@ -108,8 +148,16 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
                     // LogUp-GKR mode: the bus is proven by the multilinear
-                    // prover's fractional sumcheck.
-                    if !get_hint_ids_by_name(p_expressions_bin, "gkr_sum_bus").is_empty() {
+                    // prover's fractional sumcheck, but the result airgroup
+                    // value must still be set here so that a constraints-only
+                    // run (which never executes the GKR prover) can check the
+                    // global bus balance. At prove time the GKR prover pins
+                    // the same value from its fraction tree.
+                    let gkr_bus_hints = get_hint_ids_by_name(p_expressions_bin, "gkr_sum_bus");
+                    if !gkr_bus_hints.is_empty() {
+                        if self.std_mode[i] == STD_MODE_DEFAULT {
+                            Self::set_bus_result(&pctx, &sctx, *instance_id, gkr_bus_hints[0])?;
+                        }
                         continue;
                     }
 
