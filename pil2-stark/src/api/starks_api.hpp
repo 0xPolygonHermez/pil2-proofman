@@ -43,7 +43,7 @@ extern "C" {
 
     // Const Pols
     // ========================================================================================
-    void init_gpu_setup(uint64_t maxBitsExt, uint64_t arity);
+    void init_gpu_setup(uint64_t arity);
     void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile);
     void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);

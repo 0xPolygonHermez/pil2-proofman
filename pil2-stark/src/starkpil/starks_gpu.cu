@@ -250,49 +250,6 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
     treesGL[step - 1]->setNodes(pNodes);
 
-#ifdef USE_CUDA_GRAPH
-    CudaGraphCache *graphCache = cudagraph::current();
-    // Only the legacy tiled (ColMajorTiled) LDE was validated under graph capture; the ColMajor
-    // engine has not been (e.g. its nullptr-scratch fallback uses cudaMallocAsync). With resolveLayout
-    // always ColMajor this is constantly false and the graph path is dormant. isGraphCapturableLayout
-    // is the shared predicate the LDE dispatch also uses, so the two can never drift apart.
-    bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
-    if (graphCache && capturable && !skipRecalculation && nCols > 0) {
-        uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-        uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-        uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-        uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-        uint64_t key = CudaGraphCache::makeKey(0x4C4445ULL ^ ctxId, nBits, nBitsExt, nCols, arity, step);
-        if (graphCache->contains(key)) {
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            bool launched = graphCache->tryLaunch(key, stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-            if (launched) {
-                if (d_transcript != nullptr) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                }
-                return;
-            }
-        }
-        if (graphCache->shouldCapture(key)) {
-            if (graphCache->beginCapture(key, stream)) {
-                NTTGoldilocksGPU ntt;
-                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream,true, (gl64_t*)pNodes);
-                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(nBits, nCols), stream);
-                bool launched = graphCache->endCaptureAndLaunch(stream);
-                if (launched) {
-                    if (d_transcript != nullptr) {
-                        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-#endif
-
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
 
@@ -361,43 +318,6 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
-
-#ifdef USE_CUDA_GRAPH
-        // Only the legacy tiled (ColMajorTiled) computeQ was validated under graph capture; with
-        // resolveLayout always ColMajor this is constantly false and the graph path is dormant.
-        // isGraphCapturableLayout is the shared predicate the computeQ dispatch also uses.
-        bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
-        if (cudagraph::aggressive() && capturable) {
-            CudaGraphCache *graphCache = cudagraph::current();
-            if (graphCache) {
-                uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-                uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-                uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-                uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-                uint64_t key = CudaGraphCache::makeKey(0x514D5400ULL ^ ctxId, nBits, nBitsExt, nCols, (qDeg << 32) | qDim, arity);
-                if (graphCache->tryLaunch(key, stream)) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    if (d_transcript != nullptr) {
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-                if (graphCache->shouldCapture(key)) {
-                    if (graphCache->beginCapture(key, stream)) {
-                        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(nBits, nCols), stream);
-                        if (graphCache->endCaptureAndLaunch(stream)) {
-                            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                            if (d_transcript != nullptr) {
-                                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                            }
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-#endif
 
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);

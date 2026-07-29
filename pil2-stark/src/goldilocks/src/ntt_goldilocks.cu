@@ -1543,9 +1543,8 @@ void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uin
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols, Layout::ColMajorTiled);
 }
 
-// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain. ColMajor engine
-// everywhere (resolveLayout is always ColMajor; the tiled branch is kept only for the legacy
-// reference backend and is currently unreachable).
+// computeQ: INTT on extended domain -> coset shift -> NTT on extended domain. Runs the ColMajor
+// engine; computeQTiled remains as a directly callable legacy reference (tests/benches only).
 void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                 Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                 uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
@@ -1558,17 +1557,16 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
 
     TimerStartCategoryGPU(timer, NTT);
 
-    if(nBitsExt > maxLogDomainSize)
+    // Engine bound: NTT_MAX_LG, not the legacy static-table maxLogDomainSize (the prover no longer
+    // initializes those tables).
+    if (nBitsExt > NTT_MAX_LG)
     {
-        printf("[NTT] ERROR: nBitsExt %lu exceeds maxLogDomainSize %lu\n", nBitsExt, maxLogDomainSize);
+        printf("[NTT] ERROR: nBitsExt %lu exceeds NTT_MAX_LG %d\n", nBitsExt, NTT_MAX_LG);
         abort();
     }
 
-    if (!isGraphCapturableLayout(nBits, nCols)) {
-        computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
-    } else {
-        computeQTiled(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, stream);
-    }
+    (void)offset_helper;   // only the legacy tiled backend needed helper space (may be usedful in the future)
+    computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
 
     TimerStopCategoryGPU(timer, NTT);
 }
@@ -1594,8 +1592,6 @@ void NTTGoldilocksGPU::ldeTiled(gl64_t* d_dst_, gl64_t* d_src_,
     rowMajorToColumnMajorKernel<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols, Layout::ColMajorTiled);
 }
 
-// LDE: ColMajor engine everywhere (resolveLayout is always ColMajor; the tiled branch is kept only
-// for the legacy reference backend and is currently unreachable).
 void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
                            gl64_t* d_src, uint64_t offset_src,
                            uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
@@ -1607,20 +1603,16 @@ void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
         return;
     }
     TimerStartCategoryGPU(timer, NTT);
-    if (nBitsExt > maxLogDomainSize)
+    if (nBitsExt > NTT_MAX_LG)
     {
-        printf("[NTT] ERROR: nBitsExt %lu exceeds maxLogDomainSize %lu\n", nBitsExt, maxLogDomainSize);
+        printf("[NTT] ERROR: nBitsExt %lu exceeds NTT_MAX_LG %d\n", nBitsExt, NTT_MAX_LG);
         abort();
     }
 
     gl64_t *d_dst_ = &d_dst[offset_dst];
     gl64_t *d_src_ = &d_src[offset_src];
 
-    if (!isGraphCapturableLayout(nBits, nCols)) {
-        ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
-    } else {
-        ldeTiled(d_dst_, d_src_, nBits, nBitsExt, nCols, stream);
-    }
+    ldeColMajor(d_dst_, d_src_, nBits, nBitsExt, nCols, stream, preserve_src, preserve_scratch);
     TimerStopCategoryGPU(timer, NTT);
 }
 
@@ -1663,25 +1655,19 @@ void NTTGoldilocksGPU::inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cu
     rowMajorToColumnMajorKernel<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols, Layout::ColMajorTiled);
 }
 
-// Inverse NTT: ColMajor engine everywhere (resolveLayout is always ColMajor; the tiled branch is
-// kept only for the legacy reference backend and is currently unreachable).
 void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
     if (nCols == 0 || nBits == 0)
     {
         return;
     }
-    if (nBits > maxLogDomainSize)
+    if (nBits > NTT_MAX_LG)
     {
-        printf("[NTT] ERROR: nBits %lu exceeds maxLogDomainSize %lu\n", nBits, maxLogDomainSize);
+        printf("[NTT] ERROR: nBits %lu exceeds NTT_MAX_LG %d\n", nBits, NTT_MAX_LG);
         abort();
     }
 
-    if (resolveLayout(nBits, nCols) == Layout::ColMajor) {
-        inttColMajor(dst, nBits, nCols, stream);
-    } else {
-        inttTiled(dst, nBits, nCols, stream);
-    }
+    inttColMajor(dst, nBits, nCols, stream);
 }
 
 // =============================================================================

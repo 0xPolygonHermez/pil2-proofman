@@ -102,7 +102,7 @@ impl ProveRecursiveCmd {
         // Initialize the GPU (set_gpu_mode_c + init_gpu_setup_c). Without this the CUDA
         // context is not selected and check_device_memory_c (used by set_device_buffers)
         // returns 0. Mirrors proofman.rs:670-682 / common::init_gpu_setup.
-        init_gpu_setup(sctx.max_n_bits_ext as u64, self.gpu)?;
+        init_gpu_setup(self.gpu)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 

@@ -94,7 +94,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        init_gpu_setup(setup.stark_info.stark_struct.n_bits_ext, pctx.gpu)?;
+        init_gpu_setup(pctx.gpu)?;
         write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name)?;
         Ok(())
     }

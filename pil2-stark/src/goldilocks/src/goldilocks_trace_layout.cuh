@@ -36,16 +36,6 @@ __host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_
     return Layout::ColMajor;
 }
 
-// Single source of truth for CUDA-graph capturability of the NTT/LDE/computeQ path: only the legacy
-// tiled (ColMajorTiled) backend was validated under graph capture, so with resolveLayout always
-// ColMajor this is now constantly false and the graph path is dormant. (The ColMajor engine is pure
-// kernels but has not been audited for capture -- e.g. its nullptr-scratch fallback cudaMallocAsync.)
-// The LDE/computeQ dispatch and the capture guards in starks_gpu.cu both gate on THIS, so they can
-// never drift apart.
-__host__ __device__ __forceinline__ bool isGraphCapturableLayout(uint64_t nBits, uint64_t nCols) {
-    return resolveLayout(nBits, nCols) == Layout::ColMajorTiled;
-}
-
 // Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
 // source of truth so every producer and consumer agrees. ColMajor like the committed sections.
 // CAUTION: the on-disk GPU cache files bake this layout (.consttree_gpu, RecursiveF .const_gpu, the

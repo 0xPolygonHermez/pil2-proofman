@@ -390,7 +390,7 @@ __device__ __forceinline__ void load__(
     // Trace and aux_trace (committed pols). A committed section's storage layout is resolveLayout(nBits,
     // sectionNCols) keyed on the AIR's small-domain nBits = log2(N) -- identical to what the commit/LDE
     // and Merkle used, so reads agree with writes. ColMajor (flat) puts a column's 3 extension
-    // components domainSize apart; other layouts address each component via getBufferOffset.
+    // components domainSize apart.
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
@@ -405,8 +405,8 @@ __device__ __forceinline__ void load__(
             out1 = nullptr;
             out2 = nullptr;
             return;
-        } else if (dim == 3 && lyt == Layout::ColMajor) {
-            // Flat: the 3 extension components of column argIdx are domainSize apart.
+        } else if (dim == 3) {
+            // Flat (ColMajor): the 3 extension components of column argIdx are domainSize apart.
             const uint64_t pos0 = usePack256
                 ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
                 : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
@@ -414,28 +414,13 @@ __device__ __forceinline__ void load__(
             out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + domainSize];
             out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * domainSize];
             return;
-        } else if (dim == 1) {
+        } else {
             const uint64_t pos0 = usePack256
                 ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
                 : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
             out1 = nullptr;
             out2 = nullptr;
-            return;
-        } else {
-            // dim==3 general (non-ColMajor layouts): each component addressed independently.
-            const uint64_t pos0 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
-            out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            const uint64_t pos1 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols, lyt);
-            out1 = (gl64_t*)&dParams->aux_trace[offset + pos1];
-            const uint64_t pos2 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols, lyt);
-            out2 = (gl64_t*)&dParams->aux_trace[offset + pos2];
             return;
         }
     }
@@ -463,7 +448,7 @@ __device__ __forceinline__ void load__(
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
 {
     // Writing into a committed section -> must match that section's storage layout (same resolveLayout
-    // the reads use), so a tiled cm section round-trips. dest_domainSize is the section's row count.
+    // the reads use). dest_domainSize is the section's row count.
     const Layout lyt = resolveLayout(63 - __clzll(d_expsArgs->dest_domainSize), d_expsArgs->dest_stageCols);
     #pragma unroll
     for (uint32_t i = 0; i < d_expsArgs->dest_dim; i++) {

@@ -172,11 +172,15 @@ public:
     void inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled (legacy)
     void inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
+    // Allocates the static twiddle/coset tables (16B * 2^maxLogDomainSize per GPU) used ONLY by the
+    // legacy tiled backend and NTT(). The prover never calls this anymore -- the ColMajor engine
+    // builds its own compact tables lazily; tests/benches init it via the sizing constructor.
     static void initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
 
     // IMPORTANT: Memory management is manual. Call freeConstants() explicitly
     // at application shutdown to release GPU memory. Twiddle factors persist across
-    // instance creation/destruction to avoid recomputation overhead.
+    // instance creation/destruction to avoid recomputation overhead. Null-safe if
+    // initConstants was never called.
     static void freeConstants();
 
 private:

@@ -313,8 +313,6 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     Poseidon2GoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
     TranscriptGL_GPU::init_const(my_gpu_ids, n_gpus, arity);
 
-    //Generate static twiddles for the NTT
-    NTTGoldilocksGPU::initConstants(max_n_bits_ext, n_gpus, my_gpu_ids);
 
     cudaDeviceSynchronize();
 
@@ -1209,7 +1207,6 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
     uint64_t sizeAuxTrace = proverBufferSize * sizeof(Goldilocks::Element);
 
     if (d_commit_buffer_ == nullptr) {
-        NTTGoldilocksGPU::initConstants(22, 1, &gpuId); //max nBitsExt=21
         // Allocate new device buffers
         d_buffers->owns_aux_trace = true;
         d_buffers->owns_const_tree = true;
@@ -1527,7 +1524,7 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     // and lose/mis-drive a decrement → proofs_pending never reaches zero → Prove wedges.
 }
 
-void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
+void init_gpu_setup_gpu(uint64_t arity) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
@@ -1551,7 +1548,6 @@ void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
             zklog.error("init_gpu_setup_gpu: supports merkle tree arity 2, 3 or 4");
             exit(1);
     }
-    NTTGoldilocksGPU::initConstants(maxBitsExt, 1, my_gpu_ids);
 }
 
 void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {
