@@ -117,7 +117,7 @@ void unpack_fixed(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_FIXED);
-    // Const pols are stored fixedLayout() (ColMajorTiled) -- uniform-native prover.
+    // Const pols are stored fixedLayout() (ColMajor).
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
@@ -250,49 +250,6 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
     treesGL[step - 1]->setNodes(pNodes);
 
-#ifdef USE_CUDA_GRAPH
-    CudaGraphCache *graphCache = cudagraph::current();
-    // Only the native (ColMajorTiled) LDE is graph-capturable: the flat (ColMajor) path delegates to
-    // sppark, which runs the NTT on its own private stream (joined to the caller via events) --
-    // cross-stream work mid single-stream capture is illegal. isGraphCapturableLayout is the shared
-    // predicate the LDE dispatch also uses, so capture can never target the sppark path.
-    bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
-    if (graphCache && capturable && !skipRecalculation && nCols > 0) {
-        uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-        uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-        uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-        uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-        uint64_t key = CudaGraphCache::makeKey(0x4C4445ULL ^ ctxId, nBits, nBitsExt, nCols, arity, step);
-        if (graphCache->contains(key)) {
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            bool launched = graphCache->tryLaunch(key, stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-            if (launched) {
-                if (d_transcript != nullptr) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                }
-                return;
-            }
-        }
-        if (graphCache->shouldCapture(key)) {
-            if (graphCache->beginCapture(key, stream)) {
-                NTTGoldilocksGPU ntt;
-                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream,true, (gl64_t*)pNodes);
-                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(nBits, nCols), stream);
-                bool launched = graphCache->endCaptureAndLaunch(stream);
-                if (launched) {
-                    if (d_transcript != nullptr) {
-                        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-#endif
-
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
 
@@ -325,13 +282,12 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // Const sections are stored fixedLayout() (ColMajorTiled) -- uniform-native prover. Call the native
-    // tiled LDE directly: it is out-of-place (reads src, writes dst), so the small-domain const pols
-    // (reread by every expression as const operands) stay intact -- no preserve_src/preserve_scratch dance
-    // needed. Merkle build reads dst in the same layout the LDE wrote. (resolveLayout would pick sppark for
-    // const's nBits/nCols, so we bypass it.)
+    // Const sections are stored fixedLayout() (ColMajor). preserve_src=true: the small-domain const
+    // pols are reread by every expression as const operands, so the LDE must not run its iNTT in place
+    // on them (scratch=nullptr -> the engine stages through an internal cudaMallocAsync buffer).
+    // Merkle build reads dst in the same layout the LDE wrote.
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeNativeTiled((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream);
+    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, true, nullptr);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
@@ -362,43 +318,6 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
-
-#ifdef USE_CUDA_GRAPH
-        // Only the native (ColMajorTiled) computeQ is graph-capturable; the flat (ColMajor) path uses
-        // sppark (host sync + own stream), illegal mid-capture. isGraphCapturableLayout is the shared
-        // predicate the computeQ dispatch also uses, so capture can never target the sppark path.
-        bool capturable = isGraphCapturableLayout(setupCtx.starkInfo.starkStruct.nBits, nCols);
-        if (cudagraph::aggressive() && capturable) {
-            CudaGraphCache *graphCache = cudagraph::current();
-            if (graphCache) {
-                uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-                uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-                uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-                uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-                uint64_t key = CudaGraphCache::makeKey(0x514D5400ULL ^ ctxId, nBits, nBitsExt, nCols, (qDeg << 32) | qDim, arity);
-                if (graphCache->tryLaunch(key, stream)) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    if (d_transcript != nullptr) {
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-                if (graphCache->shouldCapture(key)) {
-                    if (graphCache->beginCapture(key, stream)) {
-                        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(nBits, nCols), stream);
-                        if (graphCache->endCaptureAndLaunch(stream)) {
-                            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                            if (d_transcript != nullptr) {
-                                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                            }
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-#endif
 
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
@@ -564,8 +483,7 @@ __global__ void computeEvals_v2(
         gl64_t *pol;
         // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
         // (1) and fixed/const (2) follow fixedLayout(). d_LEv follows resolveLayout keyed on ITS OWN
-        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it, so it works
-        // under both sppark (ColMajor) and non-sppark (ColMajorTiled).
+        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it.
         Layout levLayout = resolveLayout(63 - __clzll(N), openingsSize * FIELD_EXTENSION);
         Layout polLayout;
         if (evalInfo.type == 0)
@@ -956,13 +874,13 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         }
         else if (k == nStages + 1)
         {
-            // Const tree leaves were written fixedLayout() (ColMajorTiled) by extendAndMerkelizeFixed.
+            // Const tree leaves were written fixedLayout() by extendAndMerkelizeFixed.
             getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            // Custom commit tree leaves were written fixedLayout() (ColMajorTiled) by write_custom_commit_gpu.
+            // Custom commit tree leaves were written fixedLayout() by write_custom_commit_gpu.
             getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         }
     }

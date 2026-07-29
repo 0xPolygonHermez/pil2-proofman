@@ -689,7 +689,7 @@ where
 
         ensure_gpu_available(gpu)?;
         if gpu {
-            init_gpu_setup_c(sctx.max_n_bits_ext as u64, GOLDILOCKS_MERKLE_TREE_ARITY);
+            init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
         }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {

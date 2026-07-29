@@ -138,13 +138,6 @@ ifeq ($(CUDA_GRAPH), 1)
     NVCCFLAGS += -DUSE_CUDA_GRAPH
 endif
 
-# Benchmark switch: route every committed section through the native (ColMajorTiled) NTT
-# instead of sppark. Requires regenerating the expression kernels with the matching
-# FORCE_TILED_LAYOUT=1 (proofman-setup gen-exps) -- see goldilocks_trace_layout.cuh.
-ifeq ($(FORCE_TILED_LAYOUT), 1)
-    NVCCFLAGS += -DFORCE_TILED_LAYOUT
-endif
-
 # Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 
@@ -382,12 +375,6 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-NVCCFLAGS_GL := $(filter-out -DFEATURE_BN254,$(NVCCFLAGS)) -DFEATURE_GOLDILOCKS -DGOLDILOCKS_ZISK
-
-$(BUILD_DIR_GPU)/./src/goldilocks/src/sppark_lde.cu.o: ./src/goldilocks/src/sppark_lde.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS_GL) $(CPPFLAGS) -c $< -o $@
-
 $(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
