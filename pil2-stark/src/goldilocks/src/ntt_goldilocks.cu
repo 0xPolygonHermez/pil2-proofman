@@ -1034,6 +1034,7 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     idx1 = (idx1 & ~mask) | (rotw & mask);
 
     if (coalesced) {
+        __syncthreads();
         nttTranspose<z_count>(r[0]);
         __syncwarp();
         nttTranspose<z_count>(r[1]);
