@@ -1851,6 +1851,16 @@ void *get_first_gpu_buffer_gpu(void *d_buffers_) {
     return (void *)d_buffers->gpuMemoryBuffer[0];
 }
 
+// Byte offset of the aggregation const-pols region (d_constPolsAggregation) from the base of the
+// first GPU's unified buffer. 0 on null buffers: the consumer reloads when `used >= offset`, so
+// failing toward 0 yields a redundant reload rather than a silently corrupted proof.
+uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return (uint64_t)((uint8_t *)d_buffers->d_constPolsAggregation[0] -
+                      (uint8_t *)d_buffers->gpuMemoryBuffer[0]);
+}
+
 uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return 0;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;

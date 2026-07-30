@@ -70,6 +70,7 @@ void release_first_gpu_buffer_gpu(void *d_buffers_);
 uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_);
 uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
+uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
 void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
@@ -128,6 +129,7 @@ StarksBackend cpu_backend = []() {
     backend.is_first_gpu_buffer_borrowed = nullptr;       // default: 0 (free)
     backend.get_first_gpu_id = nullptr;                   // default: 0
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
+    backend.get_const_pols_aggregation_offset = nullptr;
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
     backend.alloc_fixed_pols_buffer_gpu = nullptr;
     backend.free_fixed_pols_buffer_gpu = nullptr;
@@ -183,6 +185,7 @@ StarksBackend gpu_backend = []() {
     backend.is_first_gpu_buffer_borrowed = is_first_gpu_buffer_borrowed_gpu;
     backend.get_first_gpu_id = get_first_gpu_id_gpu;
     backend.get_first_gpu_buffer = get_first_gpu_buffer_gpu;
+    backend.get_const_pols_aggregation_offset = get_const_pols_aggregation_offset_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
     backend.alloc_fixed_pols_buffer_gpu = alloc_fixed_pols_buffer_gpu_gpu;
     backend.free_fixed_pols_buffer_gpu = free_fixed_pols_buffer_gpu_gpu;
@@ -426,6 +429,17 @@ uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_) {
 uint32_t get_first_gpu_id(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_first_gpu_id ? backend->get_first_gpu_id(d_buffers_) : 0;
+}
+
+// CPU backend (no GPU implementation): UINT64_MAX -- there is no GPU const region to clobber,
+// so `used >= offset` must never fire. The GPU implementation instead returns 0 on null
+// buffers: GPU mode with missing buffers is an anomaly, and failing toward 0 turns it into a
+// redundant reload rather than a silently corrupted proof.
+uint64_t get_const_pols_aggregation_offset(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_const_pols_aggregation_offset
+               ? backend->get_const_pols_aggregation_offset(d_buffers_)
+               : UINT64_MAX;
 }
 
 void *get_first_gpu_buffer(void *d_buffers_) {
