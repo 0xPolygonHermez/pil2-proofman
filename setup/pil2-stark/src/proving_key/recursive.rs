@@ -590,22 +590,26 @@ pub fn gen_recursive_setup(
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let folding_factors = crate::output::stark_info::compute_folding_factors(&stark_struct);
+            let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
             let ev_map_len = pil_info_result.pil_code.ev_map.len();
-            let field_size = crate::types::security::goldilocks_cube_field_size();
-            let fri_params = crate::types::security::FRISecurityParams {
+            let field_size = crate::types::security::goldilocks_safe_extension_field_size();
+            let regime = crate::types::security::regimes::DecodingRegime::Jbr;
+            let fri_config = crate::types::security::pcs::FriConfig {
                 field_size,
-                dimension: 1u64 << stark_struct.n_bits,
+                trace_length: 1u32 << stark_struct.n_bits,
                 rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                n_opening_points: opening_points.len() as u64,
-                n_functions: ev_map_len.max(1) as u64,
-                folding_factors: folding_factors.clone(),
-                max_grinding_bits: stark_struct.pow_bits as u64,
-                use_max_grinding_bits: true,
+                batch_size: ev_map_len.max(1) as u64,
+                batching: crate::types::security::pcs::Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_query: stark_struct.pow_bits as u64,
+                use_max_grinding_bits_query: true,
                 tree_arity: stark_struct.merkle_tree_arity as u64,
+                hash_size_bits: 256,
                 target_security_bits: 128,
+                regime,
             };
-            let mut fri_security = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params);
+            let fri = crate::types::security::pcs::Fri::new(fri_config);
+            let mut fri_security = fri.security_params().clone();
 
             // An explicit starkStruct override (config.stark_struct) may request MORE queries
             // than the security-optimal count — this is how the caller sizes a has-compressor
@@ -629,7 +633,7 @@ pub fn gen_recursive_setup(
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri_security,
+                &fri,
                 config.airgroup_id,
                 config.air_id,
                 &airgroup_pil_name,
