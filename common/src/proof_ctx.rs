@@ -19,6 +19,7 @@ use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
     alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
+    get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -1079,6 +1080,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
         let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
         (gpu_buf_ptr, gpu_buf_size)
+    }
+
+    /// Report how many bytes a borrower of the first GPU's unified buffer  actually used.
+    ///
+    /// The buffer's tail holds the once-uploaded fixed pols of every aggregation
+    /// setup (compressor/recursive1/recursive2/vadcop_final). If the borrower's
+    /// usage reached that region they are now garbage, so this raises
+    /// `reload_fixed_pols_gpu`; the prove flow consumes it right after
+    /// `wcm.execute()` and re-uploads them before any proof of the block.
+    /// Call after the borrower finished writing, before or at buffer release.
+    /// No-op on CPU.
+    pub fn report_first_gpu_buffer_usage(&self, used_bytes: u64) {
+        if !self.gpu {
+            return;
+        }
+        let consts_offset = get_const_pols_aggregation_offset_c(self.d_buffers.get_ptr());
+        if used_bytes >= consts_offset {
+            tracing::warn!(
+                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
+                 aggregation const-pols region at offset {consts_offset}; scheduling \
+                 fixed-pols re-upload"
+            );
+            self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
