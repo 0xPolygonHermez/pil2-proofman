@@ -1081,7 +1081,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         (gpu_buf_ptr, gpu_buf_size)
     }
 
-    /// Report how many bytes a borrower of the first GPU's unified buffer  actually used.
+    /// Report how many bytes a borrower of the first GPU's unified buffer actually used.
     ///
     /// The buffer's tail holds the once-uploaded fixed pols of every aggregation
     /// setup (compressor/recursive1/recursive2/vadcop_final). If the borrower's
