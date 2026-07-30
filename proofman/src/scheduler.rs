@@ -343,7 +343,7 @@ pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
     let recovered = witnesses.len();
     for mut w in witnesses {
         // Adopt-then-drop returns the buffer to its pool.
-        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
+        drop(memory_handler_recursive_witness.adopt_proof_trace(&mut w));
         if let Some(idx) = w.global_idx {
             ledger.settle(idx as u64, w.proof_type.as_usize());
         }

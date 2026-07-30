@@ -702,7 +702,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // trips (or silently under-fills) the pool-integrity check in `reset()` below.
         for rx in [&self.compressor_witness_rx, &self.rec1_witness_rx, &self.rec2_witness_rx] {
             while let Ok(mut w) = rx.try_recv() {
-                drop(self.memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
+                drop(self.memory_handler_recursive_witness.adopt_proof_trace(&mut w));
             }
         }
 
@@ -2336,8 +2336,12 @@ where
         // witness — only > 1 when --packed enables parallel witness generation.
         let max_witness_stored = if options.packed { n_gpus as usize * options.max_witness_stored } else { 1 };
 
-        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs. Recursive work is
-        // lighter than basic, so it is provisioned smaller (half basic depth / 1 compressor per GPU).
+        // Recursive pool: trace buffers for in-flight recursive proofs. With solve+scatter
+        // fused, one buffer covers a proof's whole witness→prove span (no separate witness
+        // pool), so queued and proving work share this depth — see `generate_witness`.
+        // Recursive work is lighter than basic, so the pool is provisioned smaller: half the
+        // basic depth per GPU for regular recursive, one slot per GPU for compressor. CPU
+        // keeps a small fixed pipeline (2/1).
         let (max_witness_stored_recursive, max_witness_stored_recursive_compressor) = if options.gpu {
             let n_gpus = n_gpus as usize;
             (((n_gpus * options.max_witness_stored) / 2).max(1), n_gpus * 2)
@@ -2362,11 +2366,34 @@ where
         let n_device_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
-        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
+        // signalValues pool: one buffer sized to the largest circuit (depth-1 ⇒ at
+        // most one heavy witness, e.g. Keccakf, allocates at once) plus `n_small`
+        // buffers for the lighter recursive proofs. At most `n_streams` recursive
+        // witnesses run concurrently (one per worker) and the large buffer covers
+        // one, so `n_small = n_streams - 1`. Reuse needs no zeroing (write-before-read).
+        let signal_pool = {
+            let (large_cap, small_cap) = setups_vadcop.signal_pool_sizes();
+            if large_cap == 0 {
+                None
+            } else {
+                let n_small = n_streams.saturating_sub(1).max(1);
+                Some((large_cap, small_cap, n_small))
+            }
+        };
+        // Circom solve threads per recursive witness. With `n_streams` concurrent
+        // witnesses each spawning up to `nmutex` internal threads, size nmutex ≈
+        // cores/n_streams so total threads stay near the core count (the old
+        // hardcoded 8 oversubscribed: 5 streams × 8 = 40 on 24 cores). Capped at 8
+        // (circom subcomponent fan-out limit; beyond it adds no parallelism).
+        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
+        let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(1, 8);
+        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
-            setups_vadcop.max_witness_size,
             setups_vadcop.max_trace_size,
+            setups_vadcop.max_trace_size_compressor,
+            signal_pool,
+            recursive_witness_threads,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -2392,8 +2419,6 @@ where
                 Arc::new(vec![F::ZERO; sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size)]),
             )
         };
-
-        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
@@ -3155,11 +3180,11 @@ where
                             };
                             match sent {
                                 Ok(()) => child.commit(),
-                                Err(crossbeam_channel::SendError(returned)) => {
+                                Err(crossbeam_channel::SendError(mut returned)) => {
                                     // Witness channels live on `self`, so a failed send means the
                                     // pipeline is torn down mid-run. Return the witness buffer to its
                                     // pool (else it leaks in the SendError), and surface it.
-                                    drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
+                                    drop(memory_handler_recursive_witness.adopt_proof_trace(&mut returned));
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
@@ -3478,7 +3503,7 @@ where
                             // pool) is not reached on this error path, so return it here — adopt-then-drop.
                             drop(
                                 memory_handler_recursive_witness
-                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                                    .adopt_proof_trace(&mut witness),
                             );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
@@ -4289,7 +4314,7 @@ where
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
                         // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
                         drop(
-                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                            memory_handler_recursive_witness.adopt_proof_trace(&mut witness),
                         );
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
@@ -4486,7 +4511,7 @@ where
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Return the received witness buffer to its pool before bailing.
                         drop(
-                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                            memory_handler_recursive_witness.adopt_proof_trace(&mut witness),
                         );
                         break;
                     }
@@ -4506,7 +4531,7 @@ where
                             // reached here; return it so the recursive-witness pool doesn't shrink.
                             drop(
                                 memory_handler_recursive_witness
-                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                                    .adopt_proof_trace(&mut witness),
                             );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
@@ -4587,11 +4612,11 @@ where
                                 break;
                             }
                         };
-                        if let Err(crossbeam_channel::SendError(returned)) = rec2_witness_tx_clone.send(witness) {
+                        if let Err(crossbeam_channel::SendError(mut returned)) = rec2_witness_tx_clone.send(witness) {
                             // Every rec2 worker has exited, so the pipeline is torn down mid-run.
                             // Return the witness buffer to its pool (else it leaks inside the
                             // SendError and the pool comes back short) before surfacing the failure.
-                            drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
+                            drop(memory_handler_recursive_witness.adopt_proof_trace(&mut returned));
                             cancellation_info_clone.write_recover().cancel(None);
                             break;
                         }
