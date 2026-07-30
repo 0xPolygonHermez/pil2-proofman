@@ -18,6 +18,7 @@ default = []
 [dependencies]
 proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
 fields = { workspace = true, features = ["verify"] }
+proofman-multilinear = { workspace = true }
 proofman-common = { workspace = true }
 proofman-util = { workspace = true }
 stark-recurser = { path = "../stark-recurser" }
@@ -30,7 +31,6 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 indexmap = { version = "2", features = ["serde"] }
-rug = "1"
 tempfile = "3"
 rayon = { workspace = true }
 clap = { version = "4.5.38", features = ["derive", "env"] }

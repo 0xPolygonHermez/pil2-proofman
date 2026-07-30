@@ -1,5 +1,11 @@
 use serde::Serialize;
-use tabled::{Tabled, Table};
+use tabled::{Alignment, Modify, Table, Tabled, object::Segment};
+use pil2_stark_setup::types::security::{
+    self,
+    pcs::{Batching, Fri, FriConfig, Whir, WhirConfig},
+    regimes::DecodingRegime,
+};
+use proofman_multilinear::{fold_schedule, AirIr};
 use proofman_common::{
     Setup, SetupsVadcop, ProofType, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
     format_bytes,
@@ -11,24 +17,53 @@ use std::sync::Arc;
 use fields::PrimeField64;
 use std::collections::BTreeMap;
 
+/// Render a power of two as `2^k` (falls back to the plain value).
+fn pow2_str(v: u64) -> String {
+    if v.is_power_of_two() {
+        format!("2^{}", v.trailing_zeros())
+    } else {
+        v.to_string()
+    }
+}
+
+/// Render a rate `2^-k` as `1/2^k = 0.5…`.
+fn rate_str(rate: f64) -> String {
+    format!("1/2^{} = {}", (-rate.log2()).round() as u32, rate)
+}
+
+/// Render a list of powers of two as `[2^a, 2^b, …]`.
+fn pow2_list_str<I: IntoIterator<Item = u64>>(vals: I) -> String {
+    let items: Vec<String> = vals.into_iter().map(pow2_str).collect();
+    format!("[{}]", items.join(", "))
+}
+
 #[derive(Tabled)]
 pub struct AirTableRow {
     pub name: String,
-    pub trace_length: u64,
-    pub rho: f64,
-    pub air_max_degree: u64,
-    pub num_columns_fixed: u64,
-    pub num_columns_witness: u64,
+    #[tabled(rename = "trace_size")]
+    pub trace_size: String,
+    pub rate: String,
+    #[tabled(rename = "max_degree")]
+    pub constraint_max_degree: u64,
+    #[tabled(rename = "total_cols")]
     pub num_columns: u64,
+    #[tabled(rename = "constraints")]
     pub num_constraints: u64,
+    #[tabled(rename = "openings")]
     pub opening_points: u64,
     pub batch_size: u64,
-    pub power_batching: bool,
+    #[tabled(rename = "batching")]
+    pub batching_mode: String,
+    #[tabled(rename = "queries")]
     pub num_queries: u64,
+    #[tabled(rename = "folds")]
     pub fri_folding_factors: String,
-    pub fri_early_stop_degree: u64,
+    #[tabled(rename = "early_stop")]
+    pub fri_early_stop_degree: String,
+    #[tabled(rename = "grinding")]
     pub grinding_query_phase: u64,
-    pub gap_to_radius: f64,
+    #[tabled(rename = "security")]
+    pub security_bits: u32,
     pub proof_size: String,
 }
 
@@ -36,6 +71,9 @@ pub struct AirTableRow {
 pub struct SoundnessToml {
     pub zkevm: ZkevmConfig,
     pub circuits: Vec<TomlCircuit>,
+    /// AIRs provable with the multilinear (WHIR) prover.
+    #[serde(skip)]
+    pub multilinear: Vec<MlTableRow>,
 }
 
 #[derive(Serialize)]
@@ -87,21 +125,66 @@ pub struct TomlCircuit {
 
 #[derive(Serialize, Clone)]
 pub struct AirInfoSoundness {
-    pub trace_length: u64,
-    pub rho: f64,
-    pub air_max_degree: u64,
+    /// log2 of the trace length.
+    pub trace_bits: u64,
+    pub rate: f64,
+    pub constraint_max_degree: u64,
     pub num_columns_fixed: u64,
     pub num_columns_witness: u64,
+    pub num_columns_custom: u64,
     pub num_columns: u64,
     pub num_constraints: u64,
     pub opening_points: u64,
     pub batch_size: u64,
-    pub power_batching: bool,
+    pub batching_mode: String,
     pub num_queries: u64,
     pub fri_folding_factors: Vec<u64>,
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
-    pub gap_to_radius: f64,
+    pub regime: String,
+    /// Total PCS security: the minimum over all phase levels.
+    pub security_bits: u32,
+    /// Per-phase PCS security levels (batching, commit rounds, query phase).
+    pub security_levels: Vec<PhaseSecurity>,
+    pub proof_size: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct PhaseSecurity {
+    pub phase: String,
+    pub bits: u32,
+}
+
+/// Summary row for the multilinear (WHIR) PCS of one AIR, audited from the
+/// schedule pinned in its `.mlinfo.bin` artifact. Same columns as
+/// [`AirTableRow`] so the univariate and multilinear tables line up.
+#[derive(Tabled)]
+pub struct MlTableRow {
+    pub name: String,
+    #[tabled(rename = "trace_size")]
+    pub trace_size: String,
+    pub rate: String,
+    #[tabled(rename = "max_degree")]
+    pub constraint_max_degree: u64,
+    #[tabled(rename = "total_cols")]
+    pub num_columns: u64,
+    #[tabled(rename = "constraints")]
+    pub num_constraints: u64,
+    #[tabled(rename = "openings")]
+    pub opening_points: u64,
+    pub batch_size: u64,
+    #[tabled(rename = "batching")]
+    pub batching_mode: String,
+    #[tabled(rename = "queries")]
+    pub num_queries: String,
+    #[tabled(rename = "folds")]
+    pub folding_factors: String,
+    #[tabled(rename = "early_stop")]
+    pub early_stop_degree: String,
+    #[tabled(rename = "grinding")]
+    pub grinding_bits: u64,
+    #[tabled(rename = "security")]
+    pub security_bits: u32,
     pub proof_size: String,
 }
 
@@ -109,68 +192,70 @@ impl AirTableRow {
     fn from_air_info(name: &str, air: &AirInfoSoundness) -> Self {
         AirTableRow {
             name: name.to_string(),
-            trace_length: air.trace_length,
-            rho: air.rho,
-            air_max_degree: air.air_max_degree,
+            trace_size: format!("2^{}", air.trace_bits),
+            rate: rate_str(air.rate),
+            constraint_max_degree: air.constraint_max_degree,
             num_columns: air.num_columns,
-            num_columns_fixed: air.num_columns_fixed,
-            num_columns_witness: air.num_columns_witness,
             num_constraints: air.num_constraints,
             opening_points: air.opening_points,
             batch_size: air.batch_size,
-            power_batching: air.power_batching,
+            batching_mode: air.batching_mode.clone(),
             num_queries: air.num_queries,
-            fri_folding_factors: format!("{:?}", air.fri_folding_factors),
-            fri_early_stop_degree: air.fri_early_stop_degree,
+            fri_folding_factors: pow2_list_str(air.fri_folding_factors.iter().copied()),
+            // Displayed as the final polynomial *dimension* (matching the
+            // multilinear table); the serialized value keeps soundcalc's
+            // domain convention (dimension / rate).
+            fri_early_stop_degree: pow2_str((air.fri_early_stop_degree as f64 * air.rate).round() as u64),
             grinding_query_phase: air.grinding_query_phase,
-            gap_to_radius: air.gap_to_radius,
+            security_bits: air.security_bits,
             proof_size: air.proof_size.clone(),
         }
     }
 }
 
 pub fn print_soundness_table(soundness: &SoundnessToml) {
-    println!("=== Basics ===");
-    let basics_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "basic")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
-    let basics_table = Table::new(basics_rows);
-    println!("{}", basics_table);
+    let group_rows = |group: &str| -> Vec<AirTableRow> {
+        soundness
+            .circuits
+            .iter()
+            .filter(|circuit| circuit.group == group)
+            .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+            .collect()
+    };
 
-    let compressor_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "compression")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
+    fn render<I: IntoIterator>(rows: I) -> Table
+    where
+        I::Item: Tabled,
+    {
+        Table::new(rows).with(Modify::new(Segment::all()).with(Alignment::center()))
+    }
+
+    println!("=== Basics ===");
+
+    println!("=== Univariate (FRI) ===");
+    println!("{}", render(group_rows("basic")));
+
+    if !soundness.multilinear.is_empty() {
+        println!("=== Multilinear (WHIR) ===");
+        println!("{}", render(&soundness.multilinear));
+    }
+
+    let compressor_rows = group_rows("compression");
     if !compressor_rows.is_empty() {
         println!("=== Compressor ===");
-        println!("{}", Table::new(compressor_rows));
+        println!("{}", render(compressor_rows));
     }
 
-    let aggregation_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "aggregation")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
+    let aggregation_rows = group_rows("aggregation");
     if !aggregation_rows.is_empty() {
         println!("=== Aggregation ===");
-        println!("{}", Table::new(aggregation_rows));
+        println!("{}", render(aggregation_rows));
     }
 
-    let final_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "final")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
+    let final_rows = group_rows("final");
     if !final_rows.is_empty() {
         println!("=== Final Circuit ===");
-        println!("{}", Table::new(final_rows));
+        println!("{}", render(final_rows));
     }
 }
 
@@ -182,33 +267,187 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         .filter(|(k, _)| k.as_str() != "const" && k.as_str() != "cm3")
         .map(|(_, n)| n)
         .sum::<u64>();
+
+    let custom_cols = setup
+        .stark_info
+        .custom_commits
+        .iter()
+        .map(|c| c.stage_widths.iter().map(|&w| w as u64).sum::<u64>())
+        .sum::<u64>();
+
+    let stark_struct = &setup.stark_info.stark_struct;
+    let rate = 1.0 / (1 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
+    let batch_size = (setup.stark_info.ev_map.len() as u64).max(1);
+    let batching = Batching::Powers;
+    let fri_folding_bits: Vec<u32> =
+        stark_struct.steps.windows(2).map(|pair| (pair[0].n_bits - pair[1].n_bits) as u32).collect();
+    let fri_folding_factors: Vec<u64> = fri_folding_bits.iter().map(|&b| 1u64 << b).collect();
+    let fri_early_stop_degree = 1u64 << stark_struct.steps.last().unwrap().n_bits;
+
+    // Rebuild the solved FRI PCS from the free parameters stored in the
+    // proving key; the query count and grinding split are re-deduced and
+    // cross-checked against the stored values.
+    let fri = Fri::new(FriConfig {
+        field_size: security::goldilocks_safe_extension_field_size(),
+        trace_length: 1u32 << stark_struct.n_bits,
+        rate,
+        batch_size,
+        batching,
+        log_folding_factors: fri_folding_bits.clone(),
+        max_grinding_bits_query: stark_struct.pow_bits,
+        use_max_grinding_bits_query: true,
+        tree_arity: stark_struct.merkle_tree_arity,
+        hash_size_bits: 256,
+        target_security_bits: 128,
+        regime: DecodingRegime::Jbr,
+    });
+    let solved = fri.security_params();
+    if solved.n_queries != stark_struct.n_queries || solved.grinding_bits_query as u64 != stark_struct.pow_bits {
+        tracing::warn!(
+            "{}: proving key pins {} queries / {} pow bits, but the soundness formulas deduce {} / {}; \
+             the setup may predate the current formulas",
+            setup.air_name,
+            stark_struct.n_queries,
+            stark_struct.pow_bits,
+            solved.n_queries,
+            solved.grinding_bits_query,
+        );
+    }
+
+    let security_levels: Vec<PhaseSecurity> =
+        fri.security_levels().into_iter().map(|(phase, bits)| PhaseSecurity { phase, bits }).collect();
+    let security_bits = security_levels.iter().map(|l| l.bits).min().unwrap_or(0);
+
     (
         setup.air_name.clone(),
         AirInfoSoundness {
-            trace_length: 1 << setup.stark_info.stark_struct.n_bits,
-            rho: 1.0 / (1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits)) as f64,
-            air_max_degree: setup.stark_info.q_deg + 1,
-            num_columns: setup.stark_info.n_constants + witness_cols,
+            trace_bits: stark_struct.n_bits,
+            rate,
+            constraint_max_degree: setup.stark_info.q_deg + 1,
+            num_columns: setup.stark_info.n_constants + witness_cols + custom_cols,
             num_columns_fixed: setup.stark_info.n_constants,
             num_columns_witness: witness_cols,
+            num_columns_custom: custom_cols,
             num_constraints: setup.stark_info.n_constraints,
             opening_points: setup.stark_info.opening_points.len() as u64,
-            batch_size: setup.stark_info.ev_map.len() as u64,
-            power_batching: true,
-            num_queries: setup.stark_info.stark_struct.n_queries,
-            fri_folding_factors: setup
-                .stark_info
-                .stark_struct
-                .steps
-                .windows(2)
-                .map(|pair| 1 << (pair[0].n_bits - pair[1].n_bits))
-                .collect(),
-            fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
-            grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
-            gap_to_radius: setup.stark_info.security.proximity_gap,
+            batch_size,
+            batching_mode: batching.to_string(),
+            num_queries: stark_struct.n_queries,
+            fri_folding_factors,
+            fri_early_stop_degree,
+            grinding_query_phase: stark_struct.pow_bits,
+            regime: fri.regime().identifier().to_string(),
+            security_bits,
+            security_levels,
             proof_size: format_bytes(setup.proof_size as f64 * 8.0),
         },
     )
+}
+
+/// Audit the multilinear (WHIR) PCS of one AIR from the schedule pinned in
+/// its `.mlinfo.bin` artifact. Returns `None` when the AIR has no multilinear
+/// setup (or a stale one that fails to load).
+pub fn get_multilinear_air_info<F: PrimeField64>(setup: &Setup<F>) -> Option<MlTableRow> {
+    let mlinfo_path = setup.setup_path.with_extension("mlinfo.bin");
+    if !mlinfo_path.exists() {
+        return None;
+    }
+    let air_ir = match AirIr::load(&mlinfo_path) {
+        Ok(air_ir) => air_ir,
+        Err(e) => {
+            tracing::warn!("{}: could not load {}: {e}", setup.air_name, mlinfo_path.display());
+            return None;
+        }
+    };
+
+    let params = &air_ir.params;
+    let n_bits = air_ir.n_bits as usize;
+    // Mirror the prover's fold schedule exactly.
+    let fold_bits = match fold_schedule(params, n_bits) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("{}: invalid fold schedule in {}: {e}", setup.air_name, mlinfo_path.display());
+            return None;
+        }
+    };
+
+    let whir = Whir::new(WhirConfig {
+        field_size: security::goldilocks_safe_extension_field_size(),
+        trace_length: 1u32 << n_bits,
+        rate: f64::exp2(-(params.log_blowup as f64)),
+        batch_size: air_ir.total_cols().max(1) as u64,
+        batching: Batching::Powers,
+        log_folding_factors: fold_bits.iter().map(|&k| k as u32).collect(),
+        constraint_degree: 3, // ŵ(Z,X) = Z·eq(X,z) ⇒ d* = 1+1+1 = 3
+        max_grinding_bits_query: params.grinding_bits as u64,
+        use_max_grinding_bits_query: true,
+        tree_arity: 4,
+        hash_size_bits: 256,
+        base_field_bits: 64,
+        target_security_bits: 128,
+        regime: DecodingRegime::Jbr,
+    });
+    let solved = whir.security_params();
+    // The schedule the runtime actually uses: the pinned per-block schedule,
+    // or uniform `n_queries` when empty (mirrors `block_query_counts`).
+    let pinned_queries: Vec<u64> = if params.whir_query_schedule.is_empty() {
+        vec![params.n_queries as u64; fold_bits.len()]
+    } else {
+        params.whir_query_schedule.iter().map(|&t| t as u64).collect()
+    };
+    if solved.num_queries != pinned_queries
+        || solved.grinding_bits_queries.first() != Some(&(params.grinding_bits as u32))
+    {
+        tracing::warn!(
+            "{}: mlinfo pins queries {:?} / {} pow bits, but the soundness formulas deduce {:?} / {:?}; \
+             the setup may predate the current formulas",
+            setup.air_name,
+            pinned_queries,
+            params.grinding_bits,
+            solved.num_queries,
+            solved.grinding_bits_queries,
+        );
+    }
+
+    let security_levels: Vec<PhaseSecurity> =
+        whir.security_levels().into_iter().map(|(phase, bits)| PhaseSecurity { phase, bits }).collect();
+    let security_bits = security_levels.iter().map(|l| l.bits).min().unwrap_or(0);
+
+    // AIR-shape columns, computed exactly as in `get_soundness_air_info` so
+    // the two tables line up row by row.
+    let witness_cols = setup
+        .stark_info
+        .map_sections_n
+        .iter()
+        .filter(|(key, _)| key.as_str() != "const" && key.as_str() != "cm3")
+        .map(|(_, n)| n)
+        .sum::<u64>();
+    let custom_cols = setup
+        .stark_info
+        .custom_commits
+        .iter()
+        .map(|c| c.stage_widths.iter().map(|&w| w as u64).sum::<u64>())
+        .sum::<u64>();
+
+    Some(MlTableRow {
+        name: air_ir.name.clone(),
+        trace_size: format!("2^{n_bits}"),
+        rate: rate_str(f64::exp2(-(params.log_blowup as f64))),
+        constraint_max_degree: setup.stark_info.q_deg + 1,
+        // Fixed + witness + custom, like the univariate row (`air_ir.total_cols()`
+        // undercounts when the ML IR carries no custom commits yet).
+        num_columns: setup.stark_info.n_constants + witness_cols + custom_cols,
+        num_constraints: setup.stark_info.n_constraints,
+        opening_points: setup.stark_info.opening_points.len() as u64,
+        batch_size: air_ir.total_cols().max(1) as u64,
+        batching_mode: Batching::Powers.to_string(),
+        num_queries: format!("{:?}", whir.security_params().num_queries),
+        folding_factors: pow2_list_str(fold_bits.iter().map(|&k| 1u64 << k)),
+        early_stop_degree: pow2_str(1u64 << (n_bits - fold_bits.iter().sum::<usize>())),
+        grinding_bits: params.grinding_bits as u64,
+        security_bits,
+        proof_size: format_bytes(whir.proof_size_bits() as f64 / 8.0),
+    })
 }
 
 pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -> ProofmanResult<Vec<Lookup>> {
@@ -329,6 +568,7 @@ pub fn soundness_info<F: PrimeField64>(
     let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], false)?;
 
     let mut circuits = Vec::new();
+    let mut multilinear = Vec::new();
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -341,6 +581,9 @@ pub fn soundness_info<F: PrimeField64>(
                 air: air_info,
                 lookups: lookup_info,
             });
+            if let Some(ml_row) = get_multilinear_air_info(setup) {
+                multilinear.push(ml_row);
+            }
         }
     }
 
@@ -418,5 +661,6 @@ pub fn soundness_info<F: PrimeField64>(
             hash_size_bits: 256,
         },
         circuits,
+        multilinear,
     })
 }

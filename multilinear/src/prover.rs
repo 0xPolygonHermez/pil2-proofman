@@ -1,0 +1,519 @@
+//! The multilinear STARK prover.
+
+use fields::{Field, Goldilocks, PrimeField64};
+use serde::{Deserialize, Serialize};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
+
+use crate::pcs::{combine_columns, PcsCommitment, PcsOpening};
+use crate::pcs::{MlPcs, Pcs};
+use crate::eq::{eq_evals, rotate_table, skip_kernel_table};
+use crate::error::MlError;
+use crate::hypercube::{dot_base_ext, Ext};
+use crate::ir::AirIr;
+use crate::logup_gkr::{BusProof, BusProver};
+use crate::sumcheck::{ProductOracle, SumcheckOracle};
+use crate::transcript::MlTranscript;
+use crate::zerocheck::{build_kernels, KernelSpec, ZerocheckOracle};
+
+/// A multilinear STARK proof for one AIR instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MlProof {
+    /// Airgroup identifier.
+    pub airgroup_id: u32,
+    /// AIR identifier.
+    pub air_id: u32,
+    /// Number of bits in the hypercube (number of rows = 2^n_bits).
+    pub n_bits: u32,
+    /// Merkle roots of the witness stage commitments, in stage order.
+    pub stage_roots: Vec<[Goldilocks; 4]>,
+    /// Merkle root of the fixed-column commitment.
+    pub const_root: [Goldilocks; 4],
+    /// Merkle roots of the custom (fixed) commitments, in `AirIr::custom_commits` order.
+    pub custom_roots: Vec<[Goldilocks; 4]>,
+    /// Zerocheck round polynomials (evaluations at `0..=max_degree+1`).
+    pub zerocheck_round_polys: Vec<Vec<Ext>>,
+    /// The LogUp-GKR bus phase (present iff the AIR was compiled with a bus).
+    pub bus: Option<BusProof>,
+    /// Claimed weighted-sum openings: `claims[global_col][kernel]`.
+    pub claims: Vec<Vec<Ext>>,
+    /// Opening-reduction round polynomials.
+    pub reduction_round_polys: Vec<Vec<Ext>>,
+    pub opening: PcsOpening,
+    pub publics: Vec<Goldilocks>,
+    /// Global transcript challenges used by the constraints (full global
+    /// challenge vector; entries for stages the multilinear protocol does not
+    /// derive are zero). Re-derived and checked at proof-set level.
+    pub challenges: Vec<Ext>,
+    /// Air values (per-instance prover messages), in global order.
+    pub air_values: Vec<Ext>,
+    /// Proof values (proof-level prover messages, shared by every instance),
+    /// in global order.
+    pub proof_values: Vec<Ext>,
+    /// Airgroup values (enter cross-instance global constraints), in global order.
+    pub airgroup_values: Vec<Ext>,
+    /// Global instance id assigned by the proving orchestrator; defines the
+    /// root order for the global challenge derivation (a wrong or permuted id
+    /// changes the derived challenges, so the set verifier rejects).
+    pub global_instance_id: u32,
+}
+
+impl MlProof {
+    pub fn save(&self, path: &std::path::Path) -> Result<(), MlError> {
+        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+            .map_err(|e| MlError::Io(format!("serializing proof: {e}")))?;
+        std::fs::write(path, bytes).map_err(|e| MlError::Io(format!("writing {}: {e}", path.display())))
+    }
+
+    pub fn load(path: &std::path::Path) -> Result<Self, MlError> {
+        let bytes = std::fs::read(path).map_err(|e| MlError::Io(format!("reading {}: {e}", path.display())))?;
+        let (proof, _) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .map_err(|e| MlError::Io(format!("decoding proof: {e}")))?;
+        Ok(proof)
+    }
+}
+
+/// Generate a proof that `witness` satisfies `ir`'s constraints.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_air(
+    ir: &AirIr,
+    witness: &[Vec<Vec<Goldilocks>>],
+    consts: &[Vec<Goldilocks>],
+    const_matrix: Option<&PcsCommitment>,
+    customs: &[Vec<Vec<Goldilocks>>],
+    custom_matrices: Option<&[PcsCommitment]>,
+    publics: &[Goldilocks],
+    challenges: &[Ext],
+    air_values: &[Ext],
+    airgroup_values: &[Ext],
+    proof_values: &[Ext],
+) -> Result<MlProof, MlError> {
+    if witness.len() != ir.n_stages() {
+        return Err(MlError::Malformed(format!("expected {} witness stages", ir.n_stages())));
+    }
+    if challenges.len() != ir.challenge_stages.len() {
+        return Err(MlError::Malformed(format!("expected {} challenges", ir.challenge_stages.len())));
+    }
+    if air_values.len() != ir.airvalue_stages.len() || airgroup_values.len() != ir.airgroupvalue_stages.len() {
+        return Err(MlError::Malformed("air/airgroup value count mismatch".into()));
+    }
+    if proof_values.len() != ir.proofvalue_stages.len() {
+        return Err(MlError::Malformed(format!("expected {} proof values", ir.proofvalue_stages.len())));
+    }
+    if customs.len() != ir.custom_commits.len()
+        || customs.iter().zip(ir.custom_commits.iter()).any(|(cols, cc)| cols.len() != cc.n_cols as usize)
+    {
+        return Err(MlError::Malformed("custom commit shape mismatch".into()));
+    }
+    if ir.params.n_ood_samples != 1 {
+        // The setup's security accounting must match what the protocol draws.
+        return Err(MlError::Unsupported(format!(
+            "params pin {} OOD samples per block; the protocol implements exactly 1",
+            ir.params.n_ood_samples
+        )));
+    }
+
+    let airgroup_id = ir.airgroup_id;
+    let air_id = ir.air_id;
+    let n_bits = ir.n_bits;
+
+    let m = n_bits as usize;
+    let n_rows = 1usize << m;
+    let params = &ir.params;
+
+    {
+        let every_row = ir.constraints.iter().filter(|c| c.boundary == crate::ir::Boundary::EveryRow).count();
+        let bus_terms = ir.bus.as_ref().map(|b| b.terms.len() + b.scalar_terms.len()).unwrap_or(0);
+        let ks = crate::pcs::fold_schedule(params, m.max(1)).unwrap_or_default();
+        let n_rounds = ks.len();
+        let queries = crate::pcs::block_query_counts(params, n_rounds).unwrap_or_default();
+        let folding_factors = format!("[{}]", ks.iter().map(|k| format!("2^{k}")).collect::<Vec<_>>().join(", "));
+        tracing::debug!(
+            "Parameters [{}]:\n\
+             \x20   Proof System:            Multilinear\n\
+             \x20   PCS:                     WHIR\n\
+             \x20   Hash Function:           {}\n\
+             \x20   Field:                   Goldilocks\n\
+             \x20   Field Extension:         Cubic\n\
+             \x20   Target Security Bits:    {}\n\
+             \x20   Trace Length:            2^{m}\n\
+             \x20   Rate:                    1/2^{}\n\
+             \x20   Domain Size:             2^{}\n\
+             \x20   Batch Size:              {}\n\
+             \x20   Rounds:                  {n_rounds}\n\
+             \x20   Folding Factors:         {folding_factors}\n\
+             \x20   Early Stop Degree:       2^{}\n\
+             \x20   N Queries:               {queries:?}\n\
+             \x20   N OOD Samples:           {:?}\n\
+             \x20   Grinding Bits Queries:   {:?}\n\
+             \x20   Number of Constraints:   {every_row}\n\
+             \x20   Number of Bus Arguments: {bus_terms}\n\
+             \x20   Univariate Skip Bits:  {}",
+            ir.name,
+            params.hash.id(),
+            params.target_security_bits,
+            params.log_blowup,
+            m + params.log_blowup,
+            ir.total_cols(),
+            params.log_final_poly_len,
+            vec![params.n_ood_samples; n_rounds.saturating_sub(1)],
+            vec![params.grinding_bits; n_rounds],
+            params.univariate_skip_bits,
+        );
+    }
+
+    // --- LogUp-GKR bus: build the fraction tree (transcript-free) and fix the
+    // result airgroup value before anything absorbs or evaluates it.
+    timer_start_debug!(ML_PROVE_BUS_BUILD);
+    let mut airgroup_values = airgroup_values.to_vec();
+    let bus_prover = match &ir.bus {
+        Some(bus) => {
+            let bp = BusProver::build(
+                ir,
+                bus,
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                &airgroup_values,
+                proof_values,
+            )?;
+            if let Some(idx) = bus.result_airgroupvalue {
+                airgroup_values[idx as usize] = bp.result;
+            }
+            Some(bp)
+        }
+        None => None,
+    };
+    let airgroup_values = &airgroup_values[..];
+    timer_stop_and_log_debug!(ML_PROVE_BUS_BUILD);
+
+    // Start the transcript with the statement: AIR identity and public inputs.
+    let mut transcript = MlTranscript::new(params.hash);
+    seed_transcript(&mut transcript, airgroup_id, air_id, n_bits, publics);
+
+    // --- Step 1: Trace Commitments ---
+    timer_start_debug!(ML_PROVE_COMMIT);
+
+    // Fixed columns are known at setup time; reuse the prebuilt commitment
+    // (loaded from the proving key) when supplied, otherwise build it here.
+    let owned_const_matrix;
+    let const_matrix: Option<&PcsCommitment> = if ir.n_const_cols == 0 {
+        None
+    } else {
+        Some(match const_matrix {
+            Some(m) => m,
+            None => {
+                let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
+                owned_const_matrix = Pcs::commit(&const_refs, params);
+                &owned_const_matrix
+            }
+        })
+    };
+    if let Some(m) = const_matrix {
+        transcript.absorb_root(&Pcs::commitment_root(m));
+    }
+
+    // Custom (fixed) columns are setup-time constants; reuse precomputed
+    // commitments when supplied (once per AIR), otherwise build them here.
+    // Either way the roots are absorbed in `ir.custom_commits` order, so the
+    // transcript is identical.
+    let owned_custom_matrices: Vec<PcsCommitment>;
+    let custom_matrices: &[PcsCommitment] = match custom_matrices {
+        Some(ms) => {
+            if ms.len() != ir.custom_commits.len() {
+                return Err(MlError::Malformed("custom commitment count mismatch".into()));
+            }
+            ms
+        }
+        None => {
+            owned_custom_matrices = customs
+                .iter()
+                .map(|cols| {
+                    let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+                    Pcs::commit(&refs, params)
+                })
+                .collect();
+            &owned_custom_matrices
+        }
+    };
+    for matrix in custom_matrices {
+        transcript.absorb_root(&Pcs::commitment_root(matrix));
+    }
+
+    // Stage commitments.
+    let mut stage_matrices: Vec<PcsCommitment> = Vec::with_capacity(witness.len());
+    for (stage_idx, stage_cols) in witness.iter().enumerate() {
+        if !stage_cols.is_empty() {
+            let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
+            let matrix = Pcs::commit(&refs, params);
+            transcript.absorb_root(&Pcs::commitment_root(&matrix));
+            stage_matrices.push(matrix);
+        }
+
+        let stage = (stage_idx + 1) as u8;
+        absorb_stage_values(&mut transcript, ir, air_values, airgroup_values, proof_values, stage);
+        for id in challenge_ids_for_stage(ir, stage + 1) {
+            transcript.absorb_ext(&challenges[id]);
+        }
+    }
+
+    timer_stop_and_log_debug!(ML_PROVE_COMMIT);
+
+    // --- Step 2: Constraint Zerocheck ---
+    let l = ir.params.univariate_skip_bits.min(m);
+    let r = transcript.challenges(m);
+    let alpha = transcript.challenge();
+
+    timer_start_debug!(ML_PROVE_ZEROCHECK_SETUP);
+    let mut oracle = ZerocheckOracle::new(
+        ir,
+        witness,
+        consts,
+        customs,
+        publics,
+        challenges,
+        air_values,
+        airgroup_values,
+        proof_values,
+        &r,
+        alpha,
+        l,
+    );
+    timer_stop_and_log_debug!(ML_PROVE_ZEROCHECK_SETUP);
+
+    // Compute the univariate skip polynomial
+    timer_start_debug!(ML_PROVE_ZEROCHECK_ROUNDS);
+    let mut zerocheck_round_polys = Vec::with_capacity(m - l + 1);
+    let mut skip_gamma = Ext::ZERO;
+    if l > 0 {
+        let v = oracle.skip_round_evals();
+        transcript.absorb_exts(&v);
+        skip_gamma = transcript.challenge();
+        oracle.skip_bind(skip_gamma);
+        zerocheck_round_polys.push(v);
+    }
+
+    // Compute the remaining rounds of the zerocheck protocol.
+    let mut lambda_x = Vec::with_capacity(m - l);
+    for _ in 0..(m - l) {
+        let evals = oracle.round_evals();
+        let sent = evals[1..].to_vec();
+        transcript.absorb_exts(&sent);
+        let ch = transcript.challenge();
+        oracle.bind(ch);
+        zerocheck_round_polys.push(sent);
+        lambda_x.push(ch);
+    }
+    timer_stop_and_log_debug!(ML_PROVE_ZEROCHECK_ROUNDS);
+
+    // --- Step 2b: LogUp-GKR bus phase — the walk over the fraction tree plus
+    // the input-layer reduction, terminating in column claims at `v`.
+    timer_start_debug!(ML_PROVE_BUS_WALK);
+    let (bus_proof, bus_point) = match (&ir.bus, &bus_prover) {
+        (Some(bus), Some(bp)) => {
+            let (proof, v) = bp.prove(
+                ir,
+                bus,
+                witness,
+                consts,
+                customs,
+                publics,
+                challenges,
+                air_values,
+                airgroup_values,
+                proof_values,
+                &mut transcript,
+            );
+            (Some(proof), v)
+        }
+        _ => (None, Vec::new()),
+    };
+    timer_stop_and_log_debug!(ML_PROVE_BUS_WALK);
+
+    // --- Step 3: Opening Reductions ---
+    timer_start_debug!(ML_PROVE_CLAIMS);
+
+    // --- Step 3.1: Compute the opening claims
+
+    // Compute all the kernel tables K_{rot^s}(X, Y) = ∑_c eq_m(c,X)·eq_m(rot^s(c),Y) for all rotations s and corners c.
+    // When s=0, K_{rot^0}(X,Y) = eq_m(X,Y), the identity kernel.
+    let kernels = build_kernels(ir);
+    let kernel_tables: Vec<Vec<Ext>> =
+        crate::par::map_slice(&kernels, |k| kernel_table(k, l, skip_gamma, &lambda_x, &bus_point));
+
+    // Compute the RHS of the linear relation:
+    //      w_j^{(s)}(λ) = ∑_c w_j(c)·K_{rot^s}(c, λ)
+    let all_cols: Vec<&[Goldilocks]> = witness
+        .iter()
+        .flat_map(|stage| stage.iter().map(|c| c.as_slice()))
+        .chain(consts.iter().map(|c| c.as_slice()))
+        .chain(customs.iter().flat_map(|cols| cols.iter().map(|c| c.as_slice())))
+        .collect();
+
+    // Each (column, kernel) dot product streams sequentially; columns run in
+    // parallel.
+    let claims: Vec<Vec<Ext>> = crate::par::map_slice(&all_cols, |col| {
+        kernels
+            .iter()
+            .zip(kernel_tables.iter())
+            .map(|(spec, table)| match spec {
+                // Corner claims are plain trace reads; no need for the dot product.
+                KernelSpec::Point(row) => Ext::from_base(col[*row as usize]),
+                KernelSpec::Rot(_) | KernelSpec::BusRot(_) => dot_base_ext(col, table),
+            })
+            .collect()
+    });
+
+    // Send w_j^{(s)}(λ) claims
+    for row in &claims {
+        transcript.absorb_exts(row);
+    }
+
+    // --- Step 3.2: Reduce all claims to a single point evaluation
+    let delta = transcript.challenge();
+    let gamma = transcript.challenge();
+    let col_coeffs = powers(delta, all_cols.len());
+    let kernel_weights = powers(gamma, kernels.len());
+
+    // Batch the input columns
+    let phi_table = combine_columns(&all_cols, &col_coeffs);
+    let mut w_table = vec![Ext::ZERO; n_rows];
+    for (wt, table) in kernel_weights.iter().zip(kernel_tables.iter()) {
+        crate::par::zip_for_each_mut(&mut w_table, table, |o, v| *o += *wt * *v);
+    }
+
+    // Opening reduction: one plain sumcheck of `Σ_b Φ(b)·W(b) = σ` collapses
+    // every (column, kernel) claim to evaluations at its challenge point `u`;
+    // the sharing of challenges is what makes all claims land on one point.
+    let mut reduction = ProductOracle::new(phi_table.clone(), w_table);
+    let mut reduction_round_polys = Vec::with_capacity(m);
+    let mut u = Vec::with_capacity(m);
+    for _ in 0..m {
+        // Tweak 1: omit g(0); the verifier recovers it from g(0)+g(1) = claim.
+        let evals = reduction.round_evals();
+        let sent = evals[1..].to_vec();
+        transcript.absorb_exts(&sent);
+        reduction_round_polys.push(sent);
+        let ch = transcript.challenge();
+        reduction.bind(ch);
+        u.push(ch);
+    }
+    timer_stop_and_log_debug!(ML_PROVE_CLAIMS);
+
+    // --- The Opening Proof of `Φ̃(u)`.
+    timer_start_debug!(ML_PROVE_OPENING);
+    let mut matrices: Vec<&PcsCommitment> = stage_matrices.iter().collect();
+    matrices.extend(const_matrix);
+    matrices.extend(custom_matrices.iter());
+
+    let opening = Pcs::open(params, &mut transcript, phi_table, &u, &matrices);
+    timer_stop_and_log_debug!(ML_PROVE_OPENING);
+
+    Ok(MlProof {
+        airgroup_id,
+        air_id,
+        n_bits,
+        stage_roots: stage_matrices.iter().map(Pcs::commitment_root).collect(),
+        const_root: const_matrix.map(Pcs::commitment_root).unwrap_or([Goldilocks::ZERO; 4]),
+        custom_roots: custom_matrices.iter().map(Pcs::commitment_root).collect(),
+        zerocheck_round_polys,
+        bus: bus_proof,
+        claims,
+        reduction_round_polys,
+        opening,
+        publics: publics.to_vec(),
+        challenges: challenges.to_vec(),
+        air_values: air_values.to_vec(),
+        airgroup_values: airgroup_values.to_vec(),
+        proof_values: proof_values.to_vec(),
+        global_instance_id: 0,
+    })
+}
+
+/// Seed the transcript with the statement: AIR identity and public inputs.
+pub(crate) fn seed_transcript(
+    transcript: &mut MlTranscript,
+    airgroup_id: u32,
+    air_id: u32,
+    n_bits: u32,
+    publics: &[Goldilocks],
+) {
+    transcript.absorb(&[Goldilocks::from_u32(airgroup_id), Goldilocks::from_u32(air_id), Goldilocks::from_u32(n_bits)]);
+    transcript.absorb(publics);
+}
+
+/// The kernel's table over the hypercube `{0,1}^m` (prover side).
+/// `bus_point` is the LogUp-GKR input-reduction point `v` (empty without a bus).
+pub(crate) fn kernel_table(spec: &KernelSpec, l: usize, gamma: Ext, lambda_x: &[Ext], bus_point: &[Ext]) -> Vec<Ext> {
+    match spec {
+        KernelSpec::Rot(s) => {
+            let base = skip_kernel_table(l, gamma, lambda_x);
+            if *s == 0 {
+                base
+            } else {
+                rotate_table(&base, *s as i64)
+            }
+        }
+        KernelSpec::Point(row) => {
+            let mut t = vec![Ext::ZERO; 1 << (l + lambda_x.len())];
+            t[*row as usize] = Ext::ONE;
+            t
+        }
+        KernelSpec::BusRot(s) => {
+            let base = eq_evals(bus_point);
+            if *s == 0 {
+                base
+            } else {
+                rotate_table(&base, *s as i64)
+            }
+        }
+    }
+}
+
+/// Indices of the challenges the multilinear protocol actually derives:
+/// those of stages `2..=n_stages`. Later stages (quotient/evals/FRI batching)
+/// belong to the univariate protocol and stay zero.
+pub(crate) fn challenge_ids_for_stage(ir: &AirIr, stage: u8) -> impl Iterator<Item = usize> + '_ {
+    ir.challenge_stages.iter().enumerate().filter(move |&(_, &st)| st == stage).map(|(i, _)| i)
+}
+
+/// Absorb, in global order, the air-value then airgroup-value messages that are
+/// outputs of `stage` (`airvalue_stages[j] == stage`, resp. airgroup). Keeping
+/// them with their stage's root is what the multi-stage protocol requires: the
+/// stage-(i+1) challenge must bind stage-i's value messages.
+pub(crate) fn absorb_stage_values(
+    transcript: &mut MlTranscript,
+    ir: &AirIr,
+    air_values: &[Ext],
+    airgroup_values: &[Ext],
+    proof_values: &[Ext],
+    stage: u8,
+) {
+    for (j, &st) in ir.airvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&air_values[j]);
+        }
+    }
+    for (j, &st) in ir.airgroupvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&airgroup_values[j]);
+        }
+    }
+    for (j, &st) in ir.proofvalue_stages.iter().enumerate() {
+        if st == stage {
+            transcript.absorb_ext(&proof_values[j]);
+        }
+    }
+}
+
+pub(crate) fn powers(base: Ext, n: usize) -> Vec<Ext> {
+    let mut out = Vec::with_capacity(n);
+    let mut cur = Ext::ONE;
+    for _ in 0..n {
+        out.push(cur);
+        cur *= base;
+    }
+    out
+}

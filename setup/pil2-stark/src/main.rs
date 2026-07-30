@@ -131,6 +131,11 @@ struct StatsArgs {
     /// Show intermediate polynomial details per stage
     #[arg(short = 'm', long)]
     impols: bool,
+
+    /// Report the multilinear prover's view (committed columns, zerocheck,
+    /// LogUp-GKR bus, estimated proof size and prover memory)
+    #[arg(long)]
+    multilinear: bool,
 }
 
 #[derive(Parser)]
@@ -349,6 +354,7 @@ fn main() -> anyhow::Result<()> {
                 airgroups: args.airgroups,
                 airs: args.airs,
                 im_pols_stages: args.impols,
+                multilinear: args.multilinear,
             };
             // Expression trees in large AIRs (e.g. ZisK) can be thousands of levels deep,
             // which overflows the default 8 MB main-thread stack. Run on a thread with the

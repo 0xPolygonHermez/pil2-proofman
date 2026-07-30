@@ -590,38 +590,26 @@ pub fn gen_recursive_setup(
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let folding_factors = crate::output::stark_info::compute_folding_factors(&stark_struct);
             let ev_map_len = pil_info_result.pil_code.ev_map.len();
-            let field_size = crate::types::security::goldilocks_cube_field_size();
-            let fri_params = crate::types::security::FRISecurityParams {
-                field_size,
-                dimension: 1u64 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                n_opening_points: opening_points.len() as u64,
-                n_functions: ev_map_len.max(1) as u64,
-                folding_factors: folding_factors.clone(),
-                max_grinding_bits: stark_struct.pow_bits as u64,
-                use_max_grinding_bits: true,
-                tree_arity: stark_struct.merkle_tree_arity as u64,
-                target_security_bits: 128,
-            };
-            let mut fri_security = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params);
+            let mut fri = crate::output::stark_info::build_fri(&stark_struct, ev_map_len.max(1) as u64);
 
             // An explicit starkStruct override (config.stark_struct) may request MORE queries
             // than the security-optimal count — this is how the caller sizes a has-compressor
             // recursive1 up to the shared domain (more compressor queries → bigger recursive1
             // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
-            // strengthens. get_optimal_fri_query_params otherwise discards the override entirely.
+            // strengthens. Fri::new otherwise discards the override entirely.
             let override_q = stark_struct.n_queries as u64;
-            if config.stark_struct.is_some() && override_q > fri_security.n_queries {
+            if config.stark_struct.is_some() && override_q > fri.security_params().n_queries {
                 tracing::info!(
                     "Honoring nQueries override for {}: {} → {} (security floor {})",
                     template_str,
-                    fri_security.n_queries,
+                    fri.security_params().n_queries,
                     override_q,
-                    fri_security.n_queries
+                    fri.security_params().n_queries
                 );
-                fri_security.n_queries = override_q;
+                let mut sec_params = fri.security_params().clone();
+                sec_params.n_queries = override_q;
+                fri = crate::types::security::pcs::Fri::with_security_params(fri.config().clone(), sec_params);
             }
 
             let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
@@ -629,7 +617,7 @@ pub fn gen_recursive_setup(
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri_security,
+                &fri,
                 config.airgroup_id,
                 config.air_id,
                 &airgroup_pil_name,

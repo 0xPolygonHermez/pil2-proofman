@@ -14,7 +14,7 @@ use rayon::prelude::*;
 /// values. The caller gates this on the `print` flag of `calculate_internal_contributions`
 /// (driven by the `DEBUG_CHALLENGES` switch in proofman.rs), so this function itself is an
 /// unconditional dump. Runs on CPU and GPU (roots/values are host-side by this point).
-fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[crate::RootSlot<F>]) {
     let fmt = |v: &[F]| v.iter().map(|x| x.as_canonical_u64().to_string()).collect::<Vec<_>>().join(", ");
 
     tracing::info!("··· Publics: [{}]", fmt(&pctx.get_publics()));
@@ -22,7 +22,7 @@ fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[
 
     let my_instances = pctx.dctx_get_process_instances();
     for instance_id in my_instances.iter() {
-        let root_contribution = roots_contributions[*instance_id];
+        let root_contribution = roots_contributions[*instance_id].read();
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id).unwrap();
         tracing::info!(
             "··· Instance {} [{}:{}]: Root contribution: [{}, {}, {}, {}]",
@@ -39,7 +39,7 @@ fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[
 
 pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
-    roots_contributions: &[[F; 4]],
+    roots_contributions: &[crate::RootSlot<F>],
     values_contributions: &[Mutex<Vec<F>>],
     print: bool,
 ) -> Vec<u64>
@@ -61,7 +61,7 @@ where
     let mut values = vec![vec![F::ZERO; contributions_size]; my_instances.len()];
 
     values.par_iter_mut().zip(my_instances.par_iter()).for_each(|(values_row, instance_id)| {
-        let root_contribution = roots_contributions[*instance_id];
+        let root_contribution = roots_contributions[*instance_id].read();
 
         let mut values_to_hash =
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();

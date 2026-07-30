@@ -7,6 +7,7 @@ use commands::gen_exps::GenExpsCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
+use commands::prove_multilinear::ProveMultilinearCmd;
 use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::debug_info::DebugInfoCmd;
@@ -36,6 +37,7 @@ pub enum Commands {
     CheckSetupSnark(CheckSetupSnarkCmd),
     Soundness(SoundnessCmd),
     Prove(ProveCmd),
+    ProveMultilinear(ProveMultilinearCmd),
     ProveSnark(ProveSnarkCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
@@ -68,6 +70,7 @@ fn main() {
             Commands::CheckSetupSnark(args) => args.run(),
             Commands::Soundness(args) => args.run(),
             Commands::Prove(args) => args.run(),
+            Commands::ProveMultilinear(args) => args.run(),
             Commands::ProveSnark(args) => args.run(),
             Commands::PilHelpers(args) => args.run(),
             Commands::VerifyConstraints(args) => args.run(),

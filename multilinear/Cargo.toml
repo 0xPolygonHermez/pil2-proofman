@@ -1,0 +1,34 @@
+[package]
+name = "proofman-multilinear"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+fields = { workspace = true, features = ["verify"] }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror.workspace = true
+log = { workspace = true }
+tracing = { workspace = true }
+rayon = { workspace = true, optional = true }
+proofman-starks-lib-c = { workspace = true }
+proofman-util = { workspace = true }
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon"]
+# Exposes the hand-built synthetic AIRs (`test_air`) outside `#[cfg(test)]`.
+testutil = []
+
+[dev-dependencies]
+rand = { workspace = true }
+env_logger = { workspace = true }
+
+[[bench]]
+name = "prove"
+harness = false
+required-features = ["testutil"]

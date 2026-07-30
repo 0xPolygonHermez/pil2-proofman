@@ -28,6 +28,12 @@ impl<F: PrimeField64> TranscriptDyn<F> {
             TranscriptDyn::Poseidon2(t) => t.get_field(value),
         }
     }
+    pub fn get_permutations(&mut self, n: u64, n_bits: u64) -> Vec<u64> {
+        match self {
+            TranscriptDyn::Poseidon1(t) => t.get_permutations(n, n_bits),
+            TranscriptDyn::Poseidon2(t) => t.get_permutations(n, n_bits),
+        }
+    }
 }
 
 pub fn new_transcript<F: PrimeField64>(hash_id: &str) -> TranscriptDyn<F> {

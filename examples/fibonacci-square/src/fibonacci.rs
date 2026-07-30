@@ -44,8 +44,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
-            tracing::debug!("··· Starting witness computation stage {}", 1);
-
             let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
 
             let module = F::as_canonical_u64(&publics.module);

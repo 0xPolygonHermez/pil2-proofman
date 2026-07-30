@@ -32,7 +32,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
         if stage == 1 {
-            tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
             let module = F::as_canonical_u64(&publics.module);
             let mut a = F::as_canonical_u64(&publics.in1);

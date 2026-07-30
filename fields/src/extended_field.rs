@@ -1,10 +1,10 @@
 use crate::Field;
-use core::array;
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CubicExtensionField<F: Display> {
     pub value: [F; 3],
 }
@@ -33,32 +33,31 @@ impl<F: Display> Display for CubicExtensionField<F> {
 }
 
 impl<F: Field> CubicExtensionField<F> {
-    pub fn zero() -> Self {
-        Self { value: field_to_array(F::ZERO) }
-    }
-    pub fn one() -> Self {
-        Self { value: field_to_array(F::ONE) }
-    }
-    pub fn two() -> Self {
-        Self { value: field_to_array(F::TWO) }
-    }
-    pub fn neg_one() -> Self {
-        Self { value: field_to_array(F::NEG_ONE) }
-    }
+    pub const ZERO: Self = Self { value: [F::ZERO, F::ZERO, F::ZERO] };
+
+    pub const ONE: Self = Self { value: [F::ONE, F::ZERO, F::ZERO] };
+
+    pub const TWO: Self = Self { value: [F::TWO, F::ZERO, F::ZERO] };
+
+    pub const NEG_ONE: Self = Self { value: [F::NEG_ONE, F::ZERO, F::ZERO] };
 
     pub fn is_zero(&self) -> bool {
         self.value.iter().all(|&x| x.is_zero())
     }
 
+    pub fn double(&self) -> Self {
+        *self + *self
+    }
+
     #[inline(always)]
     pub fn square(&self) -> Self {
-        Self { value: cubic_square(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_square(&self.value) }
     }
 
     #[inline]
     pub fn pow(&self, mut exp: u64) -> Self {
         // result = 1
-        let mut result = Self::one();
+        let mut result = Self::ONE;
         // temp = self
         let mut base = *self;
         // while there are bits left in exp
@@ -76,7 +75,15 @@ impl<F: Field> CubicExtensionField<F> {
     }
 
     pub fn inverse(&self) -> Self {
-        Self { value: cubic_inv(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_inv(&self.value) }
+    }
+
+    pub fn from_base(x: F) -> Self {
+        Self { value: [x, F::ZERO, F::ZERO] }
+    }
+
+    pub fn from_base_batch(arr: &[F]) -> Vec<Self> {
+        arr.iter().map(|&x| Self::from_base(x)).collect()
     }
 
     pub fn from_array(arr: &[F]) -> Self {
@@ -136,7 +143,7 @@ impl<F: Field> AddAssign<F> for CubicExtensionField<F> {
 
 impl<F: Field> Sum for CubicExtensionField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let zero = Self { value: field_to_array(F::ZERO) };
+        let zero = Self::ZERO;
         iter.fold(zero, |acc, x| acc + x)
     }
 }
@@ -184,9 +191,7 @@ impl<F: Field> Mul for CubicExtensionField<F> {
 
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        let a = self.value;
-        let b = rhs.value;
-        Self { value: cubic_mul(&a, &b).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&self.value, &rhs.value) }
     }
 }
 
@@ -201,7 +206,7 @@ impl<F: Field> Mul<F> for CubicExtensionField<F> {
 
 impl<F: Field> Product for CubicExtensionField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let one = Self { value: field_to_array(F::ONE) };
+        let one = Self::ONE;
         iter.fold(one, |acc, x| acc * x)
     }
 }
@@ -233,9 +238,8 @@ impl<F: Field> Div for CubicExtensionField<F> {
 
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: Self) -> Self::Output {
-        let a = self.value;
         let b_inv = cubic_inv(&rhs.value);
-        Self { value: cubic_mul(&a, &b_inv).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&self.value, &b_inv) }
     }
 }
 
@@ -243,14 +247,6 @@ impl<F: Field> DivAssign for CubicExtensionField<F> {
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
     }
-}
-
-/// Extend a field `F` element `x` to an array of length 3
-/// by filling zeros.
-pub fn field_to_array<F: Field>(x: F) -> [F; 3] {
-    let mut arr = array::from_fn(|_| F::ZERO);
-    arr[0] = x;
-    arr
 }
 
 #[inline]
@@ -264,9 +260,22 @@ fn cubic_square<F: Field>(a: &[F]) -> [F; 3] {
 
 #[inline]
 fn cubic_mul<F: Field>(a: &[F], b: &[F]) -> [F; 3] {
-    let c0 = a[0] * b[0] + a[2] * b[1] + a[1] * b[2];
-    let c1 = a[1] * b[0] + a[0] * b[1] + a[2] * b[1] + a[1] * b[2] + a[2] * b[2];
-    let c2 = a[2] * b[0] + a[1] * b[1] + a[0] * b[2] + a[2] * b[2];
+    // Karatsuba (3-way): 6 base multiplies instead of the schoolbook 9, then
+    // reduce with u³ = u + 1 (d3·u³ → d3 + d3·u, d4·u⁴ → d4·u + d4·u²).
+    let m0 = a[0] * b[0];
+    let m1 = a[1] * b[1];
+    let m2 = a[2] * b[2];
+    let m01 = (a[0] + a[1]) * (b[0] + b[1]);
+    let m02 = (a[0] + a[2]) * (b[0] + b[2]);
+    let m12 = (a[1] + a[2]) * (b[1] + b[2]);
+
+    let d1 = m01 - m0 - m1;
+    let d2 = m02 - m0 - m2 + m1;
+    let d3 = m12 - m1 - m2;
+
+    let c0 = m0 + d3;
+    let c1 = d1 + d3 + m2;
+    let c2 = d2 + m2;
 
     [c0, c1, c2]
 }
@@ -289,10 +298,11 @@ fn cubic_inv<F: Field>(a: &[F]) -> [F; 3] {
     let ccc = cc * a[2];
 
     let t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
+    let t_inv = t.inverse();
 
-    let i0 = (bc + bb - aa - ac - ac - cc) * t.inverse();
-    let i1 = (ba - cc) * t.inverse();
-    let i2 = (ac + cc - bb) * t.inverse();
+    let i0 = (bc + bb - aa - ac - ac - cc) * t_inv;
+    let i1 = (ba - cc) * t_inv;
+    let i2 = (ac + cc - bb) * t_inv;
 
     [i0, i1, i2]
 }

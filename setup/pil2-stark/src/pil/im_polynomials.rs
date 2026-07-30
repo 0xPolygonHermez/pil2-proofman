@@ -208,7 +208,10 @@ fn calculate_im_pols(
 
     match result_pols {
         Some(pols) => {
-            let final_deg = rd.max(abs_max_d) - 1;
+            // Zero-constraint AIRs (e.g. GKR-mode bus-only AIRs) have a
+            // degree-0 dummy constraint polynomial; clamp so q_deg never goes
+            // negative (it is cast to usize downstream).
+            let final_deg = (rd.max(abs_max_d) - 1).max(0);
             (pols.into_iter().collect(), final_deg)
         }
         None => (Vec::new(), rd.max(abs_max_d).max(1) - 1),

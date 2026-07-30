@@ -14,6 +14,7 @@ members = [
   "common",
   "fields",
   "hints",
+  "multilinear",
   "pilout",
   "proofman",
   "macros",
@@ -55,6 +56,7 @@ default-members = [
   "common",
   "fields",
   "hints",
+  "multilinear",
   "pilout",
   "proofman",
   "macros",
@@ -85,6 +87,7 @@ pil-std-lib = { path = "pil2-components/lib/std/rs" }
 witness = { path = "witness" }
 pilout = { path = "pilout" }
 fields = { path = "fields" }
+proofman-multilinear = { path = "multilinear" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.11.1"

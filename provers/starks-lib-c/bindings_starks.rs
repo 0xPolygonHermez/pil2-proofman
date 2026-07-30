@@ -11,6 +11,32 @@ extern "C" {
         out_root: *mut u64,
     ) -> ::std::os::raw::c_int;
 
+    pub fn poseidon2_merkletree_gl(
+        tree: *mut ::std::os::raw::c_void,
+        input: *mut ::std::os::raw::c_void,
+        num_cols: u64,
+        num_rows: u64,
+        arity: u64,
+        dim: u64,
+    );
+
+    pub fn poseidon1_merkletree_gl(
+        tree: *mut ::std::os::raw::c_void,
+        input: *mut ::std::os::raw::c_void,
+        num_cols: u64,
+        num_rows: u64,
+        arity: u64,
+        dim: u64,
+    );
+
+    pub fn ntt_coset_lde_gl(
+        output: *mut ::std::os::raw::c_void,
+        input: *mut ::std::os::raw::c_void,
+        num_cols: u64,
+        num_rows: u64,
+        num_rows_ext: u64,
+    );
+
     pub fn fflonk_setup_c(
         r1cs_file: *const ::std::os::raw::c_char,
         ptau_file: *const ::std::os::raw::c_char,

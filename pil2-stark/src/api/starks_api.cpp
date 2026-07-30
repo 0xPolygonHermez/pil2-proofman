@@ -1182,6 +1182,50 @@ int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey
     }
 }
 
+void poseidon2_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim)
+{
+    // Width 16 == arity(4) * capacity(4); the multilinear prover always uses arity 4.
+    Poseidon2Goldilocks<16>::merkletree(
+        (Goldilocks::Element *)tree,
+        (Goldilocks::Element *)input,
+        num_cols, num_rows, arity,
+        Poseidon2Mode::Auto, 0, dim);
+}
+
+void poseidon1_merkletree_gl(void *tree, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t dim)
+{
+    // Poseidon1 counterpart of poseidon2_merkletree_gl (width 16 == arity 4 * capacity 4).
+    PoseidonGoldilocks<16>::merkletree(
+        (Goldilocks::Element *)tree,
+        (Goldilocks::Element *)input,
+        num_cols, num_rows, arity,
+        PoseidonMode::Auto, 0, dim);
+}
+
+void ntt_coset_lde_gl(void *output, void *input, uint64_t num_cols, uint64_t num_rows, uint64_t num_rows_ext)
+{
+    if (num_rows == 0 || num_cols == 0) return;
+    Goldilocks::Element *out = (Goldilocks::Element *)output; // num_rows_ext * num_cols
+    Goldilocks::Element *in  = (Goldilocks::Element *)input;  // num_rows     * num_cols
+
+    // Coset-scale row j by SHIFT^j and zero-pad up to num_rows_ext, matching
+    // `fields::coset_lde` (which scales the coefficients then runs a plain NTT
+    // over the extended domain — no INTT, since the input is already coeffs).
+    std::vector<Goldilocks::Element> buf(num_rows_ext * num_cols, Goldilocks::zero());
+    Goldilocks::Element sp = Goldilocks::one();
+    for (uint64_t j = 0; j < num_rows; j++)
+    {
+        for (uint64_t c = 0; c < num_cols; c++)
+        {
+            Goldilocks::mul(buf[j * num_cols + c], in[j * num_cols + c], sp);
+        }
+        Goldilocks::mul(sp, sp, Goldilocks::shift());
+    }
+
+    NTT_Goldilocks ntt(num_rows_ext);
+    ntt.NTT(out, buf.data(), num_rows_ext, num_cols);
+}
+
 int plonk_circuit_stats_c(const char *r1cs_file, uint64_t *n_constraints, uint64_t *n_additions)
 {
     try {

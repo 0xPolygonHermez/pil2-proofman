@@ -8,6 +8,8 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
+pil2-stark-setup = { path = "../setup/pil2-stark" }
+proofman-multilinear = { workspace = true }
 proofman-common = { workspace = true }
 proofman-hints = { workspace = true }
 pil-std-lib = { workspace = true }
