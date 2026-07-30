@@ -278,9 +278,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
+void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use)
 {
-    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate);
+    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate, single_use);
 
     return starkInfo;
 }

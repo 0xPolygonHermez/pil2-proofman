@@ -1398,11 +1398,27 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / (Next * sizeof(gl64_t)));
     if (chunk > nCols) chunk = (uint32_t)nCols;
 
-    // The batched flow stages each column's iNTT result (in the destination tail)
-    // through scratch for the spread. The serial flow needs it only to preserve src.
+    // src may alias dst (constPolsAliasTree). Both flows then write columns high-to-low so a
+    // column's output never lands on a source not yet read. 
+    const bool overlaps = d_src_ < d_dst_ + (size_t)nCols * Next && d_dst_ < d_src_ + (size_t)nCols * N;
+    if (overlaps && d_src_ != d_dst_) {
+        printf("[NTT] ERROR: ldeColMajor overlapping src/dst require equal bases (src-dst = %lld elements)\n",
+               (long long)(d_src_ - d_dst_));
+        abort();
+    }
+    // An aliased src lives inside dst: the spread necessarily destroys it, so preserve_src cannot
+    // be honored (callers pass preserve_src=false for aliased airs -- see extendAndMerkelizeFixed).
+    if (overlaps && preserve_src) {
+        printf("[NTT] ERROR: ldeColMajor cannot preserve a src that aliases dst\n");
+        abort();
+    }
+
+    // The batched flow stages each column's iNTT result (in the destination tail) through scratch
+    // for the spread. The serial flow needs it to preserve src, and for an aliased column that
+    // would otherwise overwrite its own input.
     gl64_t *scratch = preserve_scratch;
     bool own_scratch = false;
-    if (scratch == nullptr && (preserve_src || chunk >= 2)) {
+    if (scratch == nullptr && (preserve_src || overlaps || chunk >= 2)) {
         CHECKCUDAERR(cudaMallocAsync(&scratch, N * sizeof(gl64_t), stream));
         own_scratch = true;
     }
@@ -1412,14 +1428,27 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
 
     if (chunk >= 2) {
         // batched: copy chunk cols to the destination-column tails -> batched DIF-iNTT
-        // -> per-column spread (tail -> scratch -> dest column) -> batched DIT-NTT
-        for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        // -> per-column spread (tail -> scratch -> dest column) -> batched DIT-NTT.
+        // Chunks descend so a chunk's writes stay above the sources still to be read. Only the
+        // tail copy touches src, so the transforms stay batched under aliasing.
+        uint32_t nChunks = (uint32_t)((nCols + chunk - 1) / chunk);
+        for (uint32_t k = nChunks; k-- > 0; ) {
+            uint32_t c0 = k * chunk;
             uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
             gl64_t *dchunk = d_dst_ + (size_t)c0 * Next;
 
             uint32_t cblk = (uint32_t)std::min<size_t>((N + 255) / 256, 4096);
-            nttCopyToDestinationTailsKernel<<<dim3(cblk, nc), 256, 0, stream>>>(dchunk, d_src_ + (size_t)c0 * N,
-                                                                   (uint32_t)nBits, Next);
+            if (overlaps) {
+                // Per column, descending: one gridDim.y launch copies all columns at once, and at
+                // blowup 2 the tail of column c IS source column 2c+1 -- a race with itself.
+                for (uint32_t c = nc; c-- > 0; ) {
+                    nttCopyToDestinationTailsKernel<<<dim3(cblk, 1), 256, 0, stream>>>(
+                        dchunk + (size_t)c * Next, d_src_ + (size_t)(c0 + c) * N, (uint32_t)nBits, Next);
+                }
+            } else {
+                nttCopyToDestinationTailsKernel<<<dim3(cblk, nc), 256, 0, stream>>>(dchunk, d_src_ + (size_t)c0 * N,
+                                                                       (uint32_t)nBits, Next);
+            }
             CHECKCUDAERR(cudaGetLastError());
 
             NttRun{dchunk + (Next - N), Next, nc, (int)nBits, true, ti, stream, false}.run();
@@ -1437,12 +1466,17 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         }
     } else {
         // serial per column: iNTT on scratch (or in place on src when the caller
-        // allows trashing it) -> spread -> DIT-NTT on the destination column
-        for (uint32_t c = 0; c < nCols; c++) {
+        // allows trashing it) -> spread -> DIT-NTT on the destination column.
+        // High-to-low so an aliased src stays intact; irrelevant when disjoint.
+        for (uint32_t c = nCols; c-- > 0; ) {
             gl64_t *srcCol = d_src_ + (size_t)c * N;
             gl64_t *dstCol = d_dst_ + (size_t)c * Next;
-            gl64_t *inttCol = srcCol;            
-            if (preserve_src) {
+            gl64_t *inttCol = srcCol;
+            // Also stage when a column's output covers its own input: the spread reads in[idx]
+            // while another thread writes out[idx*blowup], the same address. Ordering cannot fix
+            // that, but it only hits where srcCol meets dstCol; the rest run in place.
+            bool self_overlap = srcCol < dstCol + Next && dstCol < srcCol + N;
+            if (preserve_src || self_overlap) {
                 CHECKCUDAERR(cudaMemcpyAsync(scratch, srcCol, N * sizeof(gl64_t),
                                              cudaMemcpyDeviceToDevice, stream));
                 inttCol = scratch;

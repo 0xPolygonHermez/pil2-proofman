@@ -177,6 +177,15 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
+    /// Airs whose const *tree* is kept GPU-resident, for both their Basic and Recursive1
+    /// circuits: `const_tree_size` VRAM each, against a per-proof load from disk. Airgroup
+    /// 0's Recursive2 is always preloaded and must not be listed.
+    pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
+    /// Tables: airs proved at most once, so their const pols need not survive the proof and
+    /// the layout can alias them onto the const tree's node area, saving `N * nConstants` per
+    /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
+    /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
+    pub table_airs_gpu: Vec<(usize, usize)>,
 }
 
 impl Default for ProofmanOptions {
@@ -193,6 +202,8 @@ impl Default for ProofmanOptions {
             aggregation: true,
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
+            preloaded_const_tree_gpu: Vec::new(),
+            table_airs_gpu: Vec::new(),
         }
     }
 }
@@ -242,6 +253,14 @@ impl ProofmanOptions {
 
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
+    }
+
+    pub fn preloaded_const_tree_gpu(&mut self, preloaded_const_tree_gpu: Vec<(usize, usize)>) {
+        self.preloaded_const_tree_gpu = preloaded_const_tree_gpu;
+    }
+
+    pub fn table_airs_gpu(&mut self, table_airs_gpu: Vec<(usize, usize)>) {
+        self.table_airs_gpu = table_airs_gpu;
     }
 }
 

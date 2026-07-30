@@ -97,7 +97,7 @@ impl ProveRecursiveCmd {
         // under recursive1/, so loading as Basic looked for a nonexistent air/<Air>.so.
         // (Compressor with has_compressor unset still yields an empty setup, but a recursive
         // proof file never names that case here.)
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], self.gpu)?;
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], &[], self.gpu)?;
 
         // Initialize the GPU (set_gpu_mode_c + init_gpu_setup_c). Without this the CUDA
         // context is not selected and check_device_memory_c (used by set_device_buffers)
@@ -225,6 +225,8 @@ impl ProveRecursiveCmd {
             tree_path,
             setup.const_tree_size as u64,
             proof_type_str,
+            false,
+            // Single AIR, single slot: nothing to share with.
             false,
         );
 

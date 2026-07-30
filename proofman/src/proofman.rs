@@ -4,7 +4,8 @@ use fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeFi
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
-    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES,
+    PreLoadedConstTree,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -685,7 +686,7 @@ where
 
         let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
 
         ensure_gpu_available(gpu)?;
         if gpu {
@@ -1703,6 +1704,7 @@ where
             &ProofType::RecurserAggregator,
             false,
             false,
+            false,
             self.options.gpu,
             Some(&vadcop_final_stem),
         )?;
@@ -1784,6 +1786,8 @@ where
             "",
             setup.const_tree_size as u64,
             proof_type,
+            false,
+            // Recursers swap through a single reserved slot; each one really is uploaded.
             false,
         );
         Ok(())
@@ -4539,16 +4543,48 @@ where
 
         let mut preloaded_const = Vec::new();
         if pctx.gpu {
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Basic));
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive1));
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive2));
+            // Airgroup 0's Recursive2 is the one unconditional preload: every aggregation
+            // path proves it. The rest depend on the air mix, so the caller chooses.
+            preloaded_const.push(PreLoadedConstTree::new(0, 0, ProofType::Recursive2));
+            for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
+                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Basic));
+                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Recursive1));
+            }
         }
+
+        // Both lists name airs by index, so a typo would otherwise be silently ignored.
+        for (option, airs) in [
+            ("preloaded_const_tree_gpu", &options.preloaded_const_tree_gpu),
+            ("table_airs_gpu", &options.table_airs_gpu),
+        ] {
+            for &(airgroup_id, air_id) in airs {
+                if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
+                    return Err(ProofmanError::InvalidConfiguration(format!(
+                        "{option} names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
+                    )));
+                }
+            }
+        }
+
+        // A preallocated tree lives in the const buffer, so there is no in-aux-trace node
+        // area to alias the const pols onto.
+        for air in &options.table_airs_gpu {
+            if options.preloaded_const_tree_gpu.contains(air) {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "air ({}, {}) is in both table_airs_gpu and preloaded_const_tree_gpu",
+                    air.0, air.1
+                )));
+            }
+        }
+
+        let table_airs: &[(usize, usize)] = if options.gpu { &options.table_airs_gpu } else { &[] };
 
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
             &pctx.global_info,
             &ProofType::Basic,
             options.verify_constraints,
             &preloaded_const,
+            table_airs,
             options.gpu,
         )?);
 
