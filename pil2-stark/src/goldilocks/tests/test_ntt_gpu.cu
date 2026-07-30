@@ -474,6 +474,73 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     CHECKCUDAERR(cudaFree(d_dst_tiled));
 }
 
+// Aliased LDE (the constPolsAliasTree layout): the small-domain source columns are packed at
+// the BASE of the destination buffer (src col c at base + c*N, dst col c at base + c*Next,
+// equal bases) and extended in place. ldeColMajor's two flows carry independent aliasing
+// logic (descending whole-slot ordering in the batched flow, column-0 staging in the serial
+// flow), and WHICH flow runs depends on the GPU's L2 size -- so both shapes below must be
+// pinned or a regression could surface on some machines only.
+static void checkLdeAliased(NTTGoldilocksGPU &gpu_ntt, cudaStream_t stream,
+                            uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols)
+{
+    const uint64_t nRows     = 1ULL << n_bits;
+    const uint64_t nRows_ext = 1ULL << n_bits_ext;
+
+    // Row-major input for the CPU reference; packed ColMajor copy for the GPU.
+    std::vector<Goldilocks::Element> h_input_rm(nRows * nCols);
+    for (uint64_t i = 0; i < nRows * nCols; i++)
+        h_input_rm[i] = Goldilocks::fromU64((i * 0x9E3779B97F4A7C15ULL + 3) & 0xffffffffffffULL);
+
+    std::vector<Goldilocks::Element> h_cpu(nRows_ext * nCols);
+    NTT_Goldilocks cpu_ntt(nRows_ext);
+    cpu_ntt.LDE(h_cpu.data(), h_input_rm.data(), nRows_ext, nRows, nCols);
+
+    // One buffer only: sources packed at its base, extension in place over them.
+    std::vector<uint64_t> h_packed(nRows * nCols);
+    for (uint64_t r = 0; r < nRows; r++)
+        for (uint64_t c = 0; c < nCols; c++)
+            h_packed[c * nRows + r] = Goldilocks::toU64(h_input_rm[r * nCols + c]);
+
+    gl64_t *d_buf;
+    CHECKCUDAERR(cudaMalloc((void**)&d_buf, nRows_ext * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemsetAsync(d_buf, 0xCD, nRows_ext * nCols * sizeof(gl64_t), stream));
+    CHECKCUDAERR(cudaMemcpyAsync(d_buf, h_packed.data(), nRows * nCols * sizeof(gl64_t),
+                                 cudaMemcpyHostToDevice, stream));
+
+    // preserve_src must be false: the aliased source is destroyed by design.
+    gpu_ntt.ldeColMajor(d_buf, d_buf, n_bits, n_bits_ext, nCols, stream, false, nullptr);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    std::vector<uint64_t> h_out(nRows_ext * nCols);
+    CHECKCUDAERR(cudaMemcpy(h_out.data(), d_buf, nRows_ext * nCols * sizeof(gl64_t),
+                            cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_buf));
+
+    for (uint64_t r = 0; r < nRows_ext; r++)
+        for (uint64_t c = 0; c < nCols; c++)
+            ASSERT_EQ(h_out[c * nRows_ext + r], Goldilocks::toU64(h_cpu[r * nCols + c]))
+                << "aliased LDE != CPU at nBits=" << n_bits << " nCols=" << nCols
+                << " (" << r << "," << c << ")";
+}
+
+TEST(GOLDILOCKS_TEST, ntt_gpu_lde_aliased_src_dst)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int*)&gpu_id);
+    NTTGoldilocksGPU gpu_ntt(23, 1, &gpu_id);
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    // Batched flow: NExt columns of 2^15 fit many times in any L2 >= ~1 MB (chunk >= 2).
+    checkLdeAliased(gpu_ntt, stream, 14, 15, 8);
+    if (::testing::Test::HasFatalFailure()) { cudaStreamDestroy(stream); NTTGoldilocksGPU::freeConstants(); return; }
+    // Serial flow: one 2^23-row column is 64 MB -- no GPU L2 holds two (chunk == 1).
+    checkLdeAliased(gpu_ntt, stream, 22, 23, 2);
+
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
+}
+
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_backends_equivalent)
 {
     // Same per-nBits grid as the LDE_COMPARE benchmark, so equivalence is checked at every point that
