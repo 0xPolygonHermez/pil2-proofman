@@ -18,8 +18,7 @@ use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
     alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
-    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
-    get_const_pols_aggregation_offset_c,
+    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
