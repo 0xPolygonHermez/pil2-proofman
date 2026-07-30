@@ -1176,7 +1176,7 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
     
     gl64_t *d_const_tree = d_aux_trace + offsetConstTree;
-    extendAndMerkelizeFixed(*setupCtx, d_const_pols_unpacked, (Goldilocks::Element *)d_const_tree, timer, stream);
+    extendAndMerkelizeFixed(*setupCtx, d_const_pols_unpacked, (Goldilocks::Element *)d_const_tree, true, timer, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     // Both regions now hold this slot's data, so any air in the group can skip both.
     sd.constTreeResident = true;

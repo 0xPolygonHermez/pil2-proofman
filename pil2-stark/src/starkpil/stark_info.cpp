@@ -473,18 +473,16 @@ void StarkInfo::setMapOffsets() {
             calculateFixedExtended = true;
         }
 
-        // With calculateFixedExtended the merkelize is the last reader of the const pols, so
-        // a single-use air can hold them in the node area of the tree they produce. A
-        // const-heavy air fails the size test and keeps its own region.
-        constPolsAliasTree = singleUse && calculateFixedExtended && (N * nConstants <= numNodes);
+        // extendAndMerkelizeFixed is the last reader of the unpacked const pols (quotient, evals
+        // and FRI use the extended tree), and a single-use air never reuses them across proofs, so
+        // they can live in the region they extend into and cost nothing.
+        constPolsAliasTree = singleUse && calculateFixedExtended;
     }
 
     if (gpu) {
         if (constPolsAliasTree) {
-            // Safe: the LDE writes only the first nConstants*NExtended of the tree region,
-            // and buildMerkleTreeGPU overwrites the nodes afterwards on the same stream.
             mapOffsets[std::make_pair("const", false)] =
-                mapOffsets[std::make_pair("const", true)] + NExtended * nConstants;
+                mapOffsets[std::make_pair("const", true)];
         } else {
             mapOffsets[std::make_pair("const", false)] = mapTotalN;
             mapTotalN += N * nConstants;

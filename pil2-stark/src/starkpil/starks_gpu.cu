@@ -274,7 +274,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     }
 }
 
-void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, TimerGPU &timer, cudaStream_t stream) {
+// preserve_src: must the unpacked const pols survive? Yes whenever a later proof of the same air
+// can reuse them instead of re-unpacking -- so for everything except an aliased air.
+void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t nCols = setupCtx.starkInfo.nConstants;
     NTTGoldilocksGPU ntt;
@@ -282,12 +284,10 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // Const sections are stored fixedLayout() (ColMajor). preserve_src=true: the small-domain const
-    // pols are reread by every expression as const operands, so the LDE must not run its iNTT in place
-    // on them (scratch=nullptr -> the engine stages through an internal cudaMallocAsync buffer).
-    // Merkle build reads dst in the same layout the LDE wrote.
+    // Const sections are stored fixedLayout() (ColMajor); the Merkle build reads dst in that
+    // layout. pNodes is free scratch: above the LDE's writes, filled by the merkelize below.
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, true, nullptr);
+    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);

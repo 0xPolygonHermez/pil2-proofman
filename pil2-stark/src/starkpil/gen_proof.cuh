@@ -270,7 +270,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
         TimerStartGPU(timer, FIXED_POLS_TREE);
-        extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
+        extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress,
+                                !setupCtx.starkInfo.constPolsAliasTree, timer, stream);
         TimerStopGPU(timer, FIXED_POLS_TREE);
     }
 
