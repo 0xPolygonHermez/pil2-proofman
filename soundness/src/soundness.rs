@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 #[derive(Tabled)]
 pub struct AirTableRow {
     pub name: String,
+    pub protocol_family: String,
     pub trace_length: u64,
     pub rho: f64,
     pub air_max_degree: u64,
@@ -41,7 +42,6 @@ pub struct SoundnessToml {
 #[derive(Serialize)]
 pub struct ZkevmConfig {
     pub name: String,
-    pub protocol_family: String,
     pub version: String,
     pub field: String,
     pub hash_size_bits: u32,
@@ -78,6 +78,7 @@ pub struct BusInfo {
 #[derive(Serialize)]
 pub struct TomlCircuit {
     pub name: String,
+    pub protocol_family: String,
     pub group: String,
     #[serde(flatten)]
     pub air: AirInfoSoundness,
@@ -106,9 +107,11 @@ pub struct AirInfoSoundness {
 }
 
 impl AirTableRow {
-    fn from_air_info(name: &str, air: &AirInfoSoundness) -> Self {
+    fn from_circuit(circuit: &TomlCircuit) -> Self {
+        let air = &circuit.air;
         AirTableRow {
-            name: name.to_string(),
+            name: circuit.name.clone(),
+            protocol_family: circuit.protocol_family.clone(),
             trace_length: air.trace_length,
             rho: air.rho,
             air_max_degree: air.air_max_degree,
@@ -131,12 +134,8 @@ impl AirTableRow {
 
 pub fn print_soundness_table(soundness: &SoundnessToml) {
     println!("=== Basics ===");
-    let basics_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "basic")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
+    let basics_rows: Vec<AirTableRow> =
+        soundness.circuits.iter().filter(|circuit| circuit.group == "basic").map(AirTableRow::from_circuit).collect();
     let basics_table = Table::new(basics_rows);
     println!("{}", basics_table);
 
@@ -144,7 +143,7 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
         .circuits
         .iter()
         .filter(|circuit| circuit.group == "compression")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+        .map(AirTableRow::from_circuit)
         .collect();
     if !compressor_rows.is_empty() {
         println!("=== Compressor ===");
@@ -155,19 +154,15 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
         .circuits
         .iter()
         .filter(|circuit| circuit.group == "aggregation")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+        .map(AirTableRow::from_circuit)
         .collect();
     if !aggregation_rows.is_empty() {
         println!("=== Aggregation ===");
         println!("{}", Table::new(aggregation_rows));
     }
 
-    let final_rows: Vec<AirTableRow> = soundness
-        .circuits
-        .iter()
-        .filter(|circuit| circuit.group == "final")
-        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
-        .collect();
+    let final_rows: Vec<AirTableRow> =
+        soundness.circuits.iter().filter(|circuit| circuit.group == "final").map(AirTableRow::from_circuit).collect();
     if !final_rows.is_empty() {
         println!("=== Final Circuit ===");
         println!("{}", Table::new(final_rows));
@@ -337,6 +332,7 @@ pub fn soundness_info<F: PrimeField64>(
             let lookup_info = get_bus_air_info(&pctx, setup)?;
             circuits.push(TomlCircuit {
                 name: air_name,
+                protocol_family: "FRI_STARK".to_string(),
                 group: "basic".to_string(),
                 air: air_info,
                 lookups: lookup_info,
@@ -354,6 +350,7 @@ pub fn soundness_info<F: PrimeField64>(
                     let lookup_info = get_bus_air_info(&pctx, setup)?;
                     circuits.push(TomlCircuit {
                         name: format!("{}-compressor", air_name),
+                        protocol_family: "FRI_STARK".to_string(),
                         group: "compression".to_string(),
                         air: air_info,
                         lookups: lookup_info,
@@ -371,6 +368,7 @@ pub fn soundness_info<F: PrimeField64>(
                 let lookup_info = get_bus_air_info(&pctx, setup)?;
                 circuits.push(TomlCircuit {
                     name: format!("Recursive2 - Airgroup_{}", airgroup),
+                    protocol_family: "FRI_STARK".to_string(),
                     group: "aggregation".to_string(),
                     air: air_info,
                     lookups: lookup_info,
@@ -382,6 +380,7 @@ pub fn soundness_info<F: PrimeField64>(
             let lookup_info = get_bus_air_info(&pctx, setup)?;
             circuits.push(TomlCircuit {
                 name: "Recursive2".to_string(),
+                protocol_family: "FRI_STARK".to_string(),
                 group: "aggregation".to_string(),
                 air: air_info,
                 lookups: lookup_info,
@@ -393,6 +392,7 @@ pub fn soundness_info<F: PrimeField64>(
         let lookup_info = get_bus_air_info(&pctx, setup_final_circuit)?;
         circuits.push(TomlCircuit {
             name: "Final".to_string(),
+            protocol_family: "FRI_STARK".to_string(),
             group: "final".to_string(),
             air: final_air_info,
             lookups: lookup_info,
@@ -403,6 +403,7 @@ pub fn soundness_info<F: PrimeField64>(
         let lookup_info_c = get_bus_air_info(&pctx, setup_final_compressed_circuit)?;
         circuits.push(TomlCircuit {
             name: "Final_Compressed".to_string(),
+            protocol_family: "FRI_STARK".to_string(),
             group: "final_compressed".to_string(),
             air: final_compressed_air_info,
             lookups: lookup_info_c,
@@ -413,7 +414,6 @@ pub fn soundness_info<F: PrimeField64>(
         zkevm: ZkevmConfig {
             name: "ZisK".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol_family: "FRI_STARK".to_string(),
             field: "Goldilocks^3".to_string(),
             hash_size_bits: 256,
         },
