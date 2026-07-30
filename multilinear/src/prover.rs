@@ -1,6 +1,6 @@
 //! The multilinear STARK prover.
 
-use fields::{Goldilocks, PrimeField64};
+use fields::{Field, Goldilocks, PrimeField64};
 use serde::{Deserialize, Serialize};
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
@@ -199,15 +199,21 @@ pub fn prove_air(
     // Fixed columns are known at setup time; reuse the prebuilt commitment
     // (loaded from the proving key) when supplied, otherwise build it here.
     let owned_const_matrix;
-    let const_matrix: &PcsCommitment = match const_matrix {
-        Some(m) => m,
-        None => {
-            let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
-            owned_const_matrix = Pcs::commit(&const_refs, params);
-            &owned_const_matrix
-        }
+    let const_matrix: Option<&PcsCommitment> = if ir.n_const_cols == 0 {
+        None
+    } else {
+        Some(match const_matrix {
+            Some(m) => m,
+            None => {
+                let const_refs: Vec<&[Goldilocks]> = consts.iter().map(|c| c.as_slice()).collect();
+                owned_const_matrix = Pcs::commit(&const_refs, params);
+                &owned_const_matrix
+            }
+        })
     };
-    transcript.absorb_root(&Pcs::commitment_root(const_matrix));
+    if let Some(m) = const_matrix {
+        transcript.absorb_root(&Pcs::commitment_root(m));
+    }
 
     // Custom (fixed) columns are setup-time constants; reuse precomputed
     // commitments when supplied (once per AIR), otherwise build them here.
@@ -239,10 +245,12 @@ pub fn prove_air(
     // Stage commitments.
     let mut stage_matrices: Vec<PcsCommitment> = Vec::with_capacity(witness.len());
     for (stage_idx, stage_cols) in witness.iter().enumerate() {
-        let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
-        let matrix = Pcs::commit(&refs, params);
-        transcript.absorb_root(&Pcs::commitment_root(&matrix));
-        stage_matrices.push(matrix);
+        if !stage_cols.is_empty() {
+            let refs: Vec<&[Goldilocks]> = stage_cols.iter().map(|c| c.as_slice()).collect();
+            let matrix = Pcs::commit(&refs, params);
+            transcript.absorb_root(&Pcs::commitment_root(&matrix));
+            stage_matrices.push(matrix);
+        }
 
         let stage = (stage_idx + 1) as u8;
         absorb_stage_values(&mut transcript, ir, air_values, airgroup_values, proof_values, stage);
@@ -397,7 +405,7 @@ pub fn prove_air(
     // --- The Opening Proof of `Φ̃(u)`.
     timer_start_debug!(ML_PROVE_OPENING);
     let mut matrices: Vec<&PcsCommitment> = stage_matrices.iter().collect();
-    matrices.push(const_matrix);
+    matrices.extend(const_matrix);
     matrices.extend(custom_matrices.iter());
 
     let opening = Pcs::open(params, &mut transcript, phi_table, &u, &matrices);
@@ -408,7 +416,7 @@ pub fn prove_air(
         air_id,
         n_bits,
         stage_roots: stage_matrices.iter().map(Pcs::commitment_root).collect(),
-        const_root: Pcs::commitment_root(const_matrix),
+        const_root: const_matrix.map(Pcs::commitment_root).unwrap_or([Goldilocks::ZERO; 4]),
         custom_roots: custom_matrices.iter().map(Pcs::commitment_root).collect(),
         zerocheck_round_polys,
         bus: bus_proof,

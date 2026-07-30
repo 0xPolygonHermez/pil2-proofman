@@ -258,7 +258,8 @@ struct MlProveJob {
     /// Witness columns per stage, extracted from the (already freed) trace.
     witness: Vec<Vec<Vec<Goldilocks>>>,
     consts: Arc<Vec<Vec<Goldilocks>>>,
-    const_matrix: Arc<proofman_multilinear::PcsCommitment>,
+    /// `None` when the AIR has no fixed columns.
+    const_matrix: Option<Arc<proofman_multilinear::PcsCommitment>>,
     custom_data: Arc<crate::multilinear::CustomData>,
     air_challenges: Vec<Ext>,
     air_values: Vec<Ext>,
@@ -5090,7 +5091,7 @@ where
             &ir,
             &witness,
             &consts,
-            Some(&const_matrix),
+            const_matrix.as_deref(),
             &custom_data.columns,
             Some(&custom_data.commitments),
             publics,
@@ -5501,7 +5502,7 @@ where
             air_instance_id,
             airgroup_id,
             air_id,
-            const_matrix: ml_cache.const_matrix(setup, &ir)?,
+            const_matrix: if ir.n_const_cols == 0 { None } else { Some(ml_cache.const_matrix(setup, &ir)?) },
             ir,
             witness,
             consts,
@@ -5637,6 +5638,14 @@ where
                 offset + n_rows * n_cols
             )));
         }
-        Ok(trace_to_columns(&aux[offset..offset + n_rows * n_cols], n_rows, n_cols))
+        let cols = trace_to_columns(&aux[offset..offset + n_rows * n_cols], n_rows, n_cols);
+        for (c, col) in cols.iter().enumerate() {
+            let nz = col.iter().filter(|v| v.as_canonical_u64() != 0).count();
+            tracing::debug!(
+                "ML_EXTRACT instance {instance_id} {section} col {c}: {nz}/{n_rows} nonzero, first: {:?}",
+                &col[..4.min(col.len())]
+            );
+        }
+        Ok(cols)
     }
 }

@@ -50,12 +50,18 @@ pub fn verify_air(
     if publics.len() != ir.n_publics as usize {
         return Err(MlError::Malformed(format!("expected {} public inputs", ir.n_publics)));
     }
-    if proof.stage_roots.len() != ir.n_stages() {
-        return Err(MlError::Malformed(format!("expected {} stage roots", ir.n_stages())));
+
+    let n_committed_stages = ir.cols_per_stage.iter().filter(|&&c| c > 0).count();
+    if proof.stage_roots.len() != n_committed_stages {
+        return Err(MlError::Malformed(format!("expected {n_committed_stages} stage roots")));
     }
-    if let Some(expected) = expected_const_root {
-        if proof.const_root != *expected {
-            return Err(MlError::Malformed("const-column commitment does not match the verifying key".into()));
+
+    let has_const_commitment = ir.n_const_cols > 0;
+    if has_const_commitment {
+        if let Some(expected) = expected_const_root {
+            if proof.const_root != *expected {
+                return Err(MlError::Malformed("const-column commitment does not match the verifying key".into()));
+            }
         }
     }
     if proof.custom_roots.len() != ir.custom_commits.len() {
@@ -100,13 +106,19 @@ pub fn verify_air(
     // --- Transcript replay: statement, commitments.
     let mut transcript = MlTranscript::new(params.hash);
     seed_transcript(&mut transcript, ir.airgroup_id, ir.air_id, ir.n_bits, publics);
-    transcript.absorb_root(&proof.const_root);
+    if has_const_commitment {
+        transcript.absorb_root(&proof.const_root);
+    }
     for root in &proof.custom_roots {
         transcript.absorb_root(root);
     }
 
-    for (stage_idx, root) in proof.stage_roots.iter().enumerate() {
-        transcript.absorb_root(root);
+    let mut stage_roots_iter = proof.stage_roots.iter();
+    for stage_idx in 0..ir.n_stages() {
+        if ir.cols_per_stage[stage_idx] > 0 {
+            let root = stage_roots_iter.next().expect("stage root count checked above");
+            transcript.absorb_root(root);
+        }
         let stage = (stage_idx + 1) as u8;
         crate::prover::absorb_stage_values(
             &mut transcript,
@@ -314,11 +326,15 @@ pub fn verify_air(
     let phi_at_u = red_claim * w_at_u.inverse();
 
     // --- Batched Basefold opening of `Φ̃(u)`.
+    // Column-less stages and const-less AIRs have no commitment: the roots
+    // and column-count vectors carry only the committed matrices.
     let mut roots: Vec<[Goldilocks; 4]> = proof.stage_roots.clone();
-    roots.push(proof.const_root);
+    let mut stage_n_cols: Vec<usize> = ir.cols_per_stage.iter().filter(|&&c| c > 0).map(|&c| c as usize).collect();
+    if has_const_commitment {
+        roots.push(proof.const_root);
+        stage_n_cols.push(ir.n_const_cols as usize);
+    }
     roots.extend(proof.custom_roots.iter().copied());
-    let mut stage_n_cols: Vec<usize> = ir.cols_per_stage.iter().map(|&c| c as usize).collect();
-    stage_n_cols.push(ir.n_const_cols as usize);
     stage_n_cols.extend(ir.custom_commits.iter().map(|c| c.n_cols as usize));
 
     Pcs::verify(params, &mut transcript, n, phi_at_u, &proof.opening, &roots, &stage_n_cols, &col_coeffs, &u)?;
