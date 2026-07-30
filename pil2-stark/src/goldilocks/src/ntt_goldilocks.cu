@@ -1399,11 +1399,19 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     if (chunk > nCols) chunk = (uint32_t)nCols;
 
     // src may alias dst (constPolsAliasTree). Both flows then write columns high-to-low so a
-    // column's output never lands on a source not yet read. That holds while column c's writes,
-    // which start at c*Next, stay above the sources left below them at (d_src_-d_dst_) + c*N --
-    // i.e. while the two bases are within Next-N of each other. constPolsAliasTree makes them equal.
+    // column's output never lands on a source not yet read. 
     const bool overlaps = d_src_ < d_dst_ + (size_t)nCols * Next && d_dst_ < d_src_ + (size_t)nCols * N;
-    assert(!overlaps || (size_t)(d_src_ - d_dst_) <= Next - N);
+    if (overlaps && d_src_ != d_dst_) {
+        printf("[NTT] ERROR: ldeColMajor overlapping src/dst require equal bases (src-dst = %lld elements)\n",
+               (long long)(d_src_ - d_dst_));
+        abort();
+    }
+    // An aliased src lives inside dst: the spread necessarily destroys it, so preserve_src cannot
+    // be honored (callers pass preserve_src=false for aliased airs -- see extendAndMerkelizeFixed).
+    if (overlaps && preserve_src) {
+        printf("[NTT] ERROR: ldeColMajor cannot preserve a src that aliases dst\n");
+        abort();
+    }
 
     // The batched flow stages each column's iNTT result (in the destination tail) through scratch
     // for the spread. The serial flow needs it to preserve src, and for an aliased column that
