@@ -1086,7 +1086,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     /// The buffer's tail holds the once-uploaded fixed pols of every aggregation
     /// setup (compressor/recursive1/recursive2/vadcop_final). If the borrower's
     /// usage reached that region they are now garbage, so this raises
-    /// `reload_fixed_pols_gpu`; the prove flow consumes it right after
+    /// `reload_fixed_pols_gpu`; the proving flow consumes it right after
     /// `wcm.execute()` and re-uploads them before any proof of the block.
     /// Call after the borrower finished writing, before or at buffer release.
     /// No-op on CPU.
