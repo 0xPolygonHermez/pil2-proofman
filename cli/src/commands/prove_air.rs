@@ -2,14 +2,14 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, init_gpu_setup, initialize_logger, ProofmanOptions, SetupCtx, SetupsVadcop, MpiCtx, ProofCtx,
-    ProofmanError, ProofType,
+    calculate_fixed_tree, init_gpu_setup, initialize_logger, GetWitnessTraceFunc, ProofmanOptions, SetupCtx,
+    SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;
 use proofman_starks_lib_c::{
-    add_publics_aggregation_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
-    load_device_const_pols_c, load_device_setup_c, read_exec_file_c,
+    add_publics_aggregation_c, gen_recursive_proof_c, get_stream_id_proof_c, load_device_const_pols_c,
+    load_device_setup_c, read_exec_file_c,
 };
 use libloading::{Library, Symbol};
 use std::fs::File;
@@ -24,9 +24,7 @@ use std::str::FromStr;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 // Circom witness-library entry points (mirror examples/test-recursive/src/recursive.rs).
-type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+// `GetWitnessTraceFunc` is shared with proofman_common so the FFI signature has one owner.
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 /// Proves ONE air on its own: the transcript is seeded from its verkey + publics, so the proof
@@ -243,19 +241,27 @@ impl ProveAirCmd {
             init_circom_circuit(dat_filename_ptr)
         };
 
-        let size_witness = unsafe {
-            let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-            get_size_witness()
-        };
-
-        // Total circom witness size = circuit witness + the n_adds from the exec header.
-        let witness_size = (size_witness + exec_file_data[0]) as usize;
-        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
+        // getWitnessTrace scatters straight into the trace + publics; no witness buffer.
+        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+        let n_publics = setup.stark_info.n_publics;
+        let mut trace: Vec<Goldilocks> = vec![Goldilocks::ZERO; (n_cols * n) as usize];
+        let mut publics: Vec<Goldilocks> = vec![Goldilocks::ZERO; n_publics as usize];
 
         timer_start_info!(WITNESS_GENERATION);
         let res = unsafe {
-            let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-            get_witness(zkin.as_mut_ptr(), circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
+            let get_witness_trace: Symbol<GetWitnessTraceFunc> = library.get(b"getWitnessTrace\0")?;
+            get_witness_trace(
+                zkin.as_mut_ptr(),
+                circom_circuit_ptr,
+                exec_file_data.as_mut_ptr(),
+                trace.as_mut_ptr() as *mut c_void,
+                publics.as_mut_ptr() as *mut c_void,
+                n,
+                n_publics,
+                n_cols,
+                1,
+                std::ptr::null_mut(), // no signalValues pool for a one-shot CLI run
+            )
         };
         timer_stop_and_log_info!(WITNESS_GENERATION);
 
@@ -309,21 +315,6 @@ impl ProveAirCmd {
         );
 
         // Non-final proofs only: the vadcop tail goes through a different entry point.
-        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-
-        let mut trace: Vec<Goldilocks> = vec![Goldilocks::ZERO; (n_cols * n) as usize];
-        let mut publics: Vec<Goldilocks> = vec![Goldilocks::ZERO; setup.stark_info.n_publics as usize];
-
-        get_committed_pols_c(
-            witness.as_ptr() as *mut u8,
-            exec_file_data.as_mut_ptr(),
-            trace.as_mut_ptr() as *mut u8,
-            publics.as_mut_ptr() as *mut u8,
-            size_witness,
-            n,
-            setup.stark_info.n_publics,
-            n_cols,
-        );
 
         // Layout: aggregation publics in [0..publics_aggregation), then the proof itself.
         let publics_aggregation = n_publics_aggregation(&pctx, airgroup_id);

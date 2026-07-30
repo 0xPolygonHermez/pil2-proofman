@@ -23,14 +23,20 @@ u64 fnv1a(std::string s) {
   return hash;
 }
 
-Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh) {
+Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh, u64* signalValuesBuf) {
     circuit = aCircuit;
     inputSignalAssignedCounter = get_main_input_signal_no();
 
     inputSignalAssigned = new bool[inputSignalAssignedCounter];
     memset(inputSignalAssigned, 0, inputSignalAssignedCounter * sizeof(bool));
 
-    signalValues = new u64[get_total_signal_no()];
+    if (signalValuesBuf != nullptr) {
+        signalValues = signalValuesBuf;
+        ownsSignalValues = false;
+    } else {
+        signalValues = new u64[get_total_signal_no()];
+        ownsSignalValues = true;
+    }
     signalValues[0] = 1;
 
     componentMemory = new Circom_Component[get_number_of_components()];
@@ -83,7 +89,7 @@ Circom_CalcWit::~Circom_CalcWit() {
   }
   
   delete[] inputSignalAssigned;
-  delete[] signalValues;
+  if (ownsSignalValues) delete[] signalValues;
   delete[] componentMemory;
 }
 
@@ -152,8 +158,6 @@ std::string Circom_CalcWit::getTrace(u64 id_cmp){
 
     return Circom_CalcWit::getTrace(id_father) + "." + my_name;
   }
-
-
 }
 
 std::string Circom_CalcWit::generate_position_array(uint* dimensions, uint size_dimensions, uint index){

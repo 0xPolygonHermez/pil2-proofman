@@ -25,6 +25,7 @@ class Circom_CalcWit {
 public:
 
   u64* signalValues;
+  bool ownsSignalValues = true;
   Circom_Component* componentMemory;
   // u64* circuitConstants; 
   std::map<u32,IOFieldDefPair> templateInsId2IOSignalInfo; 
@@ -41,7 +42,7 @@ public:
   std::atomic<bool> errorOccurred{false};
 
   // Functions called by the circuit
-  Circom_CalcWit(Circom_Circuit *aCircuit, uint numTh = NMUTEXES);
+  Circom_CalcWit(Circom_Circuit *aCircuit, uint numTh = NMUTEXES, u64* signalValuesBuf = nullptr);
   ~Circom_CalcWit();
 
   // Public functions
