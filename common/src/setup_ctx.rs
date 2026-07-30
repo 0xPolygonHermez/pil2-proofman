@@ -50,8 +50,6 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
-    pub max_witness_size: usize,
-    pub max_witness_size_compressor: usize,
     pub max_trace_size: usize,
     pub max_trace_size_compressor: usize,
     pub max_const_size: usize,
@@ -191,19 +189,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
-            let max_witness_size = sctx_recursive1
-                .max_witness_size
-                .max(sctx_recursive2.max_witness_size)
-                .max(setup_vadcop_final.get_circom_witness_size())
-                .max(setup_vadcop_final_compressed.get_circom_witness_size());
-
             let max_trace_size = sctx_recursive1
                 .max_trace_size
                 .max(sctx_recursive2.max_trace_size)
                 .max(vadcop_final_trace_size as usize)
                 .max(vadcop_final_compressed_trace_size as usize);
 
-            let max_witness_size_compressor = sctx_compressor.max_witness_size;
             let max_trace_size_compressor = sctx_compressor.max_trace_size;
 
             Ok(SetupsVadcop {
@@ -220,9 +211,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
-                max_witness_size,
                 max_trace_size,
-                max_witness_size_compressor,
                 max_trace_size_compressor,
                 total_const_pols_size,
                 total_const_tree_size,
@@ -246,12 +235,37 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
-                max_witness_size: 0,
                 max_trace_size: 0,
-                max_witness_size_compressor: 0,
                 max_trace_size_compressor: 0,
             })
         }
+    }
+
+    /// Sizing for the pooled signalValues buffers (in u64 elements). Returns
+    /// `(large_cap, small_cap)`: `large_cap` is the biggest `total_signal_no`
+    /// across all recursive/compressor/final setups (e.g. Keccakf compressor),
+    /// `small_cap` the largest of the rest. A single large buffer fits any circuit;
+    /// the smalls serve the many lighter recursive proofs. `(0, 0)` if no setup
+    /// exposes a `total_signal_no` (pool then stays off).
+    pub fn signal_pool_sizes(&self) -> (usize, usize) {
+        let mut sizes: Vec<usize> = Vec::new();
+        for sctx in [self.sctx_compressor.as_ref(), self.sctx_recursive1.as_ref(), self.sctx_recursive2.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            sizes.extend(sctx.total_signal_nos());
+        }
+        for setup in
+            [self.setup_vadcop_final.as_ref(), self.setup_vadcop_final_compressed.as_ref()].into_iter().flatten()
+        {
+            if let Some(n) = setup.total_signal_no {
+                sizes.push(n as usize);
+            }
+        }
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        let large = sizes.first().copied().unwrap_or(0);
+        let small = sizes.get(1).copied().unwrap_or(large);
+        (large, small)
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> ProofmanResult<&Setup<F>> {
@@ -275,7 +289,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_contributions_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
-    max_witness_size: usize,
     max_trace_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
@@ -328,7 +341,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
-        let mut max_witness_size = 0;
         let mut max_trace_size = 0;
 
         // Airs in the order load_device_const_pols walks them, and the slot each verkey maps
@@ -389,7 +401,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                     max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
-                    max_witness_size = max_witness_size.max(setup.get_circom_witness_size());
                     max_trace_size = max_trace_size.max(trace_size as usize);
                 }
                 setups.insert((airgroup_id, air_id), setup);
@@ -448,7 +459,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
             total_const_tree_size,
-            max_witness_size,
             max_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
         })
@@ -465,7 +475,6 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
-    pub max_witness_size: usize,
     pub max_trace_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
@@ -492,7 +501,6 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
-        let max_witness_size = setup_repository.max_witness_size;
         let max_trace_size = setup_repository.max_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
         Ok(SetupCtx {
@@ -501,7 +509,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_const_size,
             max_prover_contributions_size,
             max_prover_buffer_size,
-            max_witness_size,
             max_trace_size,
             max_prover_trace_size,
             max_pinned_proof_size,
@@ -543,6 +550,12 @@ impl<F: PrimeField64> SetupCtx<F> {
 
     pub fn get_setups_list(&self) -> Vec<(usize, usize)> {
         self.setup_repository.setups.keys().cloned().collect()
+    }
+
+    /// `total_signal_no` (circom signalValues length, u64 elements) for every setup
+    /// in this repository. Used to size the signalValues buffer pool.
+    pub fn total_signal_nos(&self) -> Vec<usize> {
+        self.setup_repository.setups.values().filter_map(|s| s.total_signal_no.map(|n| n as usize)).collect()
     }
 
     pub fn get_global_bin(&self) -> *mut c_void {

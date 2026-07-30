@@ -1963,10 +1963,12 @@ where
         // witness — only > 1 when --packed enables parallel witness generation.
         let max_witness_stored = if options.packed { n_gpus as usize * options.max_witness_stored } else { 1 };
 
-        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs.
-        // Recursive work is lighter than basic, so the pool is provisioned smaller:
-        // half the basic depth per GPU for regular recursive, one slot per GPU for
-        // compressor. CPU keeps a small fixed pipeline (2/1).
+        // Recursive pool: trace buffers for in-flight recursive proofs. With solve+scatter
+        // fused, one buffer covers a proof's whole witness→prove span (no separate witness
+        // pool), so queued and proving work share this depth — see `generate_witness`.
+        // Recursive work is lighter than basic, so the pool is provisioned smaller: half the
+        // basic depth per GPU for regular recursive, one slot per GPU for compressor. CPU
+        // keeps a small fixed pipeline (2/1).
         let (max_witness_stored_recursive, max_witness_stored_recursive_compressor) = if options.gpu {
             let n_gpus = n_gpus as usize;
             (((n_gpus * options.max_witness_stored) / 2).max(1), n_gpus * 2)
@@ -1988,13 +1990,34 @@ where
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
-        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
+        // signalValues pool: one buffer sized to the largest circuit (depth-1 ⇒ at
+        // most one heavy witness, e.g. Keccakf, allocates at once) plus `n_small`
+        // buffers for the lighter recursive proofs. At most `n_streams` recursive
+        // witnesses run concurrently (one per worker) and the large buffer covers
+        // one, so `n_small = n_streams - 1`. Reuse needs no zeroing (write-before-read).
+        let signal_pool = {
+            let (large_cap, small_cap) = setups_vadcop.signal_pool_sizes();
+            if large_cap == 0 {
+                None
+            } else {
+                let n_small = n_streams.saturating_sub(1).max(1);
+                Some((large_cap, small_cap, n_small))
+            }
+        };
+        // Circom solve threads per recursive witness. With `n_streams` concurrent
+        // witnesses each spawning up to `nmutex` internal threads, size nmutex ≈
+        // cores/n_streams so total threads stay near the core count (the old
+        // hardcoded 8 oversubscribed: 5 streams × 8 = 40 on 24 cores). Capped at 8
+        // (circom subcomponent fan-out limit; beyond it adds no parallelism).
+        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
+        let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(1, 8);
+        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
-            setups_vadcop.max_witness_size,
-            setups_vadcop.max_witness_size_compressor,
             setups_vadcop.max_trace_size,
             setups_vadcop.max_trace_size_compressor,
+            signal_pool,
+            recursive_witness_threads,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -2020,8 +2043,6 @@ where
                 Arc::new(vec![F::ZERO; sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size)]),
             )
         };
-
-        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,

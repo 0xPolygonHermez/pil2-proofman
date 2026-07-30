@@ -2,9 +2,9 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crossbeam_queue::SegQueue;
+use std::time::Duration;
 use crate::ProofCtx;
 use fields::PrimeField64;
 use crate::{ProofmanError, ProofmanResult};
@@ -388,10 +388,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for MemoryHandler<F>
 }
 
 pub struct MemoryHandlerRecursive<F: PrimeField64 + Send + Sync + 'static> {
-    witness: Pool<F>,
-    witness_compressor: Pool<F>,
     trace: Pool<F>,
     trace_compressor: Pool<F>,
+    signal_values: Option<SignalValuesPool>,
+    witness_threads: usize,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -399,28 +399,46 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     pub fn new(
         n_buffers: usize,
         n_buffers_compressor: usize,
-        buffer_size_witness: usize,
-        buffer_size_witness_compressor: usize,
         buffer_size_trace: usize,
         buffer_size_trace_compressor: usize,
     ) -> Self {
+        Self::new_with_signal_pool(
+            n_buffers,
+            n_buffers_compressor,
+            buffer_size_trace,
+            buffer_size_trace_compressor,
+            None,
+            8,
+        )
+    }
+
+    pub fn new_with_signal_pool(
+        n_buffers: usize,
+        n_buffers_compressor: usize,
+        buffer_size_trace: usize,
+        buffer_size_trace_compressor: usize,
+        signal_pool: Option<(usize, usize, usize)>,
+        witness_threads: usize,
+    ) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let witness = Pool::new(n_buffers, buffer_size_witness, false, cancelled.clone());
-        let witness_compressor =
-            Pool::new(n_buffers_compressor, buffer_size_witness_compressor, false, cancelled.clone());
+        // Trace pools are H2D sources so they are pinned; signalValues is CPU-only scratch.
         let trace = Pool::new(n_buffers, buffer_size_trace, true, cancelled.clone());
         let trace_compressor = Pool::new(n_buffers_compressor, buffer_size_trace_compressor, true, cancelled.clone());
 
-        let total = witness.total_bytes()
-            + witness_compressor.total_bytes()
-            + trace.total_bytes()
-            + trace_compressor.total_bytes();
+        let total = trace.total_bytes() + trace_compressor.total_bytes();
         tracing::info!(
             "MemoryHandlerRecursive::Total memory for recursive traces: {}",
             crate::format_bytes(total as f64)
         );
 
-        Self { witness, witness_compressor, trace, trace_compressor, cancelled }
+        let signal_values = signal_pool.map(|(large_cap, small_cap, n_small)| {
+            SignalValuesPool::new(large_cap, small_cap, n_small, cancelled.clone())
+        });
+
+        let witness_threads = witness_threads.max(1);
+        tracing::info!("MemoryHandlerRecursive::circom solve threads per recursive witness: {}", witness_threads);
+
+        Self { trace, trace_compressor, signal_values, witness_threads, cancelled }
     }
 
     /// Unblock any thread parked in a pooled `take()`. Called on the abort path so
@@ -430,31 +448,33 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    pub fn witness_threads(&self) -> usize {
+        self.witness_threads
+    }
+
+    pub fn take_buffer_signal_values(&self, needed: usize) -> Vec<u64> {
+        match &self.signal_values {
+            Some(pool) => pool.take(needed),
+            None => Vec::new(),
+        }
+    }
+    pub fn release_buffer_signal_values(&self, buffer: Vec<u64>) {
+        if let Some(pool) = &self.signal_values {
+            if !buffer.is_empty() {
+                pool.release(buffer);
+            }
+        }
+    }
+
     pub fn reset(&self) -> ProofmanResult<()> {
-        self.witness.reset()?;
-        self.witness_compressor.reset()?;
         self.trace.reset()?;
         self.trace_compressor.reset()?;
-        // Re-arm AFTER all four pool resets: the pools share this flag, and each
+        // Re-arm AFTER both pool resets: the pools share this flag, and each
         // Pool::reset relies on it (cancelled-aware early-out) — clearing earlier
         // would re-enable the integrity checks mid-teardown. Left set, the flag
         // turns take() into an unbounded fresh allocator on the next run.
         self.cancelled.store(false, Ordering::SeqCst);
         Ok(())
-    }
-
-    pub fn take_buffer_witness(&self) -> Vec<F> {
-        self.witness.take()
-    }
-    pub fn release_buffer_witness(&self, buffer: Vec<F>) -> ProofmanResult<()> {
-        self.witness.release(buffer)
-    }
-
-    pub fn take_buffer_witness_compressor(&self) -> Vec<F> {
-        self.witness_compressor.take()
-    }
-    pub fn release_buffer_witness_compressor(&self, buffer: Vec<F>) -> ProofmanResult<()> {
-        self.witness_compressor.release(buffer)
     }
 
     pub fn take_buffer_trace(&self) -> Vec<F> {
@@ -472,6 +492,143 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     }
 }
 
+/// Pool of reusable `signalValues` (u64) buffers handed into getWitnessTrace so
+/// Circom_CalcWit reuses them instead of allocating tens-to-hundreds of MB per
+/// proof. Buffers are NOT zeroed on reuse: the circom solve is write-before-read
+/// (only signalValues[0]=1, reset inside the ctor), validated end-to-end.
+///
+/// Two size classes over bounded channels (a bounded channel's depth caps
+/// concurrency; `recv` blocks when empty):
+///
+/// - `large`: one buffer sized to the biggest circuit (e.g. Keccakf compressor,
+///   ~835MB). Depth 1 ⇒ at most one big-circuit witness allocates at a time.
+/// - `small`: `n_small` buffers sized to the largest non-outlier circuit, for the
+///   many lighter recursive proofs.
+///
+/// A `large` buffer fits any circuit, so a small proof may borrow it when smalls
+/// are exhausted — but only if no big proof is queued for it (see `large_waiters`).
+///
+/// Every blocking wait is cancel-aware, like the trace `Pool`.
+pub struct SignalValuesPool {
+    large: Sender<Vec<u64>>,
+    large_rx: Receiver<Vec<u64>>,
+    small: Sender<Vec<u64>>,
+    small_rx: Receiver<Vec<u64>>,
+    large_cap: usize,
+    small_cap: usize,
+    /// Count of big proofs (needed > small_cap) currently blocked on the large
+    /// buffer. While > 0, small proofs won't steal it — big circuits get priority.
+    large_waiters: AtomicUsize,
+    /// Shared with the owning `MemoryHandlerRecursive` and its trace pools.
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SignalValuesPool {
+    /// `large_cap` / `small_cap` are in u64 elements (= get_total_signal_no()).
+    pub fn new(large_cap: usize, small_cap: usize, n_small: usize, cancelled: Arc<AtomicBool>) -> Self {
+        let (large, large_rx) = bounded(1);
+        large.send(vec![0u64; large_cap]).unwrap();
+        let (small, small_rx) = bounded(n_small.max(1));
+        for _ in 0..n_small.max(1) {
+            small.send(vec![0u64; small_cap]).unwrap();
+        }
+        let total = (large_cap + small_cap * n_small.max(1)) * 8;
+        tracing::info!(
+            "SignalValuesPool: 1 large ({}) + {} small ({} each) = {}",
+            crate::format_bytes((large_cap * 8) as f64),
+            n_small.max(1),
+            crate::format_bytes((small_cap * 8) as f64),
+            crate::format_bytes(total as f64),
+        );
+        Self { large, large_rx, small, small_rx, large_cap, small_cap, large_waiters: AtomicUsize::new(0), cancelled }
+    }
+
+    /// Blocking receive that yields to `cancelled`, mirroring `Pool::take`: on the abort
+    /// path it hands back a fresh buffer instead of parking on one nobody will return.
+    fn recv_cancellable(&self, rx: &Receiver<Vec<u64>>, cap: usize) -> Vec<u64> {
+        loop {
+            match rx.recv_timeout(Duration::from_micros(100)) {
+                Ok(buffer) => return buffer,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if self.cancelled.load(Ordering::SeqCst) {
+                        return vec![0u64; cap];
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    panic!("SignalValuesPool channel closed");
+                }
+            }
+        }
+    }
+
+    /// Take a buffer with capacity >= `needed`. Big proofs (needed > small_cap)
+    /// block on the large buffer with priority; small proofs prefer a small buffer
+    /// and only borrow the large one when no big proof is waiting for it.
+    pub fn take(&self, needed: usize) -> Vec<u64> {
+        if needed > self.large_cap {
+            // No pooled buffer fits — recursers are registered after the pool is sized.
+            // Handing out the large one would overflow it; empty ⇒ null ⇒ C++ self-allocates.
+            tracing::debug!(
+                "SignalValuesPool: request of {} elements exceeds the largest pooled buffer ({}); \
+                 falling back to a self-allocated signalValues buffer",
+                needed,
+                self.large_cap
+            );
+            return Vec::new();
+        }
+        let mut buffer = if needed > self.small_cap {
+            // Only the large buffer fits. Register as a waiter so small proofs yield
+            // it to us, then block until it's free.
+            self.large_waiters.fetch_add(1, Ordering::SeqCst);
+            let buf = self.recv_cancellable(&self.large_rx, self.large_cap);
+            self.large_waiters.fetch_sub(1, Ordering::SeqCst);
+            buf
+        } else if let Ok(buf) = self.small_rx.try_recv() {
+            buf
+        } else if self.large_waiters.load(Ordering::SeqCst) == 0 {
+            // Smalls exhausted, no big proof queued: borrow large non-blockingly;
+            // if it's busy too, wait for a small rather than block a big proof.
+            match self.large_rx.try_recv() {
+                Ok(buf) => buf,
+                Err(_) => self.recv_cancellable(&self.small_rx, self.small_cap),
+            }
+        } else {
+            // A big proof is queued for the large buffer — don't contend; wait for a small.
+            self.recv_cancellable(&self.small_rx, self.small_cap)
+        };
+        // The class a buffer sits in is not a hard guarantee of its length: on the abort
+        // path `take` mints fresh buffers, so `release` can find a channel full and file a
+        // short buffer under `large`. Never hand the C++ solve a buffer shorter than it
+        // will write; growing it here also re-files it into the right class on release.
+        if buffer.len() < needed {
+            buffer.resize(needed, 0);
+        }
+        buffer
+    }
+
+    /// Return a buffer, preferring the class its length belongs to. Never blocks: with
+    /// `large_cap == small_cap` every buffer looks "large" and the depth-1 large channel
+    /// fills, so a blocking send would deadlock — fall back to the other class, and drop
+    /// only if both are full (which means `take` minted extras on the abort path). A short
+    /// buffer can therefore end up under `large`; `take` re-grows it rather than trusting
+    /// the class.
+    pub fn release(&self, buffer: Vec<u64>) {
+        let (preferred, fallback) =
+            if buffer.len() >= self.large_cap { (&self.large, &self.small) } else { (&self.small, &self.large) };
+        match preferred.try_send(buffer) {
+            Ok(()) => {}
+            Err(crossbeam_channel::TrySendError::Full(buffer)) => {
+                // On the abort path `take` hands out fresh buffers, so live buffers can
+                // outnumber channel capacity; dropping the extra is correct there.
+                let _ = fallback.try_send(buffer);
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                panic!("SignalValuesPool channel closed");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,24 +641,18 @@ mod tests {
     type F = Goldilocks;
 
     fn handler(n: usize, n_comp: usize, size: usize, size_comp: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(n, n_comp, size, size_comp, size, size_comp)
+        MemoryHandlerRecursive::new(n, n_comp, size, size_comp)
     }
 
     #[test]
     fn clean_round_trip_then_reset_succeeds() {
         let h = handler(2, 1, 8, 4);
         // Take every buffer out of each pool, then release them all back.
-        let w0 = h.take_buffer_witness();
-        let w1 = h.take_buffer_witness();
         let t0 = h.take_buffer_trace();
         let t1 = h.take_buffer_trace();
-        let wc = h.take_buffer_witness_compressor();
         let tc = h.take_buffer_trace_compressor();
-        h.release_buffer_witness(w0).unwrap();
-        h.release_buffer_witness(w1).unwrap();
         h.release_buffer_trace(t0).unwrap();
         h.release_buffer_trace(t1).unwrap();
-        h.release_buffer_witness_compressor(wc).unwrap();
         h.release_buffer_trace_compressor(tc).unwrap();
         // This is the gap-2 invariant: a clean round trip leaves full pools, so the
         // reset wired into ProofMan::reset() passes.
@@ -517,16 +668,16 @@ mod tests {
         // early `?` return on a non-cancelled path). reset() must surface the short
         // pool rather than paper over it — this is exactly what the gap-2 reset wired
         // into ProofMan::reset() now catches.
-        let _leaked = h.take_buffer_witness();
+        let _leaked = h.take_buffer_trace();
         assert!(h.reset().is_err());
     }
 
     #[test]
     fn release_rejects_wrong_size_buffer() {
         let h = handler(1, 0, 8, 0);
-        let _good = h.take_buffer_witness();
+        let _good = h.take_buffer_trace();
         // Release a buffer of the wrong length; the size check rejects it.
-        assert!(h.release_buffer_witness(vec![F::ZERO; 7]).is_err());
+        assert!(h.release_buffer_trace(vec![F::ZERO; 7]).is_err());
     }
 
     #[test]
@@ -534,10 +685,80 @@ mod tests {
         let h = handler(1, 0, 8, 0);
         // Empty the pool, then cancel. A subsequent take must return a fresh buffer
         // instead of blocking forever, and reset must not flag the (now short) pool.
-        let _taken = h.take_buffer_witness();
+        let _taken = h.take_buffer_trace();
         h.cancel();
-        let fresh = h.take_buffer_witness(); // would hang pre-cancel on an empty pool
+        let fresh = h.take_buffer_trace(); // would hang pre-cancel on an empty pool
         assert_eq!(fresh.len(), 8);
         h.reset().unwrap(); // cancelled path skips integrity checks
+    }
+
+    // ---- signalValues pool ----
+
+    fn signal_handler(large: usize, small: usize, n_small: usize) -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new_with_signal_pool(1, 0, 8, 0, Some((large, small, n_small)), 4)
+    }
+
+    #[test]
+    fn signal_pool_sizes_buffers_by_class() {
+        let h = signal_handler(64, 16, 2);
+        // A request that fits a small gets a small; one that doesn't gets the large.
+        let s = h.take_buffer_signal_values(16);
+        assert!(s.len() >= 16);
+        let l = h.take_buffer_signal_values(17);
+        assert!(l.len() >= 17);
+        h.release_buffer_signal_values(s);
+        h.release_buffer_signal_values(l);
+        // Round-trip is repeatable: the large buffer went back to the large class.
+        let l2 = h.take_buffer_signal_values(64);
+        assert_eq!(l2.len(), 64);
+        h.release_buffer_signal_values(l2);
+    }
+
+    #[test]
+    fn signal_pool_request_larger_than_pool_yields_empty_buffer() {
+        let h = signal_handler(64, 16, 2);
+        // Bigger than any pooled buffer (a late-registered recurser): must not be handed
+        // the too-short large one. Empty => null => C++ self-allocates.
+        assert!(h.take_buffer_signal_values(65).is_empty());
+        assert_eq!(h.take_buffer_signal_values(64).len(), 64);
+    }
+
+    #[test]
+    fn signal_pool_absent_yields_empty_buffer() {
+        // No pool configured => empty Vec (the null sentinel); releasing it is a no-op.
+        let h = handler(1, 0, 8, 0);
+        let buf = h.take_buffer_signal_values(1024);
+        assert!(buf.is_empty());
+        h.release_buffer_signal_values(buf);
+    }
+
+    #[test]
+    fn signal_pool_take_never_returns_a_short_buffer_after_an_abort() {
+        // Reproduces the class-mixing the abort path can cause: with both classes drained,
+        // `cancel` makes take() mint a fresh small buffer; releasing all three then finds
+        // the small channel full and files a SHORT buffer under `large`. A later big
+        // request must still get something it can safely write `needed` elements into.
+        let h = signal_handler(64, 16, 1);
+        let s = h.take_buffer_signal_values(16);
+        let l = h.take_buffer_signal_values(64);
+        h.cancel();
+        let fresh = h.take_buffer_signal_values(16);
+        h.release_buffer_signal_values(s);
+        h.release_buffer_signal_values(fresh); // small full -> lands in `large`
+        h.release_buffer_signal_values(l); // large full -> dropped
+        h.reset().unwrap(); // re-arms `cancelled`, as the distributed worker does
+        assert!(h.take_buffer_signal_values(64).len() >= 64, "handed the solve a short buffer");
+    }
+
+    #[test]
+    fn signal_pool_cancel_unblocks_take() {
+        let h = signal_handler(64, 16, 1);
+        // Drain both classes, then cancel: a further take must return a fresh buffer of
+        // the right class rather than parking forever.
+        let _s = h.take_buffer_signal_values(16);
+        let _l = h.take_buffer_signal_values(64);
+        h.cancel();
+        assert_eq!(h.take_buffer_signal_values(16).len(), 16);
+        assert_eq!(h.take_buffer_signal_values(64).len(), 64);
     }
 }
