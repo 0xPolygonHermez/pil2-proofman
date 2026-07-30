@@ -326,7 +326,7 @@ pub fn soundness_info<F: PrimeField64>(
 
     let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], false)?);
 
-    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], false)?;
+    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], false)?;
 
     let mut circuits = Vec::new();
 

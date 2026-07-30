@@ -133,6 +133,7 @@ pub fn clear_proof_done_callback_c() {
     *PROOFS_DONE.write().unwrap() = None;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stark_info_new_c(
     filename: &str,
     recursive_final: bool,
@@ -141,6 +142,8 @@ pub fn stark_info_new_c(
     verify: bool,
     gpu: bool,
     preallocate: bool,
+    // Table airs: proved at most once, so the const pols need not survive the proof.
+    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -153,6 +156,7 @@ pub fn stark_info_new_c(
             verify,
             gpu,
             preallocate,
+            single_use,
         )
     }
 }
@@ -1591,6 +1595,8 @@ pub fn load_device_const_pols_c(
     const_tree_size: u64,
     proof_type: &str,
     only_first_gpu: bool,
+    // This air shares its slot with one already uploaded: record the offsets, transfer nothing.
+    already_loaded: bool,
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1613,6 +1619,7 @@ pub fn load_device_const_pols_c(
             const_tree_size,
             proof_type_ptr,
             only_first_gpu,
+            already_loaded,
         );
     }
 }

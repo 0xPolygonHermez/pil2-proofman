@@ -52,6 +52,7 @@ extern "C" {
         verify: bool,
         gpu: bool,
         preallocate: bool,
+        single_use: bool,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn set_hash_family(fam: u8);
@@ -634,6 +635,7 @@ extern "C" {
         constTreeSize: u64,
         proofType: *mut ::std::os::raw::c_char,
         onlyFirstGPU: bool,
+        alreadyLoaded: bool,
     );
     
     pub fn load_device_setup(

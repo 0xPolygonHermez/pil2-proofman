@@ -5,7 +5,7 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
 {
 
     recursive = recursive_;
@@ -13,6 +13,7 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify = verify_;
     gpu = gpu_;
     preallocate = preallocate_;
+    singleUse = single_use_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -471,11 +472,23 @@ void StarkInfo::setMapOffsets() {
         if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
             calculateFixedExtended = true;
         }
+
+        // With calculateFixedExtended the merkelize is the last reader of the const pols, so
+        // a single-use air can hold them in the node area of the tree they produce. A
+        // const-heavy air fails the size test and keeps its own region.
+        constPolsAliasTree = singleUse && calculateFixedExtended && (N * nConstants <= numNodes);
     }
 
     if (gpu) {
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
+        if (constPolsAliasTree) {
+            // Safe: the LDE writes only the first nConstants*NExtended of the tree region,
+            // and buildMerkleTreeGPU overwrites the nodes afterwards on the same stream.
+            mapOffsets[std::make_pair("const", false)] =
+                mapOffsets[std::make_pair("const", true)] + NExtended * nConstants;
+        } else {
+            mapOffsets[std::make_pair("const", false)] = mapTotalN;
+            mapTotalN += N * nConstants;
+        }
     }
 
     if(gpu) {

@@ -335,7 +335,22 @@ struct StreamData{
     int64_t instanceId;
     string proofType;
     uint64_t arity;
-        
+
+    // Which fixed columns this stream's aux trace holds, not which air it last served: airs
+    // with identical fixed share a const-pols slot, so the offset is the key. constAggBuffer
+    // separates the two const buffers (unrelated offsets), constRecurserId the recursers
+    // (one shared slot). custom_fixed is per-air and stays keyed on the air.
+    uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
+    // Where the unpacked pols land in the aux trace. Part of the key because two airs can
+    // share a slot yet lay out ("const", false) differently -- a preallocated const tree
+    // moves it, and constPolsAliasTree moves it into the tree's node area.
+    uint64_t constAuxOffset = 0;
+    bool constAggBuffer = false;
+    string constRecurserId;
+    // ("const", true) holds this slot's tree. Separate from the pols because the
+    // constraint-verification path unpacks the pols without loading the tree.
+    bool constTreeResident = false;
+
     bool recursive;
 
 #ifdef USE_CUDA_GRAPH
@@ -415,6 +430,30 @@ struct StreamData{
         proofType = "";
         recurserId = "";
         witnessResident = false;
+        constPolsOffset = UINT64_MAX;
+        constRecurserId = "";
+        constTreeResident = false;
+    }
+
+    // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
+    // apply -- even to a different air sharing them. A change also drops constTreeResident.
+    bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
+        if (constPolsOffset == offset && constAuxOffset == auxOffset && constAggBuffer == aggBuffer
+            && constRecurserId == recurser) return true;
+        constPolsOffset = offset;
+        constAuxOffset = auxOffset;
+        constAggBuffer = aggBuffer;
+        constRecurserId = recurser;
+        constTreeResident = false;
+        return false;
+    }
+
+    // Nothing valid is cached any more: for paths that overwrite the aux trace without
+    // repopulating the const pols.
+    void dropFixedSlot(){
+        constPolsOffset = UINT64_MAX;
+        constRecurserId = "";
+        constTreeResident = false;
     }
 
     void free(){
