@@ -1114,6 +1114,15 @@ impl<F: PrimeField64> ProofCtx<F> {
             return;
         }
         let consts_offset = get_const_pols_aggregation_offset_c(self.d_buffers.get_ptr());
+        let buffer_size = get_unified_buffer_gpu_size_c(self.d_buffers.get_ptr());
+        const GB: f64 = (1u64 << 30) as f64;
+        tracing::info!(
+            "GPU mops used {:.2} GB of {:.2} GB unified buffer (const pols at {:.2} GB)",
+            used_bytes as f64 / GB,
+            buffer_size as f64 / GB,
+            consts_offset as f64 / GB,
+        );
+
         if used_bytes >= consts_offset {
             tracing::warn!(
                 "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
