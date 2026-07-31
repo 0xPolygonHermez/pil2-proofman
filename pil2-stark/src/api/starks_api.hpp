@@ -28,12 +28,12 @@ extern "C" {
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate);
+    void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use);
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
     void unregister_host_memory(void *ptr);
-    void wait_stream_commit_done(void *d_buffers, uint64_t stream_id);
+    void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
@@ -43,7 +43,7 @@ extern "C" {
 
     // Const Pols
     // ========================================================================================
-    void init_gpu_setup(uint64_t maxBitsExt, uint64_t arity);
+    void init_gpu_setup(uint64_t arity);
     void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile);
     void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
@@ -114,13 +114,19 @@ extern "C" {
     // Gen proof && Recursive Proof
     // =================================================================================
     uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath);
-    uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream);
+    uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
     void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols);
     void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
     void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
     void get_stream_proofs(void *d_buffers_);
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
+    // Central arbiter: reserve the best free stream for (airgroupId,airId,proofType)
+    // without blocking. Returns UINT32_MAX if none is free right now.
+    uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
+    // Central arbiter warm fast path: reserve streamId iff it is free right now.
+    // Returns 1 on success, 0 otherwise.
+    uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive);
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
     // Final proof
@@ -178,7 +184,7 @@ extern "C" {
     void free_device_buffers(void *d_buffers);
     void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void free_device_buffers_recursivef(void *d_buffers);
-    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU);
+    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo);
     uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
     void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
@@ -193,6 +199,7 @@ extern "C" {
     uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_);
     uint32_t get_first_gpu_id(void *d_buffers_);
     void *get_first_gpu_buffer(void *d_buffers_);
+    uint64_t get_const_pols_aggregation_offset(void *d_buffers_);
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);

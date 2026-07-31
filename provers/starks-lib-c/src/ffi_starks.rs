@@ -133,6 +133,7 @@ pub fn clear_proof_done_callback_c() {
     *PROOFS_DONE.write().unwrap() = None;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stark_info_new_c(
     filename: &str,
     recursive_final: bool,
@@ -141,6 +142,8 @@ pub fn stark_info_new_c(
     verify: bool,
     gpu: bool,
     preallocate: bool,
+    // Table airs: proved at most once, so the const pols need not survive the proof.
+    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -153,6 +156,7 @@ pub fn stark_info_new_c(
             verify,
             gpu,
             preallocate,
+            single_use,
         )
     }
 }
@@ -204,9 +208,9 @@ pub fn unregister_host_memory_c(ptr: *mut c_void) {
 /// shared trace buffer whose async H2D copy rode that stream can be safely
 /// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
 /// `pctx.gpu`).
-pub fn wait_stream_commit_done_c(d_buffers: *mut c_void, stream_id: u64) {
+pub fn wait_trace_h2d_done_c(d_buffers: *mut c_void, stream_id: u64) {
     unsafe {
-        wait_stream_commit_done(d_buffers, stream_id);
+        wait_trace_h2d_done(d_buffers, stream_id);
     }
 }
 
@@ -270,9 +274,9 @@ pub fn load_const_tree_c(
     }
 }
 
-pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u64) {
+pub fn init_gpu_setup_c(arity: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt, arity);
+        init_gpu_setup(arity);
     }
 }
 
@@ -1034,6 +1038,8 @@ pub fn gen_recursive_proof_c(
     const_tree_path: &str,
     proof_type: &str,
     force_recursive_stream: bool,
+    recurser_id: &str,
+    stream_id: u64,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1046,6 +1052,9 @@ pub fn gen_recursive_proof_c(
 
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let recurser_id_name = CString::new(recurser_id).unwrap();
+    let recurser_id_ptr = recurser_id_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_recursive_proof(
@@ -1066,8 +1075,30 @@ pub fn gen_recursive_proof_c(
             const_tree_filename_ptr,
             proof_type_ptr,
             force_recursive_stream,
+            recurser_id_ptr,
+            stream_id,
         )
     }
+}
+
+/// Scheduler: reserve the best free stream for this key without blocking.
+/// Returns `u32::MAX` when nothing is free right now (caller retries).
+pub fn reserve_best_stream_nonblock_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    recursive: bool,
+    force_recursive: bool,
+) -> u32 {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe { reserve_best_stream_nonblock(d_buffers, airgroup_id, air_id, proof_type_ptr, recursive, force_recursive) }
+}
+
+/// Scheduler warm fast path: reserve `stream_id` iff it is free right now. Returns true on success.
+pub fn reserve_stream_if_free_c(d_buffers: *mut c_void, stream_id: u32, force_recursive: bool) -> bool {
+    unsafe { reserve_stream_if_free(d_buffers, stream_id, force_recursive) != 0 }
 }
 
 pub fn calculate_const_tree_fixed_c(
@@ -1492,6 +1523,11 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
     unsafe { get_first_gpu_buffer(d_buffers) }
 }
 
+/// Byte offset of the aggregation const-pols region within the first GPU's unified buffer.
+pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_const_pols_aggregation_offset(d_buffers) }
+}
+
 pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers: *mut ::std::os::raw::c_void,
     d_buffers_recursivef: *mut ::std::os::raw::c_void,
@@ -1564,6 +1600,8 @@ pub fn load_device_const_pols_c(
     const_tree_size: u64,
     proof_type: &str,
     only_first_gpu: bool,
+    // This air shares its slot with one already uploaded: record the offsets, transfer nothing.
+    already_loaded: bool,
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1586,6 +1624,7 @@ pub fn load_device_const_pols_c(
             const_tree_size,
             proof_type_ptr,
             only_first_gpu,
+            already_loaded,
         );
     }
 }

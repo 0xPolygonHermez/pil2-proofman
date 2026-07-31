@@ -150,9 +150,17 @@ where
         return false;
     }
 
+    // Pin the publics to one encoding: verification only ever compares field
+    // elements, so `x` and `x + p` pass identically, but a caller reading the raw
+    // words back as outputs would see two different values.
     let mut publics = Vec::with_capacity(n_publics as usize);
-    for _ in 0..n_publics {
-        publics.push(Goldilocks::new(proof[p as usize]));
+    for i in 0..n_publics {
+        let word = proof[p as usize];
+        if word >= Goldilocks::ORDER_U64 {
+            v_error!("Public {i} is not a canonical Goldilocks element: {word} >= {}", Goldilocks::ORDER_U64);
+            return false;
+        }
+        publics.push(Goldilocks::new(word));
         p += 1;
     }
 

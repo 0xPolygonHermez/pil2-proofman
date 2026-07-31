@@ -56,7 +56,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
     col fixed FFT4          = [0:(nPoseidonRows + nCMulRows + nEvPol4),                                               1:nFFT4,       0...];
     // TreeSelector8 now spans 2 rows (30 signals split 15/15 over a[0..14] + a[0..14]');
     // fires on the first row of each pair ([1,0] pattern).
-    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                       [1:0]:nTreeSelector8, 0...];
+    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                       [1,0]:nTreeSelector8, 0...];
     col fixed SELECTVAL1    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8),                    1:nSelectVal1, 0...];
     col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8 + nSelectVal1),      1:nPlonkRows,  0...];
 

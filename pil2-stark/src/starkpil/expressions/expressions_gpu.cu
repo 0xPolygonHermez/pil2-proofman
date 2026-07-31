@@ -97,6 +97,34 @@ ExpressionsGPU::~ExpressionsGPU()
     expsClose(expsLib);
 }
 
+// Stage one launch's params/args into pinned slot `countId` and enqueue the H2D
+// copies. Slot strides are in BYTES: pinned_exps_* are Element* only by type, so
+// Element* arithmetic would stride 8x too far.
+static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args,
+                          uint64_t countId, const DestParamsGPU *h_dest_params, const ExpsArguments &h_expsArgs,
+                          DestParamsGPU *d_destParams, ExpsArguments *d_expsArgs, cudaStream_t stream)
+{
+    if (countId >= PINNED_EXPS_SLOTS) {
+        zklog.error("ExpressionsGPU: expression launch count " + std::to_string(countId) +
+                    " exceeds pinned slot capacity " + std::to_string(PINNED_EXPS_SLOTS));
+        exitProcess();
+    }
+    // Each slot spans 2 DestParamsGPU (stride 2*sizeof) and d_destParams is sized for 2;
+    // more params would overrun both the pinned slot and the device buffer.
+    if (h_expsArgs.dest_nParams > 2) {
+        zklog.error("ExpressionsGPU: dest_nParams " + std::to_string(h_expsArgs.dest_nParams) +
+                    " exceeds slot capacity 2");
+        exitProcess();
+    }
+    uint8_t *paramsSlot = (uint8_t *)pinned_exps_params + countId * 2 * sizeof(DestParamsGPU);
+    memcpy(paramsSlot, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
+    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, paramsSlot, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+
+    uint8_t *argsSlot = (uint8_t *)pinned_exps_args + countId * sizeof(ExpsArguments);
+    memcpy(argsSlot, &h_expsArgs, sizeof(ExpsArguments));
+    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+}
+
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
     ExpsArguments h_expsArgs;
@@ -168,18 +196,14 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
-    
+
     assert(bufferCommitSize  + 9  < 32);
     size_t ptrMem = 32 * sizeof(Goldilocks::Element);
     size_t tmpMem = (h_expsArgs.maxTemp1Size + h_expsArgs.maxTemp3Size) * sizeof(Goldilocks::Element);
@@ -238,6 +262,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
 
+    // The pinned slot and d_destParams hold at most 2 entries.
+    assert(dest.params.size() == 1 || dest.params.size() == 2);
+
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
@@ -256,12 +283,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
@@ -353,7 +376,7 @@ __device__ __forceinline__ void load__(
             : dParams->pConstPolsAddress;
 
         const uint64_t nCols0 = dArgs->mapSectionsN[0];
-        // Const sections are stored fixedLayout() (ColMajorTiled) -- match the const-tree build's layout.
+        // Const sections are stored fixedLayout() (ColMajor) -- match the const-tree build's layout.
         const Layout lytC = fixedLayout();
         const uint64_t pos = usePack256
             ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0, lytC)
@@ -367,7 +390,7 @@ __device__ __forceinline__ void load__(
     // Trace and aux_trace (committed pols). A committed section's storage layout is resolveLayout(nBits,
     // sectionNCols) keyed on the AIR's small-domain nBits = log2(N) -- identical to what the commit/LDE
     // and Merkle used, so reads agree with writes. ColMajor (flat) puts a column's 3 extension
-    // components domainSize apart; ColMajorTiled addresses each component via getBufferOffset.
+    // components domainSize apart.
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
@@ -382,8 +405,8 @@ __device__ __forceinline__ void load__(
             out1 = nullptr;
             out2 = nullptr;
             return;
-        } else if (dim == 3 && lyt == Layout::ColMajor) {
-            // Flat: the 3 extension components of column argIdx are domainSize apart.
+        } else if (dim == 3) {
+            // Flat (ColMajor): the 3 extension components of column argIdx are domainSize apart.
             const uint64_t pos0 = usePack256
                 ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
                 : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
@@ -391,28 +414,13 @@ __device__ __forceinline__ void load__(
             out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + domainSize];
             out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * domainSize];
             return;
-        } else if (dim == 1) {
+        } else {
             const uint64_t pos0 = usePack256
                 ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
                 : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
             out1 = nullptr;
             out2 = nullptr;
-            return;
-        } else {
-            // dim==3 general (incl. ColMajorTiled): each component addressed independently.
-            const uint64_t pos0 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
-            out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            const uint64_t pos1 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols, lyt);
-            out1 = (gl64_t*)&dParams->aux_trace[offset + pos1];
-            const uint64_t pos2 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols, lyt)
-                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols, lyt);
-            out2 = (gl64_t*)&dParams->aux_trace[offset + pos2];
             return;
         }
     }
@@ -425,7 +433,7 @@ __device__ __forceinline__ void load__(
         out2 = nullptr;
         return;
     }
-    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajorTiled).
+    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajor).
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
@@ -440,7 +448,7 @@ __device__ __forceinline__ void load__(
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
 {
     // Writing into a committed section -> must match that section's storage layout (same resolveLayout
-    // the reads use), so a tiled cm section round-trips. dest_domainSize is the section's row count.
+    // the reads use). dest_domainSize is the section's row count.
     const Layout lyt = resolveLayout(63 - __clzll(d_expsArgs->dest_domainSize), d_expsArgs->dest_stageCols);
     #pragma unroll
     for (uint32_t i = 0; i < d_expsArgs->dest_dim; i++) {
@@ -518,7 +526,7 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         Goldilocks::Element *slot = &destVals[k * FIELD_EXTENSION * blockDim.x];
         if (d_destParams[k].op == opType::const_)
         {
-            // Const stored fixedLayout() (ColMajorTiled) -- match the const-tree build.
+            // Const stored fixedLayout() (ColMajor) -- match the const-tree build.
             uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, fixedLayout());
             slot[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }

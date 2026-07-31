@@ -261,7 +261,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     }
 
     let new_proof = create_buffer_fast(new_proof_size as usize);
-    Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
+    Ok(Proof::new(witness.proof_type, witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
 }
 
 /// Writes a vadcop-final proof's public section `[n_publics | publics(n_publics)]`.
@@ -287,6 +287,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_tree: &[F],
     const_pols: &[F],
     force_recursive_stream: bool,
+    reserved_stream: u64,
     calculate_fixed_tree_handle: Option<std::thread::JoinHandle<()>>,
 ) -> ProofmanResult<(u64, Vec<F>)> {
     timer_start_debug!(
@@ -367,6 +368,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         handle.join().map_err(|_| ProofmanError::ProofmanError("Failed to calculate fixed tree".into()))?;
     }
 
+    // `reserved_stream`: scheduler-reserved stream, or `u64::MAX` to select internally
+    // (one-off launches — outer aggregation, vadcop_final, recursers).
     let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
@@ -383,14 +386,16 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         pctx.get_device_buffers_ptr(),
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
-        witness.proof_type.clone().into(),
+        witness.proof_type.into(),
         force_recursive_stream,
+        "",
+        reserved_stream, // scheduler-reserved stream, or u64::MAX for one-off internal selection
     );
 
     // Trace H2D is async: gate buffer reuse on the stream's commit event so a
     // concurrent take() can't overwrite `trace` mid-copy (as on the main path).
     if pctx.gpu {
-        wait_stream_commit_done_c(pctx.get_device_buffers_ptr(), stream_id);
+        wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id);
     }
     match setup.setup_type {
         ProofType::Compressor => memory_handler_recursive_witness.release_buffer_trace_compressor(trace),
@@ -528,6 +533,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             const_tree,
                             const_pols,
                             false,
+                            u64::MAX, // one-off launch: reserve stream internally
                             None,
                         )?;
 
@@ -600,7 +606,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = pctx.get_device_buffers_ptr() as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
 
     let calculate_fixed_tree_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
@@ -661,6 +667,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         false,
+        u64::MAX, // one-off launch: reserve stream internally
         Some(calculate_fixed_tree_handle),
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
@@ -693,7 +700,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = pctx.get_device_buffers_ptr() as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
 
     let calculate_fixed_tree_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
@@ -729,6 +736,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         false,
+        u64::MAX, // one-off launch: reserve stream internally
         Some(calculate_fixed_tree_handle),
     )?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
@@ -843,13 +851,14 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
     d_buffers: *mut c_void,
+    recurser_id: &str,
 ) -> ProofmanResult<Vec<u64>> {
     timer_start_info!(GENERATE_RECURSER_AGGREGATOR);
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = d_buffers as usize;
-    let setup_type = setup.setup_type.clone();
+    let setup_type = setup.setup_type;
     let calc_handle = std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
             p_setup_addr as *mut c_void,
@@ -938,8 +947,10 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         d_buffers,
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
-        setup.setup_type.clone().into(),
+        setup.setup_type.into(),
         false,
+        recurser_id, // disambiguates recurser setups sharing (0,0,"recursive2")
+        u64::MAX,    // one-off launch: reserve stream internally
     );
     get_stream_id_proof_c(d_buffers, stream_id);
     timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);

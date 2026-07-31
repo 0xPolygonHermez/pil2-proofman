@@ -192,6 +192,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &ProofType::RecursiveF,
             false,
             false,
+            false,
             gpu,
             None,
         )?;
@@ -444,6 +445,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         &ProofType::RecursiveF,
         false,
         false,
+        false,
         gpu,
         None,
     )?;
@@ -483,13 +485,14 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &ProofType::RecursiveF,
         false,
         false,
+        false,
         gpu,
         None,
     )?;
 
     ensure_gpu_available(gpu)?;
     if gpu {
-        init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
+        init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
     }
 
     check_const_tree(&setup_recursivef, &None)?;

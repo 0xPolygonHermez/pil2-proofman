@@ -97,12 +97,12 @@ impl ProveRecursiveCmd {
         // under recursive1/, so loading as Basic looked for a nonexistent air/<Air>.so.
         // (Compressor with has_compressor unset still yields an empty setup, but a recursive
         // proof file never names that case here.)
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], self.gpu)?;
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], &[], self.gpu)?;
 
         // Initialize the GPU (set_gpu_mode_c + init_gpu_setup_c). Without this the CUDA
         // context is not selected and check_device_memory_c (used by set_device_buffers)
         // returns 0. Mirrors proofman.rs:670-682 / common::init_gpu_setup.
-        init_gpu_setup(sctx.max_n_bits_ext as u64, self.gpu)?;
+        init_gpu_setup(self.gpu)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 
@@ -203,7 +203,7 @@ impl ProveRecursiveCmd {
         // buffer under the same proofType gen_recursive_proof_c uses. Mirrors
         // proofman::utils::load_device_setups / load_device_const_pols (the aggregation
         // branch), but for the single AIR we are proving.
-        let proof_type_str: &str = (*proof_type).clone().into();
+        let proof_type_str: &str = (*proof_type).into();
         let d_buffers = pctx.get_device_buffers_ptr();
         load_device_setup_c(
             airgroup_id as u64,
@@ -225,6 +225,8 @@ impl ProveRecursiveCmd {
             tree_path,
             setup.const_tree_size as u64,
             proof_type_str,
+            false,
+            // Single AIR, single slot: nothing to share with.
             false,
         );
 
@@ -300,6 +302,8 @@ impl ProveRecursiveCmd {
             &setup.const_pols_tree_path,
             proof_type_str,
             false,
+            "",
+            u64::MAX, // one-off launch: reserve stream internally
         );
 
         // The recursive prover writes its output asynchronously; the result is only in

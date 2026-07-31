@@ -503,7 +503,7 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
     }
 }
 
-pub fn init_gpu_setup(max_n_bits_ext: u64, gpu: bool) -> ProofmanResult<()> {
+pub fn init_gpu_setup(gpu: bool) -> ProofmanResult<()> {
     if !set_gpu_mode_c(gpu) {
         return Err(ProofmanError::InvalidConfiguration(
             "GPU mode requested but library was built without CUDA support".into(),
@@ -515,7 +515,7 @@ pub fn init_gpu_setup(max_n_bits_ext: u64, gpu: bool) -> ProofmanResult<()> {
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
         }
 
-        init_gpu_setup_c(max_n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
+        init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
     }
     Ok(())
 }

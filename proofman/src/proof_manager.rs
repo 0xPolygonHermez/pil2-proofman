@@ -90,7 +90,13 @@ impl Counter {
 
     #[inline(always)]
     pub fn increment(&self) -> usize {
-        let new_val = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
+        // Release: this counter gates readiness for waiters that use Acquire
+        // loads. A Relaxed store would not synchronize-with those loads, so a
+        // thread observing the counter reaching threshold would have no
+        // happens-before with the work this increment represents (e.g. a
+        // producer's multiplicity fetch_add). Today the producer joins mask
+        // this, but the counter must carry its own ordering.
+        let new_val = self.counter.fetch_add(1, Ordering::Release) + 1;
 
         if new_val >= self.threshold {
             let _guard = self.wait_lock.lock().unwrap();

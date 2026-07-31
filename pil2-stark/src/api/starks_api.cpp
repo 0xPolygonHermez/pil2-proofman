@@ -278,9 +278,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
+void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use)
 {
-    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate);
+    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate, single_use);
 
     return starkInfo;
 }
@@ -833,7 +833,9 @@ void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     }
 }
 
-uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
+uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_) {
+    (void)recurser_id;
+    (void)streamId_;  // CPU backend has no streams
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
