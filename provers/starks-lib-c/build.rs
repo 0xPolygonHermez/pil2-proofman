@@ -214,7 +214,7 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
                     continue;
                 }
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name == ".build_lock" {
+                if name == ".build_lock" || name.ends_with("_stamp") {
                     continue;
                 }
                 files.push(path);
