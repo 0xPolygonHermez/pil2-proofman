@@ -107,9 +107,7 @@ void unregister_host_memory_gpu(void *ptr) {
 void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    // Guard the C-ABI surface: an out-of-range streamId (e.g. from a future caller
-    // or an error path) would index streamsData OOB and segfault before any CUDA
-    // error handling could run.
+    // Guard the C-ABI surface: an out-of-range streamId would index streamsData OOB and segfault.
     if (streamId >= d_buffers->n_total_streams) return;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     if (d_buffers->streamsData[streamId].status == 2) {
@@ -282,11 +280,9 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
         sppark_set_visible_devices(ords, (int)n);
     }
 
-    // Force CUDA primary context creation only on this rank's assigned GPUs.
-    // Why: never touch the default device (GPU 0) implicitly — non-owning ranks
-    // would each create a ~300 MB primary context there and starve the rank that
-    // actually owns GPU 0. cudaDeviceSynchronize/cudaSetDevice back to GPU 0
-    // would do exactly that, so we end on an assigned GPU instead.
+    // Create primary contexts only on this rank's assigned GPUs; never implicitly touch GPU 0.
+    // Non-owning ranks would each create a ~300 MB context there and starve GPU 0's owner, so
+    // we end on an assigned GPU rather than syncing back to GPU 0.
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
         cudaFree(0);
@@ -484,21 +480,81 @@ uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n
     return d_buffers->n_gpus;
 }
 
+// Fence all device work before a terminal free: wait (bounded) for the entries counted by
+// InFlightScope to leave, then fence the work they queued. Bounded so a wedged stream degrades to a
+// diagnostic, not an unbounded hang. `cancelled` is raised for entries that opt into checking it
+// (see InFlightScope::cancelled); today none do, so this relies on the refcount wait alone.
+static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
+    d_buffers->cancelled.store(true, std::memory_order_seq_cst);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (d_buffers->device_active.load(std::memory_order_seq_cst) > 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    const int64_t still_active = d_buffers->device_active.load(std::memory_order_acquire);
+    if (still_active > 0) {
+        printf("[teardown] WARNING: %ld device operation(s) still in flight after 30s; freeing anyway\n",
+               (long)still_active);
+        fflush(stdout);
+    }
+
+    // Fence work queued by entries that already returned, before freeing the memory it references.
+    // Bounded per-stream so a wedged stream degrades to a diagnostic, not an unbounded hang. All
+    // proof work runs on the named streams, so polling those covers it.
+    if (d_buffers->streamsData != nullptr) {
+        bool any_timed_out = false;
+        for (uint32_t s = 0; s < d_buffers->n_total_streams; ++s) {
+            cudaSetDevice(d_buffers->streamsData[s].gpuId);
+            cudaStream_t stream = d_buffers->streamsData[s].stream;
+            // Per-stream deadline so one wedged stream can't starve the fencing of the rest: a
+            // shared deadline let a stuck stream burn the whole budget, freeing later streams still in use.
+            const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (cudaStreamQuery(stream) == cudaErrorNotReady &&
+                   std::chrono::steady_clock::now() < stream_deadline) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
+            if (std::chrono::steady_clock::now() >= stream_deadline) {
+                any_timed_out = true;
+            }
+            cudaGetLastError();  // clear the sticky status left by the last query
+        }
+        if (any_timed_out) {
+            printf("[teardown] WARNING: a device stream did not drain within 10s; freeing anyway\n");
+            fflush(stdout);
+        }
+    }
+}
+
 void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
+        // Fence the stream BEFORE taking the lock: this sync can block indefinitely on a wedged
+        // cancelled stream, and holding the per-stream lock across it would wedge every concurrent
+        // harvest/selectStream on that stream too.
         cudaSetDevice(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
+        // Mutate under the per-stream lock or SEGV: a concurrent get_stream_proofs harvest reads
+        // `proofType` (a std::string) under this same lock; unlocked, invalidateContext()'s
+        // `proofType = ""` frees it mid-read.
+        std::lock_guard<std::mutex> lg(d_buffers->streamsData[i].mutex_stream_selection);
         d_buffers->streamsData[i].invalidateContext();
         d_buffers->streamsData[i].instanceId = -1;   // full teardown: no resident witness
         d_buffers->streamsData[i].reset(true);
     }
+
+    // Clear a stranded first-GPU-buffer borrow: zisk's Phase-1 error paths skip release, so a cancel
+    // can leave it set and then selectStream skips every first-GPU stream forever. Safe here because
+    // reset() runs between jobs, so no legitimate borrow is live.
+    d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
 }
 
 void free_device_buffers_gpu(void *d_buffers_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    wait_device_idle_before_teardown(d_buffers);
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -511,9 +567,7 @@ void free_device_buffers_gpu(void *d_buffers_)
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
-        // Free the single large GPU memory block
-        // All other GPU pointers (d_constPols, d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
-        // point into this same block, so we only free it once using the stored base pointer
+        // All other GPU pointers point into this single large block, so free it once via the base pointer.
         if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
             CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
         }
@@ -663,6 +717,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     std::string proofType = "basic";
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // Count this thread as inside device work so a concurrent teardown waits for it before freeing.
+    InFlightScope in_flight(d_buffers);
     uint32_t streamId;
     if (skipRecalculation) {
         // Validate the witness is still resident under the mutex; the stream may have
@@ -1026,8 +1082,18 @@ void get_stream_proofs_non_blocking_gpu(void *d_buffers_){
 }
 
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
+    if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // Guard the C-ABI surface: an out-of-range streamId would index streamsData OOB and segfault.
+    if (streamId >= d_buffers->n_total_streams) {
+        zklog.warning("get_stream_id_proof: stream " + std::to_string(streamId) +
+                      " out of range (n_total_streams " + std::to_string(d_buffers->n_total_streams) +
+                      "); ignoring");
+        return;
+    }
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
+    // Hold the per-stream lock across harvest + reset or SEGV: a concurrent reset_device_streams_gpu
+    // (same lock) races the `proofType` (std::string) read and frees the string mid-read.
     std::lock_guard<std::mutex> lock(d_buffers->streamsData[streamId].mutex_stream_selection);
     if (d_buffers->streamsData[streamId].status != 2) {
         if (d_buffers->streamsData[streamId].status == 1) {
@@ -1260,9 +1326,8 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
         gpuId = d_commit_buffer->my_gpu_ids[0];
     }
 
-    // Scope sppark's GPU registry to this rank's devices before ngpus() below
-    // builds it. Without this, a standalone SNARK-wrap process (no prior
-    // gen_device_buffers_gpu) would probe every GPU on the node.
+    // Scope sppark's GPU registry to this rank's devices before ngpus() below builds it, else a
+    // standalone SNARK-wrap process (no prior gen_device_buffers_gpu) probes every GPU on the node.
     {
         int ords[32];
         uint32_t n = (d_commit_buffer != nullptr) ? d_commit_buffer->n_gpus : 1;
@@ -1272,13 +1337,9 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
         sppark_set_visible_devices(ords, (int)n);
     }
 
-    // Force sppark's lazy GPU registry to initialize now, while we still control
-    // the current CUDA device. The first call into any sppark entry point
-    // (select_gpu, gpu_props, ngpus, all_gpus) constructs a function-local static
-    // gpus_t that probes every device and ends with cudaSetDevice(0) — silently
-    // clobbering whatever device the caller had selected. By triggering that
-    // one-time init here and restoring the device around it, later cudaSetDevice(N)
-    // calls stick and select_gpu(-1) resolves to the device we actually want.
+    // Force sppark's lazy GPU registry to init now, while we control the device. Its first entry
+    // point builds a static gpus_t that ends with cudaSetDevice(0), clobbering the caller's device;
+    // triggering it here and restoring the device makes later cudaSetDevice(N) stick.
     (void)ngpus();
     cudaSetDevice(gpuId);
 
@@ -1373,6 +1434,21 @@ void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_
 void free_device_buffers_recursivef_gpu(void *d_buffers_) {
     DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
     cudaSetDevice(d_buffers->gpuId);
+    // Fence work queued on this context before freeing the memory it references, bounded so a wedged
+    // context can't hang teardown forever. All recursivef work runs on these two streams.
+    cudaStream_t recursivef_streams[2] = { d_buffers->stream, d_buffers->stream_const_tree };
+    for (cudaStream_t st : recursivef_streams) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (cudaStreamQuery(st) == cudaErrorNotReady &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            printf("[teardown] WARNING: a recursivef stream did not drain within 10s; freeing anyway\n");
+            fflush(stdout);
+        }
+        cudaGetLastError();  // clear the sticky status left by the last query
+    }
     if (d_buffers->owns_const_tree) {
         CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
     }
@@ -1417,10 +1493,8 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
 
     uint64_t nConst = setupCtx->starkInfo.nConstants;
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
-    // Copy and tile const pols: pConstPols is row-major (.const file) but the
-    // expression kernels read the tiled layout at offsetConstPols (same layout
-    // unpack_fixed produces in the main flows). Stage through the witness
-    // scratch area, which the tiling above has already consumed (stream-ordered).
+    // Copy and tile const pols: pConstPols is row-major but the expression kernels read the tiled
+    // layout at offsetConstPols. Stage through the witness scratch, already consumed (stream-ordered).
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
     copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)d_witness_temp, sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
     gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
@@ -1438,6 +1512,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // Count this thread as inside device work so a concurrent teardown waits for it.
+    InFlightScope in_flight(d_buffers);
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, "basic");
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
@@ -1533,10 +1609,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
         totalCopySize += setupCtx->starkInfo.airValuesSize;
 
-        // Stage into the per-stream pinned region for an async copy (no stream
-        // sync); reused only on event-gated stream reselect. Hard runtime check
-        // (not assert: must survive NDEBUG release builds, else this would silently
-        // overflow the fixed pinned buffer).
+        // Stage into the per-stream pinned region for an async copy. Hard runtime check, not assert:
+        // must survive NDEBUG release builds, else it silently overflows the fixed pinned buffer.
         if (totalCopySize > PINNED_AUX_VALUES_MAX) {
             zklog.error("commit_witness_gpu: aux_values size " + std::to_string(totalCopySize) +
                         " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
@@ -1615,10 +1689,8 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
     closeStreamTimer(d_buffers->streamsData[streamId].timer, instanceId, airgroupId, airId, false);
-    // NOTE: contributions commit_root does NOT fire proof_done_callback. That decrement
-    // is owned by the proofs_pending accounting on the Prove path; firing it here (a
-    // contributions harvest) could land in the NULL-callback window between prove runs
-    // and lose/mis-drive a decrement → proofs_pending never reaches zero → Prove wedges.
+    // Contributions commit_root does NOT fire proof_done_callback: that decrement is owned by the
+    // Prove-path accounting, and firing it here could hit the NULL-callback window and wedge proofs_pending.
 }
 
 void init_gpu_setup_gpu(uint64_t arity) {
@@ -1894,9 +1966,8 @@ uint64_t get_num_gpus_gpu() {
     return deviceCount;
 }
 
-// Buffer of the caller's CURRENT device. Callers that run kernels on a
-// specific GPU (const-tree regeneration, recursivef) bind the device first
-// and get that device's buffer.
+// Buffer of the caller's CURRENT device: callers that run kernels on a specific GPU bind the
+// device first and get that device's buffer.
 void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
@@ -1905,9 +1976,8 @@ void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
     return (void *)d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
 }
 
-// Buffer of the FIRST GPU (my_gpu_ids[0], not necessarily device 0 — NUMA can
-// reorder), for consumers of the acquire/release_first_gpu_buffer borrow (mem
-// ops). 
+// Buffer of the FIRST GPU (my_gpu_ids[0], not necessarily device 0 — NUMA can reorder), for
+// consumers of the acquire/release_first_gpu_buffer borrow.
 void *get_first_gpu_buffer_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return nullptr;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -2227,6 +2297,24 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, bool fo
     reserveStreamLocked(d_buffers, streamId);
     sd.mutex_stream_selection.unlock();
     return 1;
+}
+
+// Give a reservation back without launching on it. A reserved stream sits at status==1, which every
+// selection pass treats as busy, so a caller that reserves and then fails before launching would
+// strand the slot for the process lifetime. Only status==1 is released, so this can never steal a
+// stream that has since been launched on (2) or torn down (0).
+// Takes ONLY the per-stream lock -- never stream_selection_mutex. The reserve paths take gsel then
+// the per-stream lock; acquiring them in the other order here would close a deadlock cycle.
+void release_stream_reservation_gpu(void* d_buffers_, uint32_t streamId){
+    DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
+    if (d_buffers == nullptr || d_buffers->streamsData == nullptr) return;
+    if (streamId >= d_buffers->n_total_streams) return;
+    StreamData& sd = d_buffers->streamsData[streamId];
+    std::lock_guard<std::mutex> lg(sd.mutex_stream_selection);
+    if (sd.status != 1) return;
+    // Back to "reusable, not unused": reserveStreamLocked already ran reset(false) and left the
+    // (airgroup,air,type) identity intact, so warm affinity still holds for the next pick.
+    sd.status = 3;
 }
 
 // Requires the caller to hold streamsData[streamId].mutex_stream_selection

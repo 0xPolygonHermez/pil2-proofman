@@ -127,6 +127,8 @@ extern "C" {
     // Central arbiter warm fast path: reserve streamId iff it is free right now.
     // Returns 1 on success, 0 otherwise.
     uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive);
+    // Give back a reservation made by either call above without launching on the stream.
+    void release_stream_reservation(void *d_buffers_, uint32_t streamId);
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
     // Final proof

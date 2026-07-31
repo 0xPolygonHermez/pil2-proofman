@@ -8,13 +8,15 @@
 //!
 //! Wrap in a `Mutex`; the reserve FFIs are non-blocking, so the lock is held only briefly.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use fields::PrimeField64;
-use proofman_common::{Proof, ProofType};
-use proofman_starks_lib_c::{reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+
+use crate::Ledger;
+use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
 
 /// Warm-affinity key: launches sharing it can reuse a resident const-tree.
 type Key = (usize, usize, ProofType);
@@ -29,12 +31,55 @@ fn is_aggregation(t: ProofType) -> bool {
 /// Non-recursive streams handle compressors and basics separately (see `next_nonrecursive`).
 const RECURSIVE_ORDER: [ProofType; 2] = [ProofType::Recursive2, ProofType::Recursive1];
 
-/// A single dispatch decision handed to a stream worker (chosen under the scheduler lock).
+/// A stream reserved (status=1) and not yet launched on. Every selection pass reads a reserved
+/// stream as busy, so a caller that fails between pick and launch must hand the reservation back or
+/// the slot is lost for the process lifetime. Dropping this guard does exactly that; [`Self::commit`]
+/// transfers ownership to the launch, which leaves the stream at status=2 for the harvest to collect.
+///
+/// Constructed under the scheduler lock on every path that reserves ([`RecursiveScheduler::
+/// pick_and_reserve`] and [`RecursiveScheduler::reserve_best`]), with nothing fallible in between,
+/// so a reservation is never left unguarded.
+pub struct StreamReservation {
+    /// Opaque device-buffers handle (as usize for `Send`); only handed back to the FFI.
+    d_buffers: usize,
+    stream_id: u32,
+    armed: bool,
+}
+
+// SAFETY: `d_buffers` is the opaque handle already shared across worker threads and only passed
+// back to the C FFI, never dereferenced in Rust. The release entry point is internally locked.
+unsafe impl Send for StreamReservation {}
+
+impl StreamReservation {
+    fn new(d_buffers: usize, stream_id: u32) -> Self {
+        Self { d_buffers, stream_id, armed: true }
+    }
+
+    pub fn stream_id(&self) -> u32 {
+        self.stream_id
+    }
+
+    /// The launch now owns this stream; stop releasing it on drop.
+    pub fn commit(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StreamReservation {
+    fn drop(&mut self) {
+        if self.armed {
+            release_stream_reservation_c(self.d_buffers as *mut c_void, self.stream_id);
+        }
+    }
+}
+
+/// A single dispatch decision handed to a stream worker (chosen under the scheduler lock). Carrying
+/// the [`StreamReservation`] rather than a bare id means a dropped pick returns its stream.
 pub enum WorkerPick<F: PrimeField64> {
     /// A recursive/compressor witness to launch on the reserved stream.
-    Recursive(Proof<F>, u32),
+    Recursive(Proof<F>, StreamReservation),
     /// A stored basic instance to launch on the reserved stream.
-    Basic(usize, u32),
+    Basic(usize, StreamReservation),
 }
 
 /// Candidate keys most-preferred first: restricted to `order`'s proof types (in that priority),
@@ -64,8 +109,10 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     /// compressors on the shared non-recursive streams.
     resident_keys: HashSet<Key>,
     /// physical stream -> key it currently holds resident (mirrors the CUDA side across
-    /// `reset(false)`). Shared across basic and recursive.
-    stream_warm: HashMap<usize, Key>,
+    /// `reset(false)`). Shared across basic and recursive. Ordered, not hashed: pass 1 scans it to
+    /// choose among equally-warm free streams, and a `HashMap`'s arbitrary order would make that
+    /// choice — and so the whole stream assignment — differ between otherwise identical runs.
+    stream_warm: BTreeMap<usize, Key>,
 }
 
 // `Send` is derived, not asserted: `d_buffers` is stored as a `usize` (the opaque handle is only
@@ -79,7 +126,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             queues: HashMap::new(),
             basic_queue: HashMap::new(),
             resident_keys: HashSet::new(),
-            stream_warm: HashMap::new(),
+            stream_warm: BTreeMap::new(),
         }
     }
 
@@ -113,7 +160,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// Pick + reserve a stream among `order`'s proof types → `(witness, stream)`, or `None` if
     /// none is ready / no free stream. `force_recursive` restricts the reservation to a
     /// recursive stream. The returned stream is reserved (status=1): the caller MUST launch.
-    fn next_of_types(&mut self, order: &[ProofType], force_recursive: bool) -> Option<(Proof<F>, u32)> {
+    fn next_of_types(&mut self, order: &[ProofType], force_recursive: bool) -> Option<(Proof<F>, StreamReservation)> {
         let ready: Vec<(Key, usize)> =
             self.queues.iter().filter(|(_, q)| !q.is_empty()).map(|(k, q)| (*k, q.len())).collect();
         let candidates = candidate_keys(&ready, order);
@@ -121,12 +168,13 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             return None;
         }
         let (key, s) = self.pick_and_reserve(&candidates, force_recursive)?;
+        // `s` is live from here on: if this `expect` ever fired, unwinding would release the stream.
         let w = self.pop_key(key).expect("candidate key non-empty");
         Some((w, s))
     }
 
     /// Force-recursive stream: rec2 > rec1 (never compressor), on a recursive stream.
-    pub fn next_recursive(&mut self) -> Option<(Proof<F>, u32)> {
+    pub fn next_recursive(&mut self) -> Option<(Proof<F>, StreamReservation)> {
         self.next_of_types(&RECURSIVE_ORDER, true)
     }
 
@@ -150,7 +198,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
 
     /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`. Resident
     /// basics are excluded unless `include_resident` (held back as filler otherwise).
-    pub fn next_basic(&mut self, include_resident: bool) -> Option<(usize, u32)> {
+    pub fn next_basic(&mut self, include_resident: bool) -> Option<(usize, StreamReservation)> {
         let mut ready: Vec<((usize, usize), usize)> = self
             .basic_queue
             .iter()
@@ -192,14 +240,14 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// Three-pass reservation shared by `next_of_types`/`next_basic`: (1) reuse a candidate's warm
     /// free stream, (2) fresh-load a candidate on no stream, (3) last resort reload rather
     /// than idle. Returns the chosen `(key, reserved stream)`, or `None` if no free stream.
-    fn pick_and_reserve(&mut self, candidates: &[Key], force_recursive: bool) -> Option<(Key, u32)> {
+    fn pick_and_reserve(&mut self, candidates: &[Key], force_recursive: bool) -> Option<(Key, StreamReservation)> {
         let d = self.d_buffers();
 
         // Pass 1 — REUSE: a stream already holding this key, free right now.
         for &key in candidates {
             for (&s, &k) in self.stream_warm.iter() {
                 if k == key && reserve_stream_if_free_c(d, s as u32, force_recursive) {
-                    return Some((key, s as u32));
+                    return Some((key, StreamReservation::new(self.d_buffers, s as u32)));
                 }
             }
         }
@@ -224,7 +272,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// Reserve the best free stream for `key` (today's C selection), recording the
     /// assignment so future launches of `key` target this stream and stale entries for a
     /// repurposed stream are overwritten. Returns the reserved stream or `None`.
-    fn reserve_best(&mut self, key: Key, force_recursive: bool) -> Option<u32> {
+    fn reserve_best(&mut self, key: Key, force_recursive: bool) -> Option<StreamReservation> {
         let (ag, air, t) = key;
         let type_str: &'static str = t.into();
         let s = reserve_best_stream_nonblock_c(
@@ -239,7 +287,22 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             return None;
         }
         self.stream_warm.insert(s as usize, key);
-        Some(s)
+        Some(StreamReservation::new(self.d_buffers, s))
+    }
+
+    /// Teardown drain: take everything still queued and leave the scheduler empty. Returns the
+    /// queued recursive/compressor witnesses and the queued stored-basic instance ids.
+    ///
+    /// The caller MUST return each witness's `circom_witness` to its pool and settle its ledger
+    /// unit: these were armed and committed at hand-off, and their buffers came out of the recursive
+    /// witness pools, so dropping them shrinks those pools (the compressor pool most visibly, since
+    /// it is the smallest) and leaves the pool-integrity check in `reset()` short. Only safe once
+    /// every producer and consumer is joined — otherwise a live worker can push right after.
+    pub fn drain_all(&mut self) -> (Vec<Proof<F>>, Vec<usize>) {
+        let witnesses: Vec<Proof<F>> = self.queues.drain().flat_map(|(_, q)| q.into_iter()).collect();
+        let basics: Vec<usize> = self.basic_queue.drain().flat_map(|(_, q)| q.into_iter()).collect();
+        self.resident_keys.clear();
+        (witnesses, basics)
     }
 }
 
@@ -260,6 +323,31 @@ impl<F: PrimeField64> SharedScheduler<F> {
         self.lock.lock().unwrap().push(w);
         self.ready.notify_all();
     }
+}
+
+/// Recover witnesses taken out of the scheduler by [`RecursiveScheduler::drain_all`]: return each
+/// `circom_witness` to the pool `generate_witness` took it from, and settle the ledger unit that was
+/// armed for it at hand-off. Returns how many were recovered.
+///
+/// Split out of the teardown closure so the scheduler/ledger/pool interaction is directly testable:
+/// the pool a witness goes back to is keyed off its `proof_type` (compressor witnesses come from the
+/// separate, smaller compressor pool), and the ledger unit off `(global_idx, proof_type)` — the same
+/// pair used to arm it. Getting either wrong silently shrinks a pool or strands a unit.
+pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
+    witnesses: Vec<Proof<F>>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    ledger: &Ledger,
+) -> usize {
+    let recovered = witnesses.len();
+    for mut w in witnesses {
+        let compressor = w.proof_type == ProofType::Compressor;
+        // Adopt-then-drop returns the buffer to its pool.
+        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness), compressor));
+        if let Some(idx) = w.global_idx {
+            ledger.settle(idx as u64, w.proof_type.as_usize());
+        }
+    }
+    recovered
 }
 
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
@@ -341,6 +429,172 @@ mod tests {
         let ready = vec![(k(0, 7, ProofType::Recursive1), 3), (k(0, 2, ProofType::Recursive1), 3)];
         let out = candidate_keys(&ready, &FEED_ORDER);
         assert_eq!(out, vec![k(0, 2, ProofType::Recursive1), k(0, 7, ProofType::Recursive1)]);
+    }
+}
+
+/// Teardown recovery: the scheduler holds pooled buffers and armed ledger units, so what happens to
+/// its queues when a phase ends early is a correctness property, not bookkeeping. These use a null
+/// device pointer throughout — `push`/`drain_all` never touch the FFI, and a null-pointer
+/// `CompletionOwner` makes its harvest a no-op (see `completion.rs` tests).
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+    use crate::{DeviceBuffersPtr, DeviceCompletions};
+    use fields::{Field, Goldilocks};
+    use proofman_common::MemoryHandlerRecursive;
+
+    type F = Goldilocks;
+
+    const W_SIZE: usize = 8;
+    const W_SIZE_COMPRESSOR: usize = 4;
+
+    fn scheduler() -> RecursiveScheduler<F> {
+        RecursiveScheduler::<F>::new(std::ptr::null_mut())
+    }
+
+    /// Two witness buffers per pool so a drained-and-returned buffer is distinguishable from a
+    /// refilled one: `reset()` only passes if the originals come back.
+    fn handler() -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE_COMPRESSOR, W_SIZE, W_SIZE_COMPRESSOR)
+    }
+
+    /// A witness as the hand-off builds it: `global_idx` set (the ledger keys off it) and holding a
+    /// buffer drawn from the pool its `proof_type` selects.
+    fn witness(h: &MemoryHandlerRecursive<F>, t: ProofType, global_idx: usize) -> Proof<F> {
+        let buf = if t == ProofType::Compressor { h.take_buffer_witness_compressor() } else { h.take_buffer_witness() };
+        Proof::new_witness(t, 0, 0, Some(global_idx), buf, 1)
+    }
+
+    #[test]
+    fn drain_all_takes_everything_and_leaves_the_scheduler_empty() {
+        let h = handler();
+        let mut s = scheduler();
+        s.push(witness(&h, ProofType::Compressor, 0));
+        s.push(witness(&h, ProofType::Recursive1, 1));
+        s.push(witness(&h, ProofType::Recursive2, 2));
+        s.push_basic(10, 0, 0, false);
+        s.push_basic(11, 0, 1, true);
+
+        let (witnesses, basics) = s.drain_all();
+        assert_eq!(witnesses.len(), 3);
+        assert_eq!(basics.len(), 2);
+        assert!(s.is_empty() && s.basic_is_empty(), "drain must leave nothing behind");
+
+        // A second drain is a no-op, so a double teardown can't double-return a buffer.
+        let (w2, b2) = s.drain_all();
+        assert!(w2.is_empty() && b2.is_empty());
+
+        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+    }
+
+    fn null_ptr() -> DeviceBuffersPtr {
+        DeviceBuffersPtr(std::ptr::null_mut())
+    }
+
+    #[test]
+    fn recovery_returns_compressor_buffers_to_the_compressor_pool() {
+        // The pool that shrank in the field: compressor witnesses come from their own, smallest pool,
+        // so returning one to the plain witness pool (or dropping it) leaves both pools wrong.
+        let h = handler();
+        let mut s = scheduler();
+        s.push(witness(&h, ProofType::Compressor, 0));
+        s.push(witness(&h, ProofType::Compressor, 1));
+        // Both compressor buffers are out of the pool now; a drop here would lose them for good.
+        let (witnesses, _) = s.drain_all();
+
+        let owner = DeviceCompletions::new().acquire(null_ptr());
+        assert_eq!(recover_drained_witnesses(witnesses, &h, &owner.ledger()), 2);
+
+        // Every buffer is back in the pool it came from, so the integrity check passes. This is the
+        // assertion that fails if a compressor buffer is dropped or filed under the wrong pool.
+        h.reset().expect("all four pools must be whole after recovery");
+    }
+
+    #[test]
+    fn recovery_settles_the_units_armed_at_hand_off() {
+        let h = handler();
+        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let ledger = owner.ledger();
+
+        let mut s = scheduler();
+        // Exactly what the hand-off does: arm by (child_id, kind), commit, then push.
+        for (t, idx) in [(ProofType::Compressor, 0usize), (ProofType::Recursive1, 1), (ProofType::Recursive2, 2)] {
+            ledger.arm(idx as u64, t.as_usize()).commit();
+            s.push(witness(&h, t, idx));
+        }
+        assert_eq!(ledger.remaining(), 3);
+
+        let (witnesses, _) = s.drain_all();
+        recover_drained_witnesses(witnesses, &h, &ledger);
+        assert_eq!(ledger.remaining(), 0, "a drained witness's unit must not stay outstanding");
+        h.reset().expect("pools whole");
+    }
+
+    #[test]
+    fn recovery_does_not_settle_a_unit_it_does_not_own() {
+        // Guards the key pairing: a drained compressor must settle (id, Compressor), never the basic
+        // unit that shares its numeric id and is still legitimately in flight.
+        let h = handler();
+        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let ledger = owner.ledger();
+        ledger.arm(7, ProofType::Basic.as_usize()).commit();
+        ledger.arm(7, ProofType::Compressor.as_usize()).commit();
+        assert_eq!(ledger.remaining(), 2);
+
+        let mut s = scheduler();
+        s.push(witness(&h, ProofType::Compressor, 7));
+        let (witnesses, _) = s.drain_all();
+        recover_drained_witnesses(witnesses, &h, &ledger);
+
+        assert_eq!(ledger.remaining(), 1, "only the compressor unit settles");
+        drop(ledger.adopt(7, ProofType::Basic.as_usize())); // the basic unit is still the one left
+        assert_eq!(ledger.remaining(), 0);
+        h.reset().expect("pools whole");
+    }
+
+    #[test]
+    fn a_witness_without_a_global_idx_still_returns_its_buffer() {
+        // `global_idx` is set for every hand-off path today; if that ever regresses, the buffer must
+        // still come back rather than the recovery panicking on an `unwrap`.
+        let h = handler();
+        let buf = h.take_buffer_witness();
+        let mut s = scheduler();
+        s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, 1));
+
+        let (witnesses, _) = s.drain_all();
+        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+        h.reset().expect("buffer returned even with no unit to settle");
+    }
+
+    #[test]
+    fn ledger_kind_spellings_agree() {
+        // The ledger key mixes two spellings of the same number: units are armed with
+        // `ProofType::X as usize` (the discriminant) and settled with `.as_usize()` (a match arm).
+        // If those ever diverge, arm and settle land on different keys and every unit strands.
+        for (t, discriminant) in [
+            (ProofType::Basic, ProofType::Basic as usize),
+            (ProofType::Compressor, ProofType::Compressor as usize),
+            (ProofType::Recursive1, ProofType::Recursive1 as usize),
+            (ProofType::Recursive2, ProofType::Recursive2 as usize),
+            (ProofType::VadcopFinal, ProofType::VadcopFinal as usize),
+            (ProofType::VadcopFinalCompressed, ProofType::VadcopFinalCompressed as usize),
+            (ProofType::RecursiveF, ProofType::RecursiveF as usize),
+            (ProofType::RecurserAggregator, ProofType::RecurserAggregator as usize),
+        ] {
+            assert_eq!(t.as_usize(), discriminant, "as_usize() must match `{t:?} as usize`");
+        }
+    }
+
+    #[test]
+    fn dropping_the_scheduler_undrained_is_what_loses_the_buffers() {
+        // The failure this recovery exists to prevent, pinned down so the cost of skipping the drain
+        // stays visible: without it the pool comes back short and `reset()` reports the leak.
+        let h = handler();
+        let mut s = scheduler();
+        s.push(witness(&h, ProofType::Compressor, 0));
+        s.queues.clear(); // drop the queued witness instead of draining it
+        assert!(h.reset().is_err(), "a dropped witness permanently shrinks its pool");
+        let _ = F::ZERO; // keep the Field import honest across backends
     }
 }
 

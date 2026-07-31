@@ -421,6 +421,10 @@ struct StreamData{
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
+
+        // Clear stale open timer categories: a cancel mid-category leaves one open, and the next
+        // job's stopCategory then mismatches and CHECKCUDAERR-aborts. Host-side only, no CUDA calls.
+        timer.resetCategories();
     }
 
     // Invalidate the const-reuse identity so the next proof reloads constants.
@@ -543,9 +547,15 @@ struct DeviceCommitBuffers
     uint64_t constPolsSize;
     uint64_t unifiedBufferSize = 0;
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
-    // 0 = free (proofman owns it), 1 = borrowed 
+    // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
+
+    // Device-idle barrier. Worker: increment `device_active` THEN read `cancelled`. Teardown: raise
+    // `cancelled` THEN wait for `device_active == 0`. seq_cst on both gives a total order so neither
+    // side misses the other, letting teardown fence in-flight work before free. Covers only InFlightScope entries.
+    std::atomic<int64_t> device_active{0};
+    std::atomic<bool> cancelled{false};
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
@@ -562,6 +572,26 @@ struct DeviceCommitBuffers
     bool packedTrace = false;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
+};
+
+// RAII guard for the device-idle barrier. Construct at the top of a device entry (before touching
+// the device) so teardown waits for this thread before freeing. Coverage is partial (not every
+// entry constructs one). `cancelled()` lets an entry additionally bail out early when teardown has
+// begun; increment-then-read pairs with teardown's raise-then-wait (seq_cst) so neither side misses
+// the other. NOTE: no entry checks it yet — teardown currently relies on the refcount wait alone.
+struct InFlightScope {
+    DeviceCommitBuffers *d;
+    explicit InFlightScope(DeviceCommitBuffers *d_) : d(d_) {
+        d->device_active.fetch_add(1, std::memory_order_seq_cst);
+    }
+    ~InFlightScope() {
+        d->device_active.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    bool cancelled() const {
+        return d->cancelled.load(std::memory_order_seq_cst);
+    }
+    InFlightScope(const InFlightScope &) = delete;
+    InFlightScope &operator=(const InFlightScope &) = delete;
 };
 
 void copy_to_device_in_chunks(

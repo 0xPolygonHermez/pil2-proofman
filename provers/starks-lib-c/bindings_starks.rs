@@ -463,6 +463,8 @@ extern "C" {
         force_recursive: bool,
     ) -> u32;
 
+    pub fn release_stream_reservation(d_buffers_: *mut ::std::os::raw::c_void, streamId: u32);
+
     pub fn calculate_const_tree_fixed(
         pSetupCtx_: *mut ::std::os::raw::c_void,
         airgroupId: u64,

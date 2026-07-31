@@ -104,6 +104,9 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let used_len = num_rows * row_size;
 
         if buffer.len() < used_len {
+            // Consumed by value, so this drops `buffer` — a pooled one is lost here. Say so: the
+            // pool only reports it later as an unexplained "recovered N of M".
+            tracing::error!("new_from_vec_zeroes: buffer too small ({} < {used_len}); dropping it", buffer.len());
             return Err(ProofmanError::InvalidParameters(format!(
                 "Provided buffer too small: got {}, expected at least {}",
                 buffer.len(),
@@ -132,6 +135,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let expected_len = num_rows * row_size;
 
         if buffer.len() < expected_len {
+            // Consumed by value, so this drops `buffer` — see new_from_vec_zeroes.
+            tracing::error!("new_from_vec: buffer too small ({} < {expected_len}); dropping it", buffer.len());
             return Err(ProofmanError::InvalidParameters(format!(
                 "Provided buffer too small: got {}, expected at least {}",
                 buffer.len(),

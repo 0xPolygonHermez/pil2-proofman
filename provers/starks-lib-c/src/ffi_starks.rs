@@ -13,31 +13,34 @@ use std::ffi::CString;
 
 use std::ffi::CStr;
 
-// The proof-done channel is read by `on_proof_done`, which is invoked from the C++/CUDA
-// stream-harvest threads (get_stream_proofs / get_stream_proofs_non_blocking), and written
-// by `register`/`clear` on the Rust proving/teardown thread. The C++ `proof_done_callback`
-// pointer is NEVER nulled, so a late harvest during cancel/teardown can call `on_proof_done`
-// concurrently with a `clear`. If `clear` dropped the `Sender` (freeing crossbeam's shared
-// channel allocation) while a harvest thread was mid-`send`, that send dereferenced freed
-// memory -> SEGV (status=11) on the cancel path. An RwLock makes the read-vs-drop mutually
-// exclusive: the Sender cannot be dropped while any harvest holds the read lock for a send.
-static PROOFS_DONE: std::sync::RwLock<Option<crossbeam_channel::Sender<(u64, String)>>> = std::sync::RwLock::new(None);
+/// A proof-done completion crossing the FFI boundary: the `(id, proof_type)` the C++ harvest
+/// reports for a finished proof.
+#[derive(Debug, Clone)]
+pub struct CompletionMsg {
+    pub id: u64,
+    pub proof_type: String,
+}
+
+// Read by `on_proof_done` (C++/CUDA harvest threads), written by register/clear. The C++ callback
+// pointer is never nulled, so a late harvest can race a `clear`; the RwLock keeps read-vs-drop
+// exclusive so a send can't drop/free the channel mid-send -> SEGV (status=11).
+static PROOFS_DONE: std::sync::RwLock<Option<crossbeam_channel::Sender<CompletionMsg>>> = std::sync::RwLock::new(None);
 
 extern "C" fn on_proof_done(instance_id: u64, proof_type: *const c_char) {
     let proof_type_str = unsafe { CStr::from_ptr(proof_type).to_string_lossy().into_owned() };
 
-    // Hold the read lock for the whole send: this pins the `Sender` so a concurrent
-    // `clear_proof_done_callback_c` (write lock) cannot drop/free the channel mid-send.
-    let guard = PROOFS_DONE.read().unwrap();
+    // Hold the read lock across the send so a concurrent `clear` can't drop the Sender mid-send.
+    // Recover from poison rather than unwind: an unwind out of an `extern "C"` fn aborts.
+    let guard = PROOFS_DONE.read().unwrap_or_else(|e| e.into_inner());
     if let Some(ref tx) = *guard {
-        let _ = tx.send((instance_id, proof_type_str));
+        let _ = tx.send(CompletionMsg { id: instance_id, proof_type: proof_type_str });
     }
 }
 
-pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<CompletionMsg>) {
     // Swap under the write lock: any in-flight `on_proof_done` read has released its guard
     // before this replaces (and drops) the previous Sender, so no send races the drop.
-    *PROOFS_DONE.write().unwrap() = Some(tx);
+    *PROOFS_DONE.write().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     unsafe {
         register_proof_done_callback(Some(on_proof_done));
     }
@@ -126,11 +129,9 @@ pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
 }
 
 pub fn clear_proof_done_callback_c() {
-    // Take the write lock so the Sender is dropped only when no `on_proof_done` holds the
-    // read lock mid-send. This is what makes clearing during cancel/teardown crash-safe even
-    // though the C++ `proof_done_callback` pointer is never nulled (a late harvest can still
-    // enter `on_proof_done`; it will just observe `None`, not SEGV).
-    *PROOFS_DONE.write().unwrap() = None;
+    // Take the write lock so the Sender is dropped only when no `on_proof_done` holds the read lock
+    // mid-send. A late harvest after clearing just observes `None` (the C++ pointer is never nulled).
+    *PROOFS_DONE.write().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1099,6 +1100,14 @@ pub fn reserve_best_stream_nonblock_c(
 /// Scheduler warm fast path: reserve `stream_id` iff it is free right now. Returns true on success.
 pub fn reserve_stream_if_free_c(d_buffers: *mut c_void, stream_id: u32, force_recursive: bool) -> bool {
     unsafe { reserve_stream_if_free(d_buffers, stream_id, force_recursive) != 0 }
+}
+
+/// Scheduler: give back a reservation the caller never launched on. A reserved stream reads as busy
+/// to every selection pass, so failing between reserve and launch without this would strand the slot
+/// for the process lifetime. Only releases a stream still in the reserved state, so it is safe to
+/// call unconditionally on an error path.
+pub fn release_stream_reservation_c(d_buffers: *mut c_void, stream_id: u32) {
+    unsafe { release_stream_reservation(d_buffers, stream_id) }
 }
 
 pub fn calculate_const_tree_fixed_c(
