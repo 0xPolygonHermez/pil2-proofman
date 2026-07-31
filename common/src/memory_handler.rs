@@ -2,7 +2,7 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
@@ -100,6 +100,9 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
     /// Data pointers of the pool's OWN buffers — only these are re-pooled on release (a cancel-escape
     /// buffer is freed instead), so the pool stays at exactly N pinned buffers and `release` never blocks.
     original_ptrs: HashSet<usize>,
+    /// Buffers the last `reset` found missing. While non-zero a waiter gets a fresh buffer instead of
+    /// parking on one that is never coming back; a later clean `reset` clears it.
+    deficit: AtomicUsize,
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
@@ -112,7 +115,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         for buffer in buffers {
             sender.send(buffer).unwrap();
         }
-        Self { sender, receiver, n_buffers, buffer_size, registered_buffers, cancelled, original_ptrs }
+        Self {
+            sender,
+            receiver,
+            n_buffers,
+            buffer_size,
+            registered_buffers,
+            cancelled,
+            original_ptrs,
+            deficit: AtomicUsize::new(0),
+        }
     }
 
     fn take(&self) -> Vec<F> {
@@ -125,6 +137,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     // on cancel, hand back a fresh buffer so teardown doesn't hang
                     if self.cancelled.load(Ordering::SeqCst) {
+                        return vec![F::ZERO; self.buffer_size];
+                    }
+                    if let Some(short_by) = self.short_by() {
+                        tracing::error!("Pool::take: pool short by {short_by}; using an unpooled buffer");
                         return vec![F::ZERO; self.buffer_size];
                     }
                     backoff = (backoff * 2).min(MAX_POOL_WAIT_BACKOFF);
@@ -156,6 +172,14 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
 
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// How many buffers the last `reset` found missing, if any. A waiter must not park on those.
+    fn short_by(&self) -> Option<usize> {
+        match self.deficit.load(Ordering::SeqCst) {
+            0 => None,
+            n => Some(n),
+        }
     }
 
     fn release(&self, buffer: Vec<F>) -> ProofmanResult<()> {
@@ -210,6 +234,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         for buf in valid_buffers {
             self.sender.send(buf).expect("Pool channel closed");
         }
+
+        // A missing buffer is gone for good, so record it: `take` must stop parking on it (with
+        // n_buffers == 1 it would park forever — nothing is left to release).
+        self.deficit.store(self.n_buffers.saturating_sub(recovered), Ordering::SeqCst);
 
         if recovered == self.n_buffers && wrong_size == 0 {
             return Ok(());
@@ -330,6 +358,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
             }
             if let Some(buffer) = self.pool.take_timeout(backoff) {
                 return buffer;
+            }
+            if let Some(short_by) = self.pool.short_by() {
+                tracing::error!("MemoryHandler::take_buffer: pool short by {short_by}; using an unpooled buffer");
+                return self.pool.fresh_buffer();
             }
             backoff = (backoff * 2).min(MAX_POOL_WAIT_BACKOFF);
         }
@@ -579,6 +611,19 @@ mod tests {
     }
 
     #[test]
+    fn a_short_pool_hands_out_unpooled_buffers_instead_of_parking() {
+        let h = handler(1, 0, 8, 0);
+        std::mem::forget(h.take_buffer_witness()); // stranded: never released, address never reused
+        assert!(h.reset().is_err(), "the loss is reported");
+        // Nothing is left to release, so without the recorded deficit this would park forever.
+        let fresh = h.take_buffer_witness();
+        assert_eq!(fresh.len(), 8);
+        h.release_buffer_witness(fresh).unwrap(); // unpooled: dropped, never pooled
+                                                  // A clean reset (the escapee's slot still missing) keeps reporting it.
+        assert!(h.reset().is_err());
+    }
+
+    #[test]
     fn release_rejects_wrong_size_buffer() {
         let h = handler(1, 0, 8, 0);
         let _good = h.take_buffer_witness();
@@ -630,9 +675,10 @@ mod tests {
         // buffers. That must not survive a reset that reported an error.
         let h = handler(1, 1, 8, 4);
         h.cancel();
-        let _escapee = h.take_buffer_witness(); // empty pool + cancelled -> fresh buffer
+        let escapee = h.take_buffer_witness(); // the pool's only buffer
         let _ = h.reset(); // cancelled path: warns rather than errors
-                           // Flag cleared, so the pool is authoritative again: it holds its one original buffer.
+        h.release_buffer_witness(escapee).unwrap();
+        // Flag cleared, so the pool is authoritative again: it holds its one original buffer.
         let original = h.take_buffer_witness();
         h.release_buffer_witness(original).unwrap();
         h.reset().expect("pool whole and no longer in cancelled mode");

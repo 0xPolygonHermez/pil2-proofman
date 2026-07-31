@@ -44,8 +44,8 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, launch_callback_c, initialize_instance_c,
-    calculate_trace_instance_c, wait_trace_h2d_done_c,
+    calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
+    wait_trace_h2d_done_c,
 };
 
 use std::{
@@ -3382,8 +3382,18 @@ where
         }
 
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let mut panicked = 0usize;
         for handle in handles {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                panicked += 1;
+            }
+        }
+        // A panic settles the worker's ProofToken on unwind, so `wait_settled` above already
+        // returned true for a proof that was never produced. Cancel so `check_cancel` reports it.
+        if panicked > 0 {
+            self.cancellation_info.write_recover().cancel(Some(ProofmanError::ProofmanError(format!(
+                "{panicked} recursive proof worker thread(s) panicked"
+            ))));
         }
 
         self.check_cancel(true)?;
@@ -3642,7 +3652,7 @@ where
                 let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
                 let expected = setup.proof_size as usize + publics_aggregation;
                 if proof.proof.len() != expected {
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
                         "Aggregated proof from workers {:?} airgroup {} has wrong length {} (expected {}) — malformed or truncated in transit",
                         proof.worker_indexes, proof.airgroup_id, proof.proof.len(), expected
                     ))));
@@ -3784,7 +3794,7 @@ where
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
                 &self.cancellation_info,
             );
-            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+            if self.cancellation_info.read_recover().token.is_cancelled() {
                 self.cancel_memory_handlers();
             }
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());

@@ -817,7 +817,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let const_tree_ptr_addr = const_tree.as_ptr() as usize;
     let d_buffers_addr = d_buffers_recursivef as usize;
 
-    let load_fixed_pols_handle = std::thread::spawn(move || {
+    // JoinOnDrop so an early `?` below joins this loader instead of detaching it.
+    let load_fixed_pols_handle = JoinOnDrop::new(std::thread::spawn(move || {
         timer_start_debug!(LOAD_FIXED_POLS_RECURSIVEF);
         load_fixed_pols_recursivef_c(
             p_setup_addr as *mut c_void,
@@ -825,7 +826,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
             d_buffers_addr as *mut c_void,
         );
         timer_stop_and_log_debug!(LOAD_FIXED_POLS_RECURSIVEF);
-    });
+    }));
 
     // Release-on-drop lease: returns to the pool on every exit path (see generate_recursive_proof).
     let mut trace = memory_handler_recursive_witness.take_trace_lease(false);
@@ -877,7 +878,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
 
     // Join the background thread (should be done by now since proof waited for copy event)
-    if let Err(e) = load_fixed_pols_handle.join() {
+    if let Err(e) = load_fixed_pols_handle.join_now() {
         tracing::warn!("Fixed pols loading thread panicked: {:?}", e);
     }
 
@@ -907,7 +908,8 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     let p_setup_addr = p_setup as usize;
     let device_buffers_addr = d_buffers as usize;
     let setup_type = setup.setup_type;
-    let calc_handle = std::thread::spawn(move || {
+    // JoinOnDrop so an early `?` below joins this const-tree thread instead of detaching it.
+    let calc_handle = JoinOnDrop::new(std::thread::spawn(move || {
         calculate_const_tree_fixed_c(
             p_setup_addr as *mut c_void,
             0,
@@ -915,7 +917,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
             setup_type.into(),
             device_buffers_addr as *mut c_void,
         );
-    });
+    }));
 
     let mut zkin: Vec<u64> =
         Vec::with_capacity(proof_a.len() + proof_b.len() + free_inputs_a.len() + free_inputs_b.len() + 4);
@@ -929,9 +931,6 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     let circom_witness = match generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &zkin) {
         Ok(witness) => witness,
         Err(e) => {
-            if let Err(p) = calc_handle.join() {
-                tracing::warn!("Recurser const tree calculation thread panicked: {:?}", p);
-            }
             timer_stop_and_log_info!(GENERATE_RECURSER_AGGREGATOR);
             return Err(e);
         }
@@ -974,7 +973,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         (const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8)
     };
 
-    if let Err(e) = calc_handle.join() {
+    if let Err(e) = calc_handle.join_now() {
         tracing::warn!("Recurser const tree calculation thread panicked: {:?}", e);
     }
 

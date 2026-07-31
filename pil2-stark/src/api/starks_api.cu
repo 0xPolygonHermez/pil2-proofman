@@ -1082,7 +1082,15 @@ void get_stream_proofs_non_blocking_gpu(void *d_buffers_){
 }
 
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
+    if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // Guard the C-ABI surface: an out-of-range streamId would index streamsData OOB and segfault.
+    if (streamId >= d_buffers->n_total_streams) {
+        zklog.warning("get_stream_id_proof: stream " + std::to_string(streamId) +
+                      " out of range (n_total_streams " + std::to_string(d_buffers->n_total_streams) +
+                      "); ignoring");
+        return;
+    }
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     // Hold the per-stream lock across harvest + reset or SEGV: a concurrent reset_device_streams_gpu
     // (same lock) races the `proofType` (std::string) read and frees the string mid-read.
