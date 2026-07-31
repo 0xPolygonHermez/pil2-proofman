@@ -2,7 +2,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
 
 /// Detects whether GPU (CUDA) support is available.
 /// Returns false if the cpu-only feature is set or if no CUDA toolkit is found.
@@ -21,13 +20,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
     println!("cargo:rerun-if-env-changed=CUDA_ARCH");
     println!("cargo:rerun-if-env-changed=CUDA_GENCODE_FLAGS");
-
-    // Force this script to run on every cargo build: the bump file is
-    // rewritten on each run, so its mtime always post-dates the previous
-    // fingerprint.
-    let bump = Path::new(&env::var("OUT_DIR").unwrap()).join("always-rerun");
-    fs::write(&bump, format!("{:?}", SystemTime::now())).ok();
-    println!("cargo:rerun-if-changed={}", bump.display());
 
     // Determine if GPU support should be used:
     // - If cpu-only feature is set, always use CPU
@@ -83,104 +75,40 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={}", lib_file.display());
 
-    // Detect if Makefile changed since last build. Compiler flag edits (e.g.
-    // toggling -D__AVX512__) aren't tracked by make's .d files, so a flag flip
-    // would otherwise leave stale objects linked against the new library.
+    // Detect if the Makefile changed since the last build (see the clean below).
     let makefile_path = pil2_stark_path.join("Makefile");
     let makefile_stamp_path = library_folder.join(".makefile_stamp");
     let current_makefile = fs::read(&makefile_path).ok();
     let stored_makefile = fs::read(&makefile_stamp_path).ok();
     let makefile_changed = current_makefile.is_some() && current_makefile != stored_makefile;
 
-    // Staleness gate: probe everything that could invalidate the library and
-    // invoke make only when one of the probes fires.
-    let simd_changed = cfg!(target_os = "linux")
-        && fs::read_to_string(pil2_stark_path.join(".simd_stamp"))
-            .map(|s| s.trim() != host_simd_level())
-            .unwrap_or(true);
-
-    // Raw CUDA env vars consumed by the Makefile's arch resolution; any change
-    // must reach make,
-    let cuda_env = format!(
-        "CUDA_ARCHS={};CUDA_ARCH={};CUDA_GENCODE_FLAGS={}",
-        env::var("CUDA_ARCHS").unwrap_or_default(),
-        env::var("CUDA_ARCH").unwrap_or_default(),
-        env::var("CUDA_GENCODE_FLAGS").unwrap_or_default()
-    );
-    let cuda_env_stamp_path = library_folder.join(".cuda_env_stamp");
-    let cuda_env_changed =
-        use_gpu && fs::read_to_string(&cuda_env_stamp_path).map(|s| s.trim() != cuda_env).unwrap_or(true);
-
-    // Under auto-detect (no CUDA env set), check that the GPU visible on this
-    // machine matches an arch the last build was compiled for.
-    let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
-    let host_arch = if use_gpu && auto_detect { host_gpu_arch() } else { None };
-
-    let gpu_changed = use_gpu && auto_detect && {
-        let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
-        match &host_arch {
-            // Concrete arch detected: rebuild iff the last build doesn't cover it.
-            Some(arch) => !stamp.contains(&format!("code=sm_{arch}")),
-            // No arch detected: the Makefile falls back to the multi-arch build.
-            // Rebuild only if the previous build was single-arch (or absent), so
-            // GPU-less hosts settle on the fallback instead of rebuilding forever.
-            None => stamp.matches("code=sm_").count() <= 1,
-        }
-    };
-
-    let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();
-    let sources_newer = lib_mtime.is_none_or(|lib| newest_mtime(&tracked_files) > lib);
-
-    let make_reason = if !lib_file.exists() {
-        Some("library missing")
-    } else if makefile_changed {
-        Some("Makefile changed")
-    } else if simd_changed {
-        Some("host SIMD level changed")
-    } else if cuda_env_changed {
-        Some("CUDA_ARCHS/CUDA_ARCH/CUDA_GENCODE_FLAGS changed")
-    } else if gpu_changed {
-        Some("host GPU arch changed or unknown")
-    } else if sources_newer {
-        Some("sources newer than library")
-    } else {
-        None
-    };
-
+    // No staleness gate here: cargo only re-runs this script when one of the
+    // `rerun-if-changed` / `rerun-if-env-changed` inputs above actually moved
     let target = if use_gpu { "starks_lib_gpu" } else { "starks_lib" };
-    if let Some(reason) = make_reason {
-        // Clean build when the Makefile itself changes (CUDA arch / SIMD
-        // changes are reconciled by the Makefile's own stamps)
-        if makefile_changed {
-            eprintln!("Makefile changed — running clean rebuild...");
-            // Variant-scoped: a full `make clean` would delete the other
-            // variant's build dirs, which may belong to a build that just
-            // finished or (without the lock) one still in flight.
-            run_command("make", &[if use_gpu { "clean_gpu" } else { "clean_cpu" }], &pil2_stark_path);
-        }
-        eprintln!("Running make -j {target} ({reason})...");
-        run_command("make", &["-j", target], &pil2_stark_path);
 
-        // Write stamps after make succeeds (make creates the output directory).
-        if let Some(content) = &current_makefile {
-            if let Err(e) = fs::write(&makefile_stamp_path, content) {
-                eprintln!(
-                    "Warning: failed to write Makefile stamp {:?}: {e} — next build will recompile",
-                    makefile_stamp_path
-                );
-            }
-        }
-        if use_gpu {
-            if let Err(e) = fs::write(&cuda_env_stamp_path, &cuda_env) {
-                eprintln!(
-                    "Warning: failed to write CUDA env stamp {:?}: {e} — next build will recompile",
-                    cuda_env_stamp_path
-                );
-            }
-        }
-    } else {
-        eprintln!("starks library up to date — skipping make");
+    // Clean build when the Makefile itself changes: compiler flag edits (e.g.
+    // toggling -D__AVX512__) aren't tracked by make's .d files, so a flag flip
+    // would otherwise leave stale objects linked into the new library.
+    if makefile_changed {
+        eprintln!("Makefile changed — running clean rebuild...");
+        // Variant-scoped: a full `make clean` would delete the other variant's
+        // build dirs, which may belong to a build that just finished or
+        // (without the lock) one still in flight.
+        run_command("make", &[if use_gpu { "clean_gpu" } else { "clean_cpu" }], &pil2_stark_path);
     }
+    eprintln!("Running make -j {target}...");
+    run_command("make", &["-j", target], &pil2_stark_path);
+
+    // Write the stamp after make succeeds (make creates the output directory).
+    if let Some(content) = &current_makefile {
+        if let Err(e) = fs::write(&makefile_stamp_path, content) {
+            eprintln!(
+                "Warning: failed to write Makefile stamp {:?}: {e} — next build will recompile",
+                makefile_stamp_path
+            );
+        }
+    }
+
     // Absolute path to the library
     let abs_lib_path = library_folder.canonicalize().unwrap_or_else(|_| library_folder.clone());
 
@@ -252,40 +180,6 @@ fn main() {
     }
 }
 
-/// SIMD level of the host CPU, mirroring the Makefile's AVX detection
-fn host_simd_level() -> &'static str {
-    let cpuinfo = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
-    if cpuinfo.contains("avx512") {
-        "avx512"
-    } else if cpuinfo.contains("avx2") {
-        "avx2"
-    } else {
-        "none"
-    }
-}
-
-/// Compute capability of the first visible GPU as an sm number (e.g. "120"),
-/// or None when nvidia-smi can't see a GPU. Mirrors configure.sh's probe.
-fn host_gpu_arch() -> Option<String> {
-    // nvidia-smi is the same probe configure.sh uses — gate and authority agree.
-    let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let arch: String = stdout.lines().next()?.chars().filter(char::is_ascii_digit).collect();
-    (!arch.is_empty()).then_some(arch)
-}
-
-/// Newest modification time among the given files (UNIX_EPOCH if none readable).
-fn newest_mtime(files: &[PathBuf]) -> SystemTime {
-    files
-        .iter()
-        .filter_map(|f| fs::metadata(f).ok().and_then(|m| m.modified().ok()))
-        .max()
-        .unwrap_or(SystemTime::UNIX_EPOCH)
-}
-
 /// Runs an external command and checks for errors
 fn run_command(cmd: &str, args: &[&str], dir: &Path) {
     let status = Command::new(cmd)
@@ -314,13 +208,13 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
                 files.extend(find_tracked_files(&path));
             } else {
                 // Skip build-generated files: .mk (make includes), .d (dependency
-                // files), and the Makefile's staleness stamps
+                // files), and the build lock
                 let ext = path.extension().and_then(|e| e.to_str());
                 if matches!(ext, Some("mk" | "d")) {
                     continue;
                 }
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if matches!(name, ".simd_stamp" | ".cuda_arch_stamp" | ".build_lock") {
+                if name == ".build_lock" || name.ends_with("_stamp") {
                     continue;
                 }
                 files.push(path);
