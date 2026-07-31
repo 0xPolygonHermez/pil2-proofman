@@ -608,24 +608,25 @@ pub fn gen_recursive_setup(
                 target_security_bits: 128,
                 regime,
             };
-            let fri = crate::types::security::pcs::Fri::new(fri_config);
-            let mut fri_security = fri.security_params().clone();
+            let mut fri = crate::types::security::pcs::Fri::new(fri_config);
 
             // An explicit starkStruct override (config.stark_struct) may request MORE queries
             // than the security-optimal count — this is how the caller sizes a has-compressor
             // recursive1 up to the shared domain (more compressor queries → bigger recursive1
             // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
-            // strengthens. get_optimal_fri_query_params otherwise discards the override entirely.
+            // strengthens. The solver otherwise discards the override entirely.
             let override_q = stark_struct.n_queries as u64;
-            if config.stark_struct.is_some() && override_q > fri_security.n_queries {
-                tracing::info!(
-                    "Honoring nQueries override for {}: {} → {} (security floor {})",
-                    template_str,
-                    fri_security.n_queries,
-                    override_q,
-                    fri_security.n_queries
-                );
-                fri_security.n_queries = override_q;
+            if config.stark_struct.is_some() {
+                let security_floor = fri.security_params().n_queries;
+                if fri.raise_n_queries(override_q) {
+                    tracing::info!(
+                        "Honoring nQueries override for {}: {} → {} (security floor {})",
+                        template_str,
+                        security_floor,
+                        override_q,
+                        security_floor
+                    );
+                }
             }
 
             let starkinfo_output = crate::output::stark_info::build_starkinfo_output(

@@ -89,8 +89,11 @@ impl Fri {
 
     /// Structural validation shared by both constructors.
     fn validate(cfg: FriConfig) -> Self {
+        // `num_rounds == 0` is legal: the folding phase is empty and the prover
+        // sends the whole (trace-degree) polynomial in clear, so the query phase
+        // degenerates to a direct low-degree test against it. Small airs whose
+        // 2^n_bits_ext is already at or below the final degree take this path.
         let num_rounds = cfg.log_folding_factors.len();
-        assert!(num_rounds > 0, "FRI must have at least one folding round (folding_factors non-empty)");
 
         // ρ = 2^-k.
         let k = (-cfg.rate.log2()).round();
@@ -214,6 +217,11 @@ impl Fri {
     /// Approximate verifier hash count per query: one coset opening in each
     /// round's tree.
     fn query_num_hashes(&self) -> f64 {
+        if self.num_rounds == 0 {
+            // No folding: the query still opens the initial oracle, as a single
+            // leaf (coset size 2^0) on the full evaluation domain.
+            return coset_opening_hashes(self.log_trace + self.log_inv_rate, 0, self.cfg.tree_arity);
+        }
         (0..self.num_rounds)
             .map(|round| {
                 let k = self.cfg.log_folding_factors[round];
@@ -224,9 +232,10 @@ impl Fri {
     }
 
     /// Total Merkle openings in the query phase: each query opens one coset
-    /// in every round's tree.
+    /// in every round's tree. With no folding rounds there is still the initial
+    /// oracle to open, hence the `max(1)`.
     pub fn num_merkle_openings(&self) -> u64 {
-        self.sec_params.n_queries * self.num_rounds as u64
+        self.sec_params.n_queries * self.num_rounds.max(1) as u64
     }
 
     /// Approximate verifier hashes spent on the query phase.
@@ -348,6 +357,18 @@ impl Fri {
     /// The deduced security parameters (query count, grinding split).
     pub fn security_params(&self) -> &FriSecurityParams {
         &self.sec_params
+    }
+
+    /// Raise the query count above the security-optimal value, e.g. because a
+    /// caller sizes a circuit by its query count. Never lowers it, so the
+    /// solved security floor is preserved and soundness only ever strengthens.
+    /// Returns whether the count actually changed.
+    pub fn raise_n_queries(&mut self, n_queries: u64) -> bool {
+        if n_queries > self.sec_params.n_queries {
+            self.sec_params.n_queries = n_queries;
+            return true;
+        }
+        false
     }
 
     /// The deduced gap-widening factor.
@@ -625,5 +646,44 @@ mod tests {
         assert_eq!(sec.grinding_bits_query, 22);
         assert_eq!(sec.grinding_bits_batching, 0);
         assert_eq!(sec.grinding_bits_folding, vec![0; 4]);
+    }
+
+    /// Tiny airs (e.g. the `Connection2`/`ConnectionNew` test airs, 2^4 rows with
+    /// blowup 1) generate a starkStruct with a single step, so the folding phase
+    /// is empty. The query phase then tests the codeword directly against the
+    /// final polynomial, which is sent in clear.
+    #[test]
+    fn test_no_folding_rounds() {
+        let fri = Fri::new(test_config(1 << 4, 0.5, 14, vec![], 20));
+
+        let levels = fri.security_levels();
+        assert!(levels.iter().all(|(k, _)| k != "fold(i=0)"), "no folding phase expected: {levels:?}");
+        assert_eq!(levels.iter().find(|(k, _)| k == "query").unwrap().1, 128);
+        assert_eq!(fri.total_security_bits(), 128);
+
+        let sec = fri.security_params();
+        assert!(sec.n_queries > 0);
+        assert_eq!(sec.grinding_bits_query, 20);
+        assert!(sec.grinding_bits_folding.is_empty());
+
+        // Each query still opens the single committed oracle.
+        assert_eq!(fri.num_merkle_openings(), sec.n_queries);
+        assert!(fri.total_query_hashes() > 0.0);
+        assert!(fri.proof_size_bits() > 0);
+    }
+
+    /// The nQueries override must survive into the reported security params and
+    /// must never weaken the solved security floor.
+    #[test]
+    fn test_raise_n_queries() {
+        let mut fri = Fri::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
+        let floor = fri.security_params().n_queries;
+
+        assert!(!fri.raise_n_queries(floor - 1), "must not lower below the floor");
+        assert_eq!(fri.security_params().n_queries, floor);
+
+        assert!(fri.raise_n_queries(floor + 10));
+        assert_eq!(fri.security_params().n_queries, floor + 10);
+        assert!(fri.total_security_bits() >= 128);
     }
 }
