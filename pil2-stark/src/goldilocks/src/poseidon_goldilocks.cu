@@ -42,6 +42,9 @@ static_assert(pos1MdsEntriesBelow32<16>(PoseidonGoldilocksConstants::M16), "Pose
 // CUDA threads per block.
 #define TPB_POS1 128
 
+// Merkle levels with at most this many nodes use the warp-per-node kernel; larger levels keep the thread-per-node kernel
+#define POS1_MERKLE_WARP_MAX_NODES 16384
+
 // ---------------------------------------------------------------------------
 // __constant__ memory — distinct symbols from Poseidon2.
 // ---------------------------------------------------------------------------
@@ -295,6 +298,38 @@ __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
         out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
+// Warp-per-node merkle reduction for SMALL levels. One warp cooperates on each
+// node's permutation (lane i owns state element i, MVP via shuffles), cutting
+// the per-node serial dependency chain ~W-fold vs. the one-thread-per-node
+// kernel above, whose ~100us single-permute latency dominates tree-top levels
+// that are far too small to fill the GPU. Digests are stored canonicalized
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
+__global__ void merkleNodeWarpKernel_pos1(uint64_t nextN, uint64_t nextIndex,
+                                          uint64_t pending, uint32_t arity,
+                                          uint64_t *cursor)
+{
+    const uint32_t lane = threadIdx.x & 31;
+    const uint64_t node = ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+    if (node >= nextN || lane >= W) return;
+    const uint32_t mask = (uint32_t)((1ull << W) - 1);
+
+    const uint32_t stride = arity * CAPACITY_T;
+    const uint64_t base = (uint64_t)nextIndex + node * (uint64_t)stride;
+    const uint32_t n = (stride < W) ? stride : W;
+
+    gl64_t v = (lane < n) ? ((gl64_t *)cursor)[base + lane] : gl64_t(uint64_t(0));
+    v = poseidon1PermuteWarpReg<W, HALF_F, N_PART>(v, lane, mask,
+        Pos1ConstGPU<W>::C(), Pos1ConstGPU<W>::S(),
+        Pos1ConstGPU<W>::M(), Pos1ConstGPU<W>::P());
+
+    if (lane < CAPACITY_T)
+    {
+        uint64_t u = v[0];
+        if (u >= GOLDILOCKS_PRIME) u -= GOLDILOCKS_PRIME;
+        cursor[nextIndex + (pending + node) * CAPACITY_T + lane] = u;
+    }
+}
+
 // Grinding kernel. Uses an in-register state and the register-path permute.
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void grindingKernel_pos1(uint64_t *nonce,
@@ -529,13 +564,24 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
                 (uint64_t *)(d_tree + nextIndex + pending * CAPACITY),
                 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
 
-        if (nextN < TPB_POS1) { tpb = (u32)nextN; blks = 1; }
-        else                  { tpb = TPB_POS1;   blks = (u32)(nextN / TPB_POS1 + 1); }
-        smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+        if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
+        {
+            u32 tpb_w = 256;
+            u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
+            merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks_w, tpb_w, 0, stream>>>(nextN, nextIndex,
+                                               pending + extraZeros, arity, d_tree);
+        }
+        else
+        {
+            tpb = TPB_POS1;
+            blks = (u32)(nextN / TPB_POS1 + 1);
+            smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-        merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
-                                                pending + extraZeros, arity, d_tree);
+            merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
+                                                    pending + extraZeros, arity, d_tree);
+        }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
@@ -581,13 +627,24 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
             CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * CAPACITY, 0,
                                          extraZeros * CAPACITY * sizeof(uint64_t), stream));
 
-        u32 tpb = (nextN < TPB_POS1) ? (u32)nextN : TPB_POS1;
-        u32 blks = (nextN < TPB_POS1) ? 1 : (u32)(nextN / TPB_POS1 + 1);
-        size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+        if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
+        {
+            u32 tpb_w = 256;
+            u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
+            merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks_w, tpb_w, 0, stream>>>(
+                    nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+        }
+        else
+        {
+            u32 tpb = TPB_POS1;
+            u32 blks = (u32)(nextN / TPB_POS1 + 1);
+            size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-        merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(
-                nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+            merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks, tpb, smem_bytes, stream>>>(
+                    nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+        }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
