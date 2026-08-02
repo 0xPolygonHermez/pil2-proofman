@@ -487,14 +487,13 @@ __device__ __forceinline__ gl64_t pos1_mvp_warp(gl64_t v, const gl64_t *mat, uin
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __device__ gl64_t poseidon1PermuteWarpReg(gl64_t v,
+                                          uint32_t lane,
                                           uint32_t mask,
                                           const gl64_t *GPU_C_GL,
                                           const gl64_t *GPU_S_GL,
                                           const gl64_t *GPU_M_GL,
                                           const gl64_t *GPU_P_GL)
 {
-    const uint32_t lane = threadIdx.x;
-
     // ARK.
     v = v + GPU_C_GL[lane];
 
