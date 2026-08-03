@@ -1537,6 +1537,53 @@ pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_voi
     unsafe { get_const_pols_aggregation_offset(d_buffers) }
 }
 
+pub fn stream_commit_pause_c() {
+    unsafe { stream_commit_pause() }
+}
+
+pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_slots(d_buffers) }
+}
+
+pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_floor(d_buffers) }
+}
+
+pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64 {
+    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
+}
+
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
+    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn commit_witness_streaming_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    slot_idx: u64,
+    packed: *mut ::std::os::raw::c_void,
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    words_per_row: u64,
+    col_widths: *mut ::std::os::raw::c_void,
+    root: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe {
+        commit_witness_streaming(
+            d_buffers,
+            slot_idx,
+            packed,
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            words_per_row,
+            col_widths,
+            root,
+        )
+    }
+}
+
 pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers: *mut ::std::os::raw::c_void,
     d_buffers_recursivef: *mut ::std::os::raw::c_void,

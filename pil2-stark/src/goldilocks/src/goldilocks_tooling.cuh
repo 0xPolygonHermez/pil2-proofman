@@ -353,6 +353,10 @@ struct StreamData{
 
     bool recursive;
 
+    // This stream's aux-trace region intersects the streaming-commit slot area
+    // (only ever set on first-GPU streams -- slots exist only there)
+    bool overlapsStreamCommitRegion = false;
+
 #ifdef USE_CUDA_GRAPH
     std::unique_ptr<CudaGraphCache> graph_cache;
 #endif
@@ -570,6 +574,33 @@ struct DeviceCommitBuffers
     std::mutex stream_selection_mutex;
 
     bool packedTrace = false;
+
+    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
+    // GPU only -- the only one gpu-mops can borrow. Carved from the top of the unified buffer,
+    // immediately below the const-pols aggregation region. They overlap the
+    // Slot i starts at byte offset streamCommitFloorBytes + i * streamCommitSlotBytes
+    // from gpuMemoryBuffer[0]. streamCommitFloorBytes is the ceiling gpu-mops
+    // usage must stay under (UINT64_MAX when disabled, so comparisons degrade
+    // to the const-pols one).
+    uint64_t streamCommitSlots = 0;
+    uint64_t streamCommitSlotBytes = 0;
+    uint64_t streamCommitFloorBytes = UINT64_MAX;
+    // Per-stream aux-trace byte sizes (basic / recursive), stashed at
+    // allocation for configure_stream_commit_slots' overlap computation.
+    uint64_t auxTraceBytes = 0;
+    uint64_t auxTraceRecursiveBytes = 0;
+    cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
+    // Shared-hold of the overlapped legacy streams: the first in-flight slot
+    // commit claims every overlapped stream's selection mutex, the last
+    // releases them (see acquire/release in commit_witness_streaming_gpu).
+    std::mutex streamCommitRegionMutex;
+    uint32_t streamCommitInFlight = 0;
+    // Quiesce: set by the gpu-mops borrower right before its FINAL planning
+    // phase (whose host-paced micro-ops stretch ~40x under concurrent commit
+    // load — see stream_commit_pause). While set, commit_witness_streaming
+    // rejects new commits (-14, silent legacy fallback); cleared on the next
+    // borrow acquire.
+    std::atomic<uint32_t> streamCommitQuiesced{0};
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };

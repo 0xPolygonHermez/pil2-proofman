@@ -72,6 +72,12 @@ uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_);
 uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
+uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
+uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
+uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
+void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
 void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
@@ -132,6 +138,12 @@ StarksBackend cpu_backend = []() {
     backend.get_first_gpu_id = nullptr;                   // default: 0
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
     backend.get_const_pols_aggregation_offset = nullptr;
+    backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
+    backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
+    backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
+    backend.configure_stream_commit_slots = nullptr;      // default: no-op
+    backend.commit_witness_streaming = nullptr;           // default: error (-1)
+    backend.stream_commit_pause = nullptr;                // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
     backend.alloc_fixed_pols_buffer_gpu = nullptr;
     backend.free_fixed_pols_buffer_gpu = nullptr;
@@ -189,6 +201,12 @@ StarksBackend gpu_backend = []() {
     backend.get_first_gpu_id = get_first_gpu_id_gpu;
     backend.get_first_gpu_buffer = get_first_gpu_buffer_gpu;
     backend.get_const_pols_aggregation_offset = get_const_pols_aggregation_offset_gpu;
+    backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
+    backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
+    backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
+    backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
+    backend.commit_witness_streaming = commit_witness_streaming_gpu;
+    backend.stream_commit_pause = stream_commit_pause_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
     backend.alloc_fixed_pols_buffer_gpu = alloc_fixed_pols_buffer_gpu_gpu;
     backend.free_fixed_pols_buffer_gpu = free_fixed_pols_buffer_gpu_gpu;
@@ -451,6 +469,49 @@ uint64_t get_const_pols_aggregation_offset(void *d_buffers_) {
     return backend->get_const_pols_aggregation_offset
                ? backend->get_const_pols_aggregation_offset(d_buffers_)
                : UINT64_MAX;
+}
+
+// Streaming-commit slots: 0 / UINT64_MAX on the CPU backend (no slots, no
+// GPU region for gpu-mops to stay under), same rationale as the const offset.
+uint64_t get_stream_commit_slots(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_stream_commit_slots ? backend->get_stream_commit_slots(d_buffers_) : 0;
+}
+
+uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->stream_commit_slot_bytes
+               ? backend->stream_commit_slot_bytes(nBits, nBitsExt, nCols, wordsPerRow)
+               : 0;
+}
+
+void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->configure_stream_commit_slots)
+        backend->configure_stream_commit_slots(d_buffers_, nSlots, slotBytes);
+}
+
+uint64_t get_stream_commit_floor(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_stream_commit_floor ? backend->get_stream_commit_floor(d_buffers_) : UINT64_MAX;
+}
+
+// Quiesce the streaming-commit slots before the gpu-mops final planning
+// phase (no-op on CPU / when slots are disabled).
+void stream_commit_pause() {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->stream_commit_pause) backend->stream_commit_pause();
+}
+
+int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
+                                 void *packed, uint64_t nBits, uint64_t nBitsExt,
+                                 uint64_t nCols, uint64_t wordsPerRow,
+                                 void *colWidths, void *root) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->commit_witness_streaming
+               ? backend->commit_witness_streaming(d_buffers_, slotIdx, packed, nBits,
+                                                   nBitsExt, nCols, wordsPerRow, colWidths, root)
+               : -1;
 }
 
 void *get_first_gpu_buffer(void *d_buffers_) {

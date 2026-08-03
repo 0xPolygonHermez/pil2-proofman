@@ -8,6 +8,7 @@
 #include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
+#include <chrono>
 #include <util/gpu_t.cuh>
 
 
@@ -31,6 +32,11 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <mutex>
 #include <algorithm>
 #include <map>
+#include "stream_commit.cuh"
+
+// Process-global handle for stream_commit_pause: the gpu-mops borrower calls
+// it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
+static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
 
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
@@ -376,6 +382,11 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
     d_buffers->constPolsSize = constPolsSize;
     d_buffers->unifiedBufferSize = totalGpuMemoryPerGpu;
     d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_relaxed);
+   
+    gStreamCommitBuffers.store(d_buffers, std::memory_order_release);
+
+    d_buffers->auxTraceBytes = auxTraceSize;
+    d_buffers->auxTraceRecursiveBytes = auxTraceRecursiveSize;
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -433,13 +444,13 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
         
         // Verify we used exactly the amount we calculated
         if (offset != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
-            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
-                       ": Memory offset mismatch! Expected " + std::to_string(totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) + 
+            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) +
+                       ": Memory offset mismatch! Expected " + std::to_string(totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) +
                        " but got " + std::to_string(offset) + " elements");
             exit(1);
         }
     }
-    
+
     zklog.info("All GPU memory allocations successful");
 }
 
@@ -588,6 +599,16 @@ void free_device_buffers_gpu(void *d_buffers_)
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
+    if (d_buffers->streamCommitStreams != nullptr) {
+        for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
+            CHECKCUDAERR(cudaStreamDestroy(d_buffers->streamCommitStreams[j]));
+        free(d_buffers->streamCommitStreams);
+        d_buffers->streamCommitStreams = nullptr;
+        d_buffers->streamCommitSlots = 0;
+    }
+    // Drop the process-global pause handle if it points at this instance.
+    DeviceCommitBuffers *expected = d_buffers;
+    gStreamCommitBuffers.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
     free(d_buffers->d_aux_trace);
     free(d_buffers->d_aux_traceAggregation);
     free(d_buffers->d_constPols);
@@ -2000,11 +2021,218 @@ uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
     return d_buffers->unifiedBufferSize;
 }
 
+uint64_t get_stream_commit_slots_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    return ((DeviceCommitBuffers *)d_buffers_)->streamCommitSlots;
+}
+
+uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return UINT64_MAX;
+    return ((DeviceCommitBuffers *)d_buffers_)->streamCommitFloorBytes;
+}
+
+// Byte size of one streaming-commit slot for the given packed-AIR shape (the
+// layout in streamCommitSlotElems). 0 = shape not slot-committable;
+uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
+                                      uint64_t nCols, uint64_t wordsPerRow) {
+    if (nCols == 0 || nCols > SC_MAX_COLS || nBitsExt <= nBits || wordsPerRow == 0) return 0;
+    StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
+    return streamCommitSlotElems(dims) * sizeof(Goldilocks::Element);
+}
+
+// Enable nSlots streaming-commit slots of slotBytes each (FIRST GPU only --
+// the borrowable one). Called by proofman after buffer allocation with the
+// DERIVED slot size (stream_commit_slot_bytes over the eligible AIRs): carves
+// the slots top-down from the const-pols aggregation offset, flags the legacy
+// streams whose aux regions they overlap, and creates one lowest-priority
+// stream per slot. The byte offset where the lowest slot starts is the
+// "floor": slots live above it, and gpu-mops is only ever handed the region
+// below it (get_first_gpu_buffer clamps the borrowed size to it), which is
+// what lets commits run while the buffer is borrowed.
+//
+// LOWEST priority streams: during the gpu-mops borrow window the commit
+// kernels saturate the SMs back-to-back; at default priority they starve the
+// (light) mops kernels and stretch the whole window. Low priority makes the
+// device dispatch mops first at each block boundary, so commits fill the true
+// gaps instead of creating a queue in front of mops.
+void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes) {
+    if (d_buffers_ == nullptr || nSlots == 0 || slotBytes == 0) return;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers->streamCommitSlots != 0) return;  // already configured
+
+    // Round up to 1 MiB: keeps slot bases 16-byte aligned for vectorized
+    // kernel accesses and the carve log readable.
+    slotBytes = (slotBytes + ((1ull << 20) - 1)) & ~((1ull << 20) - 1);
+
+    uint64_t totalAuxTraceSize = d_buffers->n_streams * d_buffers->auxTraceBytes;
+    uint64_t constAggOffsetBytes =
+        totalAuxTraceSize + d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes;
+    if (nSlots * slotBytes > constAggOffsetBytes) {
+        zklog.error("stream commit slots: " + std::to_string(nSlots) + " x " +
+                    std::to_string(slotBytes >> 20) + " MB does not fit below the const pols offset (" +
+                    std::to_string(constAggOffsetBytes >> 20) + " MB) -- disabling slots");
+        return;
+    }
+    d_buffers->streamCommitSlotBytes = slotBytes;
+    d_buffers->streamCommitFloorBytes = constAggOffsetBytes - nSlots * slotBytes;
+
+    // The slot area may overlap legacy aux-trace regions (recursive ones, and
+    // the tail basic ones when it reaches further down). Overlapped first-GPU
+    // streams are flagged: slot commits hold their selection mutexes while in
+    // flight, so legacy work never runs on an overlapped region concurrently
+    // with a slot commit, and the streams return to full rotation the moment
+    // the slots go idle.
+    uint32_t overlappedBasic = 0, overlappedRecursive = 0;
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        StreamData &sd = d_buffers->streamsData[i];
+        if (d_buffers->gpus_g2l[sd.gpuId] != 0) continue;
+        uint64_t start = sd.recursive
+                             ? totalAuxTraceSize + sd.localStreamId * d_buffers->auxTraceRecursiveBytes
+                             : sd.localStreamId * d_buffers->auxTraceBytes;
+        uint64_t end = start + (sd.recursive ? d_buffers->auxTraceRecursiveBytes : d_buffers->auxTraceBytes);
+        sd.overlapsStreamCommitRegion =
+            start < constAggOffsetBytes && end > d_buffers->streamCommitFloorBytes;
+        if (sd.overlapsStreamCommitRegion) {
+            if (sd.recursive) overlappedRecursive++; else overlappedBasic++;
+        }
+    }
+
+    // A stream belongs to the device current at creation, so bind the first GPU
+    // here (and again at each commit, which runs on a different thread). Restore
+    // the caller's device: this is a library entry, it should not leave thread
+    // state changed under its caller.
+    d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nSlots * sizeof(cudaStream_t));
+    int prevDevice = 0;
+    CHECKCUDAERR(cudaGetDevice(&prevDevice));
+    CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
+    int leastPriority = 0, greatestPriority = 0;
+    CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
+    for (uint64_t j = 0; j < nSlots; j++)
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&d_buffers->streamCommitStreams[j],
+                                                  cudaStreamNonBlocking, leastPriority));
+    CHECKCUDAERR(cudaSetDevice(prevDevice));
+    // Set last: the count is the enable flag readers check.
+    d_buffers->streamCommitSlots = nSlots;
+
+    zklog.info("Streaming-commit slots: " + std::to_string(nSlots) + " x " +
+               std::to_string(slotBytes >> 20) + " MB (derived), floor at " +
+               std::to_string(d_buffers->streamCommitFloorBytes / (1024.0 * 1024.0 * 1024.0)) +
+               " GB (overlapping " + std::to_string(overlappedBasic) + " basic + " +
+               std::to_string(overlappedRecursive) + " recursive streams on the first GPU)");
+}
+
+// Shared hold of the legacy streams whose aux regions overlap the slot area
+// (first-GPU streams only -- slots exist only there): the FIRST in-flight slot
+// commit claims every overlapped stream's selection mutex (only if the stream
+// is idle/drained); the LAST releases them. While held, selectStream/
+// reserveStream try_lock and skip them, so no legacy work ever touches an
+// overlapped region concurrently with a slot commit -- and the streams return
+// to full rotation as soon as slots go idle.
+static bool streamCommitAcquireRegion(DeviceCommitBuffers *d_buffers) {
+    std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
+    if (d_buffers->streamCommitInFlight == 0) {
+        std::vector<uint32_t> locked;
+        for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+            StreamData &sd = d_buffers->streamsData[i];
+            if (!sd.overlapsStreamCommitRegion) continue;
+            bool ok = sd.mutex_stream_selection.try_lock();
+            if (ok) {
+                // Selected streams stay locked by their owner, so a successful
+                // try_lock means unselected -- but kernels may still be draining.
+                bool drained = sd.status == 2 && cudaEventQuery(sd.end_event) == cudaSuccess;
+                if (!(sd.status == 0 || sd.status == 3 || drained)) {
+                    sd.mutex_stream_selection.unlock();
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                for (uint32_t j : locked) d_buffers->streamsData[j].mutex_stream_selection.unlock();
+                return false;
+            }
+            locked.push_back(i);
+        }
+    }
+    d_buffers->streamCommitInFlight++;
+    return true;
+}
+
+static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers) {
+    std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
+    if (--d_buffers->streamCommitInFlight == 0) {
+        for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+            StreamData &sd = d_buffers->streamsData[i];
+            if (sd.overlapsStreamCommitRegion)
+                sd.mutex_stream_selection.unlock();
+        }
+    }
+}
+
+// Commit a bit-packed witness on a streaming-commit slot (first GPU): upload,
+// chunked unpack+LDE+sponge absorb, node reduction, root (4 u64) to `root`.
+// Poseidon1 arity 4 only (family checked here, arity by the caller).
+// Synchronous; safe to call concurrently on distinct slots, and while the
+// first GPU's buffer is borrowed by gpu-mops (touches only the slot).
+// Returns 0 on success, negative on misuse; -14 (region busy: legacy work is
+// running on an overlapped stream) is an expected transient -- callers fall
+// back to the legacy path silently.
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
+                                     void *packed, uint64_t nBits, uint64_t nBitsExt,
+                                     uint64_t nCols, uint64_t wordsPerRow,
+                                     void *colWidths, void *root) {
+    if (d_buffers_ == nullptr) return -10;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers->streamCommitSlots == 0) return -11;
+    if (slotIdx >= d_buffers->streamCommitSlots) return -12;
+    // The slot pipeline hashes with Poseidon1 W=16 (arity 4) only -- the caller
+    // checks the arity, this checks the family. A Poseidon2 setup must take the
+    // legacy path (which dispatches on both), else the slot would produce roots
+    // from the wrong permutation.
+    if (get_hash_family() != HashFamily::Poseidon1) return -15;
+    // Quiesced: gpu-mops is in its final planning phase — stay off the GPU.
+    if (d_buffers->streamCommitQuiesced.load(std::memory_order_acquire)) return -14;
+
+    StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
+    if (streamCommitSlotElems(dims) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
+        return -13;
+
+    if (!streamCommitAcquireRegion(d_buffers)) return -14;
+
+    cudaSetDevice(d_buffers->my_gpu_ids[0]);
+    gl64_t *slotBase = d_buffers->gpuMemoryBuffer[0] +
+                       (d_buffers->streamCommitFloorBytes + slotIdx * d_buffers->streamCommitSlotBytes) /
+                           sizeof(Goldilocks::Element);
+    int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
+                                    (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx]);
+    streamCommitReleaseRegion(d_buffers);
+    return rc;
+}
+
+// Quiesce the streaming-commit slots: reject new slot commits and wait for the
+// in-flight ones to drain. Called by the gpu-mops borrower RIGHT BEFORE its
+// final planning phase
+void stream_commit_pause_gpu() {
+    DeviceCommitBuffers *d_buffers = gStreamCommitBuffers.load(std::memory_order_acquire);
+    if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
+    d_buffers->streamCommitQuiesced.store(1, std::memory_order_release);
+    for (int spins = 0; spins < 4000; spins++) {  // ~2 s cap; commits take ~250 ms max
+        bool busy;
+        {
+            std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
+            busy = d_buffers->streamCommitInFlight != 0;
+        }
+        if (!busy) return;
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+    zklog.warning("stream_commit_pause: in-flight slot commits did not drain within 2 s");
+}
+
 // Acquires exclusive use of the FIRST GPU's unified buffer (my_gpu_ids[0]) for the
 // caller.
 void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    // New borrow cycle: slots are usable again until the next quiesce.
+    d_buffers->streamCommitQuiesced.store(0, std::memory_order_release);
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
 
     // Flip the flag atomically w.r.t. stream selection on the first GPU.
