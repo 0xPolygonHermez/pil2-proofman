@@ -1237,6 +1237,12 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint6
         uint64_t i = chunk_idx * blockDim.x;
         uint64_t r = i + threadIdx.x;
         for(uint64_t o = 0; o < nOpeningPoints; ++o) {
+
+            if (d_countsPerOpeningPos[o] == 0) {
+                accum[0] = gl64_t(uint64_t(0));
+                accum[1] = gl64_t(uint64_t(0));
+                accum[2] = gl64_t(uint64_t(0));
+            }
             for(uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
                 EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
                 Goldilocks3GPU::Element &eval = *(Goldilocks3GPU::Element *)(d_evals + evalInfo.evalPos * FIELD_EXTENSION);
