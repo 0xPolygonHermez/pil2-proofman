@@ -5,7 +5,7 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
     ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES,
-    PreLoadedConstTree,
+    PreLoadedConstTree, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -13,7 +13,7 @@ use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_
 use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
-    free_device_buffers_c, use_packed_trace_c,
+    free_device_buffers_c, use_packed_trace_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
@@ -45,7 +45,8 @@ use crate::{
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c,
+    n_hint_ids_by_name_c, stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
 };
 
 use std::{
@@ -450,6 +451,18 @@ impl CancellationInfoExt for RwLock<CancellationInfo> {
 /// Cancellation re-check interval of a parked contribution worker. A send wakes it immediately, so
 /// this is not dispatch latency. Was 1ms: `n_streams` workers waking 1000x/s doing nothing.
 const CONTRIB_CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Streaming-slot commit context for the contributions phase: free-slot tokens
+/// (slot indices, first GPU only) plus the packed-trace metadata needed to
+/// drive commit_witness_streaming. Slots are the regions reserved below the
+/// const-pols aggregation area (STREAM_COMMIT_SLOTS env), usable while the
+/// first GPU's unified buffer is borrowed by gpu-mops.
+struct SlotCommitCtx {
+    pool_tx: Sender<u64>,
+    pool_rx: Receiver<u64>,
+    packed_info: HashMap<(usize, usize), PackedInfo>,
+    committed: AtomicU64,
+}
 
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
@@ -2383,6 +2396,29 @@ where
             let aux_scratch = self.aux_scratch.clone();
             let const_scratch = self.const_scratch.clone();
 
+            // Streaming-slot pool: one token per reserved commit slot (first
+            // GPU; STREAM_COMMIT_SLOTS env; None when disabled). Contribution
+            // workers take a token, commit a packed wide-trace AIR synchronously
+            // on the slot, and return the token; every other instance takes the
+            // legacy stream path untouched.
+            let slot_commit_ctx: Option<Arc<SlotCommitCtx>> = if self.pctx.gpu && self.options.packed {
+                let n_slots = get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr());
+                (n_slots > 0).then(|| {
+                    let (pool_tx, pool_rx) = unbounded();
+                    for slot in 0..n_slots {
+                        pool_tx.send(slot).unwrap();
+                    }
+                    Arc::new(SlotCommitCtx {
+                        pool_tx,
+                        pool_rx,
+                        packed_info: self.options.packed_info.clone(),
+                        committed: AtomicU64::new(0),
+                    })
+                })
+            } else {
+                None
+            };
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
                 let first_contribution_logged = first_contribution_logged.clone();
@@ -2394,6 +2430,7 @@ where
                 let cancellation_info_clone = self.cancellation_info.clone();
                 let aux_scratch = aux_scratch.clone();
                 let const_scratch = const_scratch.clone();
+                let slot_commit_ctx_clone = slot_commit_ctx.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
@@ -2415,6 +2452,7 @@ where
                                 instance_id,
                                 &mut aux_trace_local,
                                 &mut const_pols_local,
+                                slot_commit_ctx_clone.as_deref(),
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -2431,8 +2469,10 @@ where
                             if is_shared_buffer {
                                 // Trace H2D is async, so don't recycle the shared buffer until the
                                 // commit completes. Wait on the commit's stream (air_instance
-                                // stream_id is unset on the contributions path).
-                                if pctx_clone.gpu {
+                                // stream_id is unset on the contributions path). u64::MAX means the
+                                // commit ran synchronously on a streaming slot: the H2D is already
+                                // done and there is no stream to wait on.
+                                if pctx_clone.gpu && commit_stream_id != u64::MAX {
                                     wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
                                 }
                                 memory_handler_clone.to_be_released_buffer(instance_id, false);
@@ -2553,6 +2593,13 @@ where
                 *DEBUG_CHALLENGES,
             );
 
+            if let Some(ctx) = &slot_commit_ctx {
+                tracing::info!(
+                    "Streaming slots: {} of {} contributions overlapped with the execution window",
+                    ctx.committed.load(Ordering::Relaxed),
+                    my_instances_no_tables.len()
+                );
+            }
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
             let contributions_size = match self.pctx.global_info.curve {
@@ -4913,6 +4960,45 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
+        // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0/unset = off): the
+        // slot COUNT is a memory-budget knob (each slot lowers the ceiling on
+        // what gpu-mops may borrow), but the slot SIZE is derived here from the
+        // slot-eligible packed AIRs (zisk Main) -- same eligibility gate as
+        // try_slot_commit -- so it never needs manual tuning.
+        if options.gpu && options.packed {
+            let n_slots: u64 =
+                std::env::var("STREAM_COMMIT_SLOTS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            if n_slots > 0 {
+                let mut slot_bytes = 0u64;
+                for (&(airgroup_id, air_id), pi) in options.packed_info.iter() {
+                    if !pi.is_packed {
+                        continue;
+                    }
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let ss = &setup.stark_info.stark_struct;
+                    if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
+                        || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
+                    {
+                        continue;
+                    }
+                    let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
+                    slot_bytes = slot_bytes.max(stream_commit_slot_bytes_c(
+                        ss.n_bits,
+                        ss.n_bits_ext,
+                        n_cols,
+                        pi.num_packed_words,
+                    ));
+                }
+                if slot_bytes > 0 {
+                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes);
+                } else {
+                    tracing::warn!(
+                        "STREAM_COMMIT_SLOTS={n_slots} set but no slot-eligible packed AIR found; slots disabled"
+                    );
+                }
+            }
+        }
+
         load_device_setups(&pctx, &sctx, &setups_vadcop, options.aggregation, &options.packed_info)?;
 
         if mpi_ctx.rank == 0 {
@@ -5132,8 +5218,77 @@ where
         Ok(())
     }
 
+    /// Try to commit `instance_id` on a reserved streaming slot. Returns false
+    /// (caller takes the legacy stream path) when the AIR is not slot-eligible,
+    /// no slot token is free, or the C side rejects the shape.
+    ///
     #[allow(clippy::too_many_arguments)]
-    pub fn get_contribution_air(
+    fn try_slot_commit(
+        pctx: &ProofCtx<F>,
+        setup: &Setup<F>,
+        ctx: &SlotCommitCtx,
+        instance_id: usize,
+        airgroup_id: usize,
+        air_id: usize,
+        trace: *mut u8,
+        roots_contributions: &[[F; 4]],
+    ) -> bool {
+        let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
+            return false;
+        };
+        if !pi.is_packed || trace.is_null() {
+            return false;
+        }
+        let ss = &setup.stark_info.stark_struct;
+        if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
+            || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
+        {
+            return false;
+        }
+        let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
+            return false;
+        };
+        // Slots only pay off while gpu-mops holds the first GPU's buffer (no
+        // legacy stream is available there); once released, the legacy path is
+        // strictly better -- async, pinned, and it keeps witness residency.
+        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr()) {
+            return false;
+        }
+        // One-shot token take: a miss means all slots are busy right-now and the
+        // instance goes legacy. 
+        let Ok(slot) = ctx.pool_rx.try_recv() else {
+            return false;
+        };
+        let rc = commit_witness_streaming_c(
+            pctx.get_device_buffers_ptr(),
+            slot,
+            trace as *mut c_void,
+            ss.n_bits,
+            ss.n_bits_ext,
+            n_cols,
+            pi.num_packed_words,
+            pi.unpack_info.as_ptr() as *mut c_void,
+            roots_contributions[instance_id].as_ptr() as *mut c_void,
+        );
+        ctx.pool_tx.send(slot).ok();
+        if rc != 0 {
+            // -14 = quiesced: gpu-mops entered its final planning phase and slot
+            // access is paused -- expected near the window close, take the legacy
+            // path. Anything else is a misconfiguration worth surfacing (e.g. -15
+            // wrong hash family, -13 shape/slot-size drift).
+            if rc != -14 {
+                tracing::warn!(
+                    "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
+                );
+            }
+            return false;
+        }
+        ctx.committed.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn get_contribution_air(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         roots_contributions: &[[F; 4]],
@@ -5141,6 +5296,7 @@ where
         instance_id: usize,
         aux_trace: &mut [F],
         const_pols: &mut [F],
+        slot_commit: Option<&SlotCommitCtx>,
     ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -5170,18 +5326,42 @@ where
             None => String::new(),
         };
 
+        // Streaming-slot path first: packed wide-trace AIRs (zisk Main) commit
+        // synchronously inside a reserved slot, on a dedicated stream that stays
+        // usable while the first GPU's unified buffer is borrowed by gpu-mops.
+        // Falls through to the legacy stream commit when not eligible, no slot
+        // token is free, or the C side rejects the shape.
+        let slot_committed = match slot_commit {
+            Some(ctx) => Self::try_slot_commit(
+                pctx,
+                setup,
+                ctx,
+                instance_id,
+                airgroup_id,
+                air_id,
+                steps_params.trace,
+                roots_contributions,
+            ),
+            None => false,
+        };
+
         // The commit (incl. async trace H2D) runs on this stream; the root is collected later when
         // its end_event is polled. Return the streamId so the caller can gate trace-buffer reuse.
-        let stream_id = commit_witness_c(
-            p_setup,
-            p_steps_params,
-            instance_id as u64,
-            airgroup_id as u64,
-            air_id as u64,
-            roots_contributions[instance_id].as_ptr() as *mut u8,
-            pctx.get_device_buffers_ptr(),
-            &custom_commits_fixed_path,
-        );
+        // (u64::MAX = committed synchronously on a slot, no stream involved.)
+        let stream_id = if slot_committed {
+            u64::MAX
+        } else {
+            commit_witness_c(
+                p_setup,
+                p_steps_params,
+                instance_id as u64,
+                airgroup_id as u64,
+                air_id as u64,
+                roots_contributions[instance_id].as_ptr() as *mut u8,
+                pctx.get_device_buffers_ptr(),
+                &custom_commits_fixed_path,
+            )
+        };
 
         let n_airvalues = setup
             .stark_info

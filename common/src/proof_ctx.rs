@@ -17,7 +17,7 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
+    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
@@ -1093,11 +1093,19 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via
     /// `acquire_first_gpu_buffer`, does not touch the current device.
+    ///
+    /// When streaming-commit slots are enabled they occupy the top of the
+    /// buffer and host commits WHILE it is borrowed, so the borrower's usable
+    /// region is capped at the slot floor (allocation-time enforcement: the
+    /// borrower's planner sizes itself within what it is handed). No-op when
+    /// slots are disabled (floor = u64::MAX); the const-pols tail then stays
+    /// reachable and the post-hoc reload check keeps covering it.
     pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
         let device_buffers_ptr = self.d_buffers.get_ptr();
         let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
         let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
-        (gpu_buf_ptr, gpu_buf_size)
+        let usable = gpu_buf_size.min(get_stream_commit_floor_c(device_buffers_ptr));
+        (gpu_buf_ptr, usable)
     }
 
     /// Report how many bytes a borrower of the first GPU's unified buffer actually used.
@@ -1122,6 +1130,23 @@ impl<F: PrimeField64> ProofCtx<F> {
             buffer_size as f64 / GB,
             consts_offset as f64 / GB,
         );
+
+        // Streaming-commit slots sit below the const-pols region (u64::MAX when
+        // disabled): usage reaching the slot floor means commits running during
+        // the borrow window may have read clobbered data. Corrupted contribution
+        // roots cannot be repaired post-hoc, so this is a hard error -- the real
+        // protection is the allocation-time capacity handed to the borrower.
+        // `used_bytes` is a count, so the borrower occupies [0, used_bytes) and
+        // the slots start AT `slots_floor`: using exactly the capacity it was
+        // handed is legal, overlapping requires strictly more.
+        let slots_floor = get_stream_commit_floor_c(self.d_buffers.get_ptr());
+        if used_bytes > slots_floor {
+            panic!(
+                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
+                 streaming-commit slots at offset {slots_floor}; slot commits issued during \
+                 the borrow window are untrustworthy"
+            );
+        }
 
         if used_bytes >= consts_offset {
             tracing::warn!(
