@@ -8,6 +8,7 @@
 #include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
+#include <chrono>
 #include <util/gpu_t.cuh>
 
 
@@ -113,7 +114,15 @@ void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
     if (streamId >= d_buffers->n_total_streams) return;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     if (d_buffers->streamsData[streamId].status == 2) {
+        // This blocks the contribution worker before it can release the host trace
+        // buffer, so a long wait here starves take_buffer on the witness side. Timed
+        // because that back-pressure loop is otherwise invisible from both ends.
+        const auto t0 = std::chrono::steady_clock::now();
         CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].trace_copy_event));
+        contribProfile().h2d_wait_ns.fetch_add(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(),
+            std::memory_order_relaxed);
+        contribProfile().h2d_wait_count.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -1438,6 +1447,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    const auto commit_t0 = std::chrono::steady_clock::now();
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, "basic");
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
@@ -1445,6 +1455,13 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     // Check reuse against the stream's prior context before it is overwritten below.
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
+
+    // Open this commit's profile. Cleared, not accumulated: the previous commit on
+    // this stream was published at its harvest.
+    sd.profile.clear();
+    sd.profile.valid = true;
+    sd.profile.select_wait_ns = tl_select_wait_ns;
+    sd.profile.select_retries = tl_select_retries;
 
     sd.root = root;
     sd.instanceId = instanceId;
@@ -1501,6 +1518,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     // and the new slot-keyed affinity actively steers it back to this stream.
     if (nWitnessHints == 0) sd.dropFixedSlot();
     if(nWitnessHints > 0) {
+        sd.profile.flags |= CONTRIB_FLAG_WITNESS_HINTS;
         uint64_t countId = 0;
         uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
         uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
@@ -1515,13 +1533,24 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
         uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
         // Claims the slot but not constTreeResident: this never touches the const tree.
-        if (!sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")
-            || setupCtx->starkInfo.constPolsAliasTree) {
+        const bool slot_warm = sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "");
+        if (slot_warm) sd.profile.flags |= CONTRIB_FLAG_SLOT_WARM;
+        if (!slot_warm || setupCtx->starkInfo.constPolsAliasTree) {
+            // Slot miss: unpack this air's const pols again. Discrete extra GPU work
+            // (nConstants x N) whose occurrence depends on which stream selectStream
+            // handed us, i.e. on the thread race — a prime suspect for a bimodal
+            // contributions time. The flag lets the profile count it per job.
+            sd.profile.flags |= CONTRIB_FLAG_UNPACK_FIXED;
             unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
             CHECKCUDAERR(cudaGetLastError());
         }
 
         if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && !reuse_custom_fixed) {
+            // Re-reads the custom-fixed file from disk. Note reuse_custom_fixed compares
+            // the stream's prior proofType against "basic" while commit_witness stamps
+            // "witness", so on the contributions path this branch is taken on every
+            // commit — page-cache dependent work on the hot path.
+            sd.profile.flags |= CONTRIB_FLAG_CUSTOM_RELOAD;
             Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
             uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
             load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixedDst, customCommitsSize, streamId, 32);
@@ -1603,8 +1632,51 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
+    sd.profile.enqueue_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - commit_t0).count();
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
+}
+
+// Complete the in-flight commit profile with the stream timer's device times and hand
+// it to the collector. Called at harvest, where the timer's events are known complete.
+// A stream with no open profile (a proof, or a commit from before a profile reset) is
+// skipped, so this is safe to call from any harvest path.
+static void publishCommitProfile(DeviceCommitBuffers *d_buffers, uint64_t streamId,
+                                 uint64_t instanceId, uint64_t airgroupId, uint64_t airId) {
+    StreamData &sd = d_buffers->streamsData[streamId];
+    if (!sd.profile.valid) return;
+    TimerGPU &timer = sd.timer;
+
+    CommitProfileRecord rec{};
+    rec.instanceId = instanceId;
+    rec.airgroupId = airgroupId;
+    rec.airId = airId;
+    rec.streamId = streamId;
+    rec.flags = sd.profile.flags;
+    rec.select_wait_ns = sd.profile.select_wait_ns;
+    rec.select_retries = sd.profile.select_retries;
+    rec.enqueue_ns = sd.profile.enqueue_ns;
+    rec.h2d_stage_ns = sd.profile.h2d_stage_ns;
+    // getTimeMs/getCategoryTotalTimeSec throw on an absent name, so probe first: a
+    // commit that bailed early may not have recorded every category.
+    if (timer.timers.find("STARK_GPU_COMMIT") != timer.timers.end()) {
+        rec.gpu_commit_ms = timer.getTimeMs("STARK_GPU_COMMIT");
+    }
+    rec.gpu_h2d_ms = (float)(timer.getCategoryTotalTimeSec("H2D_COPY") * 1000.0);
+    rec.gpu_ntt_ms = (float)(timer.getCategoryTotalTimeSec("NTT") * 1000.0);
+    rec.gpu_merkle_ms = (float)(timer.getCategoryTotalTimeSec("MERKLE_TREE") * 1000.0);
+    rec.gpu_exprs_ms = (float)(timer.getCategoryTotalTimeSec("EXPRESSIONS") * 1000.0);
+
+    size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess) {
+        contribProfile().note_gpu_mem(free_bytes, total_bytes);
+    } else {
+        cudaGetLastError();
+    }
+
+    contribProfile().push(rec);
+    sd.profile.clear();
 }
 
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
@@ -1614,6 +1686,10 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
+    // The stream timer's device times only become readable once its events have
+    // completed, which is here (the caller synchronised the stream or its end_event).
+    // Read them out before closeStreamTimer resets the timer, and publish the record.
+    publishCommitProfile(d_buffers, streamId, instanceId, airgroupId, airId);
     closeStreamTimer(d_buffers->streamsData[streamId].timer, instanceId, airgroupId, airId, false);
     // NOTE: contributions commit_root does NOT fire proof_done_callback. That decrement
     // is owned by the proofs_pending accounting on the Prove path; firing it here (a
@@ -1949,6 +2025,7 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
     }
 
     // Drain: wait until no prover work is queued or running on the first GPU.
+    const uint64_t drain_t0 = contribNowNs();
     bool firstGpuIdle = false;
     while (!firstGpuIdle) {
         firstGpuIdle = true;
@@ -1963,16 +2040,28 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
         }
         if (!firstGpuIdle) std::this_thread::sleep_for(std::chrono::microseconds(300));
     }
+    const uint64_t sync_t0 = contribNowNs();
     CHECKCUDAERR(cudaSetDevice(firstGpuId));
     CHECKCUDAERR(cudaDeviceSynchronize());
+    const uint64_t acquired = contribNowNs();
+    ContribProfileState &prof = contribProfile();
+    prof.borrow_count.fetch_add(1, std::memory_order_relaxed);
+    prof.borrow_drain_ns.fetch_add(sync_t0 - drain_t0, std::memory_order_relaxed);
+    prof.borrow_acq_sync_ns.fetch_add(acquired - sync_t0, std::memory_order_relaxed);
+    prof.borrow_open_ns.store(acquired, std::memory_order_relaxed);
 }
 
 
 void release_first_gpu_buffer_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    ContribProfileState &prof = contribProfile();
+    const uint64_t release_t0 = contribNowNs();
+    const uint64_t opened = prof.borrow_open_ns.exchange(0, std::memory_order_relaxed);
+    if (opened != 0) prof.borrow_window_ns.fetch_add(release_t0 - opened, std::memory_order_relaxed);
     CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
     CHECKCUDAERR(cudaDeviceSynchronize());
+    prof.borrow_rel_sync_ns.fetch_add(contribNowNs() - release_t0, std::memory_order_relaxed);
     // The borrower overwrote this GPU's aux traces (incl. the cached const pols/tree),
     // so invalidate every affected stream's reuse context, forcing a constants reload.
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
@@ -2189,9 +2278,26 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
 // Blocking wrapper: retry the scan until a stream is reserved. Used by the paths that
 // select internally (contributions/commit/setup, and one-off recursive launches).
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
+    // Report the wait to the caller (see tl_select_wait_ns). There are more
+    // contribution worker threads than non-recursive streams, so a queue here is
+    // expected — the question the profile answers is whether it is 0.1ms or 100ms.
+    tl_select_wait_ns = 0;
+    tl_select_retries = 0;
+    const auto t0 = std::chrono::steady_clock::now();
     for (;;) {
         uint32_t s = reserve_best_stream_scan(d_buffers, airgroupId, airId, proofType, recursive, force_recursive);
-        if (s != UINT32_MAX) return s;
+        if (s != UINT32_MAX) {
+            tl_select_wait_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+            return s;
+        }
+        tl_select_retries++;
+        // Attribute the retry: while the first GPU's buffer is borrowed, stream
+        // selection skips every stream on it, so on a single-GPU box this retry was
+        // caused by the borrow, not by genuine GPU saturation.
+        if (d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+            contribProfile().borrow_blocked_selects.fetch_add(1, std::memory_order_relaxed);
+        }
         std::this_thread::sleep_for(std::chrono::microseconds(300));
     }
 }

@@ -1019,6 +1019,102 @@ pub fn get_stream_id_proof_c(d_buffers: *mut c_void, stream_id: u64) {
     }
 }
 
+/// One `commit_witness` call's profile. Layout must match `CommitProfileRecord` in
+/// `pil2-stark/src/utils/contrib_profile.hpp` — the drain is a raw `memcpy`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommitProfileRecord {
+    pub instance_id: u64,
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    pub stream_id: u64,
+    pub flags: u64,
+    pub select_wait_ns: u64,
+    pub select_retries: u64,
+    pub enqueue_ns: u64,
+    pub h2d_stage_ns: u64,
+    pub gpu_commit_ms: f32,
+    pub gpu_h2d_ms: f32,
+    pub gpu_ntt_ms: f32,
+    pub gpu_merkle_ms: f32,
+    pub gpu_exprs_ms: f32,
+    pub _pad: f32,
+}
+
+pub const CONTRIB_FLAG_SLOT_WARM: u64 = 1 << 0;
+pub const CONTRIB_FLAG_UNPACK_FIXED: u64 = 1 << 1;
+pub const CONTRIB_FLAG_CUSTOM_RELOAD: u64 = 1 << 2;
+pub const CONTRIB_FLAG_H2D_DIRECT: u64 = 1 << 3;
+pub const CONTRIB_FLAG_WITNESS_HINTS: u64 = 1 << 4;
+
+/// Aggregate counters from one contributions phase. Field order matches the slots
+/// written by `contrib_profile_totals`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ContribProfileTotals {
+    pub records: u64,
+    pub dropped: u64,
+    pub h2d_wait_ns: u64,
+    pub h2d_wait_count: u64,
+    pub pinned_lock_ns: u64,
+    pub pinned_lock_count: u64,
+    pub event_churn_ns: u64,
+    pub event_churn_count: u64,
+    pub gpu_free_min_bytes: u64,
+    pub gpu_free_last_bytes: u64,
+    pub gpu_total_bytes: u64,
+    /// The first-GPU unified-buffer borrow taken by memory-ops count-and-plan.
+    pub borrow_count: u64,
+    pub borrow_drain_ns: u64,
+    pub borrow_acq_sync_ns: u64,
+    pub borrow_window_ns: u64,
+    pub borrow_rel_sync_ns: u64,
+    pub borrow_blocked_selects: u64,
+}
+
+const CONTRIB_PROFILE_N_TOTALS: usize = 17;
+const CONTRIB_PROFILE_CAPACITY: usize = 256;
+
+pub fn contrib_profile_reset_c() {
+    unsafe {
+        contrib_profile_reset();
+    }
+}
+
+pub fn contrib_profile_drain_c() -> Vec<CommitProfileRecord> {
+    let mut out = vec![CommitProfileRecord::default(); CONTRIB_PROFILE_CAPACITY];
+    let n = unsafe {
+        contrib_profile_drain(out.as_mut_ptr() as *mut c_void, CONTRIB_PROFILE_CAPACITY as u64) as usize
+    };
+    out.truncate(n.min(CONTRIB_PROFILE_CAPACITY));
+    out
+}
+
+pub fn contrib_profile_totals_c() -> ContribProfileTotals {
+    let mut raw = [0u64; CONTRIB_PROFILE_N_TOTALS];
+    unsafe {
+        contrib_profile_totals(raw.as_mut_ptr());
+    }
+    ContribProfileTotals {
+        records: raw[0],
+        dropped: raw[1],
+        h2d_wait_ns: raw[2],
+        h2d_wait_count: raw[3],
+        pinned_lock_ns: raw[4],
+        pinned_lock_count: raw[5],
+        event_churn_ns: raw[6],
+        event_churn_count: raw[7],
+        gpu_free_min_bytes: raw[8],
+        gpu_free_last_bytes: raw[9],
+        gpu_total_bytes: raw[10],
+        borrow_count: raw[11],
+        borrow_drain_ns: raw[12],
+        borrow_acq_sync_ns: raw[13],
+        borrow_window_ns: raw[14],
+        borrow_rel_sync_ns: raw[15],
+        borrow_blocked_selects: raw[16],
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
@@ -1626,5 +1722,19 @@ pub fn load_device_const_pols_c(
             only_first_gpu,
             already_loaded,
         );
+    }
+}
+
+#[cfg(test)]
+mod contrib_profile_tests {
+    use super::CommitProfileRecord;
+
+    /// Mirrors the static_asserts in contrib_profile.hpp. The drain is a raw memcpy
+    /// across the FFI boundary, so a silent layout drift would surface as garbage
+    /// timings rather than a link or type error.
+    #[test]
+    fn commit_profile_record_layout_matches_cpp() {
+        assert_eq!(std::mem::size_of::<CommitProfileRecord>(), 96);
+        assert_eq!(std::mem::align_of::<CommitProfileRecord>(), 8);
     }
 }

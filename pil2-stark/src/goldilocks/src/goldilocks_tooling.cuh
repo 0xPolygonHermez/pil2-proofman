@@ -12,6 +12,7 @@
 #include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset (fromRowMajorToColMajor)
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
+#include "contrib_profile.hpp"
 #include <mutex>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
@@ -308,6 +309,12 @@ struct StreamData{
     // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
     cudaEvent_t trace_copy_event;
     TimerGPU timer;
+
+    // Host-side profile of the commit in flight. Written by commit_witness_gpu (which
+    // sees the branch outcomes), completed with the device times and published at
+    // harvest in get_commit_root. Not covered by reset()/invalidateContext(): its
+    // lifetime is one commit, and the harvest clears it.
+    PendingCommitProfile profile;
 
     TranscriptGL_GPU *transcript;
     TranscriptGL_GPU *transcript_helper;

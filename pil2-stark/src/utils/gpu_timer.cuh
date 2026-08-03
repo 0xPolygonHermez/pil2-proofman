@@ -6,6 +6,8 @@
 #include <string>
 #include <cuda_runtime.h>
 #include <vector>
+#include <chrono>
+#include "contrib_profile.hpp"
 #ifndef __GOLDILOCKS_ENV__
 #include "zklog.hpp"
 #endif
@@ -32,7 +34,15 @@ public:
     void init(cudaStream_t s) { stream = s; }
 
     bool createEvent(cudaEvent_t& event) {
+        // Every category start creates a fresh pair and clear() destroys them all, so a
+        // commit churns ~20 driver event allocations. Counted because that churn is a
+        // candidate for the occasional stall and is otherwise unmeasured.
+        const auto t0 = std::chrono::steady_clock::now();
         cudaError_t err = cudaEventCreate(&event);
+        contribProfile().event_churn_ns.fetch_add(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(),
+            std::memory_order_relaxed);
+        contribProfile().event_churn_count.fetch_add(1, std::memory_order_relaxed);
         if (err != cudaSuccess) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("cudaEventCreate failed: " + std::string(cudaGetErrorString(err)));
@@ -181,6 +191,7 @@ public:
     }
 
     void clear() {
+        const auto t0 = std::chrono::steady_clock::now();
         for (auto& [_, entry] : timers) {
             cudaEventDestroy(entry.start);
             cudaEventDestroy(entry.stop);
@@ -194,6 +205,9 @@ public:
                 cudaEventDestroy(entry.stop);
             }
         }
+        contribProfile().event_churn_ns.fetch_add(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(),
+            std::memory_order_relaxed);
         multiTimers.clear();
         activeCategoryTimers.clear();
     }

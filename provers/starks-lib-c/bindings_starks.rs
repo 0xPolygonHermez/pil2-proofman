@@ -507,6 +507,14 @@ extern "C" {
     
     pub fn get_stream_id_proof(d_buffers_: *mut ::std::os::raw::c_void, streamId: u64);
 
+    // Contributions profiling
+    // ========================================================================================
+    pub fn contrib_profile_reset();
+
+    pub fn contrib_profile_drain(out_records: *mut ::std::os::raw::c_void, max_records: u64) -> u64;
+
+    pub fn contrib_profile_totals(out: *mut u64);
+
     // Aggregation
     // ========================================================================================
     pub fn add_publics_aggregation(

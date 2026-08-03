@@ -55,6 +55,7 @@ use std::{
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
+use crate::contrib_profile::ContribProfile;
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
@@ -356,6 +357,10 @@ pub struct ProofMan<F: PrimeField64> {
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     witness_info: RwLock<WitnessInfo>,
     options: ProofmanOptions,
+
+    /// Per-phase profile of the contributions pipeline. Shared with the witness and
+    /// contribution worker threads, which record their blocking waits into it.
+    contrib_profile: Arc<ContribProfile>,
 
     /// Serializes proof-generation entry points. Use `acquire_computing()`.
     computing: Mutex<()>,
@@ -2127,6 +2132,7 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
+            contrib_profile: Arc::new(ContribProfile::new()),
             computing: Mutex::new(()),
         })
     }
@@ -2192,6 +2198,11 @@ where
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
             let first_contribution_logged = Arc::new(AtomicBool::new(false));
+
+            // Arm the profile before the workers exist: commits start flowing during
+            // exec, so a reset any later would drop the first records.
+            self.contrib_profile.begin();
+            self.memory_handler.reset_wait_stats();
 
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
@@ -2283,6 +2294,7 @@ where
             };
 
             let summary_info = self.exec()?;
+            self.contrib_profile.mark_exec_done();
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
 
@@ -2310,6 +2322,7 @@ where
                 false,
             )?;
             timer_stop_and_log_debug!(CALCULATING_WITNESS);
+            self.contrib_profile.mark_witness_enqueued();
 
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(None);
@@ -2328,6 +2341,7 @@ where
             }
 
             drop(witness_handles);
+            self.contrib_profile.mark_witness_joined();
 
             timer_start_debug!(CALCULATING_TABLES);
 
@@ -2345,6 +2359,7 @@ where
             }
 
             timer_stop_and_log_debug!(CALCULATING_TABLES);
+            self.contrib_profile.mark_tables_done();
 
             self.pctx.set_proof_tx(None);
 
@@ -2356,11 +2371,13 @@ where
             for handle in handles {
                 handle.join().unwrap();
             }
+            self.contrib_profile.mark_commits_drained();
 
             self.check_cancel(true)?;
 
             // get roots still in the gpu
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+            self.contrib_profile.mark_stream_proofs_done();
 
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
@@ -2371,8 +2388,10 @@ where
                 &self.values_contributions,
                 *DEBUG_CHALLENGES,
             );
+            self.contrib_profile.mark_challenge_done();
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
+            self.contrib_profile.report(self.memory_handler.wait_stats());
 
             let contributions_size = match self.pctx.global_info.curve {
                 CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
@@ -4120,6 +4139,7 @@ where
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
+        let contrib_profile_clone = self.contrib_profile.clone();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
             Some(std::thread::spawn(move || loop {
                 let instance_id = if let Ok(id) = witness_rx_priority.try_recv() {
@@ -4163,6 +4183,10 @@ where
                 let memory_handler_clone = memory_handler_clone.clone();
 
                 let witness_done_clone = witness_done_clone.clone();
+                // Tokens are taken one at a time on a 1ms poll, so a witness thread can
+                // sit here for a long time with nothing logged. Timed as one wait for the
+                // whole acquisition of this instance's token set.
+                let token_wait_start = std::time::Instant::now();
                 for _ in 0..n_threads_witness {
                     loop {
                         if cancellation_info_clone.read().unwrap().token.is_cancelled() {
@@ -4174,6 +4198,7 @@ where
                         }
                     }
                 }
+                contrib_profile_clone.record_thread_token_wait(token_wait_start.elapsed());
 
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                     break;
@@ -4257,6 +4282,7 @@ where
                     false => self.max_num_threads,
                 };
 
+                let token_wait_start = std::time::Instant::now();
                 for _ in 0..threads_to_use_collect {
                     loop {
                         if self.cancellation_info.read().unwrap().token.is_cancelled() {
@@ -4268,6 +4294,7 @@ where
                         }
                     }
                 }
+                self.contrib_profile.record_thread_token_wait(token_wait_start.elapsed());
 
                 if self.cancellation_info.read().unwrap().token.is_cancelled() {
                     break;

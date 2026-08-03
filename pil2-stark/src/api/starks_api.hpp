@@ -121,6 +121,14 @@ extern "C" {
     void get_stream_proofs(void *d_buffers_);
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
+
+    // Contributions profiling. Reset at the start of a contributions phase, drained at
+    // the end. Records are CommitProfileRecord (contrib_profile.hpp) — one per commit;
+    // totals needs CONTRIB_PROFILE_N_TOTALS u64 slots. Present in both backends; the
+    // CPU backend simply has nothing to report.
+    void contrib_profile_reset();
+    uint64_t contrib_profile_drain(void *out_records, uint64_t max_records);
+    void contrib_profile_totals(uint64_t *out);
     // Central arbiter: reserve the best free stream for (airgroupId,airId,proofType)
     // without blocking. Returns UINT32_MAX if none is free right now.
     uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);

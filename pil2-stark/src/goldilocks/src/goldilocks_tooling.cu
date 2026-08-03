@@ -1,6 +1,7 @@
 #include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "goldilocks_trace_layout.cuh"
+#include <chrono>
 
 // When the source is already host-pinned (e.g. via register_host_memory) and
 // large, skip the pinned-staging double-buffer and issue a single direct H2D.
@@ -88,10 +89,33 @@ void copy_to_device_in_chunks(
         // gates recycling the host trace buffer (see wait_trace_h2d_done).
         cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
         TimerStopCategoryGPU(timer, H2D_COPY);
+        d_buffers->streamsData[streamId].profile.flags |= CONTRIB_FLAG_H2D_DIRECT;
         return;
     }
 
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
+    // Staged path: one pinned double-buffer per GPU, shared by every stream, held
+    // across cudaStreamSynchronize calls below. Two concurrent stagers therefore
+    // serialize on host-visible GPU waits — time both the lock wait and the staging
+    // itself, since a convoy here is invisible in the phase timers.
+    const auto stage_t0 = std::chrono::steady_clock::now();
+    d_buffers->mutex_pinned[gpuLocalId].lock();
+    const auto stage_locked = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId], std::adopt_lock);
+    contribProfile().pinned_lock_ns.fetch_add(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(stage_locked - stage_t0).count(),
+        std::memory_order_relaxed);
+    contribProfile().pinned_lock_count.fetch_add(1, std::memory_order_relaxed);
+    struct StageTimer {
+        DeviceCommitBuffers *d;
+        uint64_t sid;
+        std::chrono::steady_clock::time_point t0;
+        ~StageTimer() {
+            d->streamsData[sid].profile.h2d_stage_ns +=
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - t0).count();
+        }
+    } stage_timer{d_buffers, streamId, stage_locked};
+
     uint64_t block_size = d_buffers->pinned_size;
     Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
     Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];

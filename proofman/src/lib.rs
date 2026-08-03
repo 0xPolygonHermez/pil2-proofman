@@ -6,6 +6,7 @@ mod proof_manager;
 mod verify_constraints;
 mod verify;
 mod challenge_accumulation;
+mod contrib_profile;
 mod snark_wrapper;
 
 pub use scheduler::*;
@@ -16,3 +17,4 @@ pub use proof_manager::*;
 pub use verify_constraints::*;
 pub use verify::*;
 pub use snark_wrapper::*;
+pub use contrib_profile::*;

@@ -2,6 +2,8 @@
 #include "starks_backend.hpp"
 #include <cstdio>
 #include <atomic>
+#include <cstring>
+#include "contrib_profile.hpp"
 
 // ============================================================================
 // Forward declarations: CPU backend implementations (always available)
@@ -486,4 +488,51 @@ void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t
 void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->pre_allocate_final_snark_prover) backend->pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef);
+}
+
+// ============================================================================
+// Contributions profiling (see contrib_profile.hpp)
+//
+// Not backend-dispatched: the collector is a plain host-side singleton, written by
+// the GPU translation units and simply left empty by the CPU backend, so these
+// entry points are identical in both builds.
+// ============================================================================
+
+void contrib_profile_reset() {
+    contribProfile().reset();
+}
+
+uint64_t contrib_profile_drain(void *out_records, uint64_t max_records) {
+    ContribProfileState &st = contribProfile();
+    uint64_t n = st.count.load(std::memory_order_relaxed);
+    if (n > CONTRIB_PROFILE_CAPACITY) n = CONTRIB_PROFILE_CAPACITY;  // overflow was dropped
+    if (n > max_records) n = max_records;
+    if (out_records != nullptr && n > 0) {
+        std::memcpy(out_records, st.records, n * sizeof(CommitProfileRecord));
+    }
+    return n;
+}
+
+// out must have room for CONTRIB_PROFILE_N_TOTALS u64 slots; see the enum in the header.
+void contrib_profile_totals(uint64_t *out) {
+    if (out == nullptr) return;
+    ContribProfileState &st = contribProfile();
+    out[0] = st.count.load(std::memory_order_relaxed);
+    out[1] = st.dropped.load(std::memory_order_relaxed);
+    out[2] = st.h2d_wait_ns.load(std::memory_order_relaxed);
+    out[3] = st.h2d_wait_count.load(std::memory_order_relaxed);
+    out[4] = st.pinned_lock_ns.load(std::memory_order_relaxed);
+    out[5] = st.pinned_lock_count.load(std::memory_order_relaxed);
+    out[6] = st.event_churn_ns.load(std::memory_order_relaxed);
+    out[7] = st.event_churn_count.load(std::memory_order_relaxed);
+    uint64_t free_min = st.gpu_free_min_bytes.load(std::memory_order_relaxed);
+    out[8] = (free_min == UINT64_MAX) ? 0 : free_min;
+    out[9] = st.gpu_free_last_bytes.load(std::memory_order_relaxed);
+    out[10] = st.gpu_total_bytes.load(std::memory_order_relaxed);
+    out[11] = st.borrow_count.load(std::memory_order_relaxed);
+    out[12] = st.borrow_drain_ns.load(std::memory_order_relaxed);
+    out[13] = st.borrow_acq_sync_ns.load(std::memory_order_relaxed);
+    out[14] = st.borrow_window_ns.load(std::memory_order_relaxed);
+    out[15] = st.borrow_rel_sync_ns.load(std::memory_order_relaxed);
+    out[16] = st.borrow_blocked_selects.load(std::memory_order_relaxed);
 }

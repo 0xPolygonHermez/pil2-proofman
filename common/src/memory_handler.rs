@@ -2,8 +2,8 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
 use fields::PrimeField64;
@@ -265,6 +265,15 @@ pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     /// with `pool` so a single flag drives both the queue drain and the pooled
     /// channel poll.
     cancelled: Arc<AtomicBool>,
+    /// Back-pressure accounting for `take_buffer`. The pool holds one buffer per
+    /// concurrent witness, and a buffer only returns once the GPU commit's trace H2D
+    /// has completed — so a slow GPU stalls witness computation here, silently. These
+    /// make that stall a number the contributions profile can report.
+    wait_ns: AtomicU64,
+    wait_count: AtomicU64,
+    /// Longest single wait, to distinguish "many small waits" (steady back-pressure)
+    /// from "one long wait" (a single stalled commit).
+    wait_max_ns: AtomicU64,
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
@@ -281,7 +290,38 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
         tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
 
-        Self { pctx, instance_ids_to_be_released, pool, cancelled }
+        Self {
+            pctx,
+            instance_ids_to_be_released,
+            pool,
+            cancelled,
+            wait_ns: AtomicU64::new(0),
+            wait_count: AtomicU64::new(0),
+            wait_max_ns: AtomicU64::new(0),
+        }
+    }
+
+    /// `(total_wait, calls_that_waited, longest_wait)` since the last
+    /// `reset_wait_stats`. Read once per phase by the contributions profile.
+    pub fn wait_stats(&self) -> (Duration, u64, Duration) {
+        (
+            Duration::from_nanos(self.wait_ns.load(Ordering::Relaxed)),
+            self.wait_count.load(Ordering::Relaxed),
+            Duration::from_nanos(self.wait_max_ns.load(Ordering::Relaxed)),
+        )
+    }
+
+    pub fn reset_wait_stats(&self) {
+        self.wait_ns.store(0, Ordering::Relaxed);
+        self.wait_count.store(0, Ordering::Relaxed);
+        self.wait_max_ns.store(0, Ordering::Relaxed);
+    }
+
+    fn record_wait(&self, elapsed: Duration) {
+        let ns = elapsed.as_nanos() as u64;
+        self.wait_ns.fetch_add(ns, Ordering::Relaxed);
+        self.wait_count.fetch_add(1, Ordering::Relaxed);
+        self.wait_max_ns.fetch_max(ns, Ordering::Relaxed);
     }
 
     /// Unblock any thread parked in `take_buffer`. Called on the abort path so a
@@ -324,8 +364,14 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     /// `to_be_released_buffer` enqueues without sending to the channel, so a parked
     /// `recv` would miss those wakeups — hence the non-blocking `try_take` in the loop.
     pub fn take_buffer(&self) -> Vec<F> {
+        // Uncontended is the common case, so try once before paying for a clock read.
+        if let Some(buffer) = self.pool.try_take() {
+            return buffer;
+        }
+        let start = Instant::now();
         loop {
             if let Some(buffer) = self.pool.try_take() {
+                self.record_wait(start.elapsed());
                 return buffer;
             }
             // Abort path: a buffer this loop is waiting on may never be released
@@ -340,6 +386,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 }
                 let (is_shared, buf) = self.pctx.free_instance_traces(iid);
                 if is_shared {
+                    self.record_wait(start.elapsed());
                     return buf;
                 }
                 continue;
