@@ -19,10 +19,11 @@
 //!    instance landed on, whether its const-pols slot was warm, whether the
 //!    custom-fixed file was re-read, which H2D path it took, and the device times.
 //!
-//! Volume: one summary line per job. The per-instance table is printed only when the
-//! phase exceeded `PROOFMAN_CONTRIB_PROFILE_MS` (default 2400ms — above the fast mode,
-//! below the slow one), so the ~4% of jobs that matter get full detail and the rest
-//! cost one line.
+//! Volume: three summary lines per job. The per-instance table is printed only when
+//! CALCULATING_CONTRIBUTIONS exceeded `PROOFMAN_CONTRIB_PROFILE_MS` (default 2400ms —
+//! above the observed fast mode, below the slow one), so the slow minority gets full
+//! detail and the rest stays cheap. Note the gate is the phase duration, not the
+//! pipeline-arm-relative `total` on the summary line, which also covers exec.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -131,12 +132,16 @@ impl ContribProfile {
     }
 
     /// Emit the report. `buffer_wait` comes from the `MemoryHandler`, which owns that
-    /// counter. Always logs one summary line; adds the per-instance table when the
-    /// phase ran long (see `detail_threshold`).
+    /// counter. Always logs the summary lines; adds the per-instance table when
+    /// CALCULATING_CONTRIBUTIONS ran long (see `detail_threshold`).
     pub fn report(&self, buffer_wait: (Duration, u64, Duration)) {
         let m = self.milestones.lock().unwrap();
         let Some(start) = m.start else { return };
         let total = m.challenge_done.unwrap_or_else(|| start.elapsed());
+        // The detail gate must use CALCULATING_CONTRIBUTIONS, not `total`: `total` runs
+        // from the pipeline arm and so includes exec (~0.5s on the cluster), which would
+        // put every job over a threshold picked from the observed witness modes.
+        let contrib_phase = total.saturating_sub(m.exec_done.unwrap_or_default());
 
         let totals = contrib_profile_totals_c();
         let records = contrib_profile_drain_c();
@@ -162,9 +167,11 @@ impl ContribProfile {
         let ms = |d: Option<Duration>| d.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(f64::NAN);
 
         tracing::info!(
-            "CONTRIB_PROFILE total={:.1}ms | stages(ms, cumulative from pipeline arm): exec={:.1} \
-             wc_enqueue={:.1} wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} challenge={:.1}",
+            "CONTRIB_PROFILE total={:.1}ms phase={:.1}ms | stages(ms, cumulative from pipeline arm): \
+             exec={:.1} wc_enqueue={:.1} wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} \
+             challenge={:.1}",
             total.as_secs_f64() * 1000.0,
+            contrib_phase.as_secs_f64() * 1000.0,
             ms(m.exec_done),
             ms(m.witness_enqueued),
             ms(m.witness_joined),
@@ -230,18 +237,23 @@ impl ContribProfile {
             );
         }
 
-        if total >= detail_threshold() {
-            self.report_detail(&records, &totals, total);
+        if contrib_phase >= detail_threshold() {
+            self.report_detail(&records, &totals, contrib_phase);
         }
     }
 
     /// Per-instance table, printed only for a slow phase. Sorted by device commit time
     /// so the outlier is the first row.
-    fn report_detail(&self, records: &[CommitProfileRecord], totals: &ContribProfileTotals, total: Duration) {
+    fn report_detail(
+        &self,
+        records: &[CommitProfileRecord],
+        totals: &ContribProfileTotals,
+        contrib_phase: Duration,
+    ) {
         tracing::info!(
             "CONTRIB_PROFILE_DETAIL phase={:.1}ms over threshold — {} commits (instance airgroup:air stream \
              flags select_wait_ms enqueue_ms stage_ms gpu_commit_ms h2d ntt merkle exprs)",
-            total.as_secs_f64() * 1000.0,
+            contrib_phase.as_secs_f64() * 1000.0,
             records.len(),
         );
         let mut sorted: Vec<&CommitProfileRecord> = records.iter().collect();
