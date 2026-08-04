@@ -79,6 +79,49 @@ impl CoreClasses {
     }
 }
 
+/// `(minor_faults, major_faults)` for the process so far, or `None` if unavailable.
+///
+/// The counter the earlier memory refutation missed. That work checked `pgmajfault` and
+/// direct-reclaim rates — all frozen — but never *minor* faults, which is what
+/// first-touching freshly-mapped anonymous memory produces. Each minor fault costs a
+/// kernel entry plus a page zeroing, charged to the process as CPU with terrible IPC, so a
+/// burst of them looks exactly like "same instructions, 3.6x the cycles".
+///
+/// Relevant because the collect path allocates one `Vec::with_capacity` per
+/// (chunk, instance), fills it during the replay, and frees it afterwards. Whether the
+/// allocator hands those pages back to the kernel between jobs is state-dependent — which
+/// is the shape of a memoryless, few-percent event.
+pub fn page_faults() -> Option<(u64, u64)> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: writes only into the local rusage.
+        let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        if rc != 0 {
+            return None;
+        }
+        Some((usage.ru_minflt as u64, usage.ru_majflt as u64))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// glibc allocator state: `(mmapped_bytes, in_use_bytes, free_in_arena_bytes)`.
+///
+/// Distinguishes "the allocator reused its arena" (cheap, no faults) from "the allocator
+/// returned the pages and had to remap them" (a fault storm). `hblkhd` moving between jobs
+/// is the direct evidence of that churn.
+pub fn allocator_stats() -> Option<(u64, u64, u64)> {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: mallinfo2 takes no arguments and returns a plain struct by value.
+        let mi = unsafe { libc::mallinfo2() };
+        Some((mi.hblkhd as u64, mi.uordblks as u64, mi.fordblks as u64))
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    None
+}
+
 /// Is this logical CPU an efficiency core? Exposed so callers that run work on their own
 /// thread pools (the executor's rayon pools) can classify the threads that actually do the
 /// work — measuring the dispatcher thread instead is misleading, because it is blocked in
