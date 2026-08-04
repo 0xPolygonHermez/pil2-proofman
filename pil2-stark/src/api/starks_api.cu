@@ -1794,7 +1794,7 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
     // The small-domain pols were copied to the host above, so preserve_src=false is fine even where
     // the serial flow runs its iNTT in place on d_customCommitsPols.
-    ntt.ldeColMajor((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream, false, nullptr);
+    ntt.ldeColMajor((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream, false, (gl64_t *)pNodes);
     buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_customCommitsTree, nCols, 1ULL << nBitsExt, fixedLayout(), stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
@@ -1853,7 +1853,7 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
     // Const tree uses fixedLayout() (ColMajor). d_fixedPols is a throwaway copy of the host const
     // pols, so preserve_src=false is fine even where the serial flow runs its iNTT in place on it.
-    ntt.ldeColMajor((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream, false, nullptr);
+    ntt.ldeColMajor((gl64_t *)d_fixedTree, (gl64_t *)d_fixedPols, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, stream, false, (gl64_t *)pNodes);
     buildMerkleTreeGPU(starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)d_fixedTree, starkInfo.nConstants, 1ULL << starkInfo.starkStruct.nBitsExt, fixedLayout(), stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
