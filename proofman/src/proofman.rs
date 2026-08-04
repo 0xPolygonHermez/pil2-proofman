@@ -56,6 +56,30 @@ use std::{
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::contrib_profile::ContribProfile;
+
+/// Dev-only: let a single local process take a 1/N share of the instances, exactly as a
+/// cluster worker does, so per-worker properties can be measured without a cluster.
+///
+/// `compute_witness_` and `verify_constraints_` are single-process by design and pin the
+/// partition to `(1, [0], 0)`. Several questions are only answerable per worker, though —
+/// notably the per-chunk instance fan-out, which sets the cost of any scheme that replays
+/// chunks per instance. Driven by env vars rather than a parameter so it does not widen
+/// the API for a measurement aid.
+///
+/// `PROOFMAN_SIMULATE_PARTITIONS=N` and optionally `PROOFMAN_SIMULATE_PARTITION_ID=K`.
+fn simulated_partition() -> Option<(usize, Vec<u32>, usize)> {
+    let n = std::env::var("PROOFMAN_SIMULATE_PARTITIONS").ok()?.parse::<usize>().ok()?;
+    let id = std::env::var("PROOFMAN_SIMULATE_PARTITION_ID")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if n == 0 || id >= n {
+        tracing::warn!("Ignoring PROOFMAN_SIMULATE_PARTITIONS={n} / ID={id}: id must be < n, n > 0");
+        return None;
+    }
+    tracing::info!("Simulating partition {id} of {n} (PROOFMAN_SIMULATE_PARTITIONS)");
+    Some((n, vec![id as u32], id))
+}
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
@@ -1065,7 +1089,8 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("compute_witness_");
 
-        self.set_partition(1, vec![0], 0)?;
+        let (n_parts, part_ids, part_idx) = simulated_partition().unwrap_or((1, vec![0], 0));
+        self.set_partition(n_parts, part_ids, part_idx)?;
 
         self.cancellation_info.write().unwrap().reset();
         self.reset()?;
