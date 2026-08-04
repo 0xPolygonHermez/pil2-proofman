@@ -8,6 +8,8 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
+# sched_getcpu, for the core-placement fields in the contributions profile.
+libc = "0.2"
 proofman-common = { path = "../common" }
 proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }

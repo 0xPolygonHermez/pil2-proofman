@@ -1482,6 +1482,7 @@ dependencies = [
  "csv",
  "curves",
  "fields",
+ "libc",
  "libloading",
  "mpi",
  "num-bigint",

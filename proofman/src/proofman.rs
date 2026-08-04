@@ -2213,6 +2213,7 @@ where
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
+                let contrib_profile_commit = self.contrib_profile.clone();
                 // Reuse the process-wide aux_trace / const_pols buffers (allocated in
                 // initialize_proofman). In CPU mode the prover runs one proof at a time,
                 // so contribution workers and proof generation never touch these
@@ -2236,6 +2237,8 @@ where
                             let const_pols_local: &mut [F] = unsafe {
                                 std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
                             };
+                            let commit_cpu_start = crate::contrib_profile::current_cpu();
+                            let commit_start = std::time::Instant::now();
                             let commit_stream_id = match Self::get_contribution_air(
                                 &pctx_clone,
                                 &sctx_clone,
@@ -2251,6 +2254,11 @@ where
                                     break;
                                 }
                             };
+                            contrib_profile_commit.record_commit_task(
+                                commit_cpu_start,
+                                crate::contrib_profile::current_cpu(),
+                                commit_start.elapsed(),
+                            );
 
                             if !first_contribution_logged.swap(true, Ordering::Relaxed) {
                                 tracing::info!("First GPU contribution queued");
@@ -2297,6 +2305,7 @@ where
             self.contrib_profile.mark_exec_done();
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
+            self.contrib_profile.mark_publics_done();
 
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
             timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
@@ -2312,6 +2321,7 @@ where
 
             let my_instances_no_tables =
                 my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            self.contrib_profile.mark_instances_listed();
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
@@ -4207,13 +4217,25 @@ where
                 let pctx_clone = pctx_clone.clone();
                 let gpu = pctx_clone.gpu;
                 let cancellation_info_clone = cancellation_info_clone.clone();
+                let contrib_profile_task = contrib_profile_clone.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    // Sample the core this witness lands on. This stage carries the bulk of
+                    // the slow-mode excess, and on a hybrid CPU an E-core placement is a
+                    // 1.5-2.5x per-thread penalty — indistinguishable from "more work" in
+                    // any other field.
+                    let cpu_start = crate::contrib_profile::current_cpu();
+                    let task_start = std::time::Instant::now();
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                     }
+                    contrib_profile_task.record_witness_task(
+                        cpu_start,
+                        crate::contrib_profile::current_cpu(),
+                        task_start.elapsed(),
+                    );
                     Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
                     timer_stop_and_log_debug!(
                         GENERATING_WC,
@@ -4262,7 +4284,9 @@ where
         let mut expected = instances.len();
         if !minimal_memory && (self.pctx.gpu || stats) {
             timer_start_debug!(PRE_CALCULATE_WC);
+            let pre_calc_start = std::time::Instant::now();
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
+            self.contrib_profile.record_pre_calculate(pre_calc_start.elapsed());
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
@@ -4377,11 +4401,16 @@ where
             }
         }
 
+        // The dominant part of the `wc_enqueue` stage: this blocks until every
+        // per-instance witness has completed, so the stage's cost is the slowest witness
+        // thread, not the collection work above it.
+        let await_witness_start = std::time::Instant::now();
         witness_done.wait_until_value_and_check_streams(
             expected,
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );
+        self.contrib_profile.record_witness_done_wait(await_witness_start.elapsed());
 
         let handles_to_join: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
         for handle in handles_to_join {

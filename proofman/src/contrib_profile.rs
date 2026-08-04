@@ -26,6 +26,7 @@
 //! pipeline-arm-relative `total` on the summary line, which also covers exec.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use proofman_starks_lib_c::{
@@ -34,9 +35,129 @@ use proofman_starks_lib_c::{
     CONTRIB_FLAG_UNPACK_FIXED, CONTRIB_FLAG_WITNESS_HINTS,
 };
 
+/// Which logical CPUs are efficiency cores.
+///
+/// Built once from `cpuinfo_max_freq`. On a hybrid part (e.g. i9-14900K: P at 5.7-6.0GHz,
+/// E at 4.4GHz) the max-frequency groups separate the classes cleanly, so we take the
+/// lowest group as E when it is meaningfully below the highest. A homogeneous machine
+/// yields an empty E set and the P/E fields become trivially all-P.
+struct CoreClasses {
+    is_e: Vec<bool>,
+    n_p: usize,
+    n_e: usize,
+}
+
+impl CoreClasses {
+    fn detect() -> Self {
+        let mut freqs: Vec<u64> = Vec::new();
+        for cpu in 0.. {
+            let path = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq");
+            match std::fs::read_to_string(&path) {
+                Ok(v) => freqs.push(v.trim().parse::<u64>().unwrap_or(0)),
+                Err(_) => break,
+            }
+        }
+        let hi = freqs.iter().copied().max().unwrap_or(0);
+        let lo = freqs.iter().copied().filter(|f| *f > 0).min().unwrap_or(0);
+        // 0.9 is comfortably below any hybrid P/E ratio (4.4/6.0 = 0.73) and comfortably
+        // above the spread within a class (5.7/6.0 = 0.95), so turbo-bin variation among
+        // P-cores is not mistaken for a second class.
+        let hybrid = hi > 0 && lo > 0 && (lo as f64) < 0.9 * hi as f64;
+        let is_e: Vec<bool> = freqs.iter().map(|f| hybrid && *f > 0 && (*f as f64) < 0.9 * hi as f64).collect();
+        let n_e = is_e.iter().filter(|e| **e).count();
+        let n_p = is_e.len() - n_e;
+        Self { is_e, n_p, n_e }
+    }
+
+    fn get() -> &'static CoreClasses {
+        static CLASSES: OnceLock<CoreClasses> = OnceLock::new();
+        CLASSES.get_or_init(CoreClasses::detect)
+    }
+
+    fn is_e_core(&self, cpu: i32) -> bool {
+        cpu >= 0 && self.is_e.get(cpu as usize).copied().unwrap_or(false)
+    }
+}
+
+/// The logical CPU the caller is running on, or -1 if unavailable.
+pub fn current_cpu() -> i32 {
+    // SAFETY: sched_getcpu takes no arguments and only reads the calling thread's state.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::sched_getcpu()
+    }
+    #[cfg(not(target_os = "linux"))]
+    -1
+}
+
+/// Where a pipeline task ran and for how long. Aggregated per class so one job's
+/// placement is a handful of numbers rather than a per-task dump.
+#[derive(Default)]
+struct Placement {
+    tasks: AtomicU64,
+    tasks_e: AtomicU64,
+    ns_p: AtomicU64,
+    ns_e: AtomicU64,
+    /// Task started on one core class and finished on the other: the scheduler moved it
+    /// mid-flight, so its time is split and the class attribution is approximate.
+    migrations: AtomicU64,
+}
+
+impl Placement {
+    fn record(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
+        let classes = CoreClasses::get();
+        let e_start = classes.is_e_core(cpu_start);
+        let e_end = classes.is_e_core(cpu_end);
+        self.tasks.fetch_add(1, Ordering::Relaxed);
+        if e_start != e_end {
+            self.migrations.fetch_add(1, Ordering::Relaxed);
+        }
+        // Attribute on the finishing core: for a task that migrated, that is where it did
+        // its most recent work, and the migration counter flags the ambiguity.
+        let ns = elapsed.as_nanos() as u64;
+        if e_end {
+            self.tasks_e.fetch_add(1, Ordering::Relaxed);
+            self.ns_e.fetch_add(ns, Ordering::Relaxed);
+        } else {
+            self.ns_p.fetch_add(ns, Ordering::Relaxed);
+        }
+    }
+
+    fn reset(&self) {
+        self.tasks.store(0, Ordering::Relaxed);
+        self.tasks_e.store(0, Ordering::Relaxed);
+        self.ns_p.store(0, Ordering::Relaxed);
+        self.ns_e.store(0, Ordering::Relaxed);
+        self.migrations.store(0, Ordering::Relaxed);
+    }
+
+    /// `(tasks, tasks_on_e, ms_on_p, ms_on_e, migrations)`
+    fn snapshot(&self) -> (u64, u64, f64, f64, u64) {
+        (
+            self.tasks.load(Ordering::Relaxed),
+            self.tasks_e.load(Ordering::Relaxed),
+            self.ns_p.load(Ordering::Relaxed) as f64 / 1e6,
+            self.ns_e.load(Ordering::Relaxed) as f64 / 1e6,
+            self.migrations.load(Ordering::Relaxed),
+        )
+    }
+}
+
 /// Default detail-dump threshold. The measured fast mode is ~2.06s and the slow mode
 /// ~2.88s, so 2400ms sits in the empty valley between them.
 const DEFAULT_DETAIL_THRESHOLD_MS: u64 = 2400;
+
+/// Sample one in N sub-threshold (fast) jobs into the detail dump, so the per-commit
+/// numbers have a baseline. Without this, every detail block is a slow job and there is
+/// nothing to compare it against. 0 disables fast sampling.
+const DEFAULT_FAST_SAMPLE_EVERY: u64 = 100;
+
+fn fast_sample_every() -> u64 {
+    std::env::var("PROOFMAN_CONTRIB_PROFILE_SAMPLE")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_FAST_SAMPLE_EVERY)
+}
 
 fn detail_threshold() -> Duration {
     let ms = std::env::var("PROOFMAN_CONTRIB_PROFILE_MS")
@@ -55,6 +176,11 @@ struct Milestones {
     /// before it runs), so this is where "GPU work overlapped with execution" ends and
     /// the phase the coordinator calls Witness begins.
     exec_done: Option<Duration>,
+    /// `set_publics_custom_commits` and the process-instance list, both of which sit
+    /// inside the `wc_enqueue` window. Broken out because that stage carries ~91% of the
+    /// slow-mode excess, and without these the stage has unattributed time in it.
+    publics_done: Option<Duration>,
+    instances_listed: Option<Duration>,
     witness_enqueued: Option<Duration>,
     witness_joined: Option<Duration>,
     tables_done: Option<Duration>,
@@ -71,6 +197,22 @@ pub struct ContribProfile {
     /// tokens from `rx_threads`. A 1ms-granularity poll loop with no logging today.
     thread_token_wait_ns: AtomicU64,
     thread_token_waits: AtomicU64,
+    /// The bulk `pre_calculate_witness` call. This is the body of the `wc_enqueue` stage,
+    /// which carries ~91% of the slow-mode excess, so it needs its own number rather than
+    /// being inferred from the stage boundary.
+    pre_calculate_ns: AtomicU64,
+    /// Blocking on `witness_done` for every per-instance witness to complete. This is the
+    /// rest of `wc_enqueue` and, on the cluster, the bulk of it: the stage is not doing
+    /// work, it is waiting for the witness threads whose core placement is recorded below.
+    witness_done_wait_ns: AtomicU64,
+    /// Core placement of the two CPU-heavy task kinds. On a hybrid part an E-core
+    /// placement costs 1.5-2.5x per thread, which is the size of the observed excess —
+    /// so this is what distinguishes "the host was slow" from "the host ran on slow
+    /// cores".
+    witness_placement: Placement,
+    commit_placement: Placement,
+    /// Jobs seen since construction, for sampling fast jobs into the detail dump.
+    jobs_seen: AtomicU64,
 }
 
 impl Default for ContribProfile {
@@ -85,6 +227,11 @@ impl ContribProfile {
             milestones: std::sync::Mutex::new(Milestones::default()),
             thread_token_wait_ns: AtomicU64::new(0),
             thread_token_waits: AtomicU64::new(0),
+            pre_calculate_ns: AtomicU64::new(0),
+            witness_done_wait_ns: AtomicU64::new(0),
+            witness_placement: Placement::default(),
+            commit_placement: Placement::default(),
+            jobs_seen: AtomicU64::new(0),
         }
     }
 
@@ -93,7 +240,30 @@ impl ContribProfile {
         *self.milestones.lock().unwrap() = Milestones { start: Some(Instant::now()), ..Default::default() };
         self.thread_token_wait_ns.store(0, Ordering::Relaxed);
         self.thread_token_waits.store(0, Ordering::Relaxed);
+        self.pre_calculate_ns.store(0, Ordering::Relaxed);
+        self.witness_done_wait_ns.store(0, Ordering::Relaxed);
+        self.witness_placement.reset();
+        self.commit_placement.reset();
+        self.jobs_seen.fetch_add(1, Ordering::Relaxed);
         contrib_profile_reset_c();
+    }
+
+    pub fn record_pre_calculate(&self, elapsed: Duration) {
+        self.pre_calculate_ns.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    pub fn record_witness_done_wait(&self, elapsed: Duration) {
+        self.witness_done_wait_ns.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// One per-instance witness computation, with the CPU it started and finished on.
+    pub fn record_witness_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
+        self.witness_placement.record(cpu_start, cpu_end, elapsed);
+    }
+
+    /// One contribution commit enqueue, with the CPU it started and finished on.
+    pub fn record_commit_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
+        self.commit_placement.record(cpu_start, cpu_end, elapsed);
     }
 
     pub fn record_thread_token_wait(&self, elapsed: Duration) {
@@ -111,6 +281,12 @@ impl ContribProfile {
 
     pub fn mark_exec_done(&self) {
         self.mark(|m, d| m.exec_done = Some(d));
+    }
+    pub fn mark_publics_done(&self) {
+        self.mark(|m, d| m.publics_done = Some(d));
+    }
+    pub fn mark_instances_listed(&self) {
+        self.mark(|m, d| m.instances_listed = Some(d));
     }
     pub fn mark_witness_enqueued(&self) {
         self.mark(|m, d| m.witness_enqueued = Some(d));
@@ -164,24 +340,51 @@ impl ContribProfile {
         let staged = records.iter().filter(|r| r.flags & CONTRIB_FLAG_H2D_DIRECT == 0).count();
         let hinted = records.iter().filter(|r| r.flags & CONTRIB_FLAG_WITNESS_HINTS != 0).count();
 
-        let ms = |d: Option<Duration>| d.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(f64::NAN);
-
+        // Increments, not just the cumulative offsets: the dominant stage should be
+        // readable at a glance instead of requiring the reader to difference the fields.
+        // `total` spans the whole pipeline (exec included); `phase` is
+        // CALCULATING_CONTRIBUTIONS alone and is the value that matches its timer line.
+        let marks = [
+            m.exec_done,
+            m.publics_done,
+            m.instances_listed,
+            m.witness_enqueued,
+            m.witness_joined,
+            m.tables_done,
+            m.commits_drained,
+            m.stream_proofs_done,
+            m.challenge_done,
+        ];
+        let mut incr = [f64::NAN; 9];
+        let mut prev = Duration::ZERO;
+        for (i, mark) in marks.iter().enumerate() {
+            if let Some(d) = mark {
+                incr[i] = d.saturating_sub(prev).as_secs_f64() * 1000.0;
+                prev = *d;
+            }
+        }
         tracing::info!(
-            "CONTRIB_PROFILE total={:.1}ms phase={:.1}ms | stages(ms, cumulative from pipeline arm): \
-             exec={:.1} wc_enqueue={:.1} wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} \
-             challenge={:.1}",
+            "CONTRIB_PROFILE total={:.1}ms (incl exec) phase={:.1}ms (== CALCULATING_CONTRIBUTIONS) | \
+             stage_ms(incremental): exec={:.1} publics={:.1} instances={:.1} wc_enqueue={:.1} \
+             wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} challenge={:.1} \
+             | wc_enqueue splits into pre_calculate={:.1} + await_witness={:.1}",
             total.as_secs_f64() * 1000.0,
             contrib_phase.as_secs_f64() * 1000.0,
-            ms(m.exec_done),
-            ms(m.witness_enqueued),
-            ms(m.witness_joined),
-            ms(m.tables_done),
-            ms(m.commits_drained),
-            ms(m.stream_proofs_done),
-            ms(m.challenge_done),
+            incr[0],
+            incr[1],
+            incr[2],
+            incr[3],
+            incr[4],
+            incr[5],
+            incr[6],
+            incr[7],
+            incr[8],
+            self.pre_calculate_ns.load(Ordering::Relaxed) as f64 / 1e6,
+            self.witness_done_wait_ns.load(Ordering::Relaxed) as f64 / 1e6,
         );
         tracing::info!(
-            "CONTRIB_PROFILE waits(ms): trace_buf={:.1}/n{} max={:.1} threads={:.1}/n{} \
+            "CONTRIB_PROFILE waits(ms, CROSS-THREAD SUMS not wall-clock; /nN = count): \
+             trace_buf={:.1}/n{} max={:.1} threads={:.1}/n{} \
              stream_sel={:.1} max={:.1} retries={} h2d_done={:.1}/n{} pinned_lock={:.1}/n{} events={:.1}/n{}",
             buf_wait.as_secs_f64() * 1000.0,
             buf_wait_n,
@@ -199,30 +402,78 @@ impl ContribProfile {
             totals.event_churn_count,
         );
         tracing::info!(
-            "CONTRIB_PROFILE commits={} dropped={} gpu_commit_sum={:.1}ms max={:.1}ms avg={:.1}ms | \
-             slot_warm={}/{} unpack_fixed={} custom_reload={} h2d_staged={} witness_hints={} | \
-             vram_free min={} last={} of {}",
+            "CONTRIB_PROFILE commits={} gpu_commit_sum={:.1}ms max={:.1}ms avg={:.1}ms | \
+             slot_warm={}/{} unpack_fixed={} h2d_staged={}",
             records.len(),
-            totals.dropped,
             gpu_commit_total,
             gpu_commit_max,
             gpu_commit_total as f64 / n,
             warm,
             hinted,
             unpacked,
-            custom_reload,
             staged,
+        );
+
+        // Core placement. The reason this is on the info line: on a hybrid CPU an E-core
+        // placement is a 1.5-2.5x per-thread slowdown, the same size as the observed
+        // slow-mode excess, and nothing else in the log can distinguish that from the host
+        // simply having more work to do.
+        let classes = CoreClasses::get();
+        let (wc_tasks, wc_e, wc_ms_p, wc_ms_e, wc_mig) = self.witness_placement.snapshot();
+        let (cm_tasks, cm_e, cm_ms_p, cm_ms_e, cm_mig) = self.commit_placement.snapshot();
+        let pct = |e: f64, p: f64| if e + p > 0.0 { 100.0 * e / (e + p) } else { 0.0 };
+        tracing::info!(
+            "CONTRIB_PROFILE cores(P={} E={}): witness tasks={} on_e={} ms_p={:.1} ms_e={:.1} \
+             e_share={:.1}% migrations={} | commit tasks={} on_e={} ms_p={:.1} ms_e={:.1} \
+             e_share={:.1}% migrations={}",
+            classes.n_p,
+            classes.n_e,
+            wc_tasks,
+            wc_e,
+            wc_ms_p,
+            wc_ms_e,
+            pct(wc_ms_e, wc_ms_p),
+            wc_mig,
+            cm_tasks,
+            cm_e,
+            cm_ms_p,
+            cm_ms_e,
+            pct(cm_ms_e, cm_ms_p),
+            cm_mig,
+        );
+
+        // Constant across every record of the 2026-08-04 run, so they are noise on the
+        // info line — but they are exactly what refuted the VRAM and buffer-contention
+        // hypotheses, so keep them at debug and escalate any that stops being nominal.
+        tracing::debug!(
+            "CONTRIB_PROFILE steady: dropped={} custom_reload={} witness_hints={} \
+             vram_free min={} last={} of {}",
+            totals.dropped,
+            custom_reload,
             hinted,
             fmt_bytes(totals.gpu_free_min_bytes),
             fmt_bytes(totals.gpu_free_last_bytes),
             fmt_bytes(totals.gpu_total_bytes),
         );
+        if totals.dropped > 0 || custom_reload > 0 {
+            tracing::warn!(
+                "CONTRIB_PROFILE no longer nominal: dropped={} custom_reload={} — these were 0 in \
+                 the baseline run, so the profile or the reuse path has changed",
+                totals.dropped,
+                custom_reload,
+            );
+        }
 
         // The MO count-and-plan borrow. On a single-GPU worker the borrow window is a
         // hard stop for every commit, and the release wipes each stream's const-pols
         // affinity — so both the window length and the blocked-select count are prime
         // suspects for a step change in contributions time.
-        if totals.borrow_count > 0 {
+        // Nominal on the baseline run (drain/acq_sync ~0, blocked_selects 0), so this is
+        // only worth an info line when the borrow actually stalled commits.
+        let borrow_costly = totals.borrow_blocked_selects > 0
+            || totals.borrow_drain_ns > 5_000_000
+            || totals.borrow_acq_sync_ns > 5_000_000;
+        if totals.borrow_count > 0 && borrow_costly {
             tracing::info!(
                 "CONTRIB_PROFILE gpu_borrow n={} drain={:.1}ms acq_sync={:.1}ms window={:.1}ms \
                  rel_sync={:.1}ms blocked_selects={} (~{:.1}ms of commit stall)",
@@ -235,25 +486,39 @@ impl ContribProfile {
                 // Each blocked retry costs one 300us sleep.
                 totals.borrow_blocked_selects as f64 * 0.3,
             );
+        } else if totals.borrow_count > 0 {
+            tracing::debug!(
+                "CONTRIB_PROFILE gpu_borrow n={} window={:.1}ms (nominal: no commits blocked)",
+                totals.borrow_count,
+                totals.borrow_window_ns as f64 / 1e6,
+            );
         }
 
-        if contrib_phase >= detail_threshold() {
-            self.report_detail(&records, &totals, contrib_phase);
+        // Dump detail for every slow phase, plus a sample of fast ones so the slow blocks
+        // have something to be compared against.
+        let over = contrib_phase >= detail_threshold();
+        let every = fast_sample_every();
+        let sampled = !over && every > 0 && self.jobs_seen.load(Ordering::Relaxed).is_multiple_of(every);
+        if over || sampled {
+            self.report_detail(&records, &totals, contrib_phase, if over { "over threshold" } else { "fast sample" });
         }
     }
 
-    /// Per-instance table, printed only for a slow phase. Sorted by device commit time
-    /// so the outlier is the first row.
+    /// Per-instance table. Sorted by device commit time so the outlier is the first row.
+    /// `reason` distinguishes a slow phase from a sampled fast one — the baseline blocks
+    /// must be identifiable, or they get pooled with the slow ones in analysis.
     fn report_detail(
         &self,
         records: &[CommitProfileRecord],
         totals: &ContribProfileTotals,
         contrib_phase: Duration,
+        reason: &str,
     ) {
         tracing::info!(
-            "CONTRIB_PROFILE_DETAIL phase={:.1}ms over threshold — {} commits (instance airgroup:air stream \
+            "CONTRIB_PROFILE_DETAIL phase={:.1}ms {} — {} commits (instance airgroup:air stream \
              flags select_wait_ms enqueue_ms stage_ms gpu_commit_ms h2d ntt merkle exprs)",
             contrib_phase.as_secs_f64() * 1000.0,
+            reason,
             records.len(),
         );
         let mut sorted: Vec<&CommitProfileRecord> = records.iter().collect();
