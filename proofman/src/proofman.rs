@@ -45,8 +45,8 @@ use crate::{
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c,
-    n_hint_ids_by_name_c, stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
 };
 
 use std::{
@@ -4960,12 +4960,12 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Streaming-commit slots: DEFAULT 2 (the measured saturation point, 
-        // overridable via STREAM_COMMIT_SLOTS (0 disables). The slot COUNT is a 
-        // memory-budget knob (each slot lowers the ceiling on what gpu-mops may 
-        // borrow); the slot SIZE is derived from the slot-eligible packed AIRs 
+        // Streaming-commit slots: DEFAULT 2 (the measured saturation point,
+        // overridable via STREAM_COMMIT_SLOTS (0 disables). The slot COUNT is a
+        // memory-budget knob (each slot lowers the ceiling on what gpu-mops may
+        // borrow); the slot SIZE is derived from the slot-eligible packed AIRs
         // (zisk Main) -- same eligibility gate as try_slot_commit -- so it never needs
-        // manual tuning. 
+        // manual tuning.
         const STREAM_COMMIT_SLOTS_DEFAULT: u64 = 2;
         if options.gpu && options.packed {
             let n_slots: u64 = std::env::var("STREAM_COMMIT_SLOTS")
@@ -5259,7 +5259,7 @@ where
             return false;
         }
         // One-shot token take: a miss means all slots are busy right-now and the
-        // instance goes legacy. 
+        // instance goes legacy.
         let Ok(slot) = ctx.pool_rx.try_recv() else {
             return false;
         };
