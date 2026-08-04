@@ -739,3 +739,122 @@ fn fmt_bytes(b: u64) -> String {
     }
     format!("{:.2}GB", b as f64 / (1024.0 * 1024.0 * 1024.0))
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hardware counters (instructions / cycles), per thread, unprivileged.
+//
+// Why this exists: the collect's per-chunk CPU *time* rises ~4.2x on a provably
+// identical instruction stream. That was read as a microarchitectural IPC collapse,
+// but CPU time is time-on-core, not cycles — so the same measurement is equally
+// consistent with the core simply running ~4.2x slower. Those have different fixes
+// (cache/bandwidth vs power/thermal/frequency) and CPU time cannot tell them apart.
+//
+// Reading instructions and cycles directly does:
+//   instructions/chunk flat + cycles/chunk up   => IPC collapse (microarchitectural)
+//   instructions and cycles both flat           => frequency drop (cycles/cpu_time falls)
+//   instructions/chunk up                       => the "identical work" premise is wrong
+//
+// Needs no privileges at perf_event_paranoid <= 2 for a self-monitoring counter, and
+// degrades to None wherever it is unavailable (no PMU, VM, stricter paranoid).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Default)]
+struct PerfEventAttr {
+    type_: u32,
+    size: u32,
+    config: u64,
+    sample_period_or_freq: u64,
+    sample_type: u64,
+    read_format: u64,
+    flags: u64,
+    wakeup: u32,
+    bp_type: u32,
+    config1: u64,
+    config2: u64,
+    branch_sample_type: u64,
+    sample_regs_user: u64,
+    sample_stack_user: u32,
+    clockid: i32,
+    sample_regs_intr: u64,
+    aux_watermark: u32,
+    sample_max_stack: u16,
+    _reserved_2: u16,
+    aux_sample_size: u32,
+    _reserved_3: u32,
+}
+
+/// A thread's instruction and cycle counters. Opened lazily on first use and left open
+/// for the thread's life — rayon workers are recycled, so this is a handful of fds.
+#[cfg(target_os = "linux")]
+struct HwCounters {
+    instructions: i32,
+    cycles: i32,
+}
+
+#[cfg(target_os = "linux")]
+impl HwCounters {
+    fn open() -> Option<Self> {
+        // PERF_TYPE_HARDWARE = 0; PERF_COUNT_HW_CPU_CYCLES = 0; _INSTRUCTIONS = 1.
+        let instructions = Self::open_one(1)?;
+        match Self::open_one(0) {
+            Some(cycles) => Some(Self { instructions, cycles }),
+            None => {
+                // SAFETY: fd came from a successful perf_event_open above.
+                unsafe { libc::close(instructions) };
+                None
+            }
+        }
+    }
+
+    fn open_one(config: u64) -> Option<i32> {
+        let attr = PerfEventAttr {
+            type_: 0,
+            size: std::mem::size_of::<PerfEventAttr>() as u32,
+            config,
+            ..Default::default()
+        };
+        // pid 0 = calling thread, cpu -1 = any, no group, no flags.
+        // SAFETY: attr is a correctly sized, fully initialised perf_event_attr; the
+        // kernel only reads it. A failure returns -1 and is handled.
+        let fd = unsafe {
+            libc::syscall(libc::SYS_perf_event_open, &attr as *const PerfEventAttr, 0, -1, -1, 0)
+        };
+        (fd >= 0).then_some(fd as i32)
+    }
+
+    fn read(&self) -> Option<(u64, u64)> {
+        Some((Self::read_one(self.instructions)?, Self::read_one(self.cycles)?))
+    }
+
+    fn read_one(fd: i32) -> Option<u64> {
+        let mut v: u64 = 0;
+        // SAFETY: reads 8 bytes into a local u64 from a perf counter fd, whose read
+        // format with no read_format flags is exactly one u64.
+        let n = unsafe { libc::read(fd, &mut v as *mut u64 as *mut libc::c_void, 8) };
+        (n == 8).then_some(v)
+    }
+}
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static HW: std::cell::RefCell<Option<Option<HwCounters>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `(instructions, cycles)` retired by *this thread* so far, or `None` if counters are
+/// unavailable. Difference two reads to get an interval.
+pub fn hw_instructions_cycles() -> Option<(u64, u64)> {
+    #[cfg(target_os = "linux")]
+    {
+        HW.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(HwCounters::open());
+            }
+            slot.as_ref().and_then(|c| c.as_ref()).and_then(|c| c.read())
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
