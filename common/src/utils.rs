@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::fs;
 use sysinfo::System;
 use rayon::ThreadPool;
+use std::sync::Mutex;
 use rayon::ThreadPoolBuilder;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::fmt::format::Writer;
@@ -468,6 +469,51 @@ pub fn create_pool(n_cores: usize) -> ThreadPool {
     ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }
 
+static POOL_CACHE: OnceLock<Mutex<HashMap<usize, Vec<ThreadPool>>>> = OnceLock::new();
+
+/// Caps retained threads if concurrency spikes; beyond it a returned pool is just dropped.
+const POOL_CACHE_MAX_PER_SIZE: usize = 64;
+
+/// A borrowed [`ThreadPool`], returned to the cache when dropped.
+pub struct PoolLease {
+    pool: Option<ThreadPool>,
+    n_cores: usize,
+}
+
+impl std::ops::Deref for PoolLease {
+    type Target = ThreadPool;
+    fn deref(&self) -> &ThreadPool {
+        self.pool.as_ref().expect("PoolLease used after drop")
+    }
+}
+
+impl Drop for PoolLease {
+    fn drop(&mut self) {
+        let Some(pool) = self.pool.take() else { return };
+        let cache = POOL_CACHE.get_or_init(Default::default);
+        // Recover from poisoning rather than panic inside a Drop.
+        let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        let slot = map.entry(self.n_cores).or_default();
+        if slot.len() < POOL_CACHE_MAX_PER_SIZE {
+            slot.push(pool);
+        }
+    }
+}
+
+/// Borrow a pool of `n_cores` workers, reusing a cached one when available.
+///
+/// Per-call pools strand freed chunks across glibc malloc arenas (each thread generation gets
+/// a different arena), so RSS climbs; long-lived threads reuse what they freed. One pool per
+/// concurrent borrow, not one shared pool, to preserve the effective parallelism.
+pub fn lease_pool(n_cores: usize) -> PoolLease {
+    let cache = POOL_CACHE.get_or_init(Default::default);
+    let reused = {
+        let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        map.get_mut(&n_cores).and_then(|v| v.pop())
+    };
+    PoolLease { pool: Some(reused.unwrap_or_else(|| create_pool(n_cores))), n_cores }
+}
+
 pub fn configured_num_threads(n_local_processes: usize) -> usize {
     let num_cores = num_cpus::get_physical();
     tracing::info!("Node has {num_cores} cores");
@@ -518,4 +564,40 @@ pub fn init_gpu_setup(gpu: bool) -> ProofmanResult<()> {
         init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod pool_cache_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Thread ids of a pool's workers; `ThreadId::as_u64` is unstable, so use the Debug form.
+    fn worker_thread_ids(pool: &PoolLease) -> HashSet<String> {
+        pool.broadcast(|_| format!("{:?}", std::thread::current().id())).into_iter().collect()
+    }
+
+    #[test]
+    fn lease_reuses_the_same_threads() {
+        let first = worker_thread_ids(&lease_pool(3));
+        let second = worker_thread_ids(&lease_pool(3));
+        assert_eq!(first.len(), 3, "expected 3 distinct workers, got {first:?}");
+        assert_eq!(first, second, "pool was rebuilt instead of reused");
+    }
+
+    #[test]
+    fn concurrent_leases_do_not_share_a_pool() {
+        let a = lease_pool(2);
+        let b = lease_pool(2);
+        let ids_a = worker_thread_ids(&a);
+        let ids_b = worker_thread_ids(&b);
+        assert!(ids_a.is_disjoint(&ids_b), "overlapping leases shared workers");
+    }
+
+    #[test]
+    fn distinct_sizes_are_cached_separately() {
+        let small = lease_pool(1);
+        let large = lease_pool(4);
+        assert_eq!(worker_thread_ids(&small).len(), 1);
+        assert_eq!(worker_thread_ids(&large).len(), 4);
+    }
 }
