@@ -79,6 +79,33 @@ impl CoreClasses {
     }
 }
 
+/// `(user, sys)` CPU consumed by the whole process so far, or `None` if unavailable.
+///
+/// The discriminator between the two remaining mechanisms for the process-internal
+/// slowdown. Serial steps inflate by the same factor as the 24-thread work while a
+/// separate process (the ASM emulator) is untouched, so it is neither CPU-count contention
+/// nor host-wide bandwidth — it is something shared inside this address space. Splitting
+/// the phase's CPU says which:
+///
+/// - `sys` balloons => kernel work: page faults, mmap/munmap, allocator syscalls. The fix
+///   is buffer reuse, arena tuning, or a different allocator.
+/// - `user` balloons => genuine IPC loss: cache or memory-bandwidth pressure from this
+///   process's own footprint, and `perf stat` is then the right follow-up.
+pub fn process_cpu_user_sys() -> Option<(Duration, Duration)> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: writes only into the local rusage.
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+            return None;
+        }
+        let tv = |t: libc::timeval| Duration::new(t.tv_sec as u64, (t.tv_usec as u32) * 1000);
+        Some((tv(usage.ru_utime), tv(usage.ru_stime)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
 /// `(minor_faults, major_faults)` for the process so far, or `None` if unavailable.
 ///
 /// The counter the earlier memory refutation missed. That work checked `pgmajfault` and
@@ -281,6 +308,10 @@ struct Milestones {
     /// Process CPU consumed at phase start. Differenced at report time to give the phase's
     /// own CPU cost — the one number that separates a spin from a block.
     cpu_at_start: Option<Duration>,
+    /// user/sys split and minor faults at phase start, differenced the same way. These say
+    /// whether the phase's extra CPU is kernel work or user-space IPC loss.
+    user_sys_at_start: Option<(Duration, Duration)>,
+    faults_at_start: Option<(u64, u64)>,
     /// End of `exec`. Commits already flow during exec (the witness pipeline is armed
     /// before it runs), so this is where "GPU work overlapped with execution" ends and
     /// the phase the coordinator calls Witness begins.
@@ -349,6 +380,8 @@ impl ContribProfile {
         *self.milestones.lock().unwrap() = Milestones {
             start: Some(Instant::now()),
             cpu_at_start: process_cpu_time(),
+            user_sys_at_start: process_cpu_user_sys(),
+            faults_at_start: page_faults(),
             ..Default::default()
         };
         self.thread_token_wait_ns.store(0, Ordering::Relaxed);
@@ -481,7 +514,7 @@ impl ContribProfile {
              stage_ms(incremental): exec={:.1} publics={:.1} instances={:.1} wc_enqueue={:.1} \
              wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} challenge={:.1} \
              | wc_enqueue splits into pre_calculate={:.1} + await_witness={:.1} \
-             | phase_cpu_ms={:.1} (process user+sys; compare against phase wall to tell a spin from a wait)",
+             | phase_cpu_ms={:.1} (user={:.1} sys={:.1}) phase_minflt={} majflt={}",
             total.as_secs_f64() * 1000.0,
             contrib_phase.as_secs_f64() * 1000.0,
             incr[0],
@@ -498,6 +531,16 @@ impl ContribProfile {
             m.cpu_at_start
                 .and_then(|c0| process_cpu_time().map(|c1| c1.saturating_sub(c0).as_secs_f64() * 1000.0))
                 .unwrap_or(f64::NAN),
+            m.user_sys_at_start
+                .zip(process_cpu_user_sys())
+                .map(|((u0, _), (u1, _))| u1.saturating_sub(u0).as_secs_f64() * 1000.0)
+                .unwrap_or(f64::NAN),
+            m.user_sys_at_start
+                .zip(process_cpu_user_sys())
+                .map(|((_, s0), (_, s1))| s1.saturating_sub(s0).as_secs_f64() * 1000.0)
+                .unwrap_or(f64::NAN),
+            m.faults_at_start.zip(page_faults()).map(|((a0, _), (a1, _))| a1.saturating_sub(a0)).unwrap_or(0),
+            m.faults_at_start.zip(page_faults()).map(|((_, b0), (_, b1))| b1.saturating_sub(b0)).unwrap_or(0),
         );
         tracing::info!(
             "CONTRIB_PROFILE waits(ms, CROSS-THREAD SUMS not wall-clock; /nN = count): \
