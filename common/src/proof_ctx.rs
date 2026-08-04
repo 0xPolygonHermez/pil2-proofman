@@ -57,6 +57,9 @@ pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
+/// Share of a GPU's free memory left unallocated for consumers outside our arena.
+const GPU_MEMORY_RESERVE_FRACTION: f64 = 0.005;
+
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
@@ -962,6 +965,12 @@ impl<F: PrimeField64> ProofCtx<F> {
             true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
             false => 0.0,
         };
+
+        if gpu {
+            let reserve = free_memory_gpu * GPU_MEMORY_RESERVE_FRACTION;
+            free_memory_gpu -= reserve;
+            tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
+        }
 
         self.mpi_ctx.barrier();
 
