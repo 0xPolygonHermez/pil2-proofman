@@ -5276,10 +5276,13 @@ where
         );
         ctx.pool_tx.send(slot).ok();
         if rc != 0 {
-            // -14 = quiesced: gpu-mops entered its final planning phase and slot
-            // access is paused -- expected near the window close, take the legacy
-            // path. Anything else is a misconfiguration worth surfacing (e.g. -15
-            // wrong hash family, -13 shape/slot-size drift).
+            // -14 is returned for either of two expected, transient conditions:
+            // the slots are quiesced (gpu-mops entered its final planning phase,
+            // typical near the window close), or the overlapped legacy region is
+            // busy (streamCommitAcquireRegion could not claim every overlapped
+            // first-GPU stream). Both mean "take the legacy path this time".
+            // Anything else is a misconfiguration worth surfacing (e.g. -15 wrong
+            // hash family, -13 shape/slot-size drift).
             if rc != -14 {
                 tracing::warn!(
                     "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"

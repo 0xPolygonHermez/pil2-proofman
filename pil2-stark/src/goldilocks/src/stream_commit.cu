@@ -160,7 +160,7 @@ static void scReduceTree(uint64_t *d_tree, uint64_t nLeaves, cudaStream_t s)
             CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * SC_CAP, 0,
                                          extraZeros * SC_CAP * 8, s));
         uint32_t tpb = (nextN < SC_TPB) ? (uint32_t)nextN : SC_TPB;
-        uint32_t blks = (nextN < SC_TPB) ? 1 : (uint32_t)(nextN / SC_TPB + 1);
+        uint32_t blks = (uint32_t)((nextN + SC_TPB - 1) / SC_TPB);
         scNodeKernel<<<blks, tpb, (size_t)tpb * SC_W * 8, s>>>(nextN, nextIndex,
                                                                pending + extraZeros, SC_ARITY, d_tree);
         CHECKCUDAERR(cudaGetLastError());

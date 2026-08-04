@@ -600,8 +600,16 @@ void free_device_buffers_gpu(void *d_buffers_)
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
     if (d_buffers->streamCommitStreams != nullptr) {
+        // The slot streams belong to the FIRST GPU's context (created there in
+        // configure_stream_commit_slots). The per-GPU loop above left the last
+        // GPU current, so rebind before destroying and restore afterwards --
+        // destroying a stream from another device's context is invalid.
+        int prevDevice = 0;
+        CHECKCUDAERR(cudaGetDevice(&prevDevice));
+        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
         for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
             CHECKCUDAERR(cudaStreamDestroy(d_buffers->streamCommitStreams[j]));
+        CHECKCUDAERR(cudaSetDevice(prevDevice));
         free(d_buffers->streamCommitStreams);
         d_buffers->streamCommitStreams = nullptr;
         d_buffers->streamCommitSlots = 0;
