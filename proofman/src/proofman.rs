@@ -2238,6 +2238,7 @@ where
                                 std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
                             };
                             let commit_cpu_start = crate::contrib_profile::current_cpu();
+                            let commit_thread_cpu_start = crate::contrib_profile::thread_cpu_time();
                             let commit_start = std::time::Instant::now();
                             let commit_stream_id = match Self::get_contribution_air(
                                 &pctx_clone,
@@ -2258,6 +2259,9 @@ where
                                 commit_cpu_start,
                                 crate::contrib_profile::current_cpu(),
                                 commit_start.elapsed(),
+                                commit_thread_cpu_start
+                                    .zip(crate::contrib_profile::thread_cpu_time())
+                                    .map(|(a, b)| b.saturating_sub(a)),
                             );
 
                             if !first_contribution_logged.swap(true, Ordering::Relaxed) {
@@ -4225,6 +4229,7 @@ where
                     // 1.5-2.5x per-thread penalty — indistinguishable from "more work" in
                     // any other field.
                     let cpu_start = crate::contrib_profile::current_cpu();
+                    let thread_cpu_start = crate::contrib_profile::thread_cpu_time();
                     let task_start = std::time::Instant::now();
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
@@ -4235,6 +4240,11 @@ where
                         cpu_start,
                         crate::contrib_profile::current_cpu(),
                         task_start.elapsed(),
+                        // Consumed CPU of this thread, so the summed wall times above can be
+                        // read as "running" vs "blocked" instead of being ambiguous.
+                        thread_cpu_start
+                            .zip(crate::contrib_profile::thread_cpu_time())
+                            .map(|(a, b)| b.saturating_sub(a)),
                     );
                     Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
                     timer_stop_and_log_debug!(

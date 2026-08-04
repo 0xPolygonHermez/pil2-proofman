@@ -79,6 +79,58 @@ impl CoreClasses {
     }
 }
 
+/// Is this logical CPU an efficiency core? Exposed so callers that run work on their own
+/// thread pools (the executor's rayon pools) can classify the threads that actually do the
+/// work — measuring the dispatcher thread instead is misleading, because it is blocked in
+/// `install` while the pool runs.
+pub fn is_e_core(cpu: i32) -> bool {
+    CoreClasses::get().is_e_core(cpu)
+}
+
+/// `(n_p, n_e)` for this host.
+pub fn core_class_counts() -> (usize, usize) {
+    let c = CoreClasses::get();
+    (c.n_p, c.n_e)
+}
+
+/// Consumed CPU time (user+system) of the whole process, or `None` if unavailable.
+///
+/// This is the spin-vs-wait discriminator. Wall-clock and summed per-task elapsed both
+/// grow the same way whether a stage spins or blocks; only consumed CPU separates them.
+/// If the phase's wall time rises and this rises with it, something is burning CPU; if
+/// this stays flat, the stage is waiting.
+pub fn process_cpu_time() -> Option<Duration> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: writes only into the local timespec.
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
+        if rc != 0 {
+            return None;
+        }
+        Some(Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// Consumed CPU time of the calling thread, or `None` if unavailable. Pairs with the
+/// wall-clock elapsed of the same task so each task carries its own cpu/wall ratio.
+pub fn thread_cpu_time() -> Option<Duration> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: writes only into the local timespec.
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        if rc != 0 {
+            return None;
+        }
+        Some(Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
 /// The logical CPU the caller is running on, or -1 if unavailable.
 pub fn current_cpu() -> i32 {
     // SAFETY: sched_getcpu takes no arguments and only reads the calling thread's state.
@@ -96,15 +148,21 @@ pub fn current_cpu() -> i32 {
 struct Placement {
     tasks: AtomicU64,
     tasks_e: AtomicU64,
+    /// WALL-clock elapsed, split by the core class the task finished on. Summed across
+    /// concurrent tasks, so it exceeds the phase wall time — and it grows identically for
+    /// a spin and for a block. Use `cpu_ns` to tell those apart.
     ns_p: AtomicU64,
     ns_e: AtomicU64,
+    /// CONSUMED CPU of the same tasks. cpu/wall near 1 means the task was running; well
+    /// below 1 means it was blocked.
+    cpu_ns: AtomicU64,
     /// Task started on one core class and finished on the other: the scheduler moved it
     /// mid-flight, so its time is split and the class attribution is approximate.
     migrations: AtomicU64,
 }
 
 impl Placement {
-    fn record(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
+    fn record(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration, cpu: Option<Duration>) {
         let classes = CoreClasses::get();
         let e_start = classes.is_e_core(cpu_start);
         let e_end = classes.is_e_core(cpu_end);
@@ -114,6 +172,9 @@ impl Placement {
         }
         // Attribute on the finishing core: for a task that migrated, that is where it did
         // its most recent work, and the migration counter flags the ambiguity.
+        if let Some(cpu) = cpu {
+            self.cpu_ns.fetch_add(cpu.as_nanos() as u64, Ordering::Relaxed);
+        }
         let ns = elapsed.as_nanos() as u64;
         if e_end {
             self.tasks_e.fetch_add(1, Ordering::Relaxed);
@@ -128,16 +189,18 @@ impl Placement {
         self.tasks_e.store(0, Ordering::Relaxed);
         self.ns_p.store(0, Ordering::Relaxed);
         self.ns_e.store(0, Ordering::Relaxed);
+        self.cpu_ns.store(0, Ordering::Relaxed);
         self.migrations.store(0, Ordering::Relaxed);
     }
 
-    /// `(tasks, tasks_on_e, ms_on_p, ms_on_e, migrations)`
-    fn snapshot(&self) -> (u64, u64, f64, f64, u64) {
+    /// `(tasks, tasks_on_e, wall_ms_on_p, wall_ms_on_e, cpu_ms, migrations)`
+    fn snapshot(&self) -> (u64, u64, f64, f64, f64, u64) {
         (
             self.tasks.load(Ordering::Relaxed),
             self.tasks_e.load(Ordering::Relaxed),
             self.ns_p.load(Ordering::Relaxed) as f64 / 1e6,
             self.ns_e.load(Ordering::Relaxed) as f64 / 1e6,
+            self.cpu_ns.load(Ordering::Relaxed) as f64 / 1e6,
             self.migrations.load(Ordering::Relaxed),
         )
     }
@@ -172,6 +235,9 @@ fn detail_threshold() -> Duration {
 struct Milestones {
     /// Set when the phase starts; every other field is an offset from it.
     start: Option<Instant>,
+    /// Process CPU consumed at phase start. Differenced at report time to give the phase's
+    /// own CPU cost — the one number that separates a spin from a block.
+    cpu_at_start: Option<Duration>,
     /// End of `exec`. Commits already flow during exec (the witness pipeline is armed
     /// before it runs), so this is where "GPU work overlapped with execution" ends and
     /// the phase the coordinator calls Witness begins.
@@ -237,7 +303,11 @@ impl ContribProfile {
 
     /// Start a phase: zero the host counters and the C++ collector.
     pub fn begin(&self) {
-        *self.milestones.lock().unwrap() = Milestones { start: Some(Instant::now()), ..Default::default() };
+        *self.milestones.lock().unwrap() = Milestones {
+            start: Some(Instant::now()),
+            cpu_at_start: process_cpu_time(),
+            ..Default::default()
+        };
         self.thread_token_wait_ns.store(0, Ordering::Relaxed);
         self.thread_token_waits.store(0, Ordering::Relaxed);
         self.pre_calculate_ns.store(0, Ordering::Relaxed);
@@ -257,13 +327,13 @@ impl ContribProfile {
     }
 
     /// One per-instance witness computation, with the CPU it started and finished on.
-    pub fn record_witness_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
-        self.witness_placement.record(cpu_start, cpu_end, elapsed);
+    pub fn record_witness_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration, cpu: Option<Duration>) {
+        self.witness_placement.record(cpu_start, cpu_end, elapsed, cpu);
     }
 
     /// One contribution commit enqueue, with the CPU it started and finished on.
-    pub fn record_commit_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration) {
-        self.commit_placement.record(cpu_start, cpu_end, elapsed);
+    pub fn record_commit_task(&self, cpu_start: i32, cpu_end: i32, elapsed: Duration, cpu: Option<Duration>) {
+        self.commit_placement.record(cpu_start, cpu_end, elapsed, cpu);
     }
 
     pub fn record_thread_token_wait(&self, elapsed: Duration) {
@@ -367,7 +437,8 @@ impl ContribProfile {
             "CONTRIB_PROFILE total={:.1}ms (incl exec) phase={:.1}ms (== CALCULATING_CONTRIBUTIONS) | \
              stage_ms(incremental): exec={:.1} publics={:.1} instances={:.1} wc_enqueue={:.1} \
              wc_join={:.1} tables={:.1} drain={:.1} stream_proofs={:.1} challenge={:.1} \
-             | wc_enqueue splits into pre_calculate={:.1} + await_witness={:.1}",
+             | wc_enqueue splits into pre_calculate={:.1} + await_witness={:.1} \
+             | phase_cpu_ms={:.1} (process user+sys; compare against phase wall to tell a spin from a wait)",
             total.as_secs_f64() * 1000.0,
             contrib_phase.as_secs_f64() * 1000.0,
             incr[0],
@@ -381,6 +452,9 @@ impl ContribProfile {
             incr[8],
             self.pre_calculate_ns.load(Ordering::Relaxed) as f64 / 1e6,
             self.witness_done_wait_ns.load(Ordering::Relaxed) as f64 / 1e6,
+            m.cpu_at_start
+                .and_then(|c0| process_cpu_time().map(|c1| c1.saturating_sub(c0).as_secs_f64() * 1000.0))
+                .unwrap_or(f64::NAN),
         );
         tracing::info!(
             "CONTRIB_PROFILE waits(ms, CROSS-THREAD SUMS not wall-clock; /nN = count): \
@@ -419,13 +493,16 @@ impl ContribProfile {
         // slow-mode excess, and nothing else in the log can distinguish that from the host
         // simply having more work to do.
         let classes = CoreClasses::get();
-        let (wc_tasks, wc_e, wc_ms_p, wc_ms_e, wc_mig) = self.witness_placement.snapshot();
-        let (cm_tasks, cm_e, cm_ms_p, cm_ms_e, cm_mig) = self.commit_placement.snapshot();
+        let (wc_tasks, wc_e, wc_ms_p, wc_ms_e, wc_cpu_ms, wc_mig) = self.witness_placement.snapshot();
+        let (cm_tasks, cm_e, cm_ms_p, cm_ms_e, cm_cpu_ms, cm_mig) = self.commit_placement.snapshot();
         let pct = |e: f64, p: f64| if e + p > 0.0 { 100.0 * e / (e + p) } else { 0.0 };
+        // cpu/wall near 1 => the task was on-CPU the whole time (a spin or real work);
+        // well under 1 => it was blocked. This is what makes the wall sums interpretable.
+        let ratio = |cpu: f64, wall: f64| if wall > 0.0 { cpu / wall } else { 0.0 };
         tracing::info!(
-            "CONTRIB_PROFILE cores(P={} E={}): witness tasks={} on_e={} ms_p={:.1} ms_e={:.1} \
-             e_share={:.1}% migrations={} | commit tasks={} on_e={} ms_p={:.1} ms_e={:.1} \
-             e_share={:.1}% migrations={}",
+            "CONTRIB_PROFILE cores(P={} E={}): witness tasks={} on_e={} wall_ms_p={:.1} wall_ms_e={:.1} \
+             e_share={:.1}% cpu_ms={:.1} cpu/wall={:.2} migrations={} | commit tasks={} on_e={} \
+             wall_ms_p={:.1} wall_ms_e={:.1} e_share={:.1}% cpu_ms={:.1} cpu/wall={:.2} migrations={}",
             classes.n_p,
             classes.n_e,
             wc_tasks,
@@ -433,12 +510,16 @@ impl ContribProfile {
             wc_ms_p,
             wc_ms_e,
             pct(wc_ms_e, wc_ms_p),
+            wc_cpu_ms,
+            ratio(wc_cpu_ms, wc_ms_p + wc_ms_e),
             wc_mig,
             cm_tasks,
             cm_e,
             cm_ms_p,
             cm_ms_e,
             pct(cm_ms_e, cm_ms_p),
+            cm_cpu_ms,
+            ratio(cm_cpu_ms, cm_ms_p + cm_ms_e),
             cm_mig,
         );
 
