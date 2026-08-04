@@ -838,7 +838,24 @@ impl HwCounters {
 }
 
 #[cfg(target_os = "linux")]
+impl Drop for HwCounters {
+    fn drop(&mut self) {
+        // Load-bearing, not hygiene: the pool is rebuilt per job, so hundreds of threads
+        // are created and destroyed per job. Without this the fds leak until
+        // perf_event_open starts failing against RLIMIT_NOFILE and the counters silently
+        // read zero.
+        // SAFETY: both fds came from successful perf_event_open calls and are owned here.
+        unsafe {
+            libc::close(self.instructions);
+            libc::close(self.cycles);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 thread_local! {
+    // Const init is fine here: it only skips the lazy-init check, the Drop above still
+    // runs on thread exit, which is what closes the fds.
     static HW: std::cell::RefCell<Option<Option<HwCounters>>> = const { std::cell::RefCell::new(None) };
 }
 
