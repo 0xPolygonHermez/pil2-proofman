@@ -4960,14 +4960,18 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0/unset = off): the
-        // slot COUNT is a memory-budget knob (each slot lowers the ceiling on
-        // what gpu-mops may borrow), but the slot SIZE is derived here from the
-        // slot-eligible packed AIRs (zisk Main) -- same eligibility gate as
-        // try_slot_commit -- so it never needs manual tuning.
+        // Streaming-commit slots: DEFAULT 2 (the measured saturation point, 
+        // overridable via STREAM_COMMIT_SLOTS (0 disables). The slot COUNT is a 
+        // memory-budget knob (each slot lowers the ceiling on what gpu-mops may 
+        // borrow); the slot SIZE is derived from the slot-eligible packed AIRs 
+        // (zisk Main) -- same eligibility gate as try_slot_commit -- so it never needs
+        // manual tuning. 
+        const STREAM_COMMIT_SLOTS_DEFAULT: u64 = 2;
         if options.gpu && options.packed {
-            let n_slots: u64 =
-                std::env::var("STREAM_COMMIT_SLOTS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let n_slots: u64 = std::env::var("STREAM_COMMIT_SLOTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(STREAM_COMMIT_SLOTS_DEFAULT);
             if n_slots > 0 {
                 let mut slot_bytes = 0u64;
                 for (&(airgroup_id, air_id), pi) in options.packed_info.iter() {
@@ -4992,8 +4996,8 @@ where
                 if slot_bytes > 0 {
                     configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes);
                 } else {
-                    tracing::warn!(
-                        "STREAM_COMMIT_SLOTS={n_slots} set but no slot-eligible packed AIR found; slots disabled"
+                    tracing::info!(
+                        "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
                     );
                 }
             }
