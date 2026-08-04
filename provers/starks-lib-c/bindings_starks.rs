@@ -694,6 +694,26 @@ extern "C" {
     pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn get_const_pols_aggregation_offset(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64;
+    pub fn configure_stream_commit_slots(
+        d_buffers: *mut ::std::os::raw::c_void,
+        n_slots: u64,
+        slot_bytes: u64,
+    );
+    pub fn commit_witness_streaming(
+        d_buffers: *mut ::std::os::raw::c_void,
+        slot_idx: u64,
+        packed: *mut ::std::os::raw::c_void,
+        n_bits: u64,
+        n_bits_ext: u64,
+        n_cols: u64,
+        words_per_row: u64,
+        col_widths: *mut ::std::os::raw::c_void,
+        root: *mut ::std::os::raw::c_void,
+    ) -> i64;
+    pub fn stream_commit_pause();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

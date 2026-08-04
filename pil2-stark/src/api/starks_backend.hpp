@@ -70,6 +70,12 @@ struct StarksBackend {
     uint32_t (*get_first_gpu_id)(void *d_buffers_);
     void *(*get_first_gpu_buffer)(void *d_buffers_);
     uint64_t (*get_const_pols_aggregation_offset)(void *d_buffers_);
+    uint64_t (*get_stream_commit_slots)(void *d_buffers_);
+    uint64_t (*get_stream_commit_floor)(void *d_buffers_);
+    uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
+    void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+    void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*free_fixed_pols_buffer_gpu)(void *d_buffers_);
