@@ -460,6 +460,9 @@ extern "C" {
     pub fn reserve_stream_if_free(
         d_buffers_: *mut ::std::os::raw::c_void,
         streamId: u32,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
         force_recursive: bool,
     ) -> u32;
 
@@ -663,7 +666,7 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void,
         nStreams: u64,
         nStreamsRecursive: u64,
-        maxSizeProverBuffer: u64,
+        auxTraceSizes: *const u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
         merkle_tree_arity: u64,
@@ -671,7 +674,6 @@ extern "C" {
 
     pub fn alloc_device_large_buffers(
         d_buffers_: *mut ::std::os::raw::c_void,
-        auxTraceArea: u64,
         auxTraceRecursiveArea: u64,
         totalConstPols: u64,
         totalConstPolsAggregation: u64,

@@ -10,7 +10,10 @@ use rayon::prelude::*;
 use fields::PrimeField64;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, ProofmanError, SetupCtx, TraceInfo};
+use proofman_common::{
+    register_host_buffer, unregister_host_buffer, AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult,
+    SetupCtx, TraceInfo,
+};
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
 use crate::{get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_as};
@@ -37,6 +40,17 @@ pub struct VirtualTableAir<F: PrimeField64> {
     // Persistent trace buffer slot. Pre-allocated in `StdVirtualTable::new`; taken in
     // `calculate_witness` and refilled by `ProofCtx::free_instance_traces`.
     trace_buffer: Arc<Mutex<Option<Vec<F>>>>,
+    // Pinned-registration page base for `trace_buffer`; unpinned it takes the staging H2D path.
+    trace_buffer_pinned: Option<usize>,
+}
+
+impl<F: PrimeField64> Drop for VirtualTableAir<F> {
+    fn drop(&mut self) {
+        // Runs before the field drops, so the pages are still live here.
+        if let Some(base) = self.trace_buffer_pinned {
+            unregister_host_buffer(base);
+        }
+    }
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
@@ -115,7 +129,10 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             let multiplicities: Vec<AtomicU64> =
                 (0..(num_muls as usize * num_rows)).into_par_iter().map(|_| AtomicU64::new(0)).collect();
 
-            let trace_buffer = Arc::new(Mutex::new(Some(vec![F::ZERO; num_muls as usize * num_rows])));
+            let buffer = vec![F::ZERO; num_muls as usize * num_rows];
+            // The reclaim slot returns this same allocation every iteration, so one pin covers every H2D.
+            let trace_buffer_pinned = if pctx.gpu { register_host_buffer(&buffer) } else { None };
+            let trace_buffer = Arc::new(Mutex::new(Some(buffer)));
             let virtual_table_air = VirtualTableAir::<F> {
                 airgroup_id,
                 air_id,
@@ -129,6 +146,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 calculated: AtomicBool::new(false),
                 shared_tables,
                 trace_buffer,
+                trace_buffer_pinned,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
         }

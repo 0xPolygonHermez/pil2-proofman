@@ -44,6 +44,19 @@ fn aligned_host_range(ptr: usize, bytes: usize) -> Option<(usize, usize)> {
 /// panic. Returns the distinct base pages (unregister each once on Drop); a registered buffer must
 /// never be reallocated — registration pins a specific address (see `reset`). Dedups the base page
 /// because `cudaHostRegister` rejects an already-registered one.
+/// Pin a long-lived host buffer so H2D can DMA straight out of it instead of taking the staging path.
+/// Returns the page base for [`unregister_host_buffer`]. Registration is not cheap: reused buffers only.
+pub fn register_host_buffer<T>(buffer: &[T]) -> Option<usize> {
+    let bytes = buffer.len().saturating_mul(std::mem::size_of::<T>());
+    let (base, size) = aligned_host_range(buffer.as_ptr() as usize, bytes)?;
+    register_host_memory_c(base as *mut c_void, size as u64).then_some(base)
+}
+
+/// Release a base from [`register_host_buffer`]. Must run before the buffer is freed.
+pub fn unregister_host_buffer(base: usize) {
+    unregister_host_memory_c(base as *mut c_void);
+}
+
 fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
     let mut registered: Vec<usize> = Vec::with_capacity(buffers.len());
     let mut covered: HashSet<usize> = HashSet::with_capacity(buffers.len());

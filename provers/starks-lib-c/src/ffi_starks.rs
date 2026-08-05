@@ -1097,9 +1097,20 @@ pub fn reserve_best_stream_nonblock_c(
     unsafe { reserve_best_stream_nonblock(d_buffers, airgroup_id, air_id, proof_type_ptr, recursive, force_recursive) }
 }
 
-/// Scheduler warm fast path: reserve `stream_id` iff it is free right now. Returns true on success.
-pub fn reserve_stream_if_free_c(d_buffers: *mut c_void, stream_id: u32, force_recursive: bool) -> bool {
-    unsafe { reserve_stream_if_free(d_buffers, stream_id, force_recursive) != 0 }
+/// Scheduler warm fast path: reserve `stream_id` iff it is free right now *and* its buffer size
+/// class holds this air. Returns true on success.
+pub fn reserve_stream_if_free_c(
+    d_buffers: *mut c_void,
+    stream_id: u32,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    force_recursive: bool,
+) -> bool {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe { reserve_stream_if_free(d_buffers, stream_id, airgroup_id, air_id, proof_type_ptr, force_recursive) != 0 }
 }
 
 /// Scheduler: give back a reservation the caller never launched on. A reserved stream reads as busy
@@ -1448,12 +1459,10 @@ pub fn free_device_buffers_recursivef_c(d_buffers: *mut c_void) {
     unsafe { free_device_buffers_recursivef(d_buffers) }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    n_streams: u64,
+    aux_trace_sizes: &[u64],
     n_recursive_streams: u64,
-    max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
     merkle_tree_arity: u64,
@@ -1461,9 +1470,9 @@ pub fn gen_device_streams_c(
     unsafe {
         gen_device_streams(
             d_buffers,
-            n_streams,
+            aux_trace_sizes.len() as u64,
             n_recursive_streams,
-            max_size_buffer,
+            aux_trace_sizes.as_ptr(),
             max_size_buffer_aggregation,
             max_pinned_proof_size,
             merkle_tree_arity,
@@ -1473,19 +1482,12 @@ pub fn gen_device_streams_c(
 
 pub fn alloc_device_large_buffers_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    aux_trace_area: u64,
     aux_trace_recursive_area: u64,
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
 ) {
     unsafe {
-        alloc_device_large_buffers(
-            d_buffers,
-            aux_trace_area,
-            aux_trace_recursive_area,
-            const_pols_area,
-            const_pols_aggregation_area,
-        );
+        alloc_device_large_buffers(d_buffers, aux_trace_recursive_area, const_pols_area, const_pols_aggregation_area);
     }
 }
 

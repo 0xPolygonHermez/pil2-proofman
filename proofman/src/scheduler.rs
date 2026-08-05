@@ -245,8 +245,10 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
 
         // Pass 1 — REUSE: a stream already holding this key, free right now.
         for &key in candidates {
+            let (ag, air, t) = key;
+            let type_str: &'static str = t.into();
             for (&s, &k) in self.stream_warm.iter() {
-                if k == key && reserve_stream_if_free_c(d, s as u32, force_recursive) {
+                if k == key && reserve_stream_if_free_c(d, s as u32, ag as u64, air as u64, type_str, force_recursive) {
                     return Some((key, StreamReservation::new(self.d_buffers, s as u32)));
                 }
             }
@@ -348,6 +350,20 @@ pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
         }
     }
     recovered
+}
+
+/// Basic GPU streams that can host an air needing `need` elements. 0 = unknown (CPU: empty carve).
+pub fn eligible_stream_count(need: usize, class_sizes: &[usize]) -> usize {
+    class_sizes.iter().filter(|&&s| s >= need).count()
+}
+
+/// Witness slots an air may hold: one per stream it can drain on, plus one ready. Uncapped when it fits
+/// every class (capping those starves the streams they feed) or when eligibility is unknown.
+pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
+    if eligible == 0 || n_classes == 0 || eligible >= n_classes {
+        return usize::MAX;
+    }
+    eligible + 1
 }
 
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
@@ -595,6 +611,41 @@ mod drain_tests {
         s.queues.clear(); // drop the queued witness instead of draining it
         assert!(h.reset().is_err(), "a dropped witness permanently shrinks its pool");
         let _ = F::ZERO; // keep the Field import honest across backends
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::{eligible_stream_count, witness_slot_cap};
+
+    /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
+    const CLASSES: [usize; 3] = [7598, 6390, 6390];
+
+    #[test]
+    fn eligibility_matches_the_measured_carve() {
+        assert_eq!(eligible_stream_count(7598, &CLASSES), 1, "7.42 GB air: large class only");
+        assert_eq!(eligible_stream_count(6133, &CLASSES), 3, "5.99 GB air: all three");
+        assert_eq!(eligible_stream_count(9000, &CLASSES), 0, "bigger than any class");
+    }
+
+    /// 8 slots = 24 cores / 3 threads per witness, 3 classes.
+    #[test]
+    fn a_confined_air_gets_one_slot_per_stream_plus_a_prefetch() {
+        assert_eq!(witness_slot_cap(1, 3), 2);
+        assert_eq!(witness_slot_cap(2, 3), 3);
+    }
+
+    #[test]
+    fn an_air_that_fits_everywhere_is_uncapped() {
+        assert_eq!(witness_slot_cap(3, 3), usize::MAX);
+        assert_eq!(witness_slot_cap(8, 8), usize::MAX);
+    }
+
+    #[test]
+    fn unknown_eligibility_never_blocks() {
+        assert_eq!(eligible_stream_count(6133, &[]), 0);
+        assert_eq!(witness_slot_cap(0, 3), usize::MAX);
+        assert_eq!(witness_slot_cap(1, 0), usize::MAX);
     }
 }
 

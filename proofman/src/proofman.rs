@@ -25,6 +25,22 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
+/// Releases an admission slot on drop. A witness thread that panics would otherwise leak one, and a
+/// leaked slot permanently blocks its air once the cap is reached — the admission loop then spins.
+struct SlotGuard {
+    in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>>,
+    key: (usize, usize),
+}
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        // Recover from poison rather than panic inside a drop during unwind.
+        if let Some(n) = self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&self.key) {
+            *n = n.saturating_sub(1);
+        }
+    }
+}
+
 /// Master switch for per-proof debug logging of airgroup values, stage roots, and the
 /// challenge/contribution dump (`print_challenges`). Off by default; enable with
 /// `PROOFMAN_DEBUG_CHALLENGES=1` (matching PROOFMAN_SUMCHECK: any other value, or unset,
@@ -4517,102 +4533,161 @@ where
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
-        let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
-            Some(std::thread::spawn(move || loop {
-                let instance_id = if let Ok(id) = witness_rx_priority.try_recv() {
-                    id
-                } else {
-                    crossbeam_channel::select! {
-                        recv(witness_rx_priority) -> msg => match msg {
-                            Ok(id) => id,
-                            Err(_) => break,
-                        },
-                        recv(witness_rx) -> msg => match msg {
-                            Ok(id) if id == usize::MAX => break,
-                            Ok(id) => id,
-                            Err(_) => break,
-                        },
-                        default(std::time::Duration::from_millis(5)) => {
+        let sctx_admission = self.sctx.clone();
+        let class_sizes = self.pctx.basic_stream_sizes.clone();
+        let n_classes = class_sizes.len();
+        let witness_handler =
+            if !minimal_memory && (self.pctx.gpu || stats) {
+                // Ready instances waiting to be admitted, priority-first, and how many slots each air
+                // currently holds. Taking straight off the channels would be pure FIFO with no choice;
+                // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
+                // stream so the slots it would have taken go to work the other streams can run.
+                // Two pools, not one queue: the priority pool is always scanned first, so a priority
+                // instance outranks every normal one however late it arrives, while arrival order is kept
+                // within each pool. That is all the two channels mean now — a ranking hint, no longer a
+                // queue-jump able to take every slot.
+                let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+                let mut arrivals_done = false;
+                Some(std::thread::spawn(move || loop {
+                    // Take everything available without committing to any of it yet.
+                    while let Ok(id) = witness_rx_priority.try_recv() {
+                        pending_priority.push_back(id);
+                    }
+                    while let Ok(id) = witness_rx.try_recv() {
+                        if id == usize::MAX {
+                            arrivals_done = true;
+                        } else {
+                            pending.push_back(id);
+                        }
+                    }
+
+                    // 0 = unknown (CPU, or an air the carve does not know): never held back.
+                    let eligible_of = |id: usize| -> usize {
+                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
+                        let need =
+                            sctx_admission.get_setup(key.0, key.1).map(|s| s.prover_buffer_size as usize).unwrap_or(0);
+                        crate::eligible_stream_count(need, &class_sizes)
+                    };
+                    let admissible = |id: usize, held: &HashMap<(usize, usize), usize>| -> bool {
+                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else {
+                            return true; // unknown air: never hold back work we cannot reason about
+                        };
+                        let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
+                        held.get(&key).copied().unwrap_or(0) < cap
+                    };
+                    // First admissible, priority pool first. Not reordered by scarcity: that starved the
+                    // streams flexible work feeds (83% -> 71% busy). The cap alone is the lever.
+                    let chosen: Option<(bool, usize)> = {
+                        let held = in_flight.lock().unwrap();
+                        pending_priority
+                            .iter()
+                            .position(|&id| admissible(id, &held))
+                            .map(|pos| (true, pos))
+                            .or_else(|| pending.iter().position(|&id| admissible(id, &held)).map(|pos| (false, pos)))
+                    };
+
+                    let instance_id = match chosen.and_then(|(is_priority, pos)| {
+                        if is_priority {
+                            pending_priority.remove(pos)
+                        } else {
+                            pending.remove(pos)
+                        }
+                    }) {
+                        Some(id) => id,
+                        None => {
+                            // Nothing admissible. Exit only once no more can arrive and nothing is queued;
+                            // otherwise wait briefly for a slot to free or a new arrival.
                             if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
+                            if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(1));
                             continue;
-                        },
+                        }
+                    };
+
+                    if let Some(witness_start_time_clone) = &witness_start_time_clone {
+                        if witness_start_time_clone.read().unwrap().is_none() {
+                            *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
+                        }
                     }
-                };
 
-                if let Some(witness_start_time_clone) = &witness_start_time_clone {
-                    if witness_start_time_clone.read().unwrap().is_none() {
-                        *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
-                    }
-                }
-
-                let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        cancellation_info_clone.write_recover().cancel(Some(e));
-                        break;
-                    }
-                };
-
-                let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
-                let wcm = wcm_clone.clone();
-                let memory_handler_clone = memory_handler_clone.clone();
-
-                let witness_done_clone = witness_done_clone.clone();
-                for _ in 0..n_threads_witness {
-                    loop {
-                        if cancellation_info_clone.read_recover().token.is_cancelled() {
+                    let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
-                        match rx_threads_clone.recv_timeout(std::time::Duration::from_millis(1)) {
-                            Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                        }
-                    }
-                }
+                    };
 
-                if cancellation_info_clone.read_recover().token.is_cancelled() {
-                    break;
-                }
+                    // Held until the witness thread finishes: the span this air occupies a slot.
+                    *in_flight.lock().unwrap().entry((airgroup_id, air_id)).or_insert(0) += 1;
+                    let slot = SlotGuard { in_flight: in_flight.clone(), key: (airgroup_id, air_id) };
 
-                let pctx_clone = pctx_clone.clone();
-                let gpu = pctx_clone.gpu;
-                let cancellation_info_clone = cancellation_info_clone.clone();
-                let handle = std::thread::spawn(move || {
-                    timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    if let Err(e) =
-                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
-                    {
-                        cancellation_info_clone.write_recover().cancel(Some(e));
-                    }
-                    Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
-                    timer_stop_and_log_debug!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
-                    witness_done_clone.increment();
-                    if stats {
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                        if is_shared_buffer {
-                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                cancellation_info_clone.write_recover().cancel(Some(e));
+                    let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
+                    let wcm = wcm_clone.clone();
+                    let memory_handler_clone = memory_handler_clone.clone();
+
+                    let witness_done_clone = witness_done_clone.clone();
+                    for _ in 0..n_threads_witness {
+                        loop {
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
+                                break;
+                            }
+                            match rx_threads_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                                Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
                             }
                         }
                     }
-                });
-                if !stats && !gpu {
-                    handle.join().unwrap();
-                } else {
-                    witness_handles_clone.lock().unwrap().push(handle);
-                }
-            }))
-        } else {
-            None
-        };
+
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        break;
+                    }
+
+                    let pctx_clone = pctx_clone.clone();
+                    let gpu = pctx_clone.gpu;
+                    let cancellation_info_clone = cancellation_info_clone.clone();
+                    let handle = std::thread::spawn(move || {
+                        timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                        if let Err(e) =
+                            wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
+                        {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                        }
+                        Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
+                        // Free the slot before the counter so admission can refill immediately.
+                        drop(slot);
+                        timer_stop_and_log_debug!(
+                            GENERATING_WC,
+                            "GENERATING_WC_{} [{}:{}]",
+                            instance_id,
+                            airgroup_id,
+                            air_id
+                        );
+                        witness_done_clone.increment();
+                        if stats {
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
+                                }
+                            }
+                        }
+                    });
+                    if !stats && !gpu {
+                        handle.join().unwrap();
+                    } else {
+                        witness_handles_clone.lock().unwrap().push(handle);
+                    }
+                }))
+            } else {
+                None
+            };
         (Arc::new(Mutex::new(witness_handler)), witness_handles)
     }
 

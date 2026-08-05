@@ -385,16 +385,20 @@ void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint6
     }
 }
 
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
+// Non-recursive areas are sized per stream from d_buffers->aux_trace_sizes, not one uniform size.
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t constPolsSize = totalConstPols * sizeof(Goldilocks::Element);
     uint64_t constPolsAggregationSize = totalConstPolsAggregation * sizeof(Goldilocks::Element);
-    uint64_t auxTraceSize = auxTraceArea * sizeof(Goldilocks::Element);
     uint64_t auxTraceRecursiveSize = auxTraceRecursiveArea * sizeof(Goldilocks::Element);
-    
-    uint64_t totalAuxTraceSize = d_buffers->n_streams * auxTraceSize;
+
+    uint64_t totalAuxTraceArea = 0;
+    for (uint32_t j = 0; j < d_buffers->n_streams; ++j) {
+        totalAuxTraceArea += d_buffers->aux_trace_sizes[j];
+    }
+    uint64_t totalAuxTraceSize = totalAuxTraceArea * sizeof(Goldilocks::Element);
     uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
-    
+
     uint64_t totalGpuMemoryPerGpu = constPolsAggregationSize + 
                                      totalAuxTraceSize + totalAuxTraceRecursiveSize;
     
@@ -403,7 +407,18 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
     zklog.info("Memory allocation per GPU:");
     zklog.info("  - Constant polynomials (separate): " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Constant polynomials aggregation: " + std::to_string(constPolsAggregationSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
-    zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    // Collapse the per-stream sizes back into "count x size" classes; they arrive grouped.
+    std::string auxTraceClasses;
+    for (uint32_t j = 0; j < d_buffers->n_streams; ) {
+        uint32_t k = j;
+        while (k < d_buffers->n_streams && d_buffers->aux_trace_sizes[k] == d_buffers->aux_trace_sizes[j]) ++k;
+        if (j != 0) auxTraceClasses += " + ";
+        auxTraceClasses += std::to_string(k - j) + " x " +
+            std::to_string(d_buffers->aux_trace_sizes[j] * sizeof(Goldilocks::Element) / (1024.0 * 1024.0 * 1024.0)) +
+            " GB";
+        j = k;
+    }
+    zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB [" + auxTraceClasses + "]");
     zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Unified buffer per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Total GPU memory per GPU: " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + " GB");
@@ -415,7 +430,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
    
     gStreamCommitBuffers.store(d_buffers, std::memory_order_release);
 
-    d_buffers->auxTraceBytes = auxTraceSize;
+    d_buffers->auxTraceTotalBytes = totalAuxTraceSize;
     d_buffers->auxTraceRecursiveBytes = auxTraceRecursiveSize;
 
     // Allocate large GPU buffers with a single malloc per GPU
@@ -452,12 +467,12 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
         // Set up pointers to different sections of the memory block
         uint64_t offset = 0;
                 
-        // Auxiliary trace buffers (non-recursive)
+        // Auxiliary trace buffers (non-recursive), one size class each
         for (int j = 0; j < d_buffers->n_streams; ++j) {
             d_buffers->d_aux_trace[i][j] = gpuMemoryBlock + offset;
-            offset += auxTraceArea;
+            offset += d_buffers->aux_trace_sizes[j];
         }
-        
+
         // Auxiliary trace buffers (recursive)
         for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {
             d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
@@ -484,13 +499,21 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
     zklog.info("All GPU memory allocations successful");
 }
 
-uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
-    
+// `auxTraceSizes`: field elements per non-recursive stream, largest class first (plan_stream_layout).
+uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
+
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->n_streams = n_streams;
     d_buffers->n_recursive_streams = n_recursive_streams;
     d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
-    
+
+    // Retained for the whole run: the memory carve below and every stream selection read it.
+    free(d_buffers->aux_trace_sizes);
+    d_buffers->aux_trace_sizes = (uint64_t *)malloc(n_streams * sizeof(uint64_t));
+    for (uint64_t j = 0; j < n_streams; ++j) {
+        d_buffers->aux_trace_sizes[j] = auxTraceSizes[j];
+    }
+
     // Allocate d_aux_trace arrays now that we know stream counts
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
         d_buffers->d_aux_trace[i] = (gl64_t **)malloc(n_streams * sizeof(gl64_t*));
@@ -510,11 +533,15 @@ uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n
         uint64_t gpu_stream_start = i * (d_buffers->n_streams + d_buffers->n_recursive_streams);
 
         for (uint64_t j = 0; j < d_buffers->n_streams; j++) {
-            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, false, merkleTreeArity);
+            StreamData &sd = d_buffers->streamsData[gpu_stream_start + j];
+            sd.initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, false, merkleTreeArity);
+            sd.auxTraceCapacity = auxTraceSizes[j];
         }
 
         for (uint64_t j = 0; j < d_buffers->n_recursive_streams; j++) {
-            d_buffers->streamsData[gpu_stream_start + d_buffers->n_streams + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, true, merkleTreeArity);
+            StreamData &sd = d_buffers->streamsData[gpu_stream_start + d_buffers->n_streams + j];
+            sd.initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, true, merkleTreeArity);
+            sd.auxTraceCapacity = maxSizeProverBufferAggregation;
         }
     }
 
@@ -649,6 +676,8 @@ void free_device_buffers_gpu(void *d_buffers_)
     gStreamCommitBuffers.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
     free(d_buffers->d_aux_trace);
     free(d_buffers->d_aux_traceAggregation);
+    free(d_buffers->aux_trace_sizes);
+    d_buffers->aux_trace_sizes = nullptr;
     free(d_buffers->d_constPols);
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
@@ -1586,7 +1615,10 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     sd.airgroupId = airgroupId;
     sd.airId = airId;
     sd.proofType = "witness";
-    sd.witnessResident = true;
+    // A stream sized for the contributions footprint can be too small for this air's proof, and a
+    // resident witness pins gen_proof here (skip_recalculation). Only claim residency if the proof fits;
+    // otherwise the instance takes the normal recompute path and re-uploads its trace.
+    sd.witnessResident = sd.auxTraceCapacity >= setupCtx->starkInfo.mapTotalN;
 
     proofman_sumcheck_set_context(instanceId, airgroupId, airId);
 
@@ -2102,7 +2134,7 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     // kernel accesses and the carve log readable.
     slotBytes = (slotBytes + ((1ull << 20) - 1)) & ~((1ull << 20) - 1);
 
-    uint64_t totalAuxTraceSize = d_buffers->n_streams * d_buffers->auxTraceBytes;
+    uint64_t totalAuxTraceSize = d_buffers->auxTraceTotalBytes;
     uint64_t constAggOffsetBytes =
         totalAuxTraceSize + d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes;
     if (nSlots * slotBytes > constAggOffsetBytes) {
@@ -2124,10 +2156,18 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         StreamData &sd = d_buffers->streamsData[i];
         if (d_buffers->gpus_g2l[sd.gpuId] != 0) continue;
-        uint64_t start = sd.recursive
-                             ? totalAuxTraceSize + sd.localStreamId * d_buffers->auxTraceRecursiveBytes
-                             : sd.localStreamId * d_buffers->auxTraceBytes;
-        uint64_t end = start + (sd.recursive ? d_buffers->auxTraceRecursiveBytes : d_buffers->auxTraceBytes);
+        // Sizes differ per stream, so the offset is a prefix sum of the carve, not localStreamId * size.
+        uint64_t start, end;
+        if (sd.recursive) {
+            start = totalAuxTraceSize + sd.localStreamId * d_buffers->auxTraceRecursiveBytes;
+            end = start + d_buffers->auxTraceRecursiveBytes;
+        } else {
+            start = 0;
+            for (uint32_t j = 0; j < sd.localStreamId; ++j) {
+                start += d_buffers->aux_trace_sizes[j] * sizeof(Goldilocks::Element);
+            }
+            end = start + d_buffers->aux_trace_sizes[sd.localStreamId] * sizeof(Goldilocks::Element);
+        }
         sd.overlapsStreamCommitRegion =
             start < constAggOffsetBytes && end > d_buffers->streamCommitFloorBytes;
         if (sd.overlapsStreamCommitRegion) {
@@ -2394,6 +2434,36 @@ static const AirInstanceInfo *requestedAirInstance(DeviceCommitBuffers* d_buffer
     return byType->second[0];
 }
 
+static uint64_t largestBasicCapacity(DeviceCommitBuffers* d_buffers){
+    uint64_t largest = 0;
+    for (uint32_t j = 0; j < d_buffers->n_streams; ++j) {
+        largest = std::max(largest, d_buffers->aux_trace_sizes[j]);
+    }
+    return largest;
+}
+
+// Aux-trace elements this launch needs, 0 when the air is not registered (see requirementFor).
+// Always full mapTotalN, even for a "witness" (contributions) launch. Sizing those by the regions the
+// commit touches looked safe and is not: besides cm1/mt1 the commit also writes const, custom_fixed,
+// publics, airgroupvalues, airvalues and proofvalues, so a stream sized below mapTotalN lets those
+// writes run past its slice into the next stream's buffer -- observed as a contribution-challenge
+// mismatch, not a crash. Any narrower bound must cover every one of those sections.
+// Under-counts compressor/recursive launches by their trace, which only ever land on classes the
+// Rust carve floored high enough (plan_stream_layout), so they always fit.
+static uint64_t requiredAuxTrace(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, const std::string &proofType){
+    const AirInstanceInfo *air = requestedAirInstance(d_buffers, airgroupId, airId, proofType);
+    if (air == nullptr || air->setupCtx == nullptr) return 0;
+    return air->setupCtx->starkInfo.mapTotalN;
+}
+
+// What `stream` must hold for this launch. An unknown requirement falls back to the largest class on
+// the sized non-recursive pool (the old uniform placement); the recursive pool is one size, so
+// holding it to that guess would leave a forced recursive request with no eligible stream at all.
+static uint64_t requirementFor(DeviceCommitBuffers* d_buffers, const StreamData &stream, uint64_t known){
+    if (known != 0) return known;
+    return stream.recursive ? 0 : largestBasicCapacity(d_buffers);
+}
+
 // One non-blocking scan+pick+reserve pass (the body of selectStream's old while-loop).
 // Returns a reserved streamId (status=1), or UINT32_MAX if none is free right now. Lets the
 // Rust scheduler drive stream assignment; selectStream just retries this in a loop.
@@ -2409,6 +2479,11 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     const uint64_t wantAux = slotUsable
         ? wantAir->setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)] : 0;
     const bool wantAgg = !(proofType == "basic" || proofType == "witness");
+    // Streams come in size classes, so a free one is only a candidate when its buffer holds this launch.
+    const uint64_t needAux = requiredAuxTrace(d_buffers, airgroupId, airId, proofType);
+    auto fitsCapacity = [&](const StreamData &sd) {
+        return sd.auxTraceCapacity >= requirementFor(d_buffers, sd, needAux);
+    };
     auto isWarm = [&](const StreamData &sd, bool drained) {
         if (!(sd.status==3 || drained)) return false;
         if (sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == proofType) return true;
@@ -2419,13 +2494,27 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     uint32_t countUnusedStreams[d_buffers->n_gpus];
     int streamIdxGPU[d_buffers->n_gpus];
     bool warmFoundGPU[d_buffers->n_gpus];
+    bool unusedFoundGPU[d_buffers->n_gpus];
 
     for( uint32_t i = 0; i < d_buffers->n_gpus; i++){
         countUnusedStreams[i] = 0;
         countFreeStreamsGPU[i] = 0;
         streamIdxGPU[i] = -1;
         warmFoundGPU[i] = false;
+        unusedFoundGPU[i] = false;
     }
+
+    // Tightest fit first, so larger classes stay free for the airs with nowhere else to go. Only free
+    // streams are compared, so a busy tight class never idles the big one. Within a class: warm, then unused.
+    auto betterCandidate = [&](uint32_t cand, int best, bool candWarm, bool candUnused,
+                               bool bestWarm, bool bestUnused) {
+        if (best < 0) return true;
+        const uint64_t candCap = d_buffers->streamsData[cand].auxTraceCapacity;
+        const uint64_t bestCap = d_buffers->streamsData[best].auxTraceCapacity;
+        if (candCap != bestCap) return candCap < bestCap;
+        if (candWarm != bestWarm) return candWarm;
+        return candUnused && !bestUnused;
+    };
 
     bool someFree = false;
 
@@ -2453,29 +2542,24 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                     // Ran to completion but not yet harvested: free to take, and its
                     // const-tree is still loaded. Queried once and reused by the warm test.
                     const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
-                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained) {
+                    if ((d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained)
+                        && fitsCapacity(d_buffers->streamsData[i])) {
                         uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
 
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
                         }
-                        // status==0 is deliberately absent: the only path to it
+                        // status==0 is deliberately absent from isWarm: the only path to it
                         // (reset_device_streams_gpu) calls invalidateContext() first, so the
-                        // key comparison below can never match an unused stream anyway.
+                        // key comparison there can never match an unused stream anyway.
                         bool warm = isWarm(d_buffers->streamsData[i], drained);
-                        if (warm) {
-                            // Sticky warm choice: keep the stream already holding these fixed
-                            // columns so reuse_constants hits; not clobbered by a later free
-                            // stream (the bug that killed affinity).
+                        bool unused = d_buffers->streamsData[i].status==0;
+                        if (betterCandidate(i, streamIdxGPU[gpuLocalId], warm, unused,
+                                            warmFoundGPU[gpuLocalId], unusedFoundGPU[gpuLocalId])) {
                             streamIdxGPU[gpuLocalId] = i;
-                            warmFoundGPU[gpuLocalId] = true;
-                        } else if (!warmFoundGPU[gpuLocalId]) {
-                            // No warm stream yet: prefer an unused (cold, no eviction) stream,
-                            // else any free one.
-                            if (d_buffers->streamsData[i].status==0 || streamIdxGPU[gpuLocalId] == -1) {
-                                streamIdxGPU[gpuLocalId] = i;
-                            }
+                            warmFoundGPU[gpuLocalId] = warm;
+                            unusedFoundGPU[gpuLocalId] = unused;
                         }
                         someFree = true;
                         streams_locked[i] = true;
@@ -2501,29 +2585,24 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                     // Ran to completion but not yet harvested: free to take, and its
                     // const-tree is still loaded. Queried once and reused by the warm test.
                     const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
-                    if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained) {
+                    if ((d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained)
+                        && fitsCapacity(d_buffers->streamsData[i])) {
                         uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
 
                         countFreeStreamsGPU[gpuLocalId]++;
                         if(d_buffers->streamsData[i].status==0){
                             countUnusedStreams[gpuLocalId]++;
                         }
-                        // status==0 is deliberately absent: the only path to it
+                        // status==0 is deliberately absent from isWarm: the only path to it
                         // (reset_device_streams_gpu) calls invalidateContext() first, so the
-                        // key comparison below can never match an unused stream anyway.
+                        // key comparison there can never match an unused stream anyway.
                         bool warm = isWarm(d_buffers->streamsData[i], drained);
-                        if (warm) {
-                            // Sticky warm choice: keep the stream already holding these fixed
-                            // columns so reuse_constants hits; not clobbered by a later free
-                            // stream (the bug that killed affinity).
+                        bool unused = d_buffers->streamsData[i].status==0;
+                        if (betterCandidate(i, streamIdxGPU[gpuLocalId], warm, unused,
+                                            warmFoundGPU[gpuLocalId], unusedFoundGPU[gpuLocalId])) {
                             streamIdxGPU[gpuLocalId] = i;
-                            warmFoundGPU[gpuLocalId] = true;
-                        } else if (!warmFoundGPU[gpuLocalId]) {
-                            // No warm stream yet: prefer an unused (cold, no eviction) stream,
-                            // else any free one.
-                            if (d_buffers->streamsData[i].status==0 || streamIdxGPU[gpuLocalId] == -1) {
-                                streamIdxGPU[gpuLocalId] = i;
-                            }
+                            warmFoundGPU[gpuLocalId] = warm;
+                            unusedFoundGPU[gpuLocalId] = unused;
                         }
                         someFree = true;
                         streams_locked[i] = true;
@@ -2562,9 +2641,33 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
 // Blocking wrapper: retry the scan until a stream is reserved. Used by the paths that
 // select internally (contributions/commit/setup, and one-off recursive launches).
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
-    for (;;) {
+    for (uint64_t spins = 0;; ++spins) {
         uint32_t s = reserve_best_stream_scan(d_buffers, airgroupId, airId, proofType, recursive, force_recursive);
         if (s != UINT32_MAX) return s;
+        // Two very different causes spin here: no stream is large enough (permanent -- this would
+        // spin forever), or every eligible stream is merely busy (transient, and a sign the class is
+        // under-provisioned). Reported once; both keep retrying.
+        if (spins == 20000) {
+            const uint64_t need = requiredAuxTrace(d_buffers, airgroupId, airId, proofType);
+            uint32_t eligible = 0;
+            uint64_t largest = 0;
+            for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
+                const StreamData &sd = d_buffers->streamsData[i];
+                if (force_recursive && !sd.recursive) continue;
+                largest = std::max(largest, sd.auxTraceCapacity);
+                if (sd.auxTraceCapacity >= requirementFor(d_buffers, sd, need)) eligible++;
+            }
+            const double gb = sizeof(Goldilocks::Element) / (1024.0 * 1024.0 * 1024.0);
+            const std::string what = proofType + " [" + std::to_string(airgroupId) + ":" +
+                                     std::to_string(airId) + "] (needs " + std::to_string(need * gb) + " GB)";
+            if (eligible == 0) {
+                zklog.error("selectStream: " + what + " exceeds every stream -- largest holds " +
+                            std::to_string(largest * gb) + " GB, so this can never be placed");
+            } else {
+                zklog.warning("selectStream: " + what + " starved 6s behind " + std::to_string(eligible) +
+                              " eligible stream(s) -- that class may be under-provisioned");
+            }
+        }
         std::this_thread::sleep_for(std::chrono::microseconds(300));
     }
 }
@@ -2576,16 +2679,34 @@ uint32_t reserve_best_stream_nonblock_gpu(void* d_buffers_, uint64_t airgroupId,
     return reserve_best_stream_scan(d_buffers, airgroupId, airId, std::string(proofType), recursive, force_recursive);
 }
 
+// Is some other free non-recursive stream on this GPU a tighter fit for `need` than `cap`? Advisory:
+// statuses are read unlocked, so a wrong answer costs a cold scan or one oversized placement, no more.
+static bool tighterFreeStreamExists(DeviceCommitBuffers* d_buffers, uint64_t need, uint64_t cap, uint32_t self, uint32_t gpuId){
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
+        if (i == self) continue;
+        const StreamData &sd = d_buffers->streamsData[i];
+        if (sd.recursive || sd.gpuId != gpuId) continue;
+        if (sd.auxTraceCapacity < need || sd.auxTraceCapacity >= cap) continue;
+        const uint32_t status = sd.status.load(std::memory_order_relaxed);
+        if (status == 0 || status == 3) return true;
+    }
+    return false;
+}
+
 // Warm-affinity fast path: reserve `streamId` IFF free right now (and a recursive stream
 // for a forced request). Returns 1 on success, 0 otherwise. Same lock order as
 // reserve_best_stream_scan (gsel, then per-stream try_lock) so they can't deadlock.
-uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, bool force_recursive){
+uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_t airgroupId, uint64_t airId, char* proofType, bool force_recursive){
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
     if (streamId >= d_buffers->n_total_streams) return 0;
     StreamData& sd = d_buffers->streamsData[streamId];
     // A forced recursive launch must stay on a recursive stream; refuse otherwise so
     // the caller falls back to the cold scan.
     if (force_recursive && !sd.recursive) return 0;
+    // Warm is worthless if the launch does not fit; the cold scan will find a class that does.
+    const uint64_t known = requiredAuxTrace(d_buffers, airgroupId, airId, std::string(proofType));
+    const uint64_t need = requirementFor(d_buffers, sd, known);
+    if (sd.auxTraceCapacity < need) return 0;
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
     if (d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire) && sd.gpuId == firstGpuId) return 0;
 
@@ -2597,6 +2718,14 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, bool fo
     }
     bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess);
     if (!free) { sd.mutex_stream_selection.unlock(); return 0; }
+    // Warm but too roomy: taking it would park this launch on a stream some larger air may be the
+    // only user of. Refuse, and let the scan apply its tightest-fit rule. Sized pool only -- the
+    // recursive streams are one class, and comparing them against basic ones just loses affinity.
+    if (!sd.recursive && sd.auxTraceCapacity > need
+        && tighterFreeStreamExists(d_buffers, need, sd.auxTraceCapacity, streamId, sd.gpuId)) {
+        sd.mutex_stream_selection.unlock();
+        return 0;
+    }
     reserveStreamLocked(d_buffers, streamId);
     sd.mutex_stream_selection.unlock();
     return 1;
@@ -2637,7 +2766,6 @@ void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
     reserveStreamLocked(d_buffers, streamId);
     d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
 }
-
 void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_id, uint64_t air_id, bool isProve) {
     TimerSyncAndLogAllGPU(timer, instance_id, airgroup_id, air_id);
     TimerSyncCategoriesGPU(timer);
