@@ -1,6 +1,7 @@
 mod air_instance;
 mod verbose_mode;
 mod distribution_ctx;
+mod gpu_stream_layout;
 mod mpi_ctx;
 mod proof_ctx;
 mod prover;
@@ -35,6 +36,7 @@ pub use std_mode::*;
 pub use publics::*;
 pub use utils::*;
 pub use distribution_ctx::*;
+pub use gpu_stream_layout::*;
 pub use custom_commits::*;
 pub use constraints::*;
 pub use fixed_cols::*;

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
+use crate::{plan_stream_layout, StreamClass, StreamLayout};
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
@@ -288,6 +289,10 @@ pub struct ProofCtx<F: PrimeField64> {
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
+    /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
+    /// this is what makes stream eligibility visible to the Rust-side schedulers.
+    pub basic_stream_sizes: Vec<usize>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -343,6 +348,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            basic_stream_sizes: Vec::new(),
         })
     }
 
@@ -1002,57 +1008,74 @@ impl<F: PrimeField64> ProofCtx<F> {
             }
         }
 
-        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
-        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+        // Wrapping here would carve streams out of a budget the card does not have, and only fail
+        // later inside cudaMalloc.
+        let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
+            .checked_sub(total_const_area + total_const_area_aggregation)
+            .ok_or_else(|| {
+                ProofmanError::InvalidConfiguration(format!(
+                    "Fixed polynomials need {} but only {} is free on the GPU",
+                    format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
+                    format_bytes(free_memory_gpu),
+                ))
+            })?;
 
-        let n_streams_per_gpu = match gpu {
-            true => {
-                let max_number_proofs_per_gpu =
-                    max_number_streams_gpu.min(max_size_buffer as usize / max_prover_buffer_size);
-                if max_number_proofs_per_gpu < 1 {
-                    return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
-                }
-                max_number_proofs_per_gpu
-            }
-            false => 1,
-        };
+        // Non-recursive streams also take compressor/vadcop_final launches, which floors their classes.
+        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size;
+        let max_prover_recursive2_buffer_size =
+            if aggregation { setups_vadcop.max_prover_recursive2_buffer_size } else { 0 };
 
-        let max_prover_buffer_size =
-            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
-
-        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
-
-        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
-            "Max prover recursive buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+            "Max prover buffer size: {}",
+            format_bytes(sctx.max_prover_buffer_size.max(recursive_capable_size) as f64 * 8.0)
         );
+        tracing::info!("Max prover recursive buffer size: {}", format_bytes(recursive_capable_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive1/recursive2 buffer size: {}",
             format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
         );
 
-        let mut gpu_available_memory = match gpu {
-            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
-            false => 0,
+        let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
+
+        let layout = match gpu {
+            true => plan_stream_layout(
+                max_size_buffer as usize,
+                &basic_sizes,
+                recursive_capable_size,
+                max_prover_recursive2_buffer_size,
+                max_number_streams_gpu,
+                if aggregation { max_number_recursive_streams_gpu } else { 0 },
+            )
+            .ok_or_else(|| ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()))?,
+            // No device streams to carve: one nominal stream, sized for the largest proof.
+            false => StreamLayout {
+                basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
+                recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                unused: 0,
+            },
         };
-        let mut n_recursive_streams_per_gpu = 0;
-        if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < max_number_recursive_streams_gpu {
-                gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
-                if gpu_available_memory < 0 {
-                    break;
-                }
-                n_recursive_streams_per_gpu += 1;
-            }
-        }
+
+        let aux_trace_sizes: Vec<u64> = layout.basic_stream_sizes().iter().map(|&s| s as u64).collect();
+        // Retained so the witness admission can tell which airs are confined to a subset of streams.
+        self.basic_stream_sizes = layout.basic_stream_sizes();
+        let n_streams_per_gpu = layout.n_basic_streams();
+        let n_recursive_streams_per_gpu = layout.recursive.count;
 
         if gpu {
+            let classes = layout
+                .basic
+                .iter()
+                .map(|c| format!("{} x {}", c.count, format_bytes(c.size as f64 * 8.0)))
+                .collect::<Vec<_>>()
+                .join(" + ");
             tracing::info!(
-                "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+                "Using {} streams per GPU for basic proofs ({}) and {} streams per GPU for recursive proofs. \
+                 Using {} for fixed pols, {} unused",
                 n_streams_per_gpu,
+                classes,
                 n_recursive_streams_per_gpu,
-                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
+                format_bytes(layout.unused as f64 * 8.0),
             );
         }
 
@@ -1063,18 +1086,16 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
-            n_streams_per_gpu as u64,
+            &aux_trace_sizes,
             n_recursive_streams_per_gpu as u64,
-            max_prover_buffer_size,
-            max_prover_recursive2_buffer_size,
+            max_prover_recursive2_buffer_size as u64,
             max_pinned_proof_size,
             self.global_info.transcript_arity as u64,
         );
 
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
-            max_prover_buffer_size,
-            max_prover_recursive2_buffer_size,
+            max_prover_recursive2_buffer_size as u64,
             total_const_area,
             total_const_area_aggregation,
         );

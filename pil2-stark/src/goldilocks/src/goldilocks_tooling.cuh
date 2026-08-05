@@ -402,6 +402,9 @@ struct StreamData{
     // (only ever set on first-GPU streams -- slots exist only there)
     bool overlapsStreamCommitRegion = false;
 
+    // Field elements in this stream's slice of the unified buffer: a proof fits only when mapTotalN does.
+    uint64_t auxTraceCapacity = 0;
+
 #ifdef USE_CUDA_GRAPH
     std::unique_ptr<CudaGraphCache> graph_cache;
 #endif
@@ -612,6 +615,8 @@ struct DeviceCommitBuffers
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
+    // Aux trace elements per non-recursive stream, largest class first; length n_streams. Owned here.
+    uint64_t *aux_trace_sizes = nullptr;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 
@@ -630,9 +635,9 @@ struct DeviceCommitBuffers
     uint64_t streamCommitSlots = 0;
     uint64_t streamCommitSlotBytes = 0;
     uint64_t streamCommitFloorBytes = UINT64_MAX;
-    // Per-stream aux-trace byte sizes (basic / recursive), stashed at
-    // allocation for configure_stream_commit_slots' overlap computation.
-    uint64_t auxTraceBytes = 0;
+    // Stashed at allocation for configure_stream_commit_slots' overlap computation. Non-recursive
+    // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
+    uint64_t auxTraceTotalBytes = 0;
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
     // Shared-hold of the overlapped legacy streams: the first in-flight slot

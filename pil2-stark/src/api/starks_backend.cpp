@@ -47,7 +47,7 @@ void get_stream_proofs_gpu(void *d_buffers_);
 void get_stream_proofs_non_blocking_gpu(void *d_buffers_);
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId);
 uint32_t reserve_best_stream_nonblock_gpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
-uint32_t reserve_stream_if_free_gpu(void *d_buffers_, uint32_t streamId, bool force_recursive);
+uint32_t reserve_stream_if_free_gpu(void *d_buffers_, uint32_t streamId, uint64_t airgroupId, uint64_t airId, char *proofType, bool force_recursive);
 void release_stream_reservation_gpu(void *d_buffers_, uint32_t streamId);
 uint64_t gen_recursive_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
 void *gen_recursive_proof_final_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
@@ -60,8 +60,8 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
 void free_device_buffers_recursivef_gpu(void *d_buffers);
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
-uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
+uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
 void get_instances_ready_gpu(void *d_buffers, int64_t* instances_ready);
 void reset_device_streams_gpu(void *d_buffers_);
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size);
@@ -324,10 +324,10 @@ uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uin
     return backend->reserve_best_stream_nonblock(d_buffers_, airgroupId, airId, proofType, recursive, force_recursive);
 }
 
-uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive) {
+uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, uint64_t airgroupId, uint64_t airId, char *proofType, bool force_recursive) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (!backend->reserve_stream_if_free) return 0;
-    return backend->reserve_stream_if_free(d_buffers_, streamId, force_recursive);
+    return backend->reserve_stream_if_free(d_buffers_, streamId, airgroupId, airId, proofType, force_recursive);
 }
 
 // Symmetric to the two reserve entries above: hand a reservation back when the caller failed
@@ -409,14 +409,14 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     backend->load_device_setup(airgroupId, airId, proofType, pSetupCtx_, d_buffers_, verkeyRoot_, packedInfo);
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->gen_device_streams ? backend->gen_device_streams(d_buffers_, n_streams, n_recursive_streams, maxSizeProverBuffer, maxSizeProverBufferAggregation, maxProofSize, merkleTreeArity) : 1;
+    return backend->gen_device_streams ? backend->gen_device_streams(d_buffers_, n_streams, n_recursive_streams, auxTraceSizes, maxSizeProverBufferAggregation, maxProofSize, merkleTreeArity) : 1;
 }
 
-void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceArea, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation);
+    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation);
 }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {

@@ -132,7 +132,7 @@ extern "C" {
     uint32_t reserve_best_stream_nonblock(void *d_buffers_, uint64_t airgroupId, uint64_t airId, char *proofType, bool recursive, bool force_recursive);
     // Central arbiter warm fast path: reserve streamId iff it is free right now.
     // Returns 1 on success, 0 otherwise.
-    uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, bool force_recursive);
+    uint32_t reserve_stream_if_free(void *d_buffers_, uint32_t streamId, uint64_t airgroupId, uint64_t airId, char *proofType, bool force_recursive);
     // Give back a reservation made by either call above without launching on the stream.
     void release_stream_reservation(void *d_buffers_, uint32_t streamId);
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
@@ -195,8 +195,8 @@ extern "C" {
     void free_device_buffers_recursivef(void *d_buffers);
     void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo);
-    uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
+    uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
+    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
     void get_instances_ready(void *d_buffers, int64_t* instances_ready);
     void reset_device_streams(void *d_buffers_);
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
