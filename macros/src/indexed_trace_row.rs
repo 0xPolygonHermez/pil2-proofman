@@ -82,6 +82,15 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     let mut runtime_fields = vec![TraceField { name: format_ident!("index"), ty: BitType::Bit(INDEX_BITS as usize) }];
     let mut table_fields = vec![];
     for (f, instr) in &inp.fields {
+        // Rejected here rather than deeper in expansion so the user gets a spanned
+        // compile error instead of a proc-macro panic backtrace. Array columns would
+        // need per-element source flags; COL_SOURCE is per output column, so an
+        // `@instr` array has no representation today.
+        if *instr && is_array(&f.ty) {
+            return syn::Error::new_spanned(&f.name, "indexed_trace_row!: `@instr` unsupported on array columns")
+                .to_compile_error()
+                .into();
+        }
         if *instr {
             table_fields.push(f.clone());
         } else {
@@ -164,7 +173,9 @@ fn indexed_ops_impl(
                 }
             }
         } else if is_array(&f.ty) {
-            assert!(!*instr, "indexed_trace_row!: `@instr` unsupported on array column `{}`", f.name);
+            // `@instr` on an array is rejected with a spanned error in the entrypoint,
+            // so by here every array column is runtime-sourced.
+            debug_assert!(!*instr);
             let (bits, dims, _) = collect_dimensions(&f.ty);
             let rust_ty = rust_type_for_bits(bits);
             let idx_args: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();

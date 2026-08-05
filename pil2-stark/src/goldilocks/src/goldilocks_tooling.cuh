@@ -82,7 +82,9 @@ struct AirInstanceInfo {
 
     // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
     // at setup; the instruction table is uploaded later, per program, via
-    // set_instruction_table(). d_instr_table == nullptr selects the plain unpack path.
+    // set_instruction_table(). d_col_source == nullptr is what selects the plain unpack
+    // path -- when it is set, d_instr_table must have been registered before the first
+    // unpack, and unpack_trace aborts rather than silently falling back to the plain walk.
     uint8_t  *d_col_source = nullptr;   // per column: 0 = row stream, 1 = table stream
     uint64_t  index_bits = 0;           // width of the leading index header in a compact row
     uint64_t  words_per_entry = 0;      // u64 words per instruction-table entry

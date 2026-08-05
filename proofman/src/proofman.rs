@@ -2348,6 +2348,14 @@ where
         num_entries: u64,
         words_per_entry: u64,
     ) -> ProofmanResult<()> {
+        // An empty descriptor would register nothing, leave d_instr_table null, and only
+        // surface as an abort at the first unpack -- far from the cause. Reject it here.
+        if num_entries == 0 || words_per_entry == 0 {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "register_instruction_table [{airgroup_id}:{air_id}]: num_entries ({num_entries}) and \
+                 words_per_entry ({words_per_entry}) must both be > 0"
+            )));
+        }
         // The C side copies num_entries * words_per_entry words out of `table`; a short
         // slice would be an out-of-bounds read there, so reject it here where we can.
         let expected = (num_entries as usize).saturating_mul(words_per_entry as usize);

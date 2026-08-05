@@ -189,8 +189,8 @@ TEST(GOLDILOCKS_TEST, stream_commit_reduced_small)
 static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEntries)
 {
     const uint64_t nBitsExt = nBits + 1;
-    const uint32_t CAP = 4, TPB = 128;
-    const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
+    const uint32_t CAP = 4;
+    const uint64_t N = 1ull << nBits;
     const uint64_t INDEX_BITS = 32;
 
     ASSERT_LE(nCols, 38u);
@@ -211,7 +211,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
     const uint64_t rowWords = wordsFor(rowW), entWords = wordsFor(tabW);
 
     // Instruction table + per-row values, then BOTH encodings of the same trace.
-    std::vector<uint64_t> table(nEntries * entWords), tabVals(tabW.size());
+    std::vector<uint64_t> table(nEntries * entWords);
     std::vector<std::vector<uint64_t>> entryVals(nEntries, std::vector<uint64_t>(tabW.size()));
     uint64_t x = 0x9E3779B97F4A7C15ull;
     auto next = [&]() { x ^= x << 13; x ^= x >> 7; x ^= x << 17; return x; };
@@ -222,7 +222,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
 
     std::vector<uint64_t> hCompact(N * rowWords), hFull(N * MAIN_WORDS);
     {
-        std::vector<uint64_t> rowVals(nCols), compactVals(rowW.size()), fullVals(nCols);
+        std::vector<uint64_t> compactVals(rowW.size()), fullVals(nCols);
         for (uint64_t r = 0; r < N; r++) {
             uint64_t idx = r % nEntries;
             compactVals[0] = idx;
