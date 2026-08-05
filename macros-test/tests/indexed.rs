@@ -22,13 +22,18 @@ indexed_trace_row!(
     }
 );
 
+// The indexed discriminator is what a generic filler branches on to compile out the
+// instruction-derived columns, so assert it where a regression is a build failure
+// rather than a test failure (same style as the constant checks in src/lib.rs).
+const _: () = assert!(<IxRowPackedIndexed<Goldilocks> as IndexedFill>::IS_INDEXED);
+const _: () = assert!(!<IxRow<Goldilocks> as IndexedFill>::IS_INDEXED);
+const _: () = assert!(!<IxRowPacked<Goldilocks> as IndexedFill>::IS_INDEXED);
+
 #[test]
 fn compiles_and_routes() {
     // COL_SOURCE must mark op and flag as table-sourced.
     assert_eq!(IxRowPackedIndexed::<Goldilocks>::COL_SOURCE, [0u8, 1, 0, 1]);
     assert_eq!(IxRowPackedIndexed::<Goldilocks>::INDEX_BITS, 32);
-    assert!(<IxRowPackedIndexed<Goldilocks> as IndexedFill>::IS_INDEXED);
-    assert!(!<IxRow<Goldilocks> as IndexedFill>::IS_INDEXED);
 
     // Compact row: index(32) + a(16) + b(12) = 60 bits -> 1 word.
     assert_eq!(IxRowPackedIndexed::<Goldilocks>::PACKED_BITS, 60);

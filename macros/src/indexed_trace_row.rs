@@ -112,7 +112,7 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
         } else {
             1
         };
-        col_source.extend(std::iter::repeat(if *instr { 1u8 } else { 0u8 }).take(cols));
+        col_source.extend(std::iter::repeat_n(if *instr { 1u8 } else { 0u8 }, cols));
     }
     let n_cols = col_source.len();
     let col_lits = col_source.iter().map(|&s| quote! { #s });
