@@ -864,8 +864,8 @@ mod tests {
         let grinding_bits_folding = &sec.grinding_bits_folding;
         assert!(grinding_bits_folding.len() == 6, "Expected 6 iterations, got {}", grinding_bits_folding.len());
         for (i, g) in grinding_bits_folding.iter().enumerate() {
-            for s in 0..g.len() {
-                assert_eq!(g[s], 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {}", s + 1, g[s]);
+            for (s, bits) in g.iter().enumerate() {
+                assert_eq!(*bits, 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {bits}", s + 1);
             }
         }
 
@@ -1015,8 +1015,8 @@ mod tests {
         let grinding_bits_folding = &sec.grinding_bits_folding;
         assert!(grinding_bits_folding.len() == 5, "Expected 5 iterations, got {}", grinding_bits_folding.len());
         for (i, g) in grinding_bits_folding.iter().enumerate() {
-            for s in 0..g.len() {
-                assert_eq!(g[s], 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {}", s + 1, g[s]);
+            for (s, bits) in g.iter().enumerate() {
+                assert_eq!(*bits, 0, "grinding_bits_folding mismatch for iteration {i}, round {}: got {bits}", s + 1);
             }
         }
 

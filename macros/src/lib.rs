@@ -8,6 +8,7 @@ mod trace_row;
 mod packed_row;
 mod unpacked_row;
 mod trait_row;
+mod indexed_trace_row;
 
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {
@@ -22,6 +23,14 @@ pub fn values(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn trace_row(input: TokenStream) -> TokenStream {
     trace_row::trace_row_entrypoint(input)
+}
+
+/// Companion to `trace_row!` for the indexed (compact) variant of an already-defined row.
+/// The base row + its `RowNameOps` trait must already exist (e.g. from `trace_row!`); this
+/// only adds the indexed variant beside them. See `indexed_trace_row.rs` for what it emits.
+#[proc_macro]
+pub fn indexed_trace_row(input: TokenStream) -> TokenStream {
+    indexed_trace_row::indexed_trace_row_entrypoint(input)
 }
 
 // Keep the old packed_row macro for backward compatibility

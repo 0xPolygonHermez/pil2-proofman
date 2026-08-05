@@ -13,7 +13,7 @@ use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_
 use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
-    free_device_buffers_c, use_packed_trace_c, is_first_gpu_buffer_borrowed_c,
+    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
@@ -2331,6 +2331,50 @@ where
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
         self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
+    }
+
+    /// Upload (per program) the instruction table for an indexed air. `table` is
+    /// `num_entries * words_per_entry` packed u64 words.
+    ///
+    /// Must be called AFTER the setups are loaded (the air's `AirInstanceInfo` has to
+    /// exist to receive it) and BEFORE the first commit of that program -- the contribution
+    /// phase already unpacks. An air with an indexed descriptor but no table aborts at
+    /// unpack rather than silently decoding compact rows as full ones.
+    pub fn register_instruction_table(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        table: &[u64],
+        num_entries: u64,
+        words_per_entry: u64,
+    ) -> ProofmanResult<()> {
+        // An empty descriptor would register nothing, leave d_instr_table null, and only
+        // surface as an abort at the first unpack -- far from the cause. Reject it here.
+        if num_entries == 0 || words_per_entry == 0 {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "register_instruction_table [{airgroup_id}:{air_id}]: num_entries ({num_entries}) and \
+                 words_per_entry ({words_per_entry}) must both be > 0"
+            )));
+        }
+        // The C side copies num_entries * words_per_entry words out of `table`; a short
+        // slice would be an out-of-bounds read there, so reject it here where we can.
+        let expected = (num_entries as usize).saturating_mul(words_per_entry as usize);
+        if table.len() != expected {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "register_instruction_table [{airgroup_id}:{air_id}]: table has {} words, expected \
+                 num_entries ({num_entries}) * words_per_entry ({words_per_entry}) = {expected}",
+                table.len()
+            )));
+        }
+        register_instruction_table_c(
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+            table,
+            num_entries,
+            words_per_entry,
+        );
+        Ok(())
     }
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
@@ -5226,6 +5270,10 @@ where
     /// (caller takes the legacy stream path) when the AIR is not slot-eligible,
     /// no slot token is free, or the C side rejects the shape.
     ///
+    /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
+    /// (col_source / index_bits / words_per_entry) and its uploaded instruction
+    /// table from the first GPU's AirInstanceInfo, and drives the indexed slot
+    /// unpack -- hence airgroup_id/air_id are passed through.
     #[allow(clippy::too_many_arguments)]
     fn try_slot_commit(
         pctx: &ProofCtx<F>,
@@ -5266,6 +5314,8 @@ where
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
             slot,
+            airgroup_id as u64,
+            air_id as u64,
             trace as *mut c_void,
             ss.n_bits,
             ss.n_bits_ext,
@@ -5282,7 +5332,10 @@ where
             // busy (streamCommitAcquireRegion could not claim every overlapped
             // first-GPU stream). Both mean "take the legacy path this time".
             // Anything else is a misconfiguration worth surfacing (e.g. -15 wrong
-            // hash family, -13 shape/slot-size drift).
+            // hash family, -13 shape/slot-size drift, -16 indexed air whose
+            // instruction table was never registered, -4 incomplete indexed
+            // descriptor). Note the legacy fallback is NOT a rescue for -16: the
+            // prover-side unpack aborts on the same missing table.
             if rc != -14 {
                 tracing::warn!(
                     "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"

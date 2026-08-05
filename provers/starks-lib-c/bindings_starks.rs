@@ -621,7 +621,16 @@ extern "C" {
         d_commit_buffers: *mut ::std::os::raw::c_void,
         packed_trace: bool,
     );
-    
+
+    pub fn register_instruction_table(
+        d_commit_buffers: *mut ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        table: *const u64,
+        num_entries: u64,
+        words_per_entry: u64,
+    );
+
     pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
@@ -705,6 +714,8 @@ extern "C" {
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,
         slot_idx: u64,
+        airgroup_id: u64,
+        air_id: u64,
         packed: *mut ::std::os::raw::c_void,
         n_bits: u64,
         n_bits_ext: u64,

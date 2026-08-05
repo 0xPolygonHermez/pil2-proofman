@@ -33,6 +33,15 @@ struct StreamCommitDims {
     uint64_t nBitsExt;     // log2 extended rows
     uint64_t nCols;        // witness columns (<= SC_MAX_COLS)
     uint64_t wordsPerRow;  // packed 64-bit words per row
+
+    // Indexed (compact) witness. Each row is a leading instruction-index header
+    // (indexBits wide) followed by the runtime columns; the columns flagged in
+    // dColSource are read instead from a shared instruction table of numEntries
+    // entries, wordsPerEntry words each. Left zero for a plain packed witness --
+    // dColSource == nullptr at the call is what actually selects the plain path.
+    uint64_t indexBits = 0;
+    uint64_t wordsPerEntry = 0;
+    uint64_t numEntries = 0;
 };
 
 // Returns required slot size in gl64 elements for the given dims. Slot layout:
@@ -44,13 +53,23 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims);
 
 // Commit the bit-packed witness at hPacked (N*wordsPerRow u64, row-major) and
 // write the 4-element root to hRoot. colWidths: per-column bit widths (nCols
-// entries). The packed upload is issued as 32 MiB cudaMemcpyAsync blocks.
+// entries, host). The packed upload is issued as 32 MiB cudaMemcpyAsync blocks.
 // Synchronous on return: the root is valid, and both the slot and the caller's
 // packed-witness buffer are free for reuse -- callers need no event handling.
+//
+// dColSource / dTable are DEVICE pointers and select the indexed unpack: per
+// column 0 = read from the row stream, 1 = read from the instruction table.
+// Both must be non-null together, resident on the current device, and stay
+// alive for the call; they are borrowed, never freed here. Pass nullptr for
+// both (the default) to commit a plain packed witness.
+//
 // Returns 0, or a negative value on invalid dims (nCols outside
-// (0, SC_MAX_COLS], arity mismatch with the slot layout contract).
+// (0, SC_MAX_COLS], arity mismatch with the slot layout contract, or an
+// inconsistent indexed descriptor).
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
-                           uint64_t *hRoot, cudaStream_t stream);
+                           uint64_t *hRoot, cudaStream_t stream,
+                           const uint8_t *dColSource = nullptr,
+                           const uint64_t *dTable = nullptr);
 
 #endif

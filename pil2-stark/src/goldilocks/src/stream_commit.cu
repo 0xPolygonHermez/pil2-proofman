@@ -50,6 +50,43 @@ static void scEnsureConstants()
     if (memoized) uploaded[dev] = true;
 }
 
+// Advance the cursor (word,idx,off) over `nbits` of a packed stream, returning the
+// value when Extract. The prover's unpack bit walk (starks_gpu.cu unpack /
+// idx_read_bits) -- the cursor updates are kept character-for-character identical so
+// slot roots match the prover's cm1.
+//
+// A chunked commit re-walks columns [0, c0) purely to reposition the cursors, and the
+// value there is dead. Extract=false is that case: one template keeps a single copy of
+// the cursor logic (so skip and read can never drift) while the mask/shift/or folds
+// away. The word loads stay -- they are what advances the cursor, and they are also
+// why this is not a speedup: the kernel is DRAM-bound, so dropping the arithmetic
+// measures as noise. It is kept for the single-source-of-truth cursor, not for time.
+template <bool Extract>
+__device__ __forceinline__ static uint64_t scStepBits(
+    const uint64_t *__restrict__ base, uint64_t words,
+    uint64_t &word, uint64_t &idx, uint64_t &off, uint64_t nbits)
+{
+    uint64_t val = 0;
+    uint64_t bits_left = 64 - off;
+    if (nbits <= bits_left) {
+        if (Extract) {
+            uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
+            val = (word >> off) & mask;
+        }
+        off += nbits;
+        if (off == 64 && idx + 1 < words) { word = base[++idx]; off = 0; }
+    } else {
+        uint64_t low = word >> off;
+        word = base[++idx];
+        if (Extract) {
+            uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
+            val = (high << bits_left) | low;
+        }
+        off = nbits - bits_left;
+    }
+    return val;
+}
+
 // The prover's unpack bit walk (starks_gpu.cu unpack), writing only columns
 // [c0, c0+cc) into cc ColMajor columns of dst (columns before c0 are skipped
 // by advancing the cursor). Widths come from global memory so concurrent
@@ -65,23 +102,70 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
     const uint64_t *packed_row = src + row * wordsPerRow;
     uint64_t word = packed_row[0];
     uint64_t word_idx = 0, bit_offset = 0;
-    for (uint64_t c = 0; c < nCols && c < (uint64_t)c0 + cc; c++) {
-        uint64_t nbits = widths[c];
-        uint64_t val;
-        uint64_t bits_left = 64 - bit_offset;
-        if (nbits <= bits_left) {
-            uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
-            val = (word >> bit_offset) & mask;
-            bit_offset += nbits;
-            if (bit_offset == 64 && word_idx + 1 < wordsPerRow) { word = packed_row[++word_idx]; bit_offset = 0; }
-        } else {
-            uint64_t low = word >> bit_offset;
-            word = packed_row[++word_idx];
-            uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
-            val = (high << bits_left) | low;
-            bit_offset = nbits - bits_left;
-        }
-        if (c >= c0) dst[(uint64_t)(c - c0) * nRows + row] = val;
+    // Reposition over the columns this chunk does not write, then extract.
+    for (uint64_t c = 0; c < (uint64_t)c0 && c < nCols; c++)
+        scStepBits<false>(packed_row, wordsPerRow, word, word_idx, bit_offset, widths[c]);
+    for (uint64_t c = c0; c < nCols && c < (uint64_t)c0 + cc; c++) {
+        uint64_t val = scStepBits<true>(packed_row, wordsPerRow, word, word_idx, bit_offset, widths[c]);
+        dst[(uint64_t)(c - c0) * nRows + row] = val;
+    }
+}
+
+// Indexed counterpart of scUnpackRangeKernel: two cursors (compact row, shared
+// instruction table), each output column sourced per colSource. Mirrors
+// unpack_indexed (starks_gpu.cu), so a slot root equals the prover's cm1 root.
+// Columns before c0 still have to be walked -- both cursors are sequential.
+__global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ src,
+                                                  const uint64_t *__restrict__ table,
+                                                  const uint64_t *__restrict__ widths,
+                                                  const uint8_t *__restrict__ colSource,
+                                                  uint64_t *__restrict__ dst,
+                                                  uint64_t nCols, uint64_t nRows,
+                                                  uint64_t wordsPerRow, uint64_t wordsPerEntry,
+                                                  uint64_t numEntries, uint64_t indexBits,
+                                                  uint32_t c0, uint32_t cc)
+{
+    // Per-column metadata is uniform across rows, so stage it once per block the way
+    // the prover's unpack does with its widths. One shared word carries BOTH the width
+    // and the source flag (nbits in the low 32 bits, source in bit 32) -- nbits <= 64,
+    // so they fit, and the inner loops take one shared read instead of two global ones.
+    // nCols <= SC_MAX_COLS, so at most 512 B per block. Note this is a tidiness/latency
+    // measure, not a throughput lever: the kernel runs at ~83% of DRAM roofline, so its
+    // cost is the row traffic below, not this metadata.
+    extern __shared__ uint64_t scInfo[];
+    for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x)
+        scInfo[i] = widths[i] | ((uint64_t)(colSource[i] != 0) << 32);
+    __syncthreads();
+
+    uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= nRows) return;
+
+    const uint64_t *rbase = src + row * wordsPerRow;
+    uint64_t rword = rbase[0], ridx = 0, roff = 0;
+    uint64_t index = scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, indexBits);
+    // A witness bug can put an out-of-range index here. The CPU unpack reports
+    // it and aborts; a kernel cannot, so fall back to entry 0 to stay in bounds
+    // -- the root then simply fails verification instead of reading past the table.
+    if (index >= numEntries) index = 0;
+
+    const uint64_t *tbase = table + index * wordsPerEntry;
+    uint64_t tword = tbase[0], tidx = 0, toff = 0;
+
+    // Both cursors are sequential, so the columns this chunk does not write still have
+    // to be walked -- but only to reposition, so their values are never materialized.
+    for (uint64_t c = 0; c < (uint64_t)c0 && c < nCols; c++) {
+        uint64_t info = scInfo[c];
+        if (info >> 32) scStepBits<false>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
+        else            scStepBits<false>(rbase, wordsPerRow,   rword, ridx, roff, info & 0xFFFFFFFFull);
+    }
+    for (uint64_t c = c0; c < nCols && c < (uint64_t)c0 + cc; c++) {
+        uint64_t info = scInfo[c];
+        uint64_t nbits = info & 0xFFFFFFFFull;
+        // Warp-uniform: colSource depends only on c, so this never diverges.
+        uint64_t val = (info >> 32)
+            ? scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, nbits)
+            : scStepBits<true>(rbase, wordsPerRow,   rword, ridx, roff, nbits);
+        dst[(uint64_t)(c - c0) * nRows + row] = val;
     }
 }
 
@@ -189,10 +273,16 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims)
 
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
-                           uint64_t *hRoot, cudaStream_t stream)
+                           uint64_t *hRoot, cudaStream_t stream,
+                           const uint8_t *dColSource, const uint64_t *dTable)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
+    // Indexed descriptor must be complete or entirely absent.
+    const bool indexed = (dColSource != nullptr);
+    if (indexed && (dTable == nullptr || dims.wordsPerEntry == 0 || dims.numEntries == 0 ||
+                    dims.indexBits == 0 || dims.indexBits > 64))
+        return -4;
 
     const uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
     const uint64_t treeElems = scTreeNumElements(NExt);
@@ -230,9 +320,16 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     for (uint32_t k = 0; k < nChunks; k++) {
         uint32_t cc = (uint32_t)((uint64_t)(k + 1) * SC_RATE <= dims.nCols ? SC_RATE
                                                                            : dims.nCols - (uint64_t)k * SC_RATE);
-        scUnpackRangeKernel<<<ublk, SC_TPB, 0, stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
-                                                         dims.nCols, N, dims.wordsPerRow,
-                                                         (uint32_t)(k * SC_RATE), cc);
+        if (indexed) {
+            scUnpackRangeIndexedKernel<<<ublk, SC_TPB, dims.nCols * sizeof(uint64_t), stream>>>(
+                d_packed, dTable, d_widths, dColSource, (uint64_t *)d_rate,
+                dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
+                dims.indexBits, (uint32_t)(k * SC_RATE), cc);
+        } else {
+            scUnpackRangeKernel<<<ublk, SC_TPB, 0, stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
+                                                             dims.nCols, N, dims.wordsPerRow,
+                                                             (uint32_t)(k * SC_RATE), cc);
+        }
         CHECKCUDAERR(cudaGetLastError());
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
