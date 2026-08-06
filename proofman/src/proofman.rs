@@ -2346,6 +2346,7 @@ where
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("register_custom_commits");
         self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
     }
 
