@@ -1,5 +1,8 @@
 //! CUDA source emission: the straight-line / chunked kernel text for one AIR's
-//! Q expression, the shared `gen_common.cuh` header, and the fixed C-ABI
+//! Q expression, one trace-domain kernel per other covered expression
+//! (hint fields, im columns, ... -- `emit_exprs_tu`, dispatched by expId via
+//! `exps_expr_covered` / `exps_launch_expr`), the shared `gen_common.cuh`
+//! header, and the fixed C-ABI
 //! exports. The template whitespace is deliberate — the emitted `.cu` is what
 //! nvcc compiles, so treat these strings as code, not free-form text.
 
@@ -17,6 +20,9 @@ pub const COMMON_CUH: &str = r#"#pragma once
 #include "steps.hpp"
 #include "goldilocks_trace_layout.cuh"
 #include <cstdint>
+// cg_* = the codegen's Goldilocks cubic-extension helpers (g3 = one Fp3 element).
+// Prefixed to avoid collisions with the prover headers this TU also includes;
+// digit suffixes are operand dims (mul33 = 3x3, mul31 = 3x1, inv3 = cubic inverse).
 struct g3 { gl64_t a,b,c; };
 __device__ __forceinline__ g3 cg_mul33(g3 x, g3 y){
   gl64_t A=(x.a+x.b)*(y.a+y.b), B=(x.a+x.c)*(y.a+y.c), C=(x.b+x.c)*(y.b+y.c);
@@ -29,6 +35,49 @@ __device__ __forceinline__ g3 cg_add13(gl64_t s, g3 y){ g3 r; r.a=y.a+s; r.b=y.b
 __device__ __forceinline__ g3 cg_sub33(g3 x, g3 y){ g3 r; r.a=x.a-y.a; r.b=x.b-y.b; r.c=x.c-y.c; return r; }
 __device__ __forceinline__ g3 cg_sub31(g3 x, gl64_t s){ g3 r; r.a=x.a-s; r.b=x.b; r.c=x.c; return r; }
 __device__ __forceinline__ g3 cg_sub13(gl64_t s, g3 y){ g3 r; r.a=s-y.a; r.b=-y.b; r.c=-y.c; return r; }
+static __device__ __noinline__ g3 cg_inv3(g3 v){
+  gl64_t aa=v.a*v.a, ac=v.a*v.c, ba=v.b*v.a, bb=v.b*v.b, bc=v.b*v.c, cc=v.c*v.c;
+  gl64_t aaa=aa*v.a, aac=aa*v.c, abc=ba*v.c, abb=ba*v.b, acc=ac*v.c, bbb=bb*v.b, bcc=bc*v.c, ccc=cc*v.c;
+  gl64_t t = abc+abc+abc+abb-aaa-aac-aac-acc-bbb+bcc-ccc;
+  gl64_t tinv = t.reciprocal();
+  g3 r; r.a=(bc+bb-aa-ac-ac-cc)*tinv; r.b=(ba-cc)*tinv; r.c=(ac+cc-bb)*tinv; return r; }
+__device__ __forceinline__ void exps_expr_store(gl64_t* dest, uint64_t row, uint64_t destDomain,
+    uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr,
+    uint64_t mode, uint64_t scalar, g3 v, uint64_t vdim)
+{
+  uint64_t idx0, idx1 = 0, idx2 = 0;
+  if (destExpr) {
+    idx0 = row*destDim; idx1 = idx0+1; idx2 = idx0+2;
+  } else {
+    const Layout lyt = resolveLayout(63 - __clzll(destDomain), stageCols);
+    idx0 = getBufferOffset(row, stagePos+0, destDomain, stageCols, lyt);
+    if (destDim > 1) {
+      idx1 = getBufferOffset(row, stagePos+1, destDomain, stageCols, lyt);
+      idx2 = getBufferOffset(row, stagePos+2, destDomain, stageCols, lyt);
+    }
+  }
+  if (mode == 0) {                       // WRITE (pad to destDim)
+    if (vdim == 1) { v.b = gl64_t(uint64_t(0)); v.c = gl64_t(uint64_t(0)); }
+    dest[idx0] = v.a;
+    if (destDim > 1) { dest[idx1] = v.b; dest[idx2] = v.c; }
+    return;
+  }
+  g3 inv;
+  if (vdim == 1) { inv.a = v.a.reciprocal(); inv.b = gl64_t(uint64_t(0)); inv.c = gl64_t(uint64_t(0)); }
+  else          { inv = cg_inv3(v); }
+  if (mode == 1) {                       // MUL_INV: dest = dest * v^-1
+    if (destDim == 1) { dest[idx0] = dest[idx0] * inv.a; return; }
+    g3 cur; cur.a = dest[idx0]; cur.b = dest[idx1]; cur.c = dest[idx2];
+    g3 r = (vdim == 1) ? cg_mul31(cur, inv.a) : cg_mul33(cur, inv);
+    dest[idx0] = r.a; dest[idx1] = r.b; dest[idx2] = r.c;
+    return;
+  }
+  // WRITE_INV: dest = scalar * v^-1
+  gl64_t sc(scalar);
+  if (destDim == 1) { dest[idx0] = sc * inv.a; return; }
+  g3 r = cg_mul31(inv, sc);
+  dest[idx0] = r.a; dest[idx1] = r.b; dest[idx2] = r.c;
+}
 "#;
 
 /// Committed-section layout the generated kernel reads, mirroring `resolveLayout(nBits,nCols)` in
@@ -207,7 +256,7 @@ fn chunk_tu(sym: &str, lo: usize, hi: usize, kernels: &[String]) -> String {
     )
 }
 
-/// The launcher TU: cross-TU `run_*` decls + the adaptive-grid wave loop + C-ABI.
+/// The Q launcher TU (`exps_launch`): cross-TU `run_*` decls + the adaptive-grid wave loop + C-ABI.
 fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64) -> String {
     let decls: Vec<String> = (0..n_chunks)
         .map(|i| {
@@ -247,7 +296,7 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
 }
 
 /// Emit the per-AIR TU source files. Returns `(filename, contents)` pairs:
-/// one self-contained TU for a single kernel, or a launcher TU + N chunk TUs
+/// one self-contained TU for a single kernel, or a Q launcher TU + N chunk TUs
 /// when chunked. `plan.total_slots` is the cross-chunk cut width.
 pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
     if plan.n_chunks <= 1 {
@@ -370,4 +419,92 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
         lo += CHUNKS_PER_TU;
     }
     files
+}
+
+// ---------------------------------------------------------------------------
+// Generic (non-Q) expression kernels: one small straight-line kernel per
+// covered expression id, evaluated over the TRACE domain, plus the C-ABI
+// per-expId dispatch (`exps_expr_covered` / `exps_launch_expr`) the loader
+// dlsym's. Store semantics are mode-parameterized (write / mul-inverse /
+// scalar-times-inverse) so two-parameter hint dests (num x den^-1) fuse the
+// combine into the second kernel's store — no scratch, no pair kernels.
+// ---------------------------------------------------------------------------
+
+/// Emit the `gen_<sym>_cexprs.cu` TU covering `items` = (expId, ir, out_dim).
+pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
+    let mut kernels: Vec<String> = Vec::new();
+    let mut cases_launch: Vec<String> = Vec::new();
+    let mut cases_covered: Vec<String> = Vec::new();
+    for (exp_id, ir, out_dim) in items {
+        let mut body: Vec<String> = Vec::new();
+        let mut declared: HashSet<u64> = HashSet::new();
+        for instr in &ir.instrs {
+            let (op_lines, is_out) = emit_op(instr, ir, &declared);
+            body.extend(op_lines);
+            if !is_out {
+                declared.insert(instr.dst_id.unwrap());
+            }
+        }
+        // The result lives in the last instruction's destination: `qq` for an
+        // explicit output store, `t<id>` when the expression ends in a tmp.
+        let last = ir.instrs.last().unwrap();
+        let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
+        let store = if *out_dim == 3 {
+            format!("    {{ g3 v_={result}; exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,3); }}")
+        } else {
+            format!("    {{ g3 v_; v_.a={result}; v_.b=gl64_t(uint64_t(0)); v_.c=gl64_t(uint64_t(0)); exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,1); }}")
+        };
+        kernels.push(format!(
+            r#"__global__ void gen_{sym}_x{exp_id}(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,
+    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,
+    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr) {{
+  const uint64_t NExt = N; const uint64_t MASK = N-1;
+  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
+  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
+  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
+{}
+{}
+  }}
+}}"#,
+            body.join("\n"),
+            store
+        ));
+        cases_launch.push(format!(
+            "    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"
+        ));
+        cases_covered.push(format!("    case {exp_id}ull: return 1;"));
+    }
+    format!(
+        r#"// AUTO-GENERATED generic expression kernels for {sym} ({} expressions)
+#include "gen_common.cuh"
+#define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
+{}
+extern "C" int exps_expr_covered(unsigned long long expId) {{
+  switch (expId) {{
+{}
+    default: return 0;
+  }}
+}}
+extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t* dest,
+    unsigned long long N, unsigned long long destDomain,
+    unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
+    unsigned long long mode, unsigned long long scalar,
+    unsigned long long stagePos, unsigned long long stageCols,
+    unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+  uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
+  if (grid > 512ull) grid = 512ull;
+  if (grid < 1ull) grid = 1ull;
+  switch (expId) {{
+{}
+    default: return 0;
+  }}
+}}
+#undef OFF
+"#,
+        items.len(),
+        kernels.join("\n"),
+        cases_covered.join("\n"),
+        cases_launch.join("\n")
+    )
 }

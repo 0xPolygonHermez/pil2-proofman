@@ -71,8 +71,10 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
     ExpsKernel ek = expsOpenForAir(setupCtx);
     expsLib = ek.lib;
-    expsFn = (void *)ek.fn;
-    expsMinScratch = ek.minScratch;
+    qLaunchFn = (void *)ek.qLaunch;
+    qMinScratch = ek.qMinScratch;
+    exprCoveredFn = (void *)ek.exprCovered;
+    exprLaunchFn = (void *)ek.exprLaunch;
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -127,6 +129,56 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
+    // Generated-kernel fast path for trace-domain dests: a single covered
+    // expression, or the hint pair (numerator x denominator^{-1}) fused as two
+    // passes (write, then multiply-by-inverse in the store). Anything else
+    // falls through to the bytecode interpreter below.
+    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr) {
+        auto exprCovered = (ExprCoveredFn)exprCoveredFn;
+        auto exprLaunch = (ExprLaunchFn)exprLaunchFn;
+        auto offc = [&](const char *sec) -> uint64_t {
+            auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(sec), false));
+            return it != setupCtx.starkInfo.mapOffsets.end() ? it->second : 0;
+        };
+        const uint64_t o1 = offc("cm1"), o2 = offc("cm2"), o3 = offc("cm3");
+        const uint32_t dExpr = dest.expr ? 1u : 0u;
+        bool handled = false;
+        if (dest.params.size() == 1) {
+            Params &p0 = dest.params[0];
+            if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
+                TimerStartCategoryGPU(timer, EXPRESSIONS);
+                exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                        o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                TimerStopCategoryGPU(timer, EXPRESSIONS);
+                handled = true;
+            }
+        } else if (dest.params.size() == 2) {
+            Params &p0 = dest.params[0];
+            Params &p1 = dest.params[1];
+            if (p1.op == opType::tmp && p1.inverse && exprCovered(p1.expId)) {
+                if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
+                    TimerStartCategoryGPU(timer, EXPRESSIONS);
+                    exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_MUL_INV, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    TimerStopCategoryGPU(timer, EXPRESSIONS);
+                    handled = true;
+                } else if (p0.op == opType::number && !p0.inverse) {
+                    TimerStartCategoryGPU(timer, EXPRESSIONS);
+                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_WRITE_INV, p0.value, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    TimerStopCategoryGPU(timer, EXPRESSIONS);
+                    handled = true;
+                }
+            }
+        }
+        if (handled) {
+            CHECKCUDAERR(cudaGetLastError());
+            return;
+        }
+    }
+
     ExpsArguments h_expsArgs;
 
     uint32_t nrowsPack = std::min(static_cast<uint32_t>(nRowsPack), static_cast<uint32_t>(domainSize));
@@ -301,8 +353,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     // If this AIR has a generated Q kernel launch it instead of the bytecode interpreter.
     bool computed = false;
-    if (dest.dest_gpu != nullptr && expsFn != nullptr) {
-        computed = tryLaunchExps(setupCtx, (ExpsKernelFn)expsFn, expsMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+    if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
+        computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
     }
     if (!computed) {
         computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
