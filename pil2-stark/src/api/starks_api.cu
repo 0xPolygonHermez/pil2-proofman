@@ -1637,6 +1637,20 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
     TimerStartGPU(timer, STARK_GPU_COMMIT);
 
+#ifdef USE_CUDA_GRAPH
+    // Contributions-phase capture regions: this path runs outside genProof_gpu, so bind
+    // the thread-local cache to this stream's for the call. All host staging into pinned
+    // buffers stays OUTSIDE the regions (it must re-run before every replay); the regions
+    // hold only stream work with per-(air,stream) stable arguments. A body that hits the
+    // interpreter fallback poisons its capture (see stageExpsSlot).
+    cudagraph::current() = d_buffers->streamsData[streamId].graph_cache.get();
+    struct WitnessGraphCtxGuard {
+        ~WitnessGraphCtxGuard() { cudagraph::current() = nullptr; }
+    } witnessGraphCtxGuard;
+#endif
+    // Key tags 0x57455843 "WEXC" / 0x574c4445 "WLDE" — full tag table at graphCtxId in gen_proof.cuh.
+    const uint64_t witnessCtxId = (uint64_t)(uintptr_t)setupCtx;
+
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
@@ -1724,8 +1738,6 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             offset += setupCtx->starkInfo.airValuesSize;
         }
 
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
-
         StepsParams h_params = {
             trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
             aux_trace : (Goldilocks::Element *)d_aux_trace,
@@ -1743,29 +1755,39 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
                 : nullptr,
         };
 
+        // Host staging BEFORE the capture region: replays skip the region body, so pinned
+        // content must already be correct when the graph's H2D nodes read it.
         StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
         memcpy(params_pinned, &h_params, sizeof(StepsParams));
         StepsParams *d_params =  d_buffers->streamsData[streamId].params;
-        CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
 
         ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
         DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
         Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
         Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
-        
-        calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+
+        auto witnessExprBody = [&] {
+            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
+            CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+            calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        };
+        cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
     }
 
     PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
-    ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+    auto commitLdeBody = [&] {
+        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
+        // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
+        // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution
+        // root read uninitialised in-tile padding -> non-det; keep the shared predicate.
+        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
+        CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+    };
+    uint64_t commitLdeCountId = 0;   // no expression launches in this body; dummy cursor
+    cudagraph::run(cudagraph::key(0x574c4445ULL ^ witnessCtxId), commitLdeCountId, stream, commitLdeBody);
     PROOFMAN_SUMCHECK("contrib_after_lde", d_aux_trace + offset_dst, NExtended * nCols, stream);
-    TimerStartCategoryGPU(timer, MERKLE_TREE);
-    // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
-    // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution
-    // root read uninitialised in-tile padding -> non-det; keep the shared predicate.
-    buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
-    TimerStopCategoryGPU(timer, MERKLE_TREE);
-    CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;

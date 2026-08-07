@@ -4,6 +4,9 @@
 #include "goldilocks_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "expressions_codegen.cuh"
+#ifdef USE_CUDA_GRAPH
+#include "cuda_graph_cache.cuh"
+#endif
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
@@ -106,6 +109,13 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
                           uint64_t countId, const DestParamsGPU *h_dest_params, const ExpsArguments &h_expsArgs,
                           DestParamsGPU *d_destParams, ExpsArguments *d_expsArgs, cudaStream_t stream)
 {
+#ifdef USE_CUDA_GRAPH
+    // The pinned slots are per-stream scratch shared by ALL airs: a captured graph would
+    // bake this H2D copy's source address, but the slot content at replay time belongs to
+    // whatever proof staged it last. Poison the in-flight capture (if any) so the region is
+    // discarded, blacklisted, and re-executed directly.
+    if (CudaGraphCache *gc = cudagraph::current()) gc->poison();
+#endif
     if (countId >= PINNED_EXPS_SLOTS) {
         zklog.error("ExpressionsGPU: expression launch count " + std::to_string(countId) +
                     " exceeds pinned slot capacity " + std::to_string(PINNED_EXPS_SLOTS));
@@ -269,6 +279,18 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
 void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
 {
+    // Generated Q kernel first: it takes everything by value, so the interpreter's
+    // pinned-slot staging below is dead weight on this path (and poisons graph capture).
+    if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
+        TimerStartCategoryGPU(timer, EXPRESSIONS);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        TimerStopCategoryGPU(timer, EXPRESSIONS);
+        if (computed) {
+            CHECKCUDAERR(cudaGetLastError());
+            return;
+        }
+    }
+
     ExpsArguments h_expsArgs;
 
     uint32_t nrowsPack = std::min(static_cast<uint32_t>(nRowsPack), static_cast<uint32_t>(domainSize));
@@ -351,14 +373,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     size_t sharedMem = useTmpInShared ? (ptrMem + tmpMem) : ptrMem;
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    // If this AIR has a generated Q kernel launch it instead of the bytecode interpreter.
-    bool computed = false;
-    if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
-        computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
-    }
-    if (!computed) {
-        computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
-    }
+    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
