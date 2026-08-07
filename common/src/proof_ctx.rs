@@ -181,9 +181,10 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
-    /// Airs whose const *tree* is kept GPU-resident, for both their Basic and Recursive1
-    /// circuits: `const_tree_size` VRAM each, against a per-proof load from disk. Airgroup
-    /// 0's Recursive2 is always preloaded and must not be listed.
+    /// Airs whose const *tree* is kept GPU-resident, for each of their Basic, Compressor
+    /// (when they have one) and Recursive1 circuits: `const_tree_size` VRAM each, against a
+    /// per-proof load from disk. Airgroup 0's Recursive2 is always preloaded and must not be
+    /// listed.
     pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
     /// Tables: airs proved at most once, so their const pols need not survive the proof and
     /// the layout can alias them onto the const tree's node area, saving `N * nConstants` per

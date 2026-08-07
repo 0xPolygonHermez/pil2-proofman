@@ -5019,6 +5019,9 @@ where
             preloaded_const.push(PreLoadedConstTree::new(0, 0, ProofType::Recursive2));
             for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
                 preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Basic));
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Compressor));
+                }
                 preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Recursive1));
             }
         }
