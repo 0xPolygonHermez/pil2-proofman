@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
+#include <climits>
 
 class CudaGraphCache;
 
@@ -56,9 +58,20 @@ class CudaGraphCache {
     // after several executions all lazy init on the region's path has already run.
     static uint32_t captureThreshold() {
         static const uint32_t v = [] {
+            constexpr uint32_t defaultThreshold = 100u;
+            constexpr uint32_t floorThreshold = 10u;
             const char *e = getenv("CUDA_GRAPH_CAPTURE_THRESHOLD");
-            uint32_t t = e ? (uint32_t)strtoul(e, nullptr, 10) : 100u;
-            return t < 10 ? 10u : t;
+            if (e == nullptr || *e == '\0') return defaultThreshold;
+            // Full-string numeric or it doesn't count: a typo must fall back to the
+            // conservative default, not silently clamp to the aggressive floor.
+            char *end = nullptr;
+            errno = 0;
+            unsigned long t = strtoul(e, &end, 10);
+            if (end == e || *end != '\0' || errno == ERANGE || t > UINT32_MAX) {
+                fprintf(stderr, "[cudaGraph] invalid CUDA_GRAPH_CAPTURE_THRESHOLD='%s', using default %u\n", e, defaultThreshold);
+                return defaultThreshold;
+            }
+            return t < floorThreshold ? floorThreshold : (uint32_t)t;
         }();
         return v;
     }
