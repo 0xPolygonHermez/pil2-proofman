@@ -377,6 +377,62 @@ __device__ __forceinline__ void pos1_pow7add_smem_(const gl64_t *C)
     }
 }
 
+// Fused full round: state[I] = sum_J M[J][I] * (pow7(state[J]) + C[J]), one
+// smem read and one smem write per element per round (the split
+// pow7add_smem_ + mvp_smem_mimm_ pair does two of each), with each lane's
+// pow7 mul chain (fma pipe) interleaving against the previous lane's
+// immediate-MDS accumulation adds (alu pipe). Accumulator bound: W * max(M)
+// * 2^64 < 2^75 fits the u128 with no carry limb (static-asserted in the .cu).
+template<uint32_t W, uint32_t J, uint32_t I = 0>
+__device__ __forceinline__ void pos1_fused_scatter_(unsigned __int128 *acc, uint64_t t)
+{
+    if constexpr (I < W)
+    {
+        constexpr uint64_t m = pos1_m_entry_<W>(J, I);
+        if constexpr (m == 1)
+            acc[I] += t;
+        else if constexpr (m != 0)
+            acc[I] += (unsigned __int128)t * m;
+        pos1_fused_scatter_<W, J, I + 1>(acc, t);
+    }
+}
+
+template<uint32_t W, bool ARK, uint32_t J = 0>
+__device__ __forceinline__ void pos1_fused_rows_(unsigned __int128 *acc, const gl64_t *C)
+{
+    if constexpr (J < W)
+    {
+        gl64_t x = scratchpad[J * blockDim.x + threadIdx.x];
+        gl64_t x2 = x * x;
+        gl64_t x3 = x * x2;
+        gl64_t x4 = x2 * x2;
+        gl64_t t = x3 * x4;
+        uint64_t tj;
+        if constexpr (ARK)
+            tj = (t + C[J])[0];
+        else
+            tj = t[0];
+        pos1_fused_scatter_<W, J>(acc, tj);
+        pos1_fused_rows_<W, ARK, J + 1>(acc, C);
+    }
+}
+
+// ARK=false is the schedule's final full round (pow7 + MDS, no constants);
+// that instantiation never reads C.
+template<uint32_t W, bool ARK = true>
+__device__ __forceinline__ void pos1_round_fused_smem_(const gl64_t *C = nullptr)
+{
+    unsigned __int128 acc[W] = {};
+    pos1_fused_rows_<W, ARK>(acc, C);
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+    {
+        gl64_t r;
+        r[0] = pos1_reduce128_((uint64_t)(acc[i] >> 64), (uint64_t)acc[i]);
+        scratchpad[i * blockDim.x + threadIdx.x] = r;
+    }
+}
+
 // P x state in shared memory. Indexing matches pos1_mvp_ (mat[W*j + i],
 // transposed). Outer loop kept at unroll-1 on purpose: fully unrolling it
 // spikes register use and drops occupancy.
@@ -410,8 +466,15 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 #pragma unroll 1
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
-        pos1_pow7add_smem_<W>(&GPU_C_GL[(r + 1) * W]);
-        pos1_mvp_smem_mimm_<W>();
+        // W=16 (production commit sponge, occupancy-limited) measures faster with
+        // the fused round;
+        if constexpr (W == 16)
+            pos1_round_fused_smem_<W>(&GPU_C_GL[(r + 1) * W]);
+        else
+        {
+            pos1_pow7add_smem_<W>(&GPU_C_GL[(r + 1) * W]);
+            pos1_mvp_smem_mimm_<W>();
+        }
     }
 
     // Transition full round → MVP(P).
@@ -456,11 +519,21 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 #pragma unroll 1
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
-        pos1_pow7add_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+        if constexpr (W == 16)
+            pos1_round_fused_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+        else
+        {
+            pos1_pow7add_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+            pos1_mvp_smem_mimm_<W>();
+        }
+    }
+    if constexpr (W == 16)
+        pos1_round_fused_smem_<W, false>();
+    else
+    {
+        pos1_pow7_smem_<W>();
         pos1_mvp_smem_mimm_<W>();
     }
-    pos1_pow7_smem_<W>();
-    pos1_mvp_smem_mimm_<W>();
 
 }
 
@@ -562,8 +635,9 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
                                       uint64_t *__restrict__ input,
                                       uint32_t num_cols, uint32_t num_rows);
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART,
+         uint32_t TPB_V, uint32_t MINB>
+__global__ void __launch_bounds__(TPB_V, MINB) linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
                                            uint32_t num_cols, uint32_t num_rows, Layout layout);
 
