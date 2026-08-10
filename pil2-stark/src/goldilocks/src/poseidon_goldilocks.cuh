@@ -102,20 +102,31 @@ __device__ __forceinline__ uint64_t pos1_reduce160_(uint32_t c, uint64_t hi, uin
     return r;
 }
 
-// Dot product with full-width constants: u128 + carry-limb accumulation.
+// 3-limb carry-chained MAC: (cy:hi:lo) += a*b in one hardware carry chain
+// (mad.lo.cc / madc.hi.cc / addc = 3 instructions). The compiler's u128 +
+// compare-based carry tracking costs ~2x that plus register-pair marshalling
+// MOVs; the value semantics are identical.
+__device__ __forceinline__ void pos1_mac_cc_(uint64_t &lo, uint64_t &hi, uint32_t &cy,
+                                             uint64_t a, uint64_t b)
+{
+    asm("mad.lo.cc.u64 %0, %3, %4, %0;\n\t"
+        "madc.hi.cc.u64 %1, %3, %4, %1;\n\t"
+        "addc.u32 %2, %2, 0;"
+        : "+l"(lo), "+l"(hi), "+r"(cy)
+        : "l"(a), "l"(b));
+}
+
+// Dot product with full-width constants: 3-limb carry-chained accumulation.
 template<uint32_t W>
 __device__ __forceinline__ uint64_t pos1_dot_wide_raw_(const uint64_t *s, const gl64_t *col, uint32_t stride)
 {
-    unsigned __int128 acc = (unsigned __int128)s[0] * col[0][0];
+    unsigned __int128 first = (unsigned __int128)s[0] * col[0][0];
+    uint64_t lo = (uint64_t)first, hi = (uint64_t)(first >> 64);
     uint32_t cy = 0;
 #pragma unroll
     for (uint32_t j = 1; j < W; ++j)
-    {
-        unsigned __int128 pr = (unsigned __int128)s[j] * col[j * stride][0];
-        acc += pr;
-        cy += (acc < pr);
-    }
-    return pos1_reduce160_(cy, (uint64_t)(acc >> 64), (uint64_t)acc);
+        pos1_mac_cc_(lo, hi, cy, s[j], col[j * stride][0]);
+    return pos1_reduce160_(cy, hi, lo);
 }
 
 // x + a*b with a single reduction. Bound: (2^64-1)^2 + (2^64-1) < 2^128.
@@ -383,6 +394,10 @@ __device__ __forceinline__ void pos1_pow7add_smem_(const gl64_t *C)
 // pow7 mul chain (fma pipe) interleaving against the previous lane's
 // immediate-MDS accumulation adds (alu pipe). Accumulator bound: W * max(M)
 // * 2^64 < 2^75 fits the u128 with no carry limb (static-asserted in the .cu).
+// NOTE: deliberately plain u128 arithmetic, NOT the asm MAC helpers — the M
+// entries are tiny compile-time constants the compiler strength-reduces onto
+// the full-rate alu pipe (shifts/adds); forcing mad here moves the work onto
+// the scarce half-rate mul pipe (measured +5% regression on W16).
 template<uint32_t W, uint32_t J, uint32_t I = 0>
 __device__ __forceinline__ void pos1_fused_scatter_(unsigned __int128 *acc, uint64_t t)
 {
@@ -497,20 +512,19 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 
             const gl64_t *S_row = &GPU_S_GL[(W * 2 - 1) * r];
             uint64_t a = s0_reg[0];
-            unsigned __int128 acc = (unsigned __int128)a * S_row[0][0];
+            unsigned __int128 first = (unsigned __int128)a * S_row[0][0];
+            uint64_t lo = (uint64_t)first, hi = (uint64_t)(first >> 64);
             uint32_t cy = 0;
 #pragma unroll
             for (uint32_t j = 1; j < W; ++j)
             {
                 uint64_t sj = scratchpad[j * blockDim.x + threadIdx.x][0];
-                unsigned __int128 pr = (unsigned __int128)sj * S_row[j][0];
-                acc += pr;
-                cy += (acc < pr);
+                pos1_mac_cc_(lo, hi, cy, sj, S_row[j][0]);
                 gl64_t nsj;
                 nsj[0] = pos1_muladd_raw_(sj, a, S_row[W - 1 + j][0]);
                 scratchpad[j * blockDim.x + threadIdx.x] = nsj;
             }
-            s0_reg[0] = pos1_reduce160_(cy, (uint64_t)(acc >> 64), (uint64_t)acc);
+            s0_reg[0] = pos1_reduce160_(cy, hi, lo);
         }
         scratchpad[threadIdx.x] = s0_reg;
     }
