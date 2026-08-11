@@ -102,6 +102,11 @@ template custom extern_c CustPoseidon1_16() {
     signal output im[12][16];
     signal output out[16];
 
+    // One-hot encoding of the 2 key bits, declared after out[16] so it lands last in the r1cs
+    // signal list. Exposed so the AIR can read the input-ordering mask as a stored degree-1
+    // value rather than rebuilding the degree-2 products from the key bits.
+    signal output im_m[4];
+
     assert(key[0]*(key[0] - 1) == 0);
     assert(key[1]*(key[1] - 1) == 0);
 
@@ -248,6 +253,12 @@ template custom extern_c CustPoseidon1_16() {
             }
         }
     }
+
+    // One-hot the key so the AIR can read the ordering mask as a stored value.
+    var mm[4];
+    for (var i = 0; i < 4; i++) { mm[i] = 0; }
+    mm[key[0] + 2*key[1]] = 1;
+    im_m <-- mm;
 }
 
 

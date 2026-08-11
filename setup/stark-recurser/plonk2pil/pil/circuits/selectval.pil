@@ -1,3 +1,7 @@
+// SELECTVAL1 GATE - Given 4 values (each a 4-element vector) and a 2-bit key,
+// pick the value whose index equals the key (key[0] = LSB, key[1] = MSB).
+// Mux form: PIL inlines `const expr`, so one constraint per (mask, slot) would give the
+// im-pol search 16 copies of `sel * m_i` to commit instead of 4.
 function selectval1(const expr vals[][], const expr key[], const expr res[], const expr sel) {
 
     const expr key00 = (1 - key[0]) * (1 - key[1]);
@@ -5,26 +9,28 @@ function selectval1(const expr vals[][], const expr key[], const expr res[], con
     const expr key01 = (1 - key[0]) * key[1];
     const expr key11 = key[0] * key[1];
 
-    sel * key00 * (vals[0][0] - res[0]) === 0;
-    sel * key00 * (vals[0][1] - res[1]) === 0;
-    sel * key00 * (vals[0][2] - res[2]) === 0;
-    sel * key00 * (vals[0][3] - res[3]) === 0;
-
-    sel * key10 * (vals[1][0] - res[0]) === 0;
-    sel * key10 * (vals[1][1] - res[1]) === 0;
-    sel * key10 * (vals[1][2] - res[2]) === 0;
-    sel * key10 * (vals[1][3] - res[3]) === 0;
-
-    sel * key01 * (vals[2][0] - res[0]) === 0;
-    sel * key01 * (vals[2][1] - res[1]) === 0;
-    sel * key01 * (vals[2][2] - res[2]) === 0;
-    sel * key01 * (vals[2][3] - res[3]) === 0;
-
-    sel * key11 * (vals[3][0] - res[0]) === 0;
-    sel * key11 * (vals[3][1] - res[1]) === 0;
-    sel * key11 * (vals[3][2] - res[2]) === 0;
-    sel * key11 * (vals[3][3] - res[3]) === 0;
+    for (int j = 0; j < 4; j++) {
+        sel * (((key00 * vals[0][j] + key10 * vals[1][j]) + key01 * vals[2][j]) + key11 * vals[3][j] - res[j]) === 0;
+    }
 
     sel * (key[0]*(1 - key[0])) === 0;
     sel * (key[1]*(1 - key[1])) === 0;
+}
+
+// As above but with the one-hot mask read from the gate's im_m[4] cells: stored it is degree 1,
+// so sel * selection is 3 rather than 4. Binary + sum-to-1 + the two bit-extraction rows force
+// m to be the one-hot of (key[0], key[1]) — index order key[0] + 2*key[1], as in circom.
+function selectval1Mask(const expr vals[][], const expr key[], const expr m[], const expr res[], const expr sel) {
+
+    for (int i = 0; i < 4; i++) {
+        sel * (m[i] * (1 - m[i])) === 0;
+    }
+
+    sel * (((m[0] + m[1]) + m[2]) + m[3] - 1) === 0;
+    sel * ((m[1] + m[3]) - key[0]) === 0;
+    sel * ((m[2] + m[3]) - key[1]) === 0;
+
+    for (int j = 0; j < 4; j++) {
+        sel * (((m[0] * vals[0][j] + m[1] * vals[1][j]) + m[2] * vals[2][j]) + m[3] * vals[3][j] - res[j]) === 0;
+    }
 }

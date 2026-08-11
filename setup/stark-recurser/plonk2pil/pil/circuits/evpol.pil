@@ -23,3 +23,34 @@ function evpol4(const expr coefs[][], const expr x[], const expr res[], const ex
     sel * (acc[4][1] - res[1]) === 0;
     sel * (acc[4][2] - res[2]) === 0;
 }
+
+// One Horner step in Fp3: r = p*x + c. Degree 2 when p and x are degree 1.
+function evpol4Step(const expr p[], const expr x[], const expr c[]): const expr[] {
+    const expr r[3];
+    r[0] = (p[0]*x[0] + p[1]*x[2] + p[2]*x[1]) + c[0];
+    r[1] = (p[0]*x[1] + p[1]*x[0] + p[1]*x[2] + p[2]*x[1] + p[2]*x[2]) + c[1];
+    r[2] = (p[0]*x[2] + p[2]*x[2] + p[2]*x[0] + p[1]*x[1]) + c[2];
+    return r;
+}
+
+// EVPOL4 with the Horner chain broken over three stored triples s[0..2] instead of inlined.
+// Inlined, acc grows a degree per step, so acc[2] onwards must be committed as intermediate
+// polynomials (6 base columns at a degree-3 budget). Pinning each step to a stored cell keeps
+// every constraint at sel * deg 2 = 3 and commits nothing.
+//
+// The stores need no copy constraint — each is pinned by its own equation — so they live
+// outside the S connection band, where they cost neither a fixed column nor a plonk slot.
+function evpol4Stored(const expr coefs[][], const expr x[], const expr s[][], const expr res[], const expr sel) {
+
+    const expr a1[3] = evpol4Step(coefs[0], x, coefs[1]);
+    const expr a2[3] = evpol4Step(s[0], x, coefs[2]);
+    const expr a3[3] = evpol4Step(s[1], x, coefs[3]);
+    const expr a4[3] = evpol4Step(s[2], x, coefs[4]);
+
+    for (int j = 0; j < 3; j++) {
+        sel * (s[0][j] - a1[j]) === 0;
+        sel * (s[1][j] - a2[j]) === 0;
+        sel * (s[2][j] - a3[j]) === 0;
+        sel * (a4[j] - res[j]) === 0;
+    }
+}

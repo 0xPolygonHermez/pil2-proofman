@@ -180,8 +180,14 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     coefs[4] = [a[0], a[1], a[2]];
     const expr x[3] = [a[15], a[16], a[17]];
     const expr resEVPOL[3] = [a[18], a[19], a[20]];
-    evpol4(coefs, x, resEVPOL, EVPOL4);
-   
+    // Horner stores at a[27..35]: pinned by their own equations, so they need no S column and
+    // sit outside the band, leaving this row's plonk slots free.
+    const expr evpolS[3][3];
+    evpolS[0] = [a[27], a[28], a[29]];
+    evpolS[1] = [a[30], a[31], a[32]];
+    evpolS[2] = [a[33], a[34], a[35]];
+    evpol4Stored(coefs, x, evpolS, resEVPOL, EVPOL4);
+
     const expr treevals[4][3];
     treevals[0] = [a[0], a[1], a[2]];
     treevals[1] = [a[3], a[4], a[5]];
@@ -189,7 +195,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     treevals[3] = [a[9], a[10], a[11]];
     const expr key[2] = [a[12], a[13]];
     const expr resTREE[3] = [a[14], a[15], a[16]];
-    treeselector4(treevals, key, resTREE, TREESELECTOR4);
+    const expr treeMasks[4] = [a[27], a[28], a[29], a[30]];
+    treeselector4Mask(treevals, key, treeMasks, resTREE, TREESELECTOR4);
 
     const expr selectvals[4][4];
     selectvals[0] = [a[0], a[1], a[2], a[3]];
@@ -198,7 +205,10 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     selectvals[3] = [a[12], a[13], a[14], a[15]];
     const expr selectvals_key[2] = [a[16], a[17]];
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
-    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+    // Mask read stored (degree 1) so sel * selection stays at 3; pinned locally, so it needs no
+    // S column and sits outside the band at a[27..30].
+    const expr selectvals_m[4] = [a[27], a[28], a[29], a[30]];
+    selectval1Mask(selectvals, selectvals_key, selectvals_m, selected, SELECTVAL1);
 
     const expr A[27];
     for (int i = 0; i < 27; i++) {

@@ -9,6 +9,8 @@ template custom TreeSelector8() {
 
     signal output out[3];
 
+    signal output im_m[8];
+
     var root[3];
 
     assert(keys[0]*(keys[0] - 1) == 0);
@@ -32,6 +34,11 @@ template custom TreeSelector8() {
     } else {
         root = values[7];
     }
+
+    var mm[8];
+    for (var i = 0; i < 8; i++) { mm[i] = 0; }
+    mm[keys[0] + 2*keys[1] + 4*keys[2]] = 1;
+    im_m <-- mm;
 
     out <-- root;
 }

@@ -116,7 +116,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
-        max_constraint_degree: 5,
+        max_constraint_degree: options.max_constraint_degree.unwrap_or(8),
         n_plonk_rows: cgi.n_plonk_rows,
         n_poseidon_compressor: n_poseidon_compression,
         n_poseidon_sponge,
@@ -287,8 +287,15 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── EvPol4 ────────────────────────────────────────────────────────────────
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     for cgu in &ev_pol4_uses {
+        // 30 signals: coefs 15 + x 3 + out 3 + im_acc 9.
+        assert_eq!(cgu.signals.len(), 30);
         for (i, item) in s_map.iter_mut().enumerate().take(21) {
             item[r] = cgu.signals[i] as u32;
+        }
+        // im_acc -> a[27..35]. Each is pinned by its own PIL equation, so it needs no copy
+        // constraint and sits past the S[27] band, leaving the row's plonk slots free.
+        for (i, item) in s_map[27..36].iter_mut().enumerate() {
+            item[r] = cgu.signals[21 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
@@ -333,9 +340,14 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── TreeSelector4 ─────────────────────────────────────────────────────────
     tracing::info!("Processing {} treeSelector4 gates...", tree_sel4_uses.len());
     for cgu in &tree_sel4_uses {
-        assert_eq!(cgu.signals.len(), 17);
+        // 21 signals: values 12 + keys 2 + out 3 + im_m 4.
+        assert_eq!(cgu.signals.len(), 21);
         for (i, item) in s_map.iter_mut().enumerate().take(17) {
             item[r] = cgu.signals[i] as u32;
+        }
+        // im_m -> a[27..30]: pinned by treeselector4Mask, so outside the S[27] band.
+        for (i, item) in s_map[27..31].iter_mut().enumerate() {
+            item[r] = cgu.signals[17 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
@@ -347,9 +359,14 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── SelectVal1 ────────────────────────────────────────────────────────────
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
-        assert_eq!(cgu.signals.len(), 22);
+        // 26 signals: values 16 + key 2 + selected 4 + im_m 4.
+        assert_eq!(cgu.signals.len(), 26);
         for (i, item) in s_map.iter_mut().enumerate().take(22) {
             item[r] = cgu.signals[i] as u32;
+        }
+        // im_m -> a[27..30]: pinned by selectval1Mask, so outside the S[27] band.
+        for (i, item) in s_map[27..31].iter_mut().enumerate() {
+            item[r] = cgu.signals[22 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;

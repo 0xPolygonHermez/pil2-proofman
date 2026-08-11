@@ -79,6 +79,43 @@ pub enum RecursiveTemplate {
     Recursive2,
 }
 
+/// Blowup factor per template — the two halves pay for the degree budget differently.
+///
+/// Recursive1/2 take blowup 3, where the degree-8 pow7 full-round check fits whole and they need
+/// zero intermediate polynomials: the tree is self-recursive, so a smaller verifier compounds.
+/// The compressor goes to blowup 1 for the smallest LDE volume instead, since its verifier cost
+/// is paid once by recursive1. That only pays off with the stored one-hot masks in place
+/// (SelectVal1 / TreeSelector8 / Poseidon INIT ordering / evpol4 Horner).
+pub fn recursive_blowup_factor(template: RecursiveTemplate) -> usize {
+    match template {
+        RecursiveTemplate::Compressor => 1,
+        RecursiveTemplate::Recursive1 | RecursiveTemplate::Recursive2 => 3,
+    }
+}
+
+/// Grinding bits per template. Recursive1/2 leave it unset to follow the Goldilocks default
+/// (`generate_stark_struct` uses 20); the compressor grinds more to offset its rate-1/2 queries.
+pub fn recursive_pow_bits(template: RecursiveTemplate, n_bits: usize) -> Option<usize> {
+    match template {
+        // Scaled by the compressor's own size. recursive1 spends ~620 rows verifying one
+        // compressor query and a grinding bit buys 2 queries, so ~1,240 rows per bit. A
+        // compressor one power of two larger opens deeper Merkle paths, so the same query
+        // count costs more and has to be ground down to stay inside the shared 2^17 domain.
+        // Measured on ZisK: 2^18 compressors leave ~7,400 rows spare at 22 and 2^19 ~3,500,
+        // while a 2^20 compressor is 1,361 over at 23 and fits at 25 with ~1,100 spare.
+        RecursiveTemplate::Compressor => Some(if n_bits >= 20 { 25 } else { 22 }),
+        RecursiveTemplate::Recursive1 | RecursiveTemplate::Recursive2 => None,
+    }
+}
+
+/// Highest constraint degree a prover at `blowup` can absorb without committing
+/// intermediate polynomials: `2^blowup + 1`. Capped at 8 — beyond that the
+/// std-lib batching produces expressions whose evaluation cost outweighs the
+/// columns saved.
+pub fn max_constraint_degree_for_blowup(blowup: usize) -> usize {
+    ((1usize << blowup) + 1).min(8)
+}
+
 impl RecursiveTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -242,15 +279,15 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
         _ => airgroup_pil_name.clone(),
     };
-    let mut plonk_opts = PlonkOptions {
+    // The PIL is compiled with the SAME degree bound the prover can actually absorb
+    // (2^blowup + 1), so the std-lib batching doesn't emit degree-N blocks that
+    // calculate_intermediate_polynomials then has to re-split into extra committed cols.
+    let plonk_opts = PlonkOptions {
         airgroup_name: Some(plonk_airgroup_name),
-        max_constraint_degree: None,
+        max_constraint_degree: Some(max_constraint_degree_for_blowup(recursive_blowup_factor(template))),
         hash_id: config.hash.to_string(),
         merge_copies: true,
     };
-    if template == RecursiveTemplate::Compressor {
-        plonk_opts.max_constraint_degree = Some(5);
-    }
     let type_compressor = match template {
         RecursiveTemplate::Compressor => "compressor",
         _ => "aggregation",
@@ -568,12 +605,11 @@ pub fn gen_recursive_setup(
 
             // Generate stark struct for this recursive circuit.
             let make_recursive_settings = || {
-                let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
                 crate::types::stark_struct::StarkSettings {
-                    blowup_factor: Some(blowup),
+                    blowup_factor: Some(recursive_blowup_factor(template)),
                     folding_factor: Some(3),
                     final_degree: Some(5),
-                    last_level_verification: None,
+                    pow_bits: recursive_pow_bits(template, n_bits_air),
                     ..Default::default()
                 }
             };
@@ -1024,4 +1060,67 @@ pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path:
         }
     }
     format!("node_modules/{package}/{sub_path}")
+}
+
+#[cfg(test)]
+mod degree_tests {
+    use super::*;
+
+    #[test]
+    fn pil_degree_matches_the_prover_budget() {
+        // The prover's budget is `2^blowup + 1` (pil/info.rs: 1 << (nBitsExt - nBits) + 1).
+        for blowup in 1..=3 {
+            let prover_budget = (1usize << blowup) + 1;
+            assert_eq!(max_constraint_degree_for_blowup(blowup), prover_budget.min(8), "blowup {blowup}");
+        }
+        assert_eq!(max_constraint_degree_for_blowup(1), 3);
+        assert_eq!(max_constraint_degree_for_blowup(2), 5);
+        assert_eq!(max_constraint_degree_for_blowup(3), 8, "2^3+1 = 9, capped at 8");
+        assert_eq!(max_constraint_degree_for_blowup(4), 8, "2^4+1 = 17, capped at 8");
+        assert_eq!(max_constraint_degree_for_blowup(6), 8, "2^6+1 = 65, capped at 8");
+    }
+
+    #[test]
+    fn each_template_gets_a_degree_matching_its_own_blowup() {
+        let cases = [
+            // (template, blowup, set_max_constraint_degree). Recursive uses blowup 3, whose
+            // budget 2^3+1 = 9 is capped to 8; the compressor stays at 2 -> 5.
+            (RecursiveTemplate::Compressor, 1, 3),
+            (RecursiveTemplate::Recursive1, 3, 8),
+            (RecursiveTemplate::Recursive2, 3, 8),
+        ];
+        for (template, blowup, degree) in cases {
+            assert_eq!(recursive_blowup_factor(template), blowup, "{template:?} blowup");
+            assert_eq!(
+                max_constraint_degree_for_blowup(recursive_blowup_factor(template)),
+                degree,
+                "{template:?} set_max_constraint_degree"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_compressor_pins_pow_bits() {
+        // None means "follow generate_stark_struct's Goldilocks default", which is 20.
+        assert_eq!(recursive_pow_bits(RecursiveTemplate::Compressor, 18), Some(22));
+        assert_eq!(recursive_pow_bits(RecursiveTemplate::Compressor, 19), Some(22));
+        assert_eq!(recursive_pow_bits(RecursiveTemplate::Compressor, 20), Some(25));
+        assert_eq!(recursive_pow_bits(RecursiveTemplate::Recursive1, 17), None);
+        assert_eq!(recursive_pow_bits(RecursiveTemplate::Recursive2, 17), None);
+
+        let gl_default = 20;
+        let settings = crate::types::stark_struct::StarkSettings {
+            blowup_factor: Some(recursive_blowup_factor(RecursiveTemplate::Recursive2)),
+            pow_bits: recursive_pow_bits(RecursiveTemplate::Recursive2, 17),
+            ..Default::default()
+        };
+        assert_eq!(crate::types::stark_struct::generate_stark_struct(&settings, 17).pow_bits, gl_default);
+
+        let comp = crate::types::stark_struct::StarkSettings {
+            blowup_factor: Some(recursive_blowup_factor(RecursiveTemplate::Compressor)),
+            pow_bits: recursive_pow_bits(RecursiveTemplate::Compressor, 18),
+            ..Default::default()
+        };
+        assert_eq!(crate::types::stark_struct::generate_stark_struct(&comp, 18).pow_bits, 22);
+    }
 }

@@ -151,6 +151,37 @@ function poseidonPartialChainGl(const int rounds, const int sRoundOffset, const 
 //
 // Degrees: mask = degree 2 (product of 2 key bits); permuted = degree 3; constraint
 // = SEL * (R0 - permuted) = degree 4. Comfortably under max=8.
+// Same permutation as poseidon1InputOrderGl below, but reading the one-hot mask from the gate's
+// im_m[4] cells: stored it is degree 1, so each permuted[i] is degree 2 and the ordering
+// constraint fits a degree-3 budget. Binary + sum-to-1 + the two bit-extraction rows force m to
+// be the one-hot of (key[0], key[1]) — index order key[0] + 2*key[1], as in circom.
+function poseidon1InputOrderMaskGl(const expr a[], const expr key[], const expr m[], const expr R0[], const expr SEL_COMPRESSION, const expr SEL_SPONGE) {
+    for (int j = 0; j < 4; j++) {
+        SEL_COMPRESSION * (m[j] * (1 - m[j])) === 0;
+    }
+    SEL_COMPRESSION * (((m[0] + m[1]) + m[2]) + m[3] - 1) === 0;
+    SEL_COMPRESSION * ((m[1] + m[3]) - key[0]) === 0;
+    SEL_COMPRESSION * ((m[2] + m[3]) - key[1]) === 0;
+
+    const expr permuted[POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        if (i < 4) {
+            permuted[i] = m[0] * a[i] + ((m[1] + m[2]) + m[3]) * a[i + 4];
+        } else if (i < 8) {
+            permuted[i] = m[0] * a[i] + m[1] * a[i - 4] + (m[2] + m[3]) * a[i + 4];
+        } else if (i < 12) {
+            permuted[i] = (m[0] + m[1]) * a[i] + m[2] * a[i - 8] + m[3] * a[i + 4];
+        } else {
+            permuted[i] = ((m[0] + m[1]) + m[2]) * a[i] + m[3] * a[i - 12];
+        }
+    }
+
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        SEL_COMPRESSION * (R0[i] - permuted[i]) === 0;
+        SEL_SPONGE      * (R0[i] - a[i]) === 0;
+    }
+}
+
 function poseidon1InputOrderGl(const expr a[], const expr key[], const expr R0[], const expr SEL_COMPRESSION, const expr SEL_SPONGE) {
     // Binary key bits (COMPRESSION only — SPONGE has key cells zero by Rust packer convention).
     SEL_COMPRESSION * key[0] * (key[0] - 1) === 0;

@@ -38,7 +38,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let n_poseidon_rows = n_total_poseidon * POSEIDON_ROWS;
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
-    let n_tree_sel8_rows = 2 * cgi.n(GateRole::TreeSelector); // 2 rows per gate (27/3 split)
+    let n_tree_sel8_rows = 2 * cgi.n(GateRole::TreeSelector); // 2 rows per gate
     let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
     // Per-gate row tiers for plonk piggyback. Band cells a[0..26] host 9 gates
@@ -55,7 +55,9 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // TreeSelector8 spans 2 rows (a[0..26] + a[0..2]') — no piggyback at TreeSel rows.
     let eight_count = n_total_poseidon * 7; // R1, R2, R3/PR', R4, R26, R27, R28
     let six_count = n_total_poseidon; // PR row (gates 0..5 only)
-    let two_if_count = n_total_poseidon * 2; // INIT + FINAL rows (q1 gates 6,7)
+    // FINAL always offers q1 gates 6,7; INIT only for sponge gates (compression INIT holds
+    // the im_m[4] mask at a[18..21]).
+    let two_if_count = n_total_poseidon + n_poseidon1_sponge;
     let ev_count = n_ev_pol4_rows; // EvPol4: q1 gates 7,8
     let one_count = n_sel_val1_rows; // SelectVal1: q1 gate 8
 
@@ -121,7 +123,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
-        max_constraint_degree: 5,
+        max_constraint_degree: options.max_constraint_degree.unwrap_or(8),
         n_plonk_rows: cgi.n_plonk_rows,
         n_poseidon1_compression,
         n_poseidon1_sponge,
@@ -190,7 +192,9 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
                              two_if_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
-        let expected = POSEIDON_WIDTH + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        // CustPoseidon1_16 also emits im_m[4] (one-hot key), declared last. Sponge has no key.
+        let mask_off = if is_compression { 4 } else { 0 };
+        let expected = POSEIDON_WIDTH + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH + mask_off;
         assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
 
         let input = &s[0..POSEIDON_WIDTH];
@@ -246,6 +250,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         if let Some(k) = key {
             s_map[16][r] = k[0] as u32;
             s_map[17][r] = k[1] as u32;
+            // im_m[4] at INIT a[18..21]; claiming these drops plonk gates 6,7 from INIT rows.
+            let mask = &s[s.len() - 4..];
+            for i in 0..4 {
+                s_map[i + 18][r] = mask[i] as u32;
+            }
         }
 
         for off in 0..POSEIDON_ROWS {
@@ -257,7 +266,10 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         // Plonk piggyback queues. R1,R2,PR',R4,R26,R27,R28 fire gates 0..7 → eight tier
         // (gate 8 = a[24..26] holds chain). PR fires gates 0..5 only → six tier. INIT and
         // FINAL each pick up q1 gates 6,7 (gate 8 = chain) → two_if tier.
-        two_if_extra.push(r); // INIT row (a[18..23] freed by moving anchors to PR)
+        // Compression INIT has no plonk slot (a[18..21] = im_m[4]); sponge INIT has no mask.
+        if !is_compression {
+            two_if_extra.push(r);
+        }
         eight_extra.push(r + 1); // R1
         eight_extra.push(r + 2); // R2
         eight_extra.push(r + 3); // R3 / PR'
@@ -334,8 +346,14 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── EvPol4 ────────────────────────────────────────────────────────────────
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     for cgu in &ev_pol4_uses {
+        // 30 signals: coefs 15 + x 3 + out 3 + im_acc 9.
+        assert_eq!(cgu.signals.len(), 30);
         for (i, item) in s_map.iter_mut().enumerate().take(21) {
             item[r] = cgu.signals[i] as u32;
+        }
+        // im_acc -> a[27..35]: pinned by evpol4Stored, so outside S and gates 7,8 stay free.
+        for (i, item) in s_map[27..36].iter_mut().enumerate() {
+            item[r] = cgu.signals[21 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
@@ -378,19 +396,21 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     }
 
     // ── TreeSelector8 (2 rows) ──────────────────────────────────────────────────
-    // TreeSelector8 signal layout: values[8][3] + keys[3] + out[3] = 30 signals.
-    // Split at the connection-band width N_COLS so every signal stays inside S: the
-    // first N_COLS signals on row r (a[0..N_COLS-1]), the remaining TREE_SEL8_SIGNALS -
-    // N_COLS on row r+1 (a[0..]'). No plonk piggyback at TreeSel rows.
-    const TREE_SEL8_SIGNALS: usize = 30;
+    // TreeSelector8 signal layout: values[8][3] + keys[3] + out[3] + m[8] = 38 signals.
+    // Row r: values 24 + keys 3 -> a[0..26] (inside S), im_m 8 -> a[27..34] (outside S, pinned
+    // by treeselector8Mask). Row r+1: out 3 -> a[0..2]'. No plonk piggyback at TreeSel rows.
+    const TREE_SEL8_SIGNALS: usize = 38;
     tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
     for cgu in &tree_sel8_uses {
         assert_eq!(cgu.signals.len(), TREE_SEL8_SIGNALS);
         for (i, item) in s_map.iter_mut().enumerate().take(N_COLS) {
             item[r] = cgu.signals[i] as u32;
         }
-        for (i, item) in s_map.iter_mut().enumerate().take(TREE_SEL8_SIGNALS - N_COLS) {
-            item[r + 1] = cgu.signals[N_COLS + i] as u32;
+        for (i, item) in s_map[27..35].iter_mut().enumerate() {
+            item[r] = cgu.signals[30 + i] as u32;
+        }
+        for (i, item) in s_map.iter_mut().enumerate().take(3) {
+            item[r + 1] = cgu.signals[27 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
@@ -402,9 +422,14 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── SelectVal1 ────────────────────────────────────────────────────────────
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
-        assert_eq!(cgu.signals.len(), 22);
+        // 26 signals: values 16 + key 2 + selected 4 + im_m 4.
+        assert_eq!(cgu.signals.len(), 26);
         for (i, item) in s_map.iter_mut().enumerate().take(22) {
             item[r] = cgu.signals[i] as u32;
+        }
+        // im_m -> a[27..30]: pinned by selectval1Mask, so outside the S[27] band (keeps gate 8).
+        for (i, item) in s_map[27..31].iter_mut().enumerate() {
+            item[r] = cgu.signals[22 + i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;

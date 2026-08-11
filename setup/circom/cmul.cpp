@@ -34,7 +34,9 @@ void CMulAdd(Goldilocks::Element *out, Goldilocks::Element *a, Goldilocks::Eleme
     out[2] = B - G + c[2];
 }
 
-void EvPol4(uint64_t* out, uint *size_out, uint64_t *coefs, uint* size_coefs, uint64_t *x, uint *size_x)
+// im_acc receives the three partial Horner accumulators; the PIL pins one constraint to each
+// so the chain stays inside a degree-3 budget without committing intermediate polynomials.
+void EvPol4(uint64_t* out, uint *size_out, uint64_t* im_acc, uint* size_im_acc, uint64_t *coefs, uint* size_coefs, uint64_t *x, uint *size_x)
 {
     Goldilocks::Element coefs_[5][3];
     uint64_t c = 0;
@@ -47,8 +49,11 @@ void EvPol4(uint64_t* out, uint *size_out, uint64_t *coefs, uint* size_coefs, ui
     Goldilocks::Element *x_ = (Goldilocks::Element *)x;
     Goldilocks::Element acc[3];
     CMulAdd(acc, coefs_[4], x_, coefs_[3]);
+    for(uint64_t j = 0; j < 3; ++j) im_acc[j] = Goldilocks::toU64(acc[j]);
     CMulAdd(acc, acc, x_, coefs_[2]);
+    for(uint64_t j = 0; j < 3; ++j) im_acc[3 + j] = Goldilocks::toU64(acc[j]);
     CMulAdd(acc, acc, x_, coefs_[1]);
+    for(uint64_t j = 0; j < 3; ++j) im_acc[6 + j] = Goldilocks::toU64(acc[j]);
     CMulAdd(acc, acc, x_, coefs_[0]);
     out[0] = Goldilocks::toU64(acc[0]);
     out[1] = Goldilocks::toU64(acc[1]);

@@ -26,7 +26,11 @@ use crate::io::fixed_cols;
 use stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
 };
-use crate::proving_key::recursive::compile_pil;
+use crate::proving_key::recursive::{compile_pil, max_constraint_degree_for_blowup};
+
+/// Blowup factor for the compressed-final AIR. Drives both the STARK struct and
+/// the degree bound the PIL is compiled with — keep them derived from this one value.
+const COMPRESSED_FINAL_BLOWUP: usize = 4;
 use crate::output::witness_gen::WitnessTracker;
 
 /// Configuration for the compressed final setup.
@@ -155,7 +159,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("VadcopFinalCompressed".to_string()),
-        max_constraint_degree: None,
+        max_constraint_degree: Some(max_constraint_degree_for_blowup(COMPRESSED_FINAL_BLOWUP)),
         hash_id: config.hash.to_string(),
         merge_copies: true,
     };
@@ -200,7 +204,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Compressed final stark struct settings
     let compressed_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
+        blowup_factor: Some(COMPRESSED_FINAL_BLOWUP),
         folding_factor: Some(3),
         pow_bits: Some(22),
         merkle_tree_arity: Some(2),

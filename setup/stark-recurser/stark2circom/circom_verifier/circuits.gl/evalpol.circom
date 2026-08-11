@@ -26,15 +26,22 @@ function CMulAddF(ina, inb, inc) {
 template custom extern_c EvPol4() {
     signal input coefs[5][3]; // Coeficients in the extended field
     signal input x[3]; // Point at which we are evaluating the polynomial
-    signal output out[3]; 
+    signal output out[3];
+
+    // The three partial Horner accumulators. The PIL pins each step to one of these cells so
+    // the chain never exceeds degree 2 per constraint; inlined it would have to commit
+    // intermediate polynomials instead.
+    signal output im_acc[3][3];
 
     // Apply Horner's rule to calculate the evaluation of the polynomial at point x
-    var acc[3] = coefs[4];
-    acc = CMulAddF(acc, x, coefs[3]);
-    acc = CMulAddF(acc, x, coefs[2]);
-    acc = CMulAddF(acc, x, coefs[1]);
-    acc = CMulAddF(acc, x, coefs[0]);
-    out <-- acc;
+    var a1[3] = CMulAddF(coefs[4], x, coefs[3]);
+    var a2[3] = CMulAddF(a1, x, coefs[2]);
+    var a3[3] = CMulAddF(a2, x, coefs[1]);
+    var a4[3] = CMulAddF(a3, x, coefs[0]);
+    im_acc[0] <-- a1;
+    im_acc[1] <-- a2;
+    im_acc[2] <-- a3;
+    out <-- a4;
 }
 
 /*

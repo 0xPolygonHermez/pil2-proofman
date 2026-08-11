@@ -47,6 +47,13 @@ template custom SelectValue1() {
     signal input key[2];
     signal output selected_value[4];
 
+    signal output im_m[4];
+
     var index = (key[0] + key[1]*2);
     selected_value <-- values[index];
+
+    var mm[4];
+    for (var i = 0; i < 4; i++) { mm[i] = 0; }
+    mm[index] = 1;
+    im_m <-- mm;
 }

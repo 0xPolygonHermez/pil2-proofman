@@ -43,30 +43,43 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     const int nPoseidonRows = 10 * nPoseidon1;
 
     // Three Poseidon1 fixed cols — all inner row positions derived via primes.
-    //   COMPRESSION fires at row 0 of each CustPoseidon1 gate.
-    //   SPONGE      fires at row 0 of each regular Poseidon1 gate.
-    //   FINAL       fires at row 9 of every Poseidon1 gate.
-    col fixed POSEIDON1_COMPRESSION = [[1,0:9]:nPoseidon1Compression, [0:10]:nPoseidon1Sponge, 0...];
-    col fixed POSEIDON1_SPONGE      = [[0:10]:nPoseidon1Compression, [1,0:9]:nPoseidon1Sponge, 0...];
-    col fixed POSEIDON1_FINAL       = [[0:9,1]:nPoseidon1Compression, [0:9,1]:nPoseidon1Sponge, 0...];
+    //   COMPRESSION fires at row 2 of each CustPoseidon1 gate.
+    //   SPONGE      fires at row 2 of each regular Poseidon1 gate.
+    //   MID         fires at row 7 of every Poseidon1 gate.
+    col fixed POSEIDON1_COMPRESSION = [[0:2,1,0:7]:nPoseidon1Compression, [0:10]:nPoseidon1Sponge, 0...];
+    col fixed POSEIDON1_SPONGE      = [[0:10]:nPoseidon1Compression, [0:2,1,0:7]:nPoseidon1Sponge, 0...];
+    // MID fires at row 7 of every Poseidon1 gate. Anchoring the second half here instead of
+    // at row 9 keeps every selector within 4 rows, so the opening window is {-4..0} rather
+    // than {-5..+3} — same column count, 4 fewer opening points (each costs a CInv/query).
+    col fixed POSEIDON1_MID         = [[0:7,1,0:2]:nPoseidon1Compression, [0:7,1,0:2]:nPoseidon1Sponge, 0...];
 
     // Row selectors via primes.
     // Prefix `'X` shifts BACKWARD (X at row r-1); postfix `X'` shifts FORWARD.
-    //   R0..PR look back from rows 0..5 to where INIT fires (row 0).
-    //   R26..R29 look forward from rows 6..9 to where FINAL fires (row 9).
+    //   Rows 0..4 reach the row-2 INIT anchor; rows 5..9 reach the row-7 MID anchor.
     // R4 IS now stored as a witness (row 4) — the round-3 P-matrix transition writes it
     // to the next-row chain slot like any full round, and the partial chain reads it
     // directly (no dedicated preMatP / prefix-primed fullRoundP).
     const expr POSEIDON1_INIT     = POSEIDON1_COMPRESSION + POSEIDON1_SPONGE;
-    const expr POSEIDON1_R0       = POSEIDON1_INIT;                  // row 0
-    const expr POSEIDON1_R1       = 'POSEIDON1_INIT;                 // row 1
-    const expr POSEIDON1_R2       = (2)'POSEIDON1_INIT;              // row 2
-    const expr POSEIDON1_PR_PRIME = (3)'POSEIDON1_INIT;              // row 3 (R3 row, round-3 P-matrix -> R4)
-    const expr POSEIDON1_R4       = (4)'POSEIDON1_INIT;              // row 4 (stored R4)
-    const expr POSEIDON1_PR       = (5)'POSEIDON1_INIT;              // row 5 (single 22-round partial chain)
-    const expr POSEIDON1_R26      = POSEIDON1_FINAL'(3);             // row 6
-    const expr POSEIDON1_R27      = POSEIDON1_FINAL'(2);             // row 7
-    const expr POSEIDON1_R28      = POSEIDON1_FINAL';                // row 8
+    // Anchors CENTERED in each half (rows 2 and 7) and reached with forward *and* backward
+    // shifts, so no selector moves more than 2 rows: window {-2..+2} instead of {-4..0}.
+    // COMPRESSION/SPONGE anchor at row 2, so "row 0 of the gate" is a forward shift of 2. The
+    // input, key, im_m and R0 all live on row 0 (see the row map below), so they need these.
+    const expr POSEIDON1_R0_COMPRESSION = POSEIDON1_COMPRESSION'(2);
+    const expr POSEIDON1_R0_SPONGE      = POSEIDON1_SPONGE'(2);
+    // Shifts are applied to the fixed COLUMNS, never to the shared POSEIDON1_INIT alias:
+    // priming a const expr that is also used unprimed elsewhere does not propagate the shift,
+    // so `'POSEIDON1_INIT` silently collapses back to POSEIDON1_INIT (row 2). Same reason the
+    // aggregator writes these out per column.
+    const expr POSEIDON1_R0       = POSEIDON1_COMPRESSION'(2) + POSEIDON1_SPONGE'(2);   // row 0
+    const expr POSEIDON1_R1       = POSEIDON1_COMPRESSION' + POSEIDON1_SPONGE';         // row 1
+    const expr POSEIDON1_R2       = POSEIDON1_COMPRESSION + POSEIDON1_SPONGE;           // row 2
+    const expr POSEIDON1_PR_PRIME = 'POSEIDON1_COMPRESSION + 'POSEIDON1_SPONGE;         // row 3
+    const expr POSEIDON1_R4       = (2)'POSEIDON1_COMPRESSION + (2)'POSEIDON1_SPONGE;   // row 4
+    const expr POSEIDON1_PR       = POSEIDON1_MID'(2);               // row 5 (single 22-round partial chain)
+    const expr POSEIDON1_FINAL    = (2)'POSEIDON1_MID;               // row 9
+    const expr POSEIDON1_R26      = POSEIDON1_MID';                  // row 6
+    const expr POSEIDON1_R27      = POSEIDON1_MID;                   // row 7
+    const expr POSEIDON1_R28      = 'POSEIDON1_MID;                  // row 8
     const expr POSEIDON1_R29      = POSEIDON1_FINAL;                 // row 9
 
     col fixed CMUL          = [0:nPoseidonRows,                                                                       1:nCMulRows,   0...];
@@ -102,8 +115,9 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     plonk([a[9], a[10], a[11]], q0, CHECK_PLONK);
     plonk([a[12], a[13], a[14]], q0, CHECK_PLONK);
     plonk([a[15], a[16], a[17]], q0, CHECK_PLONK);
-    plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT);
-    plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4);
+    // Gates 6,7 skip COMPRESSION INIT: a[18..21] holds im_m[4] there.
+    plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_R0_SPONGE);
+    plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_R0_SPONGE + EVPOL4);
     // Gate 8 (a[24..26]) now overlaps the chain slot a[24..39], so it must NOT fire on any
     // Poseidon row (chain state lives there). It survives only on rows where a[24..26] is
     // free: pure-plonk, EvPol4 (uses a[0..20]) and SelectVal1 (uses a[0..21]).
@@ -122,7 +136,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr pow7Input[POSEIDON_WIDTH_GL];
     const expr pow7Shared[POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        pow7Input[i] = a[i + firstColP] + POSEIDON1_INIT * POSEIDON_C_GL[i];  // INIT pre-ARC (round 0)
+        pow7Input[i] = a[i + firstColP] + POSEIDON1_R0 * POSEIDON_C_GL[i];  // round-0 pre-ARC
     }
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
         pow7Shared[i] = pow7(pow7Input[i]);
@@ -166,7 +180,9 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
         inputCells[i] = a[i];
         R0Cells[i]    = a[i + firstColP];
     }
-    poseidon1InputOrderGl(inputCells, [a[16], a[17]], R0Cells, POSEIDON1_COMPRESSION, POSEIDON1_SPONGE);
+    // im_m[4] at a[18..21] on the COMPRESSION INIT row; stored keeps permuted[i] at degree 2.
+    const expr initMasks[4] = [a[18], a[19], a[20], a[21]];
+    poseidon1InputOrderMaskGl(inputCells, [a[16], a[17]], initMasks, R0Cells, POSEIDON1_R0_COMPRESSION, POSEIDON1_R0_SPONGE);
 
     // Full-round check for the plain full rounds R0,R1,R2,R26,R27,R28 and FINAL.
     const expr fullRound[POSEIDON_WIDTH_GL] = poseidonFullRoundGl(preMat);
@@ -241,11 +257,15 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     coefs[4] = [a[0], a[1], a[2]];
     const expr x[3] = [a[15], a[16], a[17]];
     const expr resEVPOL[3] = [a[18], a[19], a[20]];
-    evpol4(coefs, x, resEVPOL, EVPOL4);
+    // Outside the band: each pinned by its own Horner equation, so gates 7,8 stay free here.
+    const expr evpolS[3][3];
+    evpolS[0] = [a[27], a[28], a[29]];
+    evpolS[1] = [a[30], a[31], a[32]];
+    evpolS[2] = [a[33], a[34], a[35]];
+    evpol4Stored(coefs, x, evpolS, resEVPOL, EVPOL4);
 
-    // TreeSelector8 (30 signals) split across 2 rows to stay inside the S[27] band:
-    //   row 0 (a[0..26]): treevals[0..7] (24) + key[3]
-    //   row 1 (a[0..2]'): res[3]
+    // TreeSelector8 (38 signals) over 2 rows: row 0 = treevals[24] + key[3] @a[0..26] and
+    // im_m[8] @a[27..34]; row 1 = res[3] @a[0..2]'.
     const expr treevals[8][3];
     treevals[0] = [a[0],  a[1],  a[2]];
     treevals[1] = [a[3],  a[4],  a[5]];
@@ -257,7 +277,10 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     treevals[7] = [a[21], a[22], a[23]];
     const expr key[3] = [a[24], a[25], a[26]];
     const expr resTREE[3] = [a[0]', a[1]', a[2]'];
-    treeselector8(treevals, key, resTREE, TREESELECTOR8);
+    // Mask outside the S[27] band: pinned by treeselector8Mask so it needs no copy constraint,
+    // and these columns are already opened at offset 0 by the chain, so it costs no new eval.
+    const expr treeMasks[8] = [a[27], a[28], a[29], a[30], a[31], a[32], a[33], a[34]];
+    treeselector8Mask(treevals, key, treeMasks, resTREE, TREESELECTOR8);
 
     const expr selectvals[4][4];
     selectvals[0] = [a[0], a[1], a[2], a[3]];
@@ -266,7 +289,9 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     selectvals[3] = [a[12], a[13], a[14], a[15]];
     const expr selectvals_key[2] = [a[16], a[17]];
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
-    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+    // Outside the band: pinned by selectval1Mask, so no copy constraint needed.
+    const expr selectvals_m[4] = [a[27], a[28], a[29], a[30]];
+    selectval1Mask(selectvals, selectvals_key, selectvals_m, selected, SELECTVAL1);
 
     const expr A[27];
     for (int i = 0; i < 27; i++) {

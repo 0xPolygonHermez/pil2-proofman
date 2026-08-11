@@ -35,6 +35,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let n_poseidon1_compression = cgi.n(GateRole::PoseidonCompression);
     let n_poseidon1_sponge = cgi.n(GateRole::PoseidonSponge);
     let n_total_poseidon = n_poseidon1_compression + n_poseidon1_sponge;
+    // One cmul rides each PR row at a[0..8] — the cells that used to donate plonk gates 0..2.
+    // A recursive1 has far more Poseidon gates than cmuls, so this drains the cmul rows.
     let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW);
     let n_poseidon_rows = n_total_poseidon * POSEIDON_ROWS;
     let n_fft4_rows = cgi.n(GateRole::Fft4);
@@ -188,7 +190,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                              three_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
-        let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        // CustPoseidon1_16 also emits im_m[4] (the one-hot encoding of its key bits) after
+        // out[16]. This AIR proves at a degree budget where the derived mask already fits, so
+        // it accepts the signals but leaves them unplaced — only the compressor reads them.
+        let mask_off = if is_compression { 4 } else { 0 };
+        let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH + mask_off;
         assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
 
         let input = &s[0..POSEIDON_WIDTH];
@@ -293,6 +299,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // ── CMul (2/row) ──────────────────────────────────────────────────────────
     // 2 cmuls per row on a[0..8], a[9..17]; a[18..23] free → plonk gates 6,7 (cmul_extra).
     tracing::info!("Processing {} cmul gates...", cmul_uses.len());
+    // Drain the PR rows first: one cmul each at a[0..8]. cv is left as the Poseidon placement
+    // set it — the cmul gate carries no C[] coefficients.
     let mut cmul_row: i64 = -1;
     let mut cmul_used = 0usize;
     for cgu in &cmul_uses {
@@ -326,6 +334,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // EvPol4 uses a[0..20]; a[21..23] free → plonk gate 7 (ev_extra).
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     for cgu in &ev_pol4_uses {
+        // 30 signals: coefs 15 + x 3 + out 3 + im_acc 9. Only the 21 used here are placed —
+        // im_acc is pinned by evpol4Stored, which only the compressor uses.
+        assert_eq!(cgu.signals.len(), 30);
         for (i, item) in s_map.iter_mut().enumerate().take(21) {
             item[r] = cgu.signals[i] as u32;
         }
@@ -370,12 +381,14 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     }
 
     // ── TreeSelector8 (2 rows) ──────────────────────────────────────────────────
-    // 30 signals split 24 + 6: the 8 vals[8][3] (signals 0..23) on the gate row a[0..23];
-    // key[3]+res[3] (signals 24..29) on the next row a[0..5]. Packing the gate row full
-    // minimizes the copy openings leaking to the second row. No plonk piggyback.
+    // The gate emits 38 signals: vals[8][3] + keys[3] + out[3] + im_m[8]. This AIR proves at
+    // blowup 3 (maxDeg 9), where the 3-bit-derived masks already fit, so it places only the
+    // 30 signals it uses and leaves im_m[8] unplaced — those appear in no plonk constraint,
+    // so nothing depends on them here. Split 24 + 6: vals on the gate row a[0..23];
+    // key[3]+res[3] on the next row a[0..5]. Only the compressor reads im_m.
     tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
     for cgu in &tree_sel8_uses {
-        assert_eq!(cgu.signals.len(), 30);
+        assert_eq!(cgu.signals.len(), 38);
         for (i, item) in s_map.iter_mut().enumerate().take(24) {
             item[r] = cgu.signals[i] as u32; // vals → a[0..23] @ row r
         }
@@ -393,7 +406,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // Uses a[0..21]; only a[22..23] free (not a full 3-cell gate) → no plonk piggyback.
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
-        assert_eq!(cgu.signals.len(), 22);
+        // 26 signals now (values 16 + key 2 + selected 4 + im_m 4); the aggregator proves at a
+        // degree-8 budget, so it derives the mask and only the 22 used are placed.
+        assert_eq!(cgu.signals.len(), 26);
         for (i, item) in s_map.iter_mut().enumerate().take(22) {
             item[r] = cgu.signals[i] as u32;
         }

@@ -10,7 +10,11 @@ use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_p
 
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
 use stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
-use crate::proving_key::{bctree, recursive::compile_pil};
+use crate::proving_key::{bctree, recursive::compile_pil, recursive::max_constraint_degree_for_blowup};
+
+/// Blowup factor for the BN128 snark AIR. Drives both the STARK struct and the
+/// degree bound the PIL is compiled with — keep them derived from this one value.
+const SNARK_BLOWUP: usize = 6;
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use pilout::pilout_proxy::PilOutProxy;
@@ -162,7 +166,7 @@ pub fn gen_snark_setup(
         fs::read(&r1cs_rf).with_context(|| format!("Failed to read recursivef.r1cs: {}", r1cs_rf.display()))?;
     let plonk_opts_rf = PlonkOptions {
         airgroup_name: Some("Recursivef".to_string()),
-        max_constraint_degree: None,
+        max_constraint_degree: Some(max_constraint_degree_for_blowup(SNARK_BLOWUP)),
         hash_id: config.hash.to_string(),
         merge_copies: true,
     };
@@ -212,7 +216,7 @@ pub fn gen_snark_setup(
     // BN128 stark struct settings (matches JS: blowupFactor=6, powBits=17, arity=4).
     let bn128_settings = StarkSettings {
         verification_hash_type: Some("BN128".to_string()),
-        blowup_factor: Some(6),
+        blowup_factor: Some(SNARK_BLOWUP),
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
         // Diverges from JS (which never implemented lastLevelVerification for

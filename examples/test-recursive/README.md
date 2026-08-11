@@ -76,7 +76,7 @@ picks up the correct hash family automatically:
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
 && cargo run --bin proofman-setup -- setup-recursive-test \
-     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation \
+     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t compressor \
      --hash Poseidon1 \
 && cargo build --workspace \
 && cargo run --bin proofman-cli verify-constraints \

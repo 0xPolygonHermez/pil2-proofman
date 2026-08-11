@@ -349,8 +349,25 @@ void Poseidon1_16(uint64_t *im, uint *size_im, uint64_t *out, uint *size_out,
 // 4-element child hashes) -> 16-element output, of which the consumer truncates
 // the first 4.
 void CustPoseidon1_16(uint64_t *im, uint *size_im, uint64_t *out, uint *size_out,
+                      uint64_t *im_m, uint *size_im_m,
                       uint64_t *in, uint *size_in, uint64_t *key, uint *size_key)
 {
+    // One-hot encoding of the key bits, consumed by the AIR's input-ordering constraint as a
+    // stored degree-1 value. Derived from the same branch selection used for the permutation
+    // below rather than by indexing on key[] arithmetic: this is an extern_c gate, so the
+    // circom body's `assert(key[i]*(key[i]-1)==0)` never runs, and a malformed key would make
+    // im_m[key[0] + 2*key[1]] an out-of-bounds write. The final branch mirrors the
+    // permutation's trailing `else`, so mask and reordering can never disagree.
+    int key_idx = 3;
+    if (key[0] == 0 && key[1] == 0) {
+        key_idx = 0;
+    } else if (key[0] == 1 && key[1] == 0) {
+        key_idx = 1;
+    } else if (key[0] == 0 && key[1] == 1) {
+        key_idx = 2;
+    }
+    for (int i = 0; i < 4; i++) im_m[i] = (i == key_idx) ? 1 : 0;
+
     // Order the inputs according to the two key bits before permuting — matches
     // the circom CustPoseidon1_16 `initialSt` block and the PIL
     // poseidon1InputOrderGl helper. key picks which 4-element child hash leads.

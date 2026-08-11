@@ -24,8 +24,12 @@ use stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
-use crate::proving_key::recursive::compile_pil;
+use crate::proving_key::recursive::{compile_pil, max_constraint_degree_for_blowup};
 use crate::output::witness_gen::WitnessTracker;
+
+/// Blowup factor for the final AIR. Drives both the STARK struct and the degree
+/// bound the PIL is compiled with — keep them derived from this one value.
+const FINAL_BLOWUP: usize = 4;
 
 /// Configuration for the final setup.
 pub struct FinalSetupConfig<'a> {
@@ -246,7 +250,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("FinalVadcop".to_string()),
-        max_constraint_degree: None,
+        max_constraint_degree: Some(max_constraint_degree_for_blowup(FINAL_BLOWUP)),
         hash_id: config.hash.to_string(),
         merge_copies: true,
     };
@@ -291,7 +295,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
+        blowup_factor: Some(FINAL_BLOWUP),
         folding_factor: Some(4),
         pow_bits: Some(22),
         last_level_verification: Some(2),

@@ -271,6 +271,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // EvPol4 uses a[0..20]; a[21..23] free → plonk gate 7 (ev_extra).
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     for cgu in &ev_pol4_uses {
+        // 30 signals: coefs 15 + x 3 + out 3 + im_acc 9. Only the 21 used here are placed —
+        // im_acc is pinned by evpol4Stored, which only the compressor uses.
+        assert_eq!(cgu.signals.len(), 30);
         for (i, item) in s_map.iter_mut().enumerate().take(21) {
             item[r] = cgu.signals[i] as u32;
         }
@@ -318,7 +321,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // 17 signals → a[0..16]; a[18..23] free → plonk gates 6,7 (cmul_extra tier).
     tracing::info!("Processing {} treeSelector4 gates...", tree_sel4_uses.len());
     for cgu in &tree_sel4_uses {
-        assert_eq!(cgu.signals.len(), 17);
+        // 21 signals now (values 12 + keys 2 + out 3 + im_m 4); only the 17 used are placed.
+        assert_eq!(cgu.signals.len(), 21);
         for (i, item) in s_map.iter_mut().enumerate().take(17) {
             item[r] = cgu.signals[i] as u32;
         }
@@ -333,7 +337,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // Uses a[0..21]; only a[22..23] free (not a full 3-cell gate) → no plonk piggyback.
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
-        assert_eq!(cgu.signals.len(), 22);
+        // 26 signals now (values 16 + key 2 + selected 4 + im_m 4); the aggregator proves at a
+        // degree-8 budget, so it derives the mask and only the 22 used are placed.
+        assert_eq!(cgu.signals.len(), 26);
         for (i, item) in s_map.iter_mut().enumerate().take(22) {
             item[r] = cgu.signals[i] as u32;
         }

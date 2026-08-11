@@ -127,7 +127,8 @@ pub fn gen_recursive_test_setup(
     // Step 4: plonk2pil — convert R1CS to PIL.
     // Use airgroup_name = "Compressor" (deterministic, avoids random hex suffix).
     // -------------------------------------------------------------------------
-    let max_constraint_degree = if setup_type == "compressor" { Some(5) } else { None };
+    // Must match the blowup this harness proves with (see StarkSettings below).
+    let max_constraint_degree = Some(crate::proving_key::recursive::max_constraint_degree_for_blowup(3));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
         max_constraint_degree,

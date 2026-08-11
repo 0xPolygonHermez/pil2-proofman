@@ -11,14 +11,30 @@ function treeselector4(const expr vals[][], const expr key[], const expr res[], 
     m[2] = nk0   * key[1]; // 01  (k1 = 1)
     m[3] = key[0]* key[1]; // 11
 
-    for (int i = 0; i < 4; i++) {
-        sel * m[i] * (vals[i][0] - res[0]) === 0;
-        sel * m[i] * (vals[i][1] - res[1]) === 0;
-        sel * m[i] * (vals[i][2] - res[2]) === 0;
+    for (int j = 0; j < 3; j++) {
+        sel * ((m[0]*vals[0][j] + m[1]*vals[1][j] + m[2]*vals[2][j] + m[3]*vals[3][j]) - res[j]) === 0;
     }
 
     sel * (key[0] * (1 - key[0])) === 0;
     sel * (key[1] * (1 - key[1])) === 0;
+}
+
+// TREESELECTOR4 with the one-hot mask read from stored cells (the gate's im_m[4]) instead of
+// derived from the key bits, so the selection is degree 2 and sel * selection is 3. Same
+// pinning argument as treeselector8Mask, with two key bits instead of three.
+function treeselector4Mask(const expr vals[][], const expr key[], const expr m[], const expr res[], const expr sel) {
+
+    for (int i = 0; i < 4; i++) {
+        sel * (m[i] * (1 - m[i])) === 0;
+    }
+
+    sel * (((m[0] + m[1]) + m[2]) + m[3] - 1) === 0;
+    sel * ((m[1] + m[3]) - key[0]) === 0;
+    sel * ((m[2] + m[3]) - key[1]) === 0;
+
+    for (int j = 0; j < 3; j++) {
+        sel * ((m[0]*vals[0][j] + m[1]*vals[1][j] + m[2]*vals[2][j] + m[3]*vals[3][j]) - res[j]) === 0;
+    }
 }
 
 // TREESELECTOR8 GATE - Given 8 values (each a 3-element vector) and a 3-bit key,
@@ -48,13 +64,34 @@ function treeselector8(const expr vals[][], const expr key[], const expr res[], 
     m[6] = nk0   * key[1]* key[2];  // 011
     m[7] = key[0]* key[1]* key[2];  // 111
 
-    for (int i = 0; i < 8; i++) {
-        sel * m[i] * (vals[i][0] - res[0]) === 0;
-        sel * m[i] * (vals[i][1] - res[1]) === 0;
-        sel * m[i] * (vals[i][2] - res[2]) === 0;
+    for (int j = 0; j < 3; j++) {
+        sel * ((m[0]*vals[0][j] + m[1]*vals[1][j] + m[2]*vals[2][j] + m[3]*vals[3][j] + m[4]*vals[4][j] + m[5]*vals[5][j] + m[6]*vals[6][j] + m[7]*vals[7][j]) - res[j]) === 0;
     }
 
     sel * (key[0] * (1 - key[0])) === 0;
     sel * (key[1] * (1 - key[1])) === 0;
     sel * (key[2] * (1 - key[2])) === 0;
+}
+
+// TREESELECTOR8 with the one-hot mask read from the gate's im_m[8] cells: stored it is degree 1,
+// so the selection is degree 3 rather than 5. Binary + sum-to-1 + one bit-extraction row per key
+// bit force m to be the one-hot of the keys (if m[t] is the single 1, those rows read off the
+// binary digits of t), which also makes the keys binary for free.
+function treeselector8Mask(const expr vals[][], const expr key[], const expr m[], const expr res[], const expr sel) {
+
+    for (int i = 0; i < 8; i++) {
+        sel * (m[i] * (1 - m[i])) === 0;
+    }
+
+    sel * (((((((m[0] + m[1]) + m[2]) + m[3]) + m[4]) + m[5]) + m[6]) + m[7] - 1) === 0;
+
+    // Bit 0 is set for indices 1,3,5,7; bit 1 for 2,3,6,7; bit 2 for 4,5,6,7.
+    sel * ((((m[1] + m[3]) + m[5]) + m[7]) - key[0]) === 0;
+    sel * ((((m[2] + m[3]) + m[6]) + m[7]) - key[1]) === 0;
+    sel * ((((m[4] + m[5]) + m[6]) + m[7]) - key[2]) === 0;
+
+    for (int j = 0; j < 3; j++) {
+        sel * ((m[0]*vals[0][j] + m[1]*vals[1][j] + m[2]*vals[2][j] + m[3]*vals[3][j]
+              + m[4]*vals[4][j] + m[5]*vals[5][j] + m[6]*vals[6][j] + m[7]*vals[7][j]) - res[j]) === 0;
+    }
 }
