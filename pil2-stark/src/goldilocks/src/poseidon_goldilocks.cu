@@ -598,7 +598,7 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
         else
         {
             tpb = pos1Tpb<SPONGE_WIDTH>();
-            blks = (u32)(nextN / tpb + 1);
+            blks = (u32)((nextN + tpb - 1) / tpb);
             smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
             merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
