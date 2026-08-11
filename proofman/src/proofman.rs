@@ -5083,11 +5083,11 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Streaming-commit slots: DEFAULT 0 (disabled). The slot COUNT is a memory-budget knob
+        // Streaming-commit slots: DEFAULT 2. The slot COUNT is a memory-budget knob
         // (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is
         // derived from the slot-eligible packed AIRs (zisk Main) -- same eligibility
         // gate as try_slot_commit -- so it never needs manual tuning.
-        const STREAM_COMMIT_SLOTS_DEFAULT: u64 = 0;
+        const STREAM_COMMIT_SLOTS_DEFAULT: u64 = 2;
         if options.gpu && options.packed {
             let n_slots: u64 = std::env::var("STREAM_COMMIT_SLOTS")
                 .ok()
