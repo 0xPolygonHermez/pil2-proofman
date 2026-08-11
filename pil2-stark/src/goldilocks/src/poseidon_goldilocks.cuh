@@ -434,6 +434,206 @@ __device__ __forceinline__ void pos1_fused_rows_(unsigned __int128 *acc, const g
 
 // ARK=false is the schedule's final full round (pow7 + MDS, no constants);
 // that instantiation never reads C.
+#ifndef POS1_MDS_CIRC
+#define POS1_MDS_CIRC 1
+#endif
+// ---------------------------------------------------------------------------
+// Circulant fast-MDS full round (W=16). M16 is circulant: M[i][j] = k[(j-i)%16]
+// with k = row 0, so the MDS product is a cyclic convolution out = k (*) t.
+// CRT split of x^16-1 = (x^8-1)(x^8+1): fold tc[j]=t[j]+t[j+8], tn[j]=t[j]-t[j+8],
+// evaluate two 8-point convolutions with the half-kernels kc = k_lo+k_hi (all
+// positive, <= 102) and kn = k_lo-k_hi (max |tap| 100; after the negacyclic
+// wraparound up to 7 of an output's 8 terms are negative -> compile-time signs
+// with one p<<7 bias per negative term, see pos1_circ_bias_), and reconstruct
+// out[i] = (U[i]+V[i])/2, out[i+8] = (U[i]-V[i])/2.
+// U +/- V go through gl64_t ops, which under GL64_PARTIALLY_REDUCED may return
+// values in [p, 2^64); pos1_halve_ is congruence-exact for any 64-bit input and
+// canonicalizes, so the result is bit-identical to the direct dot product.
+// Accumulator peaks: aU <= sum(kc)*(2^64-1) < 2^73, aV <= bias + positive
+// terms < 2^74 -> u128, no carry limb (machine-checked against M by
+// pos1_circ_bounds_ok_).
+// Cost: 128 MACs + 16 folds + 16 reductions + 16 halvings vs 256 MACs + 16
+// reductions.
+// ---------------------------------------------------------------------------
+template<uint32_t W>
+__host__ __device__ constexpr bool pos1_is_circulant_()
+{
+    for (uint32_t i = 0; i < W; ++i)
+        for (uint32_t j = 0; j < W; ++j)
+            if (pos1_m_entry_<W>(i, j) != pos1_m_entry_<W>(0, (j + W - i) % W)) return false;
+    return true;
+}
+template<uint32_t W>
+__host__ __device__ constexpr uint64_t pos1_kc_(uint32_t j)
+{
+    return pos1_m_entry_<W>(0, j) + pos1_m_entry_<W>(0, j + W / 2);
+}
+template<uint32_t W>
+__host__ __device__ constexpr int64_t pos1_kn_(uint32_t j)
+{
+    return (int64_t)pos1_m_entry_<W>(0, j) - (int64_t)pos1_m_entry_<W>(0, j + W / 2);
+}
+
+// Exact field halving, 2*r == v (mod p): even -> v/2; odd -> (v-1)/2 + (p+1)/2
+// (== (v+p)/2, no 64-bit overflow). Correct for ANY 64-bit v, not just v < p:
+// under GL64_PARTIALLY_REDUCED gl64_t add/sub can return values in [p, 2^64)
+// (e.g. U = p-1, V = 1 -> U+V = p, unreduced), and an odd v >= p would yield
+// r = (v+p)/2 >= p -- a non-canonical digest word escaping the final round.
+// r <= p + 2^31 always, so one conditional subtract canonicalizes and keeps
+// the output bit-identical to the direct MDS path.
+__device__ __forceinline__ gl64_t pos1_halve_(gl64_t x)
+{
+    uint64_t v = x[0];
+    uint64_t r = (v >> 1) + ((v & 1) ? ((GOLDILOCKS_PRIME + 1) >> 1) : 0ull);
+    if (r >= GOLDILOCKS_PRIME) r -= GOLDILOCKS_PRIME;
+    gl64_t g; g[0] = r; return g;
+}
+
+// Effective negacyclic sign of the (I, J) term: wraparound (J > I) times the
+// kernel tap's own sign — both compile-time.
+template<uint32_t W>
+__host__ __device__ constexpr int64_t pos1_circ_sm_(uint32_t i, uint32_t j)
+{
+    const int64_t kv = pos1_kn_<W>((i + W / 2 - j) % (W / 2));
+    return (j <= i) ? kv : -kv;
+}
+// One underflow cushion for the negacyclic accumulators: p<<7. It must cover
+// the largest single negative term, max|kn|*(2^64-1) -- i.e. taps up to 127.
+// That, and the aU/aV overflow headroom, are statically checked against the
+// actual matrix by pos1_circ_bounds_ok_ below.
+__host__ __device__ constexpr unsigned __int128 pos1_circ_cushion_()
+{
+    return (unsigned __int128)GOLDILOCKS_PRIME << 7;
+}
+
+// Compile-time bias for output I of the negacyclic half: one cushion per
+// negative term, so the accumulator never underflows and stays == V[I] (mod p)
+// with subtraction done directly in the 128-bit domain — one accumulator and
+// one reduction instead of a P/N pair.
+template<uint32_t W>
+__host__ __device__ constexpr unsigned __int128 pos1_circ_bias_(uint32_t i)
+{
+    uint32_t cnt = 0;
+    for (uint32_t j = 0; j < W / 2; ++j)
+        if (pos1_circ_sm_<W>(i, j) < 0) ++cnt;
+    return pos1_circ_cushion_() * cnt;
+}
+
+// Soundness of the cushion/accumulator scheme against the ACTUAL matrix
+// coefficients (evaluated at compile time, asserted in pos1_round_fused_circ_):
+//  1) one cushion covers any single negative term: |kn[j]|*(2^64-1) <= p<<7
+//  2) aV never overflows: bias(i) + sum of positive-term maxima fits u128
+//  3) aU never overflows: sum(kc)*(2^64-1) fits u128
+// Everything derives from Poseidon1Tables<W>::M, so a regenerated or swapped
+// constants table that breaks any bound fails the build instead of the proof.
+template<uint32_t W>
+__host__ __device__ constexpr bool pos1_circ_bounds_ok_()
+{
+    constexpr unsigned __int128 X = ~0ull;  // max raw 64-bit input
+    constexpr unsigned __int128 U128_MAX = ~(unsigned __int128)0;
+    unsigned __int128 sum_kc = 0;
+    for (uint32_t j = 0; j < W / 2; ++j)
+    {
+        const int64_t kn = pos1_kn_<W>(j);
+        const uint64_t mag = (uint64_t)(kn < 0 ? -kn : kn);
+        if ((unsigned __int128)mag * X > pos1_circ_cushion_()) return false;
+        sum_kc += pos1_kc_<W>(j);
+    }
+    if (sum_kc != 0 && sum_kc > U128_MAX / X) return false;
+    for (uint32_t i = 0; i < W / 2; ++i)                                      // (2)
+    {
+        unsigned __int128 total = pos1_circ_bias_<W>(i);
+        for (uint32_t j = 0; j < W / 2; ++j)
+        {
+            const int64_t sm = pos1_circ_sm_<W>(i, j);
+            if (sm <= 0) continue;
+            const unsigned __int128 t = (unsigned __int128)(uint64_t)sm * X;
+            if (total > U128_MAX - t) return false;
+            total += t;
+        }
+    }
+    return true;
+}
+
+// Scatter one folded input pair (tc, tn from lane J) into the half-size
+// accumulators; coefficients and negacyclic signs are compile-time.
+template<uint32_t W, uint32_t J, uint32_t I = 0>
+__device__ __forceinline__ void pos1_circ_scatter_(unsigned __int128 *aU,
+                                                   unsigned __int128 *aV,
+                                                   uint64_t tc, uint64_t tn)
+{
+    constexpr uint32_t H = W / 2;
+    if constexpr (I < H)
+    {
+        constexpr uint64_t mc = pos1_kc_<W>((I + H - J) % H);
+        if constexpr (mc == 1) aU[I] += tc; else aU[I] += (unsigned __int128)tc * mc;
+        constexpr int64_t sm = pos1_circ_sm_<W>(I, J);
+        if constexpr (sm > 0)
+        {
+            if constexpr (sm == 1) aV[I] += tn; else aV[I] += (unsigned __int128)tn * (uint64_t)sm;
+        }
+        else if constexpr (sm < 0)
+        {
+            if constexpr (sm == -1) aV[I] -= tn; else aV[I] -= (unsigned __int128)tn * (uint64_t)(-sm);
+        }
+        pos1_circ_scatter_<W, J, I + 1>(aU, aV, tc, tn);
+    }
+}
+
+// Unrolled bias initialization (I is a template constant so the bias folds to
+// two immediate words per accumulator).
+template<uint32_t W, uint32_t I = 0>
+__device__ __forceinline__ void pos1_circ_init_(unsigned __int128 *aV)
+{
+    if constexpr (I < W / 2)
+    {
+        aV[I] = pos1_circ_bias_<W>(I);
+        pos1_circ_init_<W, I + 1>(aV);
+    }
+}
+
+template<uint32_t W, bool ARK, uint32_t J = 0>
+__device__ __forceinline__ void pos1_circ_rows_(unsigned __int128 *aU,
+                                                unsigned __int128 *aV,
+                                                const gl64_t *C)
+{
+    constexpr uint32_t H = W / 2;
+    if constexpr (J < H)
+    {
+        gl64_t x = scratchpad[J * blockDim.x + threadIdx.x];
+        gl64_t x2 = x * x; gl64_t x3 = x * x2; gl64_t x4 = x2 * x2;
+        gl64_t ta = x3 * x4;
+        gl64_t y = scratchpad[(J + H) * blockDim.x + threadIdx.x];
+        gl64_t y2 = y * y; gl64_t y3 = y * y2; gl64_t y4 = y2 * y2;
+        gl64_t tb = y3 * y4;
+        if constexpr (ARK) { ta = ta + C[J]; tb = tb + C[J + H]; }
+        gl64_t u = ta + tb;
+        gl64_t v = ta - tb;
+        pos1_circ_scatter_<W, J>(aU, aV, u[0], v[0]);
+        pos1_circ_rows_<W, ARK, J + 1>(aU, aV, C);
+    }
+}
+
+template<uint32_t W, bool ARK = true>
+__device__ __forceinline__ void pos1_round_fused_circ_(const gl64_t *C = nullptr)
+{
+    static_assert(pos1_is_circulant_<W>(), "circulant MDS round requires a circulant M");
+    static_assert(pos1_circ_bounds_ok_<W>(),
+                  "circulant MDS round: p<<7 cushion / u128 headroom does not hold for this M");
+    constexpr uint32_t H = W / 2;
+    unsigned __int128 aU[H] = {}, aV[H];
+    pos1_circ_init_<W>(aV);
+    pos1_circ_rows_<W, ARK>(aU, aV, C);
+#pragma unroll
+    for (uint32_t i = 0; i < H; ++i)
+    {
+        gl64_t U; U[0] = pos1_reduce128_((uint64_t)(aU[i] >> 64), (uint64_t)aU[i]);
+        gl64_t V; V[0] = pos1_reduce128_((uint64_t)(aV[i] >> 64), (uint64_t)aV[i]);
+        scratchpad[i * blockDim.x + threadIdx.x]       = pos1_halve_(U + V);
+        scratchpad[(i + H) * blockDim.x + threadIdx.x] = pos1_halve_(U - V);
+    }
+}
+
 template<uint32_t W, bool ARK = true>
 __device__ __forceinline__ void pos1_round_fused_smem_(const gl64_t *C = nullptr)
 {
@@ -484,7 +684,13 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
         // W=16 (production commit sponge, occupancy-limited) measures faster with
         // the fused round;
         if constexpr (W == 16)
+        {
+#if POS1_MDS_CIRC
+            pos1_round_fused_circ_<W>(&GPU_C_GL[(r + 1) * W]);
+#else
             pos1_round_fused_smem_<W>(&GPU_C_GL[(r + 1) * W]);
+#endif
+        }
         else
         {
             pos1_pow7add_smem_<W>(&GPU_C_GL[(r + 1) * W]);
@@ -534,7 +740,13 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
     for (uint32_t r = 0; r < HALF_F - 1; ++r)
     {
         if constexpr (W == 16)
+        {
+#if POS1_MDS_CIRC
+            pos1_round_fused_circ_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+#else
             pos1_round_fused_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+#endif
+        }
         else
         {
             pos1_pow7add_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
@@ -542,7 +754,13 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
         }
     }
     if constexpr (W == 16)
+    {
+#if POS1_MDS_CIRC
+        pos1_round_fused_circ_<W, false>();
+#else
         pos1_round_fused_smem_<W, false>();
+#endif
+    }
     else
     {
         pos1_pow7_smem_<W>();
@@ -565,11 +783,17 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 template<uint32_t W>
 __device__ __forceinline__ gl64_t pos1_mvp_warp(gl64_t v, const gl64_t *mat, uint32_t lane, uint32_t mask)
 {
-    gl64_t acc = mat[lane] * shfl_gl(mask, v, 0);
+    // 3-limb carry-chained accumulation, one canonical reduce160 per lane per
+    // round -- replaces a fully reduced gl64 mul + add per term. Sound for any
+    // full-width matrix entries (P as well as M).
+    unsigned __int128 first = (unsigned __int128)mat[lane][0] * shfl_gl(mask, v, 0)[0];
+    uint64_t lo = (uint64_t)first, hi = (uint64_t)(first >> 64);
+    uint32_t cy = 0;
 #pragma unroll
     for (uint32_t j = 1; j < W; ++j)
-        acc = acc + mat[W * j + lane] * shfl_gl(mask, v, j);
-    return acc;
+        pos1_mac_cc_(lo, hi, cy, mat[W * j + lane][0], shfl_gl(mask, v, j)[0]);
+    gl64_t r; r[0] = pos1_reduce160_(cy, hi, lo);
+    return r;
 }
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
