@@ -12,7 +12,11 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
-#include "poseidon2_goldilocks.hpp"  // NONCES_LAUNCH_* grinding launch params (shared with Poseidon2)
+// NONCES_LAUNCH_* (grinding launch geometry) live in the Poseidon2 header. The
+// full build pulls them in transitively via starks_api_internal.hpp below, but
+// the standalone benchs build (which defines __GOLDILOCKS_ENV__ and lacks ./src/api
+// on its include path) does not -- include it directly so this TU always builds.
+#include "poseidon2_goldilocks.hpp"
 
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
 // (full pil2-stark build).

@@ -2,7 +2,8 @@ use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
 use fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 
-const W: usize = 16;
+/// Max transcript width across families 
+const W_MAX: usize = 16;
 use std::ops::Add;
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
@@ -76,16 +77,17 @@ where
                 values_row[i] = *v;
             }
         } else {
-            for (i, v) in contribution.iter().enumerate().take(W) {
+            let w = contribution.len();
+            for (i, v) in contribution.iter().enumerate().take(w) {
                 values_row[i] = *v;
             }
-            let n_hashes = contributions_size / W - 1;
+            let n_hashes = contributions_size / w - 1;
+            let mut state = [F::ZERO; W_MAX];
             for j in 0..n_hashes {
-                let base = j * W;
-                let mut state: [F; W] = [F::ZERO; W];
-                state.copy_from_slice(&values_row[base..base + W]);
-                hash_state(&pctx.global_info.hash, &mut state);
-                values_row[(j + 1) * W..(j + 2) * W].copy_from_slice(&state[..W]);
+                let base = j * w;
+                state[..w].copy_from_slice(&values_row[base..base + w]);
+                hash_state(&pctx.global_info.hash, &mut state[..w]);
+                values_row[(j + 1) * w..(j + 2) * w].copy_from_slice(&state[..w]);
             }
         }
     });

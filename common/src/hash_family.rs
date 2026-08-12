@@ -35,7 +35,10 @@ pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
 }
 
 pub fn is_known_family(id: &str) -> bool {
-    FAMILIES.contains(&id)
+    //TODO: "blake3" is a GPU prover-only basic-proof family (no recursion/circom),
+    // so it is accepted here but intentionally kept out of FAMILIES (which the
+    // recursive-verifier / circom codegen iterates).
+    FAMILIES.contains(&id) || id == "blake3"
 }
 
 pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {

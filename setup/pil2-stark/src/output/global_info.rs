@@ -58,7 +58,8 @@ pub(crate) fn build_global_info_json(
     let proof_values_map = build_global_proof_values_map(&pilout.symbols);
     let publics_map = build_global_publics_map(&pilout.symbols);
 
-    let transcript_arity: u64 = GOLDILOCKS_MERKLE_TREE_ARITY;
+    let transcript_arity: u64 =
+        if hash == "blake3" { 2 } else { GOLDILOCKS_MERKLE_TREE_ARITY };
 
     json!({
         "name": pilout_name,

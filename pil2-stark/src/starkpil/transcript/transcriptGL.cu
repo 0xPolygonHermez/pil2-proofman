@@ -2,6 +2,7 @@
 #include "starks_api_internal.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "blake3_core.hpp"
 #include "goldilocks_tooling.cuh"
 
 #include "math.h"
@@ -40,7 +41,9 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + transcriptPendingSize] = state[i];
     }
-    if (hashFamily == 1) {
+    if (hashFamily == 3) {
+        blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
+    } else if (hashFamily == 1) {
         switch(arity) {
             case 2:
                 poseidon1PermuteReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
@@ -224,6 +227,17 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
     }
     __syncwarp();
 
+    if (hashFamily == 3) {
+        if (lane == 0) {
+            const uint32_t transcriptStateSize = HASH_SIZE;
+            Goldilocks::Element inputs[16];
+            for (uint32_t i = 0; i < transcriptPendingSize; i++) inputs[i] = pending[i];
+            for (uint32_t i = 0; i < transcriptStateSize; i++) inputs[i + transcriptPendingSize] = state[i];
+            blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
+            for (uint32_t i = 0; i < transcriptOutSize; i++) state[i] = out[i];
+        }
+        __syncwarp();
+    } else {
     // Each active lane keeps its sponge element [pending | state] in a register.
     gl64_t v;
     if (lane < transcriptPendingSize)
@@ -279,6 +293,7 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
         // v now holds this lane's permutation output; write back state and out.
         ((gl64_t*)out)[lane]   = v;
         ((gl64_t*)state)[lane] = v;
+    }
     }
 
     if (lane == 0) {
