@@ -940,31 +940,23 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// run `npm install` in the setup crate dir (where `package.json` lives)
-/// and resolve again. Setup owns making its own tooling available — callers
+/// install the Node deps (see [`crate::proving_key::node_deps`]) and use the
+/// root it reports. Setup owns making its own tooling available — callers
 /// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
+///
+/// Going through `node_deps` rather than npm-installing this crate's directory
+/// directly is what makes this work for a published consumer: a registry
+/// checkout is read-only, and `node_deps` falls back to a user-cache root
+/// seeded from the embedded `package.json`. The snarkjs/circomlib lookups in
+/// [`ensure_node_module_subpath`] already take that path.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
     if let Some(path) = resolve_pil2com_exec() {
         return Some(path);
     }
-    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
-    let root = Path::new(CRATE_ROOT);
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    if !root.join("package.json").is_file() {
-        return None;
-    }
-    tracing::info!("pil2com not found; running `npm install` in {}", root.display());
-    match std::process::Command::new("npm").arg("install").current_dir(&root).status() {
-        Ok(status) if status.success() => resolve_pil2com_exec(),
-        Ok(status) => {
-            tracing::warn!("`npm install` in {} exited with {status}", root.display());
-            None
-        }
-        Err(e) => {
-            tracing::warn!("failed to run `npm install` in {}: {e}", root.display());
-            None
-        }
-    }
+    const PIL2COM_PROBE: &str = ".bin/pil2com";
+    let root = crate::proving_key::node_deps::ensure_node_deps(PIL2COM_PROBE)?;
+    let exec = root.join("node_modules").join(PIL2COM_PROBE);
+    exec.canonicalize().ok().and_then(|p| p.to_str().map(str::to_string))
 }
 
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
