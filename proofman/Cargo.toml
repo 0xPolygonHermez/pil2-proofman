@@ -1,37 +1,37 @@
 [package]
 name = "proofman"
+description = "PIL2 proof manager: orchestrates witness generation, STARK proving, recursion, and SNARK wrapping"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-common = { path = "../common" }
-proofman-macros = { path = "../macros" }
-proofman-hints = { path = "../hints" }
-proofman-util = { path = "../util" }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-verifier = { path = "../verifier", features = ["parallel"] }
-curves = { path = "../curves" }
-witness = { path = "../witness" }
-pil-std-lib = { workspace = true }
+proofman-common = { workspace = true }
+proofman-macros = { workspace = true }
+proofman-hints = { workspace = true }
+proofman-util = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
+proofman-verifier = { workspace = true, features = ["parallel"] }
+pil2-std-lib = { workspace = true }
 
 tracing.workspace = true
-fields.workspace = true
+proofman-curves.workspace = true
+proofman-witness.workspace = true
+proofman-fields.workspace = true
 libloading.workspace = true
 colored.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 rayon.workspace = true
-num-bigint.workspace = true
 num-traits.workspace = true
 bincode.workspace = true
 blake3.workspace = true
 crossbeam-channel.workspace = true
 borsh.workspace = true
-tokio.workspace = true
 tokio-util.workspace = true
 csv.workspace = true
 chrono = "0.4.42"

@@ -63,9 +63,9 @@ impl std::fmt::Display for RecursiveTooSmallError {
 impl std::error::Error for RecursiveTooSmallError {}
 use serde_json::Value;
 
-use pilout::pilout_proxy::PilOutProxy;
-use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use stark_recurser::plonk2pil::{self, PlonkResult};
+use pil2_pilout::pilout_proxy::PilOutProxy;
+use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
@@ -874,7 +874,7 @@ fn get_global_name(global_info: &Value) -> String {
 }
 
 /// Compile PIL source by spawning `pil2com` (JS compiler) as a subprocess.
-/// Install pil2com: `npm install` (reads package.json in the repo root).
+/// Install pil2com: `npm install` (reads package.json in the setup crate).
 ///
 /// Thin wrapper around [`crate::commands::compile_pil::run_compile_pil`] so
 /// that the recursive setup pipeline and the public CLI command share a
@@ -892,24 +892,25 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
     run_compile_pil(&opts)
 }
 
-/// Find the `pil2com` JS binary, checking (in order):
+/// Locate an already-installed `pil2com`, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
-///   2. npm install in the proofman repo itself (compile-time baked root) — covers
-///      consumers that use proofman as a path/git dependency from another workspace
-///   3. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
+///   2. The setup crate's own dir (compile-time baked) — covers consumers that
+///      use proofman as a path/git dependency from another workspace
+///   3. `node_modules/.bin/pil2com` relative to cwd
 ///   4. Walk up from the executable's location to find `node_modules/.bin/pil2com`
 ///   5. Global install: `pil2com` on PATH
 ///
-/// Install via: `npm install`  (reads package.json in the repo root)
-pub(crate) fn resolve_pil2com_exec() -> Option<String> {
+/// Pure lookup — installs nothing. [`ensure_pil2com_exec`] is the entry point
+/// that bootstraps when every step here misses.
+fn resolve_pil2com_exec() -> Option<String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
             return Some(path);
         }
     }
-    // npm install in the proofman repo root (this crate sits at <root>/setup/pil2-stark)
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let baked = Path::new(PROOFMAN_ROOT).join("node_modules/.bin/pil2com");
+    // npm install in the setup crate dir (this crate sits at <root>/setup/pil2-stark)
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let baked = Path::new(CRATE_ROOT).join("node_modules/.bin/pil2com");
     if baked.is_file() {
         if let Ok(abs) = baked.canonicalize() {
             return abs.to_str().map(|s| s.to_string());
@@ -940,37 +941,36 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// run `npm install` in the proofman repo root (where `package.json` lives)
-/// and resolve again. Setup owns making its own tooling available — callers
+/// install the Node deps (see [`crate::proving_key::node_deps`]) and use the
+/// root it reports. Setup owns making its own tooling available — callers
 /// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
+///
+/// Bootstrapping through `node_deps` rather than npm-installing this crate's
+/// directory directly is what makes this work for a published consumer: a
+/// registry checkout is read-only, and `node_deps` falls back to a user-cache
+/// root seeded from the embedded `package.json`. The snarkjs/circomlib
+/// bootstrap in [`ensure_node_module_subpath`] goes through the same helper.
+///
+/// The result is memoized: a recursive setup calls this once per air (and again
+/// per compressor attempt), and neither the PATH scan nor a failed bootstrap
+/// gets cheaper by being repeated.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
-    if let Some(path) = resolve_pil2com_exec() {
-        return Some(path);
-    }
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let root = Path::new(PROOFMAN_ROOT);
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    if !root.join("package.json").is_file() {
-        return None;
-    }
-    tracing::info!("pil2com not found; running `npm install` in {}", root.display());
-    match std::process::Command::new("npm").arg("install").current_dir(&root).status() {
-        Ok(status) if status.success() => resolve_pil2com_exec(),
-        Ok(status) => {
-            tracing::warn!("`npm install` in {} exited with {status}", root.display());
-            None
-        }
-        Err(e) => {
-            tracing::warn!("failed to run `npm install` in {}: {e}", root.display());
-            None
-        }
-    }
+    static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PIL2COM_EXEC.get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com"))).clone()
+}
+
+/// Install the Node deps if needed and return the absolute path to `probe`
+/// (a path relative to `node_modules`), or `None` if the bootstrap failed.
+fn bootstrapped_node_path(probe: &str) -> Option<String> {
+    let root = crate::proving_key::node_deps::ensure_node_deps(probe)?;
+    let path = root.join("node_modules").join(probe);
+    path.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Search order:
 ///   1. Env var override
-///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)
+///   2. `<setup-crate-dir>/node_modules/<package>/<sub_path>` (compile-time baked)
 ///   3. CWD-relative `node_modules/<package>/<sub_path>`
 ///   4. Walk up from the running executable
 fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Option<String> {
@@ -979,9 +979,9 @@ fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Opt
             return Some(v);
         }
     }
-    // Compile-time path to the proofman repo root.
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let baked = std::path::Path::new(PROOFMAN_ROOT).join("node_modules").join(package).join(sub_path);
+    // Compile-time path to the setup crate dir (where node_modules lives).
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let baked = std::path::Path::new(CRATE_ROOT).join("node_modules").join(package).join(sub_path);
     if baked.is_dir() {
         if let Ok(abs) = baked.canonicalize() {
             return Some(abs.to_string_lossy().into_owned());
@@ -1017,11 +1017,5 @@ pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path:
         return p;
     }
     let probe = format!("{package}/{sub_path}");
-    if let Some(root) = crate::proving_key::node_deps::ensure_node_deps(&probe) {
-        let candidate = root.join("node_modules").join(package).join(sub_path);
-        if let Ok(abs) = candidate.canonicalize() {
-            return abs.to_string_lossy().into_owned();
-        }
-    }
-    format!("node_modules/{package}/{sub_path}")
+    bootstrapped_node_path(&probe).unwrap_or_else(|| format!("node_modules/{probe}"))
 }

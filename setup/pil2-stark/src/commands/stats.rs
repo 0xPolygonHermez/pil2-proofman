@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use pilout::pilout as pb;
+use pil2_pilout::pilout as pb;
 use prost::Message;
 
 use crate::pil::prepare::PrepareOptions;

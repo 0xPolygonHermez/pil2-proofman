@@ -19,8 +19,8 @@ use crate::io::bin_file_writer::BinFileWriter;
 ///
 /// SymbolType::FIXED_COL == 1 in the pilout proto.
 pub fn reorder_plonk_pols_for_pilout(
-    fixed_pols: &[stark_recurser::plonk2pil::FixedPol],
-    symbols: &[pilout::pilout::Symbol],
+    fixed_pols: &[pil2_stark_recurser::plonk2pil::FixedPol],
+    symbols: &[pil2_pilout::pilout::Symbol],
     air_group_id: u32,
     air_id: u32,
 ) -> Vec<Vec<u64>> {
@@ -29,7 +29,7 @@ pub fn reorder_plonk_pols_for_pilout(
         fixed_pols.iter().map(|fp| ((fp.name.clone(), fp.index), &fp.values)).collect();
 
     // Filter to fixed cols for this air, sort by id (= pilout fixed_cols order)
-    let mut fixed_syms: Vec<&pilout::pilout::Symbol> = symbols
+    let mut fixed_syms: Vec<&pil2_pilout::pilout::Symbol> = symbols
         .iter()
         .filter(|s| {
             s.r#type == 1 // FIXED_COL
@@ -200,7 +200,7 @@ pub fn write_fixed_pols_bin(
 /// The output is a flat row-major interleaved buffer:
 ///   [col0_row0, col1_row0, ..., colN_row0, col0_row1, ..., colN_rowNrows]
 /// Written as raw u64 LE values — matching `fixedCols.saveToFile()` in JS.
-pub fn write_const_file(path: &str, air: &pilout::pilout::Air, plonk_pol_values: &[Vec<u64>]) -> Result<()> {
+pub fn write_const_file(path: &str, air: &pil2_pilout::pilout::Air, plonk_pol_values: &[Vec<u64>]) -> Result<()> {
     // num_rows is the actual row count (not log2)
     let n_rows = air.num_rows.unwrap_or(0) as usize;
     // Fall back to plonk polynomial length if pilout doesn't specify rows

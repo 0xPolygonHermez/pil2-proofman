@@ -1,6 +1,6 @@
 use std::ops::Add;
 
-use fields::{Field, ExtensionField, PrimeField64, Goldilocks, GoldilocksQuinticExtension};
+use proofman_fields::{Field, ExtensionField, PrimeField64, Goldilocks, GoldilocksQuinticExtension};
 
 use crate::curve::EllipticCurve;
 

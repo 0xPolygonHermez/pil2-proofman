@@ -5,7 +5,7 @@ use colored::Colorize;
 use std::fs::File;
 use std::io::Write;
 use toml;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 use proofman_common::initialize_logger;
 use proofman_soundness::{print_soundness_table, soundness_info};

@@ -4,8 +4,10 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+publish = false
 
 [lib]
 crate-type = ["dylib"]
@@ -13,12 +15,12 @@ crate-type = ["dylib"]
 [dependencies]
 proofman-common.workspace = true
 proofman-macros.workspace = true
-proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
+proofman-starks-lib-c = { workspace = true }
 proofman.workspace = true
-witness.workspace = true
-pil-std-lib.workspace = true
+proofman-witness.workspace = true
+pil2-std-lib.workspace = true
 tracing.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_arrays.workspace = true

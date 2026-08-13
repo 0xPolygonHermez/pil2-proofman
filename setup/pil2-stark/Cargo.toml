@@ -1,10 +1,12 @@
 [package]
 name = "pil2-stark-setup"
+description = "Setup and proving/verifying-key generation for the pil2-stark prover"
 rust-version = "1.89"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
@@ -16,13 +18,13 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
-proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
-fields = { workspace = true, features = ["verify"] }
+proofman-starks-lib-c = { workspace = true }
+proofman-fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
+pil2-stark-recurser = { workspace = true }
+pil2-pilout = { workspace = true }
 proofman-util = { workspace = true }
-stark-recurser = { path = "../stark-recurser" }
-exps-codegen = { path = "../exps-codegen" }
-pilout = { workspace = true }
+proofman-exps-codegen = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

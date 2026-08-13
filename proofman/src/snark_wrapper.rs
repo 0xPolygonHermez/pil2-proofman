@@ -4,7 +4,7 @@ use proofman_common::{
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::fs::File;

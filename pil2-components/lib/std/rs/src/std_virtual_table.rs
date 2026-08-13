@@ -7,9 +7,9 @@ use std::{
 };
 use rayon::prelude::*;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{
     register_host_buffer, unregister_host_buffer, AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult,
     SetupCtx, TraceInfo,

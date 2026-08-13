@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
 
 use crate::Ledger;
@@ -456,7 +456,7 @@ mod tests {
 mod drain_tests {
     use super::*;
     use crate::{DeviceBuffersPtr, DeviceCompletions};
-    use fields::{Field, Goldilocks};
+    use proofman_fields::{Field, Goldilocks};
     use proofman_common::MemoryHandlerRecursive;
 
     type F = Goldilocks;

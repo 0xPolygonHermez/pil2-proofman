@@ -6,9 +6,9 @@ use proofman_common::{init_gpu_setup, MpiCtx, ProofCtx, ProofType, SetupCtx, Set
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
-use witness::{WitnessLibInitFn, WitnessManager};
+use proofman_witness::{WitnessLibInitFn, WitnessManager};
 
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

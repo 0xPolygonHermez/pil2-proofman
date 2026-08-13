@@ -10,9 +10,9 @@ use mpi::environment::Universe;
 use mpi::topology::Communicator;
 
 use std::sync::atomic::{Ordering, AtomicU64, AtomicI32, AtomicU32};
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 #[cfg(feature = "mpi")]
-use fields::CubicExtensionField;
+use proofman_fields::CubicExtensionField;
 use crate::{GlobalInfo, ProofmanError};
 use crate::Proof;
 

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use crate::{ProofmanError, ProofmanResult};
 use proofman_starks_lib_c::{register_host_memory_c, unregister_host_memory_c};
 
@@ -581,7 +581,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for BufferLease<'_, F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fields::{Field, Goldilocks};
+    use proofman_fields::{Field, Goldilocks};
 
     // These exercise the pool's accounting (take/release/reset, leak detection, cancel), not pinning,
     // so they pass on both backends (CPU register is a no-op; GPU pinning is transparent to accounting).

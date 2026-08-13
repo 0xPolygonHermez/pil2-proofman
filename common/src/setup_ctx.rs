@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
 
 use crate::format_bytes;

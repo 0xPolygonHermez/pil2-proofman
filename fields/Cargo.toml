@@ -1,19 +1,23 @@
 [package]
-name = "fields"
+name = "proofman-fields"
+description = "Goldilocks field arithmetic, extensions, Poseidon hashes, Merkle trees, and FRI primitives for PIL2 proofman"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
 paste = "1.0.15"
-proofman-starks-lib-c = { path = "../provers/starks-lib-c", optional = true }
 cfg-if = "1.0"
-
 serde = { version = "1.0.130", default-features = false, features = ["derive"] }
 num-bigint = { version = "0.4", default-features = false }
+
+# Native STARKS C library — host-only (x86_64).
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+proofman-starks-lib-c = { workspace = true }
 
 [features]
 default = []

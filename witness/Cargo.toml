@@ -1,22 +1,20 @@
 [package]
-name = "witness"
+name = "proofman-witness"
+description = "Witness library, component, and manager traits for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-common = { path = "../common" }
-proofman-util = { path = "../util" }
+proofman-common = { workspace = true }
 
-tracing.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true
 libloading.workspace = true
 
-colored.workspace = true
-serde_json.workspace = true
 
 [features]
 default = []

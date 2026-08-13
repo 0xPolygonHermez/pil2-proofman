@@ -1,4 +1,4 @@
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::{
@@ -24,8 +24,8 @@ use proofman_starks_lib_c::{
 use proofman_util::create_buffer_fast;
 use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
-use pil_std_lib::Std;
-use witness::WitnessManager;
+use pil2_std_lib::Std;
+use proofman_witness::WitnessManager;
 
 pub fn print_summary_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,

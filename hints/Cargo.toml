@@ -1,18 +1,19 @@
 [package]
 name = "proofman-hints"
+description = "Hint definitions and evaluation for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-common = { path = "../common" }
-proofman-util = { path = "../util" }
-fields = { path = "../fields" }
-itoa.workspace = true
+proofman-starks-lib-c = { workspace = true }
+proofman-common = { workspace = true }
+proofman-fields = { workspace = true }
+itoa = "1.0.17"
 
 tracing.workspace = true
 

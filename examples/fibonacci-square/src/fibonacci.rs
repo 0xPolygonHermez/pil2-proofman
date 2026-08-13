@@ -3,8 +3,8 @@ use std::sync::{Arc, RwLock};
 use proofman_common::{
     write_custom_commit_trace, AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx, init_gpu_setup,
 };
-use witness::WitnessComponent;
-use fields::PrimeField64;
+use proofman_witness::WitnessComponent;
+use proofman_fields::PrimeField64;
 
 use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace, MERKLE_TREE_ARITY};
 

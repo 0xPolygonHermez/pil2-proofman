@@ -4,9 +4,9 @@ use std::sync::{
 };
 use rayon::prelude::*;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 

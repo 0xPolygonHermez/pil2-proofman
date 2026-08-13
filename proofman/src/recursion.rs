@@ -1,6 +1,6 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use libloading::{Library, Symbol};
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::ffi::CString;
 use std::fmt;
 use proofman_starks_lib_c::*;

@@ -1,5 +1,5 @@
 use std::os::raw::{c_void, c_char};
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::fs;

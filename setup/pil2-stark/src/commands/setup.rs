@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use rayon::prelude::*;
 
-use pilout::pilout::{self as pb};
+use pil2_pilout::pilout::{self as pb};
 use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
@@ -380,7 +380,7 @@ fn log2_usize(n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pilout::pilout as pb;
+    use pil2_pilout::pilout as pb;
     use prost::Message;
 
     #[test]

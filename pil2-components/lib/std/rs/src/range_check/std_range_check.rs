@@ -1,8 +1,8 @@
 use std::{fmt::Debug, sync::Arc};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 use proofman_hints::{
     get_hint_field_constant, get_hint_field_gc_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue,
