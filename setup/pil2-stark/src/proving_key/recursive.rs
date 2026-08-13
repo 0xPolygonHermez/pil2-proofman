@@ -892,16 +892,17 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
     run_compile_pil(&opts)
 }
 
-/// Find the `pil2com` JS binary, checking (in order):
+/// Locate an already-installed `pil2com`, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
-///   2. npm install in the setup crate itself (compile-time baked dir) — covers
-///      consumers that use proofman as a path/git dependency from another workspace
-///   3. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
+///   2. The setup crate's own dir (compile-time baked) — covers consumers that
+///      use proofman as a path/git dependency from another workspace
+///   3. `node_modules/.bin/pil2com` relative to cwd
 ///   4. Walk up from the executable's location to find `node_modules/.bin/pil2com`
 ///   5. Global install: `pil2com` on PATH
 ///
-/// Install via: `npm install`  (reads package.json in the setup crate)
-pub(crate) fn resolve_pil2com_exec() -> Option<String> {
+/// Pure lookup — installs nothing. [`ensure_pil2com_exec`] is the entry point
+/// that bootstraps when every step here misses.
+fn resolve_pil2com_exec() -> Option<String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
             return Some(path);
@@ -944,19 +945,28 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 /// root it reports. Setup owns making its own tooling available — callers
 /// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
 ///
-/// Going through `node_deps` rather than npm-installing this crate's directory
-/// directly is what makes this work for a published consumer: a registry
-/// checkout is read-only, and `node_deps` falls back to a user-cache root
-/// seeded from the embedded `package.json`. The snarkjs/circomlib lookups in
-/// [`ensure_node_module_subpath`] already take that path.
+/// Bootstrapping through `node_deps` rather than npm-installing this crate's
+/// directory directly is what makes this work for a published consumer: a
+/// registry checkout is read-only, and `node_deps` falls back to a user-cache
+/// root seeded from the embedded `package.json`. The snarkjs/circomlib
+/// bootstrap in [`ensure_node_module_subpath`] goes through the same helper.
+///
+/// The result is memoized: a recursive setup calls this once per air (and again
+/// per compressor attempt), and neither the PATH scan nor a failed bootstrap
+/// gets cheaper by being repeated.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
-    if let Some(path) = resolve_pil2com_exec() {
-        return Some(path);
-    }
-    const PIL2COM_PROBE: &str = ".bin/pil2com";
-    let root = crate::proving_key::node_deps::ensure_node_deps(PIL2COM_PROBE)?;
-    let exec = root.join("node_modules").join(PIL2COM_PROBE);
-    exec.canonicalize().ok().and_then(|p| p.to_str().map(str::to_string))
+    static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PIL2COM_EXEC
+        .get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com")))
+        .clone()
+}
+
+/// Install the Node deps if needed and return the absolute path to `probe`
+/// (a path relative to `node_modules`), or `None` if the bootstrap failed.
+fn bootstrapped_node_path(probe: &str) -> Option<String> {
+    let root = crate::proving_key::node_deps::ensure_node_deps(probe)?;
+    let path = root.join("node_modules").join(probe);
+    path.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
@@ -1009,11 +1019,5 @@ pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path:
         return p;
     }
     let probe = format!("{package}/{sub_path}");
-    if let Some(root) = crate::proving_key::node_deps::ensure_node_deps(&probe) {
-        let candidate = root.join("node_modules").join(package).join(sub_path);
-        if let Ok(abs) = candidate.canonicalize() {
-            return abs.to_string_lossy().into_owned();
-        }
-    }
-    format!("node_modules/{package}/{sub_path}")
+    bootstrapped_node_path(&probe).unwrap_or_else(|| format!("node_modules/{probe}"))
 }
