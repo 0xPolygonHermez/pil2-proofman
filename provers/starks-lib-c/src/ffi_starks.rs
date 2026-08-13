@@ -13,31 +13,34 @@ use std::ffi::CString;
 
 use std::ffi::CStr;
 
-// The proof-done channel is read by `on_proof_done`, which is invoked from the C++/CUDA
-// stream-harvest threads (get_stream_proofs / get_stream_proofs_non_blocking), and written
-// by `register`/`clear` on the Rust proving/teardown thread. The C++ `proof_done_callback`
-// pointer is NEVER nulled, so a late harvest during cancel/teardown can call `on_proof_done`
-// concurrently with a `clear`. If `clear` dropped the `Sender` (freeing crossbeam's shared
-// channel allocation) while a harvest thread was mid-`send`, that send dereferenced freed
-// memory -> SEGV (status=11) on the cancel path. An RwLock makes the read-vs-drop mutually
-// exclusive: the Sender cannot be dropped while any harvest holds the read lock for a send.
-static PROOFS_DONE: std::sync::RwLock<Option<crossbeam_channel::Sender<(u64, String)>>> = std::sync::RwLock::new(None);
+/// A proof-done completion crossing the FFI boundary: the `(id, proof_type)` the C++ harvest
+/// reports for a finished proof.
+#[derive(Debug, Clone)]
+pub struct CompletionMsg {
+    pub id: u64,
+    pub proof_type: String,
+}
+
+// Read by `on_proof_done` (C++/CUDA harvest threads), written by register/clear. The C++ callback
+// pointer is never nulled, so a late harvest can race a `clear`; the RwLock keeps read-vs-drop
+// exclusive so a send can't drop/free the channel mid-send -> SEGV (status=11).
+static PROOFS_DONE: std::sync::RwLock<Option<crossbeam_channel::Sender<CompletionMsg>>> = std::sync::RwLock::new(None);
 
 extern "C" fn on_proof_done(instance_id: u64, proof_type: *const c_char) {
     let proof_type_str = unsafe { CStr::from_ptr(proof_type).to_string_lossy().into_owned() };
 
-    // Hold the read lock for the whole send: this pins the `Sender` so a concurrent
-    // `clear_proof_done_callback_c` (write lock) cannot drop/free the channel mid-send.
-    let guard = PROOFS_DONE.read().unwrap();
+    // Hold the read lock across the send so a concurrent `clear` can't drop the Sender mid-send.
+    // Recover from poison rather than unwind: an unwind out of an `extern "C"` fn aborts.
+    let guard = PROOFS_DONE.read().unwrap_or_else(|e| e.into_inner());
     if let Some(ref tx) = *guard {
-        let _ = tx.send((instance_id, proof_type_str));
+        let _ = tx.send(CompletionMsg { id: instance_id, proof_type: proof_type_str });
     }
 }
 
-pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<CompletionMsg>) {
     // Swap under the write lock: any in-flight `on_proof_done` read has released its guard
     // before this replaces (and drops) the previous Sender, so no send races the drop.
-    *PROOFS_DONE.write().unwrap() = Some(tx);
+    *PROOFS_DONE.write().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     unsafe {
         register_proof_done_callback(Some(on_proof_done));
     }
@@ -126,13 +129,12 @@ pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
 }
 
 pub fn clear_proof_done_callback_c() {
-    // Take the write lock so the Sender is dropped only when no `on_proof_done` holds the
-    // read lock mid-send. This is what makes clearing during cancel/teardown crash-safe even
-    // though the C++ `proof_done_callback` pointer is never nulled (a late harvest can still
-    // enter `on_proof_done`; it will just observe `None`, not SEGV).
-    *PROOFS_DONE.write().unwrap() = None;
+    // Take the write lock so the Sender is dropped only when no `on_proof_done` holds the read lock
+    // mid-send. A late harvest after clearing just observes `None` (the C++ pointer is never nulled).
+    *PROOFS_DONE.write().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stark_info_new_c(
     filename: &str,
     recursive_final: bool,
@@ -141,6 +143,8 @@ pub fn stark_info_new_c(
     verify: bool,
     gpu: bool,
     preallocate: bool,
+    // Table airs: proved at most once, so the const pols need not survive the proof.
+    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -153,6 +157,7 @@ pub fn stark_info_new_c(
             verify,
             gpu,
             preallocate,
+            single_use,
         )
     }
 }
@@ -204,9 +209,9 @@ pub fn unregister_host_memory_c(ptr: *mut c_void) {
 /// shared trace buffer whose async H2D copy rode that stream can be safely
 /// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
 /// `pctx.gpu`).
-pub fn wait_stream_commit_done_c(d_buffers: *mut c_void, stream_id: u64) {
+pub fn wait_trace_h2d_done_c(d_buffers: *mut c_void, stream_id: u64) {
     unsafe {
-        wait_stream_commit_done(d_buffers, stream_id);
+        wait_trace_h2d_done(d_buffers, stream_id);
     }
 }
 
@@ -270,9 +275,9 @@ pub fn load_const_tree_c(
     }
 }
 
-pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u64) {
+pub fn init_gpu_setup_c(arity: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt, arity);
+        init_gpu_setup(arity);
     }
 }
 
@@ -1034,6 +1039,8 @@ pub fn gen_recursive_proof_c(
     const_tree_path: &str,
     proof_type: &str,
     force_recursive_stream: bool,
+    recurser_id: &str,
+    stream_id: u64,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1046,6 +1053,9 @@ pub fn gen_recursive_proof_c(
 
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let recurser_id_name = CString::new(recurser_id).unwrap();
+    let recurser_id_ptr = recurser_id_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_recursive_proof(
@@ -1066,8 +1076,49 @@ pub fn gen_recursive_proof_c(
             const_tree_filename_ptr,
             proof_type_ptr,
             force_recursive_stream,
+            recurser_id_ptr,
+            stream_id,
         )
     }
+}
+
+/// Scheduler: reserve the best free stream for this key without blocking.
+/// Returns `u32::MAX` when nothing is free right now (caller retries).
+pub fn reserve_best_stream_nonblock_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    recursive: bool,
+    force_recursive: bool,
+) -> u32 {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe { reserve_best_stream_nonblock(d_buffers, airgroup_id, air_id, proof_type_ptr, recursive, force_recursive) }
+}
+
+/// Scheduler warm fast path: reserve `stream_id` iff it is free right now *and* its buffer size
+/// class holds this air. Returns true on success.
+pub fn reserve_stream_if_free_c(
+    d_buffers: *mut c_void,
+    stream_id: u32,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    force_recursive: bool,
+) -> bool {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe { reserve_stream_if_free(d_buffers, stream_id, airgroup_id, air_id, proof_type_ptr, force_recursive) != 0 }
+}
+
+/// Scheduler: give back a reservation the caller never launched on. A reserved stream reads as busy
+/// to every selection pass, so failing between reserve and launch without this would strand the slot
+/// for the process lifetime. Only releases a stream still in the reserved state, so it is safe to
+/// call unconditionally on an error path.
+pub fn release_stream_reservation_c(d_buffers: *mut c_void, stream_id: u32) {
+    unsafe { release_stream_reservation(d_buffers, stream_id) }
 }
 
 pub fn calculate_const_tree_fixed_c(
@@ -1373,6 +1424,19 @@ pub fn use_packed_trace_c(d_commit_buffers: *mut ::std::os::raw::c_void, packed_
     }
 }
 
+pub fn register_instruction_table_c(
+    d_commit_buffers: *mut ::std::os::raw::c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    table: &[u64],
+    num_entries: u64,
+    words_per_entry: u64,
+) {
+    unsafe {
+        register_instruction_table(d_commit_buffers, airgroup_id, air_id, table.as_ptr(), num_entries, words_per_entry);
+    }
+}
+
 pub fn gen_device_buffers_recursivef_c(
     p_setup_ctx: *mut u8,
     prover_buffer_size: u64,
@@ -1395,12 +1459,10 @@ pub fn free_device_buffers_recursivef_c(d_buffers: *mut c_void) {
     unsafe { free_device_buffers_recursivef(d_buffers) }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    n_streams: u64,
+    aux_trace_sizes: &[u64],
     n_recursive_streams: u64,
-    max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
     merkle_tree_arity: u64,
@@ -1408,9 +1470,9 @@ pub fn gen_device_streams_c(
     unsafe {
         gen_device_streams(
             d_buffers,
-            n_streams,
+            aux_trace_sizes.len() as u64,
             n_recursive_streams,
-            max_size_buffer,
+            aux_trace_sizes.as_ptr(),
             max_size_buffer_aggregation,
             max_pinned_proof_size,
             merkle_tree_arity,
@@ -1420,19 +1482,12 @@ pub fn gen_device_streams_c(
 
 pub fn alloc_device_large_buffers_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    aux_trace_area: u64,
     aux_trace_recursive_area: u64,
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
 ) {
     unsafe {
-        alloc_device_large_buffers(
-            d_buffers,
-            aux_trace_area,
-            aux_trace_recursive_area,
-            const_pols_area,
-            const_pols_aggregation_area,
-        );
+        alloc_device_large_buffers(d_buffers, aux_trace_recursive_area, const_pols_area, const_pols_aggregation_area);
     }
 }
 
@@ -1490,6 +1545,62 @@ pub fn get_first_gpu_id_c(d_buffers: *mut ::std::os::raw::c_void) -> u32 {
 /// Unified buffer of the first GPU (my_gpu_ids[0]). Does not touch the caller's current device.
 pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { get_first_gpu_buffer(d_buffers) }
+}
+
+/// Byte offset of the aggregation const-pols region within the first GPU's unified buffer.
+pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_const_pols_aggregation_offset(d_buffers) }
+}
+
+pub fn stream_commit_pause_c() {
+    unsafe { stream_commit_pause() }
+}
+
+pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_slots(d_buffers) }
+}
+
+pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_floor(d_buffers) }
+}
+
+pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64 {
+    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
+}
+
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
+    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn commit_witness_streaming_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    slot_idx: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    packed: *mut ::std::os::raw::c_void,
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    words_per_row: u64,
+    col_widths: *mut ::std::os::raw::c_void,
+    root: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe {
+        commit_witness_streaming(
+            d_buffers,
+            slot_idx,
+            airgroup_id,
+            air_id,
+            packed,
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            words_per_row,
+            col_widths,
+            root,
+        )
+    }
 }
 
 pub fn get_unified_buffer_gpu_for_recursivef_c(
@@ -1564,6 +1675,8 @@ pub fn load_device_const_pols_c(
     const_tree_size: u64,
     proof_type: &str,
     only_first_gpu: bool,
+    // This air shares its slot with one already uploaded: record the offsets, transfer nothing.
+    already_loaded: bool,
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1586,6 +1699,7 @@ pub fn load_device_const_pols_c(
             const_tree_size,
             proof_type_ptr,
             only_first_gpu,
+            already_loaded,
         );
     }
 }

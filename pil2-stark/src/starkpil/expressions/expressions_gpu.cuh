@@ -51,8 +51,10 @@ public:
     DeviceArguments h_deviceArgs;
 
     void *expsLib = nullptr;
-    void *expsFn = nullptr;
-    uint64_t expsMinScratch = 0;
+    void *qLaunchFn = nullptr;
+    uint64_t qMinScratch = 0;
+    void *exprCoveredFn = nullptr;
+    void *exprLaunchFn = nullptr;
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();

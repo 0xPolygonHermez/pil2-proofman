@@ -79,7 +79,36 @@ struct AirInstanceInfo {
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
     uint64_t* d_num_packed_words;
-    
+
+    // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
+    // at setup; the instruction table is uploaded later, per program, via
+    // set_instruction_table(). d_col_source == nullptr is what selects the plain unpack
+    // path -- when it is set, d_instr_table must have been registered before the first
+    // unpack, and unpack_trace aborts rather than silently falling back to the plain walk.
+    uint8_t  *d_col_source = nullptr;   // per column: 0 = row stream, 1 = table stream
+    uint64_t  index_bits = 0;           // width of the leading index header in a compact row
+    uint64_t  words_per_entry = 0;      // u64 words per instruction-table entry
+    uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
+    uint64_t  num_entries = 0;
+
+    // Upload (replacing any previous) the program-specific instruction table. Caller must
+    // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
+    // while work using d_instr_table is in flight on this GPU -- the cudaFree below would
+    // pull the table out from under a running unpack. `words` also refreshes
+    // words_per_entry (seeded from PackedInfo at setup); the live program wins.
+    void set_instruction_table(const uint64_t *table, uint64_t entries, uint64_t words) {
+        if (d_instr_table != nullptr) {
+            CHECKCUDAERR(cudaFree(d_instr_table));
+            d_instr_table = nullptr;
+        }
+        num_entries = entries;
+        words_per_entry = words;
+        if (entries > 0 && words > 0) {
+            CHECKCUDAERR(cudaMalloc(&d_instr_table, entries * words * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_instr_table, table, entries * words * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+    }
+
     AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
@@ -220,6 +249,14 @@ struct AirInstanceInfo {
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+            // Indexed variant descriptor; the table itself arrives via set_instruction_table().
+            if (packedInfo->col_source != nullptr) {
+                index_bits = packedInfo->index_bits;
+                words_per_entry = packedInfo->words_per_entry;
+                CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
+                CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+            }
         }
     }
 
@@ -268,12 +305,25 @@ struct AirInstanceInfo {
         if (unpack_info != nullptr) {
             CHECKCUDAERR(cudaFree(unpack_info));
         }
+
+        if (d_col_source != nullptr) {
+            CHECKCUDAERR(cudaFree(d_col_source));
+        }
+
+        if (d_instr_table != nullptr) {
+            CHECKCUDAERR(cudaFree(d_instr_table));
+        }
     }
 };
 
 
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
+
+// Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
+// buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against it. Shared by the
+// main streams and the recursiveF buffer so the single bound matches every allocation.
+#define PINNED_EXPS_SLOTS 40000
 
 struct StreamData{
 
@@ -291,13 +341,17 @@ struct StreamData{
     Goldilocks::Element *pinned_aux_values;
 
     //runtime data
-    // Atomic: status is read (unlocked) by wait_stream_commit_done / callbacks while
+    // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
     // reserveStream/gen_proof write it, so a plain int would be a data race. The
     // atomic only removes UB on the individual load/store; the check-then-act
     // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
     // by holding mutex_stream_selection, not by the atomic.
     std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
+    // Marks the point where this stream stops reading the caller's host trace buffer, i.e. the
+    // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
+    // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
+    cudaEvent_t trace_copy_event;
     TimerGPU timer;
 
     TranscriptGL_GPU *transcript;
@@ -306,6 +360,15 @@ struct StreamData{
     StepsParams *params;
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;
+
+    // Disambiguates recurser setups (all share (0,0,"recursive2")) in the recursive-path
+    // const-reuse check; empty for normal recursion. Cleared by invalidateContext().
+    string recurserId;
+
+    // Scalar "resident witness" marker read locklessly by get_instances_ready (reading
+    // proofType there would race concurrent std::string writes). Set by commit_witness,
+    // cleared by every proof path and invalidateContext; survives reset() like proofType.
+    bool witnessResident;
 
     //callback inputs
     void *root;
@@ -317,8 +380,30 @@ struct StreamData{
     int64_t instanceId;
     string proofType;
     uint64_t arity;
-        
+
+    // Which fixed columns this stream's aux trace holds, not which air it last served: airs
+    // with identical fixed share a const-pols slot, so the offset is the key. constAggBuffer
+    // separates the two const buffers (unrelated offsets), constRecurserId the recursers
+    // (one shared slot). custom_fixed is per-air and stays keyed on the air.
+    uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
+    // Where the unpacked pols land in the aux trace. Part of the key because two airs can
+    // share a slot yet lay out ("const", false) differently -- a preallocated const tree
+    // moves it, and constPolsAliasTree moves it into the tree's node area.
+    uint64_t constAuxOffset = 0;
+    bool constAggBuffer = false;
+    string constRecurserId;
+    // ("const", true) holds this slot's tree. Separate from the pols because the
+    // constraint-verification path unpacks the pols without loading the tree.
+    bool constTreeResident = false;
+
     bool recursive;
+
+    // This stream's aux-trace region intersects the streaming-commit slot area
+    // (only ever set on first-GPU streams -- slots exist only there)
+    bool overlapsStreamCommitRegion = false;
+
+    // Field elements in this stream's slice of the unified buffer: a proof fits only when mapTotalN does.
+    uint64_t auxTraceCapacity = 0;
 
 #ifdef USE_CUDA_GRAPH
     std::unique_ptr<CudaGraphCache> graph_cache;
@@ -327,7 +412,7 @@ struct StreamData{
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
-        uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
+        uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
@@ -335,6 +420,7 @@ struct StreamData{
         localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
+        cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
@@ -345,6 +431,8 @@ struct StreamData{
 
         root = nullptr;
         pSetupCtx = nullptr;
+        recurserId = "";
+        witnessResident = false;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
@@ -377,14 +465,51 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
-        // end_event is created once in initialize() and destroyed in free();
-        // cudaEventRecord overwrites it on each use, so there is no need to
-        // destroy/recreate it on every per-instance reset.
+        // end_event / trace_copy_event are created once in initialize() and destroyed in free();
+        // cudaEventRecord overwrites them on each use, so there is no need to
+        // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
 
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
+
+        // Clear stale open timer categories: a cancel mid-category leaves one open, and the next
+        // job's stopCategory then mismatches and CHECKCUDAERR-aborts. Host-side only, no CUDA calls.
+        timer.resetCategories();
+    }
+
+    // Invalidate the const-reuse identity so the next proof reloads constants.
+    void invalidateContext(){
+        airgroupId = UINT64_MAX;
+        airId = UINT64_MAX;
+        proofType = "";
+        recurserId = "";
+        witnessResident = false;
+        constPolsOffset = UINT64_MAX;
+        constRecurserId = "";
+        constTreeResident = false;
+    }
+
+    // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
+    // apply -- even to a different air sharing them. A change also drops constTreeResident.
+    bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
+        if (constPolsOffset == offset && constAuxOffset == auxOffset && constAggBuffer == aggBuffer
+            && constRecurserId == recurser) return true;
+        constPolsOffset = offset;
+        constAuxOffset = auxOffset;
+        constAggBuffer = aggBuffer;
+        constRecurserId = recurser;
+        constTreeResident = false;
+        return false;
+    }
+
+    // Nothing valid is cached any more: for paths that overwrite the aux trace without
+    // repopulating the const pols.
+    void dropFixedSlot(){
+        constPolsOffset = UINT64_MAX;
+        constRecurserId = "";
+        constTreeResident = false;
     }
 
     void free(){
@@ -394,6 +519,7 @@ struct StreamData{
 #endif
         cudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
+        cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
@@ -428,7 +554,7 @@ struct DeviceRecursiveFBuffers
 
 
     DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
-        uint64_t maxExps = 20000;
+        uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaStreamCreate(&stream);
         cudaStreamCreate(&stream_const_tree);
         timer.init(stream);
@@ -473,9 +599,15 @@ struct DeviceCommitBuffers
     uint64_t constPolsSize;
     uint64_t unifiedBufferSize = 0;
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
-    // 0 = free (proofman owns it), 1 = borrowed 
+    // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
+
+    // Device-idle barrier. Worker: increment `device_active` THEN read `cancelled`. Teardown: raise
+    // `cancelled` THEN wait for `device_active == 0`. seq_cst on both gives a total order so neither
+    // side misses the other, letting teardown fence in-flight work before free. Covers only InFlightScope entries.
+    std::atomic<int64_t> device_active{0};
+    std::atomic<bool> cancelled{false};
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
@@ -483,12 +615,64 @@ struct DeviceCommitBuffers
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
+    // Aux trace elements per non-recursive stream, largest class first; length n_streams. Owned here.
+    uint64_t *aux_trace_sizes = nullptr;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 
+    
+    std::mutex stream_selection_mutex;
+
     bool packedTrace = false;
 
+    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
+    // GPU only -- the only one gpu-mops can borrow. Carved from the top of the unified buffer,
+    // immediately below the const-pols aggregation region. They overlap the
+    // Slot i starts at byte offset streamCommitFloorBytes + i * streamCommitSlotBytes
+    // from gpuMemoryBuffer[0]. streamCommitFloorBytes is the ceiling gpu-mops
+    // usage must stay under (UINT64_MAX when disabled, so comparisons degrade
+    // to the const-pols one).
+    uint64_t streamCommitSlots = 0;
+    uint64_t streamCommitSlotBytes = 0;
+    uint64_t streamCommitFloorBytes = UINT64_MAX;
+    // Stashed at allocation for configure_stream_commit_slots' overlap computation. Non-recursive
+    // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
+    uint64_t auxTraceTotalBytes = 0;
+    uint64_t auxTraceRecursiveBytes = 0;
+    cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
+    // Shared-hold of the overlapped legacy streams: the first in-flight slot
+    // commit claims every overlapped stream's selection mutex, the last
+    // releases them (see acquire/release in commit_witness_streaming_gpu).
+    std::mutex streamCommitRegionMutex;
+    uint32_t streamCommitInFlight = 0;
+    // Quiesce: set by the gpu-mops borrower right before its FINAL planning
+    // phase (whose host-paced micro-ops stretch ~40x under concurrent commit
+    // load — see stream_commit_pause). While set, commit_witness_streaming
+    // rejects new commits (-14, silent legacy fallback); cleared on the next
+    // borrow acquire.
+    std::atomic<uint32_t> streamCommitQuiesced{0};
+
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
+};
+
+// RAII guard for the device-idle barrier. Construct at the top of a device entry (before touching
+// the device) so teardown waits for this thread before freeing. Coverage is partial (not every
+// entry constructs one). `cancelled()` lets an entry additionally bail out early when teardown has
+// begun; increment-then-read pairs with teardown's raise-then-wait (seq_cst) so neither side misses
+// the other. NOTE: no entry checks it yet — teardown currently relies on the refcount wait alone.
+struct InFlightScope {
+    DeviceCommitBuffers *d;
+    explicit InFlightScope(DeviceCommitBuffers *d_) : d(d_) {
+        d->device_active.fetch_add(1, std::memory_order_seq_cst);
+    }
+    ~InFlightScope() {
+        d->device_active.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    bool cancelled() const {
+        return d->cancelled.load(std::memory_order_seq_cst);
+    }
+    InFlightScope(const InFlightScope &) = delete;
+    InFlightScope &operator=(const InFlightScope &) = delete;
 };
 
 void copy_to_device_in_chunks(

@@ -75,7 +75,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     // TreeSelector8 now spans 2 rows: 30 signals split 27/3 over a[0..26] + a[0..2]',
     // so all signals stay inside the S[27] connection band. Fires on the first row of
     // each pair ([1,0] pattern).
-    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                       [1:0]:nTreeSelector8, 0...];
+    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                       [1,0]:nTreeSelector8, 0...];
     col fixed SELECTVAL1    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8),                    1:nSelectVal1, 0...];
     col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8 + nSelectVal1),      1:nPlonkRows,  0...];
 

@@ -122,6 +122,8 @@ impl<F: PrimeField64> Setup<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
+        // Table air: proved at most once, so its const pols need not survive the proof.
+        single_use: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
@@ -209,6 +211,7 @@ impl<F: PrimeField64> Setup<F> {
                 false,
                 gpu,
                 preallocate_const,
+                single_use && gpu,
             );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
@@ -400,7 +403,7 @@ impl<F: PrimeField64> Setup<F> {
             exec_data,
             n_adds,
             setup_path: setup_path.to_path_buf().clone(),
-            setup_type: setup_type.clone(),
+            setup_type: *setup_type,
             air_name: air_info.name.clone(),
             const_pols_path,
             const_pols_tree_path,

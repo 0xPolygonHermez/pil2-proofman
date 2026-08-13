@@ -157,14 +157,14 @@ fn forwarding_methods(type_name: &Ident, fields: &[TraceField]) -> Vec<TokenStre
     out
 }
 
-fn generic_tokens(generic: &Option<Ident>) -> (TokenStream, TokenStream) {
+pub(crate) fn generic_tokens(generic: &Option<Ident>) -> (TokenStream, TokenStream) {
     match generic {
         Some(g) => (quote! { <#g> }, quote! { <#g: PrimeField64 + Copy + Default + Send + 'static> }),
         None => (quote! {}, quote! {}),
     }
 }
 
-fn rust_type_for_bits(bits: usize) -> TokenStream {
+pub(crate) fn rust_type_for_bits(bits: usize) -> TokenStream {
     match bits {
         1 => quote! { bool },
         2..=8 => quote! { u8 },

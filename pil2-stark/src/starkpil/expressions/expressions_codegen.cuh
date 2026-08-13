@@ -13,19 +13,37 @@
 #include <cstdlib>
 #include <cstdio>
 
-// Must match the launcher signature emitted by the codegen
+// Q launcher: must match the signature emitted by the codegen
 // (extern "C" exps_launch in setup/exps-codegen/src/emit.rs).
-typedef void (*ExpsKernelFn)(StepsParams*, gl64_t*, gl64_t*, uint64_t, uint64_t,
-                             uint64_t, uint64_t, uint64_t, uint64_t, cudaStream_t);
-// One AIR's resolved expression kernel:
-//   lib       : dlopen handle for the AIR's .exps.so (kept open for the AIR's lifetime; dlclose'd in dtor)
-//   fn        : the .so's C-ABI host launcher (exps_launch) that issues this AIR's kernel launch(es)
-//   minScratch: scratch elements a single-block launch needs (the .so reports it via exps_min_scratch;
-//               0 if unchunked).
+typedef void (*ExpsQLaunchFn)(StepsParams*, gl64_t*, gl64_t*, uint64_t, uint64_t,
+                              uint64_t, uint64_t, uint64_t, uint64_t, cudaStream_t);
+
+// Generic (non-Q) expression kernels 
+// Store modes — must match exps_expr_store in the emitted gen_common.cuh.
+enum ExprMode : uint64_t {
+    EXPR_MODE_WRITE = 0,      // dest  = expr
+    EXPR_MODE_MUL_INV = 1,    // dest *= expr^{-1}
+    EXPR_MODE_WRITE_INV = 2,  // dest  = scalar * expr^{-1}
+};
+typedef int (*ExprCoveredFn)(unsigned long long expId);
+typedef int (*ExprLaunchFn)(unsigned long long expId, StepsParams*, gl64_t* dest,
+                                unsigned long long N, unsigned long long destDomain,
+                                unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
+                                unsigned long long mode, unsigned long long scalar,
+                                unsigned long long stagePos, unsigned long long stageCols,
+                                unsigned long long destDim, unsigned int destExpr, cudaStream_t);
+// One AIR's resolved generated kernels. Two families (see expressions_gpu.cuh):
+//   lib        : dlopen handle for the AIR's .exps.so (kept open for the AIR's lifetime; dlclose'd in dtor)
+//   qLaunch    : the Q launcher (`exps_launch`) -- chunked kernels over the extended domain
+//   qMinScratch: scratch elements one Q wave needs (`exps_min_scratch`; 0 if unchunked)
+//   exprCovered/exprLaunch: per-expId trace-domain kernels for the non-Q expressions
+//                (`exps_expr_covered` / `exps_launch_expr`; optional -- older .so lack them)
 struct ExpsKernel {
     void* lib = nullptr;
-    ExpsKernelFn fn = nullptr;
-    uint64_t minScratch = 0;
+    ExpsQLaunchFn qLaunch = nullptr;
+    uint64_t qMinScratch = 0;
+    ExprCoveredFn exprCovered = nullptr;
+    ExprLaunchFn exprLaunch = nullptr;
 };
 
 // The library sits next to the AIR's .bin with the .exps.so suffix: swap a trailing ".bin" -> ".exps.so".
@@ -52,18 +70,21 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     if (::stat(path.c_str(), &st) != 0) return r;
     void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h) { fprintf(stderr, "[EXPS] dlopen failed: %s\n", dlerror()); return r; }
-    auto launch = (ExpsKernelFn)dlsym(h, "exps_launch");
+    auto qLaunch = (ExpsQLaunchFn)dlsym(h, "exps_launch");
     auto minf = (unsigned long long (*)())dlsym(h, "exps_min_scratch");
-    if (!launch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }
-    r.lib = h; r.fn = launch; r.minScratch = (uint64_t)minf();
+    if (!qLaunch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }
+    r.lib = h; r.qLaunch = qLaunch; r.qMinScratch = (uint64_t)minf();
+    r.exprCovered = (ExprCoveredFn)dlsym(h, "exps_expr_covered");
+    r.exprLaunch = (ExprLaunchFn)dlsym(h, "exps_launch_expr");
+    if ((r.exprCovered == nullptr) != (r.exprLaunch == nullptr)) { r.exprCovered = nullptr; r.exprLaunch = nullptr; }
     return r;
 }
 
 inline void expsClose(void* lib) { if (lib) dlclose(lib); }
 
-// Launch the AIR's pre-resolved kernel. Returns false (caller falls back to the interpreter) if the
-// kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
-inline bool tryLaunchExps(SetupCtx& sc, ExpsKernelFn fn, uint64_t minScratch,
+// Launch the AIR's pre-resolved Q kernel. Returns false (caller falls back to the interpreter) if
+// the kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
+inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
                           StepsParams* d_params, gl64_t* d_q, cudaStream_t stream) {
     uint64_t scratchAvail = expsScratchAvail(sc);
     if (minScratch > scratchAvail) return false;

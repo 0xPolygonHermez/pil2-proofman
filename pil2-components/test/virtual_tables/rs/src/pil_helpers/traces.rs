@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "50f3ef9317681d4f56eae05e3c8c3059d58607716af3b80fe0007ae2d0b2a29b";
+pub const PILOUT_HASH: &str = "380e6935ccf5e40bbc493001d06e841b2e34fe3ab8d5e498ec53030ed40e48f2";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -164,7 +164,7 @@ trace_row!(SpecifiedRangesTraceRow<F> {
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
 
 trace_row!(VirtualTableVirtualTables0FixedRow<F> {
- UID: [F; 3], column: [F; 10], __L1__: F,
+ COL_0_0_0: F, COL_0_0_1: F, UID_0: F, __ROW_INDEX__: F, COL_2_4_0: F, COL_2_4_1: F, COL_2_4_2: F, COL_2_4_3: F, UID_2: F, __L1__: F,
 });
 pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTables0FixedRow<F>, 512, 0, 10>;
 
@@ -175,7 +175,7 @@ trace_row!(VirtualTableVirtualTables0TraceRow<F> {
 pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 512, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables1FixedRow<F> {
- UID: [F; 5], column: [F; 17], __L1__: F,
+ __ROW_INDEX__: F, COL_4_12_0: F, COL_4_12_3: F, UID_4: F, __L1__: F,
 });
 pub type VirtualTableVirtualTables1Fixed<F> = GenericTrace<VirtualTableVirtualTables1FixedRow<F>, 8192, 0, 11>;
 
@@ -186,7 +186,7 @@ trace_row!(VirtualTableVirtualTables1TraceRow<F> {
 pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 11>;
 
 trace_row!(VirtualTableVirtualTables2FixedRow<F> {
- UID: [F; 5], column: [F; 7], __L1__: F,
+ __ROW_INDEX__: F, COL_4_4_0: F, UID_4: F, __L1__: F,
 });
 pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTables2FixedRow<F>, 16384, 0, 12>;
 

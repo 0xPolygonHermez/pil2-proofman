@@ -5,7 +5,7 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
 {
 
     recursive = recursive_;
@@ -13,6 +13,7 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify = verify_;
     gpu = gpu_;
     preallocate = preallocate_;
+    singleUse = single_use_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -471,11 +472,21 @@ void StarkInfo::setMapOffsets() {
         if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
             calculateFixedExtended = true;
         }
+
+        // extendAndMerkelizeFixed is the last reader of the unpacked const pols (quotient, evals
+        // and FRI use the extended tree), and a single-use air never reuses them across proofs, so
+        // they can live in the region they extend into and cost nothing.
+        constPolsAliasTree = singleUse && calculateFixedExtended;
     }
 
     if (gpu) {
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
+        if (constPolsAliasTree) {
+            mapOffsets[std::make_pair("const", false)] =
+                mapOffsets[std::make_pair("const", true)];
+        } else {
+            mapOffsets[std::make_pair("const", false)] = mapTotalN;
+            mapTotalN += N * nConstants;
+        }
     }
 
     if(gpu) {

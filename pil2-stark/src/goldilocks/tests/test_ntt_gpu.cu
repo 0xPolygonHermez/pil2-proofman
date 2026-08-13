@@ -118,7 +118,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_intt_multicol)
     CHECKCUDAERR(cudaStreamCreate(&stream));
     TimerGPU timer(stream);
 
-    // INTT(nBits=16, nCols=4) resolves to Layout::ColMajor (flat, sppark): nCols <= 500. Lay the input
+    // INTT(nBits=16, nCols=4) resolves to Layout::ColMajor (flat). Lay the input
     // out the SAME way (fromRowMajorToColMajor with ColMajor) so the in-place transform reads it
     // correctly, then read the result back with the matching flat formula (col*nRows + row).
     gl64_t *d_flat, *d_colmajor;
@@ -329,8 +329,8 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     NTTGoldilocksGPU::freeConstants();
 }
 
-// Keccakf-like ColMajorTiled stage-1 flow: nBits=17, nCols>500 -> resolveLayout returns ColMajorTiled,
-// so the trace is stored ColMajorTiled, LDE runs the NATIVE tiled path, and the Merkle reads tiled.
+// Keccakf-like ColMajorTiled stage-1 flow through the legacy tiled reference backend (called
+// directly: resolveLayout is always ColMajor now, so the dispatch no longer selects it).
 // (1) GPU root must match CPU LDE + merkletree_seq (row-major reference). (2) The GPU root must be
 // DETERMINISTIC across two independent runs (catches uninitialised in-tile padding reads).
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
@@ -341,8 +341,6 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
     constexpr uint64_t nRows_ext  = 1ULL << n_bits_ext;
     constexpr uint64_t nCols      = 600;          // > 500 -> ColMajorTiled
     constexpr uint32_t arity      = 3;
-
-    ASSERT_EQ(resolveLayout(n_bits, nCols), Layout::ColMajorTiled) << "test must exercise the tiled path";
 
     std::vector<Goldilocks::Element> h_input(nRows * nCols);
     for (uint64_t i = 0; i < nRows * nCols; i++)
@@ -382,7 +380,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_tiled_keccakf)
         // row-major -> ColMajorTiled storage
         fromRowMajorToColMajor(nRows, nCols, d_flat, d_tiled, Layout::ColMajorTiled, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
-        gpu_ntt.LDE(d_lde, 0, d_tiled, 0, n_bits, n_bits_ext, nCols, timer, stream);
+        gpu_ntt.ldeTiled(d_lde, d_tiled, n_bits, n_bits_ext, nCols, stream);
         Poseidon2GoldilocksGPU<12>::merkletree(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde, nCols, nRows_ext, Layout::ColMajorTiled, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
         std::vector<Goldilocks::Element> &dst = (run == 0) ? root_run0 : root_run1;
@@ -415,10 +413,11 @@ static inline uint64_t hostTiledOffset(uint64_t row, uint64_t col, uint64_t nRow
     return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT + col_block * TILE_HEIGHT + row_block;
 }
 
-// Equivalence: the two LDE backends (sppark flat vs native tiled) must produce the SAME logical result
-// at the same dims, and both must equal the CPU LDE. Each backend is called directly (bypassing the
-// resolveLayout dispatch) on its own storage layout; results are reconstructed to row-major and compared.
-// One equivalence point: run both LDE backends at (n_bits, nCols) and assert sppark == native == CPU.
+// Equivalence: the two LDE backends (in-house ColMajor engine vs legacy tiled) must produce the SAME
+// logical result at the same dims, and both must equal the CPU LDE. Each backend is called directly
+// (bypassing the resolveLayout dispatch) on its own storage layout; results are reconstructed to
+// row-major and compared.
+// One equivalence point: run both LDE backends at (n_bits, nCols) and assert colMajor == tiled == CPU.
 static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t stream,
                                        uint64_t n_bits, uint64_t nCols)
 {
@@ -434,11 +433,10 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     NTT_Goldilocks cpu_ntt(nRows_ext);
     cpu_ntt.LDE(h_cpu.data(), h_input.data(), nRows_ext, nRows, nCols);
 
-    gl64_t *d_flat, *d_src_cm, *d_src_tiled, *d_dst_cm, *d_dst_tiled;
+    gl64_t *d_flat, *d_src_cm, *d_src_tiled, *d_dst_tiled;
     CHECKCUDAERR(cudaMalloc((void**)&d_flat,      nRows     * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_src_cm,    nRows     * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_src_tiled, nRows     * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_dst_cm,    nRows_ext * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_dst_tiled, nRows_ext * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_flat, h_input.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
@@ -447,30 +445,100 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     fromRowMajorToColMajor(nRows, nCols, d_flat, d_src_tiled, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    gpu_ntt.ldeSppark(d_dst_cm, d_src_cm, n_bits, n_bits_ext, nCols, stream);
-    gpu_ntt.ldeNativeTiled(d_dst_tiled, d_src_tiled, n_bits, n_bits_ext, nCols, stream);
+    // preserve_src + null scratch exercises the engine's internal staging allocation.
+    gl64_t *d_dst_colmajor;
+    CHECKCUDAERR(cudaMalloc((void**)&d_dst_colmajor, nRows_ext * nCols * sizeof(gl64_t)));
+    gpu_ntt.ldeColMajor(d_dst_colmajor, d_src_cm, n_bits, n_bits_ext, nCols, stream, true, nullptr);
+    gpu_ntt.ldeTiled(d_dst_tiled, d_src_tiled, n_bits, n_bits_ext, nCols, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    std::vector<Goldilocks::Element> h_cm(nRows_ext * nCols), h_tiled(nRows_ext * nCols);
-    CHECKCUDAERR(cudaMemcpy(h_cm.data(),    d_dst_cm,    nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+    std::vector<Goldilocks::Element> h_tiled(nRows_ext * nCols), h_colmajor(nRows_ext * nCols);
     CHECKCUDAERR(cudaMemcpy(h_tiled.data(), d_dst_tiled, nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(h_colmajor.data(), d_dst_colmajor, nRows_ext * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_dst_colmajor));
 
     for (uint64_t row = 0; row < nRows_ext; row++) {
         for (uint64_t col = 0; col < nCols; col++) {
-            uint64_t vSppark = Goldilocks::toU64(h_cm[col * nRows_ext + row]);              // ColMajor: col*nRows+row
-            uint64_t vTiled  = Goldilocks::toU64(h_tiled[hostTiledOffset(row, col, nRows_ext, nCols)]);
-            uint64_t vCpu    = Goldilocks::toU64(h_cpu[row * nCols + col]);
-            ASSERT_EQ(vSppark, vCpu)   << "sppark LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
-            ASSERT_EQ(vTiled,  vCpu)   << "native-tiled LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
-            ASSERT_EQ(vSppark, vTiled) << "sppark vs native-tiled LDE differ at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            uint64_t vColMajor = Goldilocks::toU64(h_colmajor[col * nRows_ext + row]);   // ColMajor: col*nRows+row
+            uint64_t vTiled    = Goldilocks::toU64(h_tiled[hostTiledOffset(row, col, nRows_ext, nCols)]);
+            uint64_t vCpu      = Goldilocks::toU64(h_cpu[row * nCols + col]);
+            ASSERT_EQ(vColMajor, vCpu)   << "ldeColMajor != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            ASSERT_EQ(vTiled,    vCpu)   << "tiled LDE != CPU at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
+            ASSERT_EQ(vColMajor, vTiled) << "ldeColMajor vs tiled LDE differ at nBits=" << n_bits << " nCols=" << nCols << " (" << row << "," << col << ")";
         }
     }
 
     CHECKCUDAERR(cudaFree(d_flat));
     CHECKCUDAERR(cudaFree(d_src_cm));
     CHECKCUDAERR(cudaFree(d_src_tiled));
-    CHECKCUDAERR(cudaFree(d_dst_cm));
     CHECKCUDAERR(cudaFree(d_dst_tiled));
+}
+
+// Aliased LDE (the constPolsAliasTree layout): the small-domain source columns are packed at
+// the BASE of the destination buffer (src col c at base + c*N, dst col c at base + c*Next,
+// equal bases) and extended in place. ldeColMajor's two flows carry independent aliasing
+// logic (descending whole-slot ordering in the batched flow, column-0 staging in the serial
+// flow), and WHICH flow runs depends on the GPU's L2 size -- so both shapes below must be
+// pinned or a regression could surface on some machines only.
+static void checkLdeAliased(NTTGoldilocksGPU &gpu_ntt, cudaStream_t stream,
+                            uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols)
+{
+    const uint64_t nRows     = 1ULL << n_bits;
+    const uint64_t nRows_ext = 1ULL << n_bits_ext;
+
+    // Row-major input for the CPU reference; packed ColMajor copy for the GPU.
+    std::vector<Goldilocks::Element> h_input_rm(nRows * nCols);
+    for (uint64_t i = 0; i < nRows * nCols; i++)
+        h_input_rm[i] = Goldilocks::fromU64((i * 0x9E3779B97F4A7C15ULL + 3) & 0xffffffffffffULL);
+
+    std::vector<Goldilocks::Element> h_cpu(nRows_ext * nCols);
+    NTT_Goldilocks cpu_ntt(nRows_ext);
+    cpu_ntt.LDE(h_cpu.data(), h_input_rm.data(), nRows_ext, nRows, nCols);
+
+    // One buffer only: sources packed at its base, extension in place over them.
+    std::vector<uint64_t> h_packed(nRows * nCols);
+    for (uint64_t r = 0; r < nRows; r++)
+        for (uint64_t c = 0; c < nCols; c++)
+            h_packed[c * nRows + r] = Goldilocks::toU64(h_input_rm[r * nCols + c]);
+
+    gl64_t *d_buf;
+    CHECKCUDAERR(cudaMalloc((void**)&d_buf, nRows_ext * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemsetAsync(d_buf, 0xCD, nRows_ext * nCols * sizeof(gl64_t), stream));
+    CHECKCUDAERR(cudaMemcpyAsync(d_buf, h_packed.data(), nRows * nCols * sizeof(gl64_t),
+                                 cudaMemcpyHostToDevice, stream));
+
+    // preserve_src must be false: the aliased source is destroyed by design.
+    gpu_ntt.ldeColMajor(d_buf, d_buf, n_bits, n_bits_ext, nCols, stream, false, nullptr);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    std::vector<uint64_t> h_out(nRows_ext * nCols);
+    CHECKCUDAERR(cudaMemcpy(h_out.data(), d_buf, nRows_ext * nCols * sizeof(gl64_t),
+                            cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_buf));
+
+    for (uint64_t r = 0; r < nRows_ext; r++)
+        for (uint64_t c = 0; c < nCols; c++)
+            ASSERT_EQ(h_out[c * nRows_ext + r], Goldilocks::toU64(h_cpu[r * nCols + c]))
+                << "aliased LDE != CPU at nBits=" << n_bits << " nCols=" << nCols
+                << " (" << r << "," << c << ")";
+}
+
+TEST(GOLDILOCKS_TEST, ntt_gpu_lde_aliased_src_dst)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int*)&gpu_id);
+    NTTGoldilocksGPU gpu_ntt(23, 1, &gpu_id);
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    // Batched flow: NExt columns of 2^15 fit many times in any L2 >= ~1 MB (chunk >= 2).
+    checkLdeAliased(gpu_ntt, stream, 14, 15, 8);
+    if (::testing::Test::HasFatalFailure()) { cudaStreamDestroy(stream); NTTGoldilocksGPU::freeConstants(); return; }
+    // Serial flow: one 2^23-row column is 64 MB -- no GPU L2 holds two (chunk == 1).
+    checkLdeAliased(gpu_ntt, stream, 22, 23, 2);
+
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
 }
 
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_backends_equivalent)
@@ -496,7 +564,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_backends_equivalent)
             uint64_t N = 1ULL << n_bits, NExt = 1ULL << (n_bits + 2);
             size_t freeB = 0, totalB = 0;
             CHECKCUDAERR(cudaMemGetInfo(&freeB, &totalB));
-            size_t needB = (2 * N + 2 * NExt) * nCols * sizeof(gl64_t);   // flat+src + 2 dst buffers
+            size_t needB = (3 * N + 2 * NExt) * nCols * sizeof(gl64_t);   // flat + 2 src + 2 dst buffers (tiled, colMajor)
             if (needB > (size_t)(0.85 * (double)freeB)) {
                 printf("[equiv] skip nBits=%lu nCols=%lu (does not fit)\n", (unsigned long)n_bits, (unsigned long)nCols);
                 continue;

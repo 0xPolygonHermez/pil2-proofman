@@ -64,6 +64,26 @@ pub struct Ir {
     pub n_bits: u64,
 }
 
+impl Ir {
+    pub fn uses_zi(&self) -> bool {
+        self.instrs.iter().any(|i| matches!(i.a, Operand::Zi) || matches!(i.b, Operand::Zi))
+    }
+
+    /// Output dimension of the expression: the final instruction's value (for
+    /// non-Q expressions the result is left in the last tmp; for Q it is the
+    /// explicit output store). None for an empty body or when a non-tmp store
+    /// occurs before the end (non-canonical shape).
+    pub fn out_dim(&self) -> Option<u64> {
+        let last = self.instrs.last()?;
+        let early_out = self.instrs[..self.instrs.len() - 1].iter().any(|i| !i.dst_is_tmp);
+        if early_out {
+            None
+        } else {
+            Some(last.ddim)
+        }
+    }
+}
+
 /// Operand type the generator does not support (e.g. `custom`). The driver
 /// treats this as "skip this AIR -> keep it on the bytecode interpreter".
 #[derive(Debug)]
@@ -79,8 +99,21 @@ impl std::error::Error for UnhandledOperand {}
 /// `UnhandledOperand` (as an `anyhow` error) if it references an operand type
 /// the generator can't emit.
 pub fn build_ir(stark_info: &StarkInfo, expr_info: &ExpressionsInfo) -> anyhow::Result<Ir> {
+    build_ir_expr(stark_info, expr_info, stark_info.c_exp_id, true)
+}
+
+/// Resolve any expression by id. `extended = true` evaluates over the extended
+/// domain (Q: operand strides are openingPoint * blowup); `extended = false`
+/// over the trace domain (hint/witness expressions: strides are the raw
+/// opening points, matching the evaluator's non-extended `nextStrides`).
+pub fn build_ir_expr(
+    stark_info: &StarkInfo,
+    expr_info: &ExpressionsInfo,
+    exp_id: i64,
+    extended: bool,
+) -> anyhow::Result<Ir> {
     let opening = &stark_info.opening_points;
-    let blowup = stark_info.blowup();
+    let blowup = if extended { stark_info.blowup() } else { 1 };
     let n_constants = stark_info.n_constants;
 
     // ncols[stage] = number of committed columns at that stage, for stages 1..=nStages+1.
@@ -93,8 +126,8 @@ pub fn build_ir(stark_info: &StarkInfo, expr_info: &ExpressionsInfo) -> anyhow::
     let code = &expr_info
         .expressions_code
         .iter()
-        .find(|e| e.exp_id == stark_info.c_exp_id)
-        .ok_or_else(|| anyhow::anyhow!("cExpId {} not found in expressionsCode", stark_info.c_exp_id))?
+        .find(|e| e.exp_id == exp_id)
+        .ok_or_else(|| anyhow::anyhow!("expId {exp_id} not found in expressionsCode"))?
         .code;
 
     // stride(prime) = openingPoints[index(prime)] * blowup (membership-validated).

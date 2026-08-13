@@ -191,28 +191,10 @@ else ifeq ($(UNAME_S),Linux)
         $(info AVX2 is supported by the CPU)
     endif
 
-    # SIMD staleness check: AVX flags are baked into objects
-    # Record the level used by the last build in .simd_stamp and wipe all
-    # build/lib dirs when it no longer matches the current CPU. 
-    ifneq ($(AVX512_SUPPORTED),)
-        SIMD_LEVEL := avx512
-    else ifneq ($(AVX2_SUPPORTED),)
-        SIMD_LEVEL := avx2
-    else
-        SIMD_LEVEL := none
-    endif
-    SIMD_STAMP := .simd_stamp
-    LAST_SIMD := $(shell cat $(SIMD_STAMP) 2>/dev/null)
-    ifneq ($(LAST_SIMD),$(SIMD_LEVEL))
-        HAVE_OBJS := $(shell find $(BUILD_DIR) $(BUILD_DIR_GPU) -name '*.o' -print -quit 2>/dev/null)
-        ifneq ($(HAVE_OBJS),)
-            $(warning SIMD level changed ($(if $(LAST_SIMD),$(LAST_SIMD),unknown) -> $(SIMD_LEVEL)) — removing stale objects ($(BUILD_DIR), $(BUILD_DIR_GPU), $(LIB_DIR), $(LIB_DIR_GPU)))
-            SIMD_CLEAN := $(shell rm -rf $(BUILD_DIR) $(BUILD_DIR_GPU) $(LIB_DIR) $(LIB_DIR_GPU))
-        endif
-        SIMD_WRITE := $(shell echo $(SIMD_LEVEL) > $(SIMD_STAMP))
-    endif
-
-    # CUDA arch staleness check (same rationale as the SIMD check above)
+    # CUDA arch staleness check: gencode flags are baked into the GPU objects
+    # and make's .d files don't track them, so a flag change (CUDA_ARCHS=89 ->
+    # CUDA_ARCHS=90) would otherwise relink stale objects into the new library.
+    # Record the flags used by the last build and wipe the GPU dirs on a change.
     ifdef NEED_CUDA_ARCH
     CUDA_ARCH_STAMP := .cuda_arch_stamp
     LAST_CUDA_FLAGS := $(shell cat $(CUDA_ARCH_STAMP) 2>/dev/null)
@@ -375,12 +357,6 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-NVCCFLAGS_GL := $(filter-out -DFEATURE_BN254,$(NVCCFLAGS)) -DFEATURE_GOLDILOCKS -DGOLDILOCKS_ZISK
-
-$(BUILD_DIR_GPU)/./src/goldilocks/src/sppark_lde.cu.o: ./src/goldilocks/src/sppark_lde.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS_GL) $(CPPFLAGS) -c $< -o $@
-
 $(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@

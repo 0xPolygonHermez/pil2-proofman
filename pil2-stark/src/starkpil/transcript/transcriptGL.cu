@@ -239,21 +239,21 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
                     v = poseidon1PermuteWarpReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
                                                 PoseidonGoldilocks<8>::HALF_N_FULL_ROUNDS,
                                                 PoseidonGoldilocks<8>::N_PARTIAL_ROUNDS>(
-                        v, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                        v, lane, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
                         (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
                     break;
                 case 3:
                     v = poseidon1PermuteWarpReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
                                                 PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
                                                 PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS>(
-                        v, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                        v, lane, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
                         (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
                     break;
                 case 4:
                     v = poseidon1PermuteWarpReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
                                                 PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
                                                 PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS>(
-                        v, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                        v, lane, mask, (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
                         (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
                     break;
                 default:

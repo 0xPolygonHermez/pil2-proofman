@@ -8,6 +8,13 @@ use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Dedup while keeping the caller's order. The filters below used to iterate a `HashSet`, discarding
+/// the caller's dispatch order and varying it run to run.
+fn dedup_preserving_order(ids: &[usize]) -> Vec<usize> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    ids.iter().copied().filter(|id| seen.insert(*id)).collect()
+}
+
 pub const MAX_COMPONENTS: usize = 1000;
 
 pub struct WitnessManager<F: PrimeField64> {
@@ -108,13 +115,12 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) -> ProofmanResult<()> {
         if debug_info.std_mode.name == ModeName::Debug {
+            let unique = dedup_preserving_order(instance_ids);
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-                let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
-
-                let instance_ids_filtered: Vec<usize> = ids_hash_set
+                let instance_ids_filtered: Vec<usize> = unique
                     .iter()
                     .filter(|id| self.components_instance_ids[idx].read().unwrap().contains(id))
-                    .cloned() // turn &&usize → usize
+                    .cloned()
                     .collect();
 
                 if !instance_ids_filtered.is_empty() {
@@ -137,12 +143,11 @@ impl<F: PrimeField64> WitnessManager<F> {
         n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
+        let unique = dedup_preserving_order(instance_ids);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
-
             let mut instance_ids_filtered = Vec::new();
 
-            for id in &ids_hash_set {
+            for id in &unique {
                 if self.components_instance_ids[idx].read().unwrap().contains(id)
                     && (self.pctx.dctx_is_my_process_instance(*id)? || self.pctx.dctx_is_table(*id))
                     && !self.pctx.dctx_is_instance_calculated(*id)
@@ -185,24 +190,20 @@ impl<F: PrimeField64> WitnessManager<F> {
         n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
+        let unique = dedup_preserving_order(instance_ids);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
-
             let mut instance_ids_filtered = Vec::new();
 
-            for id in &ids_hash_set {
+            for id in &unique {
                 if self.components_instance_ids[idx].read().unwrap().contains(id)
                     && (self.pctx.dctx_is_my_process_instance(*id)? || self.pctx.dctx_is_table(*id))
-                    && !self.pctx.dctx_is_instance_calculated(*id)
+                    && self.pctx.dctx_try_mark_instance_calculated(*id)
                 {
                     instance_ids_filtered.push(*id);
                 }
             }
 
             if !instance_ids_filtered.is_empty() {
-                for id in &instance_ids_filtered {
-                    self.pctx.dctx_set_instance_calculated(*id);
-                }
                 component.calculate_witness(
                     stage,
                     self.pctx.clone(),

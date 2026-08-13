@@ -595,6 +595,113 @@ function pack_tables() {
     }
 }
 
+/**
+ * Initializes the per-air registry of already materialized columns used by simplify_virtual_fixed.
+ *
+ * @param size Upper bound on the number of columns to simplify (one registry slot each).
+ */
+function init_simplify_virtual_fixed(const int size) {
+    int air.signatures_count = 0;
+    int air.signatures[size][2];
+    expr air.signatures_fixed[size];
+    if (DEBUG_MODE_PRINT) {
+        string air.signatures_name[size];
+    }
+}
+
+/**
+ * Replaces a virtual (uncommitted) fixed column by the cheapest expression that reproduces its
+ * contents: a constant, an offset of the row index, an already materialized column (optionally
+ * rotated) or, as a last resort, a newly materialized fixed column.
+ *
+ * The contents are snapshotted here, so the caller can safely refill fixed_col afterwards.
+ *
+ * @param fixed_col The virtual column to simplify.
+ * @param col_name  Name of the column if it ends up being materialized.
+ * @return          An expression equivalent to fixed_col.
+ */
+function simplify_virtual_fixed(expr fixed_col, string col_name) : expr {
+    const int aid = Tables.analyze(fixed_col);
+    const int col_type = Tables.get_analyzed_type(aid);
+    const int signature = Tables.get_analyzed_signature(aid);
+    const int comparative_signature = Tables.get_analyzed_comparative_signature(aid);
+
+    if (DEBUG_MODE_PRINT) {
+        println(`[Debug] Virtual ${col_name} type ${col_type} signature ${signature} comparative_signature ${comparative_signature}`);
+    }
+
+    // Column type 1: constant column, we can prove it directly
+    if (col_type == 1) {
+        return Tables.get_value(fixed_col, 0);
+    }
+
+    // Column type 2: sequential column, i.e. a constant step between consecutive rows, so we can
+    // express it as an affine combination of the row index: value_0 + delta·ROW_INDEX
+    if (col_type == 2) {
+        const int params[2] = Tables.get_analyzed_params(aid);   // [first_value, delta]
+        const int value_0 = params[0];
+        const int delta = params[1];
+        const expr ROW_INDEX = get_ROW_INDEX();
+
+        // The step is not necessarily 1, and it can also be negative
+        expr linear_col = ROW_INDEX;
+        if (delta != 1) {
+            linear_col = delta * ROW_INDEX;
+        }
+        if (value_0 == 0) {
+            return linear_col;
+        }
+        return linear_col + value_0;
+    }
+
+    // Search if exist a previous column compatible with this one (equals without or with offset)
+    int index = 0;
+    while (index < air.signatures_count) {
+        if (air.signatures[index][0] == signature) {
+            if (Tables.are_equals(air.signatures_fixed[index], 0, fixed_col, 0)) {
+                if (DEBUG_MODE_PRINT) {
+                    println(`[Debug] Found matching ${col_name} and ${air.signatures_name[index]}`);
+                }
+                return air.signatures_fixed[index];
+            }
+        }
+        if (air.signatures[index][1] == comparative_signature) {
+            int row_offset = Tables.compatible_offset(air.signatures_fixed[index], 0, fixed_col, 0);
+            if (row_offset != -1) {
+                // The match is fixed_col[i] == registered[(i + row_offset) mod N] + value_offset,
+                // so the value offset is taken between row 0 of this column and row row_offset of
+                // the registered one
+                int reference_value = Tables.get_value(air.signatures_fixed[index], row_offset);
+                int current_value = Tables.get_value(fixed_col, 0);
+                int value_offset = current_value - reference_value;
+                if (DEBUG_MODE_PRINT) {
+                    println(`[Debug] Found matching ${col_name} and ${air.signatures_name[index]} with row_offset ${row_offset} value_offset ${value_offset}`);
+                }
+                if (value_offset == 0) {
+                    return air.signatures_fixed[index]'(row_offset);
+                }
+                return air.signatures_fixed[index]'(row_offset) + value_offset;
+            }
+        }
+        ++index;
+    }
+
+    // No candidate found, materialize the column and register it for the next ones
+    col fixed air.`${col_name}`;
+    expr final_col = air.`${col_name}`;
+    Tables.copy(fixed_col, 0, final_col, 0, N);
+
+    air.signatures[air.signatures_count][0] = signature;
+    air.signatures[air.signatures_count][1] = comparative_signature;
+    air.signatures_fixed[air.signatures_count] = final_col;
+    if (DEBUG_MODE_PRINT) {
+        air.signatures_name[air.signatures_count] = col_name;
+    }
+    ++air.signatures_count;
+
+    return final_col;
+}
+
 airtemplate VirtualTable(const int N, const int tables[], const int num_tables, const int total_height, const int total_area,
                          const int uids[][], const int table_idxs[][], const int widths[], const int lens[],
                          const int num_groups, const int vt_idx, const int est_cost,
@@ -605,9 +712,14 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
         sum_widths += widths[i];
     }
 
-    col fixed UID[num_groups];
-    col fixed column[sum_widths];
+    // Virtual (uncommitted) columns: they are only used to build the contents, the columns that
+    // actually reach the air are the ones decided by simplify_virtual_fixed. A single UID buffer
+    // is enough since every group snapshots it before the next one refills it.
+    col fixed virtual(N) tmp_UID;
+    col fixed virtual(N) column[sum_widths];
+
     col witness multiplicity[num_groups];
+    init_simplify_virtual_fixed(num_groups + sum_widths);
 
     // Issue hint information
     int flatten_table_ids[num_tables];
@@ -654,7 +766,7 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
             const int height_remaining = height - row_start;
             const int N_remaining = N - group_row_offset;
             const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
-            Tables.fill(uid, UID[i], group_row_offset, h);
+            Tables.fill(uid, tmp_UID, group_row_offset, h);
 
             // Fill the table columns
             for (int l = 0; l < width; l++) {
@@ -672,6 +784,13 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
             }
         }
 
+        // Since tmp_UID is shared by all the groups, the rows this group does not fill must be
+        // cleared: otherwise they would keep the UID of the previous group, whose rows are already
+        // padded with zeros in the table columns
+        if (group_row_offset < N) {
+            Tables.fill(0, tmp_UID, group_row_offset, N - group_row_offset);
+        }
+
         int uids_to_prove[group_len];
         for (int j = 0; j < group_len; j++) {
             uids_to_prove[j] = uids[i][j];
@@ -679,11 +798,13 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
 
         expr cols_to_prove[group_width];
         for (int j = 0; j < group_width; j++) {
-            cols_to_prove[j] = column[col_offset + j];
+            cols_to_prove[j] = simplify_virtual_fixed(column[col_offset + j], `COL_${i}_${col_offset}_${j}`);
         }
 
+        expr UID = simplify_virtual_fixed(tmp_UID, `UID_${i}`);
+
         // Perform the proving
-        lookup_proves_dynamic(opids: uids_to_prove, busid: UID[i], expressions: cols_to_prove, mul: multiplicity[i]);
+        lookup_proves_dynamic(opids: uids_to_prove, busid: UID, expressions: cols_to_prove, mul: multiplicity[i]);
 
         // Update the column offset
         col_offset += group_width;

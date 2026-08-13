@@ -1,10 +1,16 @@
-//! Per-AIR Q-expression -> straight-line CUDA kernel codegen.
+//! Per-AIR expression -> straight-line CUDA kernel codegen.
 //!
-//! For each AIR's Q (cExp) expression: emit a register-bounded CUDA kernel,
-//! autotune the chunk size to zero register spill, and compile it into a
-//! self-contained `<base>.exps.so` next to that AIR's `.bin`. The prover
-//! `dlopen`s it by convention and falls back to the bytecode interpreter when
-//! it's absent.
+//! Two kernel families are emitted into each AIR's self-contained
+//! `<base>.exps.so` (placed next to that AIR's `.bin`):
+//! * the Q (cExp) kernel -- register-bounded, chunk size autotuned to zero
+//!   register spill;
+//! * one small trace-domain kernel per other covered expression (hint fields,
+//!   im columns, ...), dispatched by expId via `exps_expr_covered` /
+//!   `exps_launch_expr` (see `emit_exprs_tu`).
+//!
+//! The prover `dlopen`s the library by convention and falls back to the
+//! bytecode interpreter for anything absent: missing `.so`, missing symbol,
+//! or an uncovered expression.
 //!
 //! Two entry points:
 //! * [`generate_air`]  — one AIR dir -> its `.exps.so`.
@@ -261,7 +267,6 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
     }
 }
 
-/// Phases 2-4: autotune -> emit -> compile/link, shared by both entry points.
 fn run_pipeline(
     tc: &Toolchain,
     work: &Path,
@@ -301,6 +306,7 @@ fn run_pipeline(
 
     // Phase 3: emit the .cu sources; record per-sym slot counts.
     let mut slots_by_sym: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut exprs_by_sym: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut generated: Vec<GeneratedAir> = Vec::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut max_scratch: u64 = 0;
@@ -331,6 +337,36 @@ fn run_pipeline(
         for (fname, text) in emit::emit_air(ir, &plan, &c.sym) {
             std::fs::write(work.join(&fname), text)?;
         }
+        // Generic (non-Q) expression kernels: cover every trace-domain
+        // expression the interpreter might be asked for (hint fields, im
+        // columns, ...). Small straight-line kernels only; anything odd
+        // (zerofier use, non-canonical output shape, oversized) is skipped
+        // and stays on the interpreter.
+        {
+            const EXPR_CAP: usize = 512;
+            let mut items: Vec<(i64, ir::Ir, u64)> = Vec::new();
+            for ec in &c.expr_info.expressions_code {
+                if ec.exp_id == c.cexp || ec.code.is_empty() || ec.code.len() > EXPR_CAP {
+                    continue;
+                }
+                let Ok(eir) = ir::build_ir_expr(&c.stark_info, &c.expr_info, ec.exp_id, false) else {
+                    continue;
+                };
+                if eir.uses_zi() {
+                    continue;
+                }
+                let Some(od) = eir.out_dim() else { continue };
+                if od != 1 && od != 3 {
+                    continue;
+                }
+                items.push((ec.exp_id, eir, od));
+            }
+            if !items.is_empty() {
+                let n_exprs = items.len();
+                std::fs::write(work.join(format!("gen_{}_cexprs.cu", c.sym)), emit::emit_exprs_tu(&c.sym, &items))?;
+                exprs_by_sym.insert(c.sym.clone(), n_exprs);
+            }
+        }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;
         max_scratch = max_scratch.max(plan.total_slots * n_ext);
         slots_by_sym.insert(c.sym.clone(), plan.total_slots);
@@ -343,6 +379,46 @@ fn run_pipeline(
             n_ops: c.n_ops,
             slots: plan.total_slots,
         });
+    }
+
+    // Phase 3b: compile every emitted .cu that does not already have its .o
+    // (parallel). The autotuner leaves the winning Q objects in `work`; the
+    // generic-expression TUs (and, without autotune, the Q TUs) are compiled
+    // here so the link step below is uniformly object-based.
+    {
+        let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for sym in slots_by_sym.keys() {
+            for cu in collect_artifacts(work, sym, "cu") {
+                let obj = cu.with_extension("o");
+                if !obj.exists() {
+                    jobs.push((cu, obj));
+                }
+            }
+        }
+        // Plain scoped-thread fan-out (NOT rayon: a worker blocked on a child
+        // nvcc inside the global pool can deadlock against the pipeline's
+        // outer parallel bridges).
+        let par = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+        for batch in jobs.chunks(par) {
+            let errs: Vec<String> = std::thread::scope(|scope| {
+                let handles: Vec<_> = batch
+                    .iter()
+                    .map(|(cu, obj)| {
+                        scope.spawn(move || -> Option<String> {
+                            match tc.compile_tu(cu, obj, Some(work)) {
+                                Ok((true, _)) => None,
+                                Ok((false, log)) => Some(format!("nvcc failed for {}: {log}", cu.display())),
+                                Err(e) => Some(format!("nvcc spawn failed for {}: {e}", cu.display())),
+                            }
+                        })
+                    })
+                    .collect();
+                handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+            });
+            if let Some(e) = errs.into_iter().next() {
+                anyhow::bail!(e);
+            }
+        }
     }
 
     // Phase 4: link one self-contained .so per placement whose sym was generated (parallel).
