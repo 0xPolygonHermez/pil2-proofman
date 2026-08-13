@@ -956,9 +956,7 @@ fn resolve_pil2com_exec() -> Option<String> {
 /// gets cheaper by being repeated.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
     static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    PIL2COM_EXEC
-        .get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com")))
-        .clone()
+    PIL2COM_EXEC.get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com"))).clone()
 }
 
 /// Install the Node deps if needed and return the absolute path to `probe`
