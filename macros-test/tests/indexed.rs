@@ -1,6 +1,6 @@
 // Coverage for indexed_trace_row!: the compact-row/instruction-table split, COL_SOURCE
 // (which the C++ unpack consumes verbatim), and the @instr setters being no-ops.
-use fields::{Goldilocks, PrimeField64};
+use proofman_fields::{Goldilocks, PrimeField64};
 use proofman_common::trace::IndexedFill;
 use proofman_macros::{indexed_trace_row, trace_row};
 
