@@ -12,6 +12,17 @@
 #include "blake3_core.hpp"
 #include "poseidon_gpu_common.cuh"  // Layout enum + dynamic-shared `scratchpad`
 
+#include "grinding_launch.hpp"
+
+// Grinding launch geometry for BLAKE3.
+#define BLAKE3_GRIND_BITS   19
+#define BLAKE3_GRIND_BLOCKS 512
+#define BLAKE3_GRIND_GRID \
+    ((((1ULL << BLAKE3_GRIND_BITS) + BLAKE3_GRIND_BLOCKS - 1) / BLAKE3_GRIND_BLOCKS))
+
+static_assert(BLAKE3_GRIND_GRID <= GRIND_NONCE_BLOCKS_MAX,
+              "BLAKE3 grinding grid exceeds the reserved nonce_blocks region");
+
 class Blake3GoldilocksGPU
 {
 public:

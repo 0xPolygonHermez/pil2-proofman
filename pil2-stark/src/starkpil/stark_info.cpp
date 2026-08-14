@@ -4,6 +4,7 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
+#include "grinding_launch.hpp"
 
 StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
 {
@@ -512,7 +513,7 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += 1;
 
         mapOffsets[std::make_pair("nonce_blocks", false)] = mapTotalN;
-        mapTotalN += NONCES_LAUNCH_GRID_SIZE;
+        mapTotalN += GRIND_NONCE_BLOCKS_MAX;
 
         // Align to 4 Goldilocks elements (32 bytes) for BN128 FrElement alignment
         if (starkStruct.verificationHashType == "BN128") {

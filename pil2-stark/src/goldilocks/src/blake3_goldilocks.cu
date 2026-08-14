@@ -4,7 +4,6 @@
 
 #include "blake3_goldilocks.cuh"
 #include "goldilocks_trace_layout.cuh"   // getBufferOffset (layout-aware), Layout enum
-#include "poseidon2_goldilocks.hpp"      // NONCES_LAUNCH_* grinding geometry
 #include "cuda_utils.cuh"                // CHECKCUDAERR
 
 #define TPB_B3 128
@@ -282,7 +281,7 @@ void Blake3GoldilocksGPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,
 {
     uint64_t log_launch_iters = 7;
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = NONCES_LAUNCH_BITS;
+    uint64_t log_N = BLAKE3_GRIND_BITS;
     uint64_t N = 1ULL << log_N;
     uint64_t security = 128;
 
@@ -293,8 +292,8 @@ void Blake3GoldilocksGPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,
                                    ? log_totalHashesRequired - log_launch_iters - log_N : 0;
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
 
-    dim3 blockSize(NONCES_LAUNCH_BLOCKS);
-    dim3 gridSize(NONCES_LAUNCH_GRID_SIZE);
+    dim3 blockSize(BLAKE3_GRIND_BLOCKS);
+    dim3 gridSize(BLAKE3_GRIND_GRID);
     size_t shared_mem_size = blockSize.x * sizeof(uint64_t);
 
     uint64_t nonces_offset = 0;
