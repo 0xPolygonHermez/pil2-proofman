@@ -14,7 +14,7 @@ use libloading::{Library, Symbol};
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use fields::{Field, Goldilocks};
+use proofman_fields::{Field, Goldilocks};
 use std::os::raw::{c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -10,7 +10,7 @@ use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
 use sysinfo::System;

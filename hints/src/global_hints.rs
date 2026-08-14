@@ -1,4 +1,4 @@
-use fields::{PrimeField64, CubicExtensionField};
+use proofman_fields::{PrimeField64, CubicExtensionField};
 use crate::{HintCol, HintFieldInfoC, HintFieldInfo, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
 use proofman_starks_lib_c::{
     get_hint_field_global_constraints_values_c, get_hint_field_global_constraints_sizes_c,

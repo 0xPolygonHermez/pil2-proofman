@@ -1,4 +1,4 @@
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{
     get_n_constraints_c, get_n_global_constraints_c, verify_global_constraints_c, verify_constraints_c,
 };

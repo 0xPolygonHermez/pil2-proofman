@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx, Setup};
 use proofman_hints::{
@@ -123,7 +123,7 @@ pub fn parse_debug_values_to_hashes<F: PrimeField64>(pctx: &Arc<ProofCtx<F>>) ->
                     field_components[i] = F::from_u64(parsed);
                 }
 
-                let ext_field = fields::CubicExtensionField { value: field_components };
+                let ext_field = proofman_fields::CubicExtensionField { value: field_components };
                 parsed_values.push(HintFieldOutput::FieldExtended(ext_field));
             } else {
                 // Parse as simple Field

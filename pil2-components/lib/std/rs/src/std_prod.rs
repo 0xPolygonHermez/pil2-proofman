@@ -1,11 +1,11 @@
 use std::sync::{Arc, RwLock};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use rustc_hash::FxHashMap;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{
     skip_prover_instance, ProofmanError, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx,
 };

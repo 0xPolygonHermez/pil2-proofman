@@ -42,9 +42,22 @@ fn main() {
         println!("cargo:rustc-env=STARKS_BUILD_MODE=CPU");
     }
 
-    // Canonicalize to avoid ".." in rerun-if-changed paths
-    let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
-    let pil2_stark_path = pil2_stark_path_raw.canonicalize().unwrap_or_else(|_| pil2_stark_path_raw.clone());
+    // Sources are carried by the `proofman-starks-src` crate. Build in place when
+    // that tree is writable (a local path dependency / this workspace); when it is
+    // a read-only registry checkout (a published consumer), mirror it into OUT_DIR
+    // first — the Makefile generates files in-tree (goldilocks `configure.sh`,
+    // `.simd_stamp`) and writes `build/` and `lib/` alongside the sources.
+    let vendored = proofman_starks_src::source_dir();
+    // Writable tree = local path dependency (this workspace); read-only = a
+    // published registry checkout that must be mirrored before building.
+    let in_place = is_writable(&vendored);
+    let pil2_stark_path = if in_place {
+        vendored.canonicalize().unwrap_or(vendored)
+    } else {
+        let dst = Path::new(&env::var("OUT_DIR").unwrap()).join("pil2-stark");
+        sync_tree(&vendored, &dst);
+        dst.canonicalize().unwrap_or(dst)
+    };
     let library_folder = if use_gpu { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
     let library_name = if use_gpu { "starksgpu" } else { "starks" };
     let lib_file = library_folder.join(format!("lib{library_name}.a"));
@@ -63,9 +76,14 @@ fn main() {
         .unwrap_or_else(|e| panic!("Failed to open build lock {}: {e}", lock_path.display()));
     build_lock.lock().unwrap_or_else(|e| panic!("Failed to acquire build lock {}: {e}", lock_path.display()));
 
-    // For GPU builds, ensure submodules (blst, sppark) are initialized and blst is compiled
+    // For GPU builds: in a local checkout, auto-initialize the blst/sppark
+    // submodules exactly as before (a fresh clone may not have them yet). In a
+    // published checkout their files are bundled into the crate, so skip the git
+    // call — there is no repo there. Then compile blst.
     if use_gpu {
-        ensure_gpu_submodules_initialized(&pil2_stark_path);
+        if in_place {
+            ensure_gpu_submodules_initialized(&pil2_stark_path);
+        }
         ensure_blst_compiled(&pil2_stark_path);
     }
 
@@ -224,7 +242,9 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Ensures GPU-required submodules (blst and sppark) are initialized
+/// Ensures GPU-required submodules (blst and sppark) are initialized. Local
+/// checkouts only — a published crate ships the submodule files in-tree, so the
+/// caller skips this (there is no git repo to update there).
 fn ensure_gpu_submodules_initialized(pil2_stark_path: &Path) {
     let blst_path = pil2_stark_path.join("external/blst");
     let sppark_path = pil2_stark_path.join("external/sppark");
@@ -233,6 +253,69 @@ fn ensure_gpu_submodules_initialized(pil2_stark_path: &Path) {
         eprintln!("GPU submodules not fully initialized, running git submodule update...");
         let workspace_root = pil2_stark_path.parent().unwrap_or(pil2_stark_path);
         run_command("git", &["submodule", "update", "--init", "--recursive"], workspace_root);
+    }
+}
+
+/// Whether the source tree is writable — true for a local path dependency (this
+/// workspace), false for a read-only registry checkout of the vendored sources.
+///
+/// Probes by opening an existing file (the Makefile) for writing rather than
+/// creating a temp file, so it leaves no trace in the source tree. Opening for
+/// write without writing changes neither the file's contents nor its mtime.
+fn is_writable(dir: &Path) -> bool {
+    fs::OpenOptions::new().write(true).open(dir.join("Makefile")).is_ok()
+}
+
+/// Grant the owner write permission without making the file world-writable
+/// (`set_readonly(false)` would set every write bit on Unix).
+#[cfg(unix)]
+fn make_writable(mut perms: fs::Permissions) -> fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(perms.mode() | 0o200);
+    perms
+}
+
+#[cfg(not(unix))]
+fn make_writable(mut perms: fs::Permissions) -> fs::Permissions {
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    perms
+}
+
+/// Recursively mirror `src` into `dst`, copying a file only when the source is
+/// newer (preserving mtime) so the Makefile's incremental rebuilds keep working
+/// across cargo invocations. Used only for read-only (published) source trees.
+fn sync_tree(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).expect("create OUT_DIR source mirror");
+    for entry in fs::read_dir(src).expect("read vendored source dir").flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            sync_tree(&from, &to);
+        } else if from.is_file() {
+            let src_mtime = fs::metadata(&from).and_then(|m| m.modified()).ok();
+            let dst_mtime = fs::metadata(&to).and_then(|m| m.modified()).ok();
+            let stale = match (src_mtime, dst_mtime) {
+                (Some(s), Some(d)) => s > d,
+                _ => true,
+            };
+            if stale {
+                fs::copy(&from, &to).expect("copy vendored source file");
+                // fs::copy preserves source permissions; a published source is a
+                // read-only registry checkout, but the build must rewrite this
+                // mirror (configure.sh codegen, make objects, stamps), so add the
+                // owner write bit to the copy.
+                if let Ok(meta) = fs::metadata(&to) {
+                    let perms = meta.permissions();
+                    if perms.readonly() {
+                        let _ = fs::set_permissions(&to, make_writable(perms));
+                    }
+                }
+                if let (Some(s), Ok(f)) = (src_mtime, fs::File::options().write(true).open(&to)) {
+                    let _ = f.set_modified(s);
+                }
+            }
+        }
     }
 }
 
@@ -257,7 +340,7 @@ fn ensure_blst_compiled(pil2_stark_path: &Path) {
     println!("cargo:rerun-if-changed={}", blst_path.join("src").display());
     println!("cargo:rerun-if-changed={}", blst_path.join("build").display());
     if !build_script.exists() {
-        panic!("blst build.sh not found at {}. Submodule init may have failed.", build_script.display());
+        panic!("blst build.sh not found at {} — vendored blst sources are incomplete.", build_script.display());
     }
 
     // Run the blst build script
@@ -279,11 +362,10 @@ fn ensure_blst_compiled(pil2_stark_path: &Path) {
     eprintln!("blst library successfully compiled at {}", blst_lib.display());
 }
 
-/// Checks if a git submodule is initialized (has .git file or directory with content)
+/// Checks if a git submodule is initialized (has a .git entry or non-empty dir).
 fn is_submodule_initialized(path: &Path) -> bool {
     // Initialized submodules have a .git file (not directory) pointing to parent's .git/modules/
-    let git_path = path.join(".git");
-    if git_path.exists() {
+    if path.join(".git").exists() {
         return true;
     }
     // Fallback: check if directory exists and is not empty

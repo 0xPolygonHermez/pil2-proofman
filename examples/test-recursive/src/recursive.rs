@@ -3,8 +3,8 @@ use std::env;
 
 use std::ffi::{c_void, c_char};
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
-use witness::WitnessComponent;
-use fields::PrimeField64;
+use proofman_witness::WitnessComponent;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
 
 use std::fs::File;

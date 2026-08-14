@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use witness::{WitnessComponent, execute, define_wc};
+use proofman_witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use rand::{SeedableRng, rngs::StdRng, rng, RngExt};
 
 use crate::Lookup2_15Trace;

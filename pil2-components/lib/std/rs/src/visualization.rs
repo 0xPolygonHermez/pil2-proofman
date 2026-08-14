@@ -4,7 +4,7 @@ use std::path::Path;
 use std::io::{BufWriter, Write};
 use rayon::prelude::*;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{ProofCtx, ProofmanResult, skip_prover_instance};
 use proofman_hints::format_hint_field_output_vec;
 

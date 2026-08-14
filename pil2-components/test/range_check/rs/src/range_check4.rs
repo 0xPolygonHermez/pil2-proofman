@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use witness::{WitnessComponent, execute, define_wc_with_std};
+use proofman_witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheck4Trace;

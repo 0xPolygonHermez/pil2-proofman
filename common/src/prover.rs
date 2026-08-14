@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ProofType {

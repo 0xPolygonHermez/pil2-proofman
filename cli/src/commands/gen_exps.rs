@@ -1,6 +1,6 @@
 use clap::Parser;
 use colored::Colorize;
-use exps_codegen::{generate_all, GenConfig};
+use proofman_exps_codegen::{generate_all, GenConfig};
 use std::path::PathBuf;
 
 /// Generate per-AIR Q-expression CUDA kernels and compile each into a

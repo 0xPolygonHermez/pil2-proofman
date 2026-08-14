@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 use pil2_stark_setup::commands::compile_pil::{run_compile_pil, CompilePilOptions};
 use pil2_stark_setup::commands::setup::{run_setup, SetupOptions};
 use proofman::ProofMan;

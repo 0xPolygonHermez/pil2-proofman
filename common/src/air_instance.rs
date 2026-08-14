@@ -1,6 +1,6 @@
 use std::ptr;
 use std::sync::{Arc, Mutex};
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_util::create_buffer_fast;
 
 /// reaching into pctx.air_instances.

@@ -41,7 +41,7 @@ pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
     }
 
     tracing::info!("Generating expression kernels (.exps.so) under {}", opts.proving_key.display());
-    let cfg = exps_codegen::GenConfig {
+    let cfg = proofman_exps_codegen::GenConfig {
         cap: opts.cap,
         chunk: opts.chunk,
         archspec: opts.arch.clone(),
@@ -49,7 +49,7 @@ pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
         keep_dir: None,
         dry_run: false,
     };
-    let summary = exps_codegen::generate_all(&opts.proving_key, &cfg)?;
+    let summary = proofman_exps_codegen::generate_all(&opts.proving_key, &cfg)?;
     tracing::info!(
         "Expression kernels: {} generated -> {} .exps.so ({} skipped)",
         summary.generated.len(),
