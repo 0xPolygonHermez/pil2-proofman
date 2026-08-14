@@ -209,7 +209,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         ..Default::default()
     };
     let compressed_stark_struct =
-        crate::types::stark_struct::generate_stark_struct(&compressed_settings, plonk_result.n_bits);
+        crate::types::stark_struct::generate_stark_struct(&compressed_settings, plonk_result.n_bits, config.hash);
 
     // Run real starkSetup via pil_info on the compiled compressed final pilout
     let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", template));

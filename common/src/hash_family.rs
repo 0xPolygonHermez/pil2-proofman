@@ -1,5 +1,6 @@
 //! Hash-family registry.
 
+use proofman_starks_lib_c::GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -13,8 +14,28 @@ pub enum GateRole {
     SelectVal1,
 }
 
-pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2"];
+pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
 pub const DEFAULT_HASH_ID: &str = "Poseidon1";
+
+/// Merkle-tree arity of `family`'s commitment trees over Goldilocks digests
+pub fn merkle_tree_arity(family: &str) -> u64 {
+    match family {
+        "Poseidon1" | "Poseidon2" => GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY,
+        "blake3" => 2,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// Fiat-Shamir transcript arity: the transcript squeezes through the same
+/// sponge/compression as the trees, so it shares the Merkle arity.
+pub fn transcript_arity(family: &str) -> u64 {
+    merkle_tree_arity(family)
+}
+
+/// True when the family's kernels support exactly one tree geometry
+pub fn has_forced_tree_geometry(family: &str) -> bool {
+    family == "blake3"
+}
 
 // (gate template name, role, owning family). `None` for family-agnostic gates.
 const GATES: &[(&str, GateRole, Option<&str>)] = &[
@@ -35,10 +56,7 @@ pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
 }
 
 pub fn is_known_family(id: &str) -> bool {
-    //TODO: "blake3" is a GPU prover-only basic-proof family (no recursion/circom),
-    // so it is accepted here but intentionally kept out of FAMILIES (which the
-    // recursive-verifier / circom codegen iterates).
-    FAMILIES.contains(&id) || id == "blake3"
+    FAMILIES.contains(&id)
 }
 
 pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {

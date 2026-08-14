@@ -14,6 +14,8 @@ use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
 pub struct StatsOptions {
     /// Path to compiled .pilout file.
     pub airout_path: String,
+    /// Hash family (tree/transcript geometry), as in the setup command.
+    pub hash: String,
     /// Output file for detailed per-AIR stats (default: `tmp/stats.txt`).
     pub output_path: Option<String>,
     /// Optional path to starkstructs.json.
@@ -73,7 +75,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_stark_struct(&air_settings, n_bits);
+            let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
 
             let prepare_opts = PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages };
 

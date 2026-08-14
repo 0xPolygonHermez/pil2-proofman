@@ -1,8 +1,5 @@
-use proofman_starks_lib_c::GOLDILOCKS_MERKLE_TREE_ARITY;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-
-const MERKLE_TREE_ARITY: usize = GOLDILOCKS_MERKLE_TREE_ARITY as usize;
 
 /// Configuration settings provided by the user to generate a StarkStruct.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -128,9 +125,10 @@ pub struct StarkStep {
     pub n_bits: usize,
 }
 
-/// Generate a StarkStruct from user settings and the air's power (nBits).
-///
-pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize) -> StarkStruct {
+/// Generate a StarkStruct from user settings, the air's power (nBits) and the
+/// hash family, which provides the tree/transcript arity defaults (and, for
+/// families whose kernels support a single geometry, fixes them).
+pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
     let verification_hash_type = settings.verification_hash_type.clone().unwrap_or_else(|| "GL".to_string());
 
     if !["GL", "BN128"].contains(&verification_hash_type.as_str()) {
@@ -149,10 +147,20 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize) -> StarkSt
             let llv = settings.last_level_verification.unwrap_or(0);
             (mta, mta, mtc, false, llv, pb)
         } else {
-            let mta = settings.merkle_tree_arity.unwrap_or(MERKLE_TREE_ARITY);
+            let family_arity = proofman_common::hash_family::merkle_tree_arity(hash) as usize;
+            let mta = if proofman_common::hash_family::has_forced_tree_geometry(hash) {
+                if let Some(requested) = settings.merkle_tree_arity {
+                    if requested != family_arity {
+                        panic!("{hash} kernels only support merkle tree arity {family_arity}, settings request {requested}");
+                    }
+                }
+                family_arity
+            } else {
+                settings.merkle_tree_arity.unwrap_or(family_arity)
+            };
             let pb = settings.pow_bits.unwrap_or(20);
             let llv = settings.last_level_verification.unwrap_or(2);
-            (mta, MERKLE_TREE_ARITY, true, true, llv, pb)
+            (mta, proofman_common::hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
         };
 
     let n_bits_ext = n_bits + blowup_factor;
@@ -187,13 +195,13 @@ mod tests {
     #[test]
     fn test_generate_stark_struct_defaults() {
         let settings = StarkSettings::default();
-        let ss = generate_stark_struct(&settings, 20);
+        let ss = generate_stark_struct(&settings, 20, proofman_common::hash_family::DEFAULT_HASH_ID);
 
         assert_eq!(ss.n_bits, 20);
         assert_eq!(ss.n_bits_ext, 21); // 20 + 1 (default blowup)
         assert_eq!(ss.verification_hash_type, "GL");
-        assert_eq!(ss.merkle_tree_arity, MERKLE_TREE_ARITY);
-        assert_eq!(ss.transcript_arity, MERKLE_TREE_ARITY);
+        assert_eq!(ss.merkle_tree_arity, 4); // Poseidon family default
+        assert_eq!(ss.transcript_arity, 4);
         assert!(ss.merkle_tree_custom);
         assert!(ss.hash_commits);
         assert_eq!(ss.pow_bits, 20);
@@ -214,7 +222,7 @@ mod tests {
             final_degree: Some(3),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 16);
+        let ss = generate_stark_struct(&settings, 16, proofman_common::hash_family::DEFAULT_HASH_ID);
 
         assert_eq!(ss.n_bits, 16);
         assert_eq!(ss.n_bits_ext, 18);
@@ -236,7 +244,7 @@ mod tests {
             final_degree: Some(5),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 20);
+        let ss = generate_stark_struct(&settings, 20, proofman_common::hash_family::DEFAULT_HASH_ID);
 
         // nBitsExt = 22, folding by 3 each step: 22, 19, 16, 13, 10, 7, 5
         assert_eq!(ss.steps[0].n_bits, 22);
@@ -253,7 +261,22 @@ mod tests {
     #[should_panic(expected = "Invalid verificationHashType")]
     fn test_invalid_hash_type() {
         let settings = StarkSettings { verification_hash_type: Some("INVALID".to_string()), ..Default::default() };
-        generate_stark_struct(&settings, 10);
+        generate_stark_struct(&settings, 10, proofman_common::hash_family::DEFAULT_HASH_ID);
+    }
+
+    #[test]
+    fn test_blake3_forces_binary_geometry() {
+        let ss = generate_stark_struct(&StarkSettings::default(), 20, "blake3");
+        assert_eq!(ss.merkle_tree_arity, 2);
+        assert_eq!(ss.transcript_arity, 2);
+        assert!(ss.merkle_tree_custom); // GL value; stored by GL trees/transcripts but only consumed on the BN128 path
+    }
+
+    #[test]
+    #[should_panic(expected = "only support merkle tree arity")]
+    fn test_blake3_rejects_conflicting_arity_setting() {
+        let settings = StarkSettings { merkle_tree_arity: Some(4), ..Default::default() };
+        generate_stark_struct(&settings, 20, "blake3");
     }
 
     #[test]
@@ -294,7 +317,7 @@ mod tests {
         // Resolves only under the matching airgroup.
         let pos = cfg.resolve("Zisk", "Poseidon2");
         assert_eq!(pos.blowup_factor, Some(2));
-        assert_eq!(generate_stark_struct(&pos, 20).n_bits_ext, 22); // 20 + 2
+        assert_eq!(generate_stark_struct(&pos, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 22); // 20 + 2
 
         let kec = cfg.resolve("Zisk", "Keccakf");
         assert_eq!(kec.pow_bits, Some(23));
@@ -304,7 +327,8 @@ mod tests {
         let miss = cfg.resolve("OtherGroup", "Poseidon2");
         assert_eq!(miss.blowup_factor, None);
         assert_eq!(miss.pow_bits, Some(16));
-        assert_eq!(generate_stark_struct(&miss, 20).n_bits_ext, 21); // 20 + 1
+        assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);
+        // 20 + 1
     }
 
     #[test]

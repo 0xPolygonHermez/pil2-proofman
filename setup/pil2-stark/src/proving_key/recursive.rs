@@ -579,10 +579,14 @@ pub fn gen_recursive_setup(
             };
             let stark_struct = if let Some(ss_val) = config.stark_struct {
                 serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone()).unwrap_or_else(|_| {
-                    crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air)
+                    crate::types::stark_struct::generate_stark_struct(
+                        &make_recursive_settings(),
+                        n_bits_air,
+                        config.hash,
+                    )
                 })
             } else {
-                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air)
+                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air, config.hash)
             };
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo

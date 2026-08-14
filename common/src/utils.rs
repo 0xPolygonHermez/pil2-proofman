@@ -3,9 +3,7 @@ use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
 };
-use proofman_starks_lib_c::{
-    set_log_level_c, init_gpu_setup_c, get_num_gpus_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY,
-};
+use proofman_starks_lib_c::{set_log_level_c, init_gpu_setup_c, get_num_gpus_c, set_gpu_mode_c};
 use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
@@ -549,7 +547,7 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
     }
 }
 
-pub fn init_gpu_setup(gpu: bool) -> ProofmanResult<()> {
+pub fn init_gpu_setup(hash_family: &str, gpu: bool) -> ProofmanResult<()> {
     if !set_gpu_mode_c(gpu) {
         return Err(ProofmanError::InvalidConfiguration(
             "GPU mode requested but library was built without CUDA support".into(),
@@ -561,7 +559,7 @@ pub fn init_gpu_setup(gpu: bool) -> ProofmanResult<()> {
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
         }
 
-        init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
+        init_gpu_setup_c(crate::hash_family::merkle_tree_arity(hash_family));
     }
     Ok(())
 }

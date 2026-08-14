@@ -9,8 +9,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
-use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
+use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
@@ -84,7 +83,6 @@ use crate::{
 };
 use crate::total_recursive_proofs;
 use crate::check_const_pols_gpu;
-use crate::ensure_gpu_available;
 use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
@@ -478,6 +476,18 @@ struct SlotCommitCtx {
     pool_rx: Receiver<u64>,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     committed: AtomicU64,
+}
+
+/// The streaming-commit slot kernels absorb with the width-16 sponge and walk
+/// 4-ary tree levels; keys built with any other arity (e.g. blake3's binary
+/// trees), or airs whose commit stage runs witness_calc hints, take the legacy
+/// commit path. Single predicate so slot sizing and per-instance dispatch
+/// cannot drift.
+const STREAM_COMMIT_TREE_ARITY: u64 = 4;
+
+fn stream_commit_eligible<F: PrimeField64>(setup: &Setup<F>) -> bool {
+    setup.stark_info.stark_struct.merkle_tree_arity == STREAM_COMMIT_TREE_ARITY
+        && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -897,10 +907,7 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
 
-        ensure_gpu_available(gpu)?;
-        if gpu {
-            init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
-        }
+        proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -5101,9 +5108,7 @@ where
                     }
                     let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
                     let ss = &setup.stark_info.stark_struct;
-                    if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
-                        || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
-                    {
+                    if !stream_commit_eligible(setup) {
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
@@ -5369,9 +5374,7 @@ where
             return false;
         }
         let ss = &setup.stark_info.stark_struct;
-        if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
-            || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
-        {
+        if !stream_commit_eligible(setup) {
             return false;
         }
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {

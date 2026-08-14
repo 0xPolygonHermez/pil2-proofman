@@ -297,7 +297,8 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         last_level_verification: Some(2),
         ..Default::default()
     };
-    let final_stark_struct = crate::types::stark_struct::generate_stark_struct(&final_settings, plonk_result.n_bits);
+    let final_stark_struct =
+        crate::types::stark_struct::generate_stark_struct(&final_settings, plonk_result.n_bits, config.hash);
 
     // Run real starkSetup via pil_info on the compiled vadcop_final pilout
     let starkinfo_path = files_dir.join("vadcop_final.starkinfo.json");
