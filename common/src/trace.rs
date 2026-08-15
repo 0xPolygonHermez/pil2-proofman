@@ -22,6 +22,16 @@ pub trait TraceRow: Copy + Default + Send {
     const IS_PACKED: bool;
 }
 
+/// Compile-time discriminator for the indexed (compact) row variant from `indexed_trace_row!`,
+/// plus its index setter. Defaulted (`false` / no-op) so full row types satisfy it for free;
+/// the generated indexed row overrides both. Lets a generic filler compile out the
+/// instruction-derived columns (`if !R::IS_INDEXED`) and set the index uniformly.
+pub trait IndexedFill {
+    const IS_INDEXED: bool = false;
+    #[inline(always)]
+    fn set_row_index(&mut self, _index: u32) {}
+}
+
 #[derive(Default)]
 pub struct GenericTrace<
     R,
@@ -104,6 +114,9 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let used_len = num_rows * row_size;
 
         if buffer.len() < used_len {
+            // Consumed by value, so this drops `buffer` — a pooled one is lost here. Say so: the
+            // pool only reports it later as an unexplained "recovered N of M".
+            tracing::error!("new_from_vec_zeroes: buffer too small ({} < {used_len}); dropping it", buffer.len());
             return Err(ProofmanError::InvalidParameters(format!(
                 "Provided buffer too small: got {}, expected at least {}",
                 buffer.len(),
@@ -132,6 +145,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let expected_len = num_rows * row_size;
 
         if buffer.len() < expected_len {
+            // Consumed by value, so this drops `buffer` — see new_from_vec_zeroes.
+            tracing::error!("new_from_vec: buffer too small ({} < {expected_len}); dropping it", buffer.len());
             return Err(ProofmanError::InvalidParameters(format!(
                 "Provided buffer too small: got {}, expected at least {}",
                 buffer.len(),
@@ -176,9 +191,11 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let mut buffer = std::mem::take(&mut self.buffer);
 
         if !self.shared_buffer {
-            // Buffer was created internally, not from external Vec<F>
+            // forget before reconstructing over the same allocation, else double-free.
             let len = NUM_ROWS * R::ROW_SIZE;
-            return unsafe { Vec::from_raw_parts(buffer.as_ptr() as *mut F, len, len) };
+            let ptr = buffer.as_ptr();
+            std::mem::forget(buffer);
+            return unsafe { Vec::from_raw_parts(ptr as *mut F, len, len) };
         }
 
         // Buffer was created from external Vec<F>, restore original metadata

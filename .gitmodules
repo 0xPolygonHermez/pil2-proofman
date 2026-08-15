@@ -1,6 +1,7 @@
 [submodule "pil2-stark/external/sppark"]
 	path = pil2-stark/external/sppark
-	url = https://github.com/supranational/sppark.git
+	url = https://github.com/0xPolygonHermez/sppark.git
+	branch = zisk
 [submodule "pil2-stark/external/blst"]
 	path = pil2-stark/external/blst
 	url = https://github.com/supranational/blst.git

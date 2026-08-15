@@ -1,6 +1,6 @@
 use std::ptr;
 use std::sync::{Arc, Mutex};
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_util::create_buffer_fast;
 
 /// reaching into pctx.air_instances.
@@ -122,7 +122,7 @@ impl<F> TraceInfo<F> {
     }
 
     pub fn with_airgroup_values(mut self, airgroup_values: Vec<F>) -> Self {
-        self.air_values = Some(airgroup_values);
+        self.airgroup_values = Some(airgroup_values);
         self
     }
 }

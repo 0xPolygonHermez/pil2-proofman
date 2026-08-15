@@ -1,17 +1,19 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
-use fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
+use proofman_fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx,
-    ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
+    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES,
+    PreLoadedConstTree, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
-    get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
+    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
@@ -19,27 +21,56 @@ use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock};
+
+/// Releases an admission slot on drop. A witness thread that panics would otherwise leak one, and a
+/// leaked slot permanently blocks its air once the cap is reached — the admission loop then spins.
+struct SlotGuard {
+    in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>>,
+    key: (usize, usize),
+}
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        // Recover from poison rather than panic inside a drop during unwind.
+        if let Some(n) = self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&self.key) {
+            *n = n.saturating_sub(1);
+        }
+    }
+}
+
+/// Master switch for per-proof debug logging of airgroup values, stage roots, and the
+/// challenge/contribution dump (`print_challenges`). Off by default; enable with
+/// `PROOFMAN_DEBUG_CHALLENGES=1` (matching PROOFMAN_SUMCHECK: any other value, or unset,
+/// means off). Read once so the hot recursive handler doesn't hit getenv per proof.
+static DEBUG_CHALLENGES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").map(|v| v == "1").unwrap_or(false));
 use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::deterministic_shuffle;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_verifier::VadcopFinalProof;
-use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
+use crate::{
+    check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed,
+    schedule_key,
+};
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
-    calculate_trace_instance_c,
+    calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
 };
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
+use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
@@ -52,8 +83,12 @@ use crate::{
     generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
 use crate::total_recursive_proofs;
+use crate::check_const_pols_gpu;
+use crate::ensure_gpu_available;
+use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
+use crate::{CompletionOwner, DeviceBuffersPtr, DeviceCompletions};
 use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
 
@@ -153,11 +188,11 @@ impl CancellationThread {
             if stop_flag_clone.load(Ordering::Relaxed) {
                 break;
             }
-            if cancellation_info.read().unwrap().token.is_cancelled() {
+            if cancellation_info.read_recover().token.is_cancelled() {
                 break;
             }
             if let Some(error) = mpi_ctx.check_cancellation() {
-                cancellation_info.write().unwrap().cancel(Some(error));
+                cancellation_info.write_recover().cancel(Some(error));
                 break;
             }
         });
@@ -206,6 +241,24 @@ impl<T: Send + Clone + 'static> Drop for WorkerPoolGuard<T> {
 
 struct JoinAllGuard {
     handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    /// Runs once, immediately after the join. Recovery that is only safe when no worker can still
+    /// be running (see `set_after_join`); `None` when there is nothing to recover.
+    after_join: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl JoinAllGuard {
+    fn new(handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) -> Self {
+        Self { handles, after_join: None }
+    }
+
+    /// Install work to run after the join. Used for state that is shared with the workers and so can
+    /// only be reclaimed once they are all gone — e.g. draining the scheduler's queues, where a live
+    /// worker could otherwise push a witness in right after the drain. Set after construction
+    /// because the state it closes over does not exist yet when the guard is declared, and the guard
+    /// must be declared early so it drops last.
+    fn set_after_join(&mut self, f: impl FnOnce() + Send + 'static) {
+        self.after_join = Some(Box::new(f));
+    }
 }
 
 impl Drop for JoinAllGuard {
@@ -219,6 +272,117 @@ impl Drop for JoinAllGuard {
         };
         for h in handles {
             let _ = h.join();
+        }
+        if let Some(f) = self.after_join.take() {
+            f();
+        }
+    }
+}
+
+/// Sets `proofs_finished` on drop. Declared after `JoinAllGuard` so it *drops before* it, letting
+/// generators leave their `select!` loops on any early return; otherwise the guard's unbounded join
+/// would wedge the phase.
+struct FinishOnDrop(Arc<AtomicBool>);
+
+impl Drop for FinishOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `Arc<Vec<F>>` scratch written by C++ through `&mut [F]`: empty in GPU mode, one writer at a time
+/// in CPU mode. Localizes the `unsafe` reborrow and debug-asserts that single-writer invariant.
+///
+/// The check only means anything between *clones of one instance* — they share the flag. So build
+/// one per underlying buffer (`ProofMan::aux_scratch` / `const_scratch`) and clone that; a fresh
+/// `new()` per call site would hand every writer its own flag and quietly check nothing.
+struct SharedScratch<F> {
+    buf: Arc<Vec<F>>,
+    #[cfg(debug_assertions)]
+    writing: Arc<AtomicBool>,
+}
+
+impl<F> Clone for SharedScratch<F> {
+    fn clone(&self) -> Self {
+        Self {
+            buf: self.buf.clone(),
+            #[cfg(debug_assertions)]
+            writing: self.writing.clone(),
+        }
+    }
+}
+
+impl<F> SharedScratch<F> {
+    fn new(buf: Arc<Vec<F>>) -> Self {
+        Self {
+            buf,
+            #[cfg(debug_assertions)]
+            writing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The underlying buffer, for callers that need to share the `Arc` itself rather than write
+    /// through it (e.g. `init_fixed`).
+    fn arc(&self) -> &Arc<Vec<F>> {
+        &self.buf
+    }
+
+    /// Borrow as `&mut [F]` for the guard's lifetime. Sound under the type's single-writer
+    /// invariant; debug builds detect a violation.
+    fn borrow_mut(&self) -> ScratchGuard<'_, F> {
+        // An empty scratch is the GPU mode, where every borrow yields a zero-length slice and there
+        // is nothing to alias. Don't track those: GPU runs many workers concurrently, and tripping
+        // the assert on provably harmless borrows would just teach people to remove it.
+        #[cfg(debug_assertions)]
+        let tracked = !self.buf.is_empty();
+        #[cfg(debug_assertions)]
+        assert!(
+            !tracked || !self.writing.swap(true, Ordering::AcqRel),
+            "SharedScratch aliased: two writers to a shared scratch buffer at once \
+             (the single-writer invariant is violated)"
+        );
+        // SAFETY: single-writer invariant (see type docs) — this guard is the only live `&mut`.
+        let slice = unsafe { std::slice::from_raw_parts_mut(self.buf.as_ptr() as *mut F, self.buf.len()) };
+        ScratchGuard {
+            slice,
+            #[cfg(debug_assertions)]
+            writing: self.writing.clone(),
+            #[cfg(debug_assertions)]
+            tracked,
+        }
+    }
+}
+
+/// RAII guard yielding `&mut [F]` from a [`SharedScratch`]; releases the debug single-writer flag
+/// on drop.
+struct ScratchGuard<'a, F> {
+    slice: &'a mut [F],
+    #[cfg(debug_assertions)]
+    writing: Arc<AtomicBool>,
+    /// Whether this borrow claimed the flag (see `borrow_mut`); an untracked borrow must not
+    /// clear a flag it never set.
+    #[cfg(debug_assertions)]
+    tracked: bool,
+}
+
+impl<F> std::ops::Deref for ScratchGuard<'_, F> {
+    type Target = [F];
+    fn deref(&self) -> &[F] {
+        self.slice
+    }
+}
+
+impl<F> std::ops::DerefMut for ScratchGuard<'_, F> {
+    fn deref_mut(&mut self) -> &mut [F] {
+        self.slice
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<F> Drop for ScratchGuard<'_, F> {
+    fn drop(&mut self) {
+        if self.tracked {
+            self.writing.store(false, Ordering::Release);
         }
     }
 }
@@ -283,11 +447,50 @@ impl CancellationInfo {
     }
 }
 
+/// Poison-tolerant access to the shared cancellation hub: recovering the guard avoids a poison
+/// storm aborting teardown on every thread. Safe because `token` is atomic and `error` a plain
+/// field, so the worst a reader sees after a mid-write panic is a stale error, never UB.
+pub trait CancellationInfoExt {
+    fn read_recover(&self) -> std::sync::RwLockReadGuard<'_, CancellationInfo>;
+    fn write_recover(&self) -> std::sync::RwLockWriteGuard<'_, CancellationInfo>;
+}
+
+impl CancellationInfoExt for RwLock<CancellationInfo> {
+    fn read_recover(&self) -> std::sync::RwLockReadGuard<'_, CancellationInfo> {
+        self.read().unwrap_or_else(|e| e.into_inner())
+    }
+    fn write_recover(&self) -> std::sync::RwLockWriteGuard<'_, CancellationInfo> {
+        self.write().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Cancellation re-check interval of a parked contribution worker. A send wakes it immediately, so
+/// this is not dispatch latency. Was 1ms: `n_streams` workers waking 1000x/s doing nothing.
+const CONTRIB_CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Streaming-slot commit context for the contributions phase: free-slot tokens
+/// (slot indices, first GPU only) plus the packed-trace metadata needed to
+/// drive commit_witness_streaming. Slots are the regions reserved below the
+/// const-pols aggregation area (STREAM_COMMIT_SLOTS env), usable while the
+/// first GPU's unified buffer is borrowed by gpu-mops.
+struct SlotCommitCtx {
+    pool_tx: Sender<u64>,
+    pool_rx: Receiver<u64>,
+    packed_info: HashMap<(usize, usize), PackedInfo>,
+    committed: AtomicU64,
+}
+
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
+    recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
+    recurser_const_offset: u64,
+    recurser_device_registered: Mutex<Option<String>>,
+    /// Folds write the instance-shared scratch buffers (`aux_trace`, const
+    /// slices) through FFI, so they must be single-flight per instance.
+    recurser_fold_lock: Mutex<()>,
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
@@ -303,6 +506,11 @@ pub struct ProofMan<F: PrimeField64> {
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
+    /// The two scratch buffers above, wrapped for the writers that reborrow them as `&mut [F]`.
+    /// One instance each, cloned to every writer, so the debug single-writer check actually spans
+    /// them (see [`SharedScratch`]). Never rebuilt: `aux_trace`/`const_pols` are set once in `new`.
+    aux_scratch: SharedScratch<F>,
+    const_scratch: SharedScratch<F>,
     max_num_threads: usize,
     num_threads_per_witness: usize,
     tx_threads: Sender<()>,
@@ -321,8 +529,9 @@ pub struct ProofMan<F: PrimeField64> {
     rec1_witness_rx: Receiver<Proof<F>>,
     rec2_witness_tx: Sender<Proof<F>>,
     rec2_witness_rx: Receiver<Proof<F>>,
-    recursive_tx: Sender<(u64, String)>,
-    recursive_rx: Receiver<(u64, String)>,
+    /// Owns the single proof-done callback registration. Each phase takes a `CompletionOwner` and
+    /// releases it on drop, so exactly one is live at a time (see `completion.rs`).
+    completions: DeviceCompletions,
     outer_aggregation_state: Mutex<OuterAggregationState>,
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
@@ -332,7 +541,6 @@ pub struct ProofMan<F: PrimeField64> {
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     witness_info: RwLock<WitnessInfo>,
-    reload_fixed_pols_gpu: Arc<AtomicBool>,
     options: ProofmanOptions,
 
     /// Serializes proof-generation entry points. Use `acquire_computing()`.
@@ -370,11 +578,15 @@ pub enum ProvePhaseResult {
 
 enum OuterAggregationState {
     Idle,
-    Running,
+    /// Holds the completion capability for the service's lifetime; dropping the owner (back to
+    /// `Idle`) releases the callback registration and disconnects the consumer threads.
+    Running(CompletionOwner),
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
         if let Err(e) = self.reset() {
             eprintln!("Error during ProofMan cleanup: {:?}", e);
         }
@@ -388,33 +600,37 @@ impl<F: PrimeField64> ProofMan<F> {
         GoldilocksQuinticExtension: ExtensionField<F>,
     {
         let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
-        if matches!(*outer_aggregation_state, OuterAggregationState::Running)
-            || self.cancellation_info.read().unwrap().token.is_cancelled()
+        if matches!(*outer_aggregation_state, OuterAggregationState::Running(_))
+            || self.cancellation_info.read_recover().token.is_cancelled()
         {
             return;
         }
 
-        self.outer_aggregations();
-        *outer_aggregation_state = OuterAggregationState::Running;
+        // `outer_aggregations()` acquires the owner, which spins until any prior owner drops (under
+        // this same lock in `stop_outer_aggregations`). The `Running(_)` check above guarantees we
+        // are `Idle`, so the acquire can't block here — keep that check immediately before this.
+        *outer_aggregation_state = OuterAggregationState::Running(self.outer_aggregations());
     }
 
     fn stop_outer_aggregations(&self) {
-        let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
-        if matches!(*outer_aggregation_state, OuterAggregationState::Idle) {
-            return;
-        }
+        // Take the owner out (leaving the service Idle) so the state lock is not held across the
+        // owner's bounded drain in `Drop`.
+        let owner = {
+            let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
+            match std::mem::replace(&mut *outer_aggregation_state, OuterAggregationState::Idle) {
+                OuterAggregationState::Idle => return,
+                OuterAggregationState::Running(owner) => owner,
+            }
+        };
 
-        *outer_aggregation_state = OuterAggregationState::Idle;
-
+        // Stop the generator threads, then drop the owner: its drain-then-release `Drop` clears the
+        // callback registration and disconnects the consumer threads (no sentinel sends needed).
         self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-        clear_proof_done_callback_c();
-        for _ in 0..self.n_streams {
-            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
-        }
+        drop(owner);
 
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
         for handle in handles {
-            handle.join().unwrap();
+            let _ = handle.join();
         }
     }
 
@@ -426,91 +642,109 @@ impl<F: PrimeField64> ProofMan<F> {
         self.wcm.reset();
 
         for proof_lock in self.proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
+            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
             *proof = None;
         }
 
         for proof_lock in self.compressor_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
+            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
             *proof = None;
         }
 
         for proof_lock in self.recursive1_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
+            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
             *proof = None;
         }
 
         for proof_lock in self.recursive2_proofs.iter() {
-            let mut proofs = proof_lock.write().unwrap();
+            let mut proofs = proof_lock.write().unwrap_or_else(|e| e.into_inner());
             proofs.clear();
         }
 
-        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner());
         ongoing_proofs.clear();
 
-        clear_proof_done_callback_c();
         self.pctx.set_witness_tx(None);
         self.pctx.set_witness_tx_priority(None);
         self.pctx.set_proof_tx(None);
 
-        self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-        for _ in 0..self.n_streams {
-            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
-        }
-
-        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
-        }
+        // Releases the completion capability and joins the recursive workers. They disconnect only
+        // when their owner is dropped, so they must be joined through it, not via a sentinel send.
+        self.stop_outer_aggregations();
 
         for _ in 0..self.n_streams {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
-        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let handles = self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect::<Vec<_>>();
         for handle in handles {
-            handle.join().unwrap();
+            let _ = handle.join();
         }
-
-        self.stop_outer_aggregations();
 
         // Drain all relevant channels to ensure they are empty
         while self.rx_threads.try_recv().is_ok() {}
         while self.witness_rx.try_recv().is_ok() {}
         while self.witness_rx_priority.try_recv().is_ok() {}
         while self.contributions_rx.try_recv().is_ok() {}
-        while self.recursive_rx.try_recv().is_ok() {}
         while self.proofs_rx.try_recv().is_ok() {}
-        while self.compressor_witness_rx.try_recv().is_ok() {}
-        while self.rec1_witness_rx.try_recv().is_ok() {}
-        while self.rec2_witness_rx.try_recv().is_ok() {}
 
-        self.worker_contributions.write().unwrap().clear();
+        // The three witness channels carry `Proof`s whose `circom_witness` came out of the recursive
+        // witness pools, so they must be drained by RETURNING those buffers, not by dropping them.
+        // A cancel leaves undelivered witnesses here, and dropping them shrinks the pools for the
+        // rest of the process — the compressor pool first, since it is the smallest — which then
+        // trips (or silently under-fills) the pool-integrity check in `reset()` below.
+        for rx in [&self.compressor_witness_rx, &self.rec1_witness_rx, &self.rec2_witness_rx] {
+            while let Ok(mut w) = rx.try_recv() {
+                let compressor = w.proof_type == ProofType::Compressor;
+                drop(
+                    self.memory_handler_recursive_witness
+                        .adopt_witness(std::mem::take(&mut w.circom_witness), compressor),
+                );
+            }
+        }
+
+        self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
 
-        for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
+        for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
             inner_vec.clear();
         }
 
         for _ in 0..self.max_num_threads {
-            self.tx_threads.send(()).unwrap();
+            self.tx_threads.send(()).ok();
         }
 
         self.total_outer_agg_proofs.reset();
 
-        // free_instance returns (is_shared, buf) — shared buffers must be put back into
-        // the pool, otherwise the pool capacity shrinks and memory_handler.reset() fails
-        // its `free.len() == n_buffers` invariant.
+        // Shared buffers must be returned to the pool, else its capacity shrinks and
+        // memory_handler.reset() fails its `free.len() == n_buffers` invariant. No `?` inside the
+        // sweep: bailing on the first bad release would leave every later instance's buffer
+        // unreturned, converting one failure into a pool-wide shortfall.
+        let mut first_err = None;
         for instance_id in 0..MAX_INSTANCES as usize {
             let (is_shared, buf) = self.pctx.free_instance(instance_id);
             if is_shared {
-                self.memory_handler.release_buffer(buf)?;
+                if let Err(e) = self.memory_handler.release_buffer(buf) {
+                    tracing::error!("reset: failed to return instance {instance_id}'s shared buffer: {e}");
+                    first_err = first_err.or(Some(e));
+                }
             }
         }
 
-        self.memory_handler.reset()?;
+        // Both handlers get reset even if the first fails: each clears its own sticky `cancelled`
+        // flag, and skipping that leaves the next run allocating fresh unpinned buffers without bound.
+        let basic = self.memory_handler.reset();
+        let recursive = self.memory_handler_recursive_witness.reset();
+        for result in [basic, recursive] {
+            if let Err(e) = result {
+                first_err = first_err.or(Some(e));
+            }
+        }
 
-        Ok(())
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -531,7 +765,7 @@ where
     }
 
     pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
-        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.pctx.reload_fixed_pols_gpu.clone())
     }
 
     pub fn set_barrier(&self) {
@@ -575,7 +809,7 @@ where
     }
 
     fn check_cancel(&self, notify_mpi: bool) -> ProofmanResult<()> {
-        let local_cancelled = self.cancellation_info.read().unwrap().token.is_cancelled();
+        let local_cancelled = self.cancellation_info.read_recover().token.is_cancelled();
 
         let cluster_cancelled =
             if notify_mpi { !self.mpi_ctx.all_finished_ok(!local_cancelled) } else { local_cancelled };
@@ -584,8 +818,11 @@ where
             return Ok(());
         }
 
+        // Cancellation confirmed: unblock parked workers before we join/reset.
+        self.cancel_memory_handlers();
+
         let error = {
-            let mut info = self.cancellation_info.write().unwrap();
+            let mut info = self.cancellation_info.write_recover();
             if !info.token.is_cancelled() {
                 info.cancel(Some(ProofmanError::MpiCancellation("peer rank reported cancellation".into())));
             }
@@ -606,8 +843,16 @@ where
     }
 
     pub fn cancel(&self) {
-        let mut cancellation_info = self.cancellation_info.write().unwrap();
+        let mut cancellation_info = self.cancellation_info.write_recover();
         cancellation_info.cancel(None);
+        self.cancel_memory_handlers();
+    }
+
+    /// Unblock any worker parked in a buffer-pool take() so teardown doesn't hang on
+    /// a buffer that will never be released. Must run before joining such workers.
+    fn cancel_memory_handlers(&self) {
+        self.memory_handler.cancel();
+        self.memory_handler_recursive_witness.cancel();
     }
 
     /// Acquire `computing`. Warns if the wait exceeded 50ms.
@@ -650,20 +895,11 @@ where
 
         let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
 
-        if !set_gpu_mode_c(gpu) {
-            return Err(ProofmanError::InvalidConfiguration(
-                "GPU mode requested but library was built without CUDA support".into(),
-            ));
-        }
+        ensure_gpu_available(gpu)?;
         if gpu {
-            let n_gpus = get_num_gpus_c();
-            if n_gpus == 0 {
-                return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-            }
-
-            init_gpu_setup_c(sctx.max_n_bits_ext as u64, GOLDILOCKS_MERKLE_TREE_ARITY);
+            init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
         }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -742,7 +978,7 @@ where
 
         self.set_partition(1, vec![0], 0)?;
 
-        self.cancellation_info.write().unwrap().reset();
+        self.cancellation_info.write_recover().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -936,6 +1172,7 @@ where
         num_rows: usize,
         offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
+        let _computing = self.acquire_computing("get_instance_trace");
         if self.pctx.dctx_is_instance_calculated(instance_id) {
             return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
@@ -950,7 +1187,7 @@ where
             instance_id,
             true,
             true,
-            Some(&self.const_pols),
+            Some(&self.const_scratch),
             Some(&self.aux_trace),
         )?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
@@ -967,6 +1204,7 @@ where
     }
 
     pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let _computing = self.acquire_computing("get_instance_air_values");
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
@@ -984,7 +1222,7 @@ where
             instance_id,
             true,
             true,
-            Some(&self.const_pols),
+            Some(&self.const_scratch),
             Some(&self.aux_trace),
         )?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
@@ -1033,7 +1271,7 @@ where
 
         self.set_partition(1, vec![0], 0)?;
 
-        self.cancellation_info.write().unwrap().reset();
+        self.cancellation_info.write_recover().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -1060,15 +1298,14 @@ where
 
         let _ = self.exec()?;
 
-        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-        deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
+        let my_instances = self.pctx.dctx_get_process_instances();
 
-        let my_instances_sorted_no_tables =
-            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_no_tables =
+            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
-            &my_instances_sorted_no_tables,
+            &my_instances_no_tables,
             self.memory_handler.clone(),
             witness_done.clone(),
             options.minimal_memory,
@@ -1154,7 +1391,7 @@ where
         self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
-        self.cancellation_info.write().unwrap().reset();
+        self.cancellation_info.write_recover().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -1194,7 +1431,7 @@ where
                 instance_id,
                 true,
                 true,
-                Some(&self.const_pols),
+                Some(&self.const_scratch),
                 Some(&self.aux_trace),
             )?;
             self.calculate_instance_witness(instance_id)?;
@@ -1227,7 +1464,7 @@ where
                 *instance_id,
                 true,
                 true,
-                Some(&self.const_pols),
+                Some(&self.const_scratch),
                 Some(&self.aux_trace),
             )?;
             self.calculate_instance_witness(*instance_id)?;
@@ -1298,7 +1535,7 @@ where
         self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
-        self.cancellation_info.write().unwrap().reset();
+        self.cancellation_info.write_recover().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -1340,18 +1577,18 @@ where
             let airgroup_values_air_instances = airgroup_values_air_instances.clone();
             let wcm_clone = self.wcm.clone();
             let debug_info_clone = debug_info.clone();
-            // Reuse the process-wide aux_trace / const_pols buffers. In CPU mode the
-            // verify path runs one instance at a time; in GPU mode these are empty
-            // Vecs and initialize_air_instance skips the host-side init.
+            // Reuse the process-wide aux_trace / const_pols buffers: CPU verify runs one instance
+            // at a time; in GPU mode they are empty Vecs and host-side init is skipped. Clone the
+            // process-wide `const_scratch` so its single-writer check spans every writer.
             let aux_trace_arc = self.aux_trace.clone();
-            let const_pols_arc = self.const_pols.clone();
+            let const_scratch = self.const_scratch.clone();
             let contribution_handle = std::thread::spawn(move || loop {
-                match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                     Ok(instance_id) => {
                         if instance_id == usize::MAX {
                             break;
                         }
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                        if cancellation_info_clone.read_recover().token.is_cancelled() {
                             break;
                         }
                         if let Err(e) = Self::process_verify_constraints_instance(
@@ -1363,15 +1600,15 @@ where
                             &debug_info_clone,
                             valid_constraints.clone(),
                             airgroup_values_air_instances.clone(),
-                            &const_pols_arc,
+                            &const_scratch,
                             &aux_trace_arc,
                         ) {
-                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                        if cancellation_info_clone.read_recover().token.is_cancelled() {
                             break;
                         }
                     }
@@ -1516,11 +1753,11 @@ where
         debug_info: &DebugInfo,
         valid_constraints: Arc<AtomicBool>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
-        const_pols: &Arc<Vec<F>>,
+        const_scratch: &SharedScratch<F>,
         aux_trace: &Arc<Vec<F>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(pctx, sctx, instance_id, true, true, Some(const_pols), Some(aux_trace))?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, true, true, Some(const_scratch), Some(aux_trace))?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = pctx.get_air_instance_params(instance_id, false);
@@ -1540,18 +1777,20 @@ where
             &custom_commits_fixed_path,
         );
 
-        #[cfg(feature = "diagnostic")]
-        {
-            let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
-            if invalid_initialization {
-                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
-            }
-        }
-
         pctx.set_instance_stream_id(instance_id, stream_id);
 
         if !pctx.gpu {
             calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            #[cfg(feature = "diagnostic")]
+            {
+                let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
+                if invalid_initialization {
+                    return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
+                }
+            }
+        }
+
+        if !pctx.gpu {
             wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
             calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
         } else {
@@ -1646,6 +1885,218 @@ where
         self._generate_proof(ProvePhaseInputs::Full(), proof_options, ProvePhase::Full)
     }
 
+    pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("register_recurser_setup");
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
+        let mut device_slot = self.recurser_device_registered.lock().unwrap();
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
+        let vadcop_final_stem = self.pctx.global_info.get_setup_path("vadcop_final");
+        let air_info = GlobalInfoAir::new(format!("recurser_aggregator_{recurser_id}"));
+        let setup = Setup::<F>::new(
+            recurser_path_stem,
+            0,
+            0,
+            &air_info,
+            &ProofType::RecurserAggregator,
+            false,
+            false,
+            false,
+            self.options.gpu,
+            Some(&vadcop_final_stem),
+        )?;
+
+        tracing::info!(
+            "Preparing const-tree for recurser-aggregator setup '{recurser_id}' ({} mode)",
+            if self.options.gpu { "GPU" } else { "CPU" }
+        );
+
+        let d_buffers = if self.options.gpu { Some(self.pctx.get_device_buffers_ptr()) } else { None };
+        check_const_pols_gpu(&setup)?;
+        check_const_tree(&setup, &d_buffers)?;
+
+        let setup = Arc::new(setup);
+
+        if self.options.gpu {
+            match device_slot.as_deref() {
+                Some(existing) if existing != recurser_id => {
+                    tracing::info!(
+                        "recurser '{existing}' currently occupies the GPU const slot; \
+                         '{recurser_id}' will be swapped in on demand at prove time"
+                    );
+                }
+                Some(_) => {}
+                None => {
+                    self.load_recurser_setup_on_device(&setup)?;
+                    *device_slot = Some(recurser_id.to_string());
+                }
+            }
+        }
+
+        tracing::info!(
+            "Registered recurser-aggregator setup '{recurser_id}' (files at {:?}, starkinfo borrowed from {:?})",
+            recurser_path_stem,
+            vadcop_final_stem,
+        );
+
+        let mut cache = self.recurser_setups.write().unwrap();
+        cache.entry(recurser_id.to_string()).or_insert_with(|| setup);
+        drop(cache);
+        drop(device_slot);
+        Ok(())
+    }
+
+    fn load_recurser_setup_on_device(&self, setup: &Setup<F>) -> ProofmanResult<()> {
+        let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+            .map_err(|e| {
+                ProofmanError::InvalidSetup(format!(
+                    "recurser packed const pols missing at {}: {e}",
+                    setup.const_pols_path
+                ))
+            })?
+            .len();
+        let packed_len = packed_len_bytes / 8;
+        let slot = self.setups.recurser_const_slot_size as u64;
+        if packed_len > slot {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+            )));
+        }
+        let proof_type: &str = setup.setup_type.into();
+        let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
+        load_device_setup_c(
+            0,
+            0,
+            proof_type,
+            (&setup.p_setup).into(),
+            d_buffers_ptr,
+            setup.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+        load_device_const_pols_c(
+            0,
+            0,
+            self.recurser_const_offset,
+            d_buffers_ptr,
+            &setup.const_pols_path,
+            packed_len,
+            "",
+            setup.const_tree_size as u64,
+            proof_type,
+            false,
+            // Recursers swap through a single reserved slot; each one really is uploaded.
+            false,
+        );
+        Ok(())
+    }
+
+    pub fn prove_recurser_aggregator(
+        &self,
+        recurser_id: &str,
+        proof_a: &VadcopFinalProof,
+        proof_b: &VadcopFinalProof,
+        free_inputs_a: &[u64],
+        free_inputs_b: &[u64],
+        root_c_recurser_agg: &[u64; 4],
+    ) -> ProofmanResult<VadcopFinalProof> {
+        let _computing = self.acquire_computing("prove_recurser_aggregator");
+        if proof_a.compressed || proof_b.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "prove_recurser_aggregator: compressed inputs are not supported".to_string(),
+            ));
+        }
+
+        if proof_a.hash != self.pctx.global_info.hash || proof_b.hash != self.pctx.global_info.hash {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "prove_recurser_aggregator: hash family mismatch: proofs are ({}, {}) but this \
+                 prover's proving key uses {}",
+                proof_a.hash, proof_b.hash, self.pctx.global_info.hash
+            )));
+        }
+
+        let setup = {
+            let cache = self.recurser_setups.read().unwrap();
+            cache.get(recurser_id).cloned().ok_or_else(|| {
+                ProofmanError::InvalidParameters(format!(
+                    "Recurser id '{recurser_id}' not registered. Call register_recurser_setup first."
+                ))
+            })?
+        };
+
+        let a = proof_a.proof_with_publics();
+        let b = proof_b.proof_with_publics();
+        let a_body = a.get(1..).unwrap_or(&[]);
+        let b_body = b.get(1..).unwrap_or(&[]);
+
+        let expected_body = (setup.stark_info.n_publics + setup.proof_size) as usize;
+        for (side, body) in [('a', a_body), ('b', b_body)] {
+            if body.len() != expected_body {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "prove_recurser_aggregator: proof_{side} body has {} words, expected \
+                     {expected_body} (vadcop_final n_publics + proof_size); the proof blob is \
+                     malformed or truncated",
+                    body.len()
+                )));
+            }
+        }
+
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
+
+        // The GPU const slot holds one recurser at a time; swap this one in if another is resident
+        // (same-recurser folds pay nothing). Safe under the fold lock: nothing reads the slot while
+        // we overwrite it.
+        if self.options.gpu {
+            let mut device_slot = self.recurser_device_registered.lock().unwrap();
+            if device_slot.as_deref() != Some(recurser_id) {
+                tracing::info!(
+                    "Swapping recurser '{recurser_id}' into the GPU const slot (was {:?})",
+                    device_slot.as_deref()
+                );
+                // Advance the marker only after a confirmed load. A failed load may leave the const
+                // buffer partially overwritten, so mark the slot None — else the next fold proves
+                // against those partial bytes (a silent wrong proof).
+                match self.load_recurser_setup_on_device(&setup) {
+                    Ok(()) => *device_slot = Some(recurser_id.to_string()),
+                    Err(e) => {
+                        *device_slot = None;
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        let raw_proof = crate::generate_recurser_aggregator_proof::<F>(
+            &setup,
+            &self.memory_handler_recursive_witness,
+            a_body,
+            b_body,
+            free_inputs_a,
+            free_inputs_b,
+            root_c_recurser_agg,
+            &self.aux_trace,
+            &self.const_pols,
+            &self.const_tree,
+            self.pctx.get_device_buffers_ptr(),
+            recurser_id,
+        )?;
+
+        VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.clone()).map_err(|e| {
+            ProofmanError::InvalidConfiguration(format!("Failed to wrap recurser output as VadcopFinalProof: {e}"))
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn generate_proof_from_lib(
         &self,
@@ -1672,6 +2123,7 @@ where
         &self,
         vadcop_final_proof: &VadcopFinalProof,
     ) -> ProofmanResult<VadcopFinalProof> {
+        let _computing = self.acquire_computing("generate_vadcop_final_proof_compressed");
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
@@ -1714,7 +2166,7 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
+        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, recurser_const_offset) =
             Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
@@ -1727,10 +2179,8 @@ where
         // witness — only > 1 when --packed enables parallel witness generation.
         let max_witness_stored = if options.packed { n_gpus as usize * options.max_witness_stored } else { 1 };
 
-        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs.
-        // Recursive work is lighter than basic, so the pool is provisioned smaller:
-        // half the basic depth per GPU for regular recursive, one slot per GPU for
-        // compressor. CPU keeps a small fixed pipeline (2/1).
+        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs. Recursive work is
+        // lighter than basic, so it is provisioned smaller (half basic depth / 1 compressor per GPU).
         let (max_witness_stored_recursive, max_witness_stored_recursive_compressor) = if options.gpu {
             let n_gpus = n_gpus as usize;
             (((n_gpus * options.max_witness_stored) / 2).max(1), n_gpus * 2)
@@ -1829,7 +2279,6 @@ where
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
@@ -1843,6 +2292,10 @@ where
             mpi_ctx,
             wcm,
             setups: setups_vadcop,
+            recurser_setups: RwLock::new(HashMap::new()),
+            recurser_const_offset,
+            recurser_device_registered: Mutex::new(None),
+            recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
@@ -1854,6 +2307,8 @@ where
             recursive1_proofs,
             recursive2_proofs,
             recursive2_proofs_ongoing,
+            aux_scratch: SharedScratch::new(aux_trace.clone()),
+            const_scratch: SharedScratch::new(const_pols.clone()),
             aux_trace,
             const_pols,
             const_tree,
@@ -1867,8 +2322,7 @@ where
             witness_rx_priority,
             contributions_tx,
             contributions_rx,
-            recursive_tx,
-            recursive_rx,
+            completions: DeviceCompletions::new(),
             proofs_tx,
             proofs_rx,
             compressor_witness_tx,
@@ -1887,13 +2341,57 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
-            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             computing: Mutex::new(()),
         })
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("register_custom_commits");
         self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
+    }
+
+    /// Upload (per program) the instruction table for an indexed air. `table` is
+    /// `num_entries * words_per_entry` packed u64 words.
+    ///
+    /// Must be called AFTER the setups are loaded (the air's `AirInstanceInfo` has to
+    /// exist to receive it) and BEFORE the first commit of that program -- the contribution
+    /// phase already unpacks. An air with an indexed descriptor but no table aborts at
+    /// unpack rather than silently decoding compact rows as full ones.
+    pub fn register_instruction_table(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        table: &[u64],
+        num_entries: u64,
+        words_per_entry: u64,
+    ) -> ProofmanResult<()> {
+        // An empty descriptor would register nothing, leave d_instr_table null, and only
+        // surface as an abort at the first unpack -- far from the cause. Reject it here.
+        if num_entries == 0 || words_per_entry == 0 {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "register_instruction_table [{airgroup_id}:{air_id}]: num_entries ({num_entries}) and \
+                 words_per_entry ({words_per_entry}) must both be > 0"
+            )));
+        }
+        // The C side copies num_entries * words_per_entry words out of `table`; a short
+        // slice would be an out-of-bounds read there, so reject it here where we can.
+        let expected = (num_entries as usize).saturating_mul(words_per_entry as usize);
+        if table.len() != expected {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "register_instruction_table [{airgroup_id}:{air_id}]: table has {} words, expected \
+                 num_entries ({num_entries}) * words_per_entry ({words_per_entry}) = {expected}",
+                table.len()
+            )));
+        }
+        register_instruction_table_c(
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+            table,
+            num_entries,
+            words_per_entry,
+        );
+        Ok(())
     }
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
@@ -1921,7 +2419,7 @@ where
                 ));
             }
 
-            self.cancellation_info.write().unwrap().reset();
+            self.cancellation_info.write_recover().reset();
             self.reset()?;
             self.pctx.dctx_reset();
         }
@@ -1934,12 +2432,10 @@ where
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
-        let _recursives_guard = WorkerPoolGuard {
-            sentinel: (u64::MAX - 1, String::from("Basic")),
-            n_streams: self.n_streams,
-            tx: self.recursive_tx.clone(),
-            handles: self.handle_recursives.clone(),
-        };
+        // Join-only backstop for the recursive workers. They exit when the owner drops (consumers)
+        // and when `proofs_finished` is set via `FinishOnDrop` (generators). Declared before both so
+        // it drops LAST — joining before either has signalled would hang.
+        let mut _recursives_guard = JoinAllGuard::new(self.handle_recursives.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
@@ -1952,57 +2448,99 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+            let first_contribution_logged = Arc::new(AtomicBool::new(false));
+
+            // Reuse the process-wide aux_trace / const_pols buffers: CPU runs one proof at a time so
+            // workers never touch them concurrently; in GPU mode they are empty Vecs. `SharedScratch`
+            // localizes the reborrow and debug-asserts the single-writer invariant — clone the
+            // process-wide instances so that check spans every writer, not just these workers.
+            let aux_scratch = self.aux_scratch.clone();
+            let const_scratch = self.const_scratch.clone();
+
+            // Streaming-slot pool: one token per reserved commit slot (first
+            // GPU; STREAM_COMMIT_SLOTS env; None when disabled). Contribution
+            // workers take a token, commit a packed wide-trace AIR synchronously
+            // on the slot, and return the token; every other instance takes the
+            // legacy stream path untouched.
+            let slot_commit_ctx: Option<Arc<SlotCommitCtx>> = if self.pctx.gpu && self.options.packed {
+                let n_slots = get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr());
+                (n_slots > 0).then(|| {
+                    let (pool_tx, pool_rx) = unbounded();
+                    for slot in 0..n_slots {
+                        pool_tx.send(slot).unwrap();
+                    }
+                    Arc::new(SlotCommitCtx {
+                        pool_tx,
+                        pool_rx,
+                        packed_info: self.options.packed_info.clone(),
+                        committed: AtomicU64::new(0),
+                    })
+                })
+            } else {
+                None
+            };
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
+                let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
                 let roots_contributions_clone = self.roots_contributions.clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
-                // Reuse the process-wide aux_trace / const_pols buffers (allocated in
-                // initialize_proofman). In CPU mode the prover runs one proof at a time,
-                // so contribution workers and proof generation never touch these
-                // concurrently. In GPU mode these are empty Vecs and get_contribution_air
-                // never reads from them.
-                let aux_trace_arc = self.aux_trace.clone();
-                let const_pols_arc = self.const_pols.clone();
+                let aux_scratch = aux_scratch.clone();
+                let const_scratch = const_scratch.clone();
+                let slot_commit_ctx_clone = slot_commit_ctx.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
-                    match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                    match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
                             if instance_id == usize::MAX {
                                 break;
                             }
-                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
-                            // SAFETY: see comment above where aux_trace_arc/const_pols_arc are cloned.
-                            let aux_trace_local: &mut [F] = unsafe {
-                                std::slice::from_raw_parts_mut(aux_trace_arc.as_ptr() as *mut F, aux_trace_arc.len())
-                            };
-                            let const_pols_local: &mut [F] = unsafe {
-                                std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
-                            };
-                            if let Err(e) = Self::get_contribution_air(
+                            // Single-writer borrow of the shared scratch (see `SharedScratch`); the
+                            // guards hold the invariant for the duration of get_contribution_air.
+                            let mut aux_trace_local = aux_scratch.borrow_mut();
+                            let mut const_pols_local = const_scratch.borrow_mut();
+                            let commit_stream_id = match Self::get_contribution_air(
                                 &pctx_clone,
                                 &sctx_clone,
                                 &roots_contributions_clone,
                                 &values_contributions_clone,
                                 instance_id,
-                                aux_trace_local,
-                                const_pols_local,
+                                &mut aux_trace_local,
+                                &mut const_pols_local,
+                                slot_commit_ctx_clone.as_deref(),
                             ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
+                                Ok(stream_id) => stream_id,
+                                Err(e) => {
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
+                                    break;
+                                }
+                            };
+
+                            if !first_contribution_logged.swap(true, Ordering::Relaxed) {
+                                tracing::info!("First GPU contribution queued");
                             }
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
                             if is_shared_buffer {
+                                // Trace H2D is async, so don't recycle the shared buffer until the
+                                // commit completes. Wait on the commit's stream (air_instance
+                                // stream_id is unset on the contributions path). u64::MAX means the
+                                // commit ran synchronously on a streaming slot: the H2D is already
+                                // done and there is no stream to wait on.
+                                if pctx_clone.gpu && commit_stream_id != u64::MAX {
+                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
+                                }
                                 memory_handler_clone.to_be_released_buffer(instance_id, false);
                             }
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
                         }
@@ -2038,17 +2576,16 @@ where
                 *witness_start_time.write().unwrap() = Some(std::time::Instant::now());
             }
 
-            let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-            deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
+            let my_instances = self.pctx.dctx_get_process_instances();
 
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_sorted_no_tables =
-                my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            let my_instances_no_tables =
+                my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
-                &my_instances_sorted_no_tables,
+                &my_instances_no_tables,
                 self.memory_handler.clone(),
                 witness_done.clone(),
                 options.minimal_memory,
@@ -2110,9 +2647,20 @@ where
             timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
-            let internal_contribution =
-                calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
+            let internal_contribution = calculate_internal_contributions(
+                &self.pctx,
+                &self.roots_contributions,
+                &self.values_contributions,
+                *DEBUG_CHALLENGES,
+            );
 
+            if let Some(ctx) = &slot_commit_ctx {
+                tracing::info!(
+                    "Streaming slots: {} of {} contributions overlapped with the execution window",
+                    ctx.committed.load(Ordering::Relaxed),
+                    my_instances_no_tables.len()
+                );
+            }
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
             let contributions_size = match self.pctx.global_info.curve {
@@ -2207,11 +2755,10 @@ where
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let instances = self.pctx.dctx_get_instances();
-        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-        deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
+        let mut my_instances = self.pctx.dctx_get_process_instances();
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
-        for &instance_id in my_instances_sorted.iter() {
+        for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
             n_airgroup_proofs[instance_info.airgroup_id] += 1;
         }
@@ -2229,16 +2776,65 @@ where
             }
         }
 
-        let proofs_pending = Arc::new(Counter::new());
-
-        register_proof_done_callback_c(self.recursive_tx.clone());
+        // Tear down any running outer-aggregation service before taking the capability: the Internal
+        // phase never reset()s, so it could still hold it and `acquire` would block.
+        self.stop_outer_aggregations();
+        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let proofs_pending = completions.ledger();
 
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
+
+        // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
+        // channels). Condvar parks idle stream workers.
+        let scheduler: Option<Arc<crate::SharedScheduler<F>>> = if self.pctx.gpu {
+            Some(Arc::new(crate::SharedScheduler::new(crate::RecursiveScheduler::<F>::new(
+                self.pctx.get_device_buffers_ptr(),
+            ))))
+        } else {
+            None
+        };
+
+        // Recover whatever is still queued when the phase ends. Runs after `_recursives_guard` has
+        // joined every producer and consumer — draining earlier would race a worker that pushes right
+        // after — and the queued witnesses hold pooled `circom_witness` buffers, so dropping the
+        // scheduler with work in it shrinks the recursive witness pools (the compressor pool first:
+        // it is the smallest) and the next `reset()` finds them short. Settling their ledger units
+        // keeps the epoch's accounting truthful for the release diagnostic.
+        if let Some(sched) = scheduler.clone() {
+            let ledger = proofs_pending.clone();
+            let pctx = self.pctx.clone();
+            let memory_handler = self.memory_handler.clone();
+            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
+            _recursives_guard.set_after_join(move || {
+                let (witnesses, basics) = {
+                    let mut guard = sched.lock.lock().unwrap_or_else(|p| p.into_inner());
+                    guard.drain_all()
+                };
+                if !witnesses.is_empty() || !basics.is_empty() {
+                    tracing::debug!(
+                        "Scheduler drained at teardown: {} witness(es) and {} stored basic(s) never dispatched",
+                        witnesses.len(),
+                        basics.len()
+                    );
+                }
+                crate::recover_drained_witnesses(witnesses, &memory_handler_recursive_witness, &ledger);
+                for instance_id in basics {
+                    let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+                    if is_shared_buffer {
+                        if let Err(e) = memory_handler.release_buffer(witness_buffer) {
+                            tracing::warn!("Failed to return a drained basic's shared buffer to the pool: {e}");
+                        }
+                    }
+                    ledger.settle(instance_id as u64, ProofType::Basic as usize);
+                }
+            });
+        }
 
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
+            let sctx_clone = self.sctx.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
@@ -2248,19 +2844,25 @@ where
             let rec1_witness_tx_clone = self.rec1_witness_tx.clone();
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
-            let recursive_rx_clone = self.recursive_rx.clone();
+            let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
+            let scheduler_clone = scheduler.clone();
             let handle_recursive = std::thread::spawn(move || {
-                while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
-                    if id == u64::MAX - 1 {
-                        return;
-                    }
-                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                // Exits when the owner is dropped and the channel disconnects (no sentinel).
+                while let Ok(msg) = recursive_rx_clone.recv() {
+                    let id = msg.id;
+                    let p: ProofType = msg.proof_type.parse().unwrap();
+                    // Settles the outstanding unit this message represents, on any exit of this
+                    // iteration — after any downstream child has been armed below.
+                    let _settled = proofs_pending_clone.adopt(id, p.as_usize());
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
                     }
-                    let p: ProofType = proof_type.parse().unwrap();
+                    if *DEBUG_CHALLENGES {
+                        Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);
+                    }
+
                     if !options.aggregation {
-                        proofs_pending_clone.decrement();
                         continue;
                     }
 
@@ -2274,7 +2876,7 @@ where
                                 }
                             }
                             Err(e) => {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                                 return;
                             }
                         }
@@ -2322,7 +2924,7 @@ where
                                             "Error generating recursive2 witness from recursive proofs: {}",
                                             e
                                         );
-                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                        cancellation_info_clone.write_recover().cancel(Some(e));
                                         break;
                                     }
                                 }
@@ -2341,7 +2943,7 @@ where
                             Ok(witness) => Some(witness),
                             Err(e) => {
                                 tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         }
@@ -2357,23 +2959,61 @@ where
                             Ok(witness) => Some(witness),
                             Err(e) => {
                                 tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         }
                     };
 
-                    if let Some(witness) = witness {
-                        proofs_pending_clone.increment();
-                        if new_proof_type == ProofType::Compressor as usize {
-                            compressor_witness_tx_clone.send(witness).unwrap();
-                        } else if new_proof_type == ProofType::Recursive1 as usize {
-                            rec1_witness_tx_clone.send(witness).unwrap();
+                    if let Some(mut witness) = witness {
+                        // Arm by the `(id, kind)` the completion will report. A recursive2 proof gets
+                        // its ongoing slot assigned here, before hand-off, so it is armed before it is
+                        // in flight; compressor/recursive1 reuse the parent's slot from `global_idx`.
+                        let child_id = if new_proof_type == ProofType::Recursive2 as usize {
+                            let mut rec2 = recursive2_proofs_ongoing_clone.write().unwrap();
+                            let id = rec2.len();
+                            rec2.push(None);
+                            witness.global_idx = Some(id);
+                            id as u64
                         } else {
-                            rec2_witness_tx_clone.send(witness).unwrap();
+                            witness.global_idx.unwrap() as u64
+                        };
+                        // New downstream unit; commit to the callback only if the handoff
+                        // succeeds, else the guard drops and settles it.
+                        let child = proofs_pending_clone.arm(child_id, new_proof_type);
+                        if let Some(sched) = scheduler_clone.as_ref() {
+                            // Key-affinity scheduler (GPU): push into the shared queue + wake a
+                            // stream worker. The unbounded push can't fail, so always commit.
+                            sched.push(witness);
+                            child.commit();
+                        } else {
+                            // CPU: hand off through the witness channels.
+                            let compressor = new_proof_type == ProofType::Compressor as usize;
+                            let sent = if compressor {
+                                compressor_witness_tx_clone.send(witness)
+                            } else if new_proof_type == ProofType::Recursive1 as usize {
+                                rec1_witness_tx_clone.send(witness)
+                            } else {
+                                rec2_witness_tx_clone.send(witness)
+                            };
+                            match sent {
+                                Ok(()) => child.commit(),
+                                Err(crossbeam_channel::SendError(returned)) => {
+                                    // Witness channels live on `self`, so a failed send means the
+                                    // pipeline is torn down mid-run. Return the witness buffer to its
+                                    // pool (else it leaks in the SendError), and surface it.
+                                    drop(
+                                        memory_handler_recursive_witness
+                                            .adopt_witness(returned.circom_witness, compressor),
+                                    );
+                                    cancellation_info_clone
+                                        .write_recover()
+                                        .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
+                                    break;
+                                }
+                            }
                         }
                     }
-                    proofs_pending_clone.decrement();
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
@@ -2386,11 +3026,13 @@ where
             if *instance_id < 0 {
                 return;
             }
-            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+            if self.cancellation_info.read_recover().token.is_cancelled() {
                 return;
             }
-            proofs_pending.increment();
-            if let Err(e) = Self::gen_proof(
+            // Commit to the callback on a successful launch; on failure or panic the guard settles
+            // it. Arm with the instance id, which is what the basic proof's completion reports.
+            let pending = proofs_pending.arm(*instance_id as u64, ProofType::Basic as usize);
+            let proof_stream_id = match Self::gen_proof(
                 &self.proofs,
                 &self.pctx,
                 &self.sctx,
@@ -2399,14 +3041,27 @@ where
                 &self.const_pols,
                 &self.const_tree,
                 Some(stream_id),
+                None, // resident/pinned witness: skip path, no reserved stream
             ) {
-                self.cancellation_info.write().unwrap().cancel(Some(e));
-            }
+                Ok(sid) => {
+                    pending.commit();
+                    Some(sid)
+                }
+                Err(e) => {
+                    self.cancellation_info.write_recover().cancel(Some(e));
+                    None
+                }
+            };
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
+                // Trace H2D is async: wait on the proof's stream before recycling
+                // the shared buffer, else a concurrent take() overwrites it mid-copy.
+                if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
+                    wait_trace_h2d_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
+                }
                 if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
-                    self.cancellation_info.write().unwrap().cancel(Some(e));
+                    self.cancellation_info.write_recover().cancel(Some(e));
                 }
             }
         });
@@ -2416,25 +3071,49 @@ where
             my_instances_calculated[*instance_id as usize] = true;
         }
 
-        my_instances_sorted.sort_by_key(|&id| {
+        // Per-AIR per-proof cost proxy for LPT ordering; computed once (not in the
+        // comparator). PROOFMAN_CLUSTER_SCHEDULE=0 falls back to tier-only order.
+        let cluster_schedule =
+            std::env::var("PROOFMAN_CLUSTER_SCHEDULE").map(|v| v != "0" && v != "false").unwrap_or(true);
+        let mut group_cost: HashMap<(usize, usize), u64> = HashMap::new();
+        for &id in my_instances.iter() {
+            let (ag, air) = (instances[id].airgroup_id, instances[id].air_id);
+            group_cost.entry((ag, air)).or_insert_with(|| match self.sctx.get_setup(ag, air) {
+                // Saturating so a pathologically large AIR can't wrap to a tiny cost and defeat LPT.
+                Ok(setup) => 1u64
+                    .checked_shl(setup.stark_info.stark_struct.n_bits as u32)
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(setup.n_cols),
+                Err(_) => 0,
+            });
+        }
+
+        my_instances.sort_by_key(|&id| {
             let (airgroup_id, air_id) = (instances[id].airgroup_id, instances[id].air_id);
             let is_stored = self.pctx.is_air_instance_stored(id);
             let has_compressor = self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
-
-            let priority_tier = if is_stored && has_compressor {
-                0
-            } else if is_stored {
-                1
-            } else if has_compressor {
-                2
+            if cluster_schedule {
+                schedule_key(airgroup_id, air_id, is_stored, has_compressor, group_cost[&(airgroup_id, air_id)])
             } else {
-                3
-            };
-
-            (priority_tier,)
+                // Legacy: tier only. Equal keys within a tier keep prior order
+                // (stable sort), reproducing today's behavior for A/B comparison.
+                let priority_tier: u8 = if is_stored && has_compressor {
+                    0
+                } else if is_stored {
+                    1
+                } else if has_compressor {
+                    2
+                } else {
+                    3
+                };
+                (priority_tier, std::cmp::Reverse(0u64), 0usize, 0usize)
+            }
         });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
+        // Backstop: guarantees the generator threads below are told to stop on *any* early return,
+        // so the `_recursives_guard` join at teardown cannot wedge (see `FinishOnDrop`).
+        let _finish_generators = FinishOnDrop(proofs_finished.clone());
         for stream_id in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
@@ -2455,21 +3134,95 @@ where
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let handle_recursive = std::thread::spawn(move || loop {
-                let force_recursive_stream = stream_id >= n_streams_non_recursive;
-                if !force_recursive_stream {
-                    if let Ok(instance_id) = proofs_rx.try_recv() {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+            let proofs_pending_clone = proofs_pending.clone();
+            let scheduler_clone = scheduler.clone();
+            let handle_recursive = std::thread::spawn(move || {
+                loop {
+                    let force_recursive_stream = stream_id >= n_streams_non_recursive;
+
+                    // One locked pick per iteration (GPU): a Basic is dispatched right below; a
+                    // Recursive witness (in `gpu_witness`) falls through to the recursive dispatch.
+                    // CPU: take a stored basic off the channel and let gen_proof select the stream.
+                    let mut reserved_stream: u64 = u64::MAX;
+                    // Holds the reservation from pick until the launch commits it. Every early exit
+                    // below (`continue`, `break`, `return`, panic) drops it and gives the stream back,
+                    // so no error path can strand a stream at status=1.
+                    let mut reservation: Option<crate::StreamReservation> = None;
+                    let mut gpu_witness: Option<Proof<F>> = None;
+                    let basic: Option<(usize, Option<usize>)> = if let Some(sched) = scheduler_clone.as_ref() {
+                        let (lock, cvar) = (&sched.lock, &sched.ready);
+                        let mut guard = lock.lock().unwrap();
+                        loop {
+                            if !force_recursive_stream {
+                                // Drain ready stored basics into the key-affinity queue.
+                                while let Ok(id) = proofs_rx.try_recv() {
+                                    match pctx_clone.dctx_get_instance_info(id) {
+                                        Ok((ag, air)) => {
+                                            // Mark resident-tree basics (preallocated const-tree)
+                                            // so the scheduler treats them as filler.
+                                            let resident =
+                                                sctx_clone.get_setup(ag, air).map(|s| s.preallocate).unwrap_or(false);
+                                            guard.push_basic(id, ag, air, resident);
+                                        }
+                                        Err(e) => {
+                                            cancellation_info_clone.write_recover().cancel(Some(e));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            let pick = if force_recursive_stream {
+                                guard.next_recursive().map(|(w, s)| crate::WorkerPick::Recursive(w, s))
+                            } else {
+                                guard.next_nonrecursive()
+                            };
+                            match pick {
+                                Some(crate::WorkerPick::Recursive(w, s)) => {
+                                    reserved_stream = s.stream_id() as u64;
+                                    reservation = Some(s);
+                                    gpu_witness = Some(w);
+                                    break None;
+                                }
+                                Some(crate::WorkerPick::Basic(id, s)) => {
+                                    let sid = s.stream_id() as usize;
+                                    reservation = Some(s);
+                                    break Some((id, Some(sid)));
+                                }
+                                None => {
+                                    // Exit only once everything is drained. Non-force workers
+                                    // also own the basic queue, so they must wait for it too.
+                                    if proofs_finished_clone.load(Ordering::Relaxed)
+                                        && guard.is_empty()
+                                        && (force_recursive_stream || guard.basic_is_empty())
+                                    {
+                                        return;
+                                    }
+                                    let (g, _) = cvar.wait_timeout(guard, std::time::Duration::from_millis(1)).unwrap();
+                                    guard = g;
+                                }
+                            }
+                        }
+                    } else if !force_recursive_stream {
+                        proofs_rx.try_recv().ok().map(|id| (id, None))
+                    } else {
+                        None
+                    };
+
+                    if let Some((instance_id, reserved)) = basic {
+                        // Armed when queued; adopt (no re-count) so it settles on the cancel/free
+                        // path or a gen_proof error, and commits only on a successful launch.
+                        let pending = proofs_pending_clone.adopt(instance_id as u64, ProofType::Basic as usize);
+                        if cancellation_info_clone.read_recover().token.is_cancelled() {
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
                                     return;
                                 }
                             }
                             continue;
                         } else {
-                            if let Err(e) = Self::gen_proof(
+                            let proof_stream_id = match Self::gen_proof(
                                 &proofs_clone,
                                 &pctx_clone,
                                 &sctx_clone,
@@ -2478,175 +3231,212 @@ where
                                 &const_pols_clone,
                                 &const_tree_clone,
                                 None,
+                                reserved,
                             ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
+                                Ok(sid) => {
+                                    pending.commit();
+                                    // Launched: the stream now carries real work, so hand the
+                                    // reservation over instead of releasing it on drop.
+                                    if let Some(r) = reservation.take() {
+                                        r.commit();
+                                    }
+                                    sid
+                                }
+                                Err(e) => {
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
+                                    break;
+                                }
+                            };
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
+                                if pctx_clone.gpu {
+                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), proof_stream_id as u64);
+                                }
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
                                     return;
                                 }
                             }
                             continue;
                         }
                     }
-                }
 
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
-
-                let witness_opt = if force_recursive_stream {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
-                    }
-                } else {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(compressor_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
-                    }
-                };
-
-                let mut witness = match witness_opt {
-                    None => {
-                        if proofs_finished_clone.load(Ordering::Relaxed) {
-                            return;
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        // The pick above may already have handed us a witness. Dropping it here would
+                        // lose its pooled `circom_witness` for the rest of the process — the teardown
+                        // drain can't recover it, since it is no longer in the scheduler's queues.
+                        // Same recovery as that drain: pool the buffer, settle the unit armed at hand-off.
+                        if let Some(w) = gpu_witness.take() {
+                            crate::recover_drained_witnesses(
+                                vec![w],
+                                &memory_handler_recursive_witness,
+                                &proofs_pending_clone,
+                            );
                         }
-                        continue;
+                        break;
                     }
-                    Some(w) => w,
-                };
 
-                let force_recursive_stream = stream_id >= n_streams_non_recursive;
-                if witness.proof_type == ProofType::Recursive2 {
-                    let id = {
-                        let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
-                        let id = rec2_proofs.len();
-                        rec2_proofs.push(None);
-                        id
+                    // The GPU pick above already reserved the stream (`reserved_stream`) and
+                    // produced the recursive witness; on CPU gen_recursive_proof selects internally.
+                    let mut witness = if let Some(w) = gpu_witness {
+                        w
+                    } else {
+                        // CPU: `select!` among the ready witness channels.
+                        let witness_opt = if force_recursive_stream {
+                            crossbeam_channel::select! {
+                                recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                                recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                                default(std::time::Duration::from_millis(1)) => None,
+                            }
+                        } else {
+                            crossbeam_channel::select! {
+                                recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                                recv(compressor_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                                recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                                default(std::time::Duration::from_millis(1)) => None,
+                            }
+                        };
+                        match witness_opt {
+                            Some(w) => w,
+                            None => {
+                                if proofs_finished_clone.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                continue;
+                            }
+                        }
                     };
 
-                    witness.global_idx = Some(id);
-                }
+                    // Adopt the downstream unit armed at hand-off (no re-count): settles on an error
+                    // `break` below, commits once launched. Its id was assigned before hand-off, so
+                    // `global_idx` is set for every proof type here.
+                    let pending =
+                        proofs_pending_clone.adopt(witness.global_idx.unwrap() as u64, witness.proof_type.as_usize());
 
-                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
+                    let force_recursive_stream = stream_id >= n_streams_non_recursive;
+
+                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            // generate_recursive_proof (which normally returns the witness buffer to its
+                            // pool) is not reached on this error path, so return it here — adopt-then-drop.
+                            drop(memory_handler_recursive_witness.adopt_witness(
+                                std::mem::take(&mut witness.circom_witness),
+                                witness.proof_type == ProofType::Compressor,
+                            ));
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            break;
+                        }
+                    };
+                    let new_proof_type_str: &str = new_proof.proof_type.into();
+
+                    let new_proof_type = new_proof.proof_type;
+
+                    let id = new_proof.global_idx.unwrap();
+                    if new_proof_type == ProofType::Recursive2 {
+                        recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
+                    } else if new_proof_type == ProofType::Compressor {
+                        *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
+                    } else if new_proof_type == ProofType::Recursive1 {
+                        *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
-                };
-                let new_proof_type_str: &str = new_proof.proof_type.clone().into();
 
-                let new_proof_type = &new_proof.proof_type.clone();
+                    if new_proof_type == ProofType::Recursive2 {
+                        let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
+                        let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
-                let id = new_proof.global_idx.unwrap();
-                if *new_proof_type == ProofType::Recursive2 {
-                    recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
-                } else if *new_proof_type == ProofType::Compressor {
-                    *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
-                } else if *new_proof_type == ProofType::Recursive1 {
-                    *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
-                }
-
-                if *new_proof_type == ProofType::Recursive2 {
-                    let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                    let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
-
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            force_recursive_stream,
+                            reserved_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            break;
+                        }
+                    } else if new_proof_type == ProofType::Compressor {
+                        let compressor_lock = compressor_proofs_clone[id].read().unwrap();
+                        let new_proof_ref = compressor_lock.as_ref().unwrap();
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            force_recursive_stream,
+                            reserved_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            break;
+                        }
+                    } else {
+                        let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
+                        let new_proof_ref = recursive1_lock.as_ref().unwrap();
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            force_recursive_stream,
+                            reserved_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            break;
+                        }
                     }
-                } else if *new_proof_type == ProofType::Compressor {
-                    let compressor_lock = compressor_proofs_clone[id].read().unwrap();
-                    let new_proof_ref = compressor_lock.as_ref().unwrap();
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
-                    }
-                } else {
-                    let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
-                    let new_proof_ref = recursive1_lock.as_ref().unwrap();
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
-                    }
-                }
 
-                if !pctx_clone.gpu {
-                    launch_callback_c(id as u64, new_proof_type_str);
+                    pending.commit();
+                    // Launched: the stream now carries real work, so hand the reservation over
+                    // instead of releasing it on drop.
+                    if let Some(r) = reservation.take() {
+                        r.commit();
+                    }
+
+                    if !pctx_clone.gpu {
+                        launch_callback_c(id as u64, new_proof_type_str);
+                    }
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
-        let mut instances_to_be_calculated = Vec::with_capacity(my_instances_sorted.len());
-        for &instance_id in my_instances_sorted.iter() {
+        let mut instances_to_be_calculated = Vec::with_capacity(my_instances.len());
+        for &instance_id in my_instances.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
             }
 
-            proofs_pending.increment();
+            // Committed to the async callback; if the send panics the guard settles it. The basic
+            // proof's completion reports its instance id.
+            let pending = proofs_pending.arm(instance_id as u64, ProofType::Basic as usize);
             if self.pctx.is_air_instance_stored(instance_id) {
                 self.proofs_tx.send(instance_id).unwrap();
             } else {
                 instances_to_be_calculated.push(instance_id);
             }
+            pending.commit();
         }
 
         let witness_done = Arc::new(Counter::new());
 
-        if !options.minimal_memory && self.pctx.gpu {
-            self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
-            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
-        }
-
-        let (witness_handler, witness_handles) = self.calc_witness_handler(
-            witness_done.clone(),
-            self.memory_handler.clone(),
-            options.minimal_memory,
-            None,
-            false,
-        );
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), true, None, false);
 
         let _witness_guard = WitnessGuard {
             witness_tx: self.witness_tx.clone(),
@@ -2659,15 +3449,10 @@ where
             &instances_to_be_calculated,
             self.memory_handler.clone(),
             witness_done.clone(),
-            options.minimal_memory,
+            true,
             false,
         )?;
         timer_stop_and_log_debug!(CALCULATING_WITNESS);
-
-        if !options.minimal_memory && self.pctx.gpu {
-            self.pctx.set_witness_tx(None);
-            self.pctx.set_witness_tx_priority(None);
-        }
         self.witness_tx.send(usize::MAX).ok();
         if let Some(h) = witness_handler.lock().unwrap().take() {
             h.join().unwrap();
@@ -2681,20 +3466,42 @@ where
 
         drop(witness_handles);
 
-        proofs_pending.wait_until_zero_and_check_streams(
+        // Wait for every launched proof to settle. The 600s backstop returns false without
+        // cancelling, so cancel then — an incomplete result must not be mistaken for success.
+        let settled = completions.wait_settled(
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
+            Some(std::time::Duration::from_secs(600)),
         );
-        get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+        if !settled && !self.cancellation_info.read_recover().token.is_cancelled() {
+            self.cancellation_info
+                .write_recover()
+                .cancel(Some(ProofmanError::ProofmanError("timed out waiting for proofs to settle".into())));
+        }
+
+        // Signal the generators to stop, then release the capability: its `Drop` runs the final
+        // harvest and clears the registration, disconnecting the consumers. A late completion is an
+        // idempotent no-op.
         proofs_finished.store(true, Ordering::Relaxed);
-        clear_proof_done_callback_c();
-        for _ in 0..self.n_streams {
-            self.recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        drop(completions);
+
+        if self.cancellation_info.read_recover().token.is_cancelled() {
+            self.cancel_memory_handlers();
         }
 
         let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let mut panicked = 0usize;
         for handle in handles {
-            handle.join().unwrap();
+            if handle.join().is_err() {
+                panicked += 1;
+            }
+        }
+        // A panic settles the worker's ProofToken on unwind, so `wait_settled` above already
+        // returned true for a proof that was never produced. Cancel so `check_cancel` reports it.
+        if panicked > 0 {
+            self.cancellation_info.write_recover().cancel(Some(ProofmanError::ProofmanError(format!(
+                "{panicked} recursive proof worker thread(s) panicked"
+            ))));
         }
 
         self.check_cancel(true)?;
@@ -2792,21 +3599,21 @@ where
                         contrib.worker_index == worker_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                     }) {
                         if contrib.aggregated {
-                            self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                            self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(
                                 "Proof contribution was already aggregated".into(),
                             )));
                         }
                         contrib.aggregated = true;
                         for (c, value) in contrib.challenge.iter().enumerate() {
                             if *value != proof_acc_challenge[c] {
-                                self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                                self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(
                                     "Proof contribution challenge does not match expected accumulated challenge previously committed".into(),
                                 )));
                                 break;
                             }
                         }
                     } else {
-                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::ProofmanError(format!(
+                        self.cancellation_info.write_recover().cancel(Some(ProofmanError::ProofmanError(format!(
                             "Missing contribution from worker {} and airgroup id {}",
                             worker_index, proof.airgroup_id
                         ))));
@@ -2823,7 +3630,7 @@ where
             }
 
             if self.mpi_ctx.rank == 0 {
-                let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options)?;
+                let vadcop_final = self.receive_aggregated_proofs_inner(vec![], true, true, &options)?;
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
@@ -2890,7 +3697,7 @@ where
                         "Received duplicated proof from worker {} for airgroup {}",
                         worker_idx, proof.airgroup_id
                     ));
-                    self.cancellation_info.write().unwrap().cancel(Some(error_message));
+                    self.cancellation_info.write_recover().cancel(Some(error_message));
                     break;
                 }
                 airgroup_vec.push(worker_idx);
@@ -2903,6 +3710,17 @@ where
     }
 
     pub fn receive_aggregated_proofs(
+        &self,
+        agg_proofs: Vec<AggProofs>,
+        last_proof: bool,
+        final_proof: bool,
+        options: &ProofOptions,
+    ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let _computing = self.acquire_computing("receive_aggregated_proofs");
+        self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
+    }
+
+    fn receive_aggregated_proofs_inner(
         &self,
         agg_proofs: Vec<AggProofs>,
         last_proof: bool,
@@ -2924,7 +3742,7 @@ where
 
                 for &worker_idx in &proof.worker_indexes {
                     if !airgroup_vec.contains(&worker_idx) {
-                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                        self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
                             "Received proof from worker {} for airgroup {} was not registered",
                             worker_idx, proof.airgroup_id
                         ))));
@@ -2933,8 +3751,21 @@ where
                 }
             }
 
-            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+            if self.cancellation_info.read_recover().token.is_cancelled() {
                 break;
+            }
+
+            {
+                let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
+                let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
+                let expected = setup.proof_size as usize + publics_aggregation;
+                if proof.proof.len() != expected {
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Aggregated proof from workers {:?} airgroup {} has wrong length {} (expected {}) — malformed or truncated in transit",
+                        proof.worker_indexes, proof.airgroup_id, proof.proof.len(), expected
+                    ))));
+                    break;
+                }
             }
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
@@ -2944,7 +3775,7 @@ where
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                 }) {
                     if contrib.aggregated {
-                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                        self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(
                             "Proof contribution was already aggregated".into(),
                         )));
                         break;
@@ -2952,7 +3783,7 @@ where
                     contrib.aggregated = true;
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
                 } else {
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::ProofmanError(format!(
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::ProofmanError(format!(
                         "Missing contribution from worker {} and airgroup id {}",
                         w, proof.airgroup_id
                     ))));
@@ -2967,9 +3798,8 @@ where
 
             let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
             publics_extended[0..publics.len()].copy_from_slice(publics);
-            let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
-            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
+            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
 
             let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
             recursive2_proof[0] = publics_extended.len() as u64;
@@ -2984,12 +3814,9 @@ where
 
             let v = verifier(&self.pctx.global_info.hash);
 
-            // Select the verkey by the proof's circuit_type, mirroring the recursive2 circuit's
-            // SelectVerificationKeyNull (0 = null, 1 = aggregated/recursive2, k >= 2 = recursive1 of air k-2).
-            // A worker with a single alive instance (e.g. only Rom, circuit_type 15) sends an un-aggregated
-            // recursive1 proof, which must be verified with that air's recursive1 verkey — not the recursive2
-            // verkey, which would fail with a wrong root_c ("Proof of work" failure). A null/padding proof
-            // (circuit_type 0) carries no real proof and is a no-op in the aggregation, so skip its verify.
+            // Select the verkey by circuit_type (0 = null, 1 = recursive2, k >= 2 = recursive1 of air
+            // k-2). A single-instance worker sends an un-aggregated recursive1 proof that must use that
+            // air's recursive1 verkey, not the recursive2 one (else wrong root_c); a null proof is a no-op.
             let circuit_type = publics[0];
             let valid_recursive_proof = match circuit_type {
                 0 => true,
@@ -3009,8 +3836,7 @@ where
 
             if !valid_recursive_proof {
                 self.cancellation_info
-                    .write()
-                    .unwrap()
+                    .write_recover()
                     .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
                 break;
             }
@@ -3019,7 +3845,7 @@ where
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
                 if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(
                         "Aggregated proof challenge does not match the expected challenge".into(),
                     )));
                     break;
@@ -3036,10 +3862,10 @@ where
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
-        if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
+        if last_proof || self.cancellation_info.read_recover().token.is_cancelled() {
             let mut total_proofs_to_be_done = 0;
             let mut total_proofs_received = vec![0; self.received_agg_proofs.read().unwrap().len()];
-            if !self.cancellation_info.read().unwrap().token.is_cancelled() {
+            if !self.cancellation_info.read_recover().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
                     let n_agg_proofs = worker_indexes.len();
                     if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? {
@@ -3076,6 +3902,9 @@ where
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
                 &self.cancellation_info,
             );
+            if self.cancellation_info.read_recover().token.is_cancelled() {
+                self.cancel_memory_handlers();
+            }
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
             self.stop_outer_aggregations();
 
@@ -3131,10 +3960,7 @@ where
                                 .collect::<Vec<_>>()
                         );
 
-                        self.cancellation_info
-                            .write()
-                            .unwrap()
-                            .cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                        self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(error.clone())));
                         return Err(ProofmanError::InvalidProof(error));
                     }
                 }
@@ -3156,7 +3982,7 @@ where
                         "Global challenge calculated from contributions does not match the global challenge from pctx"
                             .to_string();
 
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(error.clone())));
                     return Err(ProofmanError::InvalidProof(error));
                 }
 
@@ -3191,9 +4017,9 @@ where
         Ok(None)
     }
 
-    fn outer_aggregations(&self) {
+    fn outer_aggregations(&self) -> CompletionOwner {
         self.outer_agg_proofs_finished.store(false, Ordering::SeqCst);
-        register_proof_done_callback_c(self.recursive_tx.clone());
+        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
 
         if self.pctx.gpu {
             let pctx_clone = self.pctx.clone();
@@ -3201,7 +4027,7 @@ where
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_pump = std::thread::spawn(move || loop {
                 if outer_agg_proofs_finished.load(Ordering::Relaxed)
-                    || cancellation_info_clone.read().unwrap().token.is_cancelled()
+                    || cancellation_info_clone.read_recover().token.is_cancelled()
                 {
                     break;
                 }
@@ -3218,15 +4044,14 @@ where
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
-            let recursive_rx_clone = self.recursive_rx.clone();
+            let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || {
-                while let Ok((id, _)) = recursive_rx_clone.recv() {
-                    if id == u64::MAX - 1 {
-                        return;
-                    }
+                // Exits when the owner is dropped and the channel disconnects (no sentinel).
+                while let Ok(msg) = recursive_rx_clone.recv() {
+                    let id = msg.id;
 
-                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
                     }
 
@@ -3253,7 +4078,7 @@ where
                             Ok(witness) => witness,
                             Err(e) => {
                                 tracing::info!("Error generating recursive2 witness from recursive proofs: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         };
@@ -3277,7 +4102,7 @@ where
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let handle = std::thread::spawn(move || loop {
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                if cancellation_info_clone.read_recover().token.is_cancelled() {
                     break;
                 }
                 let witness = rec2_witness_rx.recv_timeout(std::time::Duration::from_millis(1));
@@ -3304,7 +4129,13 @@ where
                 let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                        // generate_recursive_proof (which returns the buffer to its pool) isn't reached
+                        // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
+                        drop(memory_handler_recursive_witness.adopt_witness(
+                            std::mem::take(&mut witness.circom_witness),
+                            witness.proof_type == ProofType::Compressor,
+                        ));
+                        cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
                 };
@@ -3324,9 +4155,10 @@ where
                     &const_tree_clone,
                     &const_pols_clone,
                     false,
+                    u64::MAX, // one-off launch: reserve stream internally
                     None,
                 ) {
-                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                    cancellation_info_clone.write_recover().cancel(Some(e));
                     break;
                 }
 
@@ -3337,16 +4169,20 @@ where
             });
             self.handle_recursives.lock().unwrap().push(handle);
         }
+
+        // The caller stores this owner for the service's lifetime; dropping it (in
+        // `stop_outer_aggregations`) clears the registration and disconnects the consumers above.
+        completions
     }
 
     fn verify_proofs(&self) -> ProofmanResult<ProvePhaseResult> {
         timer_start_info!(VERIFYING_PROOFS);
         let mut valid_proofs = true;
 
-        let my_instances_sorted = self.pctx.dctx_get_process_instances();
+        let my_instances = self.pctx.dctx_get_process_instances();
 
-        let mut airgroup_values_air_instances = vec![Vec::new(); my_instances_sorted.len()];
-        for instance_id in my_instances_sorted.iter() {
+        let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
+        for instance_id in my_instances.iter() {
             let proof = {
                 let mut lock = self.proofs[*instance_id].write().unwrap();
                 std::mem::take(&mut *lock)
@@ -3400,9 +4236,13 @@ where
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
 
-        if self.pctx.gpu && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
+        if let Err(e) = self.wcm.execute() {
+            self.cancellation_info.write_recover().cancel(Some(e));
+        }
+
+        if self.pctx.gpu && self.pctx.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
-            load_device_const_pols(
+            let _ = load_device_const_pols(
                 &self.pctx,
                 &self.sctx,
                 &self.setups,
@@ -3410,12 +4250,8 @@ where
                 self.options.aggregation,
                 true,
             )?;
-            self.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
+            self.pctx.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
             timer_stop_and_log_info!(RELOAD_FIXED_POLS);
-        }
-
-        if let Err(e) = self.wcm.execute() {
-            self.cancellation_info.write().unwrap().cancel(Some(e));
         }
 
         self.check_cancel(true)?;
@@ -3440,9 +4276,8 @@ where
         let n_processes = self.mpi_ctx.n_processes as usize;
 
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
 
-        register_proof_done_callback_c(recursive_tx.clone());
+        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
 
         let instances = self.pctx.dctx_get_instances();
         let n_airgroups = self.pctx.global_info.air_groups.len();
@@ -3477,7 +4312,7 @@ where
         }
         total_proofs += n_proofs_to_be_received;
 
-        let recursive2_done = Arc::new(Counter::new_with_threshold(total_proofs));
+        let recursive2_done = Arc::new(Counter::new());
 
         let mut recursive2_handles = Vec::new();
         for _ in 0..self.n_streams {
@@ -3492,7 +4327,12 @@ where
             let rec2_witness_rx_clone = rec2_witness_rx.clone();
             let handle = std::thread::spawn(move || {
                 while let Ok(mut witness) = rec2_witness_rx_clone.recv() {
-                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        // Return the received witness buffer to its pool before bailing.
+                        drop(memory_handler_recursive_witness.adopt_witness(
+                            std::mem::take(&mut witness.circom_witness),
+                            witness.proof_type == ProofType::Compressor,
+                        ));
                         break;
                     }
                     let id = {
@@ -3507,7 +4347,13 @@ where
                     let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                         Ok(p) => p,
                         Err(e) => {
-                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            // generate_recursive_proof (which returns the buffer to its pool) is not
+                            // reached here; return it so the recursive-witness pool doesn't shrink.
+                            drop(memory_handler_recursive_witness.adopt_witness(
+                                std::mem::take(&mut witness.circom_witness),
+                                witness.proof_type == ProofType::Compressor,
+                            ));
+                            cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
                     };
@@ -3528,9 +4374,10 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         false,
+                        u64::MAX, // one-off launch: reserve stream internally
                         None,
                     ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                        cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     };
 
@@ -3550,17 +4397,16 @@ where
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
-            let recursive_rx_clone = recursive_rx.clone();
+            let recursive_rx_clone = completions.receiver();
             let recursive2_done_clone = recursive2_done.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || {
-                while let Ok((id, _)) = recursive_rx_clone.recv() {
+                // Exits when the owner is dropped and the channel disconnects (no sentinel).
+                while let Ok(msg) = recursive_rx_clone.recv() {
                     recursive2_done_clone.increment();
-                    if id == u64::MAX - 1 {
-                        return;
-                    }
+                    let id = msg.id;
 
-                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
                     }
 
@@ -3585,12 +4431,16 @@ where
                             Ok(witness) => witness,
                             Err(e) => {
                                 tracing::info!("Error generating recursive2 witness from recursive proofs: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         };
-                        if rec2_witness_tx_clone.send(witness).is_err() {
-                            cancellation_info_clone.write().unwrap().cancel(None);
+                        if let Err(crossbeam_channel::SendError(returned)) = rec2_witness_tx_clone.send(witness) {
+                            // Every rec2 worker has exited, so the pipeline is torn down mid-run.
+                            // Return the witness buffer to its pool (else it leaks inside the
+                            // SendError and the pool comes back short) before surfacing the failure.
+                            drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness, false));
+                            cancellation_info_clone.write_recover().cancel(None);
                             break;
                         }
                     }
@@ -3600,6 +4450,12 @@ where
         }
 
         while n_proofs_to_be_received > 0 {
+            // A dead or cancelled peer must not spin this loop forever: bail on cancellation and let
+            // check_cancel surface it. We can't locally time out waiting on a specific peer.
+            if self.cancellation_info.read_recover().token.is_cancelled() {
+                break;
+            }
+            let mut progressed = false;
             for airgroup_id in 0..n_airgroups {
                 let new_proof = self.mpi_ctx.check_incoming_proofs(airgroup_id);
                 if let Some(proof) = new_proof {
@@ -3611,16 +4467,23 @@ where
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
 
                     n_proofs_to_be_received -= 1;
+                    progressed = true;
                 }
+            }
+            // Nothing arrived this pass: yield instead of hot-spinning a core while waiting on peers.
+            if !progressed {
+                std::thread::sleep(std::time::Duration::from_micros(100));
             }
         }
 
-        recursive2_done.wait_until_threshold_and_check_streams(
+        recursive2_done.wait_until_value_and_check_streams(
+            total_proofs,
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );
-        clear_proof_done_callback_c();
-        drop(recursive_tx);
+        // Release the completion capability: drain-then-release `Drop` clears the registration and
+        // disconnects the consumer threads below.
+        drop(completions);
 
         for handle in handle_recursives {
             handle.join().unwrap();
@@ -3671,102 +4534,161 @@ where
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
-        let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
-            Some(std::thread::spawn(move || loop {
-                let instance_id = if let Ok(id) = witness_rx_priority.try_recv() {
-                    id
-                } else {
-                    crossbeam_channel::select! {
-                        recv(witness_rx_priority) -> msg => match msg {
-                            Ok(id) => id,
-                            Err(_) => break,
-                        },
-                        recv(witness_rx) -> msg => match msg {
-                            Ok(id) if id == usize::MAX => break,
-                            Ok(id) => id,
-                            Err(_) => break,
-                        },
-                        default(std::time::Duration::from_millis(5)) => {
-                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+        let sctx_admission = self.sctx.clone();
+        let class_sizes = self.pctx.basic_stream_sizes.clone();
+        let n_classes = class_sizes.len();
+        let witness_handler =
+            if !minimal_memory && (self.pctx.gpu || stats) {
+                // Ready instances waiting to be admitted, priority-first, and how many slots each air
+                // currently holds. Taking straight off the channels would be pure FIFO with no choice;
+                // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
+                // stream so the slots it would have taken go to work the other streams can run.
+                // Two pools, not one queue: the priority pool is always scanned first, so a priority
+                // instance outranks every normal one however late it arrives, while arrival order is kept
+                // within each pool. That is all the two channels mean now — a ranking hint, no longer a
+                // queue-jump able to take every slot.
+                let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+                let mut arrivals_done = false;
+                Some(std::thread::spawn(move || loop {
+                    // Take everything available without committing to any of it yet.
+                    while let Ok(id) = witness_rx_priority.try_recv() {
+                        pending_priority.push_back(id);
+                    }
+                    while let Ok(id) = witness_rx.try_recv() {
+                        if id == usize::MAX {
+                            arrivals_done = true;
+                        } else {
+                            pending.push_back(id);
+                        }
+                    }
+
+                    // 0 = unknown (CPU, or an air the carve does not know): never held back.
+                    let eligible_of = |id: usize| -> usize {
+                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
+                        let need =
+                            sctx_admission.get_setup(key.0, key.1).map(|s| s.prover_buffer_size as usize).unwrap_or(0);
+                        crate::eligible_stream_count(need, &class_sizes)
+                    };
+                    let admissible = |id: usize, held: &HashMap<(usize, usize), usize>| -> bool {
+                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else {
+                            return true; // unknown air: never hold back work we cannot reason about
+                        };
+                        let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
+                        held.get(&key).copied().unwrap_or(0) < cap
+                    };
+                    // First admissible, priority pool first. Not reordered by scarcity: that starved the
+                    // streams flexible work feeds (83% -> 71% busy). The cap alone is the lever.
+                    let chosen: Option<(bool, usize)> = {
+                        let held = in_flight.lock().unwrap();
+                        pending_priority
+                            .iter()
+                            .position(|&id| admissible(id, &held))
+                            .map(|pos| (true, pos))
+                            .or_else(|| pending.iter().position(|&id| admissible(id, &held)).map(|pos| (false, pos)))
+                    };
+
+                    let instance_id = match chosen.and_then(|(is_priority, pos)| {
+                        if is_priority {
+                            pending_priority.remove(pos)
+                        } else {
+                            pending.remove(pos)
+                        }
+                    }) {
+                        Some(id) => id,
+                        None => {
+                            // Nothing admissible. Exit only once no more can arrive and nothing is queued;
+                            // otherwise wait briefly for a slot to free or a new arrival.
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
+                            if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(1));
                             continue;
-                        },
+                        }
+                    };
+
+                    if let Some(witness_start_time_clone) = &witness_start_time_clone {
+                        if witness_start_time_clone.read().unwrap().is_none() {
+                            *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
+                        }
                     }
-                };
 
-                if let Some(witness_start_time_clone) = &witness_start_time_clone {
-                    if witness_start_time_clone.read().unwrap().is_none() {
-                        *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
-                    }
-                }
-
-                let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
-                    }
-                };
-
-                let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
-                let wcm = wcm_clone.clone();
-                let memory_handler_clone = memory_handler_clone.clone();
-
-                let witness_done_clone = witness_done_clone.clone();
-                for _ in 0..n_threads_witness {
-                    loop {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
-                        match rx_threads_clone.recv_timeout(std::time::Duration::from_millis(1)) {
-                            Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                        }
-                    }
-                }
+                    };
 
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
+                    // Held until the witness thread finishes: the span this air occupies a slot.
+                    *in_flight.lock().unwrap().entry((airgroup_id, air_id)).or_insert(0) += 1;
+                    let slot = SlotGuard { in_flight: in_flight.clone(), key: (airgroup_id, air_id) };
 
-                let pctx_clone = pctx_clone.clone();
-                let gpu = pctx_clone.gpu;
-                let cancellation_info_clone = cancellation_info_clone.clone();
-                let handle = std::thread::spawn(move || {
-                    timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    if let Err(e) =
-                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
-                    {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                    }
-                    Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
-                    timer_stop_and_log_debug!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
-                    witness_done_clone.increment();
-                    if stats {
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                        if is_shared_buffer {
-                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                    let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
+                    let wcm = wcm_clone.clone();
+                    let memory_handler_clone = memory_handler_clone.clone();
+
+                    let witness_done_clone = witness_done_clone.clone();
+                    for _ in 0..n_threads_witness {
+                        loop {
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
+                                break;
+                            }
+                            match rx_threads_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                                Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
                             }
                         }
                     }
-                });
-                if !stats && !gpu {
-                    handle.join().unwrap();
-                } else {
-                    witness_handles_clone.lock().unwrap().push(handle);
-                }
-            }))
-        } else {
-            None
-        };
+
+                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        break;
+                    }
+
+                    let pctx_clone = pctx_clone.clone();
+                    let gpu = pctx_clone.gpu;
+                    let cancellation_info_clone = cancellation_info_clone.clone();
+                    let handle = std::thread::spawn(move || {
+                        timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                        if let Err(e) =
+                            wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
+                        {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                        }
+                        Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
+                        // Free the slot before the counter so admission can refill immediately.
+                        drop(slot);
+                        timer_stop_and_log_debug!(
+                            GENERATING_WC,
+                            "GENERATING_WC_{} [{}:{}]",
+                            instance_id,
+                            airgroup_id,
+                            air_id
+                        );
+                        witness_done_clone.increment();
+                        if stats {
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
+                                }
+                            }
+                        }
+                    });
+                    if !stats && !gpu {
+                        handle.join().unwrap();
+                    } else {
+                        witness_handles_clone.lock().unwrap().push(handle);
+                    }
+                }))
+            } else {
+                None
+            };
         (Arc::new(Mutex::new(witness_handler)), witness_handles)
     }
 
@@ -3780,7 +4702,10 @@ where
     ) -> ProofmanResult<()> {
         let witness_minimal_memory_handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>> =
             Arc::new(Mutex::new(Vec::new()));
-        let _join_guard = JoinAllGuard { handles: witness_minimal_memory_handles.clone() };
+        let _join_guard = JoinAllGuard::new(witness_minimal_memory_handles.clone());
+        // Skipped instances never increment, so exclude them from the wait target, else witness_done
+        // can't reach it and the wait stalls with no cancellation.
+        let mut expected = instances.len();
         if !minimal_memory && (self.pctx.gpu || stats) {
             timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
@@ -3789,6 +4714,7 @@ where
             for &instance_id in instances.iter() {
                 let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
                 if skip {
+                    expected -= 1;
                     continue;
                 }
                 let n_threads_witness = self.num_threads_per_witness;
@@ -3804,7 +4730,7 @@ where
 
                 for _ in 0..threads_to_use_collect {
                     loop {
-                        if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                        if self.cancellation_info.read_recover().token.is_cancelled() {
                             break;
                         }
                         match self.rx_threads.recv_timeout(std::time::Duration::from_millis(1)) {
@@ -3814,7 +4740,7 @@ where
                     }
                 }
 
-                if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                if self.cancellation_info.read_recover().token.is_cancelled() {
                     break;
                 }
 
@@ -3840,7 +4766,7 @@ where
                         threads_to_use_collect,
                         memory_handler_clone.as_ref(),
                     ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                        cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
                     timer_stop_and_log_debug!(
@@ -3859,7 +4785,7 @@ where
                         threads_to_use_witness,
                         memory_handler_clone.as_ref(),
                     ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                        cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
                     timer_stop_and_log_debug!(
@@ -3882,7 +4808,7 @@ where
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
                             if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                             }
                         }
                     }
@@ -3896,7 +4822,7 @@ where
         }
 
         witness_done.wait_until_value_and_check_streams(
-            instances.len(),
+            expected,
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );
@@ -3911,7 +4837,7 @@ where
 
     fn try_send_threads(tx: &Sender<()>, n_threads: usize, cancellation_info: &RwLock<CancellationInfo>) {
         for _ in 0..n_threads {
-            if cancellation_info.read().unwrap().token.is_cancelled() {
+            if cancellation_info.read_recover().token.is_cancelled() {
                 break;
             }
 
@@ -3928,6 +4854,55 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn debug_print_airgroup_values(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        proofs: &[RwLock<Option<Proof<F>>>],
+        id: u64,
+        proof_type: &ProofType,
+    ) {
+        const HASH_SIZE: usize = 4;
+        if *proof_type != ProofType::Basic {
+            return;
+        }
+        let (airgroup_id, air_id) = match pctx.dctx_get_instance_info(id as usize) {
+            Ok(info) => info,
+            Err(_) => return,
+        };
+        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { return };
+        const FE: usize = 3;
+        let n_airgroup = setup.stark_info.airgroupvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let n_air = setup.stark_info.airvalues_map.as_deref().map(|m| m.len()).unwrap_or(0);
+        let airgroup_words = n_airgroup * FE;
+        let n_stage_roots = setup.stark_info.n_stages as usize + 1; // +1 = Q stage
+
+        let guard = proofs[id as usize].read().unwrap();
+        let Some(proof) = guard.as_ref() else { return };
+        let buf = &proof.proof;
+        if airgroup_words > buf.len() {
+            return;
+        }
+
+        let vals = buf[0..airgroup_words].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+        tracing::info!("··· Instance {} [{}:{}]: airgroup values: [{}]", id, airgroup_id, air_id, vals);
+
+        let roots_base = airgroup_words + n_air * FE;
+        for s in 0..n_stage_roots {
+            let off = roots_base + s * HASH_SIZE;
+            if off + HASH_SIZE > buf.len() {
+                break;
+            }
+            let label = if s + 1 == n_stage_roots { "Q".to_string() } else { (s + 1).to_string() };
+            let root = buf[off..off + HASH_SIZE].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+            tracing::info!("··· Instance {} [{}:{}]: root stage {}: [{}]", id, airgroup_id, air_id, label, root);
+        }
+
+        if let Some(nonce) = buf.last() {
+            tracing::info!("··· Instance {} [{}:{}]: nonce: {}", id, airgroup_id, air_id, nonce);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn gen_proof(
         proofs: &[RwLock<Option<Proof<F>>>],
         pctx: &ProofCtx<F>,
@@ -3937,7 +4912,8 @@ where
         const_pols: &[F],
         const_tree: &[F],
         stream_id_: Option<usize>,
-    ) -> ProofmanResult<()> {
+        reserved_stream: Option<usize>,
+    ) -> ProofmanResult<usize> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
         Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
@@ -3968,16 +4944,22 @@ where
             None => String::new(),
         };
 
-        let (skip_recalculation, stream_id) = match stream_id_ {
-            Some(stream_id) => (true, stream_id),
-            None => (false, 0),
+        // stream_id_ Some -> resident witness (skip recompute, pinned to that stream). Else
+        // recompute; reserved_stream Some -> scheduler-reserved stream; None -> u64::MAX
+        // (CPU path — gen_proof_cpu ignores it; on GPU the scheduler always reserves).
+        let (skip_recalculation, stream_id): (bool, u64) = match (stream_id_, reserved_stream) {
+            (Some(s), _) => (true, s as u64),
+            (None, Some(s)) => (false, s as u64),
+            (None, None) => (false, u64::MAX),
         };
 
-        let proof = vec![0; setup.proof_size as usize];
+        let proof = create_buffer_fast(setup.proof_size as usize);
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
-        gen_proof_c(
+        // Returns the stream the (async) trace H2D + commit ran on; the caller
+        // must wait on it before recycling this instance's shared trace buffer.
+        let proof_stream_id = gen_proof_c(
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
@@ -3988,18 +4970,24 @@ where
             instance_id as u64,
             pctx.get_device_buffers_ptr(),
             skip_recalculation,
-            stream_id as u64,
+            stream_id,
             const_pols_path,
             const_pols_tree_path,
             &custom_commits_fixed_path,
         );
+
+        if proof_stream_id == u64::MAX {
+            return Err(ProofmanError::ProofmanError(format!(
+                "instance {instance_id} witness no longer resident on stream {stream_id}; stream was reused since the snapshot"
+            )));
+        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");
         }
 
         timer_stop_and_log_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
-        Ok(())
+        Ok(proof_stream_id as usize)
     }
 
     #[allow(clippy::type_complexity)]
@@ -4008,7 +4996,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -4026,16 +5014,51 @@ where
 
         let mut preloaded_const = Vec::new();
         if pctx.gpu {
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Basic));
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive1));
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive2));
+            // Airgroup 0's Recursive2 is the one unconditional preload: every aggregation
+            // path proves it. The rest depend on the air mix, so the caller chooses.
+            preloaded_const.push(PreLoadedConstTree::new(0, 0, ProofType::Recursive2));
+            for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
+                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Basic));
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Compressor));
+                }
+                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Recursive1));
+            }
         }
+
+        // Both lists name airs by index, so a typo would otherwise be silently ignored.
+        for (option, airs) in [
+            ("preloaded_const_tree_gpu", &options.preloaded_const_tree_gpu),
+            ("table_airs_gpu", &options.table_airs_gpu),
+        ] {
+            for &(airgroup_id, air_id) in airs {
+                if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
+                    return Err(ProofmanError::InvalidConfiguration(format!(
+                        "{option} names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
+                    )));
+                }
+            }
+        }
+
+        // A preallocated tree lives in the const buffer, so there is no in-aux-trace node
+        // area to alias the const pols onto.
+        for air in &options.table_airs_gpu {
+            if options.preloaded_const_tree_gpu.contains(air) {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "air ({}, {}) is in both table_airs_gpu and preloaded_const_tree_gpu",
+                    air.0, air.1
+                )));
+            }
+        }
+
+        let table_airs: &[(usize, usize)] = if options.gpu { &options.table_airs_gpu } else { &[] };
 
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
             &pctx.global_info,
             &ProofType::Basic,
             options.verify_constraints,
             &preloaded_const,
+            table_airs,
             options.gpu,
         )?);
 
@@ -4047,7 +5070,7 @@ where
             options.gpu,
         )?);
 
-        pctx.set_weights(&sctx)?;
+        pctx.set_weights(&sctx, &setups_vadcop)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) = pctx.set_device_buffers(
             &sctx,
@@ -4055,9 +5078,51 @@ where
             options.aggregation,
             options.gpu,
             options.max_number_streams,
+            options.max_number_recursive_streams,
         )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
+
+        // Streaming-commit slots: DEFAULT 2. The slot COUNT is a memory-budget knob
+        // (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is
+        // derived from the slot-eligible packed AIRs (zisk Main) -- same eligibility
+        // gate as try_slot_commit -- so it never needs manual tuning.
+        const STREAM_COMMIT_SLOTS_DEFAULT: u64 = 2;
+        if options.gpu && options.packed {
+            let n_slots: u64 = std::env::var("STREAM_COMMIT_SLOTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(STREAM_COMMIT_SLOTS_DEFAULT);
+            if n_slots > 0 {
+                let mut slot_bytes = 0u64;
+                for (&(airgroup_id, air_id), pi) in options.packed_info.iter() {
+                    if !pi.is_packed {
+                        continue;
+                    }
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let ss = &setup.stark_info.stark_struct;
+                    if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
+                        || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
+                    {
+                        continue;
+                    }
+                    let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
+                    slot_bytes = slot_bytes.max(stream_commit_slot_bytes_c(
+                        ss.n_bits,
+                        ss.n_bits_ext,
+                        n_cols,
+                        pi.num_packed_words,
+                    ));
+                }
+                if slot_bytes > 0 {
+                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes);
+                } else {
+                    tracing::info!(
+                        "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
+                    );
+                }
+            }
+        }
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, options.aggregation, &options.packed_info)?;
 
@@ -4098,14 +5163,23 @@ where
         mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.verify_constraints, options.aggregation, false)?;
+        // End of the init-time aggregation const-pols uploads = start of the
+        // reserved recurser slot (see register_recurser_setup).
+        let aggregation_const_end = load_device_const_pols(
+            &pctx,
+            &sctx,
+            &setups_vadcop,
+            options.verify_constraints,
+            options.aggregation,
+            false,
+        )?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, aggregation_const_end))
     }
 
     #[allow(dead_code)]
@@ -4159,7 +5233,7 @@ where
         instance_id: usize,
         init_aux_trace: bool,
         verify_constraints: bool,
-        shared_const_pols: Option<&Arc<Vec<F>>>,
+        shared_const_pols: Option<&SharedScratch<F>>,
         shared_aux_trace: Option<&Arc<Vec<F>>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -4177,11 +5251,9 @@ where
             )));
         }
 
-        // Host aux_trace / const_pols are only consumed by the CPU verify path
-        // (and CPU debug-mode hints). On GPU verify the C side reads device
-        // buffers (d_aux_trace / d_constPols pre-loaded at setup), so skip both
-        // the allocation and the file load — see verify_constraints_gpu /
-        // initialize_instance_gpu in pil2-stark/src/api/starks_api.cu.
+        // Host aux_trace / const_pols are only used by the CPU verify path. On GPU the C side reads
+        // pre-loaded device buffers, so skip the host allocation and file load (see
+        // verify_constraints_gpu in starks_api.cu).
         if init_aux_trace && !pctx.gpu {
             air_instance.init_aux_trace(shared_aux_trace.expect("CPU verify requires shared aux_trace").clone());
         }
@@ -4192,22 +5264,18 @@ where
         );
 
         if verify_constraints && !pctx.gpu {
-            // Reuse the process-wide const_pols buffer passed by the verify worker.
-            // We load the per-air const data into it each call; in CPU verify mode
-            // workers run sequentially, so no concurrent access.
-            let shared = shared_const_pols.expect("CPU verify requires shared const_pols");
-            // SAFETY: see comment above. We're the only writer for the duration of
-            // load_const_pols; no other thread holds a mutable reference into this Vec.
-            let const_pols_view: &mut [F] =
-                unsafe { std::slice::from_raw_parts_mut(shared.as_ptr() as *mut F, shared.len()) };
-            load_const_pols(setup, const_pols_view);
-            air_instance.init_fixed(shared.clone());
+            // Reuse the process-wide const_pols buffer, loading per-air const data each call. CPU
+            // verify runs sequentially (single writer); `SharedScratch` localizes the reborrow.
+            let scratch = shared_const_pols.expect("CPU verify requires shared const_pols");
+            {
+                let mut const_pols_view = scratch.borrow_mut();
+                load_const_pols(setup, &mut const_pols_view);
+            }
+            air_instance.init_fixed(scratch.arc().clone());
         }
 
-        // CPU only: allocate the host buffer and load each custom-commit file into it.
-        // In GPU mode, custom commits are streamed disk → device by initialize_instance_gpu
-        // / gen_proof_gpu via the customCommitsFixedPath threaded through FFI, so the
-        // host buffer would just be dead weight.
+        // CPU only: allocate the host buffer and load each custom-commit file. In GPU mode custom
+        // commits stream disk → device via customCommitsFixedPath, so the host buffer is dead weight.
         if !pctx.gpu {
             air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
 
@@ -4275,8 +5343,89 @@ where
         Ok(())
     }
 
+    /// Try to commit `instance_id` on a reserved streaming slot. Returns false
+    /// (caller takes the legacy stream path) when the AIR is not slot-eligible,
+    /// no slot token is free, or the C side rejects the shape.
+    ///
+    /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
+    /// (col_source / index_bits / words_per_entry) and its uploaded instruction
+    /// table from the first GPU's AirInstanceInfo, and drives the indexed slot
+    /// unpack -- hence airgroup_id/air_id are passed through.
     #[allow(clippy::too_many_arguments)]
-    pub fn get_contribution_air(
+    fn try_slot_commit(
+        pctx: &ProofCtx<F>,
+        setup: &Setup<F>,
+        ctx: &SlotCommitCtx,
+        instance_id: usize,
+        airgroup_id: usize,
+        air_id: usize,
+        trace: *mut u8,
+        roots_contributions: &[[F; 4]],
+    ) -> bool {
+        let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
+            return false;
+        };
+        if !pi.is_packed || trace.is_null() {
+            return false;
+        }
+        let ss = &setup.stark_info.stark_struct;
+        if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
+            || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
+        {
+            return false;
+        }
+        let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
+            return false;
+        };
+        // Slots only pay off while gpu-mops holds the first GPU's buffer (no
+        // legacy stream is available there); once released, the legacy path is
+        // strictly better -- async, pinned, and it keeps witness residency.
+        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr()) {
+            return false;
+        }
+        // One-shot token take: a miss means all slots are busy right-now and the
+        // instance goes legacy.
+        let Ok(slot) = ctx.pool_rx.try_recv() else {
+            return false;
+        };
+        let rc = commit_witness_streaming_c(
+            pctx.get_device_buffers_ptr(),
+            slot,
+            airgroup_id as u64,
+            air_id as u64,
+            trace as *mut c_void,
+            ss.n_bits,
+            ss.n_bits_ext,
+            n_cols,
+            pi.num_packed_words,
+            pi.unpack_info.as_ptr() as *mut c_void,
+            roots_contributions[instance_id].as_ptr() as *mut c_void,
+        );
+        ctx.pool_tx.send(slot).ok();
+        if rc != 0 {
+            // -14 is returned for either of two expected, transient conditions:
+            // the slots are quiesced (gpu-mops entered its final planning phase,
+            // typical near the window close), or the overlapped legacy region is
+            // busy (streamCommitAcquireRegion could not claim every overlapped
+            // first-GPU stream). Both mean "take the legacy path this time".
+            // Anything else is a misconfiguration worth surfacing (e.g. -15 wrong
+            // hash family, -13 shape/slot-size drift, -16 indexed air whose
+            // instruction table was never registered, -4 incomplete indexed
+            // descriptor). Note the legacy fallback is NOT a rescue for -16: the
+            // prover-side unpack aborts on the same missing table.
+            if rc != -14 {
+                tracing::warn!(
+                    "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
+                );
+            }
+            return false;
+        }
+        ctx.committed.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn get_contribution_air(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         roots_contributions: &[[F; 4]],
@@ -4284,7 +5433,8 @@ where
         instance_id: usize,
         aux_trace: &mut [F],
         const_pols: &mut [F],
-    ) -> ProofmanResult<()> {
+        slot_commit: Option<&SlotCommitCtx>,
+    ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
@@ -4313,16 +5463,42 @@ where
             None => String::new(),
         };
 
-        commit_witness_c(
-            p_setup,
-            p_steps_params,
-            instance_id as u64,
-            airgroup_id as u64,
-            air_id as u64,
-            roots_contributions[instance_id].as_ptr() as *mut u8,
-            pctx.get_device_buffers_ptr(),
-            &custom_commits_fixed_path,
-        );
+        // Streaming-slot path first: packed wide-trace AIRs (zisk Main) commit
+        // synchronously inside a reserved slot, on a dedicated stream that stays
+        // usable while the first GPU's unified buffer is borrowed by gpu-mops.
+        // Falls through to the legacy stream commit when not eligible, no slot
+        // token is free, or the C side rejects the shape.
+        let slot_committed = match slot_commit {
+            Some(ctx) => Self::try_slot_commit(
+                pctx,
+                setup,
+                ctx,
+                instance_id,
+                airgroup_id,
+                air_id,
+                steps_params.trace,
+                roots_contributions,
+            ),
+            None => false,
+        };
+
+        // The commit (incl. async trace H2D) runs on this stream; the root is collected later when
+        // its end_event is polled. Return the streamId so the caller can gate trace-buffer reuse.
+        // (u64::MAX = committed synchronously on a slot, no stream involved.)
+        let stream_id = if slot_committed {
+            u64::MAX
+        } else {
+            commit_witness_c(
+                p_setup,
+                p_steps_params,
+                instance_id as u64,
+                airgroup_id as u64,
+                air_id as u64,
+                roots_contributions[instance_id].as_ptr() as *mut u8,
+                pctx.get_device_buffers_ptr(),
+                &custom_commits_fixed_path,
+            )
+        };
 
         let n_airvalues = setup
             .stark_info
@@ -4360,6 +5536,6 @@ where
             airgroup_id,
             air_id
         );
-        Ok(())
+        Ok(stream_id)
     }
 }

@@ -26,6 +26,7 @@ jobs:
           node-version: "18"
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
+        working-directory: setup/pil2-stark
       - name: cargo test
         run: cargo test --workspace
   cargo-check:
@@ -82,6 +83,7 @@ jobs:
           node-version: "18"
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
+        working-directory: setup/pil2-stark
       - name: cargo fix --workspace
         run: |
           # Run cargo fix on the project
@@ -116,6 +118,7 @@ jobs:
           node-version: "18"
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
+        working-directory: setup/pil2-stark
       - name: cargo clippy
         run: cargo clippy --workspace -- -D warnings
   cargo-audit:
@@ -181,6 +184,7 @@ jobs:
 
       - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
+        working-directory: setup/pil2-stark
 
       - name: Install dependencies
         run: |
@@ -280,6 +284,7 @@ jobs:
 
       - name: Install npm packages
         run: npm install
+        working-directory: setup/pil2-stark
 
       - name: Install dependencies
         run: |
@@ -397,6 +402,7 @@ jobs:
 
       - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
+        working-directory: setup/pil2-stark
 
       - name: Install dependencies
         run: |

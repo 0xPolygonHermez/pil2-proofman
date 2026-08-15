@@ -1,22 +1,22 @@
 [package]
 name = "proofman-soundness"
+description = "Soundness checks for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+publish = false
 
 [dependencies]
 proofman-common = { workspace = true }
 proofman-hints = { workspace = true }
-pil-std-lib = { workspace = true }
-fields = { workspace = true }
+pil2-std-lib = { workspace = true }
+proofman-fields = { workspace = true }
 serde = { workspace = true }
 tabled = "0.7"
-itoa.workspace = true
-
-tracing.workspace = true
 
 [features]
 default = []

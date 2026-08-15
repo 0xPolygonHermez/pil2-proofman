@@ -1,0 +1,436 @@
+require "std_constants.pil"
+require "std_lookup.pil"
+
+require "common.pil"
+
+// Precompile in charge of performing the BLAKE2b permutation
+// For reference: https://www.rfc-editor.org/rfc/rfc7693.html or https://www.blake2.net/
+
+airtemplate Blake2b(const int N = 2**16) {
+    /*
+       ═══════════════════════════════════════════════════════════════════════════
+       BLAKE2B ROUND FUNCTION SPECIFICATION
+       ═══════════════════════════════════════════════════════════════════════════
+       
+       BLAKE2B(v: [u64; 16], m: [u64; 16]) -> [u64; 16]
+       
+        Each round consists of 8 G function calls and a permutation:
+
+            • Message word selection permutation for round i:
+                s[0..15] := SIGMA[i][0..15]
+
+            • 4 Column steps: Mix columns independently
+                v := G(v, 0, 4,  8, 12, m[s[ 0]], m[s[ 1]])
+                v := G(v, 1, 5,  9, 13, m[s[ 2]], m[s[ 3]])
+                v := G(v, 2, 6, 10, 14, m[s[ 4]], m[s[ 5]])
+                v := G(v, 3, 7, 11, 15, m[s[ 6]], m[s[ 7]])
+
+            • 4 Diagonal steps: Mix diagonals independently
+                v := G(v, 0, 5, 10, 15, m[s[ 8]], m[s[ 9]])
+                v := G(v, 1, 6, 11, 12, m[s[10]], m[s[11]])
+                v := G(v, 2, 7,  8, 13, m[s[12]], m[s[13]])
+                v := G(v, 3, 4,  9, 14, m[s[14]], m[s[15]])
+
+        Each G function performs 8 sequential operations on two input 
+        words x and y into four words indexed by a, b, c, and d in v
+            G(v, a, b, c, d, x, y):
+                v[a] := (v[a] + v[b] + x) mod 2⁶⁴
+                v[d] := (v[d] ^ v[a]) >>> 32
+                v[c] := (v[c] + v[d]) mod 2⁶⁴
+                v[b] := (v[b] ^ v[c]) >>> 24
+                v[a] := (v[a] + v[b] + y) mod 2⁶⁴
+                v[d] := (v[d] ^ v[a]) >>> 16
+                v[c] := (v[c] + v[d]) mod 2⁶⁴
+                v[b] := (v[b] ^ v[c]) >>> 63
+
+       ═══════════════════════════════════════════════════════════════════════════
+       EXECUTION TRACE LAYOUT
+       ═══════════════════════════════════════════════════════════════════════════
+
+           ROW      va        vb          vc         vd         x          y        ROUND         STAGE      
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  0   |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    1    |  G1 - COL MIX  | <-- V/M IN
+        |  1   |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    1    |  G2 - COL MIX  | <-- V/M IN
+        |  2   |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    1    |  G3 - COL MIX  | <-- V/M IN
+        |  3   |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    1    |  G4 - COL MIX  | <-- V/M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  4   |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    1    |  G1 - DIA MIX  | <-- M IN
+        |  5   |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    1    |  G2 - DIA MIX  | <-- M IN
+        |  6   |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    1    |  G3 - DIA MIX  | <-- M IN
+        |  7   |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    1    |  G4 - DIA MIX  | <-- M IN
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        | ...  |   ...    |   ...    |   ...    |   ...    |   ...    |   ...    |   ...   |       ...      |
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  56  |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    8    |  G1 - COL MIX  |
+        |  57  |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    8    |  G2 - COL MIX  |
+        |  58  |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    8    |  G3 - COL MIX  |
+        |  59  |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    8    |  G4 - COL MIX  |
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+        |  60  |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    8    |  G1 - DIA MIX  | <-- V OUT
+        |  61  |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    8    |  G2 - DIA MIX  | <-- V OUT
+        |  62  |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    8    |  G3 - DIA MIX  | <-- V OUT
+        |  63  |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    8    |  G4 - DIA MIX  | <-- V OUT
+        |------|----------|----------|----------|----------|----------|----------|---------|----------------|
+    */
+
+    const int CLOCKS_PER_G = 1;
+    const int NUM_G_PER_ROUND = 8;
+    const int NUM_ROUNDS = 8; // As per the "Too Much Crypto (https://eprint.iacr.org/2019/1492.pdf)" paper
+    const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_PER_ROUND;
+    const int CLOCKS = CLOCKS_PER_ROUND * NUM_ROUNDS;
+
+    // Calculate usable capacity
+    const int NUM_NON_USABLE_ROWS = N % CLOCKS;
+    const int NUM_OPS;
+    if (NUM_NON_USABLE_ROWS == 0) {
+        // N is perfectly divisible by CLOCKS
+        if (N < CLOCKS) {
+            error(`N must be at least ${CLOCKS} to fit the Blake2b arithmetization, but received N=${N}`);
+        }
+
+        NUM_OPS = N / CLOCKS;
+    } else {
+        // N is not divisible by CLOCKS
+        if (N < 2*CLOCKS) {
+            error(`N must be at least ${2*CLOCKS} to fit the Blake2b arithmetization, but received N=${N}`);
+        }
+
+        // Subtract 1 because we can't fit a complete cycle in the remaining rows
+        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    }
+
+    const int NUM_BLAKE2B = NUM_OPS;
+    println(`The total number of Blake2b's with N = ${N} is ${NUM_BLAKE2B}`);
+
+    // Message word permutation schedule
+    const int SIGMA[10][16];
+    SIGMA[0] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    SIGMA[1] = [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3];
+    SIGMA[2] = [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4];
+    SIGMA[3] = [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8];
+    SIGMA[4] = [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13];
+    SIGMA[5] = [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9];
+    SIGMA[6] = [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11];
+    SIGMA[7] = [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10];
+    SIGMA[8] = [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5];
+    SIGMA[9] = [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0];
+
+    // Argument identifiers
+    const int RANGE_CHECKER_ID = 251;
+    const int BLAKE2B_MSG_ID = 501;
+    const int BLAKE2B_TABLE_ID = 1001;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CLOCK SELECTORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    if (NUM_NON_USABLE_ROWS == 0) {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
+    } else {
+        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
+    }
+
+    // Clock selectors for each row in the cycle
+    const expr CLK[CLOCKS];
+    for (int i = 0; i < CLOCKS; i++) {
+        CLK[i] = (i)'CLK_0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // G-FUNCTION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    col witness bits(16) va[4];
+    col witness bits(8) vb[8];
+    col witness bits(16) vc[4];
+    col witness bits(8) vd[8];
+    col witness bits(16) x[4];
+    col witness bits(16) y[4];
+
+    // Range-check the limbs of va, vc, x, y (vb, vd are range-checked by the XOR table)
+    for (int i = 0; i < 4; i++) {
+        range_check_16(va[i]);
+        range_check_16(vc[i]);
+        range_check_16(x[i]);
+        range_check_16(y[i]);
+    }
+
+    // Each 64-bit operand as two 32-bit limbs [lo, hi]
+    const expr va_packed[2] = pack_u64_limbs16(va);
+    const expr vb_packed[2] = pack_u64(vb);
+    const expr vc_packed[2] = pack_u64_limbs16(vc);
+    const expr vd_packed[2] = pack_u64(vd);
+
+    const expr x_packed[2] = pack_u64_limbs16(x);
+    const expr y_packed[2] = pack_u64_limbs16(y);
+
+    // va' === (va + vb + x) mod 2⁶⁴
+    col witness bits(8) va_prime[8];
+    const expr va_prime_packed[2] = pack_u64(va_prime);
+    add3_check(va_packed, vb_packed, x_packed, va_prime_packed);
+
+    // vd' === (vd ^ va') >>> 32 (Note that ROTR 32 is a byte-aligned rotation)
+    col witness bits(8) vd_prime[8];
+    for (int i = 0; i < 8; i++) {
+        xor_check(a: vd[i], b: va_prime[i], c: vd_prime[(i + 4) % 8]);
+    }
+
+    // vc' === (vc + vd') mod 2⁶⁴
+    col witness bits(8) vc_prime[8];
+    const expr vc_prime_packed[2] = pack_u64(vc_prime);
+    const expr vd_prime_packed[2] = pack_u64(vd_prime);
+    add2_check(vc_packed, vd_prime_packed, vc_prime_packed);
+
+    // vb' === (vb ^ vc') >>> 24 (Note that ROTR 24 is a byte-aligned rotation)
+    col witness bits(8) vb_prime[8];
+    for (int i = 0; i < 8; i++) {
+        xor_check(a: vb[i], b: vc_prime[i], c: vb_prime[(i + 5) % 8]);
+    }
+
+    // va'' === (va' + vb' + y) mod 2⁶⁴
+    col witness bits(8) va_prime_prime[8];
+    const expr va_prime_prime_packed[2] = pack_u64(va_prime_prime);
+    const expr vb_prime_packed[2] = pack_u64(vb_prime);
+    add3_check(va_prime_packed, vb_prime_packed, y_packed, va_prime_prime_packed);
+
+    // vd'' === (vd' ^ va'') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
+    col witness bits(8) vd_prime_prime[8];
+    for (int i = 0; i < 8; i++) {
+        xor_check(a: vd_prime[i], b: va_prime_prime[i], c: vd_prime_prime[(i + 6) % 8]);
+    }
+
+    // vc'' === (vc' + vd'') mod 2⁶⁴
+    col witness bits(8) vc_prime_prime[8];
+    const expr vc_prime_prime_packed[2] = pack_u64(vc_prime_prime);
+    const expr vd_prime_prime_packed[2] = pack_u64(vd_prime_prime);
+    add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
+
+    // vb'' === (vb' ^ vc'') >>> 63 = (vb' ^ vc'') <<< 1 = 2·(vb' ^ vc'') with wraparound
+    col witness bits(8) vb_pp_xor[8];   // z = vb' ^ vc''
+    col witness bits(1) vb_pp_t[2];     // top bits of z_lo, z_hi
+    for (int i = 0; i < 8; i++) {
+        xor_check(a: vb_prime[i], b: vc_prime_prime[i], c: vb_pp_xor[i]);
+    }
+    vb_pp_t[0] * (1 - vb_pp_t[0]) === 0;
+    vb_pp_t[1] * (1 - vb_pp_t[1]) === 0;
+
+    const expr z[2] = pack_u64(vb_pp_xor); // [lo, hi]
+    const expr vb_pp_packed[2];
+    vb_pp_packed[0] = 2*z[0] - P2_32*vb_pp_t[0] + vb_pp_t[1]; // rotl1: lo' = 2·z_lo mod 2³² + top(z_hi)
+    vb_pp_packed[1] = 2*z[1] - P2_32*vb_pp_t[1] + vb_pp_t[0]; // rotl1: hi' = 2·z_hi mod 2³² + top(z_lo)
+    // The carry bits are sound with just booleanity: z limbs are byte-bound to [0, 2³²) by the table, and 
+    // the transition constraint equates vb_pp_packed[j] to a future vb_packed[j] which is also < 2³². 
+    // If the prover lies about a t bit, the expression lands outside [0, 2³²) as a field element (off by ±2³²), 
+    // so the equality can never hold.
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TRANSITION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
+    // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
+    const expr va_pp_packed[2] = pack_u64(va_prime_prime);
+    const expr vc_pp_packed[2] = pack_u64(vc_prime_prime);
+    const expr vd_pp_packed[2] = pack_u64(vd_prime_prime);
+
+    // Column-to-diagonal clock selectors
+    const expr ctd1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
+    const expr ctd2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
+    const expr ctd3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
+    const expr ctd4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
+    const expr ctd12_clocks = ctd1_clocks + ctd2_clocks;
+    const expr ctd34_clocks = ctd3_clocks + ctd4_clocks;
+    const expr ctd123_clocks = ctd12_clocks + ctd3_clocks;
+    const expr ctd234_clocks = ctd2_clocks + ctd34_clocks;
+    const expr ctd_clocks = ctd12_clocks + ctd34_clocks;
+
+    // Round-by-round clock selectors
+    const expr rbr1_clocks = clock_set(start: 8, end: 8 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr2_clocks = clock_set(start: 9, end: 9 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr3_clocks = clock_set(start: 10, end: 10 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr4_clocks = clock_set(start: 11, end: 11 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr12_clocks = rbr1_clocks + rbr2_clocks;
+    const expr rbr34_clocks = rbr3_clocks + rbr4_clocks;
+    const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;
+    const expr rbr234_clocks = rbr2_clocks + rbr3_clocks + rbr4_clocks;
+    const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
+    
+    for (int j = 0; j < 2; j++) {
+        (ctd_clocks + rbr_clocks) * (va_packed[j] - (4)'va_pp_packed[j]) === 0;
+
+        ctd123_clocks * (vb_packed[j] - (3)'vb_pp_packed[j]) + ctd4_clocks * (vb_packed[j] - (7)'vb_pp_packed[j]) +
+        rbr1_clocks * (vb_packed[j] - (1)'vb_pp_packed[j]) + rbr234_clocks * (vb_packed[j] - (5)'vb_pp_packed[j]) === 0;
+
+        (ctd12_clocks + rbr12_clocks) * (vc_packed[j] - (2)'vc_pp_packed[j]) + 
+        (ctd34_clocks + rbr34_clocks) * (vc_packed[j] - (6)'vc_pp_packed[j]) === 0;
+
+        ctd1_clocks * (vd_packed[j] - (1)'vd_pp_packed[j]) + ctd234_clocks * (vd_packed[j] - (5)'vd_pp_packed[j]) +
+        rbr123_clocks * (vd_packed[j] - (3)'vd_pp_packed[j]) + rbr4_clocks * (vd_packed[j] - (7)'vd_pp_packed[j]) === 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MESSAGE PERMUTATION CONSTRAINTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    col fixed BLOCK_ID;
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        BLOCK_ID[i] = i / CLOCKS;
+    }
+
+    expr msg_idx_x = 0;
+    expr msg_idx_y = 0;
+    for (int p = 0; p < CLOCKS; p++) {
+        const int r = (p / CLOCKS_PER_ROUND);
+        const int g = (p % CLOCKS_PER_ROUND);
+
+        msg_idx_x += CLK[p] * SIGMA[r][2 * g];
+        msg_idx_y += CLK[p] * SIGMA[r][2 * g + 1];
+    }
+
+    // unique key per (invocation, word): 16 indices per block, no collisions
+    const expr key_x = msg_idx_x + 16 * BLOCK_ID;
+    const expr key_y = msg_idx_y + 16 * BLOCK_ID;
+
+    // Selectors for round 0 and rounds 1..7
+    const expr round0_sel   = clock_set(start: 0, end: CLOCKS_PER_ROUND);
+    const expr rounds17_sel = clock_set(start: CLOCKS_PER_ROUND, end: CLOCKS);
+
+    // Round 0 writes the message; rounds 1..7 read it
+    lookup_proves(BLAKE2B_MSG_ID, [key_x, x_packed[0], x_packed[1]], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_proves(BLAKE2B_MSG_ID, [key_y, y_packed[0], y_packed[1]], mul: (NUM_ROUNDS - 1) * round0_sel);
+    lookup_assumes(BLAKE2B_MSG_ID, [key_x, x_packed[0], x_packed[1]], sel: rounds17_sel, sel_is_binary: 1);
+    lookup_assumes(BLAKE2B_MSG_ID, [key_y, y_packed[0], y_packed[1]], sel: rounds17_sel, sel_is_binary: 1);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE2B RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int RANGE_CHECKER_SIZE = P2_16;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range (16 bits)
+    col fixed RANGE = [0..MASK_16]...;
+
+    col witness mul_range;
+    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
+
+    function range_check_16(const expr a) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE2B OPERATION TABLE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int TABLE_SIZE = P2_16;
+    if (N < TABLE_SIZE) {
+        error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
+    }
+
+    // Inputs A (8 bits)
+    col fixed A = [0..MASK_8]...;
+
+    // Input B (8 bits)
+    col fixed B = [0:P2_8..MASK_8:P2_8]...;
+
+    // Output C (8 bits)
+    col fixed C;
+
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        const int [a, b] = [A[i], B[i]];
+
+        // XOR
+        C[i] = a ^ b;
+    }
+
+    col witness mul_table;
+    lookup_proves(BLAKE2B_TABLE_ID, [A, B, C], mul_table);
+
+    function xor_check(const expr a, const expr b, const expr c) {
+        lookup_assumes(air.BLAKE2B_TABLE_ID, [a, b, c]);
+    }
+
+    // Pack a 64-bit word into two 32-bit limbs [lo, hi]
+    function pack_u64(const expr w[]): const expr[] {
+        assert(length(w) == 8);
+        const expr lo = pack_bytes([w[0], w[1], w[2], w[3]]);
+        const expr hi = pack_bytes([w[4], w[5], w[6], w[7]]);
+        const expr result[2] = [lo, hi];
+        return result;
+    }
+
+    // Pack a 64-bit word given as 4 16-bit limbs into two 32-bit limbs [lo, hi]
+    function pack_u64_limbs16(const expr w[]): const expr[] {
+        assert(length(w) == 4);
+        const expr lo = pack([w[0], w[1]], 16);
+        const expr hi = pack([w[2], w[3]], 16);
+        const expr result[2] = [lo, hi];
+        return result;
+    }
+
+    // Given a,b,c,active, it checks c == (a + b) mod 2⁶⁴ when active == 1
+    // Assumes that a,b,c ∈ [0, 2⁶⁴), each given as 2 limbs of 32-bits each;
+    // active ∈ {0,1} and that p > 2·2³²
+    //
+    // Inspired by https://github.com/Plonky3/Plonky3/blob/main/air/src/utils.rs#L82
+    function add2_check(const expr a[], const expr b[], const expr c[], const expr active = 1): expr[] {
+        assert(length(a) == 2 && length(b) == 2 && length(c) == 2);
+
+        // c == (a + b) mod 2⁶⁴ iff c - a - b = 0, -2⁶⁴ (over the integers)
+
+        // Since our prime p < 2⁶⁴, we instead check that
+        //   (1) c0 - a0 - b0 = 0, -2³² (mod p)
+        //   (2) c - a - b = 0, -2⁶⁴ (mod p)
+
+        // Notice that since p > 2³² we have that (1) holds over the integers
+        // Now since c - a - b = (c0 - a0 - b0) + 2³²·(c1 - a1 - b1),
+        // we have that:
+        //   (3) c - a - b = 0 (mod 2³²)
+
+        // Using CRT with (2) and (3) we obtain:
+        //   (4) c - a - b = 0, -2⁶⁴ (mod 2³²·p)
+        // Now, since a,b,c < 2⁶⁴ and 2³²·p > 2·2⁶⁴, we have that (4) holds over the integers
+
+        expr sum_0 = c[0] - a[0] - b[0];
+        expr sum_1 = c[1] - a[1] - b[1];
+        expr sum = sum_0 + P2_32*sum_1;
+
+        active * (sum_0 * (sum_0 + P2_32)) === 0;
+        active * (sum * (sum + P2_64)) === 0;
+    }
+
+    // Given a,b,c,d,active, it checks d == (a + b + c) mod 2⁶⁴ when active == 1
+    // Assumes that a,b,c,d ∈ [0, 2⁶⁴), each given as 2 limbs of 32-bits each;
+    // active ∈ {0,1} and that p > 3·2³²
+    //
+    // Inspired by https://github.com/Plonky3/Plonky3/blob/main/air/src/utils.rs#L82
+    function add3_check(const expr a[], const expr b[], const expr c[], const expr d[], const expr active = 1): expr[] {
+        assert(length(a) == 2 && length(b) == 2 && length(c) == 2 && length(d) == 2);
+        // d == (a + b + c) mod 2⁶⁴ iff d - a - b - c = 0, -2⁶⁴, -2·2⁶⁴ (over the integers)
+
+        // Since our prime p < 2⁶⁴, we instead check that:
+        //   (1) d0 - a0 - b0 - c0 = 0, -2³², -2·2³² (mod p)
+        //   (2) d - a - b - c = 0, -2⁶⁴, -2·2⁶⁴ (mod p)
+
+        // Notice that since p > 2·2³² we have that (1) holds over the integers
+        // Now since d - a - b - c = (d0 - a0 - b0 - c0) + 2³²·(d1 - a1 - b1 - c1),
+        // we have that:
+        //   (3) d - a - b - c = 0 (mod 2³²)
+
+        // Using CRT with (2) and (3) we obtain:
+        //   (4) d - a - b - c = 0, -2⁶⁴, -2·2⁶⁴ (mod 2³²·p)
+        // Now, since a,b,c,d < 2⁶⁴ and 2³²·p > 3·2⁶⁴, we have that (4) holds over the integers
+
+        expr sum_0 = d[0] - a[0] - b[0] - c[0];
+        expr sum_1 = d[1] - a[1] - b[1] - c[1];
+        expr sum = sum_0 + P2_32*sum_1;
+
+        active * (sum_0 * (sum_0 + P2_32) * (sum_0 + 2*P2_32)) === 0;
+        active * (sum * (sum + P2_64) * (sum + 2*P2_64)) === 0;
+    }
+}

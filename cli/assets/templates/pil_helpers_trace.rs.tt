@@ -10,7 +10,7 @@ use proofman_common::GenericTrace;
 use proofman_common::PackedInfoConst;
 pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::fmt;
 
 #[allow(dead_code)]
@@ -96,4 +96,10 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[{{ for item in pac
         num_packed_words: { item.num_packed_words },
         unpack_info: &[{ item.unpack_info }],
     }),{{ endfor }}
+];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[{{ for air_group in air_groups }}{{ for air in air_group.airs }}
+    ({ air_group.airgroup_id }, { air.id }, "{ air.name }"),{{ endfor }}{{ endfor }}
 ];

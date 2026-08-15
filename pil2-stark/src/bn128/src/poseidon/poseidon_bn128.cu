@@ -183,7 +183,7 @@ __device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
         if (col < num_cols) {
             uint64_t idx;
             if constexpr (TILED) {
-                idx = getBufferOffset(row, col, num_rows, num_cols);
+                idx = getBufferOffset(row, col, num_rows, num_cols, Layout::ColMajor);
             } else {
                 idx = row * num_cols + col;
             }

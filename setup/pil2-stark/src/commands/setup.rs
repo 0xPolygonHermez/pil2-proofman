@@ -7,14 +7,18 @@ use std::sync::Arc;
 use anyhow::Result;
 use rayon::prelude::*;
 
-use pilout::pilout::{self as pb};
+use pil2_pilout::pilout::{self as pb};
 use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::security::{self, FRISecurityParams};
+use crate::types::security::{
+    self,
+    pcs::{FriConfig, Fri, Batching},
+    regimes::DecodingRegime,
+};
 use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
-use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_folding_factors};
+use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_log_folding_factors};
 
 /// Setup options parsed from CLI args.
 pub struct SetupOptions {
@@ -35,6 +39,25 @@ pub struct SetupOptions {
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
     pub hash: String,
+    /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
+    /// end of setup. No-op (logged) if `nvcc` is not on PATH.
+    pub gen_exps: bool,
+    /// CUDA arch spec for `--gen-exps`: `auto` | `major` | e.g. `89,120` / `sm_120`.
+    pub exps_arch: String,
+    /// Skip an AIR whose Q has more than this many ops (stays on the interpreter).
+    pub exps_cap: usize,
+    /// Fixed ops/chunk for every AIR; `None` => the no-spill autotuner.
+    pub exps_chunk: Option<usize>,
+    /// pil2-stark source root for the nvcc includes; `None` resolves relative to
+    /// the exps-codegen crate.
+    pub exps_stark_src: Option<String>,
+}
+
+/// True if the CUDA `nvcc` compiler is resolvable on PATH. Used to gate
+/// `--gen-exps` so a setup run on a machine without the CUDA toolchain skips
+/// expression-kernel codegen cleanly instead of erroring mid-compile.
+pub(crate) fn nvcc_present() -> bool {
+    which::which("nvcc").is_ok()
 }
 
 /// Run the non-recursive setup pipeline.
@@ -171,29 +194,32 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let pil_code = &pil_result.pil_code;
 
                 let ev_map_len = pil_code.ev_map.len();
-                let folding_factors = compute_folding_factors(&stark_struct);
+                let log_folding_factors = compute_log_folding_factors(&stark_struct);
                 let opening_points = collect_opening_points(setup_result);
-                let field_size = security::goldilocks_cube_field_size();
-                let fri_params = FRISecurityParams {
+                let field_size = security::goldilocks_safe_extension_field_size();
+                let regime = DecodingRegime::Jbr;
+                let fri_config = FriConfig {
                     field_size,
-                    dimension: 1u64 << stark_struct.n_bits,
+                    trace_length: 1u32 << stark_struct.n_bits,
                     rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                    n_opening_points: opening_points.len() as u64,
-                    n_functions: ev_map_len.max(1) as u64,
-                    folding_factors: folding_factors.clone(),
-                    max_grinding_bits: stark_struct.pow_bits as u64,
-                    use_max_grinding_bits: true,
+                    batch_size: ev_map_len.max(1) as u64,
+                    batching: Batching::Powers,
+                    log_folding_factors,
+                    max_grinding_bits_query: stark_struct.pow_bits as u64,
+                    use_max_grinding_bits_query: true,
                     tree_arity: stark_struct.merkle_tree_arity as u64,
+                    hash_size_bits: 256,
                     target_security_bits: 128,
+                    regime,
                 };
-                let fri_security = security::get_optimal_fri_query_params("JBR", &fri_params);
+                let fri = Fri::new(fri_config);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
                     &stark_struct,
                     pil_code,
                     &opening_points,
-                    &fri_security,
+                    &fri,
                     item.ag_idx,
                     item.air_idx,
                     &item.air_name,
@@ -300,6 +326,21 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 
+    if opts.gen_exps {
+        let gen_opts = crate::commands::gen_exps::GenExpsOptions {
+            proving_key: std::path::PathBuf::from(&opts.build_dir).join("provingKey"),
+            arch: opts.exps_arch.clone(),
+            cap: opts.exps_cap,
+            chunk: opts.exps_chunk,
+            stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
+        };
+        // Non-fatal: setup itself succeeded and the provingKey is valid; the
+        // prover falls back to the interpreter for any AIR without a .so.
+        if let Err(e) = crate::commands::gen_exps::run_gen_exps(&gen_opts) {
+            tracing::error!("Expression kernel codegen failed (continuing): {:#}", e);
+        }
+    }
+
     tracing::info!("Setup complete");
     Ok(())
 }
@@ -339,8 +380,42 @@ fn log2_usize(n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pilout::pilout as pb;
+    use pil2_pilout::pilout as pb;
     use prost::Message;
+
+    #[test]
+    fn setup_options_has_gen_exps_fields() {
+        // Compile-level guard: the new gen-exps fields exist with the expected types.
+        let o = SetupOptions {
+            airout_path: String::new(),
+            build_dir: String::new(),
+            fixed_dir: None,
+            stark_structs_path: None,
+            recursive: false,
+            recursive_jobs: 1,
+            setup_jobs: 1,
+            stats_output_path: None,
+            hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
+        };
+        assert!(!o.gen_exps);
+        assert_eq!(o.exps_arch, "auto");
+        assert_eq!(o.exps_cap, 40000);
+        assert!(o.exps_chunk.is_none());
+    }
+
+    #[test]
+    fn nvcc_present_returns_bool_without_panicking() {
+        // Can't assert true/false (host-dependent), but it must not panic and
+        // must agree with whether `nvcc` is actually resolvable on PATH.
+        let got = nvcc_present();
+        let actual = which::which("nvcc").is_ok();
+        assert_eq!(got, actual);
+    }
 
     #[test]
     fn test_run_setup_writes_global_files_before_airs() {
@@ -372,6 +447,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         let result = run_setup(&opts);
         assert!(result.is_ok(), "run_setup should succeed: {:#}", result.unwrap_err());
@@ -412,6 +492,11 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 40000,
+            exps_chunk: None,
+            exps_stark_src: None,
         };
         assert!(run_setup(&opts).is_err());
         let pk = build_dir.join("provingKey");

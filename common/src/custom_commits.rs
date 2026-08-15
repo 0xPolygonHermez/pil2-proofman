@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::write_custom_commit_c;
 
 use crate::trace::Trace;

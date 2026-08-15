@@ -66,6 +66,10 @@ pub struct PlonkOptions {
     pub airgroup_name: Option<String>,
     pub max_constraint_degree: Option<usize>,
     pub hash_id: String,
+    /// Eliminate exact copy constraints by merging signals; the connection argument
+    /// then enforces the equality. Soundness depends on the s_map remap sweep being
+    /// applied to custom-gate I/O cells (see [`crate::plonk2pil::merge_copies`]).
+    pub merge_copies: bool,
 }
 
 impl Default for PlonkOptions {
@@ -74,6 +78,7 @@ impl Default for PlonkOptions {
             airgroup_name: None,
             max_constraint_degree: None,
             hash_id: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+            merge_copies: true,
         }
     }
 }

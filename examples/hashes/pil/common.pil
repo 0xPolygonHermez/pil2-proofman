@@ -1,0 +1,102 @@
+
+function pack(const expr a[], const int s): expr {
+    const int len = length(a);
+    assert(len > 0);
+    assert(s > 0);
+    const int base = 2**s;
+    expr packed = 0;
+    for (int j = 0; j < len; j++) {
+        packed += a[j] * base**j;
+    }
+    return packed;
+}
+
+function pack_bits(const expr a[]): expr {
+    return pack(a, 1);
+}
+
+function pack_bytes(const expr a[]): expr {
+    return pack(a, 8);
+}
+
+function clock_map(const expr mvcol = 1, int pos, int start = 0, int end = -1, int offset = 0, const int delta = 0, const int step = 1, const int skip = 0): const expr {
+    expr res = 0;
+    if (end == -1) {
+        end = start;
+    }
+    int index = start;
+    int in_group = 0;
+    while (index <= end) {
+        int iclock = (pos - index) % air.CLOCKS;
+        if (offset != 0) {
+            res += air.CLK[index] * (mvcol'(iclock) + offset);
+        } else {
+            res += air.CLK[index] * mvcol'(iclock);
+        }
+        offset += delta;
+
+        index++;
+        in_group++;
+        // After 'step' consecutive clocks, skip 'skip' clocks
+        if (skip > 0 && in_group == step) {
+            index += skip;
+            in_group = 0;
+        }
+    }
+    return res;
+}
+
+function clock_set(const expr mvcol = 1, int start = 0, int end = -1, const int step = 1, const int skip = 0, const int skip_first = 0): const expr {
+    expr result = 0;
+    if (end == -1) {
+        end = start + 1;
+    }
+
+    int clock_idx = start;
+    int count = 0;
+    int in_group = 0;
+    while (count < end - start) {
+        if (count >= skip_first) {
+            result += air.CLK[clock_idx];
+        }
+        count++;
+        in_group++;
+        clock_idx++;
+
+        // After 'step' consecutive clocks, skip 'skip' clocks
+        if (skip > 0 && in_group == step) {
+            clock_idx += skip;
+            in_group = 0;
+        }
+    }
+    return result * mvcol;
+}
+
+function clock_set_with_seq(const expr mvcol = 1, const int seq[], const int period = 0, const int reps = 1, const int offset = 0): const expr {
+    const int len = length(seq);
+    assert(len > 0);
+    assert(reps == 1 || period > 0);
+
+    expr result = 0;
+    for (int r = 0; r < reps; r++) {
+        const int base = offset + r * period;
+        for (int i = 0; i < len; i++) {
+            result += air.CLK[base + seq[i]];
+        }
+    }
+    return result * mvcol;
+}
+
+function clock_set_weighted(int start = 0, int end = -1, const int offset = 0, const int weights[]): const expr {
+    assert(length(weights) == end - start);
+    if (end == -1) {
+        end = start;
+    }
+    start += offset;
+    end += offset;
+    expr res = 0;
+    for (int i = start; i < end; i++) {
+        res += air.CLK[i] * weights[i - start];
+    }
+    return res;
+}

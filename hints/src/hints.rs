@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use fields::{CubicExtensionField, PrimeField64};
+use proofman_fields::{CubicExtensionField, PrimeField64};
 use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx, Setup, StepsParams};
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};

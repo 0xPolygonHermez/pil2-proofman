@@ -1,7 +1,7 @@
 use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_common::{ProofCtx, ProofmanResult};
 
 /// Small vec-based map for ~10 opids. Linear search is faster than hashing for small N.

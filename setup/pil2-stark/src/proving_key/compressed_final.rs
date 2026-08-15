@@ -17,13 +17,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use pilout::pilout_proxy::PilOutProxy;
-use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use stark_recurser::plonk2pil::{self, PlonkResult};
+use pil2_pilout::pilout_proxy::PilOutProxy;
+use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
-use stark_recurser::stark2circom::{
+use pil2_stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
 };
 use crate::proving_key::recursive::compile_pil;
@@ -110,7 +110,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     tracing::info!("Compiling {}...", template);
     let compile_output = std::process::Command::new(config.circom_exec)
         .args([
-            "--O1",
+            "--O2",
             "--r1cs",
             "--prime",
             "goldilocks",
@@ -157,6 +157,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         airgroup_name: Some("VadcopFinalCompressed".to_string()),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     let plonk_result: PlonkResult = plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts)
         .context("plonk2pil failed in compressed final setup")?;
@@ -228,29 +229,32 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let folding_factors = crate::output::stark_info::compute_folding_factors(&compressed_stark_struct);
+    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&compressed_stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size = crate::types::security::goldilocks_cube_field_size();
-    let fri_params = crate::types::security::FRISecurityParams {
+    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
+    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
+    let fri_config = crate::types::security::pcs::FriConfig {
         field_size,
-        dimension: 1u64 << compressed_stark_struct.n_bits,
+        trace_length: 1u32 << compressed_stark_struct.n_bits,
         rate: 1.0 / (1u64 << (compressed_stark_struct.n_bits_ext - compressed_stark_struct.n_bits)) as f64,
-        n_opening_points: opening_points.len() as u64,
-        n_functions: ev_map_len.max(1) as u64,
-        folding_factors: folding_factors.clone(),
-        max_grinding_bits: compressed_stark_struct.pow_bits as u64,
-        use_max_grinding_bits: true,
+        batch_size: ev_map_len.max(1) as u64,
+        batching: crate::types::security::pcs::Batching::Powers,
+        log_folding_factors,
+        max_grinding_bits_query: compressed_stark_struct.pow_bits as u64,
+        use_max_grinding_bits_query: true,
         tree_arity: compressed_stark_struct.merkle_tree_arity as u64,
+        hash_size_bits: 256,
         target_security_bits: 128,
+        regime,
     };
-    let fri_security = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params);
+    let fri = crate::types::security::pcs::Fri::new(fri_config);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &compressed_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri_security,
+        &fri,
         0,
         0,
         "compressed_final",

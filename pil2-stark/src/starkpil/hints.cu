@@ -19,8 +19,9 @@ void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool dom
 __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t dim, uint64_t col, uint64_t nCols, uint64_t nRows) {
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < nRows) {
+        Layout layout = resolveLayout(63 - __clzll(nRows), nCols);
         for (uint64_t j = 0; j < dim; ++j) {
-            uint64_t idx = getBufferOffset(row, col + j, nRows, nCols);
+            uint64_t idx = getBufferOffset(row, col + j, nRows, nCols, layout);
             pol[idx] = values[row * dim + j];
         }
     }
@@ -39,12 +40,12 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldil
     setPolynomial_<<<blocks, threads, 0, stream>>>(aux_trace + offset, values, dim, polInfo.stagePos, nCols, nRows);    
 }
 
-__global__ void getPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *dest, uint64_t dim, uint64_t col, uint64_t nCols, uint64_t nRows, uint64_t rowOffset) {
+__global__ void getPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *dest, uint64_t dim, uint64_t col, uint64_t nCols, uint64_t nRows, uint64_t rowOffset, Layout layout) {
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < nRows) {
         uint64_t srcRow = (row + rowOffset) % nRows;
         for (uint64_t j = 0; j < dim; ++j) {
-            uint64_t idx = getBufferOffset(srcRow, col + j, nRows, nCols);
+            uint64_t idx = getBufferOffset(srcRow, col + j, nRows, nCols, layout);
             dest[row * dim + j] = pol[idx];
         }
     }
@@ -56,10 +57,15 @@ void getPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
     uint64_t rowOffset = setupCtx.starkInfo.openingPoints[rowOffsetIndex];
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t dim = polInfo.dim;
-    
+    // cm follows resolveLayout; const and custom commits follow fixedLayout(),
+    // matching write_custom_commit_gpu and the expressions/FRI/eval readers.
+    Layout layout = (type == "cm") ? resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols)
+                  : (type == "const" || type == "custom") ? fixedLayout()
+                  : Layout::ColMajor;
+
     dim3 threads(512);
     dim3 blocks((nRows + threads.x - 1) / threads.x);
-    getPolynomial_<<<blocks, threads, 0, stream>>>(buffer, dest, dim, polInfo.stagePos, nCols, nRows, rowOffset);
+    getPolynomial_<<<blocks, threads, 0, stream>>>(buffer, dest, dim, polInfo.stagePos, nCols, nRows, rowOffset, layout);
 }
 
 void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size, cudaStream_t stream) {
@@ -288,12 +294,9 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     });
     HintFieldValue hintFieldAirgroupVal = hintFieldAirgroup->values[0];
 
-    Goldilocks::Element vals[3];
-    
-    Dest destStruct(vals, 1, 0, 0, true);
+    Dest destStruct(nullptr, 1, 0, 0, true);
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     destStruct.dest_gpu = h_params.aux_trace + offsetAuxTrace;
-    destStruct.dest = nullptr;
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 

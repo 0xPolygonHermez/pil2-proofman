@@ -1,9 +1,11 @@
 [package]
-name = "pilout"
+name = "pil2-pilout"
+description = "Generated Rust types for the PILOUT (PIL2 intermediate output) protobuf format"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 

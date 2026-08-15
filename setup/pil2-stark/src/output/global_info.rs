@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use pilout::pilout::{self as pb, SymbolType};
+use pil2_pilout::pilout::{self as pb, SymbolType};
 use proofman_starks_lib_c::GOLDILOCKS_MERKLE_TREE_ARITY;
 use serde_json::json;
 

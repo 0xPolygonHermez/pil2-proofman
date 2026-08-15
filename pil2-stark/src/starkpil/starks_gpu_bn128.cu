@@ -20,8 +20,7 @@ __global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * querySize + idx_x;
-        // Use the proper tiled format from goldilocks_trace_layout.cuh
-        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
+        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, Layout::ColMajor);
         uint64_t val = d_treeTrace[idx_trace][0];
         // Reduce the Goldilocks value
         if (val >= GOLDILOCKS_PRIME) {
@@ -362,6 +361,24 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
 }
 
 // Populate FRIProof structure from GPU data for JSON generation
+// Host-side equivalent of MerkleTreeBN128::getLevel for device-resident nodes:
+// copy the stored level (n real nodes) and zero-pad to arity^lastLevelVerification.
+static void getLevelBN128_gpu(MerkleTreeBN128 *tree, RawFr::Element *level) {
+    uint64_t llv = tree->last_level_verification;
+    if (llv == 0) return;
+    uint64_t numNodes = std::pow(tree->arity, llv);
+    uint64_t n = tree->height;
+    uint64_t offset = 0;
+    while (n > numNodes) {
+        n = (n - 1) / tree->arity + 1;
+        offset += n * tree->arity;
+    }
+    cudaMemcpy(level, (RawFr::Element *)tree->nodes + offset, n * sizeof(RawFr::Element), cudaMemcpyDeviceToHost);
+    for (uint64_t i = n; i < numNodes; i++) {
+        level[i] = RawFr::field.zero();
+    }
+}
+
 void setProof_bn128_gpu(
     Starks<RawFr::Element>& starks,
     FRIProof<RawFr::Element>& proof,
@@ -407,6 +424,18 @@ void setProof_bn128_gpu(
         int64_t tree_size = treesFRI[step]->getNumNodes(treesFRI[step]->height);
         RawFr::Element *d_root = (RawFr::Element *)treesFRI[step]->nodes + tree_size - 1;
         cudaMemcpy(&proof.proof.fri.treesFRI[step].root[0], d_root, sizeof(RawFr::Element), cudaMemcpyDeviceToHost);
+    }
+
+    // ============ Copy last levels (lastLevelVerification) ============
+    // Proofs::last_levels is indexed by tree position: stages 0..nStages,
+    // const tree at nStages+1, custom commits at nStages+2+c.
+    if (setupCtx.starkInfo.starkStruct.lastLevelVerification > 0) {
+        for (uint64_t k = 0; k < nTrees; ++k) {
+            getLevelBN128_gpu(trees[k], &proof.proof.last_levels[k][0]);
+        }
+        for (uint64_t step = 0; step < nFRISteps; ++step) {
+            getLevelBN128_gpu(treesFRI[step], &proof.proof.fri.treesFRI[step].last_levels[0]);
+        }
     }
 
     // ============ Copy query proofs for main trees ============

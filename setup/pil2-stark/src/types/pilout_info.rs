@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use pilout::pilout::{
+use pil2_pilout::pilout::{
     self as pb, constraint, expression as expr_mod, global_expression as gexpr_mod, global_operand, hint_field,
     operand, SymbolType,
 };

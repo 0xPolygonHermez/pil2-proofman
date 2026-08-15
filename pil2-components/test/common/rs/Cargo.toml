@@ -4,11 +4,13 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+publish = false
 
 [dependencies]
-pil2-stark-setup = { path = "../../../../setup/pil2-stark" }
+pil2-stark-setup = { workspace = true }
 proofman.workspace = true
 proofman-common.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true

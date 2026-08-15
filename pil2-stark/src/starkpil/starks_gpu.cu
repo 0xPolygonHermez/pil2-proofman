@@ -8,6 +8,7 @@
 #include "goldilocks_cubic_extension.hpp"
 #include "goldilocks_cubic_extension.cuh"
 #include "proof2zkinStark.hpp"
+#include "proofman_sumcheck.cuh"
 
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
@@ -51,7 +52,8 @@ __global__ void unpack(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t* d_words_per_row,
-    const uint64_t *d_unpack_info
+    const uint64_t *d_unpack_info,
+    Layout layout
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
@@ -70,6 +72,9 @@ __global__ void unpack(
     uint64_t word = packed_row[0];
     uint64_t word_idx = 0;
     uint64_t bit_offset = 0;
+
+    // Storage layout passed by the caller: unpack_trace (cm1) passes resolveLayout(nBits,nCols);
+    // unpack_fixed (const) passes fixedLayout(). Loop-invariant.
 
     #pragma unroll
     for (uint64_t c = 0; c < nCols; c++) {
@@ -93,7 +98,84 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        dst[getBufferOffset(row, c, nRows, nCols)] = val;
+        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
+    }
+}
+
+// Read `nbits` from a packed stream at cursor (word,idx,off), advancing the cursor.
+// Mirrors unpack()'s bit-walk exactly so indexed output is bit-identical.
+__device__ __forceinline__ uint64_t idx_read_bits(
+    const uint64_t* base, uint64_t words, uint64_t &word, uint64_t &idx, uint64_t &off, uint64_t nbits)
+{
+    uint64_t val;
+    uint64_t bits_left = 64 - off;
+    if (nbits <= bits_left) {
+        uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
+        val = (word >> off) & mask;
+        off += nbits;
+        if (off == 64 && idx + 1 < words) { word = base[++idx]; off = 0; }
+    } else {
+        uint64_t low = word >> off;
+        word = base[++idx];
+        uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
+        val = (high << bits_left) | low;
+        off = nbits - bits_left;
+    }
+    return val;
+}
+
+// Indexed unpack: each compact row holds a leading instruction index plus the runtime
+// columns; the instruction-derived columns live once in `table`. Two bit cursors (row,
+// table); each output column c is sourced per d_col_source[c]. Bit-identical to unpack().
+__global__ void unpack_indexed(
+    const uint64_t* src,             // compact rows: words_per_row each
+    const uint64_t* table,           // instruction table: words_per_entry each
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols,
+    uint64_t words_per_row,
+    uint64_t words_per_entry,
+    const uint64_t* d_unpack_info,   // nbits per output column
+    const uint8_t*  d_col_source,    // 0 = from row stream, 1 = from table stream
+    uint64_t index_bits,             // width of the leading index header in the row
+    uint64_t num_entries,            // instruction-table entry count (index bound)
+    Layout layout
+) {
+    // One shared word per column carries BOTH the width and the source flag
+    // (nbits in the low 32 bits, source in bit 32) -- nbits <= 64, so they fit.
+    // Folding them keeps the inner loop at a single shared read instead of also
+    // taking a dependent global load for d_col_source, and keeps the shared
+    // footprint identical to the plain unpack, so unpack_trace's sharedMemSize
+    // (nCols * 8) covers both kernels unchanged. This kernel is DRAM-bound (the
+    // strided row reads dominate), so treat it as hygiene, not a throughput win.
+    extern __shared__ uint64_t shared_unpack_info[];
+    for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
+        shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32);
+    }
+    __syncthreads();
+
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= nRows) return;
+
+    const uint64_t* rbase = src + row * words_per_row;
+    uint64_t rword = rbase[0], ridx = 0, roff = 0;
+    uint64_t index = idx_read_bits(rbase, words_per_row, rword, ridx, roff, index_bits);
+    // A witness bug can put an out-of-range index here. The CPU unpack reports it and
+    // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
+    // then simply fails instead of reading past the table.
+    if (index >= num_entries) index = 0;
+
+    const uint64_t* tbase = table + index * words_per_entry;
+    uint64_t tword = tbase[0], tidx = 0, toff = 0;
+
+    for (uint64_t c = 0; c < nCols; c++) {
+        uint64_t info = shared_unpack_info[c];
+        uint64_t nbits = info & 0xFFFFFFFFull;
+        // Warp-uniform: col_source depends only on c, so this never diverges.
+        uint64_t val = (info >> 32)
+            ? idx_read_bits(tbase, words_per_entry, tword, tidx, toff, nbits)
+            : idx_read_bits(rbase, words_per_row, rword, ridx, roff, nbits);
+        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
     }
 }
 
@@ -112,13 +194,15 @@ void unpack_fixed(
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
     TimerStartCategoryGPU(timer, UNPACK_FIXED);
+    // Const pols are stored fixedLayout() (ColMajor).
     unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
         d_num_packed_words,
-        d_unpack_info
+        d_unpack_info,
+        fixedLayout()
     );
     TimerStopCategoryGPU(timer, UNPACK_FIXED);
     CHECKCUDAERR(cudaGetLastError());
@@ -137,15 +221,47 @@ void unpack_trace(
     dim3 blocks((nRows + threads.x - 1) / threads.x);
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);
+    Layout layout = resolveLayout(63 - __builtin_clzll(nRows), nCols);
     TimerStartCategoryGPU(timer, UNPACK_TRACE);
-    unpack<<<blocks, threads, sharedMemSize, stream>>>(
-        src,
-        dst,
-        nRows,
-        nCols,
-        air_instance_info->d_num_packed_words,
-        air_instance_info->unpack_info
-    );
+    // d_col_source (set at setup from PackedInfo) is what makes an air indexed; the
+    // table arrives later per program. Dispatch on the descriptor, NOT on the table:
+    // an indexed air with no table must abort, because the plain walk would happily
+    // decode compact rows as full ones and yield a silently wrong trace.
+    if (air_instance_info->d_col_source != nullptr) {
+        if (air_instance_info->d_instr_table == nullptr) {
+            zklog.error("unpack_trace: air (" + std::to_string(air_instance_info->airgroupId) + "," +
+                        std::to_string(air_instance_info->airId) + ") is indexed but no instruction "
+                        "table is registered; call register_instruction_table first");
+            exitProcess();
+        }
+        // Indexed cm1 unpack: compact rows + shared instruction table reconstruct the full
+        // nCols output. Same storage layout as the plain path.
+        unpack_indexed<<<blocks, threads, sharedMemSize, stream>>>(
+            src,
+            air_instance_info->d_instr_table,
+            dst,
+            nRows,
+            nCols,
+            air_instance_info->num_packed_words,
+            air_instance_info->words_per_entry,
+            air_instance_info->unpack_info,
+            air_instance_info->d_col_source,
+            air_instance_info->index_bits,
+            air_instance_info->num_entries,
+            layout
+        );
+    } else {
+        // cm1 unpack: same storage layout the commit/LDE uses (resolveLayout on the small domain).
+        unpack<<<blocks, threads, sharedMemSize, stream>>>(
+            src,
+            dst,
+            nRows,
+            nCols,
+            air_instance_info->d_num_packed_words,
+            air_instance_info->unpack_info,
+            layout
+        );
+    }
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -241,52 +357,17 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
     treesGL[step - 1]->setNodes(pNodes);
 
-#ifdef USE_CUDA_GRAPH
-    CudaGraphCache *graphCache = cudagraph::current();
-    if (graphCache && !skipRecalculation && nCols > 0) {
-        uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-        uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-        uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-        uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-        uint64_t key = CudaGraphCache::makeKey(0x4C4445ULL ^ ctxId, nBits, nBitsExt, nCols, arity, step);
-        if (graphCache->contains(key)) {
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            bool launched = graphCache->tryLaunch(key, stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-            if (launched) {
-                if (d_transcript != nullptr) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                }
-                return;
-            }
-        }
-        if (graphCache->shouldCapture(key)) {
-            if (graphCache->beginCapture(key, stream)) {
-                NTTGoldilocksGPU ntt;
-                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
-                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
-                bool launched = graphCache->endCaptureAndLaunch(stream);
-                if (launched) {
-                    if (d_transcript != nullptr) {
-                        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-#endif
-
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
 
         if (nCols > 0)
         {
-            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+            // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
+            PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
+            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+            PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
+            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
             TimerStopCategoryGPU(timer, MERKLE_TREE);
         }
     }
@@ -300,7 +381,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     }
 }
 
-void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, TimerGPU &timer, cudaStream_t stream) {
+// preserve_src: must the unpacked const pols survive? Yes whenever a later proof of the same air
+// can reuse them instead of re-unpacking -- so for everything except an aliased air.
+void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t nCols = setupCtx.starkInfo.nConstants;
     NTTGoldilocksGPU ntt;
@@ -308,9 +391,13 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    ntt.LDE((gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+    // Const sections are stored fixedLayout() (ColMajor); the Merkle build reads dst in that
+    // layout. pNodes is free scratch: above the LDE's writes, filled by the merkelize below.
+    TimerStartCategoryGPU(timer, NTT);
+    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes);
+    TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, Layout::Tiles, stream);
+    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -339,42 +426,9 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
 
-#ifdef USE_CUDA_GRAPH
-        if (cudagraph::aggressive()) {
-            CudaGraphCache *graphCache = cudagraph::current();
-            if (graphCache) {
-                uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-                uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
-                uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-                uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
-                uint64_t key = CudaGraphCache::makeKey(0x514D5400ULL ^ ctxId, nBits, nBitsExt, nCols, (qDeg << 32) | qDim, arity);
-                if (graphCache->tryLaunch(key, stream)) {
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    if (d_transcript != nullptr) {
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                    }
-                    return;
-                }
-                if (graphCache->shouldCapture(key)) {
-                    if (graphCache->beginCapture(key, stream)) {
-                        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
-                        if (graphCache->endCaptureAndLaunch(stream)) {
-                            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                            if (d_transcript != nullptr) {
-                                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
-                            }
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-#endif
-
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
+        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
@@ -401,9 +455,9 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 
 __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
-    uint64_t i  = blockIdx.x;                  // opening point index
-    uint64_t k0 = blockIdx.y * blockDim.y;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.y;          // this thread's exponent index
+    uint64_t i  = blockIdx.y;                  // opening point index
+    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
+    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
     if (i >= nOpeningPoints || row >= N) return;
 
     Goldilocks3GPU::Element xi;
@@ -413,20 +467,22 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
 
     __shared__ Goldilocks3GPU::Element basePow;
 
-    if (threadIdx.y == 0) {
+    if (threadIdx.x == 0) {
         Goldilocks3GPU::pow(xi, k0, basePow);
     }
     __syncthreads();
 
     Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.y, xi_t);
+    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
 
     Goldilocks3GPU::Element res;
     Goldilocks3GPU::mul(res, basePow, xi_t);
 
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION)] = res[0];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION)] = res[1];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION)] = res[2];
+    Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
+    
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
 }
 
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
@@ -467,8 +523,8 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
 
-    dim3 nThreads(1, 512);
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
+    dim3 nThreads(512, 1);
+    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
     fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
@@ -477,7 +533,6 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     NTTGoldilocksGPU ntt;
     ntt.INTT(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
     TimerStopCategoryGPU(timer, NTT);
-   
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
@@ -533,42 +588,51 @@ __global__ void computeEvals_v2(
     {
         EvalInfo evalInfo = d_evalInfo[evalIdx];
         gl64_t *pol;
+        // cm sections (type 0) follow resolveLayout (keyed on the small domain log2(N)); custom commits
+        // (1) and fixed/const (2) follow fixedLayout(). d_LEv follows resolveLayout keyed on ITS OWN
+        // dimensions (openingsSize*FIELD_EXTENSION cols) -- must match how evalLEv wrote it.
+        Layout levLayout = resolveLayout(63 - __clzll(N), openingsSize * FIELD_EXTENSION);
+        Layout polLayout;
         if (evalInfo.type == 0)
         {
             pol = d_cmPols;
+            polLayout = resolveLayout(63 - __clzll(N), evalInfo.stageCols);
         }
         else if (evalInfo.type == 1)
         {
             pol = d_customComits;
+            polLayout = fixedLayout();
         }
         else
         {
             pol = d_fixedPols;
+            polLayout = fixedLayout();
         }
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
         {
-            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0)); 
+            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0));
         }
         uint64_t tid = chunkIdx * blockDim.x + threadIdx.x;
         while (tid < N)
         {
             uint64_t row = (tid << extendBits);
+            uint64_t chunkBase = tid - threadIdx.x;
             Goldilocks3GPU::Element LEv;
-            LEv[0] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
-            LEv[1] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
-            LEv[2] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
+            LEv[0] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION, levLayout)];
+            LEv[1] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION, levLayout)];
+            LEv[2] = d_LEv[getBufferOffset_pack256(chunkBase, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION, levLayout)];
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
-                Goldilocks3GPU::mul(res, LEv, pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)]);
+                Goldilocks3GPU::mul(res, LEv, pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols, polLayout)]);
             }
             else
             {
                 Goldilocks3GPU::Element val;
-                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)];
-                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, NExtended, evalInfo.stageCols)];
-                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols)];
+                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols, polLayout)];
+                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, NExtended, evalInfo.stageCols, polLayout)];
+                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols, polLayout)];
                 Goldilocks3GPU::mul(res, LEv, val);
             }
             Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
@@ -850,7 +914,7 @@ __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint6
     }
 }
 
-__global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
+__global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, Layout layout)
 {
 
     uint64_t idx_x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -859,7 +923,7 @@ __global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * bufferWidth + idx_x;
-        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
+        uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, layout);
         d_buffer[idx_buffer] = d_treeTrace[idx_trace];
     }
 }
@@ -911,17 +975,20 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         {
             std::string section = "cm" + to_string(k+1);
             uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-            uint64_t nCols = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // cm section: same storage layout the commit used (resolveLayout on the small domain).
+            Layout layout = resolveLayout(setupCtx.starkInfo.starkStruct.nBits, trees[k]->getMerkleTreeWidth());
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, layout);
         }
         else if (k == nStages + 1)
         {
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // Const tree leaves were written fixedLayout() by extendAndMerkelizeFixed.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            // Custom commit tree leaves were written fixedLayout() by write_custom_commit_gpu.
+            getTreeTracePolsBlocks<<<nBlocks, nThreads, 0, stream>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, fixedLayout());
         }
     }
     CHECKCUDAERR(cudaGetLastError());
@@ -1125,137 +1192,132 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
     initialOffset += 1;
 }
 
+// Serialize the pinned proof buffer directly into proof_buffer, in the same layout
+// FRIProof::proof2pointer produces, but without building the intermediate FRIProof object.
 void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
-    uint64_t initialOffset = 0;
+    StarkInfo &starkInfo = setupCtx.starkInfo;
 
-    FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
+    uint64_t nStages = starkInfo.nStages + 1;
+    uint64_t nFriSteps = starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nQueries = starkInfo.starkStruct.nQueries;
+    uint64_t arity = starkInfo.starkStruct.merkleTreeArity;
+    uint64_t lastLevelVerification = starkInfo.starkStruct.lastLevelVerification;
+    uint64_t numNodesLevel = lastLevelVerification == 0 ? 0 : (uint64_t)std::pow(arity, lastLevelVerification);
+    uint64_t lastLevelWords = numNodesLevel * HASH_SIZE;
 
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(NExtended);
-    uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
-    uint32_t lastLevelVerification = setupCtx.starkInfo.starkStruct.lastLevelVerification;
-    uint64_t numNodesLevel = std::pow(arity, lastLevelVerification);
-    for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
-        memcpy(&proof.proof.roots[i][0], &proof_buffer_pinned[initialOffset], HASH_SIZE * sizeof(uint64_t));
-        initialOffset += HASH_SIZE;
+    uint64_t *out = proof_buffer;
+    auto emit = [&](const Goldilocks::Element *src, uint64_t count) {
+        for (uint64_t i = 0; i < count; ++i) *out++ = Goldilocks::toU64(src[i]);
+    };
+    auto emitZeros = [&](uint64_t count) {
+        for (uint64_t i = 0; i < count; ++i) *out++ = 0;
+    };
 
-        if (lastLevelVerification > 0) {
-            memcpy(&proof.proof.last_levels[i][0], &proof_buffer_pinned[initialOffset], numNodesLevel * HASH_SIZE * sizeof(uint64_t));
-            initialOffset += numNodesLevel * HASH_SIZE;
+    uint64_t treeHeaderStride = HASH_SIZE + (lastLevelVerification > 0 ? lastLevelWords : 0);
+    Goldilocks::Element *rootsBase = proof_buffer_pinned;
+    Goldilocks::Element *constLastLevel = lastLevelVerification > 0 ? rootsBase + nStages * treeHeaderStride : nullptr;
+    Goldilocks::Element *customLastBase = rootsBase + nStages * treeHeaderStride + (lastLevelVerification > 0 ? lastLevelWords : 0);
+
+    uint64_t customLastLevelCount = 0;
+    if (lastLevelVerification > 0) {
+        for (uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
+            if (starkInfo.customCommits[i].stageWidths[0] != 0) customLastLevelCount++;
         }
     }
+    Goldilocks::Element *friHeadersBase = customLastBase + customLastLevelCount * lastLevelWords;
 
-    if (lastLevelVerification > 0) {
-        memcpy(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0], &proof_buffer_pinned[initialOffset], numNodesLevel * HASH_SIZE * sizeof(uint64_t));
-        initialOffset += numNodesLevel * HASH_SIZE;
+    uint64_t nTrees = starkInfo.nStages + starkInfo.customCommits.size() + 2;
+    uint64_t queriesProofSize = (nTrees + nFriSteps) * starkInfo.maxProofBuffSize * nQueries;
+    Goldilocks::Element *queries = friHeadersBase + nFriSteps * treeHeaderStride;
+    Goldilocks::Element *evals = queries + queriesProofSize;
+    Goldilocks::Element *airgroupValues = evals + starkInfo.evMap.size() * FIELD_EXTENSION;
+    Goldilocks::Element *airValues = airgroupValues + starkInfo.airgroupValuesSize;
+    uint64_t finalPolDegree = 1 << starkInfo.starkStruct.steps.back().nBits;
+    Goldilocks::Element *finalPol = airValues + starkInfo.airValuesSize;
+    Goldilocks::Element *nonce = finalPol + finalPolDegree * FIELD_EXTENSION;
+
+    double arityLog2 = std::log2(arity);
+    uint64_t nSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[0].nBits / arityLog2) - lastLevelVerification;
+    uint64_t siblingWords = nSiblings * (arity - 1) * HASH_SIZE;
+
+    // Address of query `q` in tree `tree` within the query openings block.
+    auto queryBase = [&](uint64_t tree, uint64_t q) {
+        return queries + (tree * nQueries + q) * starkInfo.maxProofBuffSize;
+    };
+
+    // Air group / air values: stage-1 entries hold a single base-field word, the rest are extension elements.
+    Goldilocks::Element *cursor = airgroupValues;
+    for (uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); ++i) {
+        uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        emit(cursor, width);
+        emitZeros(FIELD_EXTENSION - width);
+        cursor += width;
+    }
+    cursor = airValues;
+    for (uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
+        uint64_t width = starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        emit(cursor, width);
+        emitZeros(FIELD_EXTENSION - width);
+        cursor += width;
     }
 
-    if (lastLevelVerification > 0) {
-        for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
-            if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
-                memcpy(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 2 + i][0], &proof_buffer_pinned[initialOffset], numNodesLevel * HASH_SIZE * sizeof(uint64_t));
-                initialOffset += numNodesLevel * HASH_SIZE;
+    // Stage roots and evals.
+    for (uint64_t i = 0; i < nStages; ++i) emit(rootsBase + i * treeHeaderStride, HASH_SIZE);
+    emit(evals, starkInfo.evMap.size() * FIELD_EXTENSION);
+
+    // Constants tree openings + siblings (+ last level).
+    uint64_t constantsTree = starkInfo.nStages + 1;
+    for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q), starkInfo.nConstants);
+    for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q) + starkInfo.maxTreeWidth, siblingWords);
+    if (lastLevelVerification != 0) emit(constLastLevel, lastLevelWords);
+
+    // Custom commit trees.
+    uint64_t customLastIndex = 0;
+    for (uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+        uint64_t tree = starkInfo.nStages + 2 + c;
+        uint64_t width = starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"];
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(tree, q), width);
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(tree, q) + starkInfo.maxTreeWidth, siblingWords);
+        if (lastLevelVerification != 0) {
+            if (starkInfo.customCommits[c].stageWidths[0] != 0) {
+                emit(customLastBase + customLastIndex * lastLevelWords, lastLevelWords);
+                customLastIndex++;
+            } else {
+                emitZeros(lastLevelWords);
             }
         }
     }
 
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
-    {
-        uint64_t height = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
-        uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(height);
-        memcpy(&proof.proof.fri.treesFRI[step].root[0], &proof_buffer_pinned[initialOffset], HASH_SIZE * sizeof(uint64_t));
-        initialOffset += HASH_SIZE;
-
-        if (lastLevelVerification > 0) {
-            memcpy(&proof.proof.fri.treesFRI[step].last_levels[0], &proof_buffer_pinned[initialOffset], numNodesLevel * HASH_SIZE * sizeof(uint64_t));
-            initialOffset += numNodesLevel * HASH_SIZE;
-        }
+    // Committed stage trees.
+    for (uint64_t s = 0; s < nStages; ++s) {
+        uint64_t width = starkInfo.mapSectionsN["cm" + to_string(s + 1)];
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(s, q), width);
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(s, q) + starkInfo.maxTreeWidth, siblingWords);
+        if (lastLevelVerification != 0) emit(rootsBase + s * treeHeaderStride + HASH_SIZE, lastLevelWords);
     }
 
-    uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
-    uint64_t queriesProofSize = (nTrees + nTreesFRI) * setupCtx.starkInfo.maxProofBuffSize * setupCtx.starkInfo.starkStruct.nQueries;
-    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+    // FRI step roots, then per-step openings + siblings (+ last level).
+    for (uint64_t step = 0; step < nFriSteps; ++step) emit(friHeadersBase + step * treeHeaderStride, HASH_SIZE);
 
-    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits;
+    for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        uint64_t stepIndex = step - 1;
+        uint64_t width = (1ULL << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION;
+        uint64_t stepSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[step].nBits / arityLog2) - lastLevelVerification;
+        uint64_t stepSiblingWords = stepSiblings * (arity - 1) * HASH_SIZE;
+        uint64_t buffSize = width + stepSiblingWords;
+        Goldilocks::Element *queriesFRI = queries + (nTrees + stepIndex) * nQueries * starkInfo.maxProofBuffSize;
 
-    Goldilocks::Element *queries = &proof_buffer_pinned[initialOffset];
-    initialOffset += queriesProofSize;
-    Goldilocks::Element *evals = &proof_buffer_pinned[initialOffset];
-    initialOffset += setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
-    Goldilocks::Element *airgroupValues = &proof_buffer_pinned[initialOffset];
-    initialOffset += setupCtx.starkInfo.airgroupValuesSize;
-    Goldilocks::Element *airValues = &proof_buffer_pinned[initialOffset];
-    initialOffset += setupCtx.starkInfo.airValuesSize;
-    Goldilocks::Element *finalPol = &proof_buffer_pinned[initialOffset];
-    initialOffset += finalPolDegree * FIELD_EXTENSION;
-    Goldilocks::Element nonce = proof_buffer_pinned[initialOffset];
-    initialOffset += 1;
-
-    uint64_t numSiblings = (uint64_t)ceil(setupCtx.starkInfo.starkStruct.nBitsExt / std::log2(arity)) - lastLevelVerification;
-    uint64_t numSiblingsLevel = (arity - 1) * HASH_SIZE;
-
-    uint64_t pushes_per_polQuery = setupCtx.starkInfo.nStages + 2;
-    if (nTrees > setupCtx.starkInfo.nStages + 2) {
-        pushes_per_polQuery += 1;
-    }
-    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++) {
-        proof.proof.fri.trees.polQueries[i].reserve(pushes_per_polQuery);
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queriesFRI + q * buffSize, width);
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queriesFRI + q * buffSize + width, stepSiblingWords);
+        if (lastLevelVerification != 0) emit(friHeadersBase + stepIndex * treeHeaderStride + HASH_SIZE, lastLevelWords);
     }
 
-    int count = 0;
-    for (uint k = 0; k < setupCtx.starkInfo.nStages + 1; k++)
-    {
-        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
-        {
-            uint64_t width = setupCtx.starkInfo.mapSectionsN["cm" + to_string(k + 1)];
-            MerkleProof<Goldilocks::Element> mkProof(width, numSiblings, numSiblingsLevel, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
-            proof.proof.fri.trees.polQueries[i].push_back(mkProof);
-            ++count;
-        }
+    emit(finalPol, finalPolDegree * FIELD_EXTENSION);
+    emit(nonce, 1);
+
+    if ((uint64_t)(out - proof_buffer) != starkInfo.proofSize) {
+        throw std::runtime_error("writeProof: serialized " + to_string(out - proof_buffer) + " words, expected " + to_string(starkInfo.proofSize));
     }
-
-    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
-    {
-        uint64_t width = setupCtx.starkInfo.nConstants;
-        MerkleProof<Goldilocks::Element> mkProof(width, numSiblings, numSiblingsLevel, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
-        proof.proof.fri.trees.polQueries[i].push_back(mkProof);
-        ++count;
-    }
-
-    if(nTrees > setupCtx.starkInfo.nStages + 2){
-        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
-        {
-            uint64_t width = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
-            MerkleProof<Goldilocks::Element> mkProof(width, numSiblings, numSiblingsLevel, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
-            proof.proof.fri.trees.polQueries[i].push_back(mkProof);
-            ++count;
-        }
-    }
-
-#pragma omp parallel for collapse(2)
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
-    {   
-        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
-        {
-            Goldilocks::Element *queriesFRI = &queries[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize];
-            uint64_t width = FIELD_EXTENSION * (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / (1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
-            uint64_t numSiblings = (uint64_t)ceil(setupCtx.starkInfo.starkStruct.steps[step + 1].nBits / std::log2(arity)) - lastLevelVerification;
-            uint64_t numSiblingsLevel = (arity - 1) * HASH_SIZE;
-            uint64_t proofSize = numSiblings * numSiblingsLevel;
-            uint64_t buffSize = width + proofSize;
-            MerkleProof<Goldilocks::Element> mkProof(width, numSiblings, numSiblingsLevel, (void *)&queriesFRI[i * buffSize], width);
-            proof.proof.fri.treesFRI[step].polQueries[i].push_back(mkProof);
-        }
-    }
-
-    proof.proof.setEvals(evals);
-    proof.proof.setAirgroupValues(airgroupValues); 
-    proof.proof.setAirValues(airValues);
-    proof.proof.fri.setPol(finalPol, finalPolDegree);
-    proof.proof.setNonce(nonce.fe);
-
-    proof.proof.proof2pointer(proof_buffer);
 
     if(!proofFile.empty()) {
         json2file(pointer2json(proof_buffer, setupCtx.starkInfo), proofFile);
@@ -1268,74 +1330,97 @@ void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, Se
     d_transcript->getState(hash, stream);
 };
 
-__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits, bool debug)
+__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits)
 {
     int chunk_idx = blockIdx.x;
     uint64_t nchunks = domainSize / blockDim.x;
 
-    extern __shared__ Goldilocks::Element shared[];
+    Goldilocks3GPU::Element &vf1e = *(Goldilocks3GPU::Element *)vf1;
+    Goldilocks3GPU::Element &vf2e = *(Goldilocks3GPU::Element *)vf2;
 
     while (chunk_idx < nchunks) {
-        gl64_t *fri_pol = (gl64_t *)shared;
-        gl64_t *accum = fri_pol + blockDim.x * FIELD_EXTENSION;
-        gl64_t *res = accum + blockDim.x * FIELD_EXTENSION;
+        Goldilocks3GPU::Element fri_pol, accum, res, term;
 
         uint64_t i = chunk_idx * blockDim.x;
         uint64_t r = i + threadIdx.x;
-        for(uint64_t o = 0; o < nOpeningPoints; ++o) {
-            for(uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
-                EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
-                gl64_t* eval = d_evals + evalInfo.evalPos * FIELD_EXTENSION;
-                gl64_t *pol;
-                if (evalInfo.type == 0)
-                {
-                    pol = d_cmPols;
-                }
-                else if (evalInfo.type == 1)
-                {
-                    pol = d_customComits;
-                }
-                else
-                {
-                    pol = d_fixedPols;
-                }
-    
-                gl64_t *out = (j == 0) ? accum : res;
-                if(evalInfo.dim == 1) {
-                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                    Goldilocks3GPU::sub_13_gpu_b_const(out, out, eval);
-                } else {
-                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + 2*blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
-                    Goldilocks3GPU::sub_gpu_b_const(out, out, eval);
-                }
-                if(j != 0) {
-                    Goldilocks3GPU::mul_gpu_b_const(accum, accum, vf2);
-                    Goldilocks3GPU::add_gpu_no_const(accum, accum, (gl64_t *)out);
-                }
+        // Montgomery-batched denominators, groups of 4 openings: one Fp3 inversion
+        // per group instead of one per opening
+        Goldilocks3GPU::Element inv_g[4];
+        for (uint64_t og = 0; og < nOpeningPoints; og += 4) {
+            const uint32_t gn = (nOpeningPoints - og < 4) ? (uint32_t)(nOpeningPoints - og) : 4u;
+
+            // Batch-invert the gn denominators (x[r] - xDivXSub[og+k]):
+            // forward prefix products, one Fp3 inversion, backward unwind.
+            Goldilocks3GPU::Element den, t;
+            for (uint32_t k = 0; k < gn; ++k) {
+                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
+                Goldilocks3GPU::sub(den, d_x[r], xdiv);
+                if (k == 0) Goldilocks3GPU::copy(inv_g[0], den);
+                else Goldilocks3GPU::mul(inv_g[k], inv_g[k - 1], den);
             }
+            Goldilocks3GPU::inv(t, inv_g[gn - 1]);
+            for (uint32_t k = gn - 1; k > 0; --k) {
+                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
+                Goldilocks3GPU::sub(den, d_x[r], xdiv);
+                Goldilocks3GPU::mul(inv_g[k], t, inv_g[k - 1]);
+                Goldilocks3GPU::mul(t, t, den);
+            }
+            Goldilocks3GPU::copy(inv_g[0], t);
 
-            Goldilocks3GPU::sub_13_gpu_b_const(res, d_x + i, &d_xDivXSub[o * FIELD_EXTENSION]);
-            Goldilocks3GPU::Element aux;
-            aux[0] = res[threadIdx.x];
-            aux[1] = res[blockDim.x + threadIdx.x];
-            aux[2] = res[2 * blockDim.x + threadIdx.x];
-            Goldilocks3GPU::inv(aux, aux);
-            res[threadIdx.x] = aux[0];
-            res[blockDim.x + threadIdx.x] = aux[1];
-            res[2 * blockDim.x + threadIdx.x] = aux[2];
+            for (uint64_t o = og; o < og + gn; ++o) {
+                if (d_countsPerOpeningPos[o] == 0) {
+                    accum[0] = gl64_t(uint64_t(0));
+                    accum[1] = gl64_t(uint64_t(0));
+                    accum[2] = gl64_t(uint64_t(0));
+                }
+                for (uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
+                    EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
+                    Goldilocks3GPU::Element &eval = *(Goldilocks3GPU::Element *)(d_evals + evalInfo.evalPos * FIELD_EXTENSION);
+                    // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
+                    // commits (1) and fixed/const (2) follow fixedLayout().
+                    gl64_t *pol;
+                    Layout polLayout;
+                    if (evalInfo.type == 0) {
+                        pol = d_cmPols;
+                        polLayout = resolveLayout(nBits, evalInfo.stageCols);
+                    } else if (evalInfo.type == 1) {
+                        pol = d_customComits;
+                        polLayout = fixedLayout();
+                    } else {
+                        pol = d_fixedPols;
+                        polLayout = fixedLayout();
+                    }
 
-            gl64_t *out = o == 0 ? fri_pol : accum;
-            Goldilocks3GPU::mul_gpu_no_const(out, accum, res);
-            if(o != 0) {
-                Goldilocks3GPU::mul_gpu_b_const(fri_pol, fri_pol, vf1);
-                Goldilocks3GPU::add_gpu_no_const(fri_pol, fri_pol, accum);
+                    Goldilocks3GPU::Element &out = (j == 0) ? accum : term;
+                    if (evalInfo.dim == 1) {
+                        gl64_t v = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
+                        Goldilocks3GPU::sub(out, v, eval);
+                    } else {
+                        out[0] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
+                        out[1] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
+                        out[2] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
+                        Goldilocks3GPU::sub(out, out, eval);
+                    }
+                    if (j != 0) {
+                        Goldilocks3GPU::mul(accum, accum, vf2e);
+                        Goldilocks3GPU::add(accum, accum, term);
+                    }
+                }
+
+                Goldilocks3GPU::copy(res, inv_g[o - og]);
+
+                if (o == 0) {
+                    Goldilocks3GPU::mul(fri_pol, accum, res);
+                } else {
+                    Goldilocks3GPU::mul(accum, accum, res);
+                    Goldilocks3GPU::mul(fri_pol, fri_pol, vf1e);
+                    Goldilocks3GPU::add(fri_pol, fri_pol, accum);
+                }
             }
         }
-        d_fri[r * FIELD_EXTENSION] = fri_pol[threadIdx.x];
-        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[threadIdx.x + blockDim.x];
-        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[threadIdx.x + 2*blockDim.x];
+        d_fri[r * FIELD_EXTENSION] = fri_pol[0];
+        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[1];
+        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[2];
         chunk_idx += gridDim.x;
     }
 }
@@ -1344,14 +1429,22 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    uint32_t nthreads_ = setupCtx.starkInfo.nrowsPack;
-    uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
-    size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);
-    dim3 nThreads(nthreads_);    
+    // computeFRIExpression strides by domainSize/blockDim.x with no remainder handling,
+    // so blockDim.x must divide domainSize or leftover rows are silently dropped.
+    // Raise nrowsPack up to a 256-thread minimum (memory-constrained instances halve
+    // nrowsPack below 256 and would otherwise underpopulate blocks), then cap at
+    // domainSize. This is only reached on the prover path (gen_proof / gen_recursivef),
+    // where nrowsPack is a power of two <= 256, so blockDim.x stays a power-of-two
+    // divisor of the power-of-two domainSize. It is NOT called on the verify path, whose
+    // nrowsPack = nQueries can be a non-power-of-two > 256 and would break the invariant.
+    uint32_t nthreads_ = std::min<uint32_t>(std::max<uint32_t>(setupCtx.starkInfo.nrowsPack, 256), (uint32_t)domainSize);
+    uint32_t nblocks_ = (uint32_t)((domainSize + nthreads_ - 1) / nthreads_);
+    dim3 nThreads(nthreads_);
     dim3 nBlocks(nblocks_);
-    computeFRIExpression<<<nBlocks, nThreads, sharedMem, stream>>>(
-        domainSize, 
-        setupCtx.starkInfo.openingPoints.size(), 
+    computeFRIExpression<<<nBlocks, nThreads, 0, stream>>>(
+        domainSize,
+        setupCtx.starkInfo.starkStruct.nBits,
+        setupCtx.starkInfo.openingPoints.size(),
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)],
         air_instance_info->evalsInfoFRISizes,
         air_instance_info->evalsInfoFRI,
@@ -1362,8 +1455,7 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
         (gl64_t*)h_params.xDivXSub,
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)],
         (gl64_t *)h_params.pConstPolsExtendedTreeAddress,
-        (gl64_t *)h_params.pCustomCommitsFixed,
-        false
+        (gl64_t *)h_params.pCustomCommitsFixed
     );
     CHECKCUDAERR(cudaGetLastError());
 }

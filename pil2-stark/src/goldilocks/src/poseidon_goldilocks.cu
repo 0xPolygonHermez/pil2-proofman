@@ -12,9 +12,10 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+#include "poseidon2_goldilocks.hpp"  // NONCES_LAUNCH_* grinding launch params (shared with Poseidon2)
 
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
-// (full pil2-stark build). 
+// (full pil2-stark build).
 #if __has_include("starks_api_internal.hpp")
 #include "starks_api_internal.hpp"
 #endif
@@ -22,8 +23,42 @@
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-// CUDA threads per block.
-#define TPB_POS1 128
+// The immediate-MDS path (pos1_dot_mimm_ and the pos1_mvp_*_mimm_ helpers)
+// accumulates raw 64-bit-state x constant products in a u128 with no carry
+// limb, which is only sound while every M entry is < 2^32. Check that
+// assumption at compile time.
+template<uint32_t W>
+static constexpr bool pos1MdsEntriesBelow32(const Goldilocks::Element (&m)[W][W])
+{
+    for (uint32_t i = 0; i < W; ++i)
+        for (uint32_t j = 0; j < W; ++j)
+            if (m[i][j].fe >= (1ULL << 32)) return false;
+    return true;
+}
+static_assert(pos1MdsEntriesBelow32<8>(PoseidonGoldilocksConstants::M8),  "Poseidon1 M8 entries must be < 2^32 for the lazy MDS path");
+static_assert(pos1MdsEntriesBelow32<12>(PoseidonGoldilocksConstants::M12), "Poseidon1 M12 entries must be < 2^32 for the lazy MDS path");
+static_assert(pos1MdsEntriesBelow32<16>(PoseidonGoldilocksConstants::M16), "Poseidon1 M16 entries must be < 2^32 for the lazy MDS path");
+
+
+static constexpr size_t CUDA_SMEM_DEFAULT_BLOCK_LIMIT = 48 * 1024;
+
+// CUDA threads per block
+template<uint32_t W>
+static constexpr u32 pos1Tpb()
+{
+    return (W == 16) ? 256 : 512;
+}
+static_assert(pos1Tpb<8>()  * 8  * sizeof(uint64_t) <= CUDA_SMEM_DEFAULT_BLOCK_LIMIT, "Poseidon1 W8 smem over launch limit");
+static_assert(pos1Tpb<12>() * 12 * sizeof(uint64_t) <= CUDA_SMEM_DEFAULT_BLOCK_LIMIT, "Poseidon1 W12 smem over launch limit");
+static_assert(pos1Tpb<16>() * 16 * sizeof(uint64_t) <= CUDA_SMEM_DEFAULT_BLOCK_LIMIT, "Poseidon1 W16 smem over launch limit");
+
+// Min resident blocks/SM the tiled kernel's register budget is compiled for
+// (launch_bounds). 2 pins the measured optimum: with 1 the compiler balloons
+// registers and loses ~20%; forcing 3 spills and loses 4-6%.
+#define POS1_TILED_MINB 2
+
+// Merkle levels with at most this many nodes use the warp-per-node kernel; larger levels keep the thread-per-node kernel
+#define POS1_MERKLE_WARP_MAX_NODES 16384
 
 // ---------------------------------------------------------------------------
 // __constant__ memory — distinct symbols from Poseidon2.
@@ -181,10 +216,14 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
 }
 
 // linearHashTiledKernel_pos1: block-tiled input layout + shared-memory state.
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
+// TPB_V/MINB bound the launch so the compiler budgets registers for MINB
+// resident blocks (W=16 is register-limited to 2 blocks/SM at natural
+// allocation; forcing more trades spills for occupancy — measured choice).
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART,
+         uint32_t TPB_V, uint32_t MINB>
+__global__ void __launch_bounds__(TPB_V, MINB) linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
-                                           uint32_t num_cols, uint32_t num_rows)
+                                           uint32_t num_cols, uint32_t num_rows, Layout layout)
 {
     const uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
@@ -223,7 +262,7 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
         uint32_t col0 = num_cols - remaining;
         for (uint32_t i = 0; i < n; ++i)
         {
-            uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols);
+            uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols, layout);
             scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)input)[idx];
         }
         for (uint32_t i = n; i < RATE_T; ++i)
@@ -276,6 +315,38 @@ __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; ++i)
         out[i] = scratchpad[i * blockDim.x + threadIdx.x];
+}
+
+// Warp-per-node merkle reduction for SMALL levels. One warp cooperates on each
+// node's permutation (lane i owns state element i, MVP via shuffles), cutting
+// the per-node serial dependency chain ~W-fold vs. the one-thread-per-node
+// kernel above, whose ~100us single-permute latency dominates tree-top levels
+// that are far too small to fill the GPU. Digests are stored canonicalized
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
+__global__ void merkleNodeWarpKernel_pos1(uint64_t nextN, uint64_t nextIndex,
+                                          uint64_t pending, uint32_t arity,
+                                          uint64_t *cursor)
+{
+    const uint32_t lane = threadIdx.x & 31;
+    const uint64_t node = ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+    if (node >= nextN || lane >= W) return;
+    const uint32_t mask = (uint32_t)((1ull << W) - 1);
+
+    const uint32_t stride = arity * CAPACITY_T;
+    const uint64_t base = (uint64_t)nextIndex + node * (uint64_t)stride;
+    const uint32_t n = (stride < W) ? stride : W;
+
+    gl64_t v = (lane < n) ? ((gl64_t *)cursor)[base + lane] : gl64_t(uint64_t(0));
+    v = poseidon1PermuteWarpReg<W, HALF_F, N_PART>(v, lane, mask,
+        Pos1ConstGPU<W>::C(), Pos1ConstGPU<W>::S(),
+        Pos1ConstGPU<W>::M(), Pos1ConstGPU<W>::P());
+
+    if (lane < CAPACITY_T)
+    {
+        uint64_t u = v[0];
+        if (u >= GOLDILOCKS_PRIME) u -= GOLDILOCKS_PRIME;
+        cursor[nextIndex + (pending + node) * CAPACITY_T + lane] = u;
+    }
 }
 
 // Grinding kernel. Uses an in-register state and the register-path permute.
@@ -437,9 +508,10 @@ void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_t
 {
     if (num_rows == 0) return;
 
-    u32 tpb = TPB_POS1;
-    u32 blks = (num_rows + TPB_POS1 - 1) / TPB_POS1;
-    if (num_rows < TPB_POS1)
+    constexpr u32 tpbW = pos1Tpb<SPONGE_WIDTH>();
+    u32 tpb = tpbW;
+    u32 blks = (num_rows + tpbW - 1) / tpbW;
+    if (num_rows < tpbW)
     {
         tpb = (u32)num_rows;
         blks = 1;
@@ -447,15 +519,18 @@ void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_t
 
     const size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-    if (layout == Layout::Tiles)
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor)
     {
-        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
             <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
-        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
+        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS,
+                                   pos1Tpb<SPONGE_WIDTH>(), POS1_TILED_MINB>
+            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -474,9 +549,10 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
            "PoseidonGoldilocksGPU::merkletree: arity*CAPACITY exceeds SPONGE_WIDTH");
     if (num_rows == 0) return;
 
-    u32 tpb = TPB_POS1;
-    u32 blks = (num_rows + TPB_POS1 - 1) / TPB_POS1;
-    if (num_rows < TPB_POS1)
+    constexpr u32 tpbW = pos1Tpb<SPONGE_WIDTH>();
+    u32 tpb = tpbW;
+    u32 blks = (num_rows + tpbW - 1) / tpbW;
+    if (num_rows < tpbW)
     {
         tpb = (u32)num_rows;
         blks = 1;
@@ -484,15 +560,18 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
 
     size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-    if (layout == Layout::Tiles)
+    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
+    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
+    if (layout == Layout::RowMajor)
     {
-        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
             <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
-        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
+        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS,
+                                   pos1Tpb<SPONGE_WIDTH>(), POS1_TILED_MINB>
+            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows, layout);
     }
     CHECKCUDAERR(cudaGetLastError());
 
@@ -508,13 +587,24 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
                 (uint64_t *)(d_tree + nextIndex + pending * CAPACITY),
                 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
 
-        if (nextN < TPB_POS1) { tpb = (u32)nextN; blks = 1; }
-        else                  { tpb = TPB_POS1;   blks = (u32)(nextN / TPB_POS1 + 1); }
-        smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+        if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
+        {
+            u32 tpb_w = 256;
+            u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
+            merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks_w, tpb_w, 0, stream>>>(nextN, nextIndex,
+                                               pending + extraZeros, arity, d_tree);
+        }
+        else
+        {
+            tpb = pos1Tpb<SPONGE_WIDTH>();
+            blks = (u32)((nextN + tpb - 1) / tpb);
+            smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-        merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
-                                                pending + extraZeros, arity, d_tree);
+            merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
+                                                    pending + extraZeros, arity, d_tree);
+        }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
@@ -560,13 +650,24 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
             CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * CAPACITY, 0,
                                          extraZeros * CAPACITY * sizeof(uint64_t), stream));
 
-        u32 tpb = (nextN < TPB_POS1) ? (u32)nextN : TPB_POS1;
-        u32 blks = (nextN < TPB_POS1) ? 1 : (u32)(nextN / TPB_POS1 + 1);
-        size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+        if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
+        {
+            u32 tpb_w = 256;
+            u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
+            merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks_w, tpb_w, 0, stream>>>(
+                    nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+        }
+        else
+        {
+            u32 tpb = pos1Tpb<SPONGE_WIDTH>();
+            u32 blks = (u32)(nextN / tpb + 1);
+            size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
-        merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(
-                nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+            merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+                <<<blks, tpb, smem_bytes, stream>>>(
+                    nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
+        }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;

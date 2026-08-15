@@ -255,7 +255,7 @@ TEST(PoseidonV1Gpu, merkletree_binary_fib128x64_golden)
 }
 
 // ---------------------------------------------------------------------------
-// 6. linearHash (Tiles layout) parity vs CPU linear_hash_seq.
+// 6. linearHash (ColMajorTiled layout) parity vs CPU linear_hash_seq.
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1Gpu, linear_hash_tiled_parity)
@@ -285,11 +285,11 @@ TEST(PoseidonV1Gpu, linear_hash_tiled_parity)
     CHECKCUDAERR(cudaMalloc((void **)&d_tiled, nRows * nCols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_gpu,   nRows * CAP   * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
+    fromRowMajorToColMajor(nRows, nCols, d_flat, d_tiled, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     PosGPU::linearHash((uint64_t *)d_gpu, (uint64_t *)d_tiled, nCols, nRows,
-                       Layout::Tiles, stream);
+                       Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     std::vector<GL> h_gpu(nRows * CAP);
@@ -297,7 +297,7 @@ TEST(PoseidonV1Gpu, linear_hash_tiled_parity)
 
     for (uint64_t i = 0; i < nRows * CAP; ++i)
         ASSERT_EQ(Goldilocks::toU64(h_gpu[i]), Goldilocks::toU64(h_cpu[i]))
-            << "linearHash(Tiles) mismatch at i=" << i;
+            << "linearHash(ColMajorTiled) mismatch at i=" << i;
 
     cudaFree(d_flat);
     cudaFree(d_tiled);

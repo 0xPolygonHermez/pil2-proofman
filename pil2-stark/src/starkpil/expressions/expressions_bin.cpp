@@ -1,14 +1,15 @@
 #include "expressions_bin.hpp"
 
 ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
-    std::unique_ptr<BinFileUtils::BinFile> binFile = BinFileUtils::openExisting(file, "chps", 1);
+    binFile = file;
+    std::unique_ptr<BinFileUtils::BinFile> bin = BinFileUtils::openExisting(file, "chps", 1);
 
     if(globalBin) {
-        loadGlobalBin(binFile.get());
+        loadGlobalBin(bin.get());
     } else if(verifierBin) {
-        loadVerifierBin(binFile.get());
+        loadVerifierBin(bin.get());
     } else {
-        loadExpressionsBin(binFile.get());
+        loadExpressionsBin(bin.get());
     }
 }
 

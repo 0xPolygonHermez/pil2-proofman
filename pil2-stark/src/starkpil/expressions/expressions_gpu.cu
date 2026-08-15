@@ -3,6 +3,10 @@
 #include "cuda_utils.hpp"
 #include "goldilocks_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
+#include "expressions_codegen.cuh"
+#ifdef USE_CUDA_GRAPH
+#include "cuda_graph_cache.cuh"
+#endif
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
@@ -67,6 +71,13 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
     CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
     CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
+
+    ExpsKernel ek = expsOpenForAir(setupCtx);
+    expsLib = ek.lib;
+    qLaunchFn = (void *)ek.qLaunch;
+    qMinScratch = ek.qMinScratch;
+    exprCoveredFn = (void *)ek.exprCovered;
+    exprLaunchFn = (void *)ek.exprLaunch;
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -87,10 +98,97 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.argsConstraints));
 
     CHECKCUDAERR(cudaFree(d_deviceArgs));
+
+    expsClose(expsLib);
+}
+
+// Stage one launch's params/args into pinned slot `countId` and enqueue the H2D
+// copies. Slot strides are in BYTES: pinned_exps_* are Element* only by type, so
+// Element* arithmetic would stride 8x too far.
+static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args,
+                          uint64_t countId, const DestParamsGPU *h_dest_params, const ExpsArguments &h_expsArgs,
+                          DestParamsGPU *d_destParams, ExpsArguments *d_expsArgs, cudaStream_t stream)
+{
+#ifdef USE_CUDA_GRAPH
+    // The pinned slots are per-stream scratch shared by ALL airs: a captured graph would
+    // bake this H2D copy's source address, but the slot content at replay time belongs to
+    // whatever proof staged it last. Poison the in-flight capture (if any) so the region is
+    // discarded, blacklisted, and re-executed directly.
+    if (CudaGraphCache *gc = cudagraph::current()) gc->poison();
+#endif
+    if (countId >= PINNED_EXPS_SLOTS) {
+        zklog.error("ExpressionsGPU: expression launch count " + std::to_string(countId) +
+                    " exceeds pinned slot capacity " + std::to_string(PINNED_EXPS_SLOTS));
+        exitProcess();
+    }
+    // Each slot spans 2 DestParamsGPU (stride 2*sizeof) and d_destParams is sized for 2;
+    // more params would overrun both the pinned slot and the device buffer.
+    if (h_expsArgs.dest_nParams > 2) {
+        zklog.error("ExpressionsGPU: dest_nParams " + std::to_string(h_expsArgs.dest_nParams) +
+                    " exceeds slot capacity 2");
+        exitProcess();
+    }
+    uint8_t *paramsSlot = (uint8_t *)pinned_exps_params + countId * 2 * sizeof(DestParamsGPU);
+    memcpy(paramsSlot, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
+    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, paramsSlot, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+
+    uint8_t *argsSlot = (uint8_t *)pinned_exps_args + countId * sizeof(ExpsArguments);
+    memcpy(argsSlot, &h_expsArgs, sizeof(ExpsArguments));
+    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 }
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
+    // Generated-kernel fast path for trace-domain dests: a single covered
+    // expression, or the hint pair (numerator x denominator^{-1}) fused as two
+    // passes (write, then multiply-by-inverse in the store). Anything else
+    // falls through to the bytecode interpreter below.
+    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr) {
+        auto exprCovered = (ExprCoveredFn)exprCoveredFn;
+        auto exprLaunch = (ExprLaunchFn)exprLaunchFn;
+        auto offc = [&](const char *sec) -> uint64_t {
+            auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(sec), false));
+            return it != setupCtx.starkInfo.mapOffsets.end() ? it->second : 0;
+        };
+        const uint64_t o1 = offc("cm1"), o2 = offc("cm2"), o3 = offc("cm3");
+        const uint32_t dExpr = dest.expr ? 1u : 0u;
+        bool handled = false;
+        if (dest.params.size() == 1) {
+            Params &p0 = dest.params[0];
+            if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
+                TimerStartCategoryGPU(timer, EXPRESSIONS);
+                exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                        o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                TimerStopCategoryGPU(timer, EXPRESSIONS);
+                handled = true;
+            }
+        } else if (dest.params.size() == 2) {
+            Params &p0 = dest.params[0];
+            Params &p1 = dest.params[1];
+            if (p1.op == opType::tmp && p1.inverse && exprCovered(p1.expId)) {
+                if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
+                    TimerStartCategoryGPU(timer, EXPRESSIONS);
+                    exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_MUL_INV, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    TimerStopCategoryGPU(timer, EXPRESSIONS);
+                    handled = true;
+                } else if (p0.op == opType::number && !p0.inverse) {
+                    TimerStartCategoryGPU(timer, EXPRESSIONS);
+                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
+                            o1, o2, o3, EXPR_MODE_WRITE_INV, p0.value, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    TimerStopCategoryGPU(timer, EXPRESSIONS);
+                    handled = true;
+                }
+            }
+        }
+        if (handled) {
+            CHECKCUDAERR(cudaGetLastError());
+            return;
+        }
+    }
+
     ExpsArguments h_expsArgs;
 
     uint32_t nrowsPack = std::min(static_cast<uint32_t>(nRowsPack), static_cast<uint32_t>(domainSize));
@@ -160,18 +258,14 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
-    
+
     assert(bufferCommitSize  + 9  < 32);
     size_t ptrMem = 32 * sizeof(Goldilocks::Element);
     size_t tmpMem = (h_expsArgs.maxTemp1Size + h_expsArgs.maxTemp3Size) * sizeof(Goldilocks::Element);
@@ -185,6 +279,18 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
 void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
 {
+    // Generated Q kernel first: it takes everything by value, so the interpreter's
+    // pinned-slot staging below is dead weight on this path (and poisons graph capture).
+    if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
+        TimerStartCategoryGPU(timer, EXPRESSIONS);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        TimerStopCategoryGPU(timer, EXPRESSIONS);
+        if (computed) {
+            CHECKCUDAERR(cudaGetLastError());
+            return;
+        }
+    }
+
     ExpsArguments h_expsArgs;
 
     uint32_t nrowsPack = std::min(static_cast<uint32_t>(nRowsPack), static_cast<uint32_t>(domainSize));
@@ -230,6 +336,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
 
+    // The pinned slot and d_destParams hold at most 2 entries.
+    assert(dest.params.size() == 1 || dest.params.size() == 2);
+
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
@@ -248,12 +357,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    stageExpsSlot(pinned_exps_params, pinned_exps_args, countId, h_dest_params, h_expsArgs, d_destParams, d_expsArgs, stream);
     delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
@@ -338,60 +443,51 @@ __device__ __forceinline__ void load__(
             : dParams->pConstPolsAddress;
 
         const uint64_t nCols0 = dArgs->mapSectionsN[0];
+        // Const sections are stored fixedLayout() (ColMajor) -- match the const-tree build's layout.
+        const Layout lytC = fixedLayout();
         const uint64_t pos = usePack256
-            ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0)
-            : getBufferOffset(logicalRow, argIdx, domainSize, nCols0);
+            ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols0, lytC)
+            : getBufferOffset(logicalRow, argIdx, domainSize, nCols0, lytC);
         out0 = (gl64_t*)&basePtr[pos];
         out1 = nullptr;
         out2 = nullptr;
         return;
     }
 
-    // Trace and aux_trace
+    // Trace and aux_trace (committed pols). A committed section's storage layout is resolveLayout(nBits,
+    // sectionNCols) keyed on the AIR's small-domain nBits = log2(N) -- identical to what the commit/LDE
+    // and Merkle used, so reads agree with writes. ColMajor (flat) puts a column's 3 extension
+    // components domainSize apart.
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
+        const uint64_t nBits = 63 - __clzll(dArgs->N);
+        const Layout lyt = resolveLayout(nBits, nCols);
 
         if (type == 1 && !dExpsArgs->domainExtended) {
             const uint64_t pos = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->trace[pos];
             out1 = nullptr;
             out2 = nullptr;
             return;
-        } else if (dim == 3 && TILE_WIDTH == 4 && (argIdx & 3) <= 1) {
-            // Same-tile fast path: all 3 extension columns in same tile
-            // col_block values are argIdx&3, (argIdx+1)&3, (argIdx+2)&3 - all consecutive
-            // Offsets differ by TILE_HEIGHT between consecutive columns in same tile
+        } else if (dim == 3) {
+            // Flat (ColMajor): the 3 extension components of column argIdx are domainSize apart.
             const uint64_t pos0 = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + TILE_HEIGHT];
-            out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * TILE_HEIGHT];
-            return;
-        } else if (dim == 1) {
-            const uint64_t pos0 = usePack256
-                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
-            out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            out1 = nullptr;
-            out2 = nullptr;
+            out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + domainSize];
+            out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * domainSize];
             return;
         } else {
             const uint64_t pos0 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols, lyt)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols, lyt);
             out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
-            const uint64_t pos1 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols);
-            out1 = (gl64_t*)&dParams->aux_trace[offset + pos1];
-            const uint64_t pos2 = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols);
-            out2 = (gl64_t*)&dParams->aux_trace[offset + pos2];
+            out1 = nullptr;
+            out2 = nullptr;
             return;
         }
     }
@@ -404,11 +500,11 @@ __device__ __forceinline__ void load__(
         out2 = nullptr;
         return;
     }
-    // Custom commits
+    // Custom commits -- fixed/preprocessed section, stored fixedLayout() (ColMajor).
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
-    const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+    const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols, fixedLayout());
 
     out0 = (gl64_t*)&dParams->pCustomCommitsFixed[offset + pos];
     out1 = nullptr;
@@ -418,13 +514,16 @@ __device__ __forceinline__ void load__(
 
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
 {
+    // Writing into a committed section -> must match that section's storage layout (same resolveLayout
+    // the reads use). dest_domainSize is the section's row count.
+    const Layout lyt = resolveLayout(63 - __clzll(d_expsArgs->dest_domainSize), d_expsArgs->dest_stageCols);
     #pragma unroll
     for (uint32_t i = 0; i < d_expsArgs->dest_dim; i++) {
         if (!d_expsArgs->dest_expr) {
             uint64_t col = d_expsArgs->dest_stagePos + i;
             uint64_t nRows = d_expsArgs->dest_domainSize;
             uint64_t nCols = d_expsArgs->dest_stageCols;
-            uint64_t idx = getBufferOffset(row + threadIdx.x, col, nRows, nCols);
+            uint64_t idx = getBufferOffset(row + threadIdx.x, col, nRows, nCols, lyt);
             d_expsArgs->dest_gpu[idx] = destVals[i * blockDim.x + threadIdx.x];
         } else {
             d_expsArgs->dest_gpu[(row + threadIdx.x) * d_expsArgs->dest_dim + i] = destVals[i * blockDim.x + threadIdx.x];
@@ -491,26 +590,31 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         int64_t o = d_expsArgs->nextStridesExps[openingPointIndex];
         uint64_t l = (r + o) % d_expsArgs->domainSize;
         uint64_t nCols = d_deviceArgs->mapSectionsN[0];
+        Goldilocks::Element *slot = &destVals[k * FIELD_EXTENSION * blockDim.x];
         if (d_destParams[k].op == opType::const_)
         {
-            uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols);
-            destVals[threadIdx.x] = d_params->pConstPolsAddress[pos];
+            // Const stored fixedLayout() (ColMajor) -- match the const-tree build.
+            uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, fixedLayout());
+            slot[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
         else
         {
+            // Committed section read: match its storage layout (resolveLayout keyed on the AIR's
+            // small-domain nBits = log2(N) and the section's column count).
             uint64_t offset = d_expsArgs->mapOffsetsExps[d_destParams[k].stage];
             uint64_t nCols = d_deviceArgs->mapSectionsN[d_destParams[k].stage];
+            Layout lyt = resolveLayout(63 - __clzll(d_deviceArgs->N), nCols);
             if (d_destParams[k].stage == 1)
             {
-                uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols); 
-                destVals[threadIdx.x] = d_params->trace[pos];
+                uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols, lyt);
+                slot[threadIdx.x] = d_params->trace[pos];
             }
             else
             {
                 for (uint64_t d = 0; d < d_destParams[k].dim; ++d)
                 {
-                    uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols);
-                    destVals[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + pos];
+                    uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols, lyt);
+                    slot[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + pos];
                 }
             }
         }
@@ -776,12 +880,12 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
             {
                 getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
             }
-            
+
         }
 
         if (d_expsArgs->dest_nParams == 2)
         {
-
+            
             multiplyPolynomials__(d_expsArgs, d_destParams, d_deviceArgs, (gl64_t*) destVals, i);
         } else {
             storePolynomial__(d_expsArgs, destVals, i);

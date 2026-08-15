@@ -1,26 +1,25 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::RwLock,
-};
+use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
+use crate::{plan_stream_layout, StreamClass, StreamLayout};
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
 use std::fs;
-use fields::{new_transcript, PrimeField64};
+use proofman_fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_unified_buffer_gpu_c,
-    get_unified_buffer_gpu_size_c,
+    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
+    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -32,6 +31,10 @@ pub struct Values<F> {
 impl<F: PrimeField64> Values<F> {
     pub fn new(n_values: usize) -> Self {
         Self { values: RwLock::new(vec![F::ZERO; n_values]) }
+    }
+
+    pub fn reset(&self) {
+        self.values.write().unwrap().fill(F::ZERO);
     }
 }
 
@@ -54,6 +57,9 @@ pub type AirIdMap = HashMap<usize, (bool, InstanceMap)>;
 pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
+
+/// GPU memory (in MB) left unallocated for consumers outside our arena.
+const GPU_MEMORY_RESERVE_MB: u64 = 512;
 
 #[derive(Clone)]
 pub struct ProofOptions {
@@ -163,6 +169,9 @@ impl ProofOptions {
 #[derive(Clone)]
 pub struct ProofmanOptions {
     pub max_number_streams: usize,
+    /// Upper bound on per-GPU recursive (aggregation) streams. The actual count is
+    /// also memory-bounded; this caps it. Defaults to 10 (the prior hardcoded cap).
+    pub max_number_recursive_streams: usize,
     pub number_threads_pools_witness: usize,
     pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
@@ -172,12 +181,23 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
+    /// Airs whose const *tree* is kept GPU-resident, for each of their Basic, Compressor
+    /// (when they have one) and Recursive1 circuits: `const_tree_size` VRAM each, against a
+    /// per-proof load from disk. Airgroup 0's Recursive2 is always preloaded and must not be
+    /// listed.
+    pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
+    /// Tables: airs proved at most once, so their const pols need not survive the proof and
+    /// the layout can alias them onto the const tree's node area, saving `N * nConstants` per
+    /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
+    /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
+    pub table_airs_gpu: Vec<(usize, usize)>,
 }
 
 impl Default for ProofmanOptions {
     fn default() -> Self {
         Self {
             max_number_streams: 20,
+            max_number_recursive_streams: 10,
             number_threads_pools_witness: 4,
             max_witness_stored: 10,
             are_threads_per_witness_set: false,
@@ -187,6 +207,8 @@ impl Default for ProofmanOptions {
             aggregation: true,
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
+            preloaded_const_tree_gpu: Vec::new(),
+            table_airs_gpu: Vec::new(),
         }
     }
 }
@@ -198,6 +220,10 @@ impl ProofmanOptions {
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
         self.max_number_streams = max_number_streams;
+    }
+
+    pub fn with_max_number_recursive_streams(&mut self, max_number_recursive_streams: usize) {
+        self.max_number_recursive_streams = max_number_recursive_streams;
     }
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
@@ -233,6 +259,14 @@ impl ProofmanOptions {
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
     }
+
+    pub fn preloaded_const_tree_gpu(&mut self, preloaded_const_tree_gpu: Vec<(usize, usize)>) {
+        self.preloaded_const_tree_gpu = preloaded_const_tree_gpu;
+    }
+
+    pub fn table_airs_gpu(&mut self, table_airs_gpu: Vec<(usize, usize)>) {
+        self.table_airs_gpu = table_airs_gpu;
+    }
 }
 
 #[allow(dead_code)]
@@ -245,6 +279,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub global_info: GlobalInfo,
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
+    pub compressor_weights: HashMap<(usize, usize), u64>,
     pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
@@ -254,6 +289,11 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
+    /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
+    /// this is what makes stream eligibility visible to the Rust-side schedulers.
+    pub basic_stream_sizes: Vec<usize>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -284,6 +324,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let n_challenges = global_info.n_challenges.iter().sum::<usize>();
 
         let weights = HashMap::new();
+        let compressor_weights = HashMap::new();
 
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
@@ -300,12 +341,15 @@ impl<F: PrimeField64> ProofCtx<F> {
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
+            compressor_weights,
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            basic_stream_sizes: Vec::new(),
         })
     }
 
@@ -445,23 +489,37 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    /// Estimated prover cost of a single proof of this setup
+    fn setup_weight(setup: &Setup<F>) -> u64 {
+        let mut total_cols = setup
+            .stark_info
+            .map_sections_n
+            .iter()
+            .filter(|(key, _)| *key != "const")
+            .map(|(_, value)| *value)
+            .sum::<u64>();
+        total_cols += 3; // FRI polinomial
+        let n_openings = setup.stark_info.opening_points.len() as u64;
+        // let n_ops_quotient = setup.n_operations_quotient;
+        // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+        (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext))
+    }
+
+    /// Cost of the basic proof of every air, plus the compressor proof it triggers if it has one.
+    /// Both are needed to balance instances: a compressor proof runs on the owner of its basic
+    /// proof, and its cost varies ~2x between airs in the current zisk proving key.
+    pub fn set_weights(&mut self, sctx: &SetupCtx<F>, setups_vadcop: &SetupsVadcop<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                let mut total_cols = setup
-                    .stark_info
-                    .map_sections_n
-                    .iter()
-                    .filter(|(key, _)| *key != "const")
-                    .map(|(_, value)| *value)
-                    .sum::<u64>();
-                total_cols += 3; // FRI polinomial
-                let n_openings = setup.stark_info.opening_points.len() as u64;
-                // let n_ops_quotient = setup.n_operations_quotient;
-                let weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
-                // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
-                self.weights.insert((airgroup_id, air_id), weight);
+                self.weights.insert((airgroup_id, air_id), Self::setup_weight(setup));
+
+                if self.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    if let Some(sctx_compressor) = setups_vadcop.sctx_compressor.as_ref() {
+                        let compressor_setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                        self.compressor_weights.insert((airgroup_id, air_id), Self::setup_weight(compressor_setup));
+                    }
+                }
             }
         }
         Ok(())
@@ -469,6 +527,11 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
+    }
+
+    /// 0 if the air has no compressor, or if the compressor setups are not loaded (no aggregation)
+    pub fn get_compressor_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        self.compressor_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
     }
 
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
@@ -520,9 +583,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+        dctx.instances_calculated[global_idx]
+            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+            .is_ok()
     }
 
     pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
@@ -629,14 +694,15 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        let has_compressor = self.global_info.get_air_has_compressor(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight, has_compressor)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -653,24 +719,13 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
-        let compressor_airs: HashSet<(usize, usize)> = self
-            .global_info
-            .airs
-            .iter()
-            .enumerate()
-            .flat_map(|(ag_id, airs)| {
-                airs.iter()
-                    .enumerate()
-                    .filter(|(_, air)| air.has_compressor.unwrap_or(false))
-                    .map(move |(a_id, _)| (ag_id, a_id))
-            })
-            .collect();
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(&compressor_airs)
+        dctx.assign_instances()
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
@@ -903,6 +958,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         gpu: bool,
         max_number_streams_gpu: usize,
+        max_number_recursive_streams_gpu: usize,
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
@@ -916,6 +972,12 @@ impl<F: PrimeField64> ProofCtx<F> {
             true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
             false => 0.0,
         };
+
+        if gpu {
+            let reserve = (GPU_MEMORY_RESERVE_MB * 1024 * 1024) as f64;
+            free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
+            tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
+        }
 
         self.mpi_ctx.barrier();
 
@@ -947,57 +1009,74 @@ impl<F: PrimeField64> ProofCtx<F> {
             }
         }
 
-        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
-        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+        // Wrapping here would carve streams out of a budget the card does not have, and only fail
+        // later inside cudaMalloc.
+        let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
+            .checked_sub(total_const_area + total_const_area_aggregation)
+            .ok_or_else(|| {
+                ProofmanError::InvalidConfiguration(format!(
+                    "Fixed polynomials need {} but only {} is free on the GPU",
+                    format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
+                    format_bytes(free_memory_gpu),
+                ))
+            })?;
 
-        let n_streams_per_gpu = match gpu {
-            true => {
-                let max_number_proofs_per_gpu =
-                    max_number_streams_gpu.min(max_size_buffer as usize / max_prover_buffer_size);
-                if max_number_proofs_per_gpu < 1 {
-                    return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
-                }
-                max_number_proofs_per_gpu
-            }
-            false => 1,
-        };
+        // Non-recursive streams also take compressor/vadcop_final launches, which floors their classes.
+        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size;
+        let max_prover_recursive2_buffer_size =
+            if aggregation { setups_vadcop.max_prover_recursive2_buffer_size } else { 0 };
 
-        let max_prover_buffer_size =
-            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
-
-        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
-
-        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
-            "Max prover recursive buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+            "Max prover buffer size: {}",
+            format_bytes(sctx.max_prover_buffer_size.max(recursive_capable_size) as f64 * 8.0)
         );
+        tracing::info!("Max prover recursive buffer size: {}", format_bytes(recursive_capable_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive1/recursive2 buffer size: {}",
             format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
         );
 
-        let mut gpu_available_memory = match gpu {
-            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
-            false => 0,
+        let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
+
+        let layout = match gpu {
+            true => plan_stream_layout(
+                max_size_buffer as usize,
+                &basic_sizes,
+                recursive_capable_size,
+                max_prover_recursive2_buffer_size,
+                max_number_streams_gpu,
+                if aggregation { max_number_recursive_streams_gpu } else { 0 },
+            )
+            .ok_or_else(|| ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()))?,
+            // No device streams to carve: one nominal stream, sized for the largest proof.
+            false => StreamLayout {
+                basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
+                recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                unused: 0,
+            },
         };
-        let mut n_recursive_streams_per_gpu = 0;
-        if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < 10 {
-                gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
-                if gpu_available_memory < 0 {
-                    break;
-                }
-                n_recursive_streams_per_gpu += 1;
-            }
-        }
+
+        let aux_trace_sizes: Vec<u64> = layout.basic_stream_sizes().iter().map(|&s| s as u64).collect();
+        // Retained so the witness admission can tell which airs are confined to a subset of streams.
+        self.basic_stream_sizes = layout.basic_stream_sizes();
+        let n_streams_per_gpu = layout.n_basic_streams();
+        let n_recursive_streams_per_gpu = layout.recursive.count;
 
         if gpu {
+            let classes = layout
+                .basic
+                .iter()
+                .map(|c| format!("{} x {}", c.count, format_bytes(c.size as f64 * 8.0)))
+                .collect::<Vec<_>>()
+                .join(" + ");
             tracing::info!(
-                "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+                "Using {} streams per GPU for basic proofs ({}) and {} streams per GPU for recursive proofs. \
+                 Using {} for fixed pols, {} unused",
                 n_streams_per_gpu,
+                classes,
                 n_recursive_streams_per_gpu,
-                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
+                format_bytes(layout.unused as f64 * 8.0),
             );
         }
 
@@ -1008,18 +1087,16 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
-            n_streams_per_gpu as u64,
+            &aux_trace_sizes,
             n_recursive_streams_per_gpu as u64,
-            max_prover_buffer_size,
-            max_prover_recursive2_buffer_size,
+            max_prover_recursive2_buffer_size as u64,
             max_pinned_proof_size,
             self.global_info.transcript_arity as u64,
         );
 
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
-            max_prover_buffer_size,
-            max_prover_recursive2_buffer_size,
+            max_prover_recursive2_buffer_size as u64,
             total_const_area,
             total_const_area_aggregation,
         );
@@ -1045,10 +1122,80 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn get_gpu_buffer(&self) -> (usize, u64) {
+    /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via
+    /// `acquire_first_gpu_buffer`, does not touch the current device.
+    ///
+    /// When streaming-commit slots are enabled they occupy the top of the
+    /// buffer and host commits WHILE it is borrowed, so the borrower's usable
+    /// region is capped at the slot floor (allocation-time enforcement: the
+    /// borrower's planner sizes itself within what it is handed). No-op when
+    /// slots are disabled (floor = u64::MAX); the const-pols tail then stays
+    /// reachable and the post-hoc reload check keeps covering it.
+    pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
         let device_buffers_ptr = self.d_buffers.get_ptr();
-        let gpu_buf_ptr = get_unified_buffer_gpu_c(device_buffers_ptr) as usize;
+        let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
         let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
-        (gpu_buf_ptr, gpu_buf_size)
+        let usable = gpu_buf_size.min(get_stream_commit_floor_c(device_buffers_ptr));
+        (gpu_buf_ptr, usable)
+    }
+
+    /// Report how many bytes a borrower of the first GPU's unified buffer actually used.
+    ///
+    /// The buffer's tail holds the once-uploaded fixed pols of every aggregation
+    /// setup (compressor/recursive1/recursive2/vadcop_final). If the borrower's
+    /// usage reached that region they are now garbage, so this raises
+    /// `reload_fixed_pols_gpu`; the proving flow consumes it right after
+    /// `wcm.execute()` and re-uploads them before any proof of the block.
+    /// Call after the borrower finished writing, before or at buffer release.
+    /// No-op on CPU.
+    pub fn report_first_gpu_buffer_usage(&self, used_bytes: u64) {
+        if !self.gpu {
+            return;
+        }
+        let consts_offset = get_const_pols_aggregation_offset_c(self.d_buffers.get_ptr());
+        let buffer_size = get_unified_buffer_gpu_size_c(self.d_buffers.get_ptr());
+        const GB: f64 = (1u64 << 30) as f64;
+        tracing::info!(
+            "GPU mops used {:.2} GB of {:.2} GB unified buffer (const pols at {:.2} GB)",
+            used_bytes as f64 / GB,
+            buffer_size as f64 / GB,
+            consts_offset as f64 / GB,
+        );
+
+        // Streaming-commit slots sit below the const-pols region (u64::MAX when
+        // disabled): usage reaching the slot floor means commits running during
+        // the borrow window may have read clobbered data. Corrupted contribution
+        // roots cannot be repaired post-hoc, so this is a hard error -- the real
+        // protection is the allocation-time capacity handed to the borrower.
+        // `used_bytes` is a count, so the borrower occupies [0, used_bytes) and
+        // the slots start AT `slots_floor`: using exactly the capacity it was
+        // handed is legal, overlapping requires strictly more.
+        let slots_floor = get_stream_commit_floor_c(self.d_buffers.get_ptr());
+        if used_bytes > slots_floor {
+            panic!(
+                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
+                 streaming-commit slots at offset {slots_floor}; slot commits issued during \
+                 the borrow window are untrustworthy"
+            );
+        }
+
+        if used_bytes >= consts_offset {
+            tracing::warn!(
+                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
+                 aggregation const-pols region at offset {consts_offset}; scheduling \
+                 fixed-pols re-upload"
+            );
+            self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
+    /// points to. Not always 0 (NUMA can reorder). 0 when GPU mode is off.
+    pub fn first_gpu_id(&self) -> u32 {
+        if self.gpu {
+            get_first_gpu_id_c(self.d_buffers.get_ptr())
+        } else {
+            0
+        }
     }
 }

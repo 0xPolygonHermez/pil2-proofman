@@ -3,13 +3,13 @@ use std::sync::{
     Arc, Mutex, RwLock,
 };
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
     prelude::*,
 };
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
 use crate::AirComponent;

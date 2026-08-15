@@ -10,13 +10,13 @@ use proofman_common::GenericTrace;
 use proofman_common::PackedInfoConst;
 pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::fmt;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "61f34e7ad927950b2db58f351b8c381495da8ed13b97da220bb17edb1e2e0cde";
+pub const PILOUT_HASH: &str = "059cbb8670da626606653354f4c617b715443b6cde710589361fdd0b495c72c8";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -161,4 +161,13 @@ values!(DirectUpdateSumGlobalAirGroupValues<F> {
 });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "DirectUpdateProdLocal"),
+    (0, 1, "DirectUpdateProdGlobal"),
+    (1, 0, "DirectUpdateSumLocal"),
+    (1, 1, "DirectUpdateSumGlobal"),
 ];

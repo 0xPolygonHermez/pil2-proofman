@@ -8,14 +8,22 @@ template Main() {
 
 {{ stark_signals }}
 {{ stark_assign }}
+    // Incoming publics layout: [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics].
     signal rootC[4];
     for (var i = 0; i < 4; i++) {
         rootC[i] <== publics[i];
     }
 
+    // is_vadcop_final_proof rides at slot 4 (verified as a public input, but excluded
+    // from the hash — it is a fold-layer bookkeeping flag, not part of the on-chain
+    // committed publics).
+    signal is_vadcop_final_proof;
+    is_vadcop_final_proof <== publics[4];
+    is_vadcop_final_proof * (1 - is_vadcop_final_proof) === 0;
+
     signal publicsProof[{{ n_publics_proof }}];
     for (var i = 0; i < {{ n_publics_proof }}; i++) {
-        publicsProof[i] <== publics[i + 4];
+        publicsProof[i] <== publics[i + 5];
     }
 
     publicsHash <== getSha256Inputs()(publicsProof, rootC);

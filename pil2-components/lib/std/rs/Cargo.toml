@@ -1,9 +1,11 @@
 [package]
-name = "pil-std-lib"
+name = "pil2-std-lib"
+description = "PIL2 standard library: range checks, lookups, and sum/product arguments for proofman"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
@@ -12,11 +14,9 @@ proofman-common.workspace = true
 proofman-hints.workspace = true
 proofman-util.workspace = true
 tracing.workspace = true
-num-bigint.workspace = true
-num-traits.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true
 rayon.workspace = true
-witness.workspace = true
+proofman-witness.workspace = true
 colored.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true

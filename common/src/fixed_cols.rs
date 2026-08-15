@@ -1,6 +1,6 @@
 use std::{os::raw::c_void, path::PathBuf};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, calculate_const_tree_bn128_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
     write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c, pack_const_pols_c, tile_const_pols_c,
@@ -225,6 +225,13 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
 
 pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) {
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
+    let const_pols_size = setup.const_pols_size;
+    load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
+}
+
+pub fn load_const_pols_recursivef<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) {
+    let const_pols_path =
+        if setup.gpu { setup.const_pols_path.clone() } else { setup.setup_path.display().to_string() + ".const" };
     let const_pols_size = setup.const_pols_size;
     load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }

@@ -2,10 +2,10 @@ use std::sync::{Arc, RwLock};
 
 use rustc_hash::FxHashMap;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
-use witness::WitnessComponent;
+use proofman_witness::WitnessComponent;
 use proofman_common::{
     skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
 };

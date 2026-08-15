@@ -26,6 +26,14 @@ function get_L1(): expr {
     return air.__L1__;
 }
 
+// Shared row index column, i.e. [0, 1, ..., N-1]. Declared only once per air.
+function get_ROW_INDEX(): expr {
+    if (!defined(air.__ROW_INDEX__)) {
+        col fixed air.__ROW_INDEX__ = [0..(N-1)];
+    }
+    return air.__ROW_INDEX__;
+}
+
 /**
  * Enforces that a selector is binary, i.e. sel ∈ {0, 1}.
  *

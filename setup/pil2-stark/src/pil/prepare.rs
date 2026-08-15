@@ -1,4 +1,4 @@
-use pilout::pilout as pb;
+use pil2_pilout::pilout as pb;
 
 use crate::pil::constraint_poly::{generate_constraint_polynomial, Boundary, ConstraintPolyResult};
 use crate::expr::expression::Expression;

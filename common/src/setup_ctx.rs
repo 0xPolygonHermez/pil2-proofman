@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
 
+use crate::format_bytes;
 use crate::load_const_pols;
 use crate::{GlobalInfo, GlobalInfoAir};
 use crate::ProofmanError;
@@ -11,23 +12,33 @@ use crate::ProofmanResult;
 use crate::Setup;
 use crate::ProofType;
 
-pub struct PreLoadedConst {
+pub struct PreLoadedConstTree {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub proof_type: ProofType,
 }
 
-impl PreLoadedConst {
+impl PreLoadedConstTree {
     pub fn new(airgroup_id: usize, air_id: usize, proof_type: ProofType) -> Self {
-        PreLoadedConst { airgroup_id, air_id, proof_type }
+        PreLoadedConstTree { airgroup_id, air_id, proof_type }
     }
+}
+
+/// The slot an air's packed const pols occupy in the GPU const buffer. Airs with identical
+/// fixed columns -- same verkey, i.e. same const-tree root -- share one slot; `owner` is the
+/// first of the group and the only one that uploads. `load_tree` is a group property, so the
+/// slot layout does not depend on which member is asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedGroup {
+    pub owner: (usize, usize),
+    pub load_tree: bool,
 }
 
 pub fn is_preload_fixed(
     airgroup_id: usize,
     air_id: usize,
     proof_type: &ProofType,
-    preloaded_const: &[PreLoadedConst],
+    preloaded_const: &[PreLoadedConstTree],
 ) -> bool {
     preloaded_const
         .iter()
@@ -54,6 +65,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
+    pub recurser_const_slot_size: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
@@ -64,16 +76,18 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
-        preloaded_const: &[PreLoadedConst],
+        preloaded_const: &[PreLoadedConstTree],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         if aggregation {
+            // No `table_airs` here: the const-pols alias needs calculateFixedExtended, which
+            // stark_info.cpp only ever sets for non-recursive setups.
             let sctx_compressor =
-                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preloaded_const, gpu)?;
+                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preloaded_const, &[], gpu)?;
             let sctx_recursive1 =
-                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preloaded_const, gpu)?;
+                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preloaded_const, &[], gpu)?;
             let sctx_recursive2 =
-                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preloaded_const, gpu)?;
+                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preloaded_const, &[], gpu)?;
             let preallocate_final = is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
             let setup_vadcop_final = Setup::new(
                 &global_info.get_setup_path("vadcop_final"),
@@ -83,6 +97,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 &ProofType::VadcopFinal,
                 verify_constraints,
                 preallocate_final,
+                false,
                 gpu,
                 None,
             )?;
@@ -95,14 +110,25 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 &ProofType::VadcopFinalCompressed,
                 verify_constraints,
                 false,
+                false,
                 gpu,
                 None,
             )?;
+
+            let recurser_const_slot_size = if gpu {
+                let n_constants = setup_vadcop_final.stark_info.n_constants as usize;
+                let n_rows = 1usize << setup_vadcop_final.stark_info.stark_struct.n_bits;
+                1 + n_constants + n_rows * n_constants
+            } else {
+                0
+            };
+
             let total_const_pols_size = sctx_compressor.total_const_pols_size
                 + sctx_recursive1.total_const_pols_size
                 + sctx_recursive2.total_const_pols_size
                 + setup_vadcop_final.const_pols_size_packed
-                + setup_vadcop_final_compressed.const_pols_size_packed;
+                + setup_vadcop_final_compressed.const_pols_size_packed
+                + recurser_const_slot_size;
 
             let mut total_const_tree_size = sctx_compressor.total_const_tree_size
                 + sctx_recursive1.total_const_tree_size
@@ -153,6 +179,29 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize)
                 .max(setup_vadcop_final_compressed.prover_buffer_size as usize + vadcop_final_trace_size as usize);
 
+            // This floors every non-recursive GPU stream class, so which term dominates decides
+            // whether a regular class fits at all.
+            tracing::debug!(
+                "Recursive buffer requirement: compressor {}, recursive1 {}, recursive2 {}, vadcop_final {}, vadcop_final_compressed {}",
+                format_bytes(
+                    (sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size) as f64 * 8.0
+                ),
+                format_bytes(
+                    (sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size) as f64 * 8.0
+                ),
+                format_bytes(
+                    (sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size) as f64 * 8.0
+                ),
+                format_bytes(
+                    (setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize) as f64 * 8.0
+                ),
+                format_bytes(
+                    (setup_vadcop_final_compressed.prover_buffer_size as usize + vadcop_final_trace_size as usize)
+                        as f64
+                        * 8.0
+                ),
+            );
+
             let max_pinned_proof_size = sctx_compressor
                 .max_pinned_proof_size
                 .max(sctx_recursive1.max_pinned_proof_size)
@@ -201,6 +250,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_trace_size_compressor,
                 total_const_pols_size,
                 total_const_tree_size,
+                recurser_const_slot_size,
             })
         } else {
             Ok(SetupsVadcop {
@@ -211,6 +261,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 setup_vadcop_final_compressed: None,
                 total_const_pols_size: 0,
                 total_const_tree_size: 0,
+                recurser_const_slot_size: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_trace_size: 0,
@@ -245,6 +296,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_const_tree_size: usize,
     max_const_size: usize,
     max_prover_buffer_size: usize,
+    prover_buffer_sizes: Vec<((usize, usize), usize)>,
     max_prover_contributions_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
@@ -252,6 +304,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_trace_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
+    fixed_groups: HashMap<(usize, usize), FixedGroup>,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
     max_n_bits_ext: usize,
@@ -273,7 +326,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preloaded_const: &[PreLoadedConst],
+        preloaded_const: &[PreLoadedConstTree],
+        table_airs: &[(usize, usize)],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
@@ -295,6 +349,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_n_bits_ext = 0;
         let mut max_prover_contributions_size = 0;
         let mut max_prover_buffer_size = 0;
+        let mut prover_buffer_sizes: Vec<((usize, usize), usize)> = Vec::new();
         let mut max_prover_trace_size = 0;
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
@@ -302,11 +357,18 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_witness_size = 0;
         let mut max_trace_size = 0;
 
+        // Airs in the order load_device_const_pols walks them, and the slot each verkey maps
+        // to. `preallocate` is OR-ed over a group: members share one tree, so preloading it
+        // for one preloads it for all.
+        let mut sized_airs: Vec<(usize, usize)> = Vec::new();
+        let mut groups: HashMap<Vec<u64>, ((usize, usize), bool)> = HashMap::new();
+
         // Initialize Hashmap for each airgroup_id, air_id
 
         for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const);
+                let single_use = table_airs.contains(&(airgroup_id, air_id));
                 let setup_path = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
                 let setup = Setup::new(
                     &setup_path,
@@ -316,6 +378,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     setup_type,
                     verify_constraints,
                     preallocate,
+                    single_use,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
                 )?;
@@ -338,15 +401,17 @@ impl<F: PrimeField64> SetupRepository<F> {
                     if max_prover_buffer_size < setup.prover_buffer_size {
                         max_prover_buffer_size = setup.prover_buffer_size;
                     }
+                    prover_buffer_sizes.push(((airgroup_id, air_id), setup.prover_buffer_size as usize));
                     if max_prover_contributions_size < setup.contributions_size {
                         max_prover_contributions_size = setup.contributions_size;
                     }
                     max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
 
                     if setup.gpu {
-                        total_const_pols_size += setup.const_pols_size_packed;
-                        if preallocate {
-                            total_const_tree_size += setup.const_tree_size;
+                        sized_airs.push((airgroup_id, air_id));
+                        if !setup.verkey.is_empty() {
+                            let group = groups.entry(setup.get_vk()).or_insert(((airgroup_id, air_id), false));
+                            group.1 |= preallocate;
                         }
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
@@ -361,14 +426,54 @@ impl<F: PrimeField64> SetupRepository<F> {
             }
         }
 
+        // Second pass: `load_tree` is only settled once every member has been seen. Sizes one
+        // slot per group, in the same order the loader assigns offsets -- must not drift.
+        let mut fixed_groups: HashMap<(usize, usize), FixedGroup> = HashMap::new();
+        let mut sized_slots: HashSet<(usize, usize)> = HashSet::new();
+        let mut shared_airs = 0;
+        let mut saved = 0;
+        for air in sized_airs {
+            let setup = &setups[&air];
+            let group = match groups.get(&setup.get_vk()) {
+                Some(&(owner, load_tree)) => FixedGroup { owner, load_tree },
+                // Nothing to fingerprint with (no verkey): the air is its own group.
+                None => FixedGroup { owner: air, load_tree: setup.preallocate },
+            };
+            fixed_groups.insert(air, group);
+            if sized_slots.insert(group.owner) {
+                total_const_pols_size += setup.const_pols_size_packed;
+                if group.load_tree {
+                    total_const_tree_size += setup.const_tree_size;
+                }
+            } else {
+                shared_airs += 1;
+                saved += setup.const_pols_size_packed;
+                if group.load_tree {
+                    saved += setup.const_tree_size;
+                }
+            }
+        }
+        if shared_airs > 0 {
+            let proof_type: &str = (*setup_type).into();
+            tracing::info!(
+                "Sharing GPU const pols: {shared_airs} {proof_type} airs reuse another air's fixed columns, \
+                 saving {} MB",
+                saved * std::mem::size_of::<u64>() / (1024 * 1024)
+            );
+        }
+
+        prover_buffer_sizes.sort_by(|(ka, sa), (kb, sb)| sb.cmp(sa).then(ka.cmp(kb)));
+
         Ok(Self {
             setups,
+            fixed_groups,
             global_bin,
             global_info_file,
             max_const_tree_size,
             max_const_size,
             max_prover_contributions_size: max_prover_contributions_size as usize,
             max_prover_buffer_size: max_prover_buffer_size as usize,
+            prover_buffer_sizes,
             max_prover_trace_size,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
@@ -388,6 +493,8 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_const_size: usize,
     pub max_prover_contributions_size: usize,
     pub max_prover_buffer_size: usize,
+    /// Per-air prover buffer size, largest first. See `SetupRepository::prover_buffer_sizes`.
+    pub prover_buffer_sizes: Vec<((usize, usize), usize)>,
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_witness_size: usize,
@@ -403,14 +510,17 @@ impl<F: PrimeField64> SetupCtx<F> {
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preloaded_const: &[PreLoadedConst],
+        preloaded_const: &[PreLoadedConstTree],
+        table_airs: &[(usize, usize)],
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, gpu)?;
+        let setup_repository =
+            SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, table_airs, gpu)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
+        let prover_buffer_sizes = setup_repository.prover_buffer_sizes.clone();
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
@@ -424,6 +534,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_const_size,
             max_prover_contributions_size,
             max_prover_buffer_size,
+            prover_buffer_sizes,
             max_witness_size,
             max_trace_size,
             max_prover_trace_size,
@@ -431,7 +542,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_n_bits_ext,
             total_const_pols_size,
             total_const_tree_size,
-            setup_type: setup_type.clone(),
+            setup_type: *setup_type,
         })
     }
 
@@ -443,6 +554,11 @@ impl<F: PrimeField64> SetupCtx<F> {
                 airgroup_id, air_id
             ))),
         }
+    }
+
+    /// `None` for airs never uploaded to the GPU (CPU setups, compressor-less airs).
+    pub fn get_fixed_group(&self, airgroup_id: usize, air_id: usize) -> Option<FixedGroup> {
+        self.setup_repository.fixed_groups.get(&(airgroup_id, air_id)).copied()
     }
 
     pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<Vec<F>> {
