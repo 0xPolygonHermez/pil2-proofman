@@ -6,9 +6,9 @@ use proofman_common::{init_gpu_setup, MpiCtx, ProofCtx, ProofType, SetupCtx, Set
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
-use witness::{WitnessLibInitFn, WitnessManager};
+use proofman_witness::{WitnessLibInitFn, WitnessManager};
 
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -59,12 +59,13 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], self.gpu)?);
+        let sctx =
+            Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], self.gpu)?);
 
-        init_gpu_setup(sctx.max_n_bits_ext as u64, self.gpu)?;
+        init_gpu_setup(self.gpu)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?);
-        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1)?;
         pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
 
         let pctx = Arc::new(pctx);

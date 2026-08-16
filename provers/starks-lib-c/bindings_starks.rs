@@ -23,6 +23,12 @@ extern "C" {
         zkey_file: *const ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 
+    pub fn plonk_circuit_stats_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        n_constraints: *mut u64,
+        n_additions: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(
@@ -46,6 +52,7 @@ extern "C" {
         verify: bool,
         gpu: bool,
         preallocate: bool,
+        single_use: bool,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn set_hash_family(fam: u8);
@@ -53,7 +60,13 @@ extern "C" {
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn register_host_memory(ptr: *mut ::std::os::raw::c_void, size: u64) -> u32;
+
+    pub fn unregister_host_memory(ptr: *mut ::std::os::raw::c_void);
+
+    pub fn wait_trace_h2d_done(d_buffers: *mut ::std::os::raw::c_void, stream_id: u64);
+
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
@@ -83,7 +96,7 @@ extern "C" {
     );
     
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn calculate_words_per_row(
@@ -91,7 +104,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64, arity: u64);
+    pub fn init_gpu_setup(arity: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,
@@ -431,8 +444,30 @@ extern "C" {
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
         force_recursive_stream: bool,
+        recurser_id: *mut ::std::os::raw::c_char,
+        streamId_: u64,
     ) -> u64;
-    
+
+    pub fn reserve_best_stream_nonblock(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        force_recursive: bool,
+    ) -> u32;
+
+    pub fn reserve_stream_if_free(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        streamId: u32,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        force_recursive: bool,
+    ) -> u32;
+
+    pub fn release_stream_reservation(d_buffers_: *mut ::std::os::raw::c_void, streamId: u32);
+
     pub fn calculate_const_tree_fixed(
         pSetupCtx_: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -589,7 +624,16 @@ extern "C" {
         d_commit_buffers: *mut ::std::os::raw::c_void,
         packed_trace: bool,
     );
-    
+
+    pub fn register_instruction_table(
+        d_commit_buffers: *mut ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        table: *const u64,
+        num_entries: u64,
+        words_per_entry: u64,
+    );
+
     pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
@@ -605,6 +649,7 @@ extern "C" {
         constTreeSize: u64,
         proofType: *mut ::std::os::raw::c_char,
         onlyFirstGPU: bool,
+        alreadyLoaded: bool,
     );
     
     pub fn load_device_setup(
@@ -621,7 +666,7 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void,
         nStreams: u64,
         nStreamsRecursive: u64,
-        maxSizeProverBuffer: u64,
+        auxTraceSizes: *const u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
         merkle_tree_arity: u64,
@@ -629,7 +674,6 @@ extern "C" {
 
     pub fn alloc_device_large_buffers(
         d_buffers_: *mut ::std::os::raw::c_void,
-        auxTraceArea: u64,
         auxTraceRecursiveArea: u64,
         totalConstPols: u64,
         totalConstPolsAggregation: u64,
@@ -657,6 +701,32 @@ extern "C" {
     pub fn acquire_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
     pub fn release_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
     pub fn is_first_gpu_buffer_borrowed(d_buffers: *mut ::std::os::raw::c_void) -> u32;
+    pub fn get_first_gpu_id(d_buffers: *mut ::std::os::raw::c_void) -> u32;
+    pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+
+    pub fn get_const_pols_aggregation_offset(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64;
+    pub fn configure_stream_commit_slots(
+        d_buffers: *mut ::std::os::raw::c_void,
+        n_slots: u64,
+        slot_bytes: u64,
+    );
+    pub fn commit_witness_streaming(
+        d_buffers: *mut ::std::os::raw::c_void,
+        slot_idx: u64,
+        airgroup_id: u64,
+        air_id: u64,
+        packed: *mut ::std::os::raw::c_void,
+        n_bits: u64,
+        n_bits_ext: u64,
+        n_cols: u64,
+        words_per_row: u64,
+        col_widths: *mut ::std::os::raw::c_void,
+        root: *mut ::std::os::raw::c_void,
+    ) -> i64;
+    pub fn stream_commit_pause();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

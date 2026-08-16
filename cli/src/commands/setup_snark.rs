@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
 
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 use proofman::check_setup_snark;
 use proofman_common::initialize_logger;

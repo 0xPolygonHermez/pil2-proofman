@@ -4,10 +4,32 @@ pragma custom_templates;
 {% for vf in verifier_filenames %}include "{{ vf }}";
 {% endfor %}
 template FinalCompressed() {
-{{ stark_signals }}
-{{ stark_assign }}
-}
+{% if has_publics %}    // The incoming vadcop_final proof commits the FULL public vector
+    // `[is_vadcop_final_proof(1) | vk(4) | inputs(64)]` (n_publics), flag at index 0.
+    // It MUST be a single public input array so the circom witness fill (which
+    // consumes `public [...]` signals first, in order) reads it from the zkin in
+    // the SAME `[flag | real publics]` order the proof packed it — exactly as
+    // `recursivef` feeds its `publics[n]`. Splitting the flag into a separate
+    // private signal shifts the whole window by one (flag lands in publics[0],
+    // is_vadcop_final_proof reads the trailing 0) and breaks the transcript.
+    signal input publics[{{ n_publics }}];
 
-{% if has_publics %}component main {public [publics]} = FinalCompressed();
-{% else %}component main = FinalCompressed();
-{% endif %}
+    // The compressed proof's OWN committed publics are the flag-free
+    // `[vk | inputs]` (n_publics_real): the recursion-layer flag at index 0 is
+    // verified by `sV` but stripped from this proof's public interface. A circom
+    // `output` is implicitly public, so `publics_stripped` — not the 69-wide
+    // input — is what this proof commits.
+    signal output publics_stripped[{{ n_publics_real }}];
+{% endif %}{{ stark_signals }}
+{{ stark_assign }}
+{% if has_publics %}    // Verify against the full public vector (flag included), verbatim.
+    for (var i = 0; i < {{ n_publics }}; i++) {
+        sV.publics[i] <== publics[i];
+    }
+    // Expose only the flag-free publics (drop is_vadcop_final_proof at index 0).
+    for (var i = 0; i < {{ n_publics_real }}; i++) {
+        publics_stripped[i] <== publics[i + 1];
+    }
+{% endif %}}
+
+component main = FinalCompressed();

@@ -100,7 +100,7 @@ static void LINEAR_HASH_W_TILES_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        Poseidon2GoldilocksGPU<W>::linearHash((uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+        Poseidon2GoldilocksGPU<W>::linearHash((uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -165,11 +165,11 @@ static void MERKLETREE_W_AR_TILES_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    Poseidon2GoldilocksGPU<W>::merkletree(ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+    Poseidon2GoldilocksGPU<W>::merkletree(ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        Poseidon2GoldilocksGPU<W>::merkletree(ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+        Poseidon2GoldilocksGPU<W>::merkletree(ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -296,7 +296,7 @@ BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 16)
     ->UseRealTime();
 
 // ---------------------------------------------------------------------------
-// linearHash — W in {12, 16}, both Tiles and RowMajor layouts
+// linearHash — W in {12, 16}, both ColMajor and RowMajor layouts
 // ---------------------------------------------------------------------------
 
 REG_NCOLS(LINEAR_HASH_W_TILES_GPU_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_BENCH")

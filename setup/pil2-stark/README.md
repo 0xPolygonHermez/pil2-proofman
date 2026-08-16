@@ -157,7 +157,7 @@ library (`compressor`, `recursive1`, `recursive2`, `vadcop_final`,
    `*.verkey.json` from the proving key.
 2. Regenerates the verifier circom via `pil2circom` and the wrapper circom
    via `gen_circom`.
-3. Runs `circom <name>.circom --c -O1 --prime goldilocks` to emit C++.
+3. Runs `circom <name>.circom --c -O2 --prime goldilocks` to emit C++.
 4. Compiles the C++ into a shared library via the same `make witness` recipe
    the original setup uses.
 

@@ -1,4 +1,4 @@
-use fields::{ExtensionField, PrimeField64, SquaringFp5};
+use proofman_fields::{ExtensionField, PrimeField64, SquaringFp5};
 
 /// Trait for elliptic curves
 pub trait EllipticCurve<F: PrimeField64, K: ExtensionField<F> + SquaringFp5<F>>: Clone {

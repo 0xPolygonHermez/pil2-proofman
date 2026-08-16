@@ -83,6 +83,12 @@ namespace Fflonk {
 
         void setZkey(BinFileUtils::BinFile *fdZkey);
 
+        // Working-memory bytes required when constructed with reservedMemory
+        // (batch inverses + non-precomputed buffers). Valid after setZkey().
+        uint64_t computeUnifiedBufferSize() {
+            return (lengthBatchInversesBuffer + lengthNonPrecomputedBigBuffer) * sizeof(FrElement);
+        }
+
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 

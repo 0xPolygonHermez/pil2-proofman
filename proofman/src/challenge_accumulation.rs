@@ -1,6 +1,6 @@
-use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
+use proofman_curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
+use proofman_fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 
 const W: usize = 16;
 use std::ops::Add;
@@ -10,9 +10,17 @@ use std::sync::Mutex;
 use crate::ContributionsInfo;
 use rayon::prelude::*;
 
-fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
-    let my_instances = pctx.dctx_get_process_instances();
+/// Debug dump of per-instance root contributions plus the shared publics and proof
+/// values. The caller gates this on the `print` flag of `calculate_internal_contributions`
+/// (driven by the `DEBUG_CHALLENGES` switch in proofman.rs), so this function itself is an
+/// unconditional dump. Runs on CPU and GPU (roots/values are host-side by this point).
+fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+    let fmt = |v: &[F]| v.iter().map(|x| x.as_canonical_u64().to_string()).collect::<Vec<_>>().join(", ");
 
+    tracing::info!("··· Publics: [{}]", fmt(&pctx.get_publics()));
+    tracing::info!("··· Proof values: [{}]", fmt(&pctx.get_proof_values()));
+
+    let my_instances = pctx.dctx_get_process_instances();
     for instance_id in my_instances.iter() {
         let root_contribution = roots_contributions[*instance_id];
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id).unwrap();
@@ -33,12 +41,16 @@ pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
     roots_contributions: &[[F; 4]],
     values_contributions: &[Mutex<Vec<F>>],
+    print: bool,
 ) -> Vec<u64>
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
     timer_start_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
+    if print {
+        print_challenges(pctx, roots_contributions);
+    }
     let my_instances = pctx.dctx_get_process_instances();
 
     let contributions_size = match pctx.global_info.curve {

@@ -7,8 +7,8 @@
 //! All functions operate on `u64` canonical representatives of GF(p) elements
 //! and return `u64` canonical results ready to format into circom code.
 
-use fields::{Field, PrimeField64};
-use fields::Goldilocks;
+use proofman_fields::{Field, PrimeField64};
+use proofman_fields::Goldilocks;
 
 /// The coset shift used by the STARK: `F.shift = 7`.
 pub const GL_SHIFT: u64 = Goldilocks::SHIFT;

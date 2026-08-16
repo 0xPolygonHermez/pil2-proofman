@@ -1,14 +1,16 @@
 [package]
 name = "proofman-verifier"
+description = "STARK proof verifier with Poseidon transcripts for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-fields.workspace = true
+proofman-fields.workspace = true
 serde = { version = "1.0.130", default-features = false, features = ["alloc", "derive"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 bincode = { workspace = true, optional = true }
@@ -18,5 +20,5 @@ rayon = { workspace = true, optional = true }
 [features]
 default = ["std", "verify"]
 std = ["dep:tracing", "dep:bincode", "serde/std"]
-verify = ["fields/verify"]
+verify = ["proofman-fields/verify"]
 parallel = ["std", "dep:rayon"]

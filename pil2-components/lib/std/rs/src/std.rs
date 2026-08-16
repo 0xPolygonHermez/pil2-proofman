@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 
 use proofman_common::{ProofCtx, ProofmanResult, SetupCtx, StdMode};
 

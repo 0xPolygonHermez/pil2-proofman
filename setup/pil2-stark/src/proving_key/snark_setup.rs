@@ -6,16 +6,16 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c};
+use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
-use stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
+use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
 use crate::proving_key::{bctree, recursive::compile_pil};
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
-use pilout::pilout_proxy::PilOutProxy;
-use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use stark_recurser::plonk2pil;
+use pil2_pilout::pilout_proxy::PilOutProxy;
+use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil;
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
 /// Configuration for the final SNARK setup.
@@ -121,7 +121,7 @@ pub fn gen_snark_setup(
     tracing::info!("Compiling recursivef...");
     let compile_rf = std::process::Command::new(config.circom_exec)
         .args([
-            "--O1",
+            "--O2",
             "--r1cs",
             "--prime",
             "goldilocks",
@@ -164,6 +164,7 @@ pub fn gen_snark_setup(
         airgroup_name: Some("Recursivef".to_string()),
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
+        merge_copies: true,
     };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
@@ -214,7 +215,10 @@ pub fn gen_snark_setup(
         blowup_factor: Some(6),
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
-        last_level_verification: Some(0),
+        // Diverges from JS (which never implemented lastLevelVerification for
+        // BN128): drop 2 Poseidon-BN128 levels per query per tree in the final
+        // circuit, checked against a 16-node (arity^2) published last level.
+        last_level_verification: Some(2),
         pow_bits: Some(19),
         ..Default::default()
     };
@@ -224,29 +228,32 @@ pub fn gen_snark_setup(
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
-    let field_size = crate::types::security::goldilocks_cube_field_size();
+    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
     let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
-    let folding_factors_rf = crate::output::stark_info::compute_folding_factors(&stark_struct_rf);
-    let fri_params_rf = crate::types::security::FRISecurityParams {
+    let log_folding_factors_rf = crate::output::stark_info::compute_log_folding_factors(&stark_struct_rf);
+    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
+    let fri_config_rf = crate::types::security::pcs::FriConfig {
         field_size,
-        dimension: 1u64 << stark_struct_rf.n_bits,
+        trace_length: 1u32 << stark_struct_rf.n_bits,
         rate: 1.0 / (1u64 << (stark_struct_rf.n_bits_ext - stark_struct_rf.n_bits)) as f64,
-        n_opening_points: opening_points_rf.len() as u64,
-        n_functions: ev_map_len_rf.max(1) as u64,
-        folding_factors: folding_factors_rf,
-        max_grinding_bits: stark_struct_rf.pow_bits as u64,
-        use_max_grinding_bits: true,
+        batch_size: ev_map_len_rf.max(1) as u64,
+        batching: crate::types::security::pcs::Batching::Powers,
+        log_folding_factors: log_folding_factors_rf,
+        max_grinding_bits_query: stark_struct_rf.pow_bits as u64,
+        use_max_grinding_bits_query: true,
         tree_arity: stark_struct_rf.merkle_tree_arity as u64,
+        hash_size_bits: 256,
         target_security_bits: 128,
+        regime,
     };
-    let fri_security_rf = crate::types::security::get_optimal_fri_query_params("JBR", &fri_params_rf);
+    let fri_rf = crate::types::security::pcs::Fri::new(fri_config_rf);
 
     let starkinfo_rf = crate::output::stark_info::build_starkinfo_output(
         &pil_result_rf.setup,
         &stark_struct_rf,
         &pil_result_rf.pil_code,
         &opening_points_rf,
-        &fri_security_rf,
+        &fri_rf,
         0,
         0,
         "Recursivef",
@@ -429,15 +436,27 @@ pub fn gen_snark_setup(
         fs::copy(&dat_src_final, final_dir.join("final.dat"))?;
     }
 
+    let r1cs_final = build_path.join("final.r1cs");
+    if !r1cs_final.exists() {
+        bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
+    }
+
+    if let Some((n_constraints, n_additions)) = get_plonk_circuit_stats_c(r1cs_final.to_str().unwrap()) {
+        let circuit_power = std::cmp::max(3, 64 - (n_constraints + 1).leading_zeros() as u64);
+        tracing::info!(
+            "Final circuit: {} plonk constraints, {} plonk additions (circuit power {}, domain size {})",
+            n_constraints,
+            n_additions,
+            circuit_power,
+            1u64 << circuit_power
+        );
+    }
+
     // Validate inputs for the zkey setup before launching parallel work.
     let powers_of_tau =
         config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
     if !std::path::Path::new(powers_of_tau).exists() {
         bail!("powers-of-tau file not found: {}", powers_of_tau);
-    }
-    let r1cs_final = build_path.join("final.r1cs");
-    if !r1cs_final.exists() {
-        bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
     }
     let zkey_final = final_dir.join("final.zkey");
 
@@ -511,7 +530,7 @@ pub fn gen_snark_setup(
 ///   2. `node_modules/snarkjs` relative to cwd
 ///   3. Walk up from the executable's location to find `node_modules/snarkjs`
 ///
-/// Install via: `npm install`  (reads package.json in the repo root)
+/// Install via: `npm install`  (reads package.json in the setup crate)
 fn resolve_snarkjs_root() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SNARKJS_PATH") {
         let pb = PathBuf::from(&p);

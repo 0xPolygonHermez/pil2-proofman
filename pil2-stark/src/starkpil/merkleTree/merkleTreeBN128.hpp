@@ -60,8 +60,35 @@ public:
     void writeFile(std::string constTreeFile);
 
     bool static verifyMerkleRoot(RawFr::Element *root, RawFr::Element *level, uint64_t height, uint64_t lastLevelVerification, uint64_t arity, uint64_t nFieldElements) {
-        // TODO: implement
-        return true;
+        uint64_t numNodesLevel = height;
+        while (numNodesLevel > std::pow(arity, lastLevelVerification)) {
+            numNodesLevel = (numNodesLevel + arity - 1) / arity;
+        }
+
+        // Hash the level up to the root, replicating PoseidonBN128::merkletree
+        // padding: parents = ceil(n / arity), missing children are zeros, and
+        // each parent = hash([0 capacity, child_0 .. child_{arity-1}]).
+        PoseidonBN128 p;
+        std::vector<RawFr::Element> nodes(level, level + numNodesLevel);
+        uint64_t n = numNodesLevel;
+        while (n > 1) {
+            uint64_t nextN = (n - 1) / arity + 1;
+            nodes.resize(nextN * arity);
+            for (uint64_t i = n; i < nextN * arity; i++) {
+                nodes[i] = RawFr::field.zero();
+            }
+            for (uint64_t j = 0; j < nextN; j++) {
+                std::vector<RawFr::Element> elements(arity + 1);
+                elements[0] = RawFr::field.zero();
+                for (uint64_t a = 0; a < arity; a++) {
+                    elements[1 + a] = nodes[j * arity + a];
+                }
+                p.hash(elements, &nodes[j]);
+            }
+            n = nextN;
+        }
+
+        return RawFr::field.eq(root[0], nodes[0]);
     }
 };
 #endif

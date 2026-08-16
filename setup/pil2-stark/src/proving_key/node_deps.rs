@@ -1,10 +1,11 @@
 //! Self-bootstrapping resolution of the Node.js tooling dependencies
-//! (pil2-compiler, snarkjs, circomlib) declared in the repo-root `package.json`.
+//! (pil2-compiler, snarkjs, circomlib) declared in this crate's `package.json`
+//! (`setup/pil2-stark/package.json`).
 //!
 //! Search/bootstrap order:
-//!   1. An already-populated `node_modules` at the compile-time-baked repo root,
+//!   1. An already-populated `node_modules` at the compile-time-baked crate dir,
 //!      the cwd, or any ancestor of the running executable — no npm needed.
-//!   2. The baked repo root's own `package.json` → `npm install` there.
+//!   2. The baked crate dir's own `package.json` → `npm install` there.
 //!   3. A per-user cache dir seeded with the manifest embedded in this binary —
 //!      makes a prebuilt binary self-sufficient on machines without the source tree.
 //!
@@ -13,8 +14,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// Repo-root manifest, embedded at compile time so it travels with the binary.
-const EMBEDDED_PACKAGE_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../package.json"));
+/// This crate's Node manifest, embedded at compile time so it travels with the
+/// binary and the crate is self-contained for publishing (used to seed the
+/// per-user cache when running off-tree).
+const EMBEDDED_PACKAGE_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/package.json"));
 
 /// Return the first root whose `node_modules/<probe>` exists, canonicalized.
 fn find_in_roots(roots: &[PathBuf], probe: &str) -> Option<PathBuf> {
@@ -75,9 +78,10 @@ fn user_cache_root() -> Option<PathBuf> {
 /// `npm install` if necessary (see module docs for the order). `probe` is a
 /// path relative to `node_modules`, e.g. `.bin/pil2com` or `circomlib/circuits`.
 pub(crate) fn ensure_node_deps(probe: &str) -> Option<PathBuf> {
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    // node_modules / package.json live in this crate's dir (setup/pil2-stark).
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
-    let mut roots = vec![PathBuf::from(PROOFMAN_ROOT)];
+    let mut roots = vec![PathBuf::from(CRATE_ROOT)];
     if let Ok(cwd) = std::env::current_dir() {
         roots.push(cwd);
     }
@@ -92,11 +96,11 @@ pub(crate) fn ensure_node_deps(probe: &str) -> Option<PathBuf> {
         return Some(root);
     }
 
-    // The baked repo root's package.json is proofman's own manifest (source
+    // The baked crate dir's package.json is this crate's own manifest (source
     // checkout or cargo git checkout), so installing there is always correct;
     // a package.json at the cwd could belong to the consumer's unrelated
     // project, so we never npm-install anywhere else.
-    let baked = Path::new(PROOFMAN_ROOT);
+    let baked = Path::new(CRATE_ROOT);
     let baked = baked.canonicalize().unwrap_or_else(|_| baked.to_path_buf());
     if baked.join("package.json").is_file() {
         tracing::info!("Node deps not found; running `npm install` in {}", baked.display());

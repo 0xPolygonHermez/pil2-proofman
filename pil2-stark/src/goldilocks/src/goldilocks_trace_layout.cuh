@@ -1,23 +1,9 @@
 #ifndef __DATA_LAYOUT_CUH__
 #define __DATA_LAYOUT_CUH__
 
-/*
- * Tile-based memory layouts for GPU polynomials.
- *
- * All polynomial data is grouped in tiles of TILE_HEIGHT x TILE_WIDTH elements.
- * Three orderings within tiles are used:
- *
- * - Column-major tiles (getBufferOffset): within each tile, elements are stored
- *   column-by-column. This is the prover's storage format 
- *
- * - Row-major tiles (getBufferOffsetRowMajor): within each tile, elements are
- *   stored row-by-row. NTT butterfly kernels operate on this layout because each
- *   thread processes one row across all columns in a tile.
- *
- * - Packed row-major tiles (getBufferOffsetRowMajorPacked): row-major within tiles,
- *   but for LDE only. When extending domain N to N*B (blowup factor B), each tile
- *   has only TILE_HEIGHT/B rows of actual data, packed at the start.
- */
+// GPU polynomial memory layouts. getBufferOffset is the prover's storage accessor (ColMajor flat
+// everywhere -- see resolveLayout/fixedLayout); the ColMajorTiled / RowMajor / RowMajorPacked variants
+// remain for the legacy tiled NTT backend kept as a directly callable reference for tests/benches.
 
 #include <stdint.h>
 
@@ -25,77 +11,89 @@
 #define TILE_HEIGHT (1 << TILE_HEIGHT_LOG2)
 #define TILE_WIDTH  4
 
-// Column-major within tiles
-__device__ __forceinline__ uint64_t getBufferOffset(
-    uint64_t row,
-    uint64_t col,
-    uint64_t nRows,
-    uint64_t nCols
-) {
-    uint64_t blockY = col / TILE_WIDTH;                  
-    uint64_t blockX = row / TILE_HEIGHT;
-    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) 
-                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
-    uint64_t col_block = col % TILE_WIDTH;
-    uint64_t row_block = row % TILE_HEIGHT;
+// Memory layout, chosen at RUNTIME (no build flag). One enum shared by getBufferOffset and the
+// Merkle/linear-hash kernels (which pass it straight through to getBufferOffset):
+//   - RowMajor      : element (row,col) at row*nCols + col (contiguous columns per row).
+//   - ColMajor      : FLAT column-major, (row,col) at col*nRows + row (each column one contiguous run).
+//                     The ColMajor NTT engine's per-column format -> LDE/computeQ run in place, no
+//                     transpose.
+//   - ColMajorTiled : column-major WITHIN TILE_HEIGHT x TILE_WIDTH tiles; the layout the legacy tiled
+//                     NTT backend operates on (reference only, no longer selected).
+// Every section -- committed (resolveLayout), const and custom commits (fixedLayout) -- is stored
+// ColMajor and served by the in-house ColMajor NTT engine. getBufferOffset defaults to ColMajor so the
+// flat call sites are unchanged.
+enum class Layout : uint8_t { RowMajor, ColMajor, ColMajorTiled };
 
-    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT
-           + col_block * TILE_HEIGHT + row_block;
+// The storage layout of a committed section. Writer (commit LDE + Merkle), readers (expression
+// load__), NTT, the row-major->storage transpose, AND the commit-Merkle / FRI / opening-eval kernels
+// in starks_gpu.cu all call this with the SAME (nBits, nCols), so they always agree without storing
+// the choice. Always ColMajor since the in-house ColMajor NTT engine (ntt_goldilocks.cu) matched or
+// beat the tiled backend at every shape; must match cm_layout()/store_qq() in
+// setup/exps-codegen/src/emit.rs -- a change here requires regenerating the exps kernels (gen-exps),
+// or readers/writers disagree -> wrong proofs.
+__host__ __device__ __forceinline__ Layout resolveLayout(uint64_t nBits, uint64_t nCols) {
+    (void)nBits; (void)nCols;
+    return Layout::ColMajor;
 }
 
-// Specialized getBufferOffset when row = chunkBase + threadIdx.x and chunkBase is
-// a multiple of TILE_HEIGHT. Saves the row / TILE_HEIGHT division and row % TILE_HEIGHT
-// modulo since row_block == threadIdx.x and blockX == chunkBase >> TILE_HEIGHT_LOG2.
-__device__ __forceinline__ uint64_t getBufferOffset_pack256(
-    uint64_t chunkBase,
-    uint64_t col,
-    uint64_t nRows,
-    uint64_t nCols
-) {
+// Storage layout of the fixed/preprocessed sections (const pols, const tree, custom commits). Single
+// source of truth so every producer and consumer agrees. ColMajor like the committed sections.
+// CAUTION: the on-disk GPU cache files bake this layout (.consttree_gpu, RecursiveF .const_gpu, the
+// zisk ROM custom-commit cache) and their validity checks are size/root based, which cannot detect a
+// layout change -- if this function ever changes, those caches must be deleted so they regenerate.
+__host__ __device__ __forceinline__ Layout fixedLayout() {
+    return Layout::ColMajor;
+}
+
+// (row,col) offset for the given layout. Default ColMajor (flat): col*nRows + row.
+__device__ __forceinline__ uint64_t getBufferOffset(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout) {
+    if (layout == Layout::ColMajor) {
+        (void)nCols;
+        return col * nRows + row;
+    }
+    if (layout == Layout::RowMajor) {
+        return row * nCols + col;
+    }
+    // ColMajorTiled: column-major within tiles.
+    uint64_t blockY = col / TILE_WIDTH;
+    uint64_t blockX = row / TILE_HEIGHT;
+    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
+    uint64_t col_block = col % TILE_WIDTH;
+    uint64_t row_block = row % TILE_HEIGHT;
+    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT + col_block * TILE_HEIGHT + row_block;
+}
+
+// Specialization for row = chunkBase + threadIdx.x (chunkBase a multiple of TILE_HEIGHT). ColMajor/Tiled.
+__device__ __forceinline__ uint64_t getBufferOffset_pack256(uint64_t chunkBase, uint64_t col, uint64_t nRows, uint64_t nCols, Layout layout) {
+    if (layout == Layout::ColMajor) {
+        (void)nCols;
+        return col * nRows + chunkBase + threadIdx.x;
+    }
     uint64_t blockY = col >> 2;
     uint64_t blockX = chunkBase >> TILE_HEIGHT_LOG2;
     uint64_t rem = nCols - (blockY << 2);
     uint64_t nCols_block = rem < TILE_WIDTH ? rem : TILE_WIDTH;
     uint64_t col_block = col & 3;
-
-    return (blockY << 2) * nRows + blockX * nCols_block * TILE_HEIGHT
-           + (col_block << TILE_HEIGHT_LOG2) + threadIdx.x;
+    return (blockY << 2) * nRows + blockX * nCols_block * TILE_HEIGHT + (col_block << TILE_HEIGHT_LOG2) + threadIdx.x;
 }
 
-// Row-major within tiles
-__device__ __forceinline__ uint64_t getBufferOffsetRowMajor(
-    uint64_t row,
-    uint64_t col,
-    uint64_t nRows,
-    uint64_t nCols
-) {
-    uint64_t blockY = col / TILE_WIDTH;                  
-    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) 
-                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
+// Row-major-within-tile accessors used internally by the native (ColMajorTiled) NTT path.
+__device__ __forceinline__ uint64_t getBufferOffsetRowMajor(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols) {
+    uint64_t blockY = col / TILE_WIDTH;
+    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
     uint64_t col_block = col % TILE_WIDTH;
-
     return blockY * TILE_WIDTH * nRows + row * nCols_block + col_block;
 }
 
-// Packed row-major within tiles: only first TILE_HEIGHT/blowup rows per tile contain data.
-__device__ __forceinline__ uint64_t getBufferOffsetRowMajorPacked(
-    uint64_t row,
-    uint64_t col,
-    uint64_t nRows,
-    uint64_t nCols,
-    uint32_t blowup
-) {
-
+// Packed row-major within tiles (native LDE): only the first TILE_HEIGHT/blowup rows per tile hold data.
+__device__ __forceinline__ uint64_t getBufferOffsetRowMajorPacked(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols, uint32_t blowup) {
     uint64_t tile_height_blown = TILE_HEIGHT / blowup;
-    uint64_t blockY = col / TILE_WIDTH;                  
+    uint64_t blockY = col / TILE_WIDTH;
     uint64_t blockX = (row / tile_height_blown);
-    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) 
-                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
+    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
     uint64_t col_block = col % TILE_WIDTH;
     uint64_t row_block = row % tile_height_blown;
-
-    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT
-           + row_block * nCols_block + col_block;
+    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT + row_block * nCols_block + col_block;
 }
 
 #endif

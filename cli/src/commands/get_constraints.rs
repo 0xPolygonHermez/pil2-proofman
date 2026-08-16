@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;
@@ -24,7 +24,7 @@ impl GetConstraintsCmd {
         tracing::info!("");
 
         let global_info = GlobalInfo::new(&self.proving_key)?;
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, &[], false)?;
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, &[], &[], false)?;
 
         for airgroup_id in 0..global_info.air_groups.len() {
             for air_id in 0..global_info.airs[airgroup_id].len() {

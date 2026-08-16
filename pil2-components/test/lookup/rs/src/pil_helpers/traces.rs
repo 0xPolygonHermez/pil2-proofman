@@ -10,13 +10,13 @@ use proofman_common::GenericTrace;
 use proofman_common::PackedInfoConst;
 pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-use fields::PrimeField64;
+use proofman_fields::PrimeField64;
 use std::fmt;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "4831e8aaef13109afbf2ba8df1037225b72500150fb218dbe212b77635fab307";
+pub const PILOUT_HASH: &str = "693b265a5595d5897983539b1934744b0961c960579be32f978c5b8fee3a8396";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -130,4 +130,15 @@ values!(Lookup3AirGroupValues<F> {
 });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];
+
+/// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
+/// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
+pub const AIR_NAMES: &[(usize, usize, &str)] = &[
+    (0, 0, "Lookup0"),
+    (0, 1, "Lookup1"),
+    (0, 2, "Lookup2_12"),
+    (0, 3, "Lookup2_13"),
+    (0, 4, "Lookup2_15"),
+    (0, 5, "Lookup3"),
 ];

@@ -175,11 +175,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     CHECKCUDAERR(cudaMalloc((void**)&d_gpu_out, nRows * CAPACITY * sizeof(gl64_t)));
 
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
+    fromRowMajorToColMajor(nRows, nCols, d_flat, d_tiled, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Poseidon2GoldilocksGPU<12>::linearHash(
-        (uint64_t*)d_gpu_out, (uint64_t*)d_tiled, nCols, nRows, Layout::Tiles, stream);
+        (uint64_t*)d_gpu_out, (uint64_t*)d_tiled, nCols, nRows, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     std::vector<Goldilocks::Element> h_gpu_out(nRows * CAPACITY);
@@ -196,8 +196,9 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     NTTGoldilocksGPU::freeConstants();
 }
 
-// merkletree(Layout::Tiles): GPU root (block-tiled input) must match CPU merkletree_seq root.
-// prepare_blocks_trace converts flat row-major → block-tiled before calling the GPU kernel.
+// merkletree(Layout::ColMajorTiled): GPU root over block-tiled input must match CPU merkletree_seq
+// root. fromRowMajorToColMajor lays the trace out ColMajorTiled; the kernel reads it back via the same
+// layout, so the hashed (row,col) values match the row-major CPU reference.
 TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
 {
     constexpr uint64_t nRows = 256;
@@ -229,11 +230,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
     CHECKCUDAERR(cudaMalloc((void**)&d_tree,  tree_size * sizeof(Goldilocks::Element)));
 
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
+    fromRowMajorToColMajor(nRows, nCols, d_flat, d_tiled, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Poseidon2GoldilocksGPU<12>::merkletree(
-        arity, (uint64_t*)d_tree, (uint64_t*)d_tiled, nCols, nRows, Layout::Tiles, stream);
+        arity, (uint64_t*)d_tree, (uint64_t*)d_tiled, nCols, nRows, Layout::ColMajorTiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     std::vector<Goldilocks::Element> h_gpu_root(HASH_SIZE);
@@ -243,7 +244,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
     const Goldilocks::Element *h_cpu_root = h_cpu_tree.data() + (tree_size - HASH_SIZE);
     for (int i = 0; i < HASH_SIZE; i++)
         ASSERT_EQ(Goldilocks::toU64(h_gpu_root[i]), Goldilocks::toU64(h_cpu_root[i]))
-            << "merkletree(Layout::Tiles) root mismatch at element " << i;
+            << "merkletree(Layout::ColMajorTiled) root mismatch at element " << i;
 
     CHECKCUDAERR(cudaFree(d_flat));
     CHECKCUDAERR(cudaFree(d_tiled));

@@ -100,7 +100,7 @@ static void LINEAR_HASH_W_TILES_GPU_POS1_BENCH(benchmark::State &state)
 
     for (auto _ : state) {
         PoseidonGoldilocksGPU<W>::linearHash(
-            (uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+            (uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -167,12 +167,12 @@ static void MERKLETREE_W_AR_TILES_GPU_POS1_BENCH(benchmark::State &state)
 
     // Warm up
     PoseidonGoldilocksGPU<W>::merkletree(
-        ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+        ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
         PoseidonGoldilocksGPU<W>::merkletree(
-            ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+            ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -249,7 +249,7 @@ static void MERKLETREE_HYBRID_W12POS1_W16POS2_AR4_TILES_GPU_BENCH(benchmark::Sta
     auto build = [&]() {
         // Leaf layer: Poseidon v1 linear hash over the trace rows.
         PoseidonGoldilocksGPU<W_LEAF>::linearHash(
-            (uint64_t *)d_leaves, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+            (uint64_t *)d_leaves, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::ColMajor, stream);
         // Internal nodes: Poseidon2 arity-4 reduction over the leaf digests.
         Poseidon2GoldilocksGPU<W_NODE>::merkletreeReduce(
             (uint64_t *)d_root, (uint64_t *)d_leaves, BENCH_NROWS, ARITY, stream);
@@ -346,6 +346,8 @@ BENCHMARK_TEMPLATE(PERMUTE_W_GPU_POS1_BENCH, 12)
 // linearHash — W=12, both layouts.
 REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_POS1_BENCH")
 REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH, 12, "LINEAR_HASH_W12_ROWMAJOR_GPU_POS1_BENCH")
+// linearHash — W=16 (rate 12): the production STARK commit sponge.
+REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    16, "LINEAR_HASH_W16_TILES_GPU_POS1_BENCH")
 
 // merkletree — Poseidon1, (W,arity) in {(8,2),(12,3),(16,4)}; both layouts.
 REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_POS1_BENCH,    12, 2, "MERKLETREE_W12_AR2_TILES_GPU_POS1_BENCH")

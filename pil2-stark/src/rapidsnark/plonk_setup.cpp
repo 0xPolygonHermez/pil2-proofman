@@ -125,6 +125,20 @@ namespace Plonk
         LOG_INFO("PLONK SETUP FINISHED");
     }
 
+    void PlonkSetup::computeConstraintCounts(string r1csFilename, uint64_t &nConstraints, uint64_t &nAdditions)
+    {
+        auto fdR1cs = openExisting(r1csFilename, "r1cs", 1);
+        auto r1csHeader = R1csBinFile::readR1csHeader(*fdR1cs);
+
+        settings.nVars = r1csHeader.nVars;
+        settings.nPublics = r1csHeader.nOutputs + r1csHeader.nPubInputs;
+
+        computeConstraints(*fdR1cs, r1csHeader);
+
+        nConstraints = plonkConstraints.size();
+        nAdditions = plonkAdditions.size();
+    }
+
     void PlonkSetup::computeConstraints(BinFile &r1cs, R1csHeader &r1csHeader)
     {
         // Create r1cs processor

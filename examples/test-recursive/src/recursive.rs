@@ -3,8 +3,8 @@ use std::env;
 
 use std::ffi::{c_void, c_char};
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
-use witness::WitnessComponent;
-use fields::PrimeField64;
+use proofman_witness::WitnessComponent;
+use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
 
 use std::fs::File;
@@ -56,13 +56,13 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")
                 .join(&hash_family);
-            let proof_path = current_dir.join("proof.bin");
+            let proof_path = current_dir.join("ag0_air0_tCompressor.bin");
 
             let mut file = File::open(proof_path).unwrap();
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).unwrap();
 
-            assert!(buffer.len().is_multiple_of(8), "proof.bin length is not a multiple of 8");
+            assert!(buffer.len().is_multiple_of(8), "proof file length is not a multiple of 8");
             let proof: Vec<u64> = buffer.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
             let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };

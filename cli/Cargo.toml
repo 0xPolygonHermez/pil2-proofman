@@ -1,31 +1,34 @@
 [package]
 name = "proofman-cli"
+description = "Command-line toolchain for the PIL2 proofman framework"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+publish = false
 
 readme = "README.md"
 
 [dependencies]
-pilout = { workspace = true }
+pil2-pilout = { workspace = true }
 proofman-util = { workspace = true }
 proofman = { workspace = true }
 proofman-common = { workspace = true }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+proofman-starks-lib-c = { workspace = true }
 proofman-verifier = { workspace = true }
 proofman-soundness = { workspace = true }
-witness = { workspace = true }
-fields = { workspace = true }
+proofman-witness = { workspace = true }
+proofman-fields = { workspace = true }
+proofman-exps-codegen = { workspace = true }
 
 tracing.workspace = true
 libloading.workspace = true
 blake3.workspace = true
 colored.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 
 clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"

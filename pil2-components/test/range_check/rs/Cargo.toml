@@ -4,33 +4,35 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 keywords = { workspace = true }
+homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+publish = false
 
 [lib]
 crate-type = ["dylib"]
 
 [dependencies]
-pil-std-lib = { path = "../../../lib/std/rs" }
+pil2-std-lib = { workspace = true }
 
 proofman.workspace = true
 proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
-witness.workspace = true
+proofman-witness.workspace = true
 tracing.workspace = true
 num-traits.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-fields.workspace = true
+proofman-fields.workspace = true
 rayon.workspace = true
 
 [build-dependencies]
 proofman-cli.workspace = true
-pil2-stark-setup = { path = "../../../../setup/pil2-stark" }
+pil2-stark-setup = { workspace = true }
 
 [dev-dependencies]
-common = { path = "../../common/rs" }
+common = { workspace = true }
 
 [features]
 default = []

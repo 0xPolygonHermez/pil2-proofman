@@ -2,36 +2,59 @@
 #include "cuda_utils.cuh"
 #include "goldilocks_trace_layout.cuh"
 
-// Kernel to convert row-major layout to tiled layout
-// Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols
-__global__ void fromRowMajorToTiled(
+// When the source is already host-pinned (e.g. via register_host_memory) and
+// large, skip the pinned-staging double-buffer and issue a single direct H2D.
+// Self-selecting: a non-pinned source returns false and falls through to the
+// staged path, so this is always safe to attempt.
+static bool copy_direct_registered_h2d_if_enabled(const void *src, void *dst, uint64_t total_size, cudaStream_t stream)
+{
+    if (total_size < 16 * 1024 * 1024) return false;
+
+    cudaPointerAttributes attrs;
+    cudaError_t attrErr = cudaPointerGetAttributes(&attrs, src);
+    if (attrErr != cudaSuccess) {
+        cudaGetLastError();
+        return false;
+    }
+    // Only take the fast path when src is host memory the driver can DMA directly.
+    if (attrs.type != cudaMemoryTypeHost) return false;
+
+    CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
+    return true;
+}
+
+// Kernel: row-major input -> destination layout `layout` (see getBufferOffset).
+// Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols.
+__global__ void fromRowMajorToColMajor(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,
-    uint64_t* __restrict__ output
+    uint64_t* __restrict__ output,
+    Layout layout
 ) {
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t col = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (row < nRows && col < nCols) {
         uint64_t inputOffset = row * nCols + col;
-        uint64_t outputOffset = getBufferOffset(row, col, nRows, nCols);
+        uint64_t outputOffset = getBufferOffset(row, col, nRows, nCols, layout);
         output[outputOffset] = input[inputOffset];
     }
 }
 
-void fromRowMajorToTiled(
+void fromRowMajorToColMajor(
     uint64_t nRows,
     uint64_t nCols,
     gl64_t* src,
     gl64_t* dst,
+    Layout layout,
     cudaStream_t stream
 ) {
     if (nCols == 0 || nRows == 0) return;
     dim3 block(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid((nRows + block.x - 1) / block.x,
               (nCols + block.y - 1) / block.y);
-    fromRowMajorToTiled<<<grid, block, 0, stream>>>(nRows, nCols, (uint64_t*)src, (uint64_t*)dst);
+    fromRowMajorToColMajor<<<grid, block, 0, stream>>>(nRows, nCols, (uint64_t*)src, (uint64_t*)dst, layout);
     CHECKCUDAERR(cudaGetLastError());
 }
 
@@ -49,12 +72,23 @@ void copy_to_device_in_chunks(
     cudaSetDevice(gpuId);
 
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
-
-    uint64_t block_size = d_buffers->pinned_size;
-
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+
+    // Fast paths that do NOT need the shared pinned-staging buffer, so they skip
+    // the per-GPU mutex_pinned lock (avoids serializing behind large stagings):
+    //  - direct: large + already host-pinned source
+    //  - small:  sub-threshold copy, one shot
     TimerStartCategoryGPU(timer, H2D_COPY);
+    if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
+        // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
+        // gates recycling the host trace buffer (see wait_trace_h2d_done).
+        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
+        TimerStopCategoryGPU(timer, H2D_COPY);
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
+    uint64_t block_size = d_buffers->pinned_size;
     Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
     Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
 
@@ -98,6 +132,10 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    // Staged path: `src` was memcpy'd into the pinned staging buffer and the copies are already
+    // synced, so the host trace buffer is free here. Record anyway so the event always marks this
+    // commit's release point rather than leaving a stale record from an earlier one.
+    cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
     TimerStopCategoryGPU(timer, H2D_COPY);
 }
 
@@ -109,6 +147,7 @@ void copy_to_device_in_chunks(
     uint64_t pinnedBufferSize,
     cudaStream_t stream
 ){
+    if (copy_direct_registered_h2d_if_enabled(src, dst, total_size_bytes, stream)) return;
 
      uint64_t block_size = pinnedBufferSize/2;
     

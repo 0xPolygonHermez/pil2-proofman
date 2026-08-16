@@ -101,7 +101,7 @@ Note: By the time being we are working by default with Goldilocks but we will ad
 
 ```rust
 use proofman_common::trace;
-use fields::Goldilocks;
+use proofman_fields::Goldilocks;
 
 trace!(Fibonacci {
 	a: Goldilocks,
@@ -113,7 +113,7 @@ On the other hand it has created the `fibonacci_executor.rs` file that specifies
 
 ```rust
 use proofman::{executor, executor::Executor, ProofCtx, trace};
-use fields::{Goldilocks, AbstractField};
+use proofman_fields::{Goldilocks, AbstractField};
 
 executor!(FibonacciExecutor);
 

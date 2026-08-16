@@ -21,7 +21,7 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri_security: &security::FRIQueryResult,
+    fri: &security::pcs::Fri,
     airgroup_id: usize,
     air_id: usize,
     air_name: &str,
@@ -31,13 +31,14 @@ pub fn build_starkinfo_output(
 ) -> StarkInfoOutput {
     let steps: Vec<StepOutput> = stark_struct.steps.iter().map(|s| StepOutput { n_bits: s.n_bits }).collect();
 
+    let fri_security = fri.security_params();
     let stark_struct_out = StarkStructOutput {
         n_bits: stark_struct.n_bits,
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
         last_level_verification: stark_struct.last_level_verification,
-        pow_bits: fri_security.n_grinding_bits as usize,
+        pow_bits: fri_security.grinding_bits_query as usize,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
@@ -281,8 +282,8 @@ pub fn build_starkinfo_output(
         ev_map,
         fri_exp_id,
         security: Some(SecurityInfo {
-            proximity_gap: fri_security.proximity_gap,
-            proximity_parameter: fri_security.proximity_parameter,
+            proximity_gap: fri.proximity_gap(),
+            proximity_parameter: fri.proximity_parameter(),
             regime: "JBR".to_string(),
         }),
     }
@@ -292,11 +293,11 @@ pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
     setup.opening_points.clone()
 }
 
-pub fn compute_folding_factors(stark_struct: &StarkStruct) -> Vec<u64> {
+pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
     let steps = &stark_struct.steps;
     let mut factors = Vec::new();
     for i in 0..steps.len() - 1 {
-        factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u64);
+        factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u32);
     }
     factors
 }
