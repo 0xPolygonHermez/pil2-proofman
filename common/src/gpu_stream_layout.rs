@@ -48,6 +48,17 @@ const UNIFORM_COLLAPSE_RATIO: f64 = 1.25;
 /// fund both.
 const REGULARS_PER_LARGE: usize = 2;
 
+/// Minimum useful class size: the largest air besides the outlier that defines the large
+/// class. `class_floor` (compressor size) collapses to 0 without aggregation, letting the
+/// count-maximizing carve buy classes too small to host most airs. Returns 0 if there is no second
+/// distinct size.
+fn non_outlier_floor(basic_sizes_desc: &[usize]) -> usize {
+    let mut distinct = basic_sizes_desc.to_vec();
+    distinct.sort_unstable_by(|a, b| b.cmp(a));
+    distinct.dedup();
+    distinct.get(1).copied().unwrap_or(0)
+}
+
 impl StreamLayout {
     pub fn n_basic_streams(&self) -> usize {
         self.basic.iter().map(|c| c.count).sum()
@@ -109,6 +120,31 @@ fn grow(budget: usize, large: usize, regular: usize, reserve: usize, max_basic_s
 ///
 /// Returns `None` when the budget cannot even hold one stream for the largest air.
 pub fn plan_stream_layout(
+    budget: usize,
+    basic_sizes_desc: &[usize],
+    class_floor: usize,
+    recursive_size: usize,
+    max_basic_streams: usize,
+    max_recursive_streams: usize,
+) -> Option<StreamLayout> {
+    // Raise the floor so a class can host the bulk of the airs and not just a compressor (see
+    // `non_outlier_floor`). Only ever a retry: a raised floor that costs the second basic stream
+    // is worse than a small class, so that carve is discarded for the unraised one.
+    let raised = class_floor.max(non_outlier_floor(basic_sizes_desc));
+    if raised > class_floor {
+        let covered =
+            carve_classes(budget, basic_sizes_desc, raised, recursive_size, max_basic_streams, max_recursive_streams);
+        if let Some(layout) = covered {
+            if layout.n_basic_streams() >= 2 {
+                return Some(layout);
+            }
+        }
+    }
+    carve_classes(budget, basic_sizes_desc, class_floor, recursive_size, max_basic_streams, max_recursive_streams)
+}
+
+/// The carve itself, at a fixed `class_floor`.
+fn carve_classes(
     budget: usize,
     basic_sizes_desc: &[usize],
     class_floor: usize,
@@ -322,6 +358,33 @@ mod tests {
         for class in &layout.basic {
             assert!(class.size >= gb(ZISK_COMPRESSOR_GB), "class {class:?} cannot host a compressor");
         }
+    }
+
+    /// Aggregation off: `class_floor` is 0 (no compressor shares these streams), so only the
+    /// non-outlier floor stops the carve from buying the smallest air on the list. Without it the
+    /// card got 1 x 14.57 + 18 x 0.75 GB — a class hosting 6 of 42 airs — and every real proof
+    /// serialized on the single large stream.
+    #[test]
+    fn a_no_aggregation_carve_still_hosts_the_airs() {
+        let sizes: Vec<usize> = ZISK_BASIC_GB.iter().copied().map(gb).collect();
+        let layout = plan_stream_layout(gb(29.05), &sizes, 0, 0, 20, 0).expect("budget holds the largest air");
+        assert!(layout.n_basic_streams() >= 2, "no second stream to overlap with: {:?}", layout.basic);
+        assert_eq!(layout.basic[1].size, gb(6.45), "second class cannot host the bulk airs: {:?}", layout.basic);
+        assert!(
+            layout.basic.iter().all(|c| c.size >= gb(6.45)),
+            "a class below the non-outlier floor survived: {:?}",
+            layout.basic
+        );
+    }
+
+    /// The raised floor is a preference, not a mandate: where it would cost the second basic class
+    /// (the one thing worth more than coverage) the carve falls back to the unraised floor.
+    #[test]
+    fn the_coverage_floor_never_costs_the_second_class() {
+        // 12.0 is the non-outlier floor, and 14.5 + 12.0 does not fit — the fallback must engage.
+        let sizes = [gb(14.5), gb(12.0), gb(3.2), gb(3.2), gb(3.2)];
+        let layout = plan_stream_layout(gb(26.0), &sizes, 0, 0, 16, 0).expect("budget holds the largest air");
+        assert!(layout.n_basic_streams() >= 2, "fallback did not engage: {:?}", layout.basic);
     }
 
     /// The carve is bounded by the stream cap, not only by memory.
