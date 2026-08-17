@@ -64,11 +64,19 @@ cargo run --bin proofman-cli verify-constraints \
 
 Cost is measured in clocks per column; lower **cost / byte** is better.
 
-| Hash       | Full-op cost            | Msg bytes/block | Cost / byte | Relative  | BF  |
-| :--------- | :---------------------- | :-------------- | ----------: | --------: | --: |
-| Poseidon2  | 14 × 392 = 5.488        | 96 (*)          |        57,2 |     1,00× |   1 |
-| Blake3     | 56 × 108 = 6.048        | 64              |        94,5 |     1,65× |   1 |
-| Blake2b    | 64 × 190 = 12.160       | 128             |        95,0 |     1,66× |   1 |
-| SHA2-256   | 72 × 115 = 8.280        | 64              |       129,3 |     2,26× |   1 |
-
-(*) Poseidon2 bytes are nominal (12 Goldilocks elements × 8 bytes); a Goldilocks element holds ~63.99 bits, so the truly absorbable payload is slightly under 96 bytes.
+|                               | **Blake3**          | **SHA2-256**                | **Blake2b**                   |
+| ----------------------------- | ------------------- | --------------------------- | ----------------------------- |
+| Clock length                  | 56 rows             | 72 rows                     | 96 rows                       |
+| Fixed                         | 8                  | 5                           | 7                             |
+| Stage1                        | 55                  | 100                         | 100                           |
+| Stage2                        | 48                  | 9                           | 84                            |
+| **Total cols**                | **109**             | **115**                     | **190**                       |
+| Constraints                   | 26                  | 105                         | 47                            |
+| Max degree                    | 3                   | 3                           | 3                             |
+| Opening points                | 57                  | 73                          | 97                            |
+| nEvals                        | 186                 | 633                         | 330                           |
+| Expressions                   | 1,085               | 3,589                       | 1,992                         |
+| **Min prover mem / instance** | **(N=2¹⁷) 0.30 GB** | **(N=2¹⁶) 0.18 GB**         | **(N=2¹⁶) 0.23 GB**           |
+| **Cells / hash**              | 109x56 = **6,104**  | 115x72 = **8,280** (+36%)   | 190x96 = **18,240** (+201%)   |
+| **Cost / byte**               | 6,104/64 = **95.4** | 8,280/64 = **129.3** (+37%) | 18,240/128 = **142.5** (+51%) |
+| **Throughput / instance**     | 2¹⁸/56 = **4,681**  | 2¹⁸/72 = **3,640**          | 2¹⁸/145 = **1,807**           |

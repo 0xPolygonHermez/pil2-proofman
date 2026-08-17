@@ -20,17 +20,15 @@ pub(crate) fn range_row(v: u16) -> usize {
     v as usize
 }
 
-/// Row index of an XOR-rotate table tuple (offset, a, b, rot), rot in {0, 12, 7}
+/// Row index of an XOR-rotate table tuple (a, b, rot), rot in {0, 12}
 #[inline]
-pub(crate) fn table_row(offset: usize, a: u8, b: u8, rot: u32) -> usize {
-    debug_assert!(offset < 4);
+pub(crate) fn table_row(a: u8, b: u8, rot: u32) -> usize {
     let rot_block = match rot {
         0 => 0,
         12 => 1,
-        7 => 2,
-        _ => panic!("rotation {rot} is not in the table (expected 0, 12 or 7)"),
+        _ => panic!("rotation {rot} is not in the table (expected 0 or 12)"),
     };
-    rot_block * (1 << 18) + offset * (1 << 16) + (b as usize) * 256 + a as usize
+    rot_block * (1 << 16) + (b as usize) * 256 + a as usize
 }
 
 /// Split the XOR-rotate output into its two limb pieces
@@ -45,10 +43,4 @@ pub(crate) fn xor_rotr_split(a: u8, b: u8, rot: u32) -> (u8, u8) {
     let c0 = ((c >> (8 * l)) & 0xff) as u8;
     let c1 = ((c >> (8 * lp1)) & 0xff) as u8;
     (c0, c1)
-}
-
-/// Full 32-bit lane-positioned XOR-rotate output: rotr((a ^ b) << 8·offset, rot)
-#[inline]
-pub(crate) fn xor_rotr_full(a: u8, b: u8, offset: usize, rot: u32) -> u32 {
-    (((a ^ b) as u32) << (8 * offset)).rotate_right(rot)
 }
