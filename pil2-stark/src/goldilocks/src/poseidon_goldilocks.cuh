@@ -39,6 +39,7 @@ public:
     static constexpr uint32_t CAPACITY            = 4;
     static constexpr uint32_t RATE                = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH        = SPONGE_WIDTH_T;
+    static constexpr uint32_t ARITY               = SPONGE_WIDTH_T / CAPACITY;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = 4;
     static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;

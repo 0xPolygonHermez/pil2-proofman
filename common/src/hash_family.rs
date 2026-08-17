@@ -32,6 +32,13 @@ pub fn transcript_arity(family: &str) -> u64 {
     merkle_tree_arity(family)
 }
 
+/// Families with streaming-commit slot kernels (stream_commit.cu). The C side
+/// re-checks via get_hash_family() and returns -15 on mismatch, so this list
+/// must stay in sync with commit_witness_streaming_gpu's family gate.
+pub fn supports_stream_commit(family: &str) -> bool {
+    matches!(family, "Poseidon1" | "blake3")
+}
+
 /// True when the family's kernels support exactly one tree geometry
 pub fn has_forced_tree_geometry(family: &str) -> bool {
     family == "blake3"

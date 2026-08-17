@@ -27,6 +27,7 @@ class Blake3GoldilocksGPU
 {
 public:
     static constexpr uint32_t CAPACITY = 4;
+    static constexpr uint32_t ARITY    = 2;
 
     static void merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                            uint64_t num_cols, uint64_t num_rows,

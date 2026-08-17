@@ -38,6 +38,7 @@ static constexpr uint8_t FLAG_CHUNK_END   = 1u << 1;
 static constexpr uint8_t FLAG_PARENT      = 1u << 2;
 static constexpr uint8_t FLAG_ROOT        = 1u << 3;
 
+static constexpr uint32_t BLOCK_U64 = 8;     // u64 words per block (64 bytes)
 static constexpr uint32_t CHUNK_U64 = 128;   // u64 words per chunk (1024 bytes)
 static constexpr int      CV_STACK  = 24;    // handles up to 2^24 chunks
 

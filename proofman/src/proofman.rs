@@ -478,15 +478,10 @@ struct SlotCommitCtx {
     committed: AtomicU64,
 }
 
-/// The streaming-commit slot kernels absorb with the width-16 sponge and walk
-/// 4-ary tree levels; keys built with any other arity (e.g. blake3's binary
-/// trees), or airs whose commit stage runs witness_calc hints, take the legacy
-/// commit path. Single predicate so slot sizing and per-instance dispatch
-/// cannot drift.
-const STREAM_COMMIT_TREE_ARITY: u64 = 4;
-
-fn stream_commit_eligible<F: PrimeField64>(setup: &Setup<F>) -> bool {
-    setup.stark_info.stark_struct.merkle_tree_arity == STREAM_COMMIT_TREE_ARITY
+fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
+    proofman_common::hash_family::supports_stream_commit(hash)
+        && setup.stark_info.stark_struct.merkle_tree_arity
+            == proofman_common::hash_family::merkle_tree_arity(hash)
         && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 
@@ -5108,7 +5103,7 @@ where
                     }
                     let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
                     let ss = &setup.stark_info.stark_struct;
-                    if !stream_commit_eligible(setup) {
+                    if !stream_commit_eligible(&pctx.global_info.hash, setup) {
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
@@ -5374,7 +5369,7 @@ where
             return false;
         }
         let ss = &setup.stark_info.stark_struct;
-        if !stream_commit_eligible(setup) {
+        if !stream_commit_eligible(&pctx.global_info.hash, setup) {
             return false;
         }
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
