@@ -15,6 +15,7 @@ pub enum Operand {
     Num(u64),
     Cm { stage: u64, pos: u64, dim: u64, stride: i64 },
     Const { id: u64, stride: i64 },
+    Custom { off: u64, pos: u64, dim: u64, ncols: u64, stride: i64 },
     Zi,
     Ch { base: u64 },
     Av { pos: u64, dim: u64 },
@@ -25,9 +26,11 @@ pub enum Operand {
 impl Operand {
     pub fn dim(&self) -> u64 {
         match self {
-            Operand::Tmp { dim, .. } | Operand::Cm { dim, .. } | Operand::Av { dim, .. } | Operand::Agv { dim, .. } => {
-                *dim
-            }
+            Operand::Tmp { dim, .. }
+            | Operand::Cm { dim, .. }
+            | Operand::Custom { dim, .. }
+            | Operand::Av { dim, .. }
+            | Operand::Agv { dim, .. } => *dim,
             Operand::Ch { .. } => 3,
             Operand::Num(_) | Operand::Const { .. } | Operand::Zi | Operand::Pub { .. } => 1,
         }
@@ -95,6 +98,44 @@ impl std::fmt::Display for UnhandledOperand {
 }
 impl std::error::Error for UnhandledOperand {}
 
+/// Merkle node words for a tree of `height` leaves -- mirrors MerkleTreeGL::getNumNodes / stark_info's getNumNodesMT.
+fn num_nodes_mt(height: u64, arity: u64) -> u64 {
+    let mut num = height;
+    let mut lvl = height;
+    while lvl > 1 {
+        num += (arity - (lvl % arity)) % arity;
+        let next = lvl.div_ceil(arity);
+        num += next;
+        lvl = next;
+    }
+    num * 4
+}
+
+/// Element offset of custom commit `cid`'s section (small or extended domain)
+/// inside `pCustomCommitsFixed`. Mirrors stark_info.cpp setMapOffsets: per
+/// commit, the small section (width*N), then the extended section
+/// (width*NExt) followed by its Merkle tree nodes.
+fn custom_section_offset(stark_info: &StarkInfo, cid: usize, extended: bool) -> anyhow::Result<u64> {
+    let n = 1u64 << stark_info.stark_struct.n_bits;
+    let next = 1u64 << stark_info.stark_struct.n_bits_ext;
+    let arity = stark_info.stark_struct.merkle_tree_arity;
+    let mut off = 0u64;
+    for (i, cc) in stark_info.custom_commits.iter().enumerate() {
+        if cc.stage_widths[0] == 0 {
+            continue;
+        }
+        if i == cid && !extended {
+            return Ok(off);
+        }
+        off += cc.stage_widths[0] * n;
+        if i == cid {
+            return Ok(off);
+        }
+        off += cc.stage_widths[0] * next + num_nodes_mt(next, arity);
+    }
+    anyhow::bail!("custom commit {cid} has no section (stageWidths[0] == 0?)")
+}
+
 /// Resolve the AIR's Q (cExp) expression into typed IR. Returns
 /// `UnhandledOperand` (as an `anyhow` error) if it references an operand type
 /// the generator can't emit.
@@ -154,6 +195,22 @@ pub fn build_ir_expr(
                 Operand::Cm { stage: cm.stage, pos: cm.stage_pos, dim: cm.dim, stride: stride(src.prime.unwrap_or(0))? }
             }
             "const" => Operand::Const { id: src.id.unwrap(), stride: stride(src.prime.unwrap_or(0))? },
+            "custom" => {
+                let cid = src.commit_id.ok_or_else(|| anyhow::anyhow!("custom operand without commitId"))? as usize;
+                let pol = &stark_info.custom_commits_map[cid][src.id.unwrap() as usize];
+                let name = &stark_info.custom_commits[cid].name;
+                let ncols = *stark_info
+                    .map_sections_n
+                    .get(&format!("{name}0"))
+                    .ok_or_else(|| anyhow::anyhow!("mapSectionsN missing section {name}0"))?;
+                Operand::Custom {
+                    off: custom_section_offset(stark_info, cid, extended)?,
+                    pos: pol.stage_pos,
+                    dim: pol.dim,
+                    ncols,
+                    stride: stride(src.prime.unwrap_or(0))?,
+                }
+            }
             "Zi" => Operand::Zi,
             "challenge" => Operand::Ch { base: 3 * src.id.unwrap() },
             "airvalue" => Operand::Av { pos: pos_of(src.id.unwrap(), &stark_info.air_values_map), dim },

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 pub struct StarkStruct {
     pub n_bits: u64,
     pub n_bits_ext: u64,
+    pub merkle_tree_arity: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +52,26 @@ pub struct StarkInfo {
     pub c_exp_id: i64,
     pub airgroup_id: i64,
     pub air_id: i64,
+    #[serde(default)]
+    pub custom_commits: Vec<CustomCommit>,
+    #[serde(default)]
+    pub custom_commits_map: Vec<Vec<CustomPol>>,
+}
+
+/// A custom (preprocessed) commit declaration, e.g. zisk's `rom`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCommit {
+    pub name: String,
+    pub stage_widths: Vec<u64>,
+}
+
+/// One column of a custom commit (customCommitsMap entry).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomPol {
+    pub dim: u64,
+    pub stage_pos: u64,
 }
 
 /// One source operand of a code step.
@@ -67,6 +88,8 @@ pub struct Src {
     pub dim: Option<u64>,
     #[serde(default)]
     pub prime: Option<i64>,
+    #[serde(default)]
+    pub commit_id: Option<u64>,
     // Note: a `Zi` operand also carries `boundaryId`, but the emitted load uses a
     // single zerofier (`aux[off_zi + row]`) and ignores it.
 }

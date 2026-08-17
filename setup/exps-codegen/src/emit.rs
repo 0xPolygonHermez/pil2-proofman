@@ -126,6 +126,20 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
                 ir.n_constants
             )]
         }
+        Operand::Custom { off, pos, dim, ncols, stride } => {
+            // Custom-commit sections are fixed/preprocessed data stored
+            // fixedLayout() (ColMajor) inside pCustomCommitsFixed, like const.
+            let row = rowexpr(*stride);
+            if *dim == 1 {
+                vec![format!("  gl64_t {name} = ccf[{off}ull + OFF({row},{pos},NExt,{ncols},{CONST_LAYOUT})];")]
+            } else {
+                vec![format!(
+                    "  g3 {name}; {name}.a=ccf[{off}ull+OFF({row},{pos},NExt,{ncols},{CONST_LAYOUT})]; {name}.b=ccf[{off}ull+OFF({row},{},NExt,{ncols},{CONST_LAYOUT})]; {name}.c=ccf[{off}ull+OFF({row},{},NExt,{ncols},{CONST_LAYOUT})];",
+                    pos + 1,
+                    pos + 2
+                )]
+            }
+        }
         Operand::Cm { stage, pos, dim, stride } => {
             let row = rowexpr(*stride);
             let n_cols = ir.ncols[stage];
@@ -317,6 +331,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
   for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<NExt; row+=gridDim.x*blockDim.x) {{
 {}
 {}
@@ -402,6 +417,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
 {}
 }}"#,
             lines.join("\n")
@@ -462,6 +478,7 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
   for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
 {}
 {}
