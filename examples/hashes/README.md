@@ -29,6 +29,7 @@ Additionally, you can generate some stats about the setup by running:
 ```bash
 cargo run --bin proofman-setup -- stats \
      -a ./examples/hashes/pil/main.pilout \
+     -s ./examples/hashes/pil/config.json \
      -o ./examples/hashes/build/stats.txt
 ```
 
