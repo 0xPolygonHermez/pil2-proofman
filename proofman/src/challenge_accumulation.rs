@@ -2,7 +2,7 @@ use proofman_curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
 use proofman_fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 
-/// Max transcript width across families 
+/// Max transcript width across families
 const W_MAX: usize = 16;
 use std::ops::Add;
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};

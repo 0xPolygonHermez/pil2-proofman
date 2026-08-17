@@ -480,8 +480,7 @@ struct SlotCommitCtx {
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
     proofman_common::hash_family::supports_stream_commit(hash)
-        && setup.stark_info.stark_struct.merkle_tree_arity
-            == proofman_common::hash_family::merkle_tree_arity(hash)
+        && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
         && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 

@@ -187,7 +187,9 @@ pub fn set_hash_family_c(family: &str) {
         "Poseidon1" => 1,
         "Poseidon2" => 2,
         "blake3" => 3,
-        other => panic!("set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\", \"Poseidon2\" or \"blake3\")"),
+        other => panic!(
+            "set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\", \"Poseidon2\" or \"blake3\")"
+        ),
     };
     unsafe { set_hash_family(fam) }
 }
