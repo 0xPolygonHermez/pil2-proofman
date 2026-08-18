@@ -45,9 +45,9 @@ ifeq ($(UNAME_S),Linux)
     NVCC := /usr/local/cuda/bin/nvcc
     include CudaArch.mk
     BUILD_DIR_GPU := ./build_gpu
-    CUDA_SRC_DIRS := ./src ../utils ./utils
+    CUDA_SRC_DIRS := ./src ../utils ./utils ../../external/sppark/ff
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-    NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -U STARK_POSEIDON1
+    NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ -DGL64_PARTIALLY_REDUCED $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -U STARK_POSEIDON1
 endif
 
 # Debug build flags
@@ -85,6 +85,8 @@ GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
                 $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o \
                 $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cpp.o \
+                $(BUILD_DIR_GPU)/src/stream_commit.cu.o \
+                $(BUILD_DIR_GPU)/src/blake3_goldilocks.cu.o \
                 $(BUILD_DIR_GPU)/src/goldilocks_tooling.cu.o
 
 GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)

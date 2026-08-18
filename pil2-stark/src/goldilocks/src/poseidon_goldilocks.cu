@@ -12,7 +12,6 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
-#include "poseidon2_goldilocks.hpp"  // NONCES_LAUNCH_* grinding launch params (shared with Poseidon2)
 
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
 // (full pil2-stark build).
@@ -684,7 +683,7 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
 
 // ---------------------------------------------------------------------------
 // Public API: grinding — same launch strategy as Poseidon2 (launch_iters
-// rounds × NONCES_LAUNCH_GRID_SIZE blocks × NONCES_LAUNCH_BLOCKS threads).
+// rounds × POSEIDON1_GRIND_GRID blocks × POSEIDON1_GRIND_BLOCKS threads).
 // Shared mem: one uint64 per thread for the block-local nonce reduction.
 // ---------------------------------------------------------------------------
 template<uint32_t W>
@@ -694,7 +693,7 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
 {
     uint64_t log_launch_iters = 7;
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = NONCES_LAUNCH_BITS;
+    uint64_t log_N = POSEIDON1_GRIND_BITS;
     uint64_t N = 1ULL << log_N;
     uint64_t security = 128;
 
@@ -708,8 +707,8 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
                                    ? log_totalHashesRequired - log_launch_iters - log_N : 0;
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
 
-    dim3 blockSize(NONCES_LAUNCH_BLOCKS);
-    dim3 gridSize(NONCES_LAUNCH_GRID_SIZE);
+    dim3 blockSize(POSEIDON1_GRIND_BLOCKS);
+    dim3 gridSize(POSEIDON1_GRIND_GRID);
 
     // Only need blockDim.x uint64_t slots for the block-local reduction.
     size_t shared_mem_size = blockSize.x * sizeof(uint64_t);

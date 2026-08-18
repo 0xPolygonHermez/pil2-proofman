@@ -6,7 +6,7 @@ use proofman_common::{
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace, MERKLE_TREE_ARITY};
+use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
 
 pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
@@ -94,8 +94,9 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        init_gpu_setup(pctx.gpu)?;
-        write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name)?;
+        init_gpu_setup(&pctx.global_info.hash, pctx.gpu)?;
+        let merkle_tree_arity = setup.stark_info.stark_struct.merkle_tree_arity as u64;
+        write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, merkle_tree_arity, &file_name)?;
         Ok(())
     }
 }

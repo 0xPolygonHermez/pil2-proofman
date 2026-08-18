@@ -112,6 +112,10 @@ struct StatsArgs {
     #[arg(short = 'a', long)]
     airout: String,
 
+    /// Hash family the setup will use; determines tree/transcript geometry.
+    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    hash: String,
+
     /// Output file for detailed stats (default: tmp/stats.txt)
     #[arg(short = 'o', long)]
     output: Option<String>,
@@ -342,8 +346,12 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Stats(args) => {
             tracing::info!("proofman-setup stats: starting");
+            if !proofman_common::hash_family::is_known_family(&args.hash) {
+                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
+            }
             let opts = StatsOptions {
                 airout_path: args.airout,
+                hash: args.hash,
                 output_path: args.output,
                 stark_structs_path: args.starkstructs,
                 airgroups: args.airgroups,

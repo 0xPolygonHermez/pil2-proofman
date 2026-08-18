@@ -708,9 +708,40 @@ __device__ __forceinline__ void nttCoalescedStore(gl64_t *inout, uint32_t idx,
         inout[idx] = r[z];
 }
 
+// Fused coset-spread load for the FIRST DIT launch of an LDE: position p of the
+// (virtual) spread 2N array is src[p >> lg_blowup] * gen^bitrev_N(p >> lg_blowup)
+// when p is a multiple of the blowup, else zero. Reading this on the fly kills
+// the separate spread pass (read N + write 2N per column) and halves the first
+// launch's DRAM reads (the stored zeros are never written or read). The values
+// are bitwise the ones the spread would have stored, so the transform output is
+// bit-identical.
+__device__ __forceinline__ gl64_t nttCosetLoadVal_(const gl64_t *src,
+    const gl64_t (*cosetPows)[NTT_WIN_SIZE], uint32_t lg_domain_size,
+    uint32_t lg_blowup, uint32_t p)
+{
+    uint32_t bmask = (1u << lg_blowup) - 1u;
+    if (p & bmask)
+        return gl64_t(uint64_t(0));
+    uint32_t idx = p >> lg_blowup;
+    gl64_t r = src[idx];
+    uint32_t pow = nttBitRev(idx, lg_domain_size - lg_blowup);
+    gl64_t root = cosetPows[0][pow % NTT_WIN_SIZE];
+    #pragma unroll
+    for (int o = 1; o < NTT_WIN_NUM; o++) {
+        uint32_t w = (pow >> (o * NTT_LG_WIN)) % NTT_WIN_SIZE;
+        if (w)
+            root *= cosetPows[o][w];
+    }
+    return r * root;
+}
+
 // DIT (decimation-in-time) step: bit-reversed input order, natural output -- the
 // forward NTT of the LDE. gridDim.y selects the column (stride col_stride elements).
-template<int z_count, bool coalesced = false>
+// coset_load (stage-0, non-coalesced, single-column launches only): loads come from
+// nttCosetLoadVal_(d_csrc, ...) instead of d_inout -- see ldeColMajor's serial path.
+// With it, stage 0 never READS d_inout at all (only writes it), so the launch is
+// hazard-free even when d_csrc is disjoint scratch and d_inout aliases the source.
+template<int z_count, bool coalesced = false, bool coset_load = false>
 __launch_bounds__(768, 1) __global__
 void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
                           const uint32_t stage, const uint32_t iterations,
@@ -718,7 +749,9 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
                           const gl64_t (*d_partialRoots)[NTT_WIN_SIZE],
                           const gl64_t (*d_zStepRoots)[1024],
                           const gl64_t *d_radix6, const gl64_t *d_radixX,
-                          bool is_intt, const uint64_t domain_inv)
+                          bool is_intt, const uint64_t domain_inv,
+                          const gl64_t *d_csrc, const gl64_t (*d_cosetPows)[NTT_WIN_SIZE],
+                          uint32_t lg_blowup)
 {
     gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
     extern __shared__ int nttShm[];
@@ -749,8 +782,15 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         uint32_t z_shift = inp_mask == 0 ? iterations : 0;
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
-            r[0][z] = d_inout[idx0 + (z << z_shift)];
-            r[1][z] = d_inout[idx1 + (z << z_shift)];
+            if constexpr (coset_load) {
+                r[0][z] = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
+                                           idx0 + ((uint32_t)z << z_shift));
+                r[1][z] = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
+                                           idx1 + ((uint32_t)z << z_shift));
+            } else {
+                r[0][z] = d_inout[idx0 + (z << z_shift)];
+                r[1][z] = d_inout[idx1 + (z << z_shift)];
+            }
         }
     }
 
@@ -1053,14 +1093,29 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
 // Coset spread: reads the iNTT result (bit-reversed order), multiplies by
 // gen^bit_rev(idx) from the windowed coset-power table, writes to out[idx<<blowup]
 // and zero-fills the blowup gaps (out = the destination column). in/out must be disjoint.
+// One launch spreads the SOURCE coefficients with index in [lo, hi): it reads
+// front positions [lo, hi) and writes output positions [lo*blowup, hi*blowup).
+// The driver picks lo = hi/blowup, so the writes span exactly [hi, hi*blowup):
+// they begin precisely where this launch's own reads end, and land on the region
+// the PREVIOUS (higher) window already consumed -- the driver walks windows
+// descending (hi = N, N/b, N/b^2, ...), with the launch boundary as the sync.
+// Everything still unread ([0, lo)) lies strictly below all writes, so the whole
+// spread runs in place with NO scratch. The lowest window ([0, hi), hi <= TPB)
+// overlaps its own reads (position 0 -> 0) and is handled by
+// nttCosetSpreadHeadKernel: one block per column, read-all / sync / write.
+// gridDim.y = column.
 __global__ void nttCosetSpreadKernel(gl64_t *out, const gl64_t *in,
                                      const gl64_t (*cosetPows)[NTT_WIN_SIZE],
-                                     uint32_t lg_domain_size, uint32_t lg_blowup)
+                                     uint32_t lg_domain_size, uint32_t lg_blowup,
+                                     uint32_t lo, uint32_t hi,
+                                     size_t outColStride, size_t inColStride)
 {
     uint32_t domain_size = 1u << lg_domain_size;
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= domain_size)
+    uint32_t idx = lo + blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= hi || idx >= domain_size)
         return;
+    out += (size_t)blockIdx.y * outColStride;
+    in  += (size_t)blockIdx.y * inColStride;
 
     uint32_t blowup = 1u << lg_blowup;
     gl64_t r = in[idx];
@@ -1081,6 +1136,39 @@ __global__ void nttCosetSpreadKernel(gl64_t *out, const gl64_t *in,
     gl64_t zero = gl64_t(uint64_t(0));
     for (uint32_t j = 1; j < blowup; j++)
         out[base + j] = zero;
+}
+
+// Final spread window [0, hi), hi <= blockDim.x: writes [0, hi*blowup) overlap
+// the reads, so one block per column reads everything to registers, syncs, and
+// only then writes. gridDim.y = column, in == out (column front).
+__global__ void nttCosetSpreadHeadKernel(gl64_t *col,
+                                         const gl64_t (*cosetPows)[NTT_WIN_SIZE],
+                                         uint32_t lg_domain_size, uint32_t lg_blowup,
+                                         uint32_t hi, size_t colStride)
+{
+    col += (size_t)blockIdx.y * colStride;
+    uint32_t idx = threadIdx.x;
+    gl64_t r;
+    if (idx < hi)
+        r = col[idx];
+    __syncthreads();
+    if (idx >= hi)
+        return;
+    uint32_t blowup = 1u << lg_blowup;
+    uint32_t pow = nttBitRev(idx, lg_domain_size);
+    gl64_t root = cosetPows[0][pow % NTT_WIN_SIZE];
+    #pragma unroll
+    for (int o = 1; o < NTT_WIN_NUM; o++) {
+        uint32_t w = (pow >> (o * NTT_LG_WIN)) % NTT_WIN_SIZE;
+        if (w)
+            root *= cosetPows[o][w];
+    }
+    r = r * root;
+    size_t base = (size_t)idx << lg_blowup;
+    col[base] = r;
+    gl64_t zero = gl64_t(uint64_t(0));
+    for (uint32_t j = 1; j < blowup; j++)
+        col[base + j] = zero;
 }
 
 // Copy a chunk's source columns into the TAIL N elements of each destination
@@ -1274,6 +1362,12 @@ struct NttRun {
     cudaStream_t s;
     bool dit;              // true = DIT (rev->nat, the NTT), false = DIF (nat->rev, the iNTT)
     int stage = 0;         // internal cursor, set by run() -- callers omit it
+    // Fused coset-spread load (LDE serial path): when set, the FIRST DIT launch
+    // reads nttCosetLoadVal_(cosetSrc, ...) instead of d_base. cosetSrc must be
+    // disjoint from the output column and ncols must be 1.
+    const gl64_t *cosetSrc = nullptr;
+    const gl64_t (*cosetPows)[NTT_WIN_SIZE] = nullptr;
+    uint32_t lgBlowup = 0;
 
     void step(int iterations)
     {
@@ -1301,12 +1395,22 @@ struct NttRun {
                 base, col_stride, (const gl64_t(*)[NTT_WIN_SIZE])t.partialRoots, \
                 (const gl64_t(*)[1024])t.zStepRoots, t.radixTwiddles[0], t.radixTwiddles[radix-6], is_intt, nttDomainSizeInv[lg]
         if (dit) {
-            if (num_blocks < (uint32_t)Z)
-                nttDitColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
-            else if (stage == 0 || lg < 12)
-                nttDitColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
-            else
-                nttDitColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+            // Fused coset-spread load only ever applies to the first launch (stage 0),
+            // which is always a non-coalesced instantiation.
+            const bool fuse = (cosetSrc != nullptr) && (stage == 0);
+            if (num_blocks < (uint32_t)Z) {
+                if (fuse)
+                    nttDitColMajorKernel<1, false, true><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup);
+                else
+                    nttDitColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0);
+            } else if (stage == 0 || lg < 12) {
+                if (fuse)
+                    nttDitColMajorKernel<4, false, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup);
+                else
+                    nttDitColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0);
+            } else {
+                nttDitColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0);
+            }
             stage += iterations;
         } else {
             if (num_blocks < (uint32_t)Z)
@@ -1413,18 +1517,17 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         abort();
     }
 
-    // The batched flow stages each column's iNTT result (in the destination tail) through scratch
-    // for the spread. The serial flow needs it to preserve src, and for an aliased column that
-    // would otherwise overwrite its own input.
+    // Scratch is only for the SERIAL flow (preserve src, or an aliased column that would
+    // otherwise overwrite its own input). The batched flow spreads in place via the
+    // column-front staging + descending windows below -- zero extra memory.
     gl64_t *scratch = preserve_scratch;
     bool own_scratch = false;
-    if (scratch == nullptr && (preserve_src || overlaps || chunk >= 2)) {
+    if (scratch == nullptr && (preserve_src || overlaps) && chunk < 2) {
         CHECKCUDAERR(cudaMallocAsync(&scratch, N * sizeof(gl64_t), stream));
         own_scratch = true;
     }
 
     uint32_t sthr = 256;
-    uint32_t sblk = (uint32_t)((N + sthr - 1) / sthr);
 
     if (chunk >= 2) {
         // batched: copy chunk cols to the destination-column tails -> batched DIF-iNTT
@@ -1453,28 +1556,47 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
 
             NttRun{dchunk + (Next - N), Next, nc, (int)nBits, true, ti, stream, false}.run();
 
-            for (uint32_t c = 0; c < nc; c++) {
-                gl64_t *dstCol = dchunk + (size_t)c * Next;
-                CHECKCUDAERR(cudaMemcpyAsync(scratch, dstCol + (Next - N), N * sizeof(gl64_t),
-                                             cudaMemcpyDeviceToDevice, stream));
-                nttCosetSpreadKernel<<<sblk, sthr, 0, stream>>>(dstCol, scratch,
-                    (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup);
-                CHECKCUDAERR(cudaGetLastError());
+            // Stage every column's iNTT tail into the (dead) column FRONT with one
+            // in-buffer strided copy (rows disjoint since blowup >= 2), then spread
+            // the whole chunk with descending write-safe windows: window
+            // [hi/blowup, hi) writes [hi, hi*blowup), never touching an unread
+            // front. Zero scratch; replaces nc serialized memcpy+launch pairs
+            // (measured 7% SM issue / 49% memory-latency stalls on those).
+            CHECKCUDAERR(cudaMemcpy2DAsync(dchunk, Next * sizeof(gl64_t),
+                                           dchunk + (Next - N), Next * sizeof(gl64_t),
+                                           N * sizeof(gl64_t), nc,
+                                           cudaMemcpyDeviceToDevice, stream));
+            {
+                uint32_t hi = (uint32_t)N;
+                while (hi > sthr) {
+                    uint32_t lo = hi >> lg_blowup;
+                    uint32_t wblk = (hi - lo + sthr - 1) / sthr;
+                    nttCosetSpreadKernel<<<dim3(wblk, nc), sthr, 0, stream>>>(dchunk, dchunk,
+                        (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup,
+                        lo, hi, Next, Next);
+                    hi = lo;
+                }
+                nttCosetSpreadHeadKernel<<<dim3(1, nc), sthr, 0, stream>>>(dchunk,
+                    (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup,
+                    hi, Next);
             }
+            CHECKCUDAERR(cudaGetLastError());
 
             NttRun{dchunk, Next, nc, (int)nBitsExt, false, tf, stream, true}.run();
         }
     } else {
-        // serial per column: iNTT on scratch (or in place on src when the caller
-        // allows trashing it) -> spread -> DIT-NTT on the destination column.
-        // High-to-low so an aliased src stays intact; irrelevant when disjoint.
+        // serial per column: iNTT (on scratch, or in place on src when the caller
+        // allows trashing it) -> DIT-NTT on the destination column with the coset
+        // spread fused into its first launch.
+
         for (uint32_t c = nCols; c-- > 0; ) {
             gl64_t *srcCol = d_src_ + (size_t)c * N;
             gl64_t *dstCol = d_dst_ + (size_t)c * Next;
             gl64_t *inttCol = srcCol;
-            // Also stage when a column's output covers its own input: the spread reads in[idx]
-            // while another thread writes out[idx*blowup], the same address. Ordering cannot fix
-            // that, but it only hits where srcCol meets dstCol; the rest run in place.
+            // Stage when a column's output covers its own input (c = 0 under equal
+            // bases): the fused stage-0 load reads inttCol while the same launch
+            // writes dstCol, the same addresses. Ordering cannot fix that, so the
+            // iNTT result is bounced through scratch; all other columns run in place.
             bool self_overlap = srcCol < dstCol + Next && dstCol < srcCol + N;
             if (preserve_src || self_overlap) {
                 CHECKCUDAERR(cudaMemcpyAsync(scratch, srcCol, N * sizeof(gl64_t),
@@ -1482,10 +1604,14 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
                 inttCol = scratch;
             }
             NttRun{inttCol, N, 1, (int)nBits, true, ti, stream, false}.run();
-            nttCosetSpreadKernel<<<sblk, sthr, 0, stream>>>(dstCol, inttCol,
-                (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows, (uint32_t)nBits, lg_blowup);
-            CHECKCUDAERR(cudaGetLastError());
-            NttRun{dstCol, Next, 1, (int)nBitsExt, false, tf, stream, true}.run();
+            // Coset spread fused into the NTT's first launch: it reads the compact
+            // iNTT result (inttCol, disjoint from dstCol -- self_overlap staged it
+            // through scratch above) and materializes the spread values on the fly.
+            NttRun fwd{dstCol, Next, 1, (int)nBitsExt, false, tf, stream, true};
+            fwd.cosetSrc = inttCol;
+            fwd.cosetPows = (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows;
+            fwd.lgBlowup = lg_blowup;
+            fwd.run();
         }
     }
 

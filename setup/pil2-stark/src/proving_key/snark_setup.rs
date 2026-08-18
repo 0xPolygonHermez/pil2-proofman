@@ -222,7 +222,7 @@ pub fn gen_snark_setup(
         pow_bits: Some(19),
         ..Default::default()
     };
-    let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf);
+    let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
 
     let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default());
 

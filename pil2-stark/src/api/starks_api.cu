@@ -24,6 +24,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "gen_proof.cuh"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "blake3_goldilocks.cuh"
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
@@ -50,7 +51,9 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
-    if (get_hash_family() == HashFamily::Poseidon1) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        Blake3GoldilocksGPU::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+    } else if (get_hash_family() == HashFamily::Poseidon1) {
         switch (arity) {
         case 2: PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
         case 3: PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
@@ -76,7 +79,9 @@ void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
 void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
                     uint32_t n_bits, cudaStream_t stream)
 {
-    if (get_hash_family() == HashFamily::Poseidon1) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        Blake3GoldilocksGPU::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    } else if (get_hash_family() == HashFamily::Poseidon1) {
         PoseidonGoldilocksGPU<8>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
     } else {
         Poseidon2GoldilocksGPUGrinding::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
@@ -2129,7 +2134,10 @@ uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
                                       uint64_t nCols, uint64_t wordsPerRow) {
     if (nCols == 0 || nCols > SC_MAX_COLS || nBitsExt <= nBits || wordsPerRow == 0) return 0;
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
-    return streamCommitSlotElems(dims) * sizeof(Goldilocks::Element);
+    const StreamCommitHash hash = (get_hash_family() == HashFamily::Blake3)
+                                      ? StreamCommitHash::Blake3
+                                      : StreamCommitHash::Poseidon1;
+    return streamCommitSlotElems(dims, hash) * sizeof(Goldilocks::Element);
 }
 
 // Enable nSlots streaming-commit slots of slotBytes each (FIRST GPU only --
@@ -2290,11 +2298,10 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers->streamCommitSlots == 0) return -11;
     if (slotIdx >= d_buffers->streamCommitSlots) return -12;
-    // The slot pipeline hashes with Poseidon1 W=16 (arity 4) only -- the caller
-    // checks the arity, this checks the family. A Poseidon2 setup must take the
-    // legacy path (which dispatches on both), else the slot would produce roots
-    // from the wrong permutation.
-    if (get_hash_family() != HashFamily::Poseidon1) return -15;
+    // The slot pipeline has kernels for Poseidon1 W=16 (arity 4) and blake3
+    // (arity 2) -- the caller checks the arity, this checks the family. 
+    const HashFamily scFamily = get_hash_family();
+    if (scFamily != HashFamily::Poseidon1 && scFamily != HashFamily::Blake3) return -15;
     // Quiesced: gpu-mops is in its final planning phase — stay off the GPU.
     if (d_buffers->streamCommitQuiesced.load(std::memory_order_acquire)) return -14;
 
@@ -2328,7 +2335,10 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         dims.numEntries = aii->num_entries;
     }
 
-    if (streamCommitSlotElems(dims) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
+    const StreamCommitHash scHash = (scFamily == HashFamily::Blake3)
+                                        ? StreamCommitHash::Blake3
+                                        : StreamCommitHash::Poseidon1;
+    if (streamCommitSlotElems(dims, scHash) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
         return -13;
 
     if (!streamCommitAcquireRegion(d_buffers)) return -14;
@@ -2339,7 +2349,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                            sizeof(Goldilocks::Element);
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
-                                    dColSource, dTable);
+                                    dColSource, dTable, scHash);
     streamCommitReleaseRegion(d_buffers);
     return rc;
 }

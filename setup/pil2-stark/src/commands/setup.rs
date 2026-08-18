@@ -129,7 +129,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_stark_struct(&air_settings, n_bits);
+                let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")

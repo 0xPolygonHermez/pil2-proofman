@@ -13,11 +13,7 @@
 #define HASH_SIZE 4
 #endif
 
-// GPU PARAMS
-#define NONCES_LAUNCH_BITS 19
-#define NONCES_LAUNCH_BLOCKS 512
-#define NONCES_LAUNCH_GRID_SIZE \
-    (((1ULL << NONCES_LAUNCH_BITS) + NONCES_LAUNCH_BLOCKS - 1) / NONCES_LAUNCH_BLOCKS)
+#include "grinding_launch.hpp"  // NONCES_LAUNCH_* grinding launch geometry
 
 // Mode selector for the Poseidon2 public API.
 // Auto resolves per-operation, inline, to the best backend compiled in.

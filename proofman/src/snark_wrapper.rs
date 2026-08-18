@@ -17,7 +17,7 @@ use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
     alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c, set_gpu_mode_c,
-    get_num_gpus_c, init_gpu_setup_c, GOLDILOCKS_MERKLE_TREE_ARITY,
+    get_num_gpus_c, init_gpu_setup_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -492,7 +492,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     ensure_gpu_available(gpu)?;
     if gpu {
-        init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
+        init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.merkle_tree_arity);
     }
 
     check_const_tree(&setup_recursivef, &None)?;
