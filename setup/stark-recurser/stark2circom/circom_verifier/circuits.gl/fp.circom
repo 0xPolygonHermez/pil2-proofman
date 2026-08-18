@@ -41,7 +41,7 @@ template SignFp() {
     signal input a;
     signal output {binary} sign;
 
-    signal a_bits[64] <== Num2Bits(64)(a);
+    signal a_bits[64] <== Num2Bits_strict()(a);
 
     sign <== a_bits[0];
 }
