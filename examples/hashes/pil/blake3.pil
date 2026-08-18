@@ -171,7 +171,7 @@ airtemplate Blake3(const int N = 2**20) {
     // vd' === (vd ^ va') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
     col witness bits(8) vd_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: 0, a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 2) % 4], c1: 0);
+        xor_rotr_check(a: vd[i], b: va_prime[i], rot: 0, c0: vd_prime[(i + 2) % 4], c1: 0);
     }
 
     // vc' === (vc + vd') mod 2³²
@@ -183,7 +183,7 @@ airtemplate Blake3(const int N = 2**20) {
     // vb' === (vb ^ vc') >>> 12
     col witness bits(8) vb_prime_s[4][2];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: 0, a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
+        xor_rotr_check(a: vb[i], b: vc_prime[i], rot: 12, c0: vb_prime_s[i][0], c1: vb_prime_s[i][1]);
     }
 
     /*
@@ -212,7 +212,7 @@ airtemplate Blake3(const int N = 2**20) {
     // vd'' === (vd' ^ va'') >>> 8 (Note that ROTR 8 is a byte-aligned rotation)
     col witness bits(8) vd_prime_prime[4];
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: 0, a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 3) % 4], c1: 0);
+        xor_rotr_check(a: vd_prime[i], b: va_prime_prime[i], rot: 0, c0: vd_prime_prime[(i + 3) % 4], c1: 0);
     }
 
     // vc'' === (vc' + vd'') mod 2³²
@@ -222,24 +222,27 @@ airtemplate Blake3(const int N = 2**20) {
     add2_check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed);
 
     /*
-        vb'' === (vb' ^ vc'') >>> 7
+        vb'' === (vb' ^ vc'') >>> 7 = ((vb' ^ vc'') >>> 8) <<< 1
 
-        ROTR 7
-        x    in[x]         out[x]    
-        -----------------------------
-        0    0x88      0x10_00_00_01 
-        1    0x99      0x00_00_01_32 
-        2    0xAA      0x00_01_54_00 
-        3    0xBB      0x01_76_00_00 
-        -----------------------------
-        Result:        0x11_77_55_33 
+        ROTR 8 is a byte-aligned rotation and ROTL 1 is 2·y mod 2³² plus the
+        top bit of y: z = vb' ^ vc'' is computed with plain XOR (rot 0) lookups and the
+        rotation costs one boolean witness.
     */
-    col witness bits(32) vb_prime_prime_s[4];
-    expr vb_pp_packed = 0;
+    col witness bits(8) vb_pp_xor[4]; // z = vb' ^ vc''
+    col witness bits(1) vb_pp_t;      // top bit of y = rotr8(z), i.e., bit 7 of z[0]
     for (int i = 0; i < 4; i++) {
-        xor_rotr_check(offset: i, a: vb_prime[i], b: vc_prime_prime[i], rot: 7, c0: vb_prime_prime_s[i], c1: 0);
-        vb_pp_packed += vb_prime_prime_s[i];
+        xor_rotr_check(a: vb_prime[i], b: vc_prime_prime[i], rot: 0, c0: vb_pp_xor[i], c1: 0);
     }
+    vb_pp_t * (1 - vb_pp_t) === 0;
+
+    // y = rotr8(z): byte i of y is z[(i + 1) % 4]
+    const expr vb_pp_rotr8 = pack_bytes([vb_pp_xor[1], vb_pp_xor[2], vb_pp_xor[3], vb_pp_xor[0]]);
+    // vb'' = rotl1(y) = 2·y mod 2³² + top(y)
+    const expr vb_pp_packed = 2*vb_pp_rotr8 - P2_32*vb_pp_t + vb_pp_t;
+    // The carry bit is sound with just booleanity: z bytes are table-bound, so y < 2³², and
+    // the transition constraint equates vb_pp_packed to a future vb_packed which is also < 2³².
+    // If the prover lies about vb_pp_t, the expression lands outside [0, 2³²) as a field element
+    // (off by ±(2³² - 1)), so the equality can never hold.
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TRANSITION CONSTRAINTS
@@ -319,29 +322,10 @@ airtemplate Blake3(const int N = 2**20) {
     lookup_assumes(BLAKE3_MSG_ID, [key_y, y_packed], sel: rounds16_sel, sel_is_binary: 1);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BLAKE3 RANGE CHECKER
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const int RANGE_CHECKER_SIZE = P2_16;
-    if (N < RANGE_CHECKER_SIZE) {
-        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
-    }
-
-    // Range (16 bits)
-    col fixed RANGE = [0..MASK_16]...;
-
-    col witness mul_range;
-    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
-
-    function range_check_16(const expr a) {
-        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE3 OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const int TABLE_SIZE = P2_19 + P2_18;
+    const int TABLE_SIZE = P2_17;
     if (N < TABLE_SIZE) {
         error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
     }
@@ -352,45 +336,52 @@ airtemplate Blake3(const int N = 2**20) {
     // Input B (8 bits)
     col fixed B = [0:P2_8..MASK_8:P2_8]...;
 
-    // Offset (2 bits)
-    col fixed OFFSET = [0:P2_16..MASK_2:P2_16]...;
-
-    // Rotation (1,5 bits)
-    col fixed ROTATION = [0:P2_18, 12:P2_18, 7:P2_18]...;
+    // Rotation (1 bit)
+    col fixed ROTATION = [0:P2_16, 12:P2_16]...;
 
     // Output C2 (8 bits)
     col fixed C_ROT[2];
 
     #pragma transpile
     for (int i = 0; i < N; i++) {
-        const int [offset, rot, a, b] = [OFFSET[i], ROTATION[i], A[i], B[i]];
+        const int [rot, a, b] = [ROTATION[i], A[i], B[i]];
 
         // ROTR the XOR byte
-        const int byte = (a ^ b) << 8 * offset;
+        const int byte = a ^ b;
         const int c = ((byte >> rot) | (byte << ((32 - rot) % 32))) & MASK_32;
 
-        if (rot == 7) {
-            // Compute the 32-bit output
-            C_ROT[0][i] = c;
-            C_ROT[1][i] = 0;
-        } else {
-            const int s   = (32 - rot) % 32;  // normalized bit shift
-            const int l   = (s / 8) % 4;
-            const int lp1 = (l + 1) % 4;
+        const int s   = (32 - rot) % 32;  // normalized bit shift
+        const int l   = (s / 8) % 4;
+        const int lp1 = (l + 1) % 4;
 
-            const int c_rot0 = (c >> (8 * l))   & MASK_8;
-            const int c_rot1 = (c >> (8 * lp1)) & MASK_8;
-
-            C_ROT[0][i] = c_rot0;
-            C_ROT[1][i] = c_rot1;
-        }
+        C_ROT[0][i] = (c >> (8 * l))   & MASK_8;
+        C_ROT[1][i] = (c >> (8 * lp1)) & MASK_8;
     }
 
     col witness mul_table;
-    lookup_proves(BLAKE3_TABLE_ID, [OFFSET, A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
+    lookup_proves(BLAKE3_TABLE_ID, [A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
 
-    function xor_rotr_check(const expr offset, const expr a, const expr b, const int rot, const expr c0, const expr c1) {
-        lookup_assumes(air.BLAKE3_TABLE_ID, [offset, a, b, rot, c0, c1]);
+    function xor_rotr_check(const expr a, const expr b, const int rot, const expr c0, const expr c1) {
+        lookup_assumes(air.BLAKE3_TABLE_ID, [a, b, rot, c0, c1]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int RANGE_CHECKER_SIZE = P2_16;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range (16 bits)
+    const expr RANGE = A + P2_8 * B; // [0..MASK_16]...
+
+    col witness mul_range;
+    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
+
+    function range_check_16(const expr a) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
     }
 
     // Given a,b,c,active it checks c == (a + b) mod 2³² when active == 1
