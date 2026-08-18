@@ -42,7 +42,7 @@ pub struct GenConfig {
     pub chunk: Option<usize>,
     /// CUDA arch spec: `auto` (default), `major`, or a list like `89,120`.
     pub archspec: String,
-    /// pil2-stark source root; `None` resolves it relative to this crate.
+    /// pil2-stark source root; `None` uses the vendored `proofman-starks-src` tree.
     pub stark_src: Option<PathBuf>,
     /// Retain the generated `.cu`/`.o` here; `None` uses a temp dir removed on exit.
     pub keep_dir: Option<PathBuf>,

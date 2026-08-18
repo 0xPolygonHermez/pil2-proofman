@@ -1455,6 +1455,7 @@ name = "proofman-exps-codegen"
 version = "1.2.0-alpha"
 dependencies = [
  "anyhow",
+ "proofman-starks-src",
  "rayon",
  "regex",
  "serde",
