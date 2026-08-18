@@ -17,24 +17,24 @@ require "circuits/plonk.pil";
 // selected by mutually-exclusive fixed columns; gates reuse witness cols a[].
 //
 // Poseidon1 (width 16) = 8 full + 22 partial = 30 rounds, packed into a 10-ROW gate
-// with ONE chain slot per row on cols a[24..39] (firstColP). Hades: ARC after the S-box
+// with ONE chain slot per row on cols a[30..45] (firstColP). Hades: ARC after the S-box
 // (pow7), except round 0's pre-ARC. R4 (round-3 P-matrix output) is stored at row 4 as an
 // ordinary round, so it reuses the shared pow7. 22 partial anchors = 16 in the chain slot
 // + 6 overflow at a[18..23]@PR.
 //
 // Columns:  a[0..15] input@INIT / output@FINAL ; a[16..17] key bits ;
-//           a[18..23] plonk band tail (+ 6 overflow anchors @PR) ; a[24..39] chain ;
-//           S[27] = connection band (a[0..26]).
-// The chain slot a[24..39] OVERLAPS the band at a[24..26]: on Poseidon rows those cells
-// hold chain state (tied soundly by the copy argument via their real signal IDs — same as
-// the aggregator's chain1/band overlap), so plonk gate 8 (a[24..26]) never fires on a
-// Poseidon row. cmul rows carry no chain, so cmul stays 3/row. Committed cols 43 -> 40.
+//           a[18..29] plonk band tail (+ 6 overflow anchors @PR at a[18..23]) ;
+//           a[30..45] chain ; S[30] = connection band (a[0..29]).
+// The chain slot is DISJOINT from the band, so every band cell that a Poseidon row
+// leaves free is available to the plonk piggyback: the 7 inner full-round rows expose
+// all 10 gates, exactly like a pure-plonk row. This layout is identical to the
+// Poseidon2 compressor's — only the round algebra and the tree-selector arity differ.
 // ============================================================================
 airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectVal1) {
-    col witness a[40];
+    col witness a[46];
 
     #pragma fixed_external
-    col fixed S[27];
+    col fixed S[30];
 
     #pragma fixed_external
     col fixed C[10];
@@ -69,25 +69,24 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr POSEIDON1_R28      = POSEIDON1_FINAL';                // row 8
     const expr POSEIDON1_R29      = POSEIDON1_FINAL;                 // row 9
 
-    col fixed CMUL          = [0:nPoseidonRows,                                                                       1:nCMulRows,   0...];
-    col fixed EVPOL4        = [0:(nPoseidonRows + nCMulRows),                                                         1:nEvPol4,     0...];
-    col fixed FFT4          = [0:(nPoseidonRows + nCMulRows + nEvPol4),                                               1:nFFT4,       0...];
-    // TreeSelector8 now spans 2 rows: 30 signals split 27/3 over a[0..26] + a[0..2]',
-    // so all signals stay inside the S[27] connection band. Fires on the first row of
-    // each pair ([1,0] pattern).
-    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                       [1,0]:nTreeSelector8, 0...];
-    col fixed SELECTVAL1    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8),                    1:nSelectVal1, 0...];
-    col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + 2*nTreeSelector8 + nSelectVal1),      1:nPlonkRows,  0...];
+    col fixed CMUL          = [0:nPoseidonRows,                                                                     1:nCMulRows,        0...];
+    col fixed EVPOL4        = [0:(nPoseidonRows + nCMulRows),                                                       1:nEvPol4,          0...];
+    col fixed FFT4          = [0:(nPoseidonRows + nCMulRows + nEvPol4),                                             1:nFFT4,            0...];
+    // TreeSelector8's 30 signals are exactly the band width, so the gate fits in ONE row.
+    col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                     1:nTreeSelector8,   0...];
+    col fixed SELECTVAL1    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8),                    1:nSelectVal1,      0...];
+    col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8 + nSelectVal1),       1:nPlonkRows,       0...];
 
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
 
-    // Plonk band on Poseidon rows is a[0..23] = 8 gates (a[24..26] holds chain state):
-    // q0 = gates 0..5 (a[0..17]), q1 = gates 6,7 (a[18..23]). Gate 8 (a[24..26]) fires
-    // only on non-Poseidon rows (PLONK/EvPol4/SelectVal1) where a[24..26] is free.
-    // The 6 partial-chain overflow anchors live on the PR row at a[18..23] (gates 6,7),
-    // so gates 6,7 must NOT fire on PR — use CHECK_PLONK_NOPR. The INIT row (whose
-    // a[18..23] used to hold the anchors) is now free there, so gates 6,7 fire on INIT.
+    // Plonk band a[0..29] = 10 gates: q0 = gates 0..5 (a[0..17]), q1 = gates 6..9 (a[18..29]).
+    // Per-row availability (chain lives off-band at a[30..45], so it never blocks a gate):
+    //   R1,R2,R3,R4,R26,R27,R28 : all 10 gates (band fully free)
+    //   PR                      : gates 0..5 + 8,9 (a[18..23] hold the overflow anchors)
+    //   INIT, FINAL             : gates 6..9 only (a[0..15] input/output, a[16..17] key)
+    //   EvPol4                  : gates 7..9 (gate 6 collides with resEVPOL a[18..20])
+    //   SelectVal1              : gates 8,9 (a[0..21] used)
     const expr CHECK_PLONK = PLONK
         + POSEIDON1_R1 + POSEIDON1_R2 + POSEIDON1_PR_PRIME + POSEIDON1_R4
         + POSEIDON1_PR
@@ -104,20 +103,18 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     plonk([a[15], a[16], a[17]], q0, CHECK_PLONK);
     plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT);
     plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4);
-    // Gate 8 (a[24..26]) now overlaps the chain slot a[24..39], so it must NOT fire on any
-    // Poseidon row (chain state lives there). It survives only on rows where a[24..26] is
-    // free: pure-plonk, EvPol4 (uses a[0..20]) and SelectVal1 (uses a[0..21]).
-    plonk([a[24], a[25], a[26]], q1, PLONK + EVPOL4 + SELECTVAL1);
+    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
+    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
 
-    const int firstColP = 24;
+    const int firstColP = 30;
 
-    // 10-row layout, chain slot a[24..39]:
-    //   row 0 (INIT):  a[0..15]=input   a[24..39]=R0
-    //   rows 1..3:     a[24..39]=R1, R2, R3 (row 3 = PR', P-matrix round -> R4)
-    //   row 4 (R4):    a[24..39]=R4 (stored)
-    //   row 5 (PR):    a[18..23]=anchors[16..21]  a[24..39]=anchors[0..15]
-    //   rows 6..8:     a[24..39]=R26, R27, R28
-    //   row 9 (FINAL): a[0..15]=output  a[24..39]=R29
+    // 10-row layout, chain slot a[30..45]:
+    //   row 0 (INIT):  a[0..15]=input   a[30..45]=R0
+    //   rows 1..3:     a[30..45]=R1, R2, R3 (row 3 = PR', P-matrix round -> R4)
+    //   row 4 (R4):    a[30..45]=R4 (stored)
+    //   row 5 (PR):    a[18..23]=anchors[16..21]  a[30..45]=anchors[0..15]
+    //   rows 6..8:     a[30..45]=R26, R27, R28
+    //   row 9 (FINAL): a[0..15]=output  a[30..45]=R29
 
     const expr pow7Input[POSEIDON_WIDTH_GL];
     const expr pow7Shared[POSEIDON_WIDTH_GL];
@@ -130,7 +127,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
 
     // pow7 for the 6 overflow anchors at a[18..23]@PR (the 6 of 22 partial-round S-boxes
     // that don't fit the 16-wide chain slot). pow7Shared can't cover them — its 16 slots
-    // map to the chain columns a[24..39].
+    // map to the chain columns a[30..45].
     const expr pow7Overflow[6];
     for (int i = 0; i < 6; i++) {
         pow7Overflow[i] = pow7(a[i + 18]);
@@ -182,7 +179,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
         POSEIDON1_PR_PRIME * (a[i + firstColP]' - fullRoundP[i]) === 0;
     }
 
-    // 22-round partial chain at PR (row 5): 16 anchors a[24..39] reuse pow7Shared, 6 overflow
+    // 22-round partial chain at PR (row 5): 16 anchors a[30..45] reuse pow7Shared, 6 overflow
     // anchors a[18..23]@PR use pow7Overflow; input = R4 (stored at row 4, read via backward
     // prime 'a[i+firstColP]); output = R26 (next-row chain slot).
     const expr st0[22];
@@ -243,9 +240,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr resEVPOL[3] = [a[18], a[19], a[20]];
     evpol4(coefs, x, resEVPOL, EVPOL4);
 
-    // TreeSelector8 (30 signals) split across 2 rows to stay inside the S[27] band:
-    //   row 0 (a[0..26]): treevals[0..7] (24) + key[3]
-    //   row 1 (a[0..2]'): res[3]
+    // TreeSelector8 (30 signals) — exactly the band width, so it fits in ONE row:
+    //   treevals[0..7] → a[0..23] ; key[3] → a[24..26] ; res[3] → a[27..29]
     const expr treevals[8][3];
     treevals[0] = [a[0],  a[1],  a[2]];
     treevals[1] = [a[3],  a[4],  a[5]];
@@ -256,7 +252,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     treevals[6] = [a[18], a[19], a[20]];
     treevals[7] = [a[21], a[22], a[23]];
     const expr key[3] = [a[24], a[25], a[26]];
-    const expr resTREE[3] = [a[0]', a[1]', a[2]'];
+    const expr resTREE[3] = [a[27], a[28], a[29]];
     treeselector8(treevals, key, resTREE, TREESELECTOR8);
 
     const expr selectvals[4][4];
@@ -268,8 +264,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
     selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
 
-    const expr A[27];
-    for (int i = 0; i < 27; i++) {
+    const expr A[30];
+    for (int i = 0; i < 30; i++) {
         A[i] = a[i];
     }
     connection(1, A, S, PIOP_BUS_PROD);

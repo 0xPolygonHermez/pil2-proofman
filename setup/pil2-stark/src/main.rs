@@ -94,7 +94,7 @@ struct SetupArgs {
     exps_arch: String,
 
     /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
-    #[arg(long, default_value_t = 40000)]
+    #[arg(long, default_value_t = 60000)]
     exps_cap: usize,
 
     /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.
@@ -212,7 +212,7 @@ struct SetupRecursiveTestArgs {
     exps_arch: String,
 
     /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
-    #[arg(long, default_value_t = 40000)]
+    #[arg(long, default_value_t = 60000)]
     exps_cap: usize,
 
     /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.
@@ -265,7 +265,7 @@ struct GenExpsArgs {
     exps_arch: String,
 
     /// Skip an AIR whose Q has more than N ops (stays on the interpreter).
-    #[arg(long, default_value_t = 40000)]
+    #[arg(long, default_value_t = 60000)]
     exps_cap: usize,
 
     /// Fixed ops/chunk for every AIR; omit to auto-tune the largest no-spill size.

@@ -398,13 +398,13 @@ mod tests {
             hash: "Poseidon2".to_string(),
             gen_exps: false,
             exps_arch: "auto".to_string(),
-            exps_cap: 40000,
+            exps_cap: 60000,
             exps_chunk: None,
             exps_stark_src: None,
         };
         assert!(!o.gen_exps);
         assert_eq!(o.exps_arch, "auto");
-        assert_eq!(o.exps_cap, 40000);
+        assert_eq!(o.exps_cap, 60000);
         assert!(o.exps_chunk.is_none());
     }
 
@@ -449,7 +449,7 @@ mod tests {
             hash: "Poseidon2".to_string(),
             gen_exps: false,
             exps_arch: "auto".to_string(),
-            exps_cap: 40000,
+            exps_cap: 60000,
             exps_chunk: None,
             exps_stark_src: None,
         };
@@ -494,7 +494,7 @@ mod tests {
             hash: "Poseidon2".to_string(),
             gen_exps: false,
             exps_arch: "auto".to_string(),
-            exps_cap: 40000,
+            exps_cap: 60000,
             exps_chunk: None,
             exps_stark_src: None,
         };
