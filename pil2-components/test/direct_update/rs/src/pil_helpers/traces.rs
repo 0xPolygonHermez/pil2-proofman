@@ -18,7 +18,6 @@ type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &str = "059cbb8670da626606653354f4c617b715443b6cde710589361fdd0b495c72c8";
 
-
 //AIRGROUP CONSTANTS
 
 pub const DIRECT_UPDATE_PROD_AIRGROUP_ID: usize = 0;
