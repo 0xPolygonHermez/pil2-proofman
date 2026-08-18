@@ -121,17 +121,21 @@ fn custom_section_offset(stark_info: &StarkInfo, cid: usize, extended: bool) -> 
     let arity = stark_info.stark_struct.merkle_tree_arity;
     let mut off = 0u64;
     for (i, cc) in stark_info.custom_commits.iter().enumerate() {
-        if cc.stage_widths[0] == 0 {
+        let w0 = *cc
+            .stage_widths
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("custom commit {} ({i}) has empty stageWidths", cc.name))?;
+        if w0 == 0 {
             continue;
         }
         if i == cid && !extended {
             return Ok(off);
         }
-        off += cc.stage_widths[0] * n;
+        off += w0 * n;
         if i == cid {
             return Ok(off);
         }
-        off += cc.stage_widths[0] * next + num_nodes_mt(next, arity);
+        off += w0 * next + num_nodes_mt(next, arity);
     }
     anyhow::bail!("custom commit {cid} has no section (stageWidths[0] == 0?)")
 }

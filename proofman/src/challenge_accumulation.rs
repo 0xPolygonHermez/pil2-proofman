@@ -78,6 +78,10 @@ where
             }
         } else {
             let w = contribution.len();
+            assert!(
+                w > 0 && w <= W_MAX && contributions_size >= w && contributions_size % w == 0,
+                "contributions_size ({contributions_size}) must be a non-zero multiple of the transcript width ({w}, max {W_MAX})"
+            );
             for (i, v) in contribution.iter().enumerate().take(w) {
                 values_row[i] = *v;
             }
