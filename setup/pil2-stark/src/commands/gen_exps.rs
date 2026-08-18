@@ -23,8 +23,8 @@ pub struct GenExpsOptions {
     pub cap: usize,
     /// Fixed ops/chunk for every AIR; `None` => the no-spill autotuner.
     pub chunk: Option<usize>,
-    /// pil2-stark source root for the nvcc includes; `None` resolves relative to
-    /// the exps-codegen crate.
+    /// pil2-stark source root for the nvcc includes; `None` uses the vendored
+    /// `proofman-starks-src` tree.
     pub stark_src: Option<PathBuf>,
 }
 

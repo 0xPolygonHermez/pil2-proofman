@@ -165,10 +165,7 @@ pub fn calculate_intermediate_polynomials(
     }
 
     best.unwrap_or_else(|| {
-        panic!(
-            "No feasible intermediate-polynomial split found for constraint degrees 2..={}",
-            max_q_deg.max(2)
-        )
+        panic!("No feasible intermediate-polynomial split found for constraint degrees 2..={}", max_q_deg.max(2))
     })
 }
 

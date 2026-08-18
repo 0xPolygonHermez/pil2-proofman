@@ -53,10 +53,11 @@ fn resolve_archs(archspec: &str) -> Vec<u32> {
 
 impl Toolchain {
     pub fn new(stark_src: Option<PathBuf>, archspec: &str, work_dir: &Path) -> Result<Self> {
-        let stark_dir = match stark_src {
-            Some(p) => p,
-            None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark"),
-        };
+        // Default to the tree carried by `proofman-starks-src` — this workspace's
+        // `pil2-stark/` under a path dependency, the registry checkout for a
+        // published consumer. nvcc only reads headers from it, so the read-only
+        // registry copy is used in place (no mirroring, unlike starks-lib-c).
+        let stark_dir = stark_src.unwrap_or_else(proofman_starks_src::source_dir);
         let stark_dir = stark_dir.canonicalize().unwrap_or(stark_dir);
         if !stark_dir.join("src").is_dir() {
             bail!("pil2-stark source not found at {} (pass --stark-src)", stark_dir.display());

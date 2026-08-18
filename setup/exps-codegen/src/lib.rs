@@ -29,11 +29,11 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use toolchain::Toolchain;
 
-const DEFAULT_CAP: usize = 60000; // skip an AIR whose Q has more ops than this
+const DEFAULT_CAP: usize = 40000; // skip an AIR whose Q has more ops than this
 const DEFAULT_CHUNK: usize = 512; // fixed ops/chunk when autotuning is off
 const SLOTS_CAP: u64 = 1000; // skip an AIR whose cross-chunk cut exceeds this
 
-/// Codegen configuration. Defaults: CAP=60000, autotune on, arch=auto.
+/// Codegen configuration. Defaults: CAP=40000, autotune on, arch=auto.
 #[derive(Debug, Clone)]
 pub struct GenConfig {
     /// Skip an AIR whose Q has more than this many ops (-> interpreter).
@@ -42,7 +42,7 @@ pub struct GenConfig {
     pub chunk: Option<usize>,
     /// CUDA arch spec: `auto` (default), `major`, or a list like `89,120`.
     pub archspec: String,
-    /// pil2-stark source root; `None` resolves it relative to this crate.
+    /// pil2-stark source root; `None` uses the vendored `proofman-starks-src` tree.
     pub stark_src: Option<PathBuf>,
     /// Retain the generated `.cu`/`.o` here; `None` uses a temp dir removed on exit.
     pub keep_dir: Option<PathBuf>,
