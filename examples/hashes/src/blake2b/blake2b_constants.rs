@@ -5,8 +5,9 @@ pub const CLOCKS_PER_G: usize = 1;
 pub const NUM_G_PER_ROUND: usize = 8;
 
 /// Number of BLAKE2b rounds
-/// As per the "Too Much Crypto (https://eprint.iacr.org/2019/1492.pdf)" paper
-pub const ROUNDS: usize = 8;
+/// Non-standard, but it could be lowered down to 8 per the
+/// "Too Much Crypto (https://eprint.iacr.org/2019/1492.pdf)" paper
+pub const ROUNDS: usize = 12;
 
 /// Rows per BLAKE2b round
 pub const CLOCKS_PER_ROUND: usize = CLOCKS_PER_G * NUM_G_PER_ROUND;
@@ -36,6 +37,10 @@ pub const SIGMA: [[usize; 16]; ROUNDS] = [
     [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
     [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
     [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
+    [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
+    [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
 ];
 
 /// Range checker size

@@ -122,8 +122,6 @@ pub fn calculate_intermediate_polynomials(
     max_q_deg: usize,
     q_dim: usize,
 ) -> ImPolsResult {
-    let mut d: usize = 2;
-
     info!("-------------------- POSSIBLE DEGREES ----------------------");
     let blowup = if max_q_deg > 1 { (max_q_deg as f64 - 1.0).log2() } else { 0.0 };
     info!("Considering degrees between 2 and {} (blowup factor: {:.0})", max_q_deg, blowup);
@@ -134,29 +132,44 @@ pub fn calculate_intermediate_polynomials(
     // happen to share `(idx, max_deg, im_pols)` are reused.
     let mut memo: HashMap<MemoKey, MemoVal> = HashMap::new();
 
-    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp_id, d, &mut memo);
-    let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
-    d += 1;
+    let mut best: Option<ImPolsResult> = None;
+    let mut best_added_cols: i64 = 0;
 
-    while !im_exps.is_empty() && d <= max_q_deg {
-        info!("------------------------------------------------------------");
-        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, c_exp_id, d, &mut memo);
-        let new_added = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
-        d += 1;
-
-        let should_replace = if max_q_deg > 0 { new_added < added_basefield_cols } else { im_exps_p.is_empty() };
-
-        if should_replace {
-            added_basefield_cols = new_added;
-            im_exps = im_exps_p.clone();
-            q_deg = q_deg_p;
+    for d in 2..=max_q_deg.max(2) {
+        if d > 2 {
+            info!("------------------------------------------------------------");
         }
-        if im_exps_p.is_empty() {
+
+        // A degree can be infeasible (e.g. an inline composite that cannot be
+        // promoted to an intermediate): skip it, it says nothing about the
+        // remaining (larger) degrees.
+        let Some((im_exps_p, q_deg_p)) = calculate_im_pols(expressions, c_exp_id, d, &mut memo) else {
+            info!("Max constraint degree: {}", d);
+            info!("Infeasible: no valid intermediate split exists at this degree");
+            continue;
+        };
+        let new_added = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
+        let no_intermediates = im_exps_p.is_empty();
+
+        // On ties, keep the lowest feasible degree.
+        if best.is_none() || new_added < best_added_cols {
+            best_added_cols = new_added;
+            best = Some(ImPolsResult { im_exps: im_exps_p, q_deg: q_deg_p });
+        }
+
+        // Once a degree needs no intermediates, every larger degree returns the
+        // identical (empty, same q_deg) result: nothing left to improve.
+        if no_intermediates {
             break;
         }
     }
 
-    ImPolsResult { im_exps, q_deg }
+    best.unwrap_or_else(|| {
+        panic!(
+            "No feasible intermediate-polynomial split found for constraint degrees 2..={}",
+            max_q_deg.max(2)
+        )
+    })
 }
 
 fn calculate_added_cols(
@@ -199,20 +212,17 @@ fn calculate_im_pols(
     root_id: usize,
     max_deg: usize,
     memo: &mut HashMap<MemoKey, MemoVal>,
-) -> (Vec<usize>, i64) {
+) -> Option<(Vec<usize>, i64)> {
     let absolute_max = max_deg;
     let mut abs_max_d: i64 = 0;
 
     let (result_pols, rd) =
         calc_im_pols_inner(expressions, root_id, &BTreeSet::new(), max_deg, absolute_max, &mut abs_max_d, memo);
 
-    match result_pols {
-        Some(pols) => {
-            let final_deg = rd.max(abs_max_d) - 1;
-            (pols.into_iter().collect(), final_deg)
-        }
-        None => (Vec::new(), rd.max(abs_max_d).max(1) - 1),
-    }
+    result_pols.map(|pols| {
+        let final_deg = rd.max(abs_max_d) - 1;
+        (pols.into_iter().collect(), final_deg)
+    })
 }
 
 /// Recursive core. Returns `(Option<im_pols>, degree)`.

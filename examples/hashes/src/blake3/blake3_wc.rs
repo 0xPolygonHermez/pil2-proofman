@@ -8,7 +8,7 @@ use crate::pil_helpers::{Blake3Trace, Blake3TraceRow};
 
 use super::{
     blake3_constants::{CLOCKS, CLOCKS_PER_ROUND, G_INDICES, NUM_G_PER_ROUND, RANGE_SIZE, ROUNDS, SIGMA, TABLE_SIZE},
-    blake3_helpers::{limbs16, random_blake3_input, range_row, table_row, xor_rotr_full, xor_rotr_split},
+    blake3_helpers::{limbs16, random_blake3_input, range_row, table_row, xor_rotr_split},
 };
 
 pub struct Blake3Air {
@@ -75,20 +75,21 @@ impl Blake3Air {
                 row.set_all_vd_prime_prime(&d2.to_le_bytes());
                 row.set_all_vc_prime_prime(&c2.to_le_bytes());
 
-                // ── ROTR-by-12 split pieces and ROTR-by-7 lane-positioned values ──
+                // ── ROTR-by-12 split pieces and ROTR-by-7 XOR bytes + carry bit ──
                 let vb_b = vb.to_le_bytes();
                 let c1_b = c1.to_le_bytes();
                 let b1_b = b1.to_le_bytes();
                 let c2_b = c2.to_le_bytes();
+                let z = b1 ^ c2; // vb'' = rotl1(rotr8(z))
                 let mut vb_prime_s = [[0u8; 2]; 4];
-                let mut vb_prime_prime_s = [0u32; 4];
                 for i in 0..4 {
                     let (s0, s1) = xor_rotr_split(vb_b[i], c1_b[i], 12);
                     vb_prime_s[i] = [s0, s1];
-                    vb_prime_prime_s[i] = xor_rotr_full(b1_b[i], c2_b[i], i, 7);
                 }
                 row.set_all_vb_prime_s(&vb_prime_s);
-                row.set_all_vb_prime_prime_s(&vb_prime_prime_s);
+                row.set_all_vb_pp_xor(&z.to_le_bytes());
+                // top bit of rotr8(z) is bit 7 of z's byte 0
+                row.set_vb_pp_t((z >> 7) & 1 == 1);
 
                 // ── lookup multiplicities ──
 
@@ -105,10 +106,10 @@ impl Blake3Air {
                 let a2_b = a2.to_le_bytes();
                 let d1_b = d1.to_le_bytes();
                 for i in 0..4 {
-                    table_counts[table_row(0, vd_b[i], a1_b[i], 0)] += 1; // (vd ^ a')  >>> 16
-                    table_counts[table_row(0, vb_b[i], c1_b[i], 12)] += 1; // (vb ^ c')  >>> 12
-                    table_counts[table_row(0, d1_b[i], a2_b[i], 0)] += 1; // (d' ^ a'') >>> 8
-                    table_counts[table_row(i, b1_b[i], c2_b[i], 7)] += 1; // (b' ^ c'') >>> 7
+                    table_counts[table_row(vd_b[i], a1_b[i], 0)] += 1; // (vd ^ a')  >>> 16
+                    table_counts[table_row(vb_b[i], c1_b[i], 12)] += 1; // (vb ^ c')  >>> 12
+                    table_counts[table_row(d1_b[i], a2_b[i], 0)] += 1; // (d' ^ a'') >>> 8
+                    table_counts[table_row(b1_b[i], c2_b[i], 0)] += 1; // z = b' ^ c'' ((b' ^ c'') >>> 7 is z rotated via the carry bit)
                 }
 
                 // advance the working state
@@ -196,14 +197,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake3Air {
         let num_padding_rows = num_rows - num_rows_needed;
 
         // Perform the padding table checks. Each padding row does:
-        //      · 8 - xor_rotr_check(offset: 0, a: 0, b: 0, rot: 0,  c0: 0, c1: 0)
-        //      · 4 - xor_rotr_check(offset: 0, a: 0, b: 0, rot: 12, c0: 0, c1: 0)
-        //      · 1 - xor_rotr_check(offset: i, a: 0, b: 0, rot: 7,  c0: 0, c1: 0) for each lane i
-        table_counts[table_row(0, 0, 0, 0)] += (num_padding_rows * 8) as u64;
-        table_counts[table_row(0, 0, 0, 12)] += (num_padding_rows * 4) as u64;
-        for i in 0..4 {
-            table_counts[table_row(i, 0, 0, 7)] += num_padding_rows as u64;
-        }
+        //      · 12 - xor_rotr_check(a: 0, b: 0, rot: 0,  c0: 0, c1: 0)
+        //      ·  4 - xor_rotr_check(a: 0, b: 0, rot: 12, c0: 0, c1: 0)
+        table_counts[table_row(0, 0, 0)] += (num_padding_rows * 12) as u64;
+        table_counts[table_row(0, 0, 12)] += (num_padding_rows * 4) as u64;
 
         // Perform the padding range checks: 8 zero limbs
         let count_zeros = num_padding_rows * 8;

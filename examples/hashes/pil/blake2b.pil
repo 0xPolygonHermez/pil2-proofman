@@ -75,7 +75,8 @@ airtemplate Blake2b(const int N = 2**16) {
 
     const int CLOCKS_PER_G = 1;
     const int NUM_G_PER_ROUND = 8;
-    const int NUM_ROUNDS = 8; // As per the "Too Much Crypto (https://eprint.iacr.org/2019/1492.pdf)" paper
+    const int NUM_ROUNDS = 12; // Non-standard, but it could be lowered down to 8 per the
+                               // "Too Much Crypto (https://eprint.iacr.org/2019/1492.pdf)" paper
     const int CLOCKS_PER_ROUND = CLOCKS_PER_G * NUM_G_PER_ROUND;
     const int CLOCKS = CLOCKS_PER_ROUND * NUM_ROUNDS;
 
@@ -103,7 +104,7 @@ airtemplate Blake2b(const int N = 2**16) {
     println(`The total number of Blake2b's with N = ${N} is ${NUM_BLAKE2B}`);
 
     // Message word permutation schedule
-    const int SIGMA[10][16];
+    const int SIGMA[12][16];
     SIGMA[0] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
     SIGMA[1] = [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3];
     SIGMA[2] = [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4];
@@ -114,6 +115,8 @@ airtemplate Blake2b(const int N = 2**16) {
     SIGMA[7] = [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10];
     SIGMA[8] = [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5];
     SIGMA[9] = [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0];
+    SIGMA[10] = SIGMA[0];
+    SIGMA[11] = SIGMA[1];
 
     // Argument identifiers
     const int RANGE_CHECKER_ID = 251;
@@ -304,25 +307,6 @@ airtemplate Blake2b(const int N = 2**16) {
     lookup_assumes(BLAKE2B_MSG_ID, [key_y, y_packed[0], y_packed[1]], sel: rounds17_sel, sel_is_binary: 1);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // BLAKE2B RANGE CHECKER
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const int RANGE_CHECKER_SIZE = P2_16;
-    if (N < RANGE_CHECKER_SIZE) {
-        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
-    }
-
-    // Range (16 bits)
-    col fixed RANGE = [0..MASK_16]...;
-
-    col witness mul_range;
-    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
-
-    function range_check_16(const expr a) {
-        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // BLAKE2B OPERATION TABLE
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -353,6 +337,25 @@ airtemplate Blake2b(const int N = 2**16) {
 
     function xor_check(const expr a, const expr b, const expr c) {
         lookup_assumes(air.BLAKE2B_TABLE_ID, [a, b, c]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE2B RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int RANGE_CHECKER_SIZE = P2_16;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range (16 bits)
+    const expr RANGE = A + P2_8 * B; // [0..MASK_16]...
+
+    col witness mul_range;
+    lookup_proves(RANGE_CHECKER_ID, [RANGE], mul_range);
+
+    function range_check_16(const expr a) {
+        lookup_assumes(air.RANGE_CHECKER_ID, [a]);
     }
 
     // Pack a 64-bit word into two 32-bit limbs [lo, hi]

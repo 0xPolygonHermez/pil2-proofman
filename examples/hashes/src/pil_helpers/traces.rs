@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "f890a6bfa9dba3e382198291befdcae6757c2d0624f9b736d166da14903ca7f8";
+pub const PILOUT_HASH: &str = "683543dd975f6a152003dd7a3421015f0da6cd0d086099d7e68cee1454759d25";
 
 
 //AIRGROUP CONSTANTS
@@ -25,45 +25,49 @@ pub const HASHES_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
-pub const SHA_2_AIR_IDS: &[usize] = &[0];
+pub const BLAKE_3_AIR_IDS: &[usize] = &[0];
 
-pub const BLAKE_2_B_AIR_IDS: &[usize] = &[1];
+pub const SHA_2_AIR_IDS: &[usize] = &[1];
 
-pub const BLAKE_3_AIR_IDS: &[usize] = &[2];
+pub const BLAKE_2_B_AIR_IDS: &[usize] = &[2];
 
   
+trace_row!(Blake3FixedRow<F> {
+ CLK_0: F, BLOCK_ID: F, A: F, B: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
+});
+pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 131072, 0, 0>;
+
+trace_row!(Blake3TraceRow<F> {
+ va:[u16; 2], vb:[u8; 4], vc:[u16; 2], vd:[u8; 4], x:[u16; 2], y:[u16; 2], va_prime:[u8; 4], vd_prime:[u8; 4], vc_prime:[u8; 4], vb_prime_s:[[u8; 2]; 4], va_prime_prime:[u8; 4], vd_prime_prime:[u8; 4], vc_prime_prime:[u8; 4], vb_pp_xor:[u8; 4], vb_pp_t:bit, mul_table:u64, mul_range:u64,
+});
+
+pub type Blake3Trace<R> = GenericTrace<R, 131072, 0, 0>;
+
 trace_row!(Sha2FixedRow<F> {
  CLK_0: F, RANGE1: F, RANGE2: F, RANGE3: F, __L1__: F,
 });
-pub type Sha2Fixed<F> = GenericTrace<Sha2FixedRow<F>, 65536, 0, 0>;
+pub type Sha2Fixed<F> = GenericTrace<Sha2FixedRow<F>, 65536, 0, 1>;
 
 trace_row!(Sha2TraceRow<F> {
  s0:[bit; 32], s1:[bit; 32], w:[bit; 32], new_s0_carry_bits:ubit(3), new_s1_carry_bits:ubit(3), new_w_carry_bits:ubit(2), mul_range:u64,
 });
 
-pub type Sha2Trace<R> = GenericTrace<R, 65536, 0, 0>;
+pub type Sha2Trace<R> = GenericTrace<R, 65536, 0, 1>;
 
 trace_row!(Blake2bFixedRow<F> {
  CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, C: F, __L1__: F,
 });
-pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 65536, 0, 1>;
+pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 65536, 0, 2>;
 
 trace_row!(Blake2bTraceRow<F> {
  va:[u16; 4], vb:[u8; 8], vc:[u16; 4], vd:[u8; 8], x:[u16; 4], y:[u16; 4], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_pp_xor:[u8; 8], vb_pp_t:[bit; 2], mul_range:u64, mul_table:u64,
 });
 
-pub type Blake2bTrace<R> = GenericTrace<R, 65536, 0, 1>;
+pub type Blake2bTrace<R> = GenericTrace<R, 65536, 0, 2>;
 
-trace_row!(Blake3FixedRow<F> {
- CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, OFFSET: F, ROTATION: F, C_ROT: [F; 2], __L1__: F,
+values!(Blake3AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
 });
-pub type Blake3Fixed<F> = GenericTrace<Blake3FixedRow<F>, 1048576, 0, 2>;
-
-trace_row!(Blake3TraceRow<F> {
- va:[u16; 2], vb:[u8; 4], vc:[u16; 2], vd:[u8; 4], x:[u16; 2], y:[u16; 2], va_prime:[u8; 4], vd_prime:[u8; 4], vc_prime:[u8; 4], vb_prime_s:[[u8; 2]; 4], va_prime_prime:[u8; 4], vd_prime_prime:[u8; 4], vc_prime_prime:[u8; 4], vb_prime_prime_s:[u32; 4], mul_range:u64, mul_table:u64,
-});
-
-pub type Blake3Trace<R> = GenericTrace<R, 1048576, 0, 2>;
 
 values!(Sha2AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -73,32 +77,28 @@ values!(Blake2bAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(Blake3AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     (0, 0, PackedInfoConst {
+        is_packed: true,
+        num_packed_words: 10,
+        unpack_info: &[16, 16, 8, 8, 8, 8, 16, 16, 8, 8, 8, 8, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 1, 64, 64],
+    }),
+    (0, 1, PackedInfoConst {
         is_packed: true,
         num_packed_words: 3,
         unpack_info: &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 2, 64],
     }),
-    (0, 1, PackedInfoConst {
+    (0, 2, PackedInfoConst {
         is_packed: true,
         num_packed_words: 17,
         unpack_info: &[16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 16, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 1, 1, 64, 64],
-    }),
-    (0, 2, PackedInfoConst {
-        is_packed: true,
-        num_packed_words: 11,
-        unpack_info: &[16, 16, 8, 8, 8, 8, 16, 16, 8, 8, 8, 8, 16, 16, 16, 16, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 32, 32, 32, 32, 64, 64],
     }),
 ];
 
 /// Display name for every `(airgroup_id, air_id)` pair, derived directly from the
 /// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
 pub const AIR_NAMES: &[(usize, usize, &str)] = &[
-    (0, 0, "Sha2"),
-    (0, 1, "Blake2b"),
-    (0, 2, "Blake3"),
+    (0, 0, "Blake3"),
+    (0, 1, "Sha2"),
+    (0, 2, "Blake2b"),
 ];
