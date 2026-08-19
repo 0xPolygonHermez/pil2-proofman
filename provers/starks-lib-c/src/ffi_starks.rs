@@ -969,6 +969,9 @@ pub fn gen_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     custom_commits_fixed_path: &str,
+    // true: seed the transcript from this AIR's own verkey + publics instead of the
+    // global challenge (self-contained proof, no contributions phase).
+    self_contained: bool,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -998,6 +1001,7 @@ pub fn gen_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             custom_commits_path_ptr,
+            self_contained,
         )
     }
 }

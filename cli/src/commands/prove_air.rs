@@ -2,10 +2,11 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, init_gpu_setup, initialize_logger, SetupCtx, SetupsVadcop, MpiCtx, ProofCtx, ProofmanError,
-    ProofType,
+    calculate_fixed_tree, init_gpu_setup, initialize_logger, ProofmanOptions, SetupCtx, SetupsVadcop, MpiCtx, ProofCtx,
+    ProofmanError, ProofType,
 };
-use proofman::{n_publics_aggregation, verify_proof};
+use proofman::{n_publics_aggregation, verify_proof, ProofMan};
+use proofman_witness::load_packed_info;
 use proofman_starks_lib_c::{
     add_publics_aggregation_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
     load_device_const_pols_c, load_device_setup_c, read_exec_file_c,
@@ -28,12 +29,32 @@ type GetWitnessFunc =
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
+/// Proves ONE air on its own, with no global challenge and no contributions phase: the
+/// transcript is seeded from that air's verkey + publics, so the proof verifies standalone.
+///
+/// Two ways to get the trace:
+///   * `--proof <zkin>` -- a recursion air, whose witness comes from its circom library.
+///   * `--witness-lib <lib> --air <Name>` -- a regular air, whose witness comes from the
+///     project's Rust witness library. Only `<Name>`'s witness is computed.
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
-pub struct ProveRecursiveCmd {
-    #[clap(short = 'p', long)]
-    pub proof: PathBuf,
+pub struct ProveAirCmd {
+    /// Recursion input: zkin file whose name encodes ag<N>_air<M>_t<ProofType>.
+    #[clap(short = 'p', long, conflicts_with = "witness_lib", required_unless_present = "witness_lib")]
+    pub proof: Option<PathBuf>,
+
+    /// Witness computation dynamic library path.
+    #[clap(short = 'w', long, requires = "air")]
+    pub witness_lib: Option<PathBuf>,
+
+    /// Name of the air to prove, as it appears in the pilout (e.g. Blake3).
+    #[clap(short = 'a', long, requires = "witness_lib")]
+    pub air: Option<String>,
+
+    /// Public inputs path (witness-lib mode).
+    #[clap(short = 'i', long)]
+    pub public_inputs: Option<PathBuf>,
 
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
@@ -42,20 +63,82 @@ pub struct ProveRecursiveCmd {
     #[clap(long)]
     pub emit_witness_only: bool,
 
-    /// Run the recursive prover on the GPU.
+    /// Run the prover on the GPU.
     #[clap(long)]
     pub gpu: bool,
+
+    /// Force a packed trace (witness-lib mode). On `--gpu` this is already the default whenever
+    /// the witness library exports `packed_info`; pass it to pack on the CPU too.
+    #[clap(long)]
+    pub packed: bool,
+
+    /// Never pack the trace, even on `--gpu`.
+    #[clap(long, conflicts_with = "packed")]
+    pub no_packed: bool,
+
+    /// Skip verifying the generated proof (witness-lib mode; useful for timing runs).
+    #[clap(long)]
+    pub no_verify: bool,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 }
 
-impl ProveRecursiveCmd {
+impl ProveAirCmd {
     pub fn run(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        println!("{} ProveRecursive", format!("{: >12}", "Command").bright_green().bold());
+        println!("{} ProveAir", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
+        match (&self.witness_lib, &self.proof) {
+            (Some(witness_lib), _) => self.run_witness_lib(witness_lib, self.air.as_ref().unwrap()),
+            (None, Some(proof)) => self.run_recursion(proof),
+            // clap's required_unless_present / requires already rule this out.
+            (None, None) => Err(Box::new(ProofmanError::InvalidParameters(
+                "either --proof or --witness-lib together with --air is required".into(),
+            ))),
+        }
+    }
+
+    /// Regular air: the trace comes from the project's Rust witness library. ProofMan handles
+    /// planning and witness computation; only the requested air gets a witness, and the proof
+    /// itself skips contributions entirely.
+    fn run_witness_lib(&self, witness_lib: &Path, air: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut options = ProofmanOptions::new();
+        options.no_aggregation();
+        if self.gpu {
+            options.gpu();
+        }
+        // Exporting `packed_info` is the library's declaration that every component honours
+        // `pctx.packed`, so the GPU takes the ~5x smaller H2D by default. A library without it
+        // stays unpacked; --packed then errors rather than silently proving unpacked.
+        let packed_info = load_packed_info(witness_lib)?;
+        let use_packed = !self.no_packed && (self.packed || (self.gpu && !packed_info.is_empty()));
+        if use_packed {
+            // Both halves are required: the C++ side gates on `packedTrace && is_packed`.
+            if packed_info.is_empty() {
+                return Err(Box::new(ProofmanError::InvalidParameters(format!(
+                    "--packed requires the witness library to export `packed_info`, but {witness_lib:?} does not"
+                ))));
+            }
+            options.packed();
+            options.packed_info(packed_info);
+        }
+        options.verbose_mode(self.verbose.into());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
+        proofman.generate_air_proof(
+            witness_lib.to_path_buf(),
+            self.public_inputs.clone(),
+            air,
+            self.verbose.into(),
+            !self.no_verify,
+        )?;
+
+        Ok(())
+    }
+
+    fn run_recursion(&self, proof_path: &Path) -> Result<(), Box<dyn Error + Send + Sync>> {
         initialize_logger(self.verbose.into(), None);
 
         let mut pctx: ProofCtx<Goldilocks> = ProofCtx::create_ctx(
@@ -66,7 +149,7 @@ impl ProveRecursiveCmd {
             self.gpu,
         )?;
 
-        let mut zkin_file = File::open(&self.proof)?;
+        let mut zkin_file = File::open(proof_path)?;
         let mut zkin_u8 = Vec::new();
         zkin_file.read_to_end(&mut zkin_u8)?;
         if !zkin_u8.len().is_multiple_of(8) {
@@ -79,12 +162,12 @@ impl ProveRecursiveCmd {
 
         let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9]+)").unwrap();
 
-        let info = re.captures(self.proof.to_str().unwrap()).unwrap();
+        let info = re.captures(proof_path.to_str().unwrap()).unwrap();
         let airgroup_id = info[1].parse::<usize>().unwrap();
         let air_id = info[2].parse::<usize>().unwrap();
         let proof_type = &ProofType::from_str(&info[3]).unwrap();
 
-        // prove-recursive only ever proves the single recursive AIR named by the proof
+        // prove-air recursion mode only ever proves the single recursive AIR named by the proof
         // file (airgroup, air, proof_type). Build exactly that one setup -- do NOT build
         // the full SetupsVadcop aggregation stack (compressor + recursive1 + recursive2 +
         // vadcop_final), which would fail on proving keys that only contain this AIR.
@@ -97,7 +180,25 @@ impl ProveRecursiveCmd {
         // under recursive1/, so loading as Basic looked for a nonexistent air/<Air>.so.
         // (Compressor with has_compressor unset still yields an empty setup, but a recursive
         // proof file never names that case here.)
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, proof_type, false, &[], &[], self.gpu)?;
+        // A recursive-test proving key (setup-recursive-test) holds its single AIR in the Basic
+        // slot -- airs/<Air>/air/<Air> -- and its globalInfo carries no has_compressor flag, so
+        // asking for the named type would hand back an empty setup and then fail loading
+        // airs/<Air>/compressor/compressor.const. Load whichever layout is actually on disk.
+        //
+        // Only the *files* fall back: `proof_type_str` below keeps the named type, because it
+        // routes the const pols to the aggregation device buffer (starks_api.cu:774) which is the
+        // one gen_recursive_proof_c reads. Passing "basic" there uploads them to the basic buffer
+        // instead and the proof fails with "Invalid evaluations".
+        let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, proof_type);
+        let setup_proof_type = if Path::new(&format!("{}.starkinfo.json", setup_path.display())).exists() {
+            *proof_type
+        } else {
+            tracing::debug!("no {proof_type:?} setup at {}; loading the Basic layout", setup_path.display());
+            ProofType::Basic
+        };
+
+        let sctx: SetupCtx<Goldilocks> =
+            SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], &[], self.gpu)?;
 
         // Initialize the GPU (set_gpu_mode_c + init_gpu_setup_c). Without this the CUDA
         // context is not selected and check_device_memory_c (used by set_device_buffers)
@@ -231,7 +332,7 @@ impl ProveRecursiveCmd {
         );
 
         // vadcop/instance/proof_type follow recursion.rs:293-298 for non-final proofs.
-        // (prove-recursive targets compressor/recursive1/recursive2 — the vadcop tail
+        // (recursion mode targets compressor/recursive1/recursive2 — the vadcop tail
         // goes through a different entry point and is out of scope here.)
         let n = 1u64 << setup.stark_info.stark_struct.n_bits;
 
