@@ -1094,6 +1094,24 @@ fn generate_witness<F: PrimeField64>(
 
     let nmutex = std::cmp::min(8, rayon::current_num_threads());
 
+    // Capture the zkin feeding this recursion witness, to build test-recursive fixtures from a real
+    // run. `PIL2_DUMP_ZKIN=recursive2` (or `all`) writes the first proof of each kind under the name
+    // prove-air's regex parses. `create_new` keeps the parallel prover from racing on it.
+    if let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") {
+        let proof_type = format!("{:?}", setup.setup_type);
+        if want.eq_ignore_ascii_case("all") || want.eq_ignore_ascii_case(&proof_type) {
+            let path = std::path::Path::new("/tmp")
+                .join(format!("zkin_ag{}_air{}_t{}.bin", setup.airgroup_id, setup.air_id, proof_type));
+            if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                for word in zkin {
+                    file.write_all(&word.to_le_bytes())?;
+                }
+                file.flush()?;
+                tracing::info!("Captured zkin ({} words) to {}", zkin.len(), path.display());
+            }
+        }
+    }
+
     let mut witness: Vec<F> = match setup.setup_type {
         ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
         _ => memory_handler_recursive_witness.take_buffer_witness(),

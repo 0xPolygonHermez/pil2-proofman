@@ -56,6 +56,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")
                 .join(&hash_family);
+            // The inner proof this fixture recurses over: a recursive2 proof, so the AIR built from
+            // it matches the production aggregator. The name keeps `tCompressor` because prove-air
+            // parses the proof type out of it to resolve the setup path, and the harness names every
+            // recursive-test AIR "Compressor".
             let proof_path = current_dir.join("ag0_air0_tCompressor.bin");
 
             let mut file = File::open(proof_path).unwrap();
