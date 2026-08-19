@@ -3,18 +3,20 @@
 //! All field elements are u64 (Goldilocks fits in 8 bytes).
 //! No BigInt, no temporary files.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use anyhow::{anyhow, bail, Result};
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
-/// Wire index → Goldilocks coefficient.
-pub type LinearCombination = HashMap<u32, u64>;
+/// Wire index → Goldilocks coefficient. Ordered, so every pass over a combination's terms sees them
+/// in the same order: a `HashMap` here would iterate differently per process (Rust seeds its hasher
+/// randomly), which reaches the plonk placement and changes the AIR and its verkey run to run.
+pub type LinearCombination = BTreeMap<u32, u64>;
 
 /// A single R1CS constraint: A * B = C.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct R1csConstraint {
     pub a: LinearCombination,
     pub b: LinearCombination,
@@ -150,7 +152,7 @@ fn read_cstring(c: &mut Cursor<&[u8]>) -> Result<String> {
 /// Read a linear combination: n_terms × (wire_id u32, coeff field_size bytes).
 fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination> {
     let n_terms = read_u32(c)? as usize;
-    let mut lc = HashMap::with_capacity(n_terms);
+    let mut lc = LinearCombination::new();
     for _ in 0..n_terms {
         let wire_id = read_u32(c)?;
         let coeff = read_field(c, field_size)?;
@@ -278,6 +280,11 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
             custom_gates_uses.push(CustomGateUse { id, signals });
         }
     }
+
+    // Circom emits the same constraint system in a different order from run to run (the multiset is
+    // identical; only the serialization order moves). The plonk placement is order-sensitive, so
+    // canonicalise here and the proving key -- and its verkey -- become reproducible.
+    constraints.sort_unstable();
 
     Ok(R1csFile { header, constraints, wire_to_label, custom_gates, custom_gates_uses })
 }

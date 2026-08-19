@@ -180,7 +180,7 @@ pub fn compare_cells(r1cs: &R1csFile) -> CellComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plonk2pil::r1cs::types::{R1csConstraint, R1csFile, R1csHeader};
+    use crate::plonk2pil::r1cs::types::{R1csConstraint, R1csFile, R1csHeader, LinearCombination};
     use std::collections::HashMap;
 
     /// Minimal R1CS: `n_mul` multiplication constraints (a*b=c over fresh signals) and
@@ -190,11 +190,11 @@ mod tests {
         let mut constraints = Vec::new();
         let mut sid = 1u32;
         for _ in 0..n_mul {
-            let mut a = HashMap::new();
+            let mut a = LinearCombination::new();
             a.insert(sid, 1u64);
-            let mut b = HashMap::new();
+            let mut b = LinearCombination::new();
             b.insert(sid + 1, 1u64);
-            let mut c = HashMap::new();
+            let mut c = LinearCombination::new();
             c.insert(sid + 2, 1u64);
             constraints.push(R1csConstraint { a, b, c });
             sid += 3;
