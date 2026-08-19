@@ -24,6 +24,7 @@
 
 #include "blake3_device.cuh"
 #include "../src/goldilocks_tooling.hpp"   // getTreeNumElements (tree buffer sizing)
+#include "../src/blake3_goldilocks.cuh"    // grinding: the entry point the prover calls
 
 // Self-contained CUDA error check (keeps this bench independent of the prover
 // utility headers; BLAKE3 stays confined to the benchmark binary).
@@ -392,4 +393,76 @@ BENCHMARK(MERKLE_REDUCE_AR4_GPU_BLAKE3_BENCH)
     ->Name("MERKLE_REDUCE_AR4_GPU_BLAKE3_BENCH")
     ->Unit(benchmark::kMillisecond)
     ->Arg(1ULL << 23)
+    ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// grinding -- GPU (parameterised by n_bits, not nCols).
+//
+// Unlike the hash benches above (which time the self-contained benchs/ port),
+// this times the production entry point Blake3GoldilocksGPU::grinding, so the
+// number is directly comparable to GRINDING_GPU_POS1_BENCH / GRINDING_GPU_BENCH
+// which also time their prover launchers.
+//
+// Every iteration re-verifies the returned nonce on the host through the shared
+// blake3_core, so a fast-but-wrong grinding kernel cannot post a good time. The
+// host permute8 costs well under a microsecond against >=1 ms of grinding.
+// ---------------------------------------------------------------------------
+static void GRINDING_GPU_BLAKE3_BENCH(benchmark::State &state)
+{
+    cudaStream_t stream;
+    CUDA_OK(cudaStreamCreate(&stream));
+
+    const uint32_t n_bits = (uint32_t)state.range(0);
+
+    // The kernel reads only in[0..2] (the FIELD_EXTENSION challenge) and writes
+    // the nonce itself into slot 3.
+    constexpr int GRIND_CHALLENGE_ELEMS = 3;
+
+    uint64_t *d_in, *d_nonce, *d_nonceBlock;
+    CUDA_OK(cudaMalloc((void **)&d_in,         4 * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_nonce,      sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_nonceBlock, BLAKE3_GRIND_GRID * sizeof(uint64_t)));
+
+    uint64_t h_in[GRIND_CHALLENGE_ELEMS];
+    uint64_t iteration = 0;
+
+    for (auto _ : state)
+    {
+        iteration++;
+        for (int i = 0; i < GRIND_CHALLENGE_ELEMS; ++i)
+            h_in[i] = (iteration * 1000 + i) * 123456789ULL;
+        CUDA_OK(cudaMemcpy(d_in, h_in, GRIND_CHALLENGE_ELEMS * sizeof(uint64_t),
+                           cudaMemcpyHostToDevice));
+
+        Blake3GoldilocksGPU::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+        CUDA_OK(cudaStreamSynchronize(stream));
+
+        uint64_t h_nonce;
+        CUDA_OK(cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        if (h_nonce == UINT64_MAX)
+        {
+            state.SkipWithError("BLAKE3 grinding found no nonce");
+            break;
+        }
+
+        const uint64_t v_in[8] = {h_in[0], h_in[1], h_in[2], h_nonce, 0, 0, 0, 0};
+        uint64_t v_out[8];
+        blake3core::permute8(v_in, v_out);
+        if (v_out[0] >= (1ULL << (64 - n_bits)))
+        {
+            state.SkipWithError("BLAKE3 grinding nonce does not satisfy the bit requirement");
+            break;
+        }
+    }
+
+    CUDA_OK(cudaFree(d_in));
+    CUDA_OK(cudaFree(d_nonce));
+    CUDA_OK(cudaFree(d_nonceBlock));
+    CUDA_OK(cudaStreamDestroy(stream));
+}
+
+BENCHMARK(GRINDING_GPU_BLAKE3_BENCH)
+    ->Name("GRINDING_GPU_BLAKE3_BENCH")
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(16)->Arg(20)->Arg(23)->Arg(24)->Arg(25)->Arg(26)->Arg(27)->Arg(28)
     ->UseRealTime();
