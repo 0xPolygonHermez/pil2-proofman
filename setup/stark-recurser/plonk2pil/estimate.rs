@@ -181,7 +181,6 @@ pub fn compare_cells(r1cs: &R1csFile) -> CellComparison {
 mod tests {
     use super::*;
     use crate::plonk2pil::r1cs::types::{R1csConstraint, R1csFile, R1csHeader, LinearCombination};
-    use std::collections::HashMap;
 
     /// Minimal R1CS: `n_mul` multiplication constraints (a*b=c over fresh signals) and
     /// optional custom-gate uses, for exercising the estimator without a fixture file.
