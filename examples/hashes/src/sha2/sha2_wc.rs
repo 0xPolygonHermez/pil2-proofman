@@ -4,7 +4,7 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::pil_helpers::{Sha2Trace, Sha2TraceRow};
+use crate::pil_helpers::{Sha2Trace, Sha2TraceRow, Sha2TraceRowOps, Sha2TraceRowPacked};
 
 use super::{
     sha2_constants::{CLOCKS, CLOCKS_LOAD_INPUT, CLOCKS_LOAD_STATE, NUM_STEPS, RANGE_SIZE, RC},
@@ -32,8 +32,8 @@ impl Sha2Air {
 
     /// Fill one SHA2-256 invocation and accumulate the lookup multiplicities
     #[allow(clippy::needless_range_loop)]
-    fn process_trace<F: PrimeField64>(
-        rows: &mut [Sha2TraceRow<F>],
+    fn process_trace<F: PrimeField64, R: Sha2TraceRowOps<F>>(
+        rows: &mut [R],
         state: &[u32; 8],
         input: &[u32; 16],
         range_counts: &mut [u64],
@@ -109,38 +109,17 @@ impl Sha2Air {
             range_counts[range_row(s0_carry, s1_carry, 0)] += 1;
         }
     }
-}
 
-impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
-    fn execute(
+    /// Fill the whole trace and wrap it as an air instance. Generic over the row type so the
+    /// packed and unpacked layouts share one filler; every write goes through `Sha2TraceRowOps`.
+    fn compute_witness_inner<F: PrimeField64, R: Sha2TraceRowOps<F>>(
         &self,
-        pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        global_ids: &RwLock<Vec<usize>>,
-    ) -> ProofmanResult<()> {
-        let global_id = pctx.add_instance(Sha2Trace::<F>::AIRGROUP_ID, Sha2Trace::<F>::AIR_ID)?;
-        *self.instance_ids.write().unwrap() = vec![global_id];
-        global_ids.write().unwrap().push(global_id);
-        Ok(())
-    }
-
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        instance_ids: &[usize],
-        _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> ProofmanResult<()> {
-        if stage != 1 {
-            return Ok(());
-        }
-
+    ) -> ProofmanResult<AirInstance<F>> {
         let num_sha2s: usize = self.num_available_sha2s;
         let num_available_sha2s = self.num_available_sha2s;
 
-        let mut trace = Sha2Trace::new_from_vec_zeroes(buffer_pool.take_buffer())?;
+        let mut trace = Sha2Trace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
         let num_rows = trace.num_rows();
 
         // Check that we can fit all the SHA2 inputs in the trace
@@ -172,7 +151,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
         for k in 0..num_sha2s {
             let base = k * CLOCKS;
             let (state, input) = random_sha2_input(k as u64);
-            Self::process_trace::<F>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
+            Self::process_trace::<F, R>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
         }
 
         // Padding
@@ -183,7 +162,12 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
         if num_padding_blocks > 0 {
             let base = num_sha2s * CLOCKS;
             let mut zero_counts = vec![0u64; RANGE_SIZE];
-            Self::process_trace::<F>(&mut trace.buffer[base..base + CLOCKS], &[0u32; 8], &[0u32; 16], &mut zero_counts);
+            Self::process_trace::<F, R>(
+                &mut trace.buffer[base..base + CLOCKS],
+                &[0u32; 8],
+                &[0u32; 16],
+                &mut zero_counts,
+            );
 
             // Replicate the zero-input cycle across the remaining padding cycles
             let (head, tail) = trace.buffer.split_at_mut(base + CLOCKS);
@@ -208,9 +192,44 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
             }
         }
 
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        let instance_id = instance_ids[0];
-        pctx.add_air_instance(air_instance, instance_id);
+        Ok(AirInstance::new_from_trace(FromTrace::new(&mut trace)))
+    }
+}
+
+impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+    ) -> ProofmanResult<()> {
+        let global_id = pctx.add_instance(Sha2Trace::<F>::AIRGROUP_ID, Sha2Trace::<F>::AIR_ID)?;
+        *self.instance_ids.write().unwrap() = vec![global_id];
+        global_ids.write().unwrap().push(global_id);
+        Ok(())
+    }
+
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) -> ProofmanResult<()> {
+        if stage != 1 {
+            return Ok(());
+        }
+
+        // Same filler either way -- only the row's storage layout differs.
+        let air_instance = if pctx.packed {
+            self.compute_witness_inner::<F, Sha2TraceRowPacked<F>>(buffer_pool)?
+        } else {
+            self.compute_witness_inner::<F, Sha2TraceRow<F>>(buffer_pool)?
+        };
+
+        pctx.add_air_instance(air_instance, instance_ids[0]);
         Ok(())
     }
 }

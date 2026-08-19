@@ -4,7 +4,7 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::pil_helpers::{Blake2bTrace, Blake2bTraceRow};
+use crate::pil_helpers::{Blake2bTrace, Blake2bTraceRow, Blake2bTraceRowOps, Blake2bTraceRowPacked};
 
 use super::{
     blake2b_constants::{CLOCKS, CLOCKS_PER_ROUND, G_INDICES, NUM_G_PER_ROUND, RANGE_SIZE, ROUNDS, SIGMA, TABLE_SIZE},
@@ -32,8 +32,8 @@ impl Blake2bAir {
 
     /// Fill one Blake2b invocation and accumulate the lookup multiplicities
     #[allow(clippy::needless_range_loop)]
-    fn process_trace<F: PrimeField64>(
-        rows: &mut [Blake2bTraceRow<F>],
+    fn process_trace<F: PrimeField64, R: Blake2bTraceRowOps<F>>(
+        rows: &mut [R],
         state: &[u64; 16],
         message: &[u64; 16],
         table_counts: &mut [u64],
@@ -114,38 +114,17 @@ impl Blake2bAir {
             }
         }
     }
-}
 
-impl<F: PrimeField64> WitnessComponent<F> for Blake2bAir {
-    fn execute(
+    /// Fill the whole trace and wrap it as an air instance. Generic over the row type so the
+    /// packed and unpacked layouts share one filler; every write goes through `Blake2bTraceRowOps`.
+    fn compute_witness_inner<F: PrimeField64, R: Blake2bTraceRowOps<F>>(
         &self,
-        pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        global_ids: &RwLock<Vec<usize>>,
-    ) -> ProofmanResult<()> {
-        let global_id = pctx.add_instance(Blake2bTrace::<F>::AIRGROUP_ID, Blake2bTrace::<F>::AIR_ID)?;
-        *self.instance_ids.write().unwrap() = vec![global_id];
-        global_ids.write().unwrap().push(global_id);
-        Ok(())
-    }
-
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        instance_ids: &[usize],
-        _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> ProofmanResult<()> {
-        if stage != 1 {
-            return Ok(());
-        }
-
+    ) -> ProofmanResult<AirInstance<F>> {
         let num_blake2bs: usize = self.num_available_blake2bs;
         let num_available_blake2bs = self.num_available_blake2bs;
 
-        let mut trace = Blake2bTrace::new_from_vec_zeroes(buffer_pool.take_buffer())?;
+        let mut trace = Blake2bTrace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
         let num_rows = trace.num_rows();
 
         // Check that we can fit all the BLAKE2b inputs in the trace
@@ -178,7 +157,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake2bAir {
         for k in 0..num_blake2bs {
             let base = k * CLOCKS;
             let (state, message) = random_blake2b_input(k as u64);
-            Self::process_trace::<F>(
+            Self::process_trace::<F, R>(
                 &mut trace.buffer[base..base + CLOCKS],
                 &state,
                 &message,
@@ -210,9 +189,44 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake2bAir {
             }
         }
 
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        let instance_id = instance_ids[0];
-        pctx.add_air_instance(air_instance, instance_id);
+        Ok(AirInstance::new_from_trace(FromTrace::new(&mut trace)))
+    }
+}
+
+impl<F: PrimeField64> WitnessComponent<F> for Blake2bAir {
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+    ) -> ProofmanResult<()> {
+        let global_id = pctx.add_instance(Blake2bTrace::<F>::AIRGROUP_ID, Blake2bTrace::<F>::AIR_ID)?;
+        *self.instance_ids.write().unwrap() = vec![global_id];
+        global_ids.write().unwrap().push(global_id);
+        Ok(())
+    }
+
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) -> ProofmanResult<()> {
+        if stage != 1 {
+            return Ok(());
+        }
+
+        // Same filler either way -- only the row's storage layout differs.
+        let air_instance = if pctx.packed {
+            self.compute_witness_inner::<F, Blake2bTraceRowPacked<F>>(buffer_pool)?
+        } else {
+            self.compute_witness_inner::<F, Blake2bTraceRow<F>>(buffer_pool)?
+        };
+
+        pctx.add_air_instance(air_instance, instance_ids[0]);
         Ok(())
     }
 }

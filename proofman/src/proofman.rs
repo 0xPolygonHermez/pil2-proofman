@@ -5011,6 +5011,8 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
+        // Witness components read this to choose their packed vs unpacked row type.
+        pctx.packed = options.packed;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();

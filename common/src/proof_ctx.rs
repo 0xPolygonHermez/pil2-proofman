@@ -289,6 +289,8 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    /// Witness components write packed rows when set; mirrors `ProofmanOptions::packed`.
+    pub packed: bool,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -348,6 +350,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            packed: false,
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
         })
