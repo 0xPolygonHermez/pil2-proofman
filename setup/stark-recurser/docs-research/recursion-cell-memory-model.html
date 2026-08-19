@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recursion Cell & Memory Model</title>
+<meta name="description" content="Decision map for recursive-verifier linear-hash cells, fit checks, and GPU memory across N and blowup.">
+<style>
+  :root {
+    --bg: #0e141b;
+    --panel: #161f2a;
+    --panel-2: #1d2835;
+    --line: #2a3645;
+    --ink: #e8edf3;
+    --muted: #8593a5;
+    --faint: #5d6b7d;
+    --teal: #46c0a4;
+    --teal-dim: #2c7a68;
+    --warn: #e0a458;
+    --bad: #d9706a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 28px 64px; }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--teal); margin: 0 0 8px;
+  }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+  .sub { color: var(--muted); font-size: 14px; max-width: 70ch; margin: 0; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 22px 32px; align-items: flex-end;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 22px; margin-bottom: 26px;
+  }
+  .ctrl { display: flex; flex-direction: column; gap: 7px; min-width: 150px; flex: 1; }
+  .ctrl label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between;
+  }
+  .ctrl label b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--teal); cursor: pointer; }
+  select {
+    background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font-family: var(--mono); font-size: 13px;
+  }
+  .budget-note { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
+  .layout { display: grid; grid-template-columns: 1fr 300px; gap: 26px; align-items: start; }
+  @media (max-width: 880px) { .layout { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px;
+  }
+  .card h2 {
+    font-size: 12px; font-family: var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 16px; font-weight: 600;
+  }
+
+  /* heatmap */
+  .heat { overflow-x: auto; }
+  table.grid { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.grid th {
+    font-family: var(--mono); font-size: 11px; color: var(--faint); font-weight: 500;
+    padding: 4px 6px; text-align: center;
+  }
+  table.grid th.rowhdr { text-align: right; padding-right: 10px; }
+  /* the blowup axis is also the max-constraint-degree axis: show what it buys */
+  .degnote { display: block; font-size: 9px; color: var(--faint); opacity: .75; line-height: 1.25; margin-top: 2px; }
+  .cell {
+    width: 60px; height: 46px; border-radius: 5px; cursor: pointer;
+    position: relative; border: 2px solid transparent; transition: transform .08s;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; color: #0b0f14; font-weight: 600;
+  }
+  .cell:hover { transform: scale(1.06); z-index: 2; outline: 1px solid var(--ink); }
+  .cell.sel { outline: 2px solid var(--ink); z-index: 3; }
+  /* over the 32 GB ceiling: grayed out, struck through */
+  .cell.over {
+    background: repeating-linear-gradient(45deg, #1c242e, #1c242e 5px, #222c38 5px, #222c38 10px) !important;
+    color: var(--faint); font-weight: 500;
+  }
+  .cell.over .gb { text-shadow: none; text-decoration: line-through; opacity: .7; }
+  .cell.over::after { display: none; }
+  .cell .gb { text-shadow: 0 1px 0 rgba(255,255,255,.25); }
+  /* feasibility markers */
+  .cell.feasible { border-color: var(--teal); }
+  .cell.feasible::after {
+    content: ""; position: absolute; top: 3px; right: 4px;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--teal);
+    box-shadow: 0 0 0 1px #0b0f14;
+  }
+  td { padding: 3px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 18px; align-items: center; font-size: 12px; color: var(--muted); }
+  .ramp { height: 12px; width: 160px; border-radius: 3px; background: linear-gradient(90deg,#2b6f8f,#46c0a4,#cfd06a,#e0a458,#d9706a); }
+  .ramp-wrap { display: flex; flex-direction: column; gap: 4px; }
+  .ramp-lbl { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .key { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; border: 2px solid var(--teal); }
+
+  /* detail panel */
+  .detail .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .detail .row:last-child { border-bottom: 0; }
+  .detail .k { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
+  .detail .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .detail .hdr { font-size: 15px; font-weight: 650; margin: 0 0 4px; font-variant-numeric: tabular-nums; }
+  .detail .hint { color: var(--faint); font-size: 11px; margin: 14px 0 0; font-family: var(--mono); }
+  /* headline verdict: the one thing to read first */
+  .call { border-radius: 8px; padding: 12px 14px; margin: 12px 0 16px; border: 1px solid; }
+  .call.ok  { background: rgba(70,192,164,.10); border-color: var(--teal-dim); }
+  .call.no  { background: rgba(224,164,88,.09);  border-color: #7a5a2e; }
+  .call.bad { background: rgba(217,112,106,.09); border-color: #7c3f3c; }
+  .call .big { font-family: var(--mono); font-size: 15px; font-weight: 650; letter-spacing: .06em;
+               text-transform: uppercase; }
+  .call.ok .big  { color: var(--teal); }
+  .call.no .big  { color: var(--warn); }
+  .call.bad .big { color: var(--bad); }
+  .call .sub { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  /* derivations, folded away until asked for */
+  .detail details { border-top: 1px solid var(--line); }
+  .detail details summary { cursor: pointer; padding: 9px 0; font-family: var(--mono); font-size: 11px;
+                            letter-spacing: .04em; color: var(--muted); list-style: none; }
+  .detail details summary::-webkit-details-marker { display: none; }
+  .detail details summary::before { content: '▸ '; color: var(--teal); }
+  .detail details[open] summary::before { content: '▾ '; }
+  .detail details summary:hover { color: var(--ink); }
+  .detail details .body { padding: 0 0 10px; }
+  .detail details .row { font-size: 12px; padding: 5px 0; }
+  .detail .calc { font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.6;
+                  padding: 2px 0 8px; white-space: pre-line; }
+    table.grid th.rowhdr .degnote { text-align: right; white-space: nowrap; }
+  .detail .grp { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--faint); margin: 14px 0 4px; }
+  .detail table.bd { width: 100%; border-collapse: collapse; margin: 2px 0 12px;
+                     font-family: var(--mono); font-size: 11px; }
+  .detail table.bd caption { text-align: left; color: var(--teal); font-size: 10px; letter-spacing: .08em;
+                             text-transform: uppercase; padding: 4px 0 3px; }
+  .detail table.bd td { padding: 2px 0; color: var(--muted); }
+  .detail table.bd td:nth-child(2),
+  .detail table.bd td:nth-child(3) { text-align: right; color: var(--faint); padding-right: 8px; }
+  .detail table.bd td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; width: 3em;
+                                       padding-left: 6px; }
+  .detail table.bd td:nth-child(6) { color: var(--ink); font-weight: 600; }
+  .detail table.bd tr.hd td { color: var(--teal); font-size: 9.5px; letter-spacing: .06em;
+                              text-transform: uppercase; border-bottom: 1px solid var(--line);
+                              padding-bottom: 3px; font-weight: 500; }
+  .detail table.bd tr.tot td { border-top: 1px solid var(--line); color: var(--ink); font-weight: 650;
+                               padding-top: 4px; }
+  .detail table.bd tr.mul td { color: var(--muted); padding-top: 2px; }
+  .detail table.bd tr.mul td:last-child { color: var(--teal); font-weight: 650; }
+  .detail table.bd tr.dim td { color: var(--faint); font-style: italic; padding: 3px 0; }
+
+  footer { margin-top: 30px; color: var(--faint); font-size: 11px; font-family: var(--mono); border-top: 1px solid var(--line); padding-top: 16px; }
+  footer b { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Recursion setup · linear-hash model</p>
+    <h1>Cell &amp; GPU-memory decision map</h1>
+    <p class="sub">Each cell is a recursive-verifier configuration at dimension&nbsp;2<sup>N</sup> and blowup&nbsp;2<sup>b</sup>, folding factor&nbsp;3, Merkle arity set by the hash (blake3 binary, blake2b quaternary). Hash counts mirror <code>setup/pil2-stark/src/verifier_hashes.rs</code> rule for rule — leaf (linear) hashes, Merkle authentication paths to <code>lastLevelVerification</code>, per-tree root reductions, and the real <code>generate_stark_struct</code> FRI schedule — and reproduce that crate's counts <strong>exactly</strong> on all three airs of the hashes example (the Rust was in turn checked against an instrumented native verifier). Only the Fiat-Shamir transcript and the grinding check are left out, together about 1.5%. Paths dominate, typically 70–75% of the total. Color is estimated prover GPU memory; a teal ring marks <strong>feasible</strong> configs: the verifier <em>self-fits</em>, a ZisK&nbsp;Main proof fits the recursion cell budget, <em>and</em> prover memory stays under 32&nbsp;GB. Stage widths come from packing <em>k</em> blake3 lanes side by side and are <strong>affine</strong> in <em>k</em>, not proportional: <code>stage1&nbsp;=&nbsp;53k&nbsp;+&nbsp;2</code>. They also move <strong>along the blowup axis</strong>: a blowup of 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so the PIL can be compiled at <code>maxDeg&nbsp;=&nbsp;2<sup>b</sup>&nbsp;+&nbsp;1</code> — 3 at 2<sup>1</sup>, 5 at 2<sup>2</sup>, 8 from 2<sup>3</sup> on (<code>Compressor.pil</code>'s own ceiling) — and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Measured over LANES&nbsp;1–4&nbsp;×&nbsp;blowup&nbsp;1–3: a lane costs <strong>53&nbsp;+&nbsp;42</strong> columns at 2<sup>1</sup>, <strong>53&nbsp;+&nbsp;21</strong> at 2<sup>2</sup>, <strong>53&nbsp;+&nbsp;12</strong> at 2<sup>3</sup>, with stageQ going 6&nbsp;→&nbsp;12&nbsp;→&nbsp;21 and <code>fixed&nbsp;=&nbsp;8</code> throughout. Self-fit is still a <strong>fixed point</strong> (each added lane widens the trace the verifier must itself hash) but the shared columns are paid once. Switch the hash to compare <strong>Blake3</strong> (56 clocks) against <strong>Blake2b</strong> (96 clocks) — each carries its own lane geometry. Low-degree test is <strong>FRI</strong>.</p>
+  </header>
+
+  <div class="controls">
+    <div class="ctrl">
+      <label><span id="bklabel">Blake3</span> instances packed <b id="bkv">4</b></label>
+      <input type="range" id="blakes" min="1" max="64" step="1" value="4">
+      <span class="budget-note" id="bknote">lane geometry is in Configuration &rarr;</span>
+    </div>
+    <div class="ctrl" style="flex:0 0 auto; min-width:140px;">
+      <label>hash</label>
+      <select id="hash">
+        <option value="blake3" selected>Blake3 · 64B block</option>
+        <option value="blake2">Blake2 · 128B block</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>Grinding bits <b id="grindingVal">24</b></label>
+      <input type="range" id="grinding" min="0" max="32" step="1" value="24">
+    </div>
+    <div class="ctrl">
+      <label>lastLevelVerification <b id="llvVal">4</b></label>
+      <input type="range" id="llv" min="0" max="8" step="1" value="4">
+      <span class="budget-note" id="llvnote">&nbsp;</span>
+    </div>
+    <div class="ctrl" style="flex:0 0 auto; min-width:120px;">
+      <label>color metric</label>
+      <select id="metric">
+        <option value="mem">prover memory</option>
+        <option value="cells">total cells</option>
+        <option value="hashes">total hashes</option>
+        <option value="blakes">min instances (self-fit)</option>
+        <option value="queries">n_queries</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <h2>blowup &times; N (rows&nbsp;=&nbsp;2<sup>N</sup>) &mdash; <span id="metricName">prover memory (GB)</span></h2>
+      <div class="heat" id="heat"></div>
+      <div class="legend">
+        <div class="ramp-wrap">
+          <div class="ramp"></div>
+          <div class="ramp-lbl"><span id="rampLo">low</span><span id="rampHi">high</span></div>
+        </div>
+        <div class="key"><span class="swatch"></span> feasible: self-fit &amp; Main fits &amp; &lt;32&nbsp;GB</div>
+        <div class="key"><span class="dot" style="background:#222c38;box-shadow:0 0 0 1px var(--line)"></span> over 32&nbsp;GB (shows GB)</div>
+      </div>
+    </div>
+
+    <div class="card detail" id="detail">
+      <h2>Configuration</h2>
+      <p class="hdr" id="dTitle">N=20 · blowup=2</p>
+      <div class="call" id="dCall">
+        <div class="big" id="dCallBig">—</div>
+        <div class="sub" id="dCallSub">—</div>
+      </div>
+      <div class="row"><span class="k">self-fit</span><span class="v" id="dSelf">—</span></div>
+      <div class="row"><span class="k">main-fit</span><span class="v" id="dMainPct">—</span></div>
+      <div class="row"><span class="k">prover memory</span><span class="v" id="dMem">—</span></div>
+
+      <div class="grp">geometry</div>
+      <div class="row"><span class="k">columns</span><span class="v" id="dCols">—</span></div>
+      <div class="row"><span class="k">lane</span><span class="v" id="dLane">—</span></div>
+      <div class="row"><span class="k">cells / permutation</span><span class="v" id="dCpb">—</span></div>
+
+      <div class="grp">throughput</div>
+      <div class="row"><span class="k">permutations this air holds</span><span class="v" id="dCap">—</span></div>
+      <div class="row"><span class="k">spent verifying itself</span><span class="v" id="dUse">—</span></div>
+      <div class="row"><span class="k">left for payload</span><span class="v" id="dSpare">—</span></div>
+
+      <details>
+        <summary>where the hashes come from</summary>
+        <div class="body">
+          <div class="calc" id="dCalc">—</div>
+          <table class="bd" id="dLeafTbl"></table>
+          <div class="row"><span class="k">split</span><span class="v" id="dShare">—</span></div>
+          <div class="row"><span class="k">total permutations</span><span class="v" id="dHashes">—</span></div>
+          <div class="row"><span class="k">FRI steps (nBits)</span><span class="v" id="dFold">—</span></div>
+        </div>
+      </details>
+
+      <details>
+        <summary>cells and marginal cost</summary>
+        <div class="body">
+          <div class="row"><span class="k">cells needed</span><span class="v" id="dCells">—</span></div>
+          <div class="row"><span class="k">cells available</span><span class="v" id="dAvail">—</span></div>
+          <div class="row"><span class="k">blakes needed at this k</span><span class="v" id="dNeed">—</span></div>
+          <div class="row"><span class="k">min blakes (self-fit)</span><span class="v" id="dMinBk">—</span></div>
+          <div class="calc" id="dMarg">—</div>
+        </div>
+      </details>
+
+      <details>
+        <summary>ZisK Main verifier</summary>
+        <div class="body">
+          <div class="calc" id="dMainCalc">—</div>
+          <table class="bd" id="dMainLeafTbl"></table>
+          <div class="row"><span class="k">main total cells</span><span class="v" id="dMain">—</span></div>
+        </div>
+      </details>
+
+      <p class="hint">Click a cell to inspect. Main verifier is hardcoded (ZisK Main, nBits 22).</p>
+    </div>
+  </div>
+
+  <footer>
+    Model ported from <b>pil2-stark types::cells</b> + <b>pil::info::get_prover_memory</b> · grinding configurable (slider, default 20) · Merkle arity per hash family (see below) · digest 4 field elements · target 128-bit (JBR) · extension degree 3 · leaf hashes are block compressions, not rate-limited sponge absorptions: blake3 takes 8 elements per 64-byte block plus a parent per extra 1024-byte chunk, blake2b 16 per 128-byte block · Merkle paths stop at the <code>lastLevelVerification</code> the slider sets (<code>generate_stark_struct</code> defaults it to <code>floor(log_arity(16))</code> &mdash; a 16-node bottom level at every arity, so 4 levels at arity 2 and 2 at arity 4) and each tree pays its root reduction once, as <code>merkleTreeGL</code> does &mdash; llv counts LEVELS at any arity, so the kept level holds <code>arity^llv</code> nodes: 16 at arity 4, 4 at arity 2 · FRI only · query counts from <code>security::pcs::Fri</code> (JBR, closed form), the same calculator that sizes proving keys · blake3 = 56 clocks &times; the lane width at the chosen blowup &mdash; <em>marginal</em> lane 95 cols at 2^1, 74 at 2^2, 65 at 2^3, while the panel reports the <em>amortized</em> width (stage1+stage2)/k, which also carries the shared columns: 97 / 76 / 67 at k=4, 103 / 79 / 70 at k=1; stage1 = 53k+2 always, stage2 and stageQ follow maxDeg = min(2^b+1, 8) &mdash; all twelve LANES 1-4 &times; blowup 1-3 points measured with <code>proofman-setup stats</code>; blake2b = 96 clocks, stage1 98k+2, fixed 6, full 12-round &mdash; <code>blake2b.pil</code> currently pins NUM_ROUNDS = 8 and has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared) · Merkle arity follows the compression block: blake3 folds 2 digests per 64B block (<strong>binary</strong> tree), blake2b folds 4 per 128B block (<strong>quaternary</strong>) &mdash; one permutation per node either way · Main: nBits 22, blowup 1, fixed 3 / stageQ 6 / stage2 24 / stage1 38, 3 opening points, 61 functions, not blake-packed.
+  </footer>
+</div>
+
+<script>
+// ---- model ported from cells.rs ----
+// Merkle arity is per hash family (see HASHES below), not global.
+const TARGET = 128, FE = 3;
+// pcs::Fri indexes the evaluation domain with a u32, so n + blowup must stay
+// below 32. Mirrors MAX_EXT_BITS in types::cells; cells past it are not
+// configurations the pipeline can express.
+const MAX_EXT_BITS = 31;
+
+// Hash families: compression-block geometry (see leafHashes) plus the lane geometry
+// from examples/hashes. Two knobs move the widths: the packed lane count k, and
+// the max constraint degree, which the blowup fixes (see maxDegFor). stage1 is
+// structural (53k + 2 for blake3) and moves with neither; stage2 and stageQ move
+// with the degree. Measured with `proofman-setup stats` on blake3.pil over the
+// full LANES 1..4 x blowup 1..3 grid:
+//
+//   blowup 2^1 (maxDeg 3)   stage1  55 108 161 214 · stage2  48  90 132 174 · stageQ  6
+//   blowup 2^2 (maxDeg 5)   stage1  55 108 161 214 · stage2  24  45  66  87 · stageQ 12
+//   blowup 2^3 (maxDeg 8)   stage1  55 108 161 214 · stage2  15  27  39  51 · stageQ 21
+//   fixed = 8 in every one of the twelve.
+//
+// So a lane costs 53 + 42 columns at blowup 2^1, 53 + 21 at 2^2 and 53 + 12 at
+// 2^3 -- the degree headroom is paid back almost entirely out of stage2.
+const HASHES = {
+  // `block` = compression-block width in Goldilocks elements (blake3 64B = 8,
+  // blake2b 128B = 16). Merkle nodes use this, NOT `rate`: a node is fixed-width
+  // compression and reserves no capacity, so blake2b folds an arity-4 node
+  // (4 x 4 = 16 elements = 128 bytes) 4-to-1 in a single permutation.
+  // `arity` follows from the block: as many 4-element digests as fit. Blake3
+  // takes 2 children per block -> binary tree; blake2b takes 4 -> quaternary.
+  // Either way a node is exactly ONE permutation.
+  // `stage1`/`bus` are the marginal cost of one lane, `*Base` the shared part.
+  // `bus` is the number of lookups a lane issues -- blake3: 8 range checks,
+  // 16 XOR-table, 4 message-permutation; blake2b: 16 + 32 + 4. The two shared
+  // ones are the table and range-checker multiplicities.
+  // `chunkElems`: blake3 hashes 1024-byte (128-element) chunks and adds one parent
+  // compression per extra chunk; blake2b is sequential and has none.
+  // `grinding`: hash_family::default_grinding_bits — the prover searches 2^bits, so what a
+  // family affords tracks how fast it hashes; Poseidon takes 16, blake3 24.
+  blake3: { label: 'Blake3', rate: 4,  block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 8, grinding: 24,
+            stage1: 53, stage1Base: 2, bus: 28, busBase: 2 },
+  blake2: { label: 'Blake2', rate: 12, block: 16, chunkElems: 0,   arity: 4, clocks: 96, fixed: 6, grinding: 24,
+            stage1: 98, stage1Base: 2, bus: 52, busBase: 2 },
+};
+
+// A blowup of 2^b lets the quotient be split into 2^b chunks, so the
+// arithmetization can carry constraints of degree up to 2^b + 1. Compile the PIL
+// below that and the extra headroom is wasted; compile it above and the setup
+// inserts im pols to pull the degree back down (measured: blake3 at maxDeg 5 with
+// blowup 1 gets degraded to 3 and pays 11 im pols / +33 columns). The cap is the
+// repo's own convention -- Compressor.pil pins set_max_constraint_degree(8).
+const MAXDEG_CAP = 8;
+function maxDegFor(blowup) { return Math.min(2 ** blowup + 1, MAXDEG_CAP); }
+
+// Committed widths of k packed lanes at the degree the blowup unlocks.
+//   stage1  structural witness columns: 53k + 2. Independent of maxDeg.
+//   stage2  the bus argument. std_sum first folds as many terms as fit into the
+//           direct fraction (maxDeg - 2 of them), then clusters the rest
+//           maxDeg - 1 at a time behind one `im` -- the im constraint is
+//           im * prod(f_i + gamma), degree 1 + cluster. Each im, and gsum
+//           itself, is one extension element = 3 Goldilocks columns.
+//   stageQ  the quotient, maxDeg - 1 chunks x 3.
+// Verified against `proofman-setup stats` on blake3.pil for LANES in {1,2,4,8}
+// x maxDeg in {3,4,5,8,9,16}, and on blake2b.pil at maxDeg 3.
+function geometry(h, k, blowup) {
+  const maxDeg = maxDegFor(blowup);
+  const busOps = h.bus * k + h.busBase;
+  const im = Math.max(0, Math.ceil((busOps - (maxDeg - 2)) / (maxDeg - 1)));
+  const stage1 = h.stage1 * k + h.stage1Base;
+  const stage2 = FE * (im + 1);
+  const stageQ = FE * (maxDeg - 1);
+  // Cells the verifier can spend live in the committed lanes, so the lane width
+  // is the committed width divided by the lanes that share it.
+  const laneCols = k > 0 ? Math.ceil((stage1 + stage2) / k) : stage1 + stage2;
+  return { maxDeg, busOps, im, stage1, stage2, stageQ, laneCols,
+           cellsPerPerm: h.clocks * laneCols };
+}
+
+function ceilDiv(a, b) { return Math.ceil(a / b); }
+
+// How many hash permutations an air of 2^n rows with k lanes can hold. Mirrors
+// blake3.pil: NUM_OPS = 2^n / CLOCKS, minus one when the division leaves a
+// remainder (the trailing partial cycle is unusable), times LANES.
+function hashCapacity(n, clocks, k) {
+  const rows = 2 ** n;
+  const ops = Math.floor(rows / clocks) - ((rows % clocks) ? 1 : 0);
+  return Math.max(0, ops) * k;
+}
+
+// --- Merkle authentication paths (mirrors types::cells merkle_path_perms) ---
+// Every committed oracle is its own tree; a query walks one path into each and
+// recomputes each internal node from all `arity` child digests. DIGEST_ELEMS is
+// pil2-stark's HASH_SIZE. The tree hash is the SAME sponge as the leaf hash.
+const DIGEST_ELEMS = 4;
+
+// One blake3 permutation occupies CLOCKS = NUM_G_PER_ROUND * NUM_ROUNDS = 8 * 7
+// = 56 rows of one lane, whatever the lane's width -- so rowsPerPerm is 56 and
+// the cells a permutation costs is 56 x the lane width at the chosen blowup.
+function rowsPerPerm(cellsPerPerm, instanceCols) {
+  return Math.max(1, Math.ceil(cellsPerPerm / instanceCols));
+}
+function merklePathDepth(heightBits, arity) { return Math.ceil(heightBits / Math.log2(arity)); }
+function merkleNodePerms(arity, blockElems) { return Math.ceil((arity * DIGEST_ELEMS) / blockElems); }
+
+// `last_level_verification`: the proof carries the top `llv` LEVELS of the tree, so a
+// path is walked to there and not to the root, and the kept level holds arity^llv nodes.
+// It is levels at ANY arity -- C++ getMerkleProofLength() subtracts it from
+// ceil(log2(height)/log2(arity)) -- so arity 4 keeps 16 nodes where arity 2 keeps 4.
+// stark_struct defaults it to 2 for GL.
+// The proof carries the bottom kept level, so what is really fixed is its SIZE, not the
+// number of levels: `generate_stark_struct` defaults llv to floor(log_arity(16)), giving
+// every arity the same 16-node / 64-element bottom level. Arity 2 gets 4 levels, arity 4
+// gets 2. Mirrors stark_struct.rs::default_last_level_verification.
+const LAST_LEVEL_NODES = 16;
+function defaultLlv(arity) {
+  let levels = 0, nodes = 1;
+  while (nodes * arity <= LAST_LEVEL_NODES) { nodes *= arity; levels++; }
+  return levels;
+}
+function merklePathPerms(heightBits, arity, blockElems, llv) {
+  return Math.max(0, merklePathDepth(heightBits, arity) - llv) * merkleNodePerms(arity, blockElems);
+}
+
+// Folding that kept bottom level down to the root: once per TREE, not per query
+// (MerkleTreeGL::verifyMerkleRoot -> merkletreeReduce). Mirrors
+// verifier_hashes.rs::root_reduction_hashes, including the overshoot when the
+// arity does not divide the height evenly.
+function rootReductionPerms(arity, heightBits, llv) {
+  const stop = arity ** llv;
+  let pending = 2 ** heightBits, hashes = 0;
+  while (pending > stop) pending = Math.ceil(pending / arity);
+  while (pending > 1) { pending = Math.ceil(pending / arity); hashes += pending; }
+  return hashes;
+}
+
+// A leaf is NOT a rate-limited sponge for these families. Blake3 and blake2b are
+// real compression functions: they absorb a whole 64 / 128-byte block per call and
+// carry the chaining value in the state, so a leaf of `w` Goldilocks elements costs
+// ceil(8w / blockBytes), not ceil(w / rate). Blake3 adds one parent compression per
+// extra 1024-byte chunk. Mirrors verifier_hashes.rs::leaf_hashes / blake3_compressions.
+function leafHashes(p, widthElems) {
+  if (widthElems <= 0) return 0;
+  const blocks = Math.ceil(widthElems / p.block);
+  const chunks = p.chunkElems ? Math.ceil(widthElems / p.chunkElems) : 1;
+  return blocks + (chunks - 1);
+}
+
+// The FRI schedule, exactly as generate_stark_struct builds it: fold the EXTENDED
+// DOMAIN by `fold` until it reaches final_degree + 1, snapping to final_degree on
+// the last step. steps[0] is the committed domain; every later step commits a tree
+// the queries open, and the final polynomial is sent in the clear.
+const FINAL_DEGREE = 5;
+function friSteps(n, blowup, fold) {
+  const steps = [n + blowup];
+  let b = steps[0];
+  while (b > FINAL_DEGREE + 1) {
+    b = b > fold + FINAL_DEGREE ? b - fold : FINAL_DEGREE;
+    steps.push(b);
+  }
+  return steps;
+}
+
+// JBR proximity parameter, exactly as security::regimes computes it at alpha = 0:
+//   pp = 1 - sqrt(rate) - 1/300      (decoding radius minus the gap)
+// Query count then follows security::pcs::Fri's query_error, (1-pp)^t, ground
+// down by the PoW budget:
+//   t = ceil((target - grinding) / -log2(1 - pp))
+// This reproduces pcs::Fri exactly, and pcs is what sizes real proving keys, so
+// the page, the Rust model and the pipeline all agree by construction. It has no
+// N dependence: pcs pays the dimension-dependent batching error with its own
+// grinding budget rather than with extra queries.
+function proximityParam(blowup) {
+  return 1 - Math.sqrt(Math.pow(2, -blowup)) - 1 / 300;
+}
+function nQueries(n, blowup) {
+  const pp = proximityParam(blowup);
+  return Math.max(1, Math.ceil((TARGET - getGrinding()) / -Math.log2(1 - pp)));
+}
+
+function numNodesMt(height, arity) {
+  let nn = height, lvl = height;
+  while (lvl > 1) {
+    const extra = (arity - (lvl % arity)) % arity; nn += extra;
+    const nxt = Math.ceil(lvl / arity); nn += nxt; lvl = nxt;
+  }
+  return nn * 4;
+}
+
+function proverMemoryElems(p, steps) {
+  const n = 2 ** p.n, next = 2 ** (p.n + p.blowup), arity = p.arity;
+  const numNodes = numNodesMt(next, arity);
+  let mem = 0;
+  const nc = p.fixed;
+  mem += 2 + next * nc + numNodes;
+  if ((nc * n * 8) / (1024 * 1024) < 512) mem += n * nc;
+  const secs = [p.stage1, p.stage2, p.stageQ];
+  let off = 0;
+  secs.forEach((s, i) => { if (i === 1) off = mem; mem += s * next + numNodes; });
+  off += secs[0] * n + secs[1] * n;
+  if (off > mem) mem = off;
+  mem += (FE + FE + p.openings) * next;
+  // fri buffers: one per folding step, sized by the step list
+  const sb = steps;
+  for (let i = 0; i + 1 < sb.length; i++) {
+    const sa = sb[i], sbb = sb[i + 1];
+    const h = 2 ** sbb, w = ((2 ** sa) / h) * FE;
+    mem += h * w + numNodesMt(h, arity);
+  }
+  return mem;
+}
+
+function estimate(p) {
+  const cpb = p.cpb;
+  const steps = friSteps(p.n, p.blowup, p.fold);
+  const extBits = steps[0];
+  // One tree per committed section; a section with no columns is never committed.
+  const traceWidths = [p.fixed, p.stageQ, p.stage2, p.stage1].filter(c => c > 0);
+  const trace = traceWidths.reduce((sum, w) => sum + leafHashes(p, w), 0);
+  const traceMerkle = traceWidths.length * merklePathPerms(extBits, p.arity, p.block, p.llv);
+  let perTree = traceWidths.length * rootReductionPerms(p.arity, extBits, p.llv);
+
+  const q = nQueries(p.n, p.blowup);
+  let fri = 0, friMerkle = 0;
+  for (let i = 1; i < steps.length; i++) {
+    // The query opens a whole folding group of the previous layer, as extension elems.
+    fri += leafHashes(p, (2 ** (steps[i - 1] - steps[i])) * FE);
+    friMerkle += merklePathPerms(steps[i], p.arity, p.block, p.llv);
+    perTree += rootReductionPerms(p.arity, steps[i], p.llv);
+  }
+  const hpq = trace + fri;
+  const merklePerQuery = traceMerkle + friMerkle;
+  const linearHashes = hpq * q * p.proofs;
+  // Root reductions are per tree, so they sit outside the query multiplier.
+  const merkleHashes = (merklePerQuery * q + perTree) * p.proofs;
+  const totalHashes = linearHashes + merkleHashes;
+  const totalCells = totalHashes * cpb;
+  const rows = 2 ** p.n;
+  const neededStage1 = Math.ceil(totalCells / rows);
+  // A permutation occupies rowsPerPerm rows of ONE instance, so the verifier
+  // needs totalHashes * rowsPerPerm / 2^n instances packed side by side.
+  const rpp = rowsPerPerm(cpb, p.instanceCols);
+  const blakesNeeded = Math.ceil(totalHashes * rpp / rows);
+  const fits = p.blakes > 0 ? blakesNeeded <= p.blakes : neededStage1 <= p.stage1;
+  const memElems = proverMemoryElems(p, steps);
+  const memGb = memElems * 8 / (1024 ** 3);
+  return { steps, perTree, q, hpq, merklePerQuery, linearHashes, merkleHashes, totalHashes,
+           totalCells, needed: blakesNeeded, neededStage1, blakesNeeded, rowsPerPerm: rpp, fits, memGb };
+}
+
+const MAIN = { n: 22, blowup: 1, fixed: 3, stageQ: 6, stage2: 24, stage1: 38, openings: 3, functions: 61, proofs: 1, blakes: 0, mainPreset: true };
+function mainParams(fold, rate, cpb, laneCols) {
+  const h = currentHash();
+  return { ...MAIN, fold, rate, cpb, block: h.block, chunkElems: h.chunkElems, arity: h.arity,
+           llv: getLlv(), instanceCols: laneCols };
+}
+function mainEstimate(fold, rate, cpb, laneCols) { return estimate(mainParams(fold, rate, cpb, laneCols)); }
+
+// Per-oracle derivation of one query's work, for the panel. Leaves are block
+// compressions (see leafHashes); Merkle paths are one compression per level of
+// each committed tree. Every opened oracle appears exactly once.
+// One row per ORACLE the verifier opens. Each opening costs a leaf hash (sponge
+// absorption of that oracle's payload) plus a Merkle path (one compression per
+// level of that oracle's tree). Every opened oracle appears exactly once, so the
+// column totals reconstruct leaf/query and merkle/query.
+function hashBreakdown(p, e) {
+  const ext = p.n + p.blowup;
+  const rows = [];
+  const stageDepth = merklePathDepth(ext, p.arity);
+  const stagePath = merklePathPerms(ext, p.arity, p.block, p.llv);
+  for (const [name, cols] of [['fixed', p.fixed], ['stageQ', p.stageQ], ['stage2', p.stage2], ['stage1', p.stage1]]) {
+    if (cols > 0) rows.push([name, `2^${ext}`, `${cols} cols`, leafHashes(p, cols), stagePath]);
+  }
+  for (let i = 1; i < e.steps.length; i++) {
+    const el = (2 ** (e.steps[i - 1] - e.steps[i])) * FE;
+    rows.push([`FRI layer ${i}`, `2^${e.steps[i]}`, `${el} elems`, leafHashes(p, el),
+               merklePathPerms(e.steps[i], p.arity, p.block, p.llv)]);
+  }
+  return { rows, stageDepth, finalLayer: e.steps[e.steps.length - 1] };
+}
+
+// Render the oracle table: leaf | merkle | total per row, summed at the foot.
+function fillBreakdown(id, bd, leafTotal, merkleTotal, queries, proofs, grandTotal) {
+  const body = bd.rows.map(([name, dom, payload, lf, mk]) =>
+    `<tr><td>${name}</td><td>${dom}</td><td>${payload}</td>` +
+    `<td>${lf}</td><td>${mk}</td><td>${lf + mk}</td></tr>`).join('');
+  document.getElementById(id).innerHTML =
+    `<tr class="hd"><td>oracle opened</td><td>domain</td><td>payload</td><td>leaf</td><td>path</td><td>sum</td></tr>` +
+    body +
+    `<tr class="dim"><td colspan="6">2^${bd.finalLayer} final layer — sent in the clear, never opened</td></tr>` +
+    `<tr class="tot"><td>per query, per proof</td><td></td><td></td>` +
+    `<td>${leafTotal}</td><td>${merkleTotal}</td><td>${leafTotal + merkleTotal}</td></tr>` +
+    `<tr class="mul"><td colspan="5">x ${queries} queries x ${proofs} proof${proofs === 1 ? '' : 's'}</td>` +
+    `<td>${grandTotal.toLocaleString()}</td></tr>`;
+}
+
+// ---- UI ----
+// 2^23 is the largest air the pipeline builds; 2^24 is not a configuration to plan for.
+const N_RANGE = [17,18,19,20,21,22,23];
+const MEM_BUDGET_GB = 32;
+// Past 2^3 the max constraint degree saturates at 8, so every wider blowup is the
+// same arithmetization on a bigger domain -- not a configuration worth a column.
+const B_RANGE = [1,2,3];
+const RAMP = [[43,111,143],[70,192,164],[207,208,106],[224,164,88],[217,112,106]];
+function lerp(a,b,t){return a+(b-a)*t;}
+function rampColor(t){ // t in [0,1]
+  t = Math.max(0, Math.min(1, t));
+  const seg = t * (RAMP.length - 1), i = Math.floor(seg), f = seg - i;
+  const a = RAMP[i], b = RAMP[Math.min(i+1, RAMP.length-1)];
+  return `rgb(${Math.round(lerp(a[0],b[0],f))},${Math.round(lerp(a[1],b[1],f))},${Math.round(lerp(a[2],b[2],f))})`;
+}
+
+let sel = { n: 17, blowup: 2 };
+
+function currentHash() {
+  const h = HASHES[document.getElementById('hash').value];
+  return { ...h };
+}
+
+function recParams() {
+  const blakes = getBlakes();
+  const h = currentHash();
+  return {
+    // Stage widths are NOT fixed here: they depend on the blowup through the max
+    // constraint degree, so they are resolved per heatmap cell by withGeom().
+    hash: h,
+    fixed: h.fixed,
+    blakes,
+    openings: 8, functions: 200, proofs: 2,
+    fold: 3, // fixed (folding factor 3 is the chosen recursion convention)
+    rate: h.rate, block: h.block, chunkElems: h.chunkElems, arity: h.arity, llv: getLlv(),
+  };
+}
+
+// Resolve one configuration: the blowup fixes the max constraint degree, which
+// fixes stage2, stageQ and the lane width. cells/permutation follows from the
+// lane width unless the slider overrides it.
+function withGeom(base, n, blowup, k = base.blakes) {
+  const g = geometry(base.hash, k, blowup);
+  return { ...base, n, blowup, blakes: k, maxDeg: g.maxDeg, laneCols: g.laneCols,
+           stage1: g.stage1, stage2: g.stage2, stageQ: g.stageQ,
+           instanceCols: g.laneCols, cpb: g.cellsPerPerm };
+}
+
+// Loop gain: instances of demand added by packing one more lane, divided by the
+// one instance of capacity it buys. Adding a lane widens stage1/stage2, and the
+// verifier must hash its own widened trace — so demand grows with k too.
+// g < 1 settles (roughly base/(1-g)); g >= 1 runs away and no k ever catches up.
+function marginalGain(base, n, blowup) {
+  const at = k => estimate(withGeom(base, n, blowup, k));
+  const demand = k => { const p = withGeom(base, n, blowup, k);
+                        return at(k).totalHashes * rowsPerPerm(p.cpb, p.laneCols) / (2 ** n); };
+  return demand(3) - demand(2);
+}
+
+// Smallest self-consistent instance count: packing another lane widens stage1
+// and stage2, and the verifier must hash its own widened trace, so the
+// requirement grows with k too. Null when no k up to maxBlakes catches up.
+function minBlakesForSelfFit(base, n, blowup, maxBlakes = 512) {
+  for (let k = 1; k <= maxBlakes; k++) {
+    if (estimate(withGeom(base, n, blowup, k)).fits) return k;
+  }
+  return null;
+}
+
+function fmt(x){ if(x>=1e9) return (x/1e9).toFixed(2)+'B'; if(x>=1e6) return (x/1e6).toFixed(1)+'M'; if(x>=1e3) return (x/1e3).toFixed(1)+'k'; return ''+x; }
+
+function render() {
+  const base = recParams();
+  const hashDef = base.hash;
+  const metric = document.getElementById('metric').value;
+  document.getElementById('bkv').textContent = base.blakes;
+  document.getElementById('bknote').textContent =
+    `${hashDef.label}: ${hashDef.block * 8}-byte block (${hashDef.block} elems/compression) → arity-${hashDef.arity} tree · ${hashDef.clocks} clocks/permutation`;
+  // llv is LEVELS at any arity, so the node count it keeps is arity^llv — 16 at arity 4,
+  // 4 at arity 2. Report it against the selected cell's tree height.
+  const llv = getLlv(), ext = sel.n + sel.blowup;
+  const depth = merklePathDepth(ext, hashDef.arity);
+  document.getElementById('llvnote').textContent =
+    `at 2^${ext}, arity ${hashDef.arity}: path ${depth} → ${Math.max(0, depth - llv)} levels · ` +
+    `kept level holds ${(hashDef.arity ** llv).toLocaleString()} nodes · ` +
+    `${rootReductionPerms(hashDef.arity, ext, llv).toLocaleString()} root-reduction hashes/tree` +
+    `${llv === defaultLlv(hashDef.arity) ? ' · setup default' : ` · setup default is ${defaultLlv(hashDef.arity)}`}`;
+  document.getElementById('bklabel').textContent = hashDef.label;
+  document.getElementById('metricName').textContent =
+    metric==='mem' ? 'prover memory (GB)' : metric==='cells' ? 'total cells'
+    : metric==='hashes' ? `total ${hashDef.label} hashes`
+    : metric==='blakes' ? `min ${hashDef.label} instances to self-verify` : 'n_queries';
+
+  // compute all cells + metric range (over-budget and no-schedule cells excluded from the ramp)
+  const data = {};
+  let vals = [];
+  for (const n of N_RANGE) for (const b of B_RANGE) {
+    const p = withGeom(base, n, b);
+    const e = estimate(p);
+    const main = mainEstimate(base.fold, base.rate, p.cpb, p.laneCols);
+    // "Main fits" means its verification fits the cells this air HAS, not that it
+    // happens to be cheaper than the verifier's own two-proof workload.
+    const cellsAvail = p.laneCols * base.blakes * (2 ** n);
+    const mainFits = main.totalCells <= cellsAvail;
+    const outOfRange = n + b > MAX_EXT_BITS;
+    const over = e.memGb >= MEM_BUDGET_GB;
+    const feasible = e.fits && mainFits && !over && !outOfRange;
+    const minBk = metric==='blakes' ? minBlakesForSelfFit(base, n, b) : undefined;
+    const metricVal = metric==='mem' ? e.memGb
+                    : metric==='cells' ? e.totalCells
+                    : metric==='hashes' ? e.totalHashes
+                    : metric==='blakes' ? (minBk === null ? Infinity : minBk) : e.q;
+    data[n+'_'+b] = { e, p, mainFits, feasible, over, outOfRange, metricVal, minBk,
+                      mainCells: main.totalCells, cellsAvail };
+    if (!over && !outOfRange && Number.isFinite(metricVal)) vals.push(metricVal);
+  }
+  if (vals.length === 0) vals = [0, 1];
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  // log scale for mem/cells (they span orders of magnitude), linear for queries
+  const useLog = metric !== 'queries';
+  const norm = v => useLog ? (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo) || 1)
+                           : (v - lo) / ((hi - lo) || 1);
+
+  const rampFmt = v => metric==='mem' ? v.toFixed(2)+' GB'
+                     : (metric==='cells' || metric==='hashes') ? fmt(v) : v;
+  document.getElementById('rampLo').textContent = rampFmt(lo);
+  document.getElementById('rampHi').textContent = metric==='mem' ? hi.toFixed(1)+' GB' : rampFmt(hi);
+
+  // build table
+  let html = '<table class="grid"><tr><th class="rowhdr"></th>';
+  for (const n of N_RANGE) html += `<th>N=2<sup>${n}</sup></th>`;
+  html += '</tr>';
+  for (const b of B_RANGE) {
+    const g = geometry(base.hash, base.blakes, b);
+    html += `<tr><th class="rowhdr">blowup 2<sup>${b}</sup>` +
+            `<span class="degnote">deg ${g.maxDeg} · s2 ${g.stage2} · sQ ${g.stageQ}</span></th>`;
+    for (const n of N_RANGE) {
+      const d = data[n+'_'+b];
+      const greyCell = d.over || d.outOfRange;
+      const c = greyCell ? 'transparent' : rampColor(norm(d.metricVal));
+      // out-of-range cells show nothing; over-budget cells show memory
+      const label = d.outOfRange ? '—'
+                  : d.over ? Math.round(d.e.memGb)
+                  : metric==='mem' ? (d.e.memGb<10? d.e.memGb.toFixed(1): Math.round(d.e.memGb))
+                  : metric==='cells' ? fmt(d.e.totalCells)
+                  : metric==='hashes' ? fmt(d.e.totalHashes)
+                  : metric==='blakes' ? (d.minBk === null ? '—' : d.minBk) : d.e.q;
+      const klass = 'cell' + (greyCell?' over':'') + (d.feasible?' feasible':'') + (sel.n===n&&sel.blowup===b?' sel':'');
+      html += `<td><div class="${klass}" style="background:${c}" data-n="${n}" data-b="${b}"><span class="gb">${label}</span></div></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  document.getElementById('heat').innerHTML = html;
+  document.querySelectorAll('.cell').forEach(el =>
+    el.addEventListener('click', () => { sel = { n:+el.dataset.n, blowup:+el.dataset.b }; render(); }));
+
+  renderDetail(data, base);
+}
+
+function renderDetail(data, base) {
+  const d = data[sel.n+'_'+sel.blowup];
+  const e = d.e;
+  const h = base.hash;
+  const p = d.p;   // this cell's resolved geometry (maxDeg follows the blowup)
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+
+  set('dTitle', `N=${sel.n} · blowup=2^${sel.blowup} · maxDeg ${p.maxDeg} · ${h.label} · k=${base.blakes}`);
+
+  // The grid only solves every cell when the min-blakes METRIC is selected; the
+  // panel needs one cell, which is cheap, so always solve it here.
+  const minBk = d.minBk !== undefined ? d.minBk : minBlakesForSelfFit(base, sel.n, sel.blowup);
+  const gain = marginalGain(base, sel.n, sel.blowup);
+
+  // ---- headline: the one thing to read first ----
+  const call = document.getElementById('dCall');
+  if (d.outOfRange) {
+    call.className = 'call bad';
+    set('dCallBig', 'out of range');
+    set('dCallSub', `extended domain 2^${sel.n + sel.blowup} exceeds the ${MAX_EXT_BITS}-bit limit of pcs::Fri`);
+  } else if (!e.fits && minBk === null) {
+    call.className = 'call bad';
+    set('dCallBig', 'never fits');
+    set('dCallSub', gain >= 1
+      ? `each added blake costs ${gain.toFixed(2)}x its capacity — packing more widens the gap`
+      : `gain ${gain.toFixed(2)}x is under 1, but no k up to 512 catches up`);
+  } else if (!e.fits) {
+    call.className = 'call no';
+    set('dCallBig', `needs ${minBk} blakes`);
+    set('dCallSub', `packed ${base.blakes} · short by ${minBk - base.blakes}`);
+  } else if (d.over) {
+    // self-fit alone is not feasibility: the teal ring wants all three
+    call.className = 'call no';
+    set('dCallBig', 'over memory');
+    set('dCallSub', `self-fits with ${base.blakes - e.blakesNeeded} spare, but needs ${e.memGb.toFixed(1)} GB > ${MEM_BUDGET_GB} GB`);
+  } else if (!d.mainFits) {
+    call.className = 'call no';
+    set('dCallBig', 'Main does not fit');
+    set('dCallSub', `self-fits, but a ZisK Main proof needs ${fmt(d.mainCells)} cells of ${fmt(d.cellsAvail)}`);
+  } else {
+    call.className = 'call ok';
+    set('dCallBig', 'fits');
+    set('dCallSub', `needs ${minBk} · packed ${base.blakes} · ${base.blakes - e.blakesNeeded} spare`);
+  }
+
+  // ---- the three constraints, as margins rather than ticks ----
+  const cellsAvail = d.cellsAvail;
+  const cellsNeeded = e.totalHashes * e.rowsPerPerm * p.laneCols;
+  const over = cellsNeeded / cellsAvail;
+  set('dSelf', over > 1 ? `${over.toFixed(1)}x short` : `${Math.round(over * 100)}% of cells used`);
+
+  // ---- geometry, at this cell's blowup ----
+  set('dCols', `fixed ${p.fixed} · stage1 ${p.stage1} · stage2 ${p.stage2} · stageQ ${p.stageQ}`);
+  set('dLane', `${p.laneCols} cols/lane × ${base.blakes} lanes · ${e.rowsPerPerm} rows/perm`);
+  set('dCpb', `${p.cpb.toLocaleString()} cells`);
+
+  // ---- throughput: permutations the air can hold vs what it spends on itself ----
+  const cap = hashCapacity(sel.n, h.clocks, base.blakes);
+  const spare = cap - e.totalHashes;
+  set('dCap', `${cap.toLocaleString()} ${h.label} perms`);
+  set('dUse', `${e.totalHashes.toLocaleString()} (${cap ? Math.round(100 * e.totalHashes / cap) : 0}%)`);
+  set('dSpare', spare >= 0 ? `${spare.toLocaleString()} perms`
+                           : `none — ${(-spare).toLocaleString()} short`);
+
+  const m = mainEstimate(base.fold, base.rate, p.cpb, p.laneCols);
+  set('dMainPct', `${Math.round(100 * d.mainCells / d.cellsAvail)}% of budget`);
+  set('dMem', `${e.memGb.toFixed(2)} / ${MEM_BUDGET_GB} GB`);
+
+  // ---- where the hashes come from ----
+  set('dCalc', `(${e.hpq} leaf + ${e.merklePerQuery} merkle) x ${e.q} queries x ${base.proofs} proofs = ${e.totalHashes.toLocaleString()}`);
+  const bd = hashBreakdown(p, e);
+  fillBreakdown('dLeafTbl', bd, e.hpq, e.merklePerQuery, e.q, base.proofs, e.totalHashes);
+  set('dShare', !e.totalHashes ? '—'
+    : `${Math.round(100 * e.merkleHashes / e.totalHashes)}% merkle · ${Math.round(100 * e.linearHashes / e.totalHashes)}% leaf`);
+  set('dHashes', e.totalHashes.toLocaleString());
+  set('dFold', '[' + e.steps.join(' → ') + ']');
+
+  // ---- cells and marginal cost ----
+  set('dCells', cellsNeeded.toLocaleString());
+  set('dAvail', cellsAvail.toLocaleString());
+  set('dNeed', `${e.blakesNeeded.toLocaleString()} / ${base.blakes}`);
+  set('dMinBk', minBk === null ? 'none — never converges' : minBk);
+  const buys = p.laneCols * (2 ** sel.n);
+  set('dMarg', `one more blake: +${fmt(buys)} cells of room, +${fmt(Math.round(gain * buys))} of work (${gain.toFixed(2)}x)`);
+
+  // ---- ZisK Main: its own N/blowup/stages, single proof, never blake-packed ----
+  set('dMainCalc', `N=${MAIN.n} blowup=2^${MAIN.blowup} (2^${MAIN.n + MAIN.blowup} extended), not blake-packed\n`
+    + `(${m.hpq} leaf + ${m.merklePerQuery} merkle) x ${m.q} queries x ${MAIN.proofs} proof = ${m.totalHashes.toLocaleString()}`);
+  const mp = mainParams(base.fold, base.rate, p.cpb, p.laneCols);
+  const mbd = hashBreakdown(mp, m);
+  fillBreakdown('dMainLeafTbl', mbd, m.hpq, m.merklePerQuery, m.q, MAIN.proofs, m.totalHashes);
+  set('dMain', d.mainCells.toLocaleString());
+}
+
+// ---- grinding reader ----
+const blakesInput = document.getElementById('blakes');
+function getBlakes() { return parseInt(blakesInput.value, 10); } // 1..64
+
+const grindingInput = document.getElementById('grinding');
+const grindingValEl = document.getElementById('grindingVal');
+function getGrinding() { return parseInt(grindingInput.value, 10); } // 0..32
+grindingInput.addEventListener('input', () => { grindingValEl.textContent = grindingInput.value; render(); });
+
+const llvInput = document.getElementById('llv');
+const llvValEl = document.getElementById('llvVal');
+function getLlv() { return parseInt(llvInput.value, 10); } // 0..6, stark_struct default 2
+llvInput.addEventListener('input', () => { llvValEl.textContent = llvInput.value; render(); });
+
+['blakes','metric'].forEach(id =>
+  document.getElementById(id).addEventListener('input', render));
+// A new family means a new arity, and the setup's llv default follows the arity.
+document.getElementById('hash').addEventListener('input', () => {
+  const fam = HASHES[document.getElementById('hash').value];
+  const d = defaultLlv(fam.arity);
+  llvInput.value = String(d);
+  llvValEl.textContent = String(d);
+  grindingInput.value = String(fam.grinding);
+  grindingValEl.textContent = String(fam.grinding);
+  render();
+});
+render();
+</script>
+</body>
+</html>
