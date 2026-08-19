@@ -26,6 +26,22 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
     }
 }
 
+/// Proof-of-work bits the query phase grinds for, by family.
+///
+/// Grinding is asymmetric: the verifier pays one hash for the check, while the prover searches
+/// `2^bits` of them. What a family can afford therefore tracks how fast it hashes, and a blake3
+/// compression is roughly two orders of magnitude cheaper than a Poseidon permutation -- so
+/// blake3 can spend 8 more bits than Poseidon for a comparable search. The bits are not free
+/// security: they come straight off the query count (`pcs::Fri` needs
+/// `ceil((128 - bits) / security_per_query)` queries), which is where the verifier's hashes are.
+pub fn default_grinding_bits(family: &str) -> usize {
+    match family {
+        "Poseidon1" | "Poseidon2" => 16,
+        "blake3" => 24,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
 /// Fiat-Shamir transcript arity: the transcript squeezes through the same
 /// sponge/compression as the trees, so it shares the Merkle arity.
 pub fn transcript_arity(family: &str) -> u64 {
@@ -141,6 +157,16 @@ mod tests {
         assert_eq!(rust_hash_type("Poseidon1", 4), "Poseidon1_16");
         assert_eq!(rust_hash_type("Poseidon1", 3), "Poseidon1_12");
         assert_eq!(rust_hash_type("Poseidon1", 2), "Poseidon1_8");
+    }
+
+    /// Every family needs a default, and the cheap-to-hash one grinds harder.
+    #[test]
+    fn every_family_has_grinding_bits_and_blake3_grinds_hardest() {
+        for family in FAMILIES {
+            assert!(default_grinding_bits(family) > 0, "{family} has no grinding default");
+        }
+        assert_eq!(default_grinding_bits("Poseidon1"), default_grinding_bits("Poseidon2"));
+        assert!(default_grinding_bits("blake3") > default_grinding_bits("Poseidon1"));
     }
 
     /// The node hash absorbs every child in one permutation, so the width must be exactly

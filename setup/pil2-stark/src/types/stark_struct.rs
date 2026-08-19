@@ -52,16 +52,14 @@ impl StarkStructsConfig {
         Ok(Self { entries })
     }
 
+    /// What the user configured for this air, and nothing else. Defaults belong to
+    /// `generate_stark_struct`, which knows the hash family; filling one in here made
+    /// `pow_bits` family-blind and shadowed the default below it.
     pub fn resolve(&self, airgroup_name: &str, air_name: &str) -> StarkSettings {
-        let mut s = self
-            .lookup_nested(airgroup_name, air_name)
+        self.lookup_nested(airgroup_name, air_name)
             .or_else(|| self.lookup_flat(air_name))
             .or_else(|| self.lookup_flat("default"))
-            .unwrap_or_default();
-        if s.pow_bits.is_none() {
-            s.pow_bits = Some(16);
-        }
-        s
+            .unwrap_or_default()
     }
 
     fn lookup_nested(&self, airgroup_name: &str, air_name: &str) -> Option<StarkSettings> {
@@ -128,6 +126,30 @@ pub struct StarkStep {
 /// Generate a StarkStruct from user settings, the air's power (nBits) and the
 /// hash family, which provides the tree/transcript arity defaults (and, for
 /// families whose kernels support a single geometry, fixes them).
+/// Nodes the proof carries at the tree's bottom kept level.
+///
+/// This -- not the level count -- is the knob that matters: it fixes what the proof carries
+/// per tree (`LAST_LEVEL_NODES * nFieldElements`) while the levels it buys back depend on the
+/// arity. `last_level_verification` stays expressed in *levels* because that is what
+/// `merkleTreeGL` and the circom verifier consume; at arity 4 sixteen nodes is 2 levels, at
+/// arity 2 it is 4.
+pub const LAST_LEVEL_NODES: usize = 16;
+
+/// Levels to skip so the kept level holds at most `LAST_LEVEL_NODES` nodes: `floor(log_arity(16))`,
+/// computed without floats so an arity that is not a power of two rounds down rather than over.
+///   arity 2 -> 4 (16 nodes) · arity 3 -> 2 (9) · arity 4 -> 2 (16) · arity 16 -> 1 (16)
+pub fn default_last_level_verification(arity: usize) -> usize {
+    if arity < 2 {
+        return 0;
+    }
+    let (mut levels, mut nodes) = (0, 1usize);
+    while nodes * arity <= LAST_LEVEL_NODES {
+        nodes *= arity;
+        levels += 1;
+    }
+    levels
+}
+
 pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
     let verification_hash_type = settings.verification_hash_type.clone().unwrap_or_else(|| "GL".to_string());
 
@@ -158,8 +180,12 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             } else {
                 settings.merkle_tree_arity.unwrap_or(family_arity)
             };
-            let pb = settings.pow_bits.unwrap_or(20);
-            let llv = settings.last_level_verification.unwrap_or(2);
+            // Grinding bits are what a family can afford to search for, not a constant: see
+            // hash_family::default_grinding_bits. They come straight off the query count.
+            let pb = settings.pow_bits.unwrap_or_else(|| proofman_common::hash_family::default_grinding_bits(hash));
+            // Same 16-node bottom level whatever the arity, so switching hash family does not
+            // silently change how deep every Merkle path is walked.
+            let llv = settings.last_level_verification.unwrap_or_else(|| default_last_level_verification(mta));
             (mta, proofman_common::hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
         };
 
@@ -192,6 +218,44 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
 mod tests {
     use super::*;
 
+    /// The default is a fixed bottom-level *size*, so every arity carries the same 16 nodes
+    /// (64 field elements) and walks its paths to the same place. Levels differ; bytes do not.
+    #[test]
+    fn the_default_llv_keeps_sixteen_nodes_at_every_arity() {
+        for (arity, levels) in [(2, 4), (3, 2), (4, 2), (8, 1), (16, 1)] {
+            assert_eq!(default_last_level_verification(arity), levels, "arity {arity}");
+            assert!(arity.pow(levels as u32) <= LAST_LEVEL_NODES, "arity {arity} keeps too many nodes");
+        }
+        assert_eq!(2usize.pow(4), LAST_LEVEL_NODES);
+        assert_eq!(4usize.pow(2), LAST_LEVEL_NODES);
+    }
+
+    /// blake3 hashes cheaply enough to grind 8 bits further than Poseidon, which is 8 bits the
+    /// query count does not have to pay for.
+    #[test]
+    fn blake3_defaults_to_more_grinding_than_poseidon() {
+        let settings = StarkSettings::default();
+        assert_eq!(generate_stark_struct(&settings, 20, "blake3").pow_bits, 24);
+        assert_eq!(generate_stark_struct(&settings, 20, "Poseidon2").pow_bits, 16);
+    }
+
+    /// A binary tree gets 4 levels rather than the 2 a quaternary one gets, which is the whole
+    /// point: blake3 paths are twice as deep, so a fixed level count would charge it twice over.
+    #[test]
+    fn a_binary_tree_defaults_to_four_levels() {
+        let settings = StarkSettings::default();
+        let ss = generate_stark_struct(&settings, 20, "blake3");
+        assert_eq!(ss.merkle_tree_arity, 2);
+        assert_eq!(ss.last_level_verification, 4);
+    }
+
+    /// An explicit setting still wins.
+    #[test]
+    fn an_explicit_llv_overrides_the_default() {
+        let settings = StarkSettings { last_level_verification: Some(1), ..Default::default() };
+        assert_eq!(generate_stark_struct(&settings, 20, "blake3").last_level_verification, 1);
+    }
+
     #[test]
     fn test_generate_stark_struct_defaults() {
         let settings = StarkSettings::default();
@@ -204,7 +268,9 @@ mod tests {
         assert_eq!(ss.transcript_arity, 4);
         assert!(ss.merkle_tree_custom);
         assert!(ss.hash_commits);
-        assert_eq!(ss.pow_bits, 20);
+        // Grinding is per family: Poseidon spends 16 bits, blake3 24 (see hash_family).
+        assert_eq!(ss.pow_bits, 16);
+        // Poseidon is arity 4, so a 16-node bottom level is 2 levels.
         assert_eq!(ss.last_level_verification, 2);
 
         // First step should be nBitsExt
@@ -323,10 +389,13 @@ mod tests {
         assert_eq!(kec.pow_bits, Some(23));
         assert!(cfg.has_compressor("Zisk", "Keccakf"));
 
-        // Wrong airgroup -> no match -> defaults (powBits filled to 16, blowup 1).
+        // Wrong airgroup -> no match -> nothing configured; generate_stark_struct supplies the
+        // defaults, including the family's grinding bits.
         let miss = cfg.resolve("OtherGroup", "Poseidon2");
         assert_eq!(miss.blowup_factor, None);
-        assert_eq!(miss.pow_bits, Some(16));
+        assert_eq!(miss.pow_bits, None);
+        assert_eq!(generate_stark_struct(&miss, 20, "Poseidon2").pow_bits, 16);
+        assert_eq!(generate_stark_struct(&miss, 20, "blake3").pow_bits, 24);
         assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);
         // 20 + 1
     }
@@ -363,7 +432,7 @@ mod tests {
         let cfg = StarkStructsConfig::from_json_str(r#"{ "EmptyAir": {} }"#).unwrap();
         let s = cfg.resolve("G", "EmptyAir");
         assert_eq!(s.blowup_factor, None);
-        assert_eq!(s.pow_bits, Some(16)); // historical default fill
+        assert_eq!(s.pow_bits, None, "resolve reports config, not defaults");
         assert!(!cfg.has_compressor("G", "EmptyAir"));
     }
 
