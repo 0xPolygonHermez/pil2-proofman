@@ -32,6 +32,31 @@ pub fn transcript_arity(family: &str) -> u64 {
     merkle_tree_arity(family)
 }
 
+/// Elements in one digest, i.e. the sponge capacity (`nFieldElements` in the C++ trees).
+pub const DIGEST_SIZE: u64 = 4;
+
+/// Sponge width of `family`'s permutation at `arity`. The Merkle node hash absorbs
+/// `arity * DIGEST_SIZE` children, and the trees pick the width that exactly fits them.
+pub fn sponge_width(arity: u64) -> u64 {
+    arity * DIGEST_SIZE
+}
+
+/// Elements absorbed per permutation by a linear (leaf) hash: the width less the capacity
+/// carried between blocks. Mirrors `PoseidonGoldilocks::linear_hash_seq`.
+pub fn sponge_rate(arity: u64) -> u64 {
+    sponge_width(arity) - DIGEST_SIZE
+}
+
+/// Elements the transcript buffers before it permutes, and the size of the output FIFO it
+/// then drains. Mirrors `TranscriptGL`'s `transcriptPendingSize` / `transcriptOutSize`.
+pub fn transcript_pending_size(arity: u64) -> u64 {
+    DIGEST_SIZE * (arity - 1)
+}
+
+pub fn transcript_out_size(arity: u64) -> u64 {
+    DIGEST_SIZE * arity
+}
+
 /// Families with streaming-commit slot kernels (stream_commit.cu). The C side
 /// re-checks via get_hash_family() and returns -15 on mismatch, so this list
 /// must stay in sync with commit_witness_streaming_gpu's family gate.
@@ -116,6 +141,25 @@ mod tests {
         assert_eq!(rust_hash_type("Poseidon1", 4), "Poseidon1_16");
         assert_eq!(rust_hash_type("Poseidon1", 3), "Poseidon1_12");
         assert_eq!(rust_hash_type("Poseidon1", 2), "Poseidon1_8");
+    }
+
+    /// The node hash absorbs every child in one permutation, so the width must be exactly
+    /// `arity * DIGEST_SIZE` -- `merkletreeReduce` asserts the same thing in C++.
+    #[test]
+    fn the_sponge_width_fits_one_node_of_children() {
+        for arity in [2, 3, 4] {
+            assert_eq!(sponge_width(arity), arity * DIGEST_SIZE);
+            assert_eq!(sponge_rate(arity), sponge_width(arity) - DIGEST_SIZE);
+        }
+        // The measured geometry: arity 4 is a width-16 sponge absorbing 12 per block.
+        assert_eq!((sponge_width(4), sponge_rate(4)), (16, 12));
+    }
+
+    /// The transcript buffers one rate's worth before permuting and drains the full state.
+    #[test]
+    fn transcript_sizes_match_the_native_transcript() {
+        assert_eq!((transcript_pending_size(4), transcript_out_size(4)), (12, 16));
+        assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
     }
 
     #[test]
