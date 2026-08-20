@@ -1440,12 +1440,9 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     // instead of a sub33 + mul33 + add33. Lives in the per-stream aux_trace, so
     // concurrent proofs of the same AIR cannot race on it.
     uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
-    // mapOffsets is a std::map: a missing key would silently resolve to offset 0 and
-    // scribble over the head of the arena instead of failing. The region only exists
-    // in the gpu branch of StarkInfo::load.
-    if (setupCtx.starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
-        throw std::runtime_error("calculateFRIExpression: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
-    }
+    // The fri_folded region's presence is asserted at setup (AirInstanceInfo); this
+    // runs inside a cudagraph capture region, where throwing would strand the stream
+    // in capture mode.
     gl64_t *d_fri = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     gl64_t *d_friFoldedCoef = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_folded", false)];
     gl64_t *d_friFoldedK = d_friFoldedCoef + setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
