@@ -295,7 +295,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// Teardown drain: take everything still queued and leave the scheduler empty. Returns the
     /// queued recursive/compressor witnesses and the queued stored-basic instance ids.
     ///
-    /// The caller MUST return each witness's `circom_witness` to its pool and settle its ledger
+    /// The caller MUST return each witness's `trace` to its pool and settle its ledger
     /// unit: these were armed and committed at hand-off, and their buffers came out of the recursive
     /// witness pools, so dropping them shrinks those pools (the compressor pool most visibly, since
     /// it is the smallest) and leaves the pool-integrity check in `reset()` short. Only safe once
@@ -328,7 +328,7 @@ impl<F: PrimeField64> SharedScheduler<F> {
 }
 
 /// Recover witnesses taken out of the scheduler by [`RecursiveScheduler::drain_all`]: return each
-/// `circom_witness` to the pool `generate_witness` took it from, and settle the ledger unit that was
+/// `trace` to the pool `generate_witness` took it from, and settle the ledger unit that was
 /// armed for it at hand-off. Returns how many were recovered.
 ///
 /// Split out of the teardown closure so the scheduler/ledger/pool interaction is directly testable:
@@ -344,7 +344,7 @@ pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
     for mut w in witnesses {
         let compressor = w.proof_type == ProofType::Compressor;
         // Adopt-then-drop returns the buffer to its pool.
-        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness), compressor));
+        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut w.trace), compressor));
         if let Some(idx) = w.global_idx {
             ledger.settle(idx as u64, w.proof_type.as_usize());
         }
@@ -468,17 +468,17 @@ mod drain_tests {
         RecursiveScheduler::<F>::new(std::ptr::null_mut())
     }
 
-    /// Two witness buffers per pool so a drained-and-returned buffer is distinguishable from a
+    /// Two trace buffers per pool so a drained-and-returned buffer is distinguishable from a
     /// refilled one: `reset()` only passes if the originals come back.
     fn handler() -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE_COMPRESSOR, W_SIZE, W_SIZE_COMPRESSOR)
+        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE_COMPRESSOR)
     }
 
     /// A witness as the hand-off builds it: `global_idx` set (the ledger keys off it) and holding a
-    /// buffer drawn from the pool its `proof_type` selects.
+    /// trace drawn from the pool its `proof_type` selects.
     fn witness(h: &MemoryHandlerRecursive<F>, t: ProofType, global_idx: usize) -> Proof<F> {
-        let buf = if t == ProofType::Compressor { h.take_buffer_witness_compressor() } else { h.take_buffer_witness() };
-        Proof::new_witness(t, 0, 0, Some(global_idx), buf, 1)
+        let buf = if t == ProofType::Compressor { h.take_buffer_trace_compressor() } else { h.take_buffer_trace() };
+        Proof::new_witness(t, 0, 0, Some(global_idx), buf, Vec::new(), 1)
     }
 
     #[test]
@@ -573,9 +573,9 @@ mod drain_tests {
         // `global_idx` is set for every hand-off path today; if that ever regresses, the buffer must
         // still come back rather than the recovery panicking on an `unwrap`.
         let h = handler();
-        let buf = h.take_buffer_witness();
+        let buf = h.take_buffer_trace();
         let mut s = scheduler();
-        s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, 1));
+        s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, Vec::new(), 1));
 
         let (witnesses, _) = s.drain_all();
         recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());

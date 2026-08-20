@@ -16,7 +16,8 @@ use proofman_common::{
 use std::os::raw::{c_void, c_char};
 
 use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
+    timer_stop_and_log_debug_net, create_buffer_fast,
 };
 
 use crate::{add_publics_circom, add_publics_aggregation};
@@ -123,8 +124,9 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         add_publics_circom(&mut updated_proof, 0, pctx, None);
         let (trace, publics) =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
-        timer_stop_and_log_debug!(
+        timer_stop_and_log_debug_net!(
             GENERATE_COMPRESSOR_WITNESS,
+            proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
             proof.airgroup_id,
@@ -170,8 +172,9 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 
         let (trace, publics) =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
-        timer_stop_and_log_debug!(
+        timer_stop_and_log_debug_net!(
             GENERATE_RECURSIVE1_WITNESS,
+            proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
             proof.airgroup_id,
@@ -234,7 +237,11 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     let (trace, publics) =
         generate_witness::<F>(setup_recursive2, memory_handler_recursive_witness, 0, &updated_proof_recursive2)?;
 
-    timer_stop_and_log_debug!(GENERATE_WITNESS_AGGREGATION);
+    timer_stop_and_log_debug_net!(
+        GENERATE_WITNESS_AGGREGATION,
+        proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
+        "GENERATE_WITNESS_AGGREGATION"
+    );
     Ok(Proof::new_witness(
         ProofType::Recursive2,
         airgroup_id,
@@ -677,10 +684,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Ok(p) => p,
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
-            drop(
-                memory_handler_recursive_witness
-                    .adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness), false),
-            );
+            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace), false));
             return Err(e);
         }
     };
@@ -756,10 +760,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         Ok(p) => p,
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
-            drop(
-                memory_handler_recursive_witness
-                    .adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness), false),
-            );
+            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace), false));
             return Err(e);
         }
     };
@@ -1109,6 +1110,9 @@ fn generate_witness<F: PrimeField64>(
     let signal_values_ptr =
         if signal_values.is_empty() { std::ptr::null_mut() } else { signal_values.as_mut_ptr() as *mut c_void };
 
+    // Released before the caller can read the ledger, so carry its wait onto the trace.
+    let signal_values_wait = proofman_common::take_buffer_wait(signal_values.as_ptr() as *const u8);
+
     // Taken last, after every fallible lookup above: a pooled buffer must not be held
     // across an early `?` return, or `Pool::reset` reports it as leaked. It is the proof's
     // trace, held until `generate_recursive_proof` finishes its H2D copy — so queued and
@@ -1117,6 +1121,7 @@ fn generate_witness<F: PrimeField64>(
         ProofType::Compressor => memory_handler_recursive_witness.take_buffer_trace_compressor(),
         _ => memory_handler_recursive_witness.take_buffer_trace(),
     };
+    proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
     let res: i64 = unsafe {
