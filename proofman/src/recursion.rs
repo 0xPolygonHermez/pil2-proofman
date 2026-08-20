@@ -1179,6 +1179,9 @@ fn generate_witness<F: PrimeField64>(
     let signal_values_ptr =
         if signal_values.is_empty() { std::ptr::null_mut() } else { signal_values.as_mut_ptr() as *mut c_void };
 
+    // Released before the caller can read the ledger, so carry its wait onto the trace.
+    let signal_values_wait = proofman_common::take_buffer_wait(signal_values.as_ptr() as *const u8);
+
     // Taken last, after every fallible lookup above: a pooled buffer must not be held
     // across an early `?` return, or `Pool::reset` reports it as leaked. It is the proof's
     // trace, held until `generate_recursive_proof` finishes its H2D copy — so queued and
@@ -1189,6 +1192,7 @@ fn generate_witness<F: PrimeField64>(
         _ => memory_handler_recursive_witness.take_buffer_trace(),
     };
     timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
+    proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
     // `getWitnessTrace` scatters `n_committed_pols * n_rows` elements with no bound of its own: a

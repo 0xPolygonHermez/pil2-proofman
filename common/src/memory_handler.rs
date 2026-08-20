@@ -14,28 +14,27 @@ use proofman_starks_lib_c::{register_host_memory_c, unregister_host_memory_c};
 /// wakes it immediately, so this bounds cancel responsiveness, not pickup latency.
 const MAX_POOL_WAIT_BACKOFF: Duration = Duration::from_millis(1);
 
-/// Wait charged to the buffer it was incurred for, keyed by that buffer's data pointer.
-///
-/// Keyed by buffer rather than by thread because the block can happen on any worker the witness
-/// components spin up, while the buffer it waited for always ends up in one known instance's trace.
+/// Pool waits keyed by buffer pointer, not by thread: the block can happen on any worker a witness
+/// component spawns, but the buffer always reaches one known instance.
 static PENDING_WAITS: LazyLock<Mutex<HashMap<usize, Duration>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn charge_wait_to_buffer<F>(buffer: &[F], waited: Duration) {
-    let key = buffer.as_ptr() as usize;
-    let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
-    *map.entry(key).or_insert(Duration::ZERO) += waited;
-}
-
-/// Drop a buffer's unread wait. Called on release so the ledger only ever holds in-flight
-/// buffers: an entry nobody reads back (a table instance, an untimed path) would otherwise
-/// accumulate for the life of the process.
+/// Called on release, so an entry nobody reads back cannot accumulate for the process's life.
 fn forget_buffer_wait<F>(buffer: &[F]) {
     let key = buffer.as_ptr() as usize;
     PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
 }
 
-/// How long the buffer now backing `ptr` waited to be acquired, clearing the entry. `ZERO` when it
-/// never blocked (or the pointer is not a pooled buffer).
+/// Carry a wait onto a buffer that outlives the one it was incurred for, so a span that took
+/// several pooled buffers reports their total.
+pub fn charge_buffer_wait(ptr: *const u8, waited: Duration) {
+    if waited.is_zero() {
+        return;
+    }
+    let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
+    *map.entry(ptr as usize).or_insert(Duration::ZERO) += waited;
+}
+
+/// How long this buffer waited to be acquired, clearing the entry. `ZERO` if it never blocked.
 pub fn take_buffer_wait(ptr: *const u8) -> Duration {
     let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
     map.remove(&(ptr as usize)).unwrap_or(Duration::ZERO)
@@ -127,7 +126,7 @@ fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
 /// Single fixed-size buffer pool over a bounded channel (internal to `MemoryHandlerRecursive`).
 /// `take()` waits on the channel with a backoff timeout so the abort path (`cancelled`) can wake it.
 struct Pool<F: PrimeField64 + Send + Sync + 'static> {
-    /// Names this pool in the wait diagnostics, so a blocked acquisition can be matched to it.
+    /// Names this pool in the wait diagnostics.
     name: &'static str,
     sender: Sender<Vec<F>>,
     receiver: Receiver<Vec<F>>,
@@ -142,8 +141,7 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
     /// Data pointers of the pool's OWN buffers — only these are re-pooled on release (a cancel-escape
     /// buffer is freed instead), so the pool stays at exactly N pinned buffers and `release` never blocks.
     original_ptrs: HashSet<usize>,
-    /// Time callers have spent blocked here, and how many acquisitions blocked. Without this the
-    /// wait is invisible: it is charged to whichever timer wraps the caller.
+    /// Blocked time and count. Unmeasured, it is charged to whichever timer wraps the caller.
     wait_ns: AtomicU64,
     wait_count: AtomicUsize,
     /// Buffers the last `reset` found missing. While non-zero a waiter gets a fresh buffer instead of
@@ -177,13 +175,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
     }
 
-    /// Total blocked time and how many acquisitions blocked.
     fn wait_stats(&self) -> (Duration, usize) {
         (Duration::from_nanos(self.wait_ns.load(Ordering::Relaxed)), self.wait_count.load(Ordering::Relaxed))
     }
 
-    /// Report total blocked time. The sum of the callers' reported waits must equal this; if it
-    /// falls short, some blocking is not reaching a span and the per-span numbers are understated.
+    /// The callers' reported waits must sum to this; short means blocking is not reaching a span.
     fn log_wait(&self) {
         let (waited, blocked) = self.wait_stats();
         if blocked > 0 {
@@ -197,12 +193,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
     }
 
-    /// Charge a blocked acquisition to this pool's total and to the buffer it was waiting for, so
-    /// the caller that ends up with that buffer can subtract the wait from its own span.
+    /// Charge to the pool total and to the buffer, so the caller holding it can subtract the wait.
     fn charge_wait<T>(&self, buffer: &[T], waited: Duration) {
         self.wait_ns.fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
         self.wait_count.fetch_add(1, Ordering::Relaxed);
-        charge_wait_to_buffer(buffer, waited);
+        charge_buffer_wait(buffer.as_ptr() as *const u8, waited);
     }
 
     fn take(&self) -> Vec<F> {
@@ -627,10 +622,13 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         }
     }
 
-    /// Same as [`MemoryHandler::log_wait_summary`], across both recursive trace pools.
+    /// Same as [`MemoryHandler::log_wait_summary`], across the recursive pools.
     pub fn log_wait_summary(&self) {
         self.trace.log_wait();
         self.trace_compressor.log_wait();
+        if let Some(pool) = &self.signal_values {
+            pool.log_wait();
+        }
     }
 
     pub fn take_buffer_trace(&self) -> Vec<F> {
@@ -745,6 +743,9 @@ pub struct SignalValuesPool {
     large_waiters: AtomicUsize,
     /// Shared with the owning `MemoryHandlerRecursive` and its trace pools.
     cancelled: Arc<AtomicBool>,
+    /// It replaced the witness pools, which did block, so leaving it unmeasured moves the blind spot.
+    wait_ns: AtomicU64,
+    wait_count: AtomicUsize,
 }
 
 impl SignalValuesPool {
@@ -764,7 +765,18 @@ impl SignalValuesPool {
             crate::format_bytes((small_cap * 8) as f64),
             crate::format_bytes(total as f64),
         );
-        Self { large, large_rx, small, small_rx, large_cap, small_cap, large_waiters: AtomicUsize::new(0), cancelled }
+        Self {
+            large,
+            large_rx,
+            small,
+            small_rx,
+            large_cap,
+            small_cap,
+            large_waiters: AtomicUsize::new(0),
+            cancelled,
+            wait_ns: AtomicU64::new(0),
+            wait_count: AtomicUsize::new(0),
+        }
     }
 
     /// Blocking receive that yields to `cancelled`, mirroring `Pool::take`: on the abort
@@ -788,6 +800,18 @@ impl SignalValuesPool {
     /// Take a buffer with capacity >= `needed`. Big proofs (needed > small_cap)
     /// block on the large buffer with priority; small proofs prefer a small buffer
     /// and only borrow the large one when no big proof is waiting for it.
+    /// Blocked time here, reported like the trace pools'.
+    pub fn log_wait(&self) {
+        let blocked = self.wait_count.load(Ordering::Relaxed);
+        if blocked > 0 {
+            tracing::debug!(
+                "Pool 'signal-values': {} acquisitions blocked, {:.3}s total",
+                blocked,
+                Duration::from_nanos(self.wait_ns.load(Ordering::Relaxed)).as_secs_f64()
+            );
+        }
+    }
+
     pub fn take(&self, needed: usize) -> Vec<u64> {
         if needed > self.large_cap {
             // No pooled buffer fits — recursers are registered after the pool is sized.
@@ -1008,34 +1032,6 @@ mod tests {
         h.reset().unwrap(); // cancelled path skips integrity checks
     }
 
-    /// A blocked acquisition must be attributed to the pool, not left inside whichever timer wraps
-    /// the caller -- that is what made a 6.4s buffer wait read as 6.4s of witness compute.
-    #[test]
-    fn a_blocked_acquisition_is_charged_to_the_pool() {
-        use proofman_fields::Goldilocks;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let pool: Arc<Pool<Goldilocks>> = Arc::new(Pool::new("test", 1, 8, false, cancelled));
-
-        // The only buffer, so the next take must block.
-        let held = pool.take();
-        assert_eq!(pool.wait_stats(), (Duration::ZERO, 0), "an uncontended take must not be charged");
-
-        let returner = {
-            let pool = pool.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(150));
-                pool.release(held).unwrap();
-            })
-        };
-        let _second = pool.take();
-        returner.join().unwrap();
-
-        let (waited, blocked) = pool.wait_stats();
-        assert_eq!(blocked, 1, "exactly one acquisition blocked");
-        assert!(waited >= Duration::from_millis(100), "wait of {waited:?} should reflect the 150ms hold");
-        assert!(waited < Duration::from_secs(5), "wait of {waited:?} is implausible");
-    }
-
     // ---- signalValues pool ----
 
     fn signal_handler(large: usize, small: usize, n_small: usize) -> MemoryHandlerRecursive<F> {
@@ -1104,5 +1100,33 @@ mod tests {
         h.cancel();
         assert_eq!(h.take_buffer_signal_values(16).len(), 16);
         assert_eq!(h.take_buffer_signal_values(64).len(), 64);
+    }
+
+    /// A blocked acquisition must be attributed to the pool, not left inside whichever timer wraps
+    /// the caller -- that is what made a 6.4s buffer wait read as 6.4s of witness compute.
+    #[test]
+    fn a_blocked_acquisition_is_charged_to_the_pool() {
+        use proofman_fields::Goldilocks;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let pool: Arc<Pool<Goldilocks>> = Arc::new(Pool::new("test", 1, 8, false, cancelled));
+
+        // The only buffer, so the next take must block.
+        let held = pool.take();
+        assert_eq!(pool.wait_stats(), (Duration::ZERO, 0), "an uncontended take must not be charged");
+
+        let returner = {
+            let pool = pool.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                pool.release(held).unwrap();
+            })
+        };
+        let _second = pool.take();
+        returner.join().unwrap();
+
+        let (waited, blocked) = pool.wait_stats();
+        assert_eq!(blocked, 1, "exactly one acquisition blocked");
+        assert!(waited >= Duration::from_millis(100), "wait of {waited:?} should reflect the 150ms hold");
+        assert!(waited < Duration::from_secs(5), "wait of {waited:?} is implausible");
     }
 }
