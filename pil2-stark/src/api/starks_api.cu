@@ -804,7 +804,7 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
     }
 }
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -948,7 +948,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // The tree-aware flag, not the slot one: genProof_gpu's reuse also gates the
     // calculateFixedExtended merkelize, and a slot claimed by commit_witness has pols but no
     // tree. Costs a redundant unpack in exactly that case.
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, false, reuse_const_tree);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree);
     cudaEventRecord(sd.end_event, stream);
     sd.status = 2;
     return streamId;

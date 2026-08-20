@@ -424,6 +424,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
         customCommitsFixedPath: *mut ::std::os::raw::c_char,
+        selfContained: bool,
     ) -> u64;
     
     pub fn gen_recursive_proof(

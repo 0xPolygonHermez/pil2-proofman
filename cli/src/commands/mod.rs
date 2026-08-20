@@ -15,4 +15,4 @@ pub mod gen_custom_commits_fixed;
 pub mod gen_exps;
 pub mod stats;
 pub mod execute;
-pub mod prove_recursive;
+pub mod prove_air;

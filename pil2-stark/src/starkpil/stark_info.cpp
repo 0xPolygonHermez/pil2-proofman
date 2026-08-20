@@ -351,7 +351,7 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
-    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkStruct.steps[0].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
 
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
@@ -376,7 +376,7 @@ void StarkInfo::getProofSize() {
     }
 
     for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
-        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+        uint64_t nSiblings = merkleProofLevels(starkStruct.steps[i].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
         proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
         proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
@@ -416,7 +416,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
         }
     }
 
-    uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
     uint64_t maxProofSize = nSiblings * nSiblingsPerLevel;
 
@@ -560,7 +560,7 @@ void StarkInfo::setMapOffsets() {
             }
         }
 
-        uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+        uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel;
         if (starkStruct.verificationHashType == "BN128") {
             // BN128: all arity siblings per level, each is 4 uint64_t (32 bytes)

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::RwLock,
+};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -238,6 +241,12 @@ impl ProofmanOptions {
         self.packed = true;
     }
 
+    /// Undoes `gpu()`'s implied packing. Without this `--no-packed` relies on `packed_info` being
+    /// empty, which stops being true as soon as a caller populates it unconditionally.
+    pub fn no_packed(&mut self) {
+        self.packed = false;
+    }
+
     pub fn gpu(&mut self) {
         self.gpu = true;
         self.packed = true;
@@ -289,6 +298,9 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    /// Airs whose rows components must write packed. Holds the same `packedTrace && is_packed`
+    /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
+    pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -348,6 +360,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
         })
@@ -655,6 +668,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.instances[global_idx].table
+    }
+
+    /// Whether this air's witness rows must be written packed.
+    pub fn is_packed(&self, airgroup_id: usize, air_id: usize) -> bool {
+        self.packed_airs.contains(&(airgroup_id, air_id))
     }
 
     pub fn is_shared_buffer(&self, global_idx: usize) -> bool {

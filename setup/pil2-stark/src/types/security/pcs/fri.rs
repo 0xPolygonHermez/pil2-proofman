@@ -686,4 +686,41 @@ mod tests {
         assert_eq!(fri.security_params().n_queries, floor + 10);
         assert!(fri.total_security_bits() >= 128);
     }
+
+    /// The property the whole calculator exists for: every geometry the pipeline can generate must
+    /// clear the 128-bit target. Sweeps the grinding defaults too, including blake3's 24, which no
+    /// other test reaches.
+    #[test]
+    fn every_generated_geometry_reaches_the_security_target() {
+        use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+        for hash in ["Poseidon1", "Poseidon2", "blake3"] {
+            for n_bits in [10usize, 17, 20, 24] {
+                for blowup in 1usize..=4 {
+                    let settings = StarkSettings {
+                        blowup_factor: Some(blowup),
+                        folding_factor: Some(3),
+                        final_degree: Some(5),
+                        ..Default::default()
+                    };
+                    let ss = generate_stark_struct(&settings, n_bits, hash);
+                    let fri = Fri::new(FriConfig {
+                        field_size: crate::types::security::goldilocks_safe_extension_field_size(),
+                        regime: DecodingRegime::Jbr,
+                        trace_length: 1u32 << n_bits,
+                        rate: 1.0 / (1u64 << blowup) as f64,
+                        batching: Batching::Powers,
+                        batch_size: 100,
+                        log_folding_factors: crate::output::stark_info::compute_log_folding_factors(&ss),
+                        max_grinding_bits_query: ss.pow_bits as u64,
+                        use_max_grinding_bits_query: true,
+                        tree_arity: ss.merkle_tree_arity as u64,
+                        hash_size_bits: 256,
+                        target_security_bits: 128,
+                    });
+                    let min = fri.security_levels().iter().map(|(_, b)| *b).min().unwrap();
+                    assert!(min >= 128, "{hash} n={n_bits} blowup=2^{blowup} reaches only {min} bits");
+                }
+            }
+        }
+    }
 }

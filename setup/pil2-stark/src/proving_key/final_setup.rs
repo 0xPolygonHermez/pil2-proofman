@@ -294,7 +294,8 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         blowup_factor: Some(4),
         folding_factor: Some(4),
         pow_bits: Some(22),
-        last_level_verification: Some(2),
+        // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
+        last_level_verification: None,
         ..Default::default()
     };
     let final_stark_struct =

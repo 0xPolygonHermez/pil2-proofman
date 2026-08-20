@@ -2,6 +2,7 @@
 #define STARK_INFO_HPP
 
 #include <nlohmann/json.hpp>
+#include <cmath>
 #include <string>
 #include <vector>
 #include "zkassert.hpp"
@@ -85,6 +86,17 @@ public:
     vector<StepStruct> steps;
     uint64_t powBits;
 };
+
+/// Merkle path levels one query publishes: the tree's depth less the levels the published last
+/// level replaces. Saturating, because `lastLevelVerification` can exceed a short tree's height
+/// and every caller works in unsigned arithmetic.
+inline uint64_t merkleProofLevels(uint64_t nBits, uint64_t arity, uint64_t lastLevelVerification, bool bn128)
+{
+    if (nBits == 0) return 0;
+    uint64_t levels = bn128 ? (uint64_t)std::floor((nBits - 1) / std::ceil(std::log2(arity))) + 1
+                            : (uint64_t)std::ceil(nBits / std::log2(arity));
+    return levels > lastLevelVerification ? levels - lastLevelVerification : 0;
+}
 
 opType string2opType (const string s);
 string opType2string (const opType op);

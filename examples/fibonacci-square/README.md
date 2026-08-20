@@ -197,7 +197,7 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      --custom-commits rom=examples/fibonacci-square/build/rom.bin -y
 ```
 
-**With recursion:**
+**With recursion (Poseidon2):**
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
@@ -207,6 +207,7 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
 && cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -r \
+     --hash Poseidon2 \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \

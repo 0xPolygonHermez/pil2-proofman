@@ -4,7 +4,7 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::pil_helpers::{Sha2Trace, Sha2TraceRow};
+use crate::pil_helpers::{Sha2Trace, Sha2TraceRow, Sha2TraceRowOps, Sha2TraceRowPacked};
 
 use super::{
     sha2_constants::{CLOCKS, CLOCKS_LOAD_INPUT, CLOCKS_LOAD_STATE, NUM_STEPS, RANGE_SIZE, RC},
@@ -32,8 +32,8 @@ impl Sha2Air {
 
     /// Fill one SHA2-256 invocation and accumulate the lookup multiplicities
     #[allow(clippy::needless_range_loop)]
-    fn process_trace<F: PrimeField64>(
-        rows: &mut [Sha2TraceRow<F>],
+    fn process_trace<F: PrimeField64, R: Sha2TraceRowOps<F>>(
+        rows: &mut [R],
         state: &[u32; 8],
         input: &[u32; 16],
         range_counts: &mut [u64],
@@ -109,6 +109,58 @@ impl Sha2Air {
             range_counts[range_row(s0_carry, s1_carry, 0)] += 1;
         }
     }
+
+    /// Fill the whole trace and wrap it as an air instance. Generic over the row type so the
+    /// packed and unpacked layouts share one filler; every write goes through `Sha2TraceRowOps`.
+    fn compute_witness_inner<F: PrimeField64, R: Sha2TraceRowOps<F>>(
+        &self,
+        buffer_pool: &dyn BufferPool<F>,
+    ) -> ProofmanResult<AirInstance<F>> {
+        // One count today: every available slot is filled. A requested count, when there is one,
+        // would make the padding below reachable.
+        let num_available_sha2s = self.num_available_sha2s;
+
+        let mut trace = Sha2Trace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
+        let num_rows = trace.num_rows();
+
+        // Check that we can fit all the SHA2 inputs in the trace
+        let num_rows_needed = num_available_sha2s * CLOCKS;
+
+        tracing::debug!(
+            "··· Creating SHA2 instance with {} inputs [{} rows, {:.2}% filled]",
+            num_available_sha2s,
+            num_rows,
+            num_rows_needed as f64 / num_rows as f64 * 100.0
+        );
+
+        // Local multiplicity accumulator for the range checker
+        let mut range_counts = vec![0u64; RANGE_SIZE];
+
+        // 1] Fill one CLOCKS-row cycle per SHA2 and count its lookups.
+        for k in 0..num_available_sha2s {
+            let base = k * CLOCKS;
+            let (state, input) = random_sha2_input(k as u64);
+            Self::process_trace::<F, R>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
+        }
+
+        // Every complete cycle is filled above, so there are no padding cycles to fill. If a
+        // requested count is ever plumbed in, they cannot be left zero: unlike the Blake AIRs the
+        // all-zero row does not satisfy the SHA2 constraints on clocked cycles (the round constant
+        // is a fixed column), so each spare cycle needs a real zero-input SHA2 written into it.
+
+        // The trailing rows where no clock fires range-check the all-zero carry triple
+        let num_trailing_rows = num_rows - num_available_sha2s * CLOCKS;
+        range_counts[range_row(0, 0, 0)] += num_trailing_rows as u64;
+
+        // Write the multiplicity column
+        for (t, &m) in range_counts.iter().enumerate() {
+            if m != 0 {
+                trace.buffer[t].set_mul_range(m);
+            }
+        }
+
+        Ok(AirInstance::new_from_trace(FromTrace::new(&mut trace)))
+    }
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
@@ -137,80 +189,14 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
             return Ok(());
         }
 
-        let num_sha2s: usize = self.num_available_sha2s;
-        let num_available_sha2s = self.num_available_sha2s;
-
-        let mut trace = Sha2Trace::new_from_vec_zeroes(buffer_pool.take_buffer())?;
-        let num_rows = trace.num_rows();
-
-        // Check that we can fit all the SHA2 inputs in the trace
-        let num_rows_needed = num_sha2s * CLOCKS;
-        let num_rows_covered = if num_sha2s < num_available_sha2s {
-            num_rows_needed
-        } else if num_sha2s == num_available_sha2s {
-            num_rows
+        // Same filler either way -- only the row's storage layout differs.
+        let air_instance = if pctx.is_packed(Sha2Trace::<F>::AIRGROUP_ID, Sha2Trace::<F>::AIR_ID) {
+            self.compute_witness_inner::<F, Sha2TraceRowPacked<F>>(buffer_pool)?
         } else {
-            panic!(
-                "Exceeded available SHA2 inputs: requested {}, but only {} are available.",
-                num_sha2s, num_available_sha2s
-            );
+            self.compute_witness_inner::<F, Sha2TraceRow<F>>(buffer_pool)?
         };
 
-        tracing::debug!(
-            "··· Creating SHA2 instance with {} inputs (of {} available) [{} / {} rows filled {:.2}%]",
-            num_sha2s,
-            num_available_sha2s,
-            num_rows_covered,
-            num_rows,
-            num_rows_covered as f64 / num_rows as f64 * 100.0
-        );
-
-        // Local multiplicity accumulator for the range checker
-        let mut range_counts = vec![0u64; RANGE_SIZE];
-
-        // 1] Fill one CLOCKS-row cycle per SHA2 and count its lookups.
-        for k in 0..num_sha2s {
-            let base = k * CLOCKS;
-            let (state, input) = random_sha2_input(k as u64);
-            Self::process_trace::<F>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
-        }
-
-        // Padding
-        // Unlike the Blake AIRs, the all-zero row does not satisfy the SHA2 constraints on
-        // clocked cycles: the round constant k is a fixed column, so every complete cycle must
-        // contain a valid computation. We fill the remaining cycles with the zero-input SHA2.
-        let num_padding_blocks = num_available_sha2s - num_sha2s;
-        if num_padding_blocks > 0 {
-            let base = num_sha2s * CLOCKS;
-            let mut zero_counts = vec![0u64; RANGE_SIZE];
-            Self::process_trace::<F>(&mut trace.buffer[base..base + CLOCKS], &[0u32; 8], &[0u32; 16], &mut zero_counts);
-
-            // Replicate the zero-input cycle across the remaining padding cycles
-            let (head, tail) = trace.buffer.split_at_mut(base + CLOCKS);
-            let zero_block = &head[base..base + CLOCKS];
-            for k in 1..num_padding_blocks {
-                tail[(k - 1) * CLOCKS..k * CLOCKS].copy_from_slice(zero_block);
-            }
-
-            for (t, &m) in zero_counts.iter().enumerate() {
-                range_counts[t] += m * num_padding_blocks as u64;
-            }
-        }
-
-        // The trailing rows where no clock fires range-check the all-zero carry triple
-        let num_trailing_rows = num_rows - num_available_sha2s * CLOCKS;
-        range_counts[range_row(0, 0, 0)] += num_trailing_rows as u64;
-
-        // Write the multiplicity column
-        for (t, &m) in range_counts.iter().enumerate() {
-            if m != 0 {
-                trace.buffer[t].set_mul_range(m);
-            }
-        }
-
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        let instance_id = instance_ids[0];
-        pctx.add_air_instance(air_instance, instance_id);
+        pctx.add_air_instance(air_instance, instance_ids[0]);
         Ok(())
     }
 }

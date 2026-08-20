@@ -4,7 +4,7 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::pil_helpers::{Blake3Trace, Blake3TraceRow};
+use crate::pil_helpers::{Blake3Trace, Blake3TraceRow, Blake3TraceRowOps, Blake3TraceRowPacked};
 
 use super::{
     blake3_constants::{CLOCKS, CLOCKS_PER_ROUND, G_INDICES, NUM_G_PER_ROUND, RANGE_SIZE, ROUNDS, SIGMA, TABLE_SIZE},
@@ -32,8 +32,8 @@ impl Blake3Air {
 
     /// Fill one Blake3 invocation and accumulate the lookup multiplicities
     #[allow(clippy::needless_range_loop)]
-    fn process_trace<F: PrimeField64>(
-        rows: &mut [Blake3TraceRow<F>],
+    fn process_trace<F: PrimeField64, R: Blake3TraceRowOps<F>>(
+        rows: &mut [R],
         state: &[u32; 16],
         message: &[u32; 16],
         table_counts: &mut [u64],
@@ -148,32 +148,40 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake3Air {
             return Ok(());
         }
 
-        let num_blake3s: usize = self.num_available_blake3s;
+        // Same filler either way -- only the row's storage layout differs.
+        let air_instance = if pctx.is_packed(Blake3Trace::<F>::AIRGROUP_ID, Blake3Trace::<F>::AIR_ID) {
+            self.compute_witness_inner::<F, Blake3TraceRowPacked<F>>(buffer_pool)?
+        } else {
+            self.compute_witness_inner::<F, Blake3TraceRow<F>>(buffer_pool)?
+        };
+
+        pctx.add_air_instance(air_instance, instance_ids[0]);
+        Ok(())
+    }
+}
+
+impl Blake3Air {
+    /// Fill the whole trace and wrap it as an air instance. Generic over the row type so the
+    /// packed and unpacked layouts share one filler; every write goes through `Blake3TraceRowOps`.
+    fn compute_witness_inner<F: PrimeField64, R: Blake3TraceRowOps<F>>(
+        &self,
+        buffer_pool: &dyn BufferPool<F>,
+    ) -> ProofmanResult<AirInstance<F>> {
+        // One count today: every available slot is filled. A requested count, when there is one,
+        // would make the padding below reachable.
         let num_available_blake3s = self.num_available_blake3s;
 
-        let mut trace = Blake3Trace::new_from_vec_zeroes(buffer_pool.take_buffer())?;
+        let mut trace = Blake3Trace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
         let num_rows = trace.num_rows();
 
         // Check that we can fit all the BLAKE3 inputs in the trace
-        let num_rows_needed = num_blake3s * CLOCKS;
-        let num_rows_covered = if num_blake3s < num_available_blake3s {
-            num_rows_needed
-        } else if num_blake3s == num_available_blake3s {
-            num_rows
-        } else {
-            panic!(
-                "Exceeded available BLAKE3 inputs: requested {}, but only {} are available.",
-                num_blake3s, num_available_blake3s
-            );
-        };
+        let num_rows_needed = num_available_blake3s * CLOCKS;
 
         tracing::debug!(
-            "··· Creating BLAKE3 instance with {} inputs (of {} available) [{} / {} rows filled {:.2}%]",
-            num_blake3s,
+            "··· Creating BLAKE3 instance with {} inputs [{} rows, {:.2}% filled]",
             num_available_blake3s,
-            num_rows_covered,
             num_rows,
-            num_rows_covered as f64 / num_rows as f64 * 100.0
+            num_rows_needed as f64 / num_rows as f64 * 100.0
         );
 
         // Local multiplicity accumulators for the tables
@@ -181,10 +189,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake3Air {
         let mut range_counts = vec![0u64; RANGE_SIZE];
 
         // 1] Fill one CLOCKS-row cycle per Blake3 and count its lookups.
-        for k in 0..num_blake3s {
+        for k in 0..num_available_blake3s {
             let base = k * CLOCKS;
             let (state, message) = random_blake3_input(k as u64);
-            Self::process_trace::<F>(
+            Self::process_trace::<F, R>(
                 &mut trace.buffer[base..base + CLOCKS],
                 &state,
                 &message,
@@ -218,9 +226,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Blake3Air {
             }
         }
 
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        let instance_id = instance_ids[0];
-        pctx.add_air_instance(air_instance, instance_id);
-        Ok(())
+        Ok(AirInstance::new_from_trace(FromTrace::new(&mut trace)))
     }
 }

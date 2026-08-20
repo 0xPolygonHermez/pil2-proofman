@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn test_zero_a_sum() {
         let r1cs = make_r1cs(
-            vec![R1csConstraint { a: HashMap::new(), b: make_lc(&[(1, 1)]), c: make_lc(&[(2, 1), (3, 1)]) }],
+            vec![R1csConstraint { a: LinearCombination::new(), b: make_lc(&[(1, 1)]), c: make_lc(&[(2, 1), (3, 1)]) }],
             4,
         );
         let (cs, _) = r1cs2plonk(&r1cs);

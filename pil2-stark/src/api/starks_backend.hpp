@@ -27,7 +27,7 @@ struct StarksBackend {
     // Proof generation
     // customCommitsFixedPath: path to the on-disk custom-commits-fixed file for this
     // (airgroupId, airId). Empty string means no custom commits for this instance.
-    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath);
+    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained);
     void (*get_stream_proofs)(void *d_buffers_);
     void (*get_stream_proofs_non_blocking)(void *d_buffers_);
     void (*get_stream_id_proof)(void *d_buffers_, uint64_t streamId);
