@@ -200,27 +200,25 @@ cargo run --release --bin proofman-setup -- stats -a /tmp/l.pilout -s /tmp/ss.js
 
 ## Where the numbers come from
 
-The page reimplements, in JS, the analytical model in
-[`setup/pil2-stark/src/types/cells.rs`](../../setup/pil2-stark/src/types/cells.rs):
+The page carries the model itself, in JS:
 
 - leaf hashes per query — trace/Q stages plus FRI folding layers,
 - Merkle-path hashes per query — one path per committed tree,
 - `n_queries` from [`security::pcs::Fri`](../../setup/pil2-stark/src/types/security/pcs/fri.rs),
   the same calculator that sizes real proving keys,
-- prover memory ported from `pil::info::get_prover_memory`.
+- prover memory following `pil::info::get_prover_memory`.
+
+The hash rules it applies are the ones
+[`verifier_hashes.rs`](../../setup/pil2-stark/src/verifier_hashes.rs) measured against an
+instrumented native verifier — leaf compressions, path levels stopping at
+`lastLevelVerification`, and one root reduction per tree. That module is the reference to check
+this page against; `proofman-setup stats` prints its per-air totals.
 
 The in-browser query count is the closed form `pcs::Fri` itself uses:
 `pp = 1 - sqrt(rate) - 1/300` (JBR at alpha = 0) and
 `t = ceil((128 - grinding) / -log2(1 - pp))`. It has no N dependence — `pcs`
 pays the dimension-dependent batching error out of its own grinding budget
 rather than with extra queries.
-
-To regenerate the sweep, and the per-cell dump used for parity checking:
-
-```sh
-cargo test -p pil2-stark-setup --lib types::cells::tests::cells_sweep_csv -- --ignored --nocapture
-HASH=blake3 BLAKES=4 cargo test -p pil2-stark-setup --lib types::cells::tests::audit_dump -- --ignored --nocapture
-```
 
 ## Modelling assumptions and limits
 
@@ -232,14 +230,14 @@ pinned. What it deliberately does not model:
 
 - **custom gates**, and the **Fiat-Shamir transcript / grinding** permutations —
   `verifier_hashes.rs` counts both; here they are ~1.5% and would need the full
-  challenge and air-value maps to reproduce,
+  challenge and air-value maps to reproduce (and its transcript term is the standalone
+  sequence, so an aggregated verifier's is ~1-3% lower),
 - **asymmetric recursion** — the two aggregated proofs are assumed to share the
   verifier's own N, blowup and stage widths; `n_proofs` is a plain multiplier.
 
 Two hard bounds:
 
-- **`n + blowup <= 31`** (`MAX_EXT_BITS`) — `pcs::Fri` indexes the evaluation
-  domain with a `u32`.
+- **`n + blowup <= 31`** — `pcs::Fri` indexes the evaluation domain with a `u32`.
 - The FRI schedule is `generate_stark_struct`'s own: the **extended domain** folds
   by 3 down to `final_degree = 5`. (An earlier version of this page folded the
   polynomial dimension to `2^6` instead, which counted 4 FRI trees where the real

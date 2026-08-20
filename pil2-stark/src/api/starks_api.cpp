@@ -699,19 +699,27 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[std::make_pair("mt1", true)];
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+    // The witness buffer is only num_packed_words wide, so read the unpacked cm1 where it lands.
+    StepsParams paramsUnpacked = *params;
+    // mt1 is smaller than the LDE's N_Extended*nCols scratch, so the scratch runs into cm1(false).
+    // Harmless while the source is the caller's buffer; not once it IS cm1(false).
+    Goldilocks::Element *ldeScratch = &auxTraceGL[offset_mt];
     if (packed_info != nullptr && packed_info->is_packed) {
         unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
                        (uint64_t *)&auxTraceGL[offset_src], N, nCols);
-        memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
+        paramsUnpacked.trace = &auxTraceGL[offset_src];
+        auto it = setupCtx->starkInfo.mapOffsets.find(std::make_pair(std::string("buff_helper_fft_1"), false));
+        // Starts exactly past the unpacked cm1 and is sized for the LDE; null makes the NTT malloc.
+        ldeScratch = it == setupCtx->starkInfo.mapOffsets.end() ? nullptr : &auxTraceGL[it->second];
     }
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
-    calculateWitnessExpr(*setupCtx, *params, expressionsCtx);
+    calculateWitnessExpr(*setupCtx, paramsUnpacked, expressionsCtx);
 
     NTT_Goldilocks ntt(N);
-    ntt.LDE(&auxTraceGL[offset_dst], params->trace, NExtended, N, nCols, &auxTraceGL[offset_mt]);
+    ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
     mt.setSource(&auxTraceGL[offset_dst]);
     mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();
@@ -823,12 +831,14 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     d_buffers->proofType = "basic";
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+    // The witness buffer is only num_packed_words wide, so read the unpacked cm1 where it lands.
+    StepsParams paramsUnpacked = *params;
     if (packed_info != nullptr && packed_info->is_packed) {
         unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
                        (uint64_t *)&params->aux_trace[offsetCm1], N, nCols);
-        memcpy(params->trace, &params->aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
+        paramsUnpacked.trace = &params->aux_trace[offsetCm1];
     }
-    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), selfContained);
+    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, paramsUnpacked, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), selfContained);
     
     return 0;
 }

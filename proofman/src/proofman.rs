@@ -18,7 +18,7 @@ use crate::add_publics_circom;
 use proofman_verifier::verifier;
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
@@ -1826,13 +1826,8 @@ where
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
-    /// Proves a single AIR standing alone: no contributions phase and therefore no global
-    /// challenge. The transcript is seeded from the AIR's own verkey + publics (genProof's
-    /// `recursive` mode), so the proof verifies against that AIR's verkey by itself.
-    ///
-    /// Only the instances of `air_name` get a witness computed; every other planned instance
-    /// is left untouched.
+    /// Proves a single AIR standing alone: the transcript is seeded from its own verkey + publics,
+    /// so the proof verifies by itself without a global challenge.
     pub fn generate_air_proof(
         &self,
         witness_lib_path: PathBuf,
@@ -1840,7 +1835,7 @@ where
         air_name: &str,
         verbose_mode: VerboseMode,
         verify: bool,
-    ) -> ProofmanResult<Vec<Proof<F>>> {
+    ) -> ProofmanResult<()> {
         if !witness_lib_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
                 "Witness computation dynamic library not found at path: {witness_lib_path:?}"
@@ -1855,6 +1850,12 @@ where
             }
         }
 
+        if self.options.verify_constraints {
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has been initialized in verify_constraints mode".into(),
+            ));
+        }
+
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -1867,7 +1868,7 @@ where
         self.generate_air_proof_from_lib(air_name, verify)
     }
 
-    pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<Vec<Proof<F>>> {
+    pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("generate_air_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -1877,30 +1878,33 @@ where
 
         let _ = self.exec()?;
 
+        // Each custom commit's tree root is a public input; without this they stay zero.
+        Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
+
         // Resolve the requested AIR by name over the planned instances of this process.
-        let mut targets: Vec<usize> = Vec::new();
-        let mut available: Vec<String> = Vec::new();
-        for &instance_id in self.pctx.dctx_get_process_instances().iter() {
+        let instances = self.pctx.dctx_get_process_instances();
+        let mut targets: Vec<(usize, usize, usize)> = Vec::new();
+        for &instance_id in instances.iter() {
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
-            let name = self.pctx.global_info.airs[airgroup_id][air_id].name.clone();
-            if !available.contains(&name) {
-                available.push(name.clone());
-            }
-            if name == air_name {
-                targets.push(instance_id);
+            if self.pctx.global_info.get_air_name(airgroup_id, air_id) == air_name {
+                targets.push((instance_id, airgroup_id, air_id));
             }
         }
 
         if targets.is_empty() {
+            // Only now is the name list worth building.
+            let available: BTreeSet<&str> = instances
+                .iter()
+                .filter_map(|&id| self.pctx.dctx_get_instance_info(id).ok())
+                .map(|(ag, air)| self.pctx.global_info.get_air_name(ag, air))
+                .collect();
             return Err(ProofmanError::InvalidParameters(format!(
                 "No planned instance of air '{air_name}'. Planned airs: [{}]",
-                available.join(", ")
+                available.into_iter().collect::<Vec<_>>().join(", ")
             )));
         }
 
-        let mut proofs = Vec::new();
-        for &instance_id in targets.iter() {
-            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        for &(instance_id, airgroup_id, air_id) in targets.iter() {
             tracing::info!("··· Proving {air_name} (instance #{instance_id}) standalone, without global challenge");
 
             timer_start_info!(WITNESS_GENERATION);
@@ -1973,10 +1977,10 @@ where
                 );
             }
 
-            proofs.push(proof);
+            drop(proof);
         }
 
-        Ok(proofs)
+        Ok(())
     }
 
     pub fn generate_proof(
@@ -5169,8 +5173,12 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
-        // Witness components read this to choose their packed vs unpacked row type.
-        pctx.packed = options.packed;
+        // Components must pack exactly the airs the device will unpack: it gates every packed
+        // read path on `packedTrace && is_packed`, so a global flag alone would corrupt the trace.
+        if options.packed {
+            pctx.packed_airs =
+                options.packed_info.iter().filter(|(_, info)| info.is_packed).map(|(key, _)| *key).collect();
+        }
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();

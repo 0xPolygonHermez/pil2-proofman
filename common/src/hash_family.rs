@@ -26,14 +26,8 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
     }
 }
 
-/// Proof-of-work bits the query phase grinds for, by family.
-///
-/// Grinding is asymmetric: the verifier pays one hash for the check, while the prover searches
-/// `2^bits` of them. What a family can afford therefore tracks how fast it hashes, and a blake3
-/// compression is roughly two orders of magnitude cheaper than a Poseidon permutation -- so
-/// blake3 can spend 8 more bits than Poseidon for a comparable search. The bits are not free
-/// security: they come straight off the query count (`pcs::Fri` needs
-/// `ceil((128 - bits) / security_per_query)` queries), which is where the verifier's hashes are.
+/// Proof-of-work bits the query phase grinds for. Per family because the prover searches `2^bits`,
+/// so what one affords tracks how fast it hashes; the bits come off the query count.
 pub fn default_grinding_bits(family: &str) -> usize {
     match family {
         "Poseidon1" | "Poseidon2" => 16,

@@ -266,7 +266,7 @@ public:
             }
         }
 
-        uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+        uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
@@ -351,7 +351,7 @@ public:
             }
 
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
                 uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
                 for(uint64_t l = 0; l < nSiblings; ++l) {
                     for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
@@ -445,7 +445,7 @@ public:
         }
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 - starkInfo.starkStruct.lastLevelVerification : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
             j["s0_valsC"][i] = json::array();
@@ -538,7 +538,7 @@ public:
                     j["s" + std::to_string(step) + "_vals"][i][l] = Goldilocks::toString(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
                 }
 
-                uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[step].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 - starkInfo.starkStruct.lastLevelVerification : std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
                 uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
                 for(uint64_t l = 0; l < nSiblings; ++l) {

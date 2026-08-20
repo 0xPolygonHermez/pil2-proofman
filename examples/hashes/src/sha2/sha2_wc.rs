@@ -116,70 +116,37 @@ impl Sha2Air {
         &self,
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<AirInstance<F>> {
-        let num_sha2s: usize = self.num_available_sha2s;
+        // One count today: every available slot is filled. A requested count, when there is one,
+        // would make the padding below reachable.
         let num_available_sha2s = self.num_available_sha2s;
 
         let mut trace = Sha2Trace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
         let num_rows = trace.num_rows();
 
         // Check that we can fit all the SHA2 inputs in the trace
-        let num_rows_needed = num_sha2s * CLOCKS;
-        let num_rows_covered = if num_sha2s < num_available_sha2s {
-            num_rows_needed
-        } else if num_sha2s == num_available_sha2s {
-            num_rows
-        } else {
-            panic!(
-                "Exceeded available SHA2 inputs: requested {}, but only {} are available.",
-                num_sha2s, num_available_sha2s
-            );
-        };
+        let num_rows_needed = num_available_sha2s * CLOCKS;
 
         tracing::debug!(
-            "··· Creating SHA2 instance with {} inputs (of {} available) [{} / {} rows filled {:.2}%]",
-            num_sha2s,
+            "··· Creating SHA2 instance with {} inputs [{} rows, {:.2}% filled]",
             num_available_sha2s,
-            num_rows_covered,
             num_rows,
-            num_rows_covered as f64 / num_rows as f64 * 100.0
+            num_rows_needed as f64 / num_rows as f64 * 100.0
         );
 
         // Local multiplicity accumulator for the range checker
         let mut range_counts = vec![0u64; RANGE_SIZE];
 
         // 1] Fill one CLOCKS-row cycle per SHA2 and count its lookups.
-        for k in 0..num_sha2s {
+        for k in 0..num_available_sha2s {
             let base = k * CLOCKS;
             let (state, input) = random_sha2_input(k as u64);
             Self::process_trace::<F, R>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
         }
 
-        // Padding
-        // Unlike the Blake AIRs, the all-zero row does not satisfy the SHA2 constraints on
-        // clocked cycles: the round constant k is a fixed column, so every complete cycle must
-        // contain a valid computation. We fill the remaining cycles with the zero-input SHA2.
-        let num_padding_blocks = num_available_sha2s - num_sha2s;
-        if num_padding_blocks > 0 {
-            let base = num_sha2s * CLOCKS;
-            let mut zero_counts = vec![0u64; RANGE_SIZE];
-            Self::process_trace::<F, R>(
-                &mut trace.buffer[base..base + CLOCKS],
-                &[0u32; 8],
-                &[0u32; 16],
-                &mut zero_counts,
-            );
-
-            // Replicate the zero-input cycle across the remaining padding cycles
-            let (head, tail) = trace.buffer.split_at_mut(base + CLOCKS);
-            let zero_block = &head[base..base + CLOCKS];
-            for k in 1..num_padding_blocks {
-                tail[(k - 1) * CLOCKS..k * CLOCKS].copy_from_slice(zero_block);
-            }
-
-            for (t, &m) in zero_counts.iter().enumerate() {
-                range_counts[t] += m * num_padding_blocks as u64;
-            }
-        }
+        // Every complete cycle is filled above, so there are no padding cycles to fill. If a
+        // requested count is ever plumbed in, they cannot be left zero: unlike the Blake AIRs the
+        // all-zero row does not satisfy the SHA2 constraints on clocked cycles (the round constant
+        // is a fixed column), so each spare cycle needs a real zero-input SHA2 written into it.
 
         // The trailing rows where no clock fires range-check the all-zero carry triple
         let num_trailing_rows = num_rows - num_available_sha2s * CLOCKS;
@@ -223,7 +190,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
         }
 
         // Same filler either way -- only the row's storage layout differs.
-        let air_instance = if pctx.packed {
+        let air_instance = if pctx.is_packed(Sha2Trace::<F>::AIRGROUP_ID, Sha2Trace::<F>::AIR_ID) {
             self.compute_witness_inner::<F, Sha2TraceRowPacked<F>>(buffer_pool)?
         } else {
             self.compute_witness_inner::<F, Sha2TraceRow<F>>(buffer_pool)?

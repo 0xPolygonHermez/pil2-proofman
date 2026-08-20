@@ -11,8 +11,7 @@ use anyhow::{anyhow, bail, Result};
 // ─── Public types ───────────────────────────────────────────────────────────
 
 /// Wire index → Goldilocks coefficient. Ordered, so every pass over a combination's terms sees them
-/// in the same order: a `HashMap` here would iterate differently per process (Rust seeds its hasher
-/// randomly), which reaches the plonk placement and changes the AIR and its verkey run to run.
+/// Ordered, so the plonk placement it feeds is reproducible.
 pub type LinearCombination = BTreeMap<u32, u64>;
 
 /// A single R1CS constraint: A * B = C.
@@ -45,7 +44,7 @@ pub struct CustomGate {
 }
 
 /// One application of a custom gate (gate index + wire signals).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CustomGateUse {
     pub id: u32,
     pub signals: Vec<u64>,
@@ -285,6 +284,9 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
     // identical; only the serialization order moves). The plonk placement is order-sensitive, so
     // canonicalise here and the proving key -- and its verkey -- become reproducible.
     constraints.sort_unstable();
+    // The custom-gate uses need it too: the compressor/aggregation setups walk this vector
+    // positionally and assign each use its own row band, so its order is the row assignment.
+    custom_gates_uses.sort_unstable();
 
     Ok(R1csFile { header, constraints, wire_to_label, custom_gates, custom_gates_uses })
 }

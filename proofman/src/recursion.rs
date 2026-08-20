@@ -1077,6 +1077,39 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
     }
 }
 
+/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
+/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
+fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) {
+    let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
+        return;
+    };
+    // The canonical spelling, so the dump round-trips through `ProofType::from_str`.
+    let proof_type: &str = setup.setup_type.into();
+    if !want.eq_ignore_ascii_case("all") && !want.eq_ignore_ascii_case(proof_type) {
+        return;
+    }
+
+    let dir = std::env::var_os("TMPDIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let path = dir.join(format!("zkin_ag{}_air{}_t{proof_type}.bin", setup.airgroup_id, setup.air_id));
+    // create_new: the parallel prover would otherwise race on the same name. A leftover file from an
+    // earlier run wins, so say so rather than looking like the capture happened.
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(file) => {
+            let bytes: Vec<u8> = zkin.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let mut file = std::io::BufWriter::new(file);
+            if let Err(e) = file.write_all(&bytes) {
+                tracing::warn!("zkin capture to {} failed: {e}", path.display());
+            } else {
+                tracing::info!("Captured zkin ({} words) to {}", zkin.len(), path.display());
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            tracing::warn!("zkin capture skipped: {} already exists", path.display());
+        }
+        Err(e) => tracing::warn!("zkin capture to {} failed: {e}", path.display()),
+    }
+}
+
 fn generate_witness<F: PrimeField64>(
     setup: &Setup<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
@@ -1095,22 +1128,9 @@ fn generate_witness<F: PrimeField64>(
     let nmutex = std::cmp::min(8, rayon::current_num_threads());
 
     // Capture the zkin feeding this recursion witness, to build test-recursive fixtures from a real
-    // run. `PIL2_DUMP_ZKIN=recursive2` (or `all`) writes the first proof of each kind under the name
-    // prove-air's regex parses. `create_new` keeps the parallel prover from racing on it.
-    if let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") {
-        let proof_type = format!("{:?}", setup.setup_type);
-        if want.eq_ignore_ascii_case("all") || want.eq_ignore_ascii_case(&proof_type) {
-            let path = std::path::Path::new("/tmp")
-                .join(format!("zkin_ag{}_air{}_t{}.bin", setup.airgroup_id, setup.air_id, proof_type));
-            if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                for word in zkin {
-                    file.write_all(&word.to_le_bytes())?;
-                }
-                file.flush()?;
-                tracing::info!("Captured zkin ({} words) to {}", zkin.len(), path.display());
-            }
-        }
-    }
+    // run. `PIL2_DUMP_ZKIN=recursive2` (or `all`) writes the first proof of each kind. Diagnostic
+    // only: a dump that cannot be written must never fail the proof.
+    dump_zkin_if_requested(setup, zkin);
 
     let mut witness: Vec<F> = match setup.setup_type {
         ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),

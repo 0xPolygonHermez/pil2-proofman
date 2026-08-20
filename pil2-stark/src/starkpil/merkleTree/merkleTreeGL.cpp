@@ -55,7 +55,9 @@ uint64_t MerkleTreeGL::getMerkleTreeWidth()
 
 uint64_t MerkleTreeGL::getMerkleProofLength() {
     if(height > 1) {
-        return (uint64_t)ceil(std::log2(height) / std::log2(arity)) - last_level_verification;
+        // Saturating: last_level_verification can exceed a short tree's depth.
+        uint64_t levels = (uint64_t)ceil(std::log2(height) / std::log2(arity));
+        return levels > last_level_verification ? levels - last_level_verification : 0;
     } 
     return 0;
 }

@@ -395,18 +395,8 @@ BENCHMARK(MERKLE_REDUCE_AR4_GPU_BLAKE3_BENCH)
     ->Arg(1ULL << 23)
     ->UseRealTime();
 
-// ---------------------------------------------------------------------------
-// grinding -- GPU (parameterised by n_bits, not nCols).
-//
-// Unlike the hash benches above (which time the self-contained benchs/ port),
-// this times the production entry point Blake3GoldilocksGPU::grinding, so the
-// number is directly comparable to GRINDING_GPU_POS1_BENCH / GRINDING_GPU_BENCH
-// which also time their prover launchers.
-//
-// Every iteration re-verifies the returned nonce on the host through the shared
-// blake3_core, so a fast-but-wrong grinding kernel cannot post a good time. The
-// host permute8 costs well under a microsecond against >=1 ms of grinding.
-// ---------------------------------------------------------------------------
+// grinding -- GPU, timed on the production launcher (n_bits, not nCols) so it is comparable to
+// GRINDING_GPU_POS1_BENCH. The host re-verifies each nonce, so a fast-but-wrong kernel cannot win.
 static void GRINDING_GPU_BLAKE3_BENCH(benchmark::State &state)
 {
     cudaStream_t stream;

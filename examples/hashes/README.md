@@ -78,6 +78,9 @@ cargo run --release --bin proofman-cli -- prove-air \
 Swap `--air` for `Sha2` or `Blake2b` to prove those instead. Add `--no-verify` to skip the
 verification step when timing, and drop `--gpu` to run on the CPU.
 
+This library exports `packed_info`, so `--gpu` packs the trace by default (a ~5x smaller H2D
+copy); `--packed` packs on the CPU too, and `--no-packed` turns it off either way.
+
 ### 7 All at once
 
 Steps 1-6 chained. This one builds in release throughout, so the same library serves both

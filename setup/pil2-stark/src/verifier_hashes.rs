@@ -1,21 +1,8 @@
-//! How many hash invocations a verifier performs for one air.
+//! Hash invocations a verifier performs for one air. Geometry, not who checks it: native and
+//! in-circuit run the same algorithm and differ only in the price of one hash.
 //!
-//! The count is a property of the proof's geometry, not of who checks it: the native verifier and
-//! the in-circuit (recursive) one run the same algorithm, so they perform the same hashes. What
-//! differs is the price of one — a Blake3 compression is nearly free on a CPU and expensive in a
-//! circuit, a Poseidon permutation the other way round.
-//!
-//! Every rule here mirrors a specific piece of the verifier, and the tests name which:
-//! `stark_verify.hpp` for the sequence, `merkleTreeGL.cpp` for the trees, `transcriptGL.cpp` for
-//! Fiat-Shamir, `poseidon_goldilocks.cpp` for the sponge.
-//!
-//! These counts were checked against the native verifier itself, temporarily instrumented to count
-//! its own hashes, over the three airs of the hashes example under all three families -- nine cases,
-//! all exact (2026-08-19). The measured totals are pinned in the tests below, so if the verifier ever
-//! changes shape they are what to re-derive. Re-instrumenting is a small, purely additive patch:
-//! atomic counters bumped in `MerkleTreeGL::verifyGroupProof`, `calculateRootFromProof` and
-//! `TranscriptGL::_updateState` -- atomic because the query loops in `starkVerify` are OpenMP
-//! parallel -- summed and logged at the end of `starkVerify`.
+//! Each rule mirrors the verifier piece its test names. The transcript term is the standalone
+//! (`challengesVadcop == false`) sequence, so an aggregated air's is ~1-3% lower.
 
 use proofman_common::hash_family::{sponge_rate, transcript_out_size, transcript_pending_size, DIGEST_SIZE};
 
@@ -45,6 +32,8 @@ impl HashCounts {
 pub struct VerifierGeometry {
     pub n_bits_ext: u64,
     pub arity: u64,
+    /// The transcript sponge's arity, which `StarkStruct` keeps independent of the tree's.
+    pub transcript_arity: u64,
     pub last_level_verification: u64,
     pub n_queries: u64,
     pub pow_bits: u64,
@@ -72,11 +61,9 @@ pub struct VerifierGeometry {
 /// Blake3 compressions over `bytes`: one per 64-byte block, plus one parent per extra 1024-byte
 /// chunk. A 64-byte input — one Merkle node — is a single compression.
 pub fn blake3_compressions(bytes: u64) -> u64 {
-    if bytes == 0 {
-        return 0;
-    }
-    let blocks = bytes.div_ceil(64);
-    let chunks = bytes.div_ceil(1024);
+    // `hash_le64` forces nblocks = 1, so even an empty input costs one compression.
+    let blocks = bytes.div_ceil(64).max(1);
+    let chunks = bytes.div_ceil(1024).max(1);
     blocks + (chunks - 1)
 }
 
@@ -85,6 +72,8 @@ pub fn blake3_compressions(bytes: u64) -> u64 {
 pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
     match family {
         "blake3" => blake3_compressions(width * 8),
+        // sponge_rate is 0 at arity 1 and underflows at 0; the trees support 2..=4.
+        _ if arity < 2 => 0,
         _ => width.div_ceil(sponge_rate(arity)),
     }
 }
@@ -92,7 +81,7 @@ pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
 /// Node hashes on one Merkle path: `ceil(log_arity(height)) - last_level_verification`, matching
 /// `MerkleTreeGL::getMerkleProofLength`. Each level is one permutation, since the sponge width is
 /// exactly `arity * DIGEST_SIZE`.
-pub fn merkle_path_hashes(n_bits_height: u64, arity: u64, last_level_verification: u64) -> u64 {
+pub fn merkle_path_permutations(n_bits_height: u64, arity: u64, last_level_verification: u64) -> u64 {
     if n_bits_height == 0 {
         return 0;
     }
@@ -102,14 +91,17 @@ pub fn merkle_path_hashes(n_bits_height: u64, arity: u64, last_level_verificatio
     levels.saturating_sub(last_level_verification)
 }
 
-/// Hashes to reduce a stored bottom level to the root, done once per tree rather than per query
-/// (`MerkleTreeGL::verifyMerkleRoot` -> `merkletreeReduce`). Zero unless the tree keeps levels.
-///
-/// The kept level is not `arity^llv` nodes wide: the verifier folds the height down until it is *at
-/// most* that, which overshoots whenever the arity does not divide the height evenly. Arity 4 over an
-/// odd `n_bits` stops at 8 rather than 16, and reduces in three hashes instead of five.
+/// Hashes reducing the stored bottom level to the root, once per tree (`merkletreeReduce`). The kept
+/// level is at *most* `arity^llv` wide, overshooting when the arity does not divide the height.
 pub fn root_reduction_hashes(arity: u64, last_level_verification: u64, n_bits_height: u64) -> u64 {
-    let stop = arity.pow(last_level_verification as u32);
+    // The trees support arity 2..=4; below that the fold never converges. Both bounds are
+    // user-configurable, so cap rather than overflow the pow or the shift.
+    if arity < 2 || n_bits_height >= 64 {
+        return 0;
+    }
+    let Some(stop) = arity.checked_pow(last_level_verification.min(u32::MAX as u64) as u32) else {
+        return 0;
+    };
     let mut pending = 1u64 << n_bits_height;
     while pending > stop {
         pending = pending.div_ceil(arity);
@@ -193,11 +185,9 @@ impl TranscriptSim {
     }
 }
 
-/// Build the geometry for `family` from what the stats pipeline already has. The widths do not
-/// depend on the family -- only the tree arity does, and through it the FRI query count, so each
-/// family gets its own security analysis.
+/// Build the geometry from what the stats pipeline already has. Everything family-dependent
+/// reaches it through `stark_struct` (the arity, and through it the FRI query count).
 pub fn geometry_for_family(
-    family: &str,
     stark_struct: &crate::types::stark_struct::StarkStruct,
     setup: &crate::types::pilout_info::SetupResult,
     n_evals: usize,
@@ -206,10 +196,12 @@ pub fn geometry_for_family(
     use crate::types::security::pcs::{Batching, Fri, FriConfig};
     use crate::types::security::regimes::DecodingRegime;
 
-    let arity = proofman_common::hash_family::merkle_tree_arity(family);
+    // The arity the setup actually builds: only blake3 has it forced, so any other family can be
+    // configured away from the family default and the whole geometry moves with it.
+    let arity = stark_struct.merkle_tree_arity as u64;
 
-    // Same configuration `build_starkinfo_output` uses, with this family's arity: the query count
-    // and grinding bits come out of the security analysis, not out of the settings.
+    // Same configuration `build_starkinfo_output` uses: the query count and grinding bits come
+    // out of the security analysis, not out of the settings.
     let fri = Fri::new(FriConfig {
         field_size: security::goldilocks_safe_extension_field_size(),
         trace_length: 1u32 << stark_struct.n_bits,
@@ -231,8 +223,9 @@ pub fn geometry_for_family(
     VerifierGeometry {
         n_bits_ext: stark_struct.n_bits_ext as u64,
         arity,
+        transcript_arity: stark_struct.transcript_arity as u64,
         last_level_verification: stark_struct.last_level_verification as u64,
-        n_queries: security.n_queries as u64,
+        n_queries: security.n_queries,
         pow_bits: security.grinding_bits_query as u64,
         hash_commits: stark_struct.hash_commits,
         // One committed tree per stage, plus the quotient stage.
@@ -259,7 +252,7 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     // ── Query phase: every committed tree is opened at every query ──
     let open = |width: u64, n_bits_height: u64, leaf: &mut u64, merkle: &mut u64| {
         *leaf += geom.n_queries * leaf_hashes(family, geom.arity, width);
-        *merkle += geom.n_queries * merkle_path_hashes(n_bits_height, geom.arity, geom.last_level_verification);
+        *merkle += geom.n_queries * merkle_path_permutations(n_bits_height, geom.arity, geom.last_level_verification);
         // Reducing the kept level to the root is done once for the tree, not once per query.
         *merkle += root_reduction_hashes(geom.arity, geom.last_level_verification, n_bits_height);
     };
@@ -275,14 +268,16 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     // ── FRI folding trees: one per step past the committed domain ──
     for step in 1..geom.step_n_bits.len() {
         let n_bits = geom.step_n_bits[step];
-        let group_size = 1u64 << (geom.step_n_bits[step - 1] - n_bits);
+        // A deserialized starkinfo is not guaranteed to have decreasing steps.
+        let group_size = 1u64 << geom.step_n_bits[step - 1].saturating_sub(n_bits).min(63);
         let (mut leaf, mut merkle) = (0, 0);
         open(group_size * FIELD_EXTENSION, n_bits, &mut leaf, &mut merkle);
         counts.fri += leaf + merkle;
     }
 
     counts.transcript = transcript_hashes(geom);
-    counts.grinding = u64::from(geom.pow_bits > 0);
+    // `starkVerify` runs the permutation unconditionally; powBits only picks the threshold.
+    counts.grinding = 1;
     counts
 }
 
@@ -295,12 +290,12 @@ const FIELD_EXTENSION: u64 = 3;
 ///
 /// This is the standalone path (`challengesVadcop == false`), which a proof of a single air takes.
 fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
-    let mut t = TranscriptSim::new(geom.arity);
+    let mut t = TranscriptSim::new(geom.transcript_arity);
     // A hashed commit absorbs a digest of the values rather than the values, and computing that
     // digest costs a sponge of its own (`transcriptHash.getState`).
     let put_values = |t: &mut TranscriptSim, n: u64| {
         if geom.hash_commits {
-            let mut inner = TranscriptSim::new(geom.arity);
+            let mut inner = TranscriptSim::new(geom.transcript_arity);
             inner.put(n);
             inner.get_state();
             t.hashes += inner.hashes;
@@ -346,10 +341,10 @@ fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
     t.get_field();
 
     // Query indices come from a transcript of their own, seeded with the last challenge and a nonce.
-    let mut queries = TranscriptSim::new(geom.arity);
+    let mut queries = TranscriptSim::new(geom.transcript_arity);
     queries.put(FIELD_EXTENSION);
     queries.put(1);
-    queries.get_permutations(geom.n_queries, geom.step_n_bits[0]);
+    queries.get_permutations(geom.n_queries, geom.step_n_bits.first().copied().unwrap_or(0));
 
     t.hashes + queries.hashes
 }
@@ -368,7 +363,9 @@ mod tests {
     /// A chunk is 1024 bytes of 64-byte blocks; past that, each new chunk costs a parent too.
     #[test]
     fn blake3_counts_blocks_plus_chunk_parents() {
-        assert_eq!(blake3_compressions(0), 0);
+        // `hash_le64` compresses one padded block even for an empty input, so a zero-width tree
+        // still costs a hash per query -- matching `blake3_core`'s `if (nblocks == 0) nblocks = 1`.
+        assert_eq!(blake3_compressions(0), 1);
         assert_eq!(blake3_compressions(1), 1);
         assert_eq!(blake3_compressions(1024), 16);
         assert_eq!(blake3_compressions(1025), 18); // 17 blocks + 1 parent
@@ -395,10 +392,10 @@ mod tests {
     /// `ceil(log_arity(height))`, less the levels the verifier reads from the proof instead.
     #[test]
     fn a_merkle_path_is_one_hash_per_level() {
-        assert_eq!(merkle_path_hashes(20, 4, 0), 10);
-        assert_eq!(merkle_path_hashes(20, 2, 0), 20);
-        assert_eq!(merkle_path_hashes(20, 4, 2), 8);
-        assert_eq!(merkle_path_hashes(0, 4, 0), 0, "a height-1 tree has no path");
+        assert_eq!(merkle_path_permutations(20, 4, 0), 10);
+        assert_eq!(merkle_path_permutations(20, 2, 0), 20);
+        assert_eq!(merkle_path_permutations(20, 4, 2), 8);
+        assert_eq!(merkle_path_permutations(0, 4, 0), 0, "a height-1 tree has no path");
     }
 
     /// The kept bottom level is reduced to the root once, not once per query.
@@ -410,14 +407,24 @@ mod tests {
         assert_eq!(root_reduction_hashes(2, 3, 20), 7, "8 -> 4 -> 2 -> 1");
     }
 
-    /// Folding an odd `n_bits` by 4 cannot land on 16, so the kept level is 8 wide and costs two
-    /// hashes less. Missing this made every Poseidon count too high; blake3's arity 2 always divides
-    /// a power-of-two height exactly, so it hid the bug.
+    /// An odd `n_bits` folded by 4 cannot land on 16, so the kept level is 8 wide and costs less.
     #[test]
     fn an_odd_height_keeps_a_narrower_level() {
         assert_eq!(root_reduction_hashes(4, 2, 22), 5, "2^22 folds to exactly 16");
         assert_eq!(root_reduction_hashes(4, 2, 19), 3, "2^19 folds to 8, not 16");
         assert_eq!(root_reduction_hashes(2, 2, 19), 3, "arity 2 always lands on 4");
+    }
+
+    /// The shipped blake3 default is arity 2 with llv 4, which neither measured case covers: the
+    /// path drops 4 levels rather than 2 and the reduction folds a 16-node level instead of a 4-node
+    /// one, so the two terms move in opposite directions.
+    #[test]
+    fn the_default_binary_geometry_trades_path_levels_for_root_reductions() {
+        assert_eq!(merkle_path_permutations(22, 2, 4), 18, "22 levels less the 4 the kept level replaces");
+        assert_eq!(merkle_path_permutations(22, 2, 2), 20, "the same tree at the old llv");
+        // 16 -> 8 -> 4 -> 2 -> 1 = 8 + 4 + 2 + 1.
+        assert_eq!(root_reduction_hashes(2, 4, 22), 15, "a 16-node kept level folds in 15");
+        assert_eq!(root_reduction_hashes(2, 2, 22), 3, "a 4-node one in 3");
     }
 
     /// Absorbing exactly one buffer's worth permutes once; a partial buffer costs nothing until
@@ -470,6 +477,7 @@ mod tests {
         VerifierGeometry {
             n_bits_ext: 4,
             arity: 4,
+            transcript_arity: 4,
             n_queries: 1,
             stage_widths: vec![12],
             n_constants: 12,
@@ -511,29 +519,23 @@ mod tests {
         assert_eq!(counts.fri, 2, "one leaf hash and one path level");
     }
 
-    /// Grinding is one hash when it is configured and none when it is not.
+    /// One hash either way: `starkVerify` runs the permutation before looking at powBits, which
+    /// only selects the threshold the result is compared against.
     #[test]
-    fn grinding_costs_one_hash() {
+    fn grinding_costs_one_hash_whatever_the_threshold() {
         let mut geom = minimal_geometry();
-        assert_eq!(verifier_hashes(&geom, "Poseidon1").grinding, 0);
+        assert_eq!(verifier_hashes(&geom, "Poseidon1").grinding, 1);
         geom.pow_bits = 20;
         assert_eq!(verifier_hashes(&geom, "Poseidon1").grinding, 1);
     }
 
-    /// Checked against the instrumented native verifier, which counts its own hashes (see the report
-    /// at the end of `starkVerify`). Three airs of the hashes example agreed to the unit:
-    ///
-    ///   Sha2    2^16 blowup 1  ->  27674   Blake2b 2^16 blowup 1  ->  29498
-    ///   Blake3  2^20 blowup 2  ->  24183   (leaf 6042, merkle 9132, fri 8568, transcript 440)
-    ///
-    /// This pins the Blake3 one, whose geometry comes from its own `Blake3.starkinfo.json`: arity 2,
-    /// 114 queries, lastLevelVerification 2, nBitsExt 22, steps [22,19,16,13,10,7,5], cm 214/174/6,
-    /// 8 constants, hashCommits, no publics, challenges 2 and 1 in stages 2 and 3.
+    /// Measured against an instrumented native verifier: 24183 for this Blake3 geometry.
     #[test]
     fn the_measured_blake3_air_matches_the_native_verifier() {
         let geom = VerifierGeometry {
             n_bits_ext: 22,
             arity: 2,
+            transcript_arity: 2,
             last_level_verification: 2,
             n_queries: 114,
             pow_bits: 16,
@@ -567,6 +569,7 @@ mod tests {
         let geom = VerifierGeometry {
             n_bits_ext: 22,
             arity: 4,
+            transcript_arity: 4,
             last_level_verification: 2,
             n_queries: 114,
             pow_bits: 16,
@@ -598,8 +601,11 @@ mod tests {
     #[test]
     fn the_family_changes_the_count_not_just_the_price() {
         let poseidon = verifier_hashes(&minimal_geometry(), "Poseidon1");
-        let blake3 =
-            verifier_hashes(&VerifierGeometry { arity: merkle_tree_arity("blake3"), ..minimal_geometry() }, "blake3");
+        let blake3_arity = merkle_tree_arity("blake3");
+        let blake3 = verifier_hashes(
+            &VerifierGeometry { arity: blake3_arity, transcript_arity: blake3_arity, ..minimal_geometry() },
+            "blake3",
+        );
 
         assert_eq!(blake3.merkle, poseidon.merkle * 2, "binary paths are twice as long");
     }

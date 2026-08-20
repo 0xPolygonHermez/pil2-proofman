@@ -1326,8 +1326,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     Goldilocks::Element *finalPol = airValues + starkInfo.airValuesSize;
     Goldilocks::Element *nonce = finalPol + finalPolDegree * FIELD_EXTENSION;
 
-    double arityLog2 = std::log2(arity);
-    uint64_t nSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[0].nBits / arityLog2) - lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, arity, lastLevelVerification, false);
     uint64_t siblingWords = nSiblings * (arity - 1) * HASH_SIZE;
 
     // Address of query `q` in tree `tree` within the query openings block.
@@ -1392,7 +1391,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
         uint64_t stepIndex = step - 1;
         uint64_t width = (1ULL << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION;
-        uint64_t stepSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[step].nBits / arityLog2) - lastLevelVerification;
+        uint64_t stepSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, arity, lastLevelVerification, false);
         uint64_t stepSiblingWords = stepSiblings * (arity - 1) * HASH_SIZE;
         uint64_t buffSize = width + stepSiblingWords;
         Goldilocks::Element *queriesFRI = queries + (nTrees + stepIndex) * nQueries * starkInfo.maxProofBuffSize;

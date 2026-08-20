@@ -37,9 +37,10 @@ of each other, since both verify the same shape of proof.
 
 The fixtures were generated from the fibonacci-square example, one setup per family: `setup -r`
 emits `build/circom/FiboCPU_recursive2.{circom,verifier.circom}`, and a `prove --aggregation` run
-with `PIL2_DUMP_ZKIN=recursive2` captures the proof blob (see `proofman/src/recursion.rs`). The blob keeps the name `ag0_air0_tCompressor.bin` because `prove-air`
-parses the proof type out of it to resolve the setup path, and the harness names every
-recursive-test AIR `Compressor`.
+with `PIL2_DUMP_ZKIN=recursive2` captures the proof blob (see `proofman/src/recursion.rs`). The dump
+is named `zkin_ag<N>_air<M>_t<proof_type>.bin`, which is what `prove-air --proof` parses to resolve
+the setup path; the committed fixtures keep the older `ag0_air0_tCompressor.bin` spelling, which the
+same parser accepts, because the harness names every recursive-test AIR `Compressor`.
 
 Note the harness always uses blowupFactor 3, while a production **compressor** uses 2 -- so these
 numbers are faithful for the aggregator, not for the compressor.

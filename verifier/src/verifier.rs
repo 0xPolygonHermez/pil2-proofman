@@ -45,7 +45,9 @@ pub struct VerifierInfo {
 
 pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
     let log_arity = (info.arity as f64).log2();
-    let n_siblings = ((info.n_bits_ext as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+    // Saturating, as the prover's `merkleProofLevels` is: llv can exceed a short tree's depth.
+    let n_siblings =
+        (((info.n_bits_ext as f64 / log_arity).ceil()) as u64).saturating_sub(info.last_level_verification);
     let n_siblings_per_level = (info.arity - 1) * 4;
     let n_queries = info.n_fri_queries;
     let num_nodes_level = info.arity.pow(info.last_level_verification as u32) * 4;
@@ -84,8 +86,8 @@ pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
         let vals_size = (1u64 << (info.fri_steps[(i - 1) as usize] - info.fri_steps[i as usize])) * 3;
         p += n_queries * vals_size;
 
-        let n_siblings_fri =
-            ((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+        let n_siblings_fri = (((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64)
+            .saturating_sub(info.last_level_verification);
         p += n_queries * n_siblings_fri * n_siblings_per_level;
 
         p += last_level_extra;
@@ -129,8 +131,8 @@ where
         return false;
     }
 
-    let n_siblings: u64 = ((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
-        - verifier_info.last_level_verification;
+    let n_siblings: u64 = (((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64)
+        .saturating_sub(verifier_info.last_level_verification);
     let n_siblings_per_level = (verifier_info.arity - 1) * 4;
 
     let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
@@ -302,8 +304,8 @@ where
             val_fri.push(vals);
         }
 
-        let n_siblings_fri = ((verifier_info.fri_steps[i as usize] as f64 / log_arity).ceil()) as usize
-            - verifier_info.last_level_verification as usize;
+        let n_siblings_fri = (((verifier_info.fri_steps[i as usize] as f64 / log_arity).ceil()) as usize)
+            .saturating_sub(verifier_info.last_level_verification as usize);
 
         for query_siblings in siblings_fri.iter_mut() {
             let mut siblings = Vec::with_capacity(n_siblings_fri);

@@ -123,33 +123,28 @@ pub struct StarkStep {
     pub n_bits: usize,
 }
 
-/// Generate a StarkStruct from user settings, the air's power (nBits) and the
-/// hash family, which provides the tree/transcript arity defaults (and, for
-/// families whose kernels support a single geometry, fixes them).
-/// Nodes the proof carries at the tree's bottom kept level.
-///
-/// This -- not the level count -- is the knob that matters: it fixes what the proof carries
-/// per tree (`LAST_LEVEL_NODES * nFieldElements`) while the levels it buys back depend on the
-/// arity. `last_level_verification` stays expressed in *levels* because that is what
-/// `merkleTreeGL` and the circom verifier consume; at arity 4 sixteen nodes is 2 levels, at
-/// arity 2 it is 4.
+/// Nodes the proof carries at the tree's bottom kept level. Fixing the node count rather than
+/// the level count keeps what the proof carries per tree constant across arities.
 pub const LAST_LEVEL_NODES: usize = 16;
 
-/// Levels to skip so the kept level holds at most `LAST_LEVEL_NODES` nodes: `floor(log_arity(16))`,
-/// computed without floats so an arity that is not a power of two rounds down rather than over.
-///   arity 2 -> 4 (16 nodes) · arity 3 -> 2 (9) · arity 4 -> 2 (16) · arity 16 -> 1 (16)
-pub fn default_last_level_verification(arity: usize) -> usize {
+/// BN128 has no `hash_family` entry, so it keeps the grinding `resolve` used to fill in.
+pub const BN128_DEFAULT_POW_BITS: usize = 16;
+
+/// Levels to skip so the kept level holds at most `LAST_LEVEL_NODES` nodes, capped at the tree's
+/// own height: every consumer subtracts this from an unsigned level count without a floor.
+pub fn default_last_level_verification(arity: usize, n_bits_ext: usize) -> usize {
     if arity < 2 {
         return 0;
     }
-    let (mut levels, mut nodes) = (0, 1usize);
-    while nodes * arity <= LAST_LEVEL_NODES {
-        nodes *= arity;
-        levels += 1;
-    }
-    levels
+    // The same depth every consumer computes, not an integer approximation of it: the two differ
+    // for a non-power-of-two arity, and this value is what they subtract.
+    let levels = crate::verifier_hashes::merkle_path_permutations(n_bits_ext as u64, arity as u64, 0);
+    LAST_LEVEL_NODES.ilog(arity).min(levels as u32) as usize
 }
 
+/// Generate a StarkStruct from user settings, the air's power (nBits) and the
+/// hash family, which provides the tree/transcript arity defaults (and, for
+/// families whose kernels support a single geometry, fixes them).
 pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
     let verification_hash_type = settings.verification_hash_type.clone().unwrap_or_else(|| "GL".to_string());
 
@@ -165,7 +160,7 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
         if verification_hash_type == "BN128" {
             let mta = settings.merkle_tree_arity.unwrap_or(16);
             let mtc = settings.merkle_tree_custom.unwrap_or(false);
-            let pb = settings.pow_bits.unwrap_or(0);
+            let pb = settings.pow_bits.unwrap_or(BN128_DEFAULT_POW_BITS);
             let llv = settings.last_level_verification.unwrap_or(0);
             (mta, mta, mtc, false, llv, pb)
         } else {
@@ -185,7 +180,9 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             let pb = settings.pow_bits.unwrap_or_else(|| proofman_common::hash_family::default_grinding_bits(hash));
             // Same 16-node bottom level whatever the arity, so switching hash family does not
             // silently change how deep every Merkle path is walked.
-            let llv = settings.last_level_verification.unwrap_or_else(|| default_last_level_verification(mta));
+            let llv = settings
+                .last_level_verification
+                .unwrap_or_else(|| default_last_level_verification(mta, n_bits + blowup_factor));
             (mta, proofman_common::hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
         };
 
@@ -223,11 +220,27 @@ mod tests {
     #[test]
     fn the_default_llv_keeps_sixteen_nodes_at_every_arity() {
         for (arity, levels) in [(2, 4), (3, 2), (4, 2), (8, 1), (16, 1)] {
-            assert_eq!(default_last_level_verification(arity), levels, "arity {arity}");
+            assert_eq!(default_last_level_verification(arity, 22), levels, "arity {arity}");
             assert!(arity.pow(levels as u32) <= LAST_LEVEL_NODES, "arity {arity} keeps too many nodes");
         }
         assert_eq!(2usize.pow(4), LAST_LEVEL_NODES);
         assert_eq!(4usize.pow(2), LAST_LEVEL_NODES);
+    }
+
+    /// Every consumer computes `levels - llv` in unsigned arithmetic with no floor, so a tree
+    /// shorter than the default must clamp here rather than underflow there.
+    #[test]
+    fn the_default_llv_never_exceeds_the_tree_height() {
+        for arity in [2usize, 3, 4, 8, 16] {
+            for n_bits_ext in 0..8usize {
+                let llv = default_last_level_verification(arity, n_bits_ext);
+                // Measured with the consumers' own formula, not the one under test.
+                let levels =
+                    crate::verifier_hashes::merkle_path_permutations(n_bits_ext as u64, arity as u64, 0) as usize;
+                assert!(llv <= levels, "arity {arity}, n_bits_ext {n_bits_ext}: llv {llv} > levels {levels}");
+            }
+        }
+        assert_eq!(default_last_level_verification(2, 3), 3);
     }
 
     /// blake3 hashes cheaply enough to grind 8 bits further than Poseidon, which is 8 bits the
@@ -297,7 +310,8 @@ mod tests {
         assert_eq!(ss.transcript_arity, 16);
         assert!(!ss.merkle_tree_custom);
         assert!(!ss.hash_commits);
-        assert_eq!(ss.pow_bits, 0);
+        // BN128 has no hash_family entry, so it keeps the grinding `resolve` used to fill in.
+        assert_eq!(ss.pow_bits, BN128_DEFAULT_POW_BITS);
         assert_eq!(ss.last_level_verification, 0);
         assert_eq!(ss.steps[0].n_bits, 18);
     }
