@@ -535,6 +535,11 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("xdivxsub", false)] = mapTotalN;
         mapTotalN += openingPoints.size() * FIELD_EXTENSION;
 
+        // Folded FRI constants (computeFRIFoldedConstants): one cubic coefficient per
+        // eval-map entry followed by one cubic constant per opening point.
+        mapOffsets[std::make_pair("fri_folded", false)] = mapTotalN;
+        mapTotalN += (evMap.size() + openingPoints.size()) * FIELD_EXTENSION;
+
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
 
