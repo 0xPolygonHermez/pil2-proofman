@@ -1450,6 +1450,7 @@ dependencies = [
 name = "proofman-fields"
 version = "1.2.0-alpha"
 dependencies = [
+ "blake3",
  "cfg-if",
  "num-bigint",
  "paste",
