@@ -483,17 +483,17 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
     Ok(())
 }
 
-/// Is `.const_gpu` older than the `.const` it was packed from?
+/// Is `.const_gpu` *provably* older than the `.const` it was packed from?
 ///
 /// The size check cannot tell: the expected size is pure AIR geometry, so changed
 /// fixed-polynomial *values* leave it byte-identical. `.consttree` checks its root
-/// against the verkey instead; a flat repack has no root. Unreadable metadata means
-/// "cannot tell", so repack.
+/// against the verkey instead; a flat repack has no root. Unreadable metadata answers
+/// "no": a GPU key needs no `.const`, and the repack this would trigger reads it.
 fn const_gpu_older_than_source(const_path: &Path, const_gpu_path: &Path) -> bool {
     let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
     match (modified(const_path), modified(const_gpu_path)) {
         (Some(src), Some(derived)) => src > derived,
-        _ => true,
+        _ => false,
     }
 }
 
@@ -1376,13 +1376,15 @@ mod const_gpu_staleness_tests {
         assert!(const_gpu_older_than_source(&src, &derived), "same-size source rewrite must be detected");
     }
 
+    /// A GPU proving key is complete without `.const`, and the repack a "stale" answer
+    /// triggers loads `.const` -- so an absent source must never report stale.
     #[test]
-    fn missing_files_are_stale() {
+    fn missing_source_is_not_stale() {
         let d = scratch("missing");
         let src = d.join("a.const");
         let derived = d.join("a.const_gpu");
-        assert!(const_gpu_older_than_source(&src, &derived), "neither present");
-        fs::write(&src, b"x").unwrap();
-        assert!(const_gpu_older_than_source(&src, &derived), "derived missing");
+        fs::write(&derived, vec![9u8; 4096]).unwrap();
+        assert!(!const_gpu_older_than_source(&src, &derived), "source missing: size check alone decides");
+        assert!(!const_gpu_older_than_source(&src, &d.join("absent.const_gpu")), "neither present");
     }
 }
