@@ -1,6 +1,6 @@
 {
     "Hashes": {
-        "Blake3": { "blowupFactor": 1 },
+        "Blake3": { "blowupFactor": 2 },
         "Sha2": { "blowupFactor": 1 },
         "Blake2b": { "blowupFactor": 1 }
     }
