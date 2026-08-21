@@ -36,7 +36,7 @@ const DEFAULT_CAP: usize = 40000; // skip an AIR whose Q has more ops than this
 const DEFAULT_CHUNK: usize = 512; // fixed ops/chunk when autotuning is off
 const SLOTS_CAP: u64 = 1000; // skip an AIR whose cross-chunk cut exceeds this
 
-/// Codegen configuration. Defaults: CAP=40000, autotune on, arch=auto.
+/// Codegen configuration (the CLI defaults: cap 60000, autotune on, arch auto, optimizer on).
 #[derive(Debug, Clone)]
 pub struct GenConfig {
     /// Skip an AIR whose Q has more than this many ops (-> interpreter).
@@ -296,8 +296,10 @@ fn optimize_checked(ir: ir::Ir, c: &Candidate, cfg: &GenConfig) -> std::result::
     // a chunk can hold in registers, where every extra value is a scratch slot.
     let live_ratio = st.max_live_after as f64 / st.max_live_before.max(1) as f64;
     let cost_ratio = st.cost_after as f64 / st.cost_before.max(1) as f64;
-    let decline =
-        std::env::var("EXPS_NO_DECLINE").is_err() && live_ratio > 2.0 && st.max_live_after > 64 && cost_ratio > 0.5;
+    let decline = !std::env::var("EXPS_NO_DECLINE").is_ok_and(|v| v != "0")
+        && live_ratio > 2.0
+        && st.max_live_after > 64
+        && cost_ratio > 0.5;
     if decline {
         eprintln!(
             "[exps-codegen] {}: optimizer DECLINED (max live {} -> {}, cost {:.1}%): keeping the setup's expression",
@@ -379,7 +381,6 @@ fn run_pipeline(
 
     // Phase 3: emit the .cu sources; record per-sym slot counts.
     let mut slots_by_sym: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    let mut exprs_by_sym: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut generated: Vec<GeneratedAir> = Vec::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut max_scratch: u64 = 0;
@@ -402,7 +403,13 @@ fn run_pipeline(
         } else {
             cfg.chunk.unwrap_or(DEFAULT_CHUNK)
         };
-        let plan = plan_chunks(ir, chunk, &c.sym)?;
+        let plan = match plan_chunks(ir, chunk, &c.sym) {
+            Ok(p) => p,
+            Err(why) => {
+                skipped.push((c.name.clone(), format!("chunk plan failed: {why}")));
+                continue;
+            }
+        };
         if plan.total_slots > SLOTS_CAP {
             skipped.push((c.name.clone(), format!("slots {} > SLOTS_CAP (wide cut)", plan.total_slots)));
             continue;
@@ -432,28 +439,19 @@ fn run_pipeline(
                 if od != 1 && od != 3 {
                     continue;
                 }
-                // EXPS_X_STATS=1: what the Q optimizer would do to this non-Q
-                // expression (equivalence-checked), to size that opportunity.
-                if std::env::var("EXPS_X_STATS").is_ok() {
-                    // stats mirror the generated kernel: powers in registers, no hoisting
-                    let xh = std::env::var("EXPS_X_HOIST").is_ok();
-                    let (o, st) = opt::optimize_opts(&eir, xh, true);
-                    let ok = check::equivalent(&eir, &o, 3).is_ok();
-                    eprintln!(
-                        "[exps-x-stats] {} x{}: ops {} -> {}, cost {} -> {}, live {} -> {}, hoisted {} ops -> {} words, equiv {}",
-                        c.name, ec.exp_id, st.ops_before, st.ops_after, st.cost_before, st.cost_after, st.max_live_before, st.max_live_after, st.tab_ops, st.tab_words, ok
-                    );
-                }
                 // Optimize the standalone expression too (inner-chain fold with the
                 // powers kept in registers, CSE, scheduling; no hoisting: no table).
                 // Equivalence-gated exactly like Q; on mismatch the original is kept.
-                let eir = if cfg.optimize && std::env::var("EXPS_X_OPT").map_or(true, |v| v != "0") {
+                let eir = if cfg.optimize && std::env::var("EXPS_X_OPT").ok().is_none_or(|v| v != "0") {
                     let (mut o, _st) = opt::optimize_opts(&eir, false, true);
                     if check::equivalent(&eir, &o, 3).is_ok() {
                         o.pow_in_regs = true;
                         o
                     } else {
-                        eprintln!("[exps-codegen] {} x{}: OPTIMIZED IR MISMATCH; keeping the setup's expression", c.name, ec.exp_id);
+                        eprintln!(
+                            "[exps-codegen] {} x{}: OPTIMIZED IR MISMATCH; keeping the setup's expression",
+                            c.name, ec.exp_id
+                        );
                         eir
                     }
                 } else {
@@ -462,9 +460,7 @@ fn run_pipeline(
                 items.push((ec.exp_id, eir, od));
             }
             if !items.is_empty() {
-                let n_exprs = items.len();
                 std::fs::write(work.join(format!("gen_{}_cexprs.cu", c.sym)), emit::emit_exprs_tu(&c.sym, &items))?;
-                exprs_by_sym.insert(c.sym.clone(), n_exprs);
             }
         }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;
@@ -621,9 +617,14 @@ impl WorkDir {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static SEQ: AtomicU64 = AtomicU64::new(0);
                 let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-                let p = std::env::temp_dir().join(format!("genexps_{}_{}", std::process::id(), seq));
-                let _ = std::fs::remove_dir_all(&p);
-                std::fs::create_dir_all(&p)?;
+                // Fresh directory, never a pre-existing path: `create_dir` fails if
+                // something (a leftover or a planted symlink) is already there.
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.subsec_nanos())
+                    .unwrap_or(0);
+                let p = std::env::temp_dir().join(format!("genexps_{}_{}_{}", std::process::id(), seq, nanos));
+                std::fs::create_dir(&p).with_context(|| format!("creating work dir {}", p.display()))?;
                 Ok(WorkDir { path: p, temp: true })
             }
         }

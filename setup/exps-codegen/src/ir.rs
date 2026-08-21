@@ -297,6 +297,16 @@ pub fn build_ir_expr(
 
     let mut instrs = Vec::with_capacity(code.len());
     for (idx, step) in code.iter().enumerate() {
+        // Only the binary field ops are modelled (by the emitter, the optimizer
+        // and the host evaluator alike); anything else leaves the AIR on the
+        // interpreter instead of failing deep inside a pass.
+        if !matches!(step.op.as_str(), "add" | "sub" | "mul") || step.src.len() != 2 {
+            return Err(anyhow::Error::new(UnhandledOperand(format!(
+                "op {} with {} operands",
+                step.op,
+                step.src.len()
+            ))));
+        }
         instrs.push(Instr {
             op: step.op.clone(),
             a: operand(&step.src[0])?,
@@ -345,8 +355,6 @@ impl ChunkPlan {
     }
 }
 
-/// Build the liveness/chunk/coloring plan for `ir` at the given chunk size.
-/// `sym` is only used in the SSA-violation error message.
 /// Index of the chunk containing `op_idx` for sorted `bounds` (bounds[0] = 0).
 pub fn chunk_of_bounds(bounds: &[usize], op_idx: usize) -> usize {
     // number of starts <= op_idx, minus one
@@ -412,6 +420,8 @@ fn adaptive_bounds(
     bounds
 }
 
+/// Build the liveness/chunk/coloring plan for `ir` at the given chunk size.
+/// `sym` is only used in the SSA-violation error message.
 pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<ChunkPlan> {
     let n_ops = ir.instrs.len();
 

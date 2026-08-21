@@ -206,7 +206,6 @@ impl Toolchain {
         compile_flags.extend(defs);
         compile_flags.append(&mut incs);
 
-        let _ = &stark_dir; // validated above; not retained
         Ok(Toolchain { arch_list, gencode, compile_flags })
     }
 

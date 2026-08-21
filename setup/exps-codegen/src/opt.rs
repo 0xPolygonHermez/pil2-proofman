@@ -6,11 +6,20 @@
 //!    is rewritten as `Σ vcʲ·cᵢ` with `vcʲ` read from a per-launch powers
 //!    table (`Operand::Pow`). A base-field constraint then costs a `mul13`
 //!    instead of a `mul33`, and the terms become order-independent.
-//! 3. **Term clustering** — terms are ordered greedily so consecutive terms
-//!    share as many subtrees/columns as possible.
-//! 4. **Rematerialization** — shared single-op-on-leaves values whose uses
-//!    are far apart in that order are duplicated instead of kept live.
-//! 5. **List scheduling** — topological order that prefers ops freeing
+//! 3. **Inner-chain folding** — the same rewrite for Horner chains over any
+//!    challenge anywhere in the DAG (bus fingerprints), cost-gated; tried
+//!    with and without, the variant with fewer cross-chunk slots wins.
+//! 4. **Linear-term distribution** — affine terms `Σ inv_k·atom_k` are
+//!    distributed over the powers so their row-invariant coefficients merge
+//!    across terms and leave the per-row work.
+//! 5. **Invariant hoisting** — row-invariant subexpressions are evaluated
+//!    once per launch into the table (`Operand::Tab`) instead of per row.
+//! 6. **Term clustering** — two candidate term orders (live-aware greedy,
+//!    reverse Cuthill–McKee over shared features); each gets the full tail
+//!    below on a DAG copy and the lower final max-live wins.
+//! 7. **Rematerialization** — cheap shared values (≤ 3 ops) whose uses are far
+//!    apart in that order are recomputed instead of kept live.
+//! 8. **List scheduling** — topological order that prefers ops freeing
 //!    registers, tie-broken by the clustered order.
 //!
 //! Field arithmetic is exact, so any topological order of the DAG computes
@@ -31,6 +40,13 @@ enum Kind {
 const ADD: u8 = 0;
 const SUB: u8 = 1;
 const MUL: u8 = 2;
+
+/// Diagnostic verbosity: EXPS_OPT_DEBUG=1 prints the per-AIR schedule/live
+/// summary, 2 adds the longest-held shared values at the live peak. Unset or 0
+/// = silent.
+fn opt_debug() -> u32 {
+    std::env::var("EXPS_OPT_DEBUG").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
+}
 
 fn op_code(op: &str) -> u8 {
     match op {
@@ -130,7 +146,9 @@ pub struct OptStats {
     pub ltd_atoms: usize,
 }
 
-/// Rough instruction cost of one op by operand dims, for reporting only.
+/// Instruction cost of one op by operand dims (cubic multiplies dominate).
+/// Drives the remat candidate selection and the clustering weights, and the
+/// reported cost totals.
 fn cost(op: u8, ad: u64, bd: u64) -> u64 {
     match (op, ad, bd) {
         (MUL, 1, 1) => 4,
@@ -293,81 +311,6 @@ fn refcounts(dag: &Dag, root: NodeId) -> Vec<u32> {
     rc
 }
 
-/// Feature bitset of a term: the shared Op nodes and column leaves it reads.
-fn term_features(dag: &Dag, term: NodeId, feat_idx: &HashMap<NodeId, usize>, words: usize) -> Vec<u64> {
-    let mut bits = vec![0u64; words];
-    let mut stack = vec![term];
-    let mut seen: HashSet<NodeId> = HashSet::new();
-    while let Some(n) = stack.pop() {
-        if !seen.insert(n) {
-            continue;
-        }
-        if let Some(&fi) = feat_idx.get(&n) {
-            bits[fi / 64] |= 1u64 << (fi % 64);
-            if !dag.is_leaf(n) {
-                continue; // a shared subtree is one feature; don't descend
-            }
-        }
-        if let Some((a, b)) = dag.children(n) {
-            stack.push(a);
-            stack.push(b);
-        }
-    }
-    bits
-}
-
-fn popcount_and(a: &[u64], b: &[u64]) -> u32 {
-    a.iter().zip(b).map(|(x, y)| (x & y).count_ones()).sum()
-}
-
-/// Greedy nearest-neighbour ordering of the terms by shared features.
-fn cluster_terms(dag: &Dag, terms: &[(NodeId, u64)], rc: &[u32]) -> Vec<usize> {
-    // features: Op nodes with >1 parent, plus column/const leaves
-    let mut feat_idx: HashMap<NodeId, usize> = HashMap::new();
-    for (i, n) in dag.nodes.iter().enumerate() {
-        let is_feat = match &n.kind {
-            Kind::Op { .. } => rc[i] > 1,
-            Kind::Leaf(Operand::Cm { .. }) | Kind::Leaf(Operand::Custom { .. }) | Kind::Leaf(Operand::Const { .. }) => {
-                true
-            }
-            _ => false,
-        };
-        if is_feat {
-            let k = feat_idx.len();
-            feat_idx.insert(i, k);
-        }
-    }
-    let words = feat_idx.len().div_ceil(64).max(1);
-    let feats: Vec<Vec<u64>> = terms.iter().map(|&(t, _)| term_features(dag, t, &feat_idx, words)).collect();
-
-    let n = terms.len();
-    let mut order: Vec<usize> = Vec::with_capacity(n);
-    let mut used = vec![false; n];
-    // start from the first term (keeps the natural order when nothing is shared)
-    let mut cur = 0usize;
-    used[cur] = true;
-    order.push(cur);
-    for _ in 1..n {
-        let mut best = usize::MAX;
-        let mut best_score = -1i64;
-        for j in 0..n {
-            if used[j] {
-                continue;
-            }
-            let s = popcount_and(&feats[cur], &feats[j]) as i64;
-            // tie-break: natural order, so equal-similarity terms stay sequential
-            if s > best_score || (s == best_score && j < best) {
-                best_score = s;
-                best = j;
-            }
-        }
-        used[best] = true;
-        order.push(best);
-        cur = best;
-    }
-    order
-}
-
 /// Per-term sparse feature lists + feature weights. Features are shared Op
 /// nodes (weight = clamped recompute cost, dim-aware) and column/const leaves
 /// (a reload is one load). A shared subtree is one feature: don't descend.
@@ -500,7 +443,6 @@ fn order_rcm(feats: &[Vec<usize>], nfeat: usize) -> Vec<usize> {
     // BFS from `start` over unvisited nodes; returns (order, last level)
     let bfs = |start: usize, visited: &mut [bool]| -> (Vec<usize>, Vec<usize>) {
         let mut out = vec![start];
-        let mut level = vec![start];
         visited[start] = true;
         let mut head = 0usize;
         let mut last_level: Vec<usize> = vec![start];
@@ -521,11 +463,9 @@ fn order_rcm(feats: &[Vec<usize>], nfeat: usize) -> Vec<usize> {
                 }
             }
             if !next.is_empty() {
-                last_level = next.clone();
-                level = next;
+                last_level = next;
             }
         }
-        let _ = level;
         (out, last_level)
     };
     let mut visited = vec![false; n];
@@ -548,139 +488,18 @@ fn order_rcm(feats: &[Vec<usize>], nfeat: usize) -> Vec<usize> {
     order
 }
 
-/// Candidate term orders. EXPS_CLUSTER=nn|live|rcm forces one; by default both
-/// live and rcm are returned and the caller keeps whichever yields the lower
-/// max-live once the sum chain is actually built and scheduled (the cheap
-/// open-count proxy picked wrong on Main and ArithEq, so the selection is exact).
+/// Candidate term orders. EXPS_CLUSTER=live|rcm forces one; by default both
+/// are returned and the caller keeps whichever yields the lower max-live once
+/// the sum chain is actually built and scheduled (the cheap open-count proxy
+/// picked wrong on Main and ArithEq, so the selection is exact).
 fn cluster_candidates(dag: &Dag, terms: &[(NodeId, u64)], rc: &[u32], ex: &[u64]) -> Vec<(&'static str, Vec<usize>)> {
     let (feats, weight) = term_feature_lists(dag, terms, rc, ex);
     let nfeat = weight.len();
     match std::env::var("EXPS_CLUSTER").as_deref() {
-        Ok("nn") => vec![("nn", cluster_terms(dag, terms, rc))],
         Ok("live") => vec![("live", order_live(&feats, &weight))],
         Ok("rcm") => vec![("rcm", order_rcm(&feats, nfeat))],
         _ => vec![("live", order_live(&feats, &weight)), ("rcm", order_rcm(&feats, nfeat))],
     }
-}
-
-/// Row-invariance census (EXPS_OPT_DEBUG=3). Classifies every node as
-/// Invariant (built only from challenges / powers / publics / air values /
-/// numbers: the same for every row, so computable once per launch), Linear
-/// (an affine form Σ inv_k·atom_k + inv_0 over row-dependent base-field atoms:
-/// columns, constants, Zi, and base×base products) or Opaque (anything else,
-/// e.g. products with cubic columns). A Linear Horner term c_j makes
-/// vc^j·c_j = Σ (vc^j·inv_k)·atom_k: its mul33 disappears, the coefficients go
-/// to the per-launch table and merge across terms sharing an atom. Reports how
-/// much of the Q cost that shape covers, to decide whether the rewrite is worth
-/// building.
-#[derive(Clone)]
-enum Lf {
-    Inv,
-    Lin(HashSet<NodeId>),
-    Opaque,
-}
-
-fn lf_classify(dag: &Dag, n: NodeId, memo: &mut HashMap<NodeId, Lf>) -> Lf {
-    if let Some(v) = memo.get(&n) {
-        return v.clone();
-    }
-    let v = match &dag.nodes[n].kind {
-        Kind::Leaf(op) => match op {
-            Operand::Num(_)
-            | Operand::Ch { .. }
-            | Operand::Pow { .. }
-            | Operand::Pub { .. }
-            | Operand::Av { .. }
-            | Operand::Agv { .. }
-            | Operand::Tab { .. } => Lf::Inv,
-            Operand::Cm { dim: 3, .. } | Operand::Custom { dim: 3, .. } => Lf::Opaque,
-            Operand::Cm { .. } | Operand::Custom { .. } | Operand::Const { .. } | Operand::Zi => {
-                Lf::Lin(HashSet::from([n]))
-            }
-            Operand::Tmp { .. } => Lf::Opaque,
-        },
-        Kind::Op { op, a, b } => {
-            let la = lf_classify(dag, *a, memo);
-            let lb = lf_classify(dag, *b, memo);
-            match (*op, la, lb) {
-                (_, Lf::Inv, Lf::Inv) => Lf::Inv,
-                (ADD | SUB, Lf::Inv, Lf::Lin(s)) | (ADD | SUB, Lf::Lin(s), Lf::Inv) => Lf::Lin(s),
-                (ADD | SUB, Lf::Lin(mut x), Lf::Lin(y)) => {
-                    x.extend(y);
-                    Lf::Lin(x)
-                }
-                (MUL, Lf::Inv, Lf::Lin(s)) | (MUL, Lf::Lin(s), Lf::Inv) => Lf::Lin(s),
-                // base x base is a fresh row-dependent atom; cubic results are not affine
-                (MUL, Lf::Lin(_), Lf::Lin(_)) if dag.nodes[n].dim == 1 => Lf::Lin(HashSet::from([n])),
-                _ => Lf::Opaque,
-            }
-        }
-    };
-    memo.insert(n, v.clone());
-    v
-}
-
-fn linear_census(dag: &Dag, terms: &[(NodeId, u64)], label: &str) {
-    let mut memo: HashMap<NodeId, Lf> = HashMap::new();
-    let (mut n_inv, mut n_lin, mut n_opq) = (0usize, 0usize, 0usize);
-    let mut atoms: HashSet<NodeId> = HashSet::new();
-    // unique mul33 nodes reachable from terms of each class
-    let mut m33_lin: HashSet<NodeId> = HashSet::new();
-    let mut m33_all: HashSet<NodeId> = HashSet::new();
-    let mut cost_lin = 0u64;
-    let mut cost_all = 0u64;
-    let mut seen_all: HashSet<NodeId> = HashSet::new();
-    let mut seen_lin: HashSet<NodeId> = HashSet::new();
-    let mut lin_pow_terms = 0usize; // linear terms with p >= 1: their vc^j mul33 vanishes
-    for &(c, p) in terms {
-        let cls = lf_classify(dag, c, &mut memo);
-        let is_lin = matches!(cls, Lf::Lin(_));
-        match &cls {
-            Lf::Inv => n_inv += 1,
-            Lf::Lin(s) => {
-                n_lin += 1;
-                atoms.extend(s.iter().copied());
-                if p >= 1 {
-                    lin_pow_terms += 1;
-                }
-            }
-            Lf::Opaque => n_opq += 1,
-        }
-        // per-term visited set: shared DAG nodes must not be re-expanded
-        let mut seen_term: HashSet<NodeId> = HashSet::new();
-        let mut stack = vec![c];
-        while let Some(n) = stack.pop() {
-            if !seen_term.insert(n) {
-                continue;
-            }
-            let Kind::Op { op, a, b } = dag.nodes[n].kind else { continue };
-            let cst = cost(op, dag.nodes[a].dim, dag.nodes[b].dim);
-            if seen_all.insert(n) {
-                cost_all += cst;
-                if op == MUL && dag.nodes[a].dim == 3 && dag.nodes[b].dim == 3 {
-                    m33_all.insert(n);
-                }
-            }
-            if is_lin && seen_lin.insert(n) {
-                cost_lin += cst;
-                if op == MUL && dag.nodes[a].dim == 3 && dag.nodes[b].dim == 3 {
-                    m33_lin.insert(n);
-                }
-            }
-            stack.push(a);
-            stack.push(b);
-        }
-    }
-    eprintln!(
-        "[exps-opt-census] {label}: terms {} = inv {n_inv} + lin {n_lin} (with power {lin_pow_terms}) + opaque {n_opq}; distinct atoms in lin terms {}; mul33 inside terms: all {} lin {}; cost inside terms: all {cost_all} lin {cost_lin} ({:.1}%); removable vc^j mul33 ~{} (cost ~{})",
-        terms.len(),
-        atoms.len(),
-        m33_all.len(),
-        m33_lin.len(),
-        if cost_all > 0 { 100.0 * cost_lin as f64 / cost_all as f64 } else { 0.0 },
-        lin_pow_terms,
-        lin_pow_terms as u64 * 40
-    );
 }
 
 /// Symbolic affine form of a row-dependent value: Σ coef_k·atom_k + cst, with
@@ -990,20 +809,17 @@ fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (Node
             let head = terms.iter().max_by_key(|&&(p, _)| p).map(|&(_, x)| x).unwrap();
             let old = wcost(MUL, 3, dag.nodes[head].dim)
                 + (n as u64 - 2) * wcost(MUL, 3, 3)
-                + terms
-                    .iter()
-                    .filter(|&&(_, x)| x != head)
-                    .map(|&(_, x)| wcost(ADD, 3, dag.nodes[x].dim))
-                    .sum::<u64>();
+                + terms.iter().filter(|&&(_, x)| x != head).map(|&(_, x)| wcost(ADD, 3, dag.nodes[x].dim)).sum::<u64>();
             // Folded: one extension-by-operand multiply per non-zero exponent (`ch^0`
             // needs none) and one add per term after the first.
-            let new: u64 = terms
-                .iter()
-                .filter(|&&(p, _)| p > 0)
-                .map(|&(_, x)| wcost(MUL, 3, dag.nodes[x].dim))
-                .sum::<u64>()
-                + (n as u64 - 1) * wcost(ADD, 3, 3);
-            if new < old { Some((*ch, terms.clone())) } else { None }
+            let new: u64 =
+                terms.iter().filter(|&&(p, _)| p > 0).map(|&(_, x)| wcost(MUL, 3, dag.nodes[x].dim)).sum::<u64>()
+                    + (n as u64 - 1) * wcost(ADD, 3, 3);
+            if new < old {
+                Some((*ch, terms.clone()))
+            } else {
+                None
+            }
         });
         let nv = match worth {
             Some((ch_node, terms)) => {
@@ -1031,7 +847,11 @@ fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (Node
                 Kind::Leaf(_) => v,
                 Kind::Op { op, a, b } => {
                     let (ra, rb) = (done[&a], done[&b]);
-                    if ra == a && rb == b { v } else { dag.op(op, ra, rb) }
+                    if ra == a && rb == b {
+                        v
+                    } else {
+                        dag.op(op, ra, rb)
+                    }
                 }
             },
         };
@@ -1117,6 +937,8 @@ fn schedule(dag: &Dag, root: NodeId, seq: &HashMap<NodeId, usize>) -> Vec<NodeId
         }
         freed
     };
+    // Key (score, -seq position, node): `seq` is a HashMap, so the unique node id
+    // as the final tiebreak is what keeps the schedule deterministic.
     let mut heap: BinaryHeap<(i64, i64, NodeId)> = BinaryHeap::new();
     for (&n, &s) in seq.iter() {
         if pending[n] == 0 {
@@ -1242,12 +1064,12 @@ fn clone_size(dag: &Dag, n: NodeId, rc: &[u32], ex: &[u64], cost_max: u64, memo:
 /// Duplicate cheap shared subtrees for users that are far apart in the
 /// schedule: recomputing them is cheaper than keeping them live (a register,
 /// or a scratch slot across chunks). Returns the number of clones made.
-/// Remat tiers: (distance window, max recompute cost, max clone size). A use
+/// Remat tier: (distance window, max recompute cost, max clone size). A use
 /// further than the window from the previous use is served by a fresh clone if
-/// the value is within the tier's cost/size caps. The far tier admits costlier
-/// clones: holding a value across thousands of ops costs a scratch slot per
-/// chunk boundary (and shrinks the adaptive grid), which outweighs a few more
-/// instructions.
+/// the value is within the cost/size caps. Clones are appended to `dag.nodes`
+/// directly and users are re-pointed in place, bypassing the hash-consing
+/// `memo`: after this pass `Dag::op` must not be used to build new nodes (it
+/// could CSE a clone back into its original), and nothing downstream does.
 struct RematTier {
     window: usize,
     cost_max: u64,
@@ -1308,7 +1130,7 @@ fn rematerialize(dag: &mut Dag, root: NodeId, order: &[NodeId], tiers: &[RematTi
     clones
 }
 
-/// Diagnostic (EXPS_OPT_DEBUG=1): at the max-live point of `order`, bucket the
+/// Diagnostic (EXPS_OPT_DEBUG>=1): at the max-live point of `order`, bucket the
 /// live values by how they are held: term-internal (single use, finishing the
 /// current term) vs shared, and for shared ones by exclusive recompute cost and
 /// by distance to their last use. Tells whether pressure comes from CSE keeping
@@ -1374,8 +1196,8 @@ fn live_breakdown(dag: &Dag, root: NodeId, order: &[NodeId], label: &str) {
             shared_exp += 1;
         }
     }
-    // EXPS_OPT_DEBUG=2: structure of the longest-held shared values at the peak
-    if std::env::var("EXPS_OPT_DEBUG").as_deref() == Ok("2") {
+    // EXPS_OPT_DEBUG>=2: structure of the longest-held shared values at the peak
+    if opt_debug() >= 2 {
         let mut first_use: HashMap<NodeId, usize> = HashMap::new();
         for (i, &n) in order.iter().enumerate() {
             if let Some((a, b)) = dag.children(n) {
@@ -1413,7 +1235,6 @@ fn live_breakdown(dag: &Dag, root: NodeId, order: &[NodeId], label: &str) {
             );
         }
     }
-    let _ = pos;
     eprintln!(
         "[exps-opt-debug] {label}: max-live {best} at op {best_at}/{}: single-use {single}, shared cheap(<=16) {shared_cheap}, mid(17..64) {shared_mid}, expensive(>64) {shared_exp}; far(>256 ops to last use) {far}, mean dist {}",
         order.len(),
@@ -1452,7 +1273,6 @@ fn schedule_seq(seq: &HashMap<NodeId, usize>) -> Vec<NodeId> {
     v.into_iter().map(|(_, n)| n).collect()
 }
 
-/// Linearize a schedule into fresh SSA IR.
 /// Is this leaf the same for every row? Challenges, their powers, publics,
 /// air/airgroup values and literals are; columns, constants and Zi are not.
 fn invariant_leaf(o: &Operand) -> bool {
@@ -1500,7 +1320,7 @@ fn linearize(
     stats: &mut OptStats,
     allow_hoist: bool,
 ) -> Ir {
-    let hoist = allow_hoist && std::env::var("EXPS_HOIST").map_or(true, |v| v != "0");
+    let hoist = allow_hoist && std::env::var("EXPS_HOIST").ok().is_none_or(|v| v != "0");
     let inv = invariant_nodes(dag, order);
     let hoisting = hoist && !inv[root];
     // table program: invariant op nodes in order; exports: those used by a row-dependent op
@@ -1583,7 +1403,7 @@ fn linearize(
     }
     stats.tab_ops = tab.len();
     stats.tab_words = tab_words;
-    if std::env::var("EXPS_OPT_DEBUG").is_ok() {
+    if opt_debug() >= 1 {
         let n_tab_opnd =
             instrs.iter().filter(|i| matches!(i.a, Operand::Tab { .. }) || matches!(i.b, Operand::Tab { .. })).count();
         let n_tmp_opnd = instrs.iter().filter(|i| i.a.as_tmp().is_some() || i.b.as_tmp().is_some()).count();
@@ -1727,7 +1547,15 @@ const REF_CHUNK: usize = 512;
 
 /// One full pipeline run for a fixed inner-fold choice: Horner -> powers with
 /// clustering/remat/schedule search on the root chain, then hoisting and SSA.
-fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: bool, inner: bool, mut stats: OptStats) -> (Ir, OptStats) {
+fn optimize_variant(
+    ir: &Ir,
+    mut dag: Dag,
+    out: NodeId,
+    hoist: bool,
+    powers: bool,
+    inner: bool,
+    mut stats: OptStats,
+) -> (Ir, OptStats) {
     // Horner -> sum of powers (optionally under a trailing `* Zi`).
     //
     // Two passes, in this order. First every INNER chain, over any challenge and anywhere
@@ -1753,11 +1581,8 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
         let (acc, zi) = strip_zi(&dag, out);
         if let Some(terms) = horner_terms(&dag, acc, vc) {
             stats.horner_terms = terms.len();
-            if std::env::var("EXPS_OPT_DEBUG").as_deref() == Ok("3") {
-                linear_census(&dag, &terms, &format!("ops {}", ir.instrs.len()));
-            }
             let Kind::Leaf(Operand::Ch { base }) = dag.nodes[vc].kind else { unreachable!() };
-            let terms = if std::env::var("EXPS_LTD").map_or(true, |v| v != "0") {
+            let terms = if std::env::var("EXPS_LTD").ok().is_none_or(|v| v != "0") {
                 let (t, n_lin, n_atoms) = distribute_linear(&mut dag, &terms, vc, base);
                 stats.ltd_terms = n_lin;
                 stats.ltd_atoms = n_atoms;
@@ -1765,6 +1590,11 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
             } else {
                 terms
             };
+            // Refcounts / exclusive costs are taken on the pre-distribution
+            // root: the clustering features are the subtrees the terms shared
+            // in the setup's expression. Coefficients created by the
+            // distribution are not features (they are row-invariant and end
+            // up hoisted to the table, so they cost no per-row live range).
             let rc = refcounts(&dag, acc);
             let pre = schedule_seq(&sequence(&dag, acc));
             let ex = exclusive_costs(&dag, &pre, &rc, u64::MAX);
@@ -1776,7 +1606,6 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
             let mut best_key: Option<(usize, usize)> = None;
             for (cname, order) in &cands {
                 let mut d2 = dag.clone();
-                let mut max_pow = 0u64;
                 let mut sum: Option<NodeId> = None;
                 for &ti in order {
                     let (c, p) = terms[ti];
@@ -1784,7 +1613,6 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
                         0 => c,
                         1 => d2.op(MUL, vc, c),
                         j => {
-                            max_pow = max_pow.max(j);
                             let pw = d2.leaf(&Operand::Pow { base, j });
                             d2.op(MUL, pw, c)
                         }
@@ -1803,7 +1631,6 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
                 let key = (live, o.len());
                 if best_key.is_none_or(|bk| key < bk) {
                     best_key = Some(key);
-                    let _ = max_pow;
                     finished = Some((d2, r, o, rm, live, sw, cname));
                 }
             }
@@ -1821,7 +1648,7 @@ fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: boo
     // powers of challenges the root chain never touches.
     let pow = powers_used(&dag, root);
     stats.remat = remat;
-    if std::env::var("EXPS_OPT_DEBUG").is_ok() {
+    if opt_debug() >= 1 {
         eprintln!(
             "[exps-opt-debug] ops {} terms {} cluster winner: {cluster_winner}, schedule winner: {sched_winner} (max-live {live})",
             order.len(),

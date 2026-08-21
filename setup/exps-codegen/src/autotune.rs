@@ -2,6 +2,7 @@
 //! with zero register spill (STACK=0 per `cuobjdump -res-usage`), bisecting down
 //! from the start size.
 
+use anyhow::Context;
 use crate::emit::emit_air;
 use crate::ir::{plan_chunks, Ir};
 use crate::toolchain::Toolchain;
@@ -121,7 +122,9 @@ fn tune_inner(
             // this clean size and the last spilling one; keep the largest clean.
             let (best_chunk, best_objs) = refine_up(tc, ir, sym, probe, chunk, last_spill, objs)?;
             for obj in &best_objs {
-                let _ = std::fs::copy(obj, out_dir.join(obj.file_name().unwrap()));
+                let dest = out_dir.join(obj.file_name().unwrap());
+                std::fs::copy(obj, &dest)
+                    .with_context(|| format!("staging tuned object {} -> {}", obj.display(), dest.display()))?;
             }
             return Ok(Some(best_chunk));
         }
@@ -184,12 +187,12 @@ fn refine_up(
                 hi = mid;
             }
             None => {
+                eprintln!("  [tune] {sym} chunk={mid} (refine) -> compile failed, treated as spilling");
                 hi = mid;
             }
         }
     }
     // re-emit the winner so the returned objects match `lo` (probes overwrote them)
     let (_, objs) = compile_at(lo)?;
-    let _ = lo_objs;
     Ok((lo, objs))
 }

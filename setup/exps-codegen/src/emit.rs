@@ -20,6 +20,8 @@ pub const COMMON_CUH: &str = r#"#pragma once
 #include "steps.hpp"
 #include "goldilocks_trace_layout.cuh"
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 // cg_* = the codegen's Goldilocks cubic-extension helpers (g3 = one Fp3 element).
 // Prefixed to avoid collisions with the prover headers this TU also includes;
 // digit suffixes are operand dims (mul33 = 3x3, mul31 = 3x1, inv3 = cubic inverse).
@@ -230,7 +232,6 @@ fn store_qq(out_dim: u64) -> &'static str {
     }
 }
 
-/// Elements of scratch reserved at its head for the challenge-powers table.
 /// The fixed C-ABI the loader dlsym's from each `.exps.so`. `exps_min_scratch`
 /// covers one wave of cross-chunk temps plus the per-launch table (powers +
 /// hoisted invariants).
@@ -270,7 +271,8 @@ fn tab_body(ir: &Ir) -> String {
 
 /// Kernel filling the challenge-powers table `pw[3*j..3*j+3] = ch[base..]^j`
 /// for j in 0..n, plus the launcher prologue that carves the table off the
-/// head of scratch and runs it. Empty strings when the IR uses no powers.
+/// head of scratch and runs it. No kernel (and a prologue that just aliases
+/// `pw` to scratch) when the IR has neither powers nor a table.
 /// One block: thread t starts at `v^t` and strides by `v^blockDim`.
 fn pow_kernel(sym: &str, ir: &Ir) -> (String, String) {
     if ir.pow.is_empty() && ir.tab.is_empty() {
@@ -298,8 +300,10 @@ fn pow_kernel(sym: &str, ir: &Ir) -> (String, String) {
             )
         })
         .collect::<Vec<_>>()
-        .join("
-");
+        .join(
+            "
+",
+        );
     let tab = tab_body(ir);
     let kernel = format!(
         r#"__global__ void gen_{sym}_pow(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw) {{
@@ -394,11 +398,18 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
 // each chunk kernel computes WAVE=gridDim*blockDim at runtime, so any grid is correct.
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
-{prologue}
   const uint64_t BLK = {GEN_BLK}ull;
+  // exps_min_scratch() is the contract with the loader: one wave of cross-chunk
+  // temps plus the per-launch table. Below it the table carve-out underflows and
+  // the chunk kernels would write past the scratch buffer, so fail loudly.
+  if (scratchElems < {table_words}ull + {total_slots}ull*BLK) {{
+    fprintf(stderr, "[exps] {sym}: scratch too small (%llu < %llu elements)\n",
+        (unsigned long long)scratchElems, (unsigned long long)({table_words}ull + {total_slots}ull*BLK));
+    abort();
+  }}
+{prologue}
   uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
   if (grid > 512ull) grid = 512ull;
-  if (grid < 1ull) grid = 1ull;
   const uint64_t WAVE = grid * BLK;
   for (uint64_t base=0; base<NExt; base+=WAVE) {{
 {}
@@ -408,7 +419,8 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
 "#,
         decls.join("\n"),
         calls.join("\n"),
-        c_abi_exports(sym, total_slots, ir)
+        c_abi_exports(sym, total_slots, ir),
+        table_words = ir.table_words(),
     )
 }
 
@@ -592,7 +604,10 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
                     base + 2
                 ));
                 for j in 2..n {
-                    lines.push(format!("  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);", j - 1));
+                    lines.push(format!(
+                        "  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);",
+                        j - 1
+                    ));
                 }
             }
             lines.join("\n") + "\n"
