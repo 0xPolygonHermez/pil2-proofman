@@ -138,11 +138,13 @@ public:
     // LDE runs the in-house ColMajor engine (ldeColMajor). The backends are also exposed directly so
     // tests/benches can run a given size through any path and compare (identical logical output on
     // each backend's own storage layout -- see test_ntt_gpu equivalence test).
+    // preserve_scratch/scratch_elems: scratch the LDE may trash, and its capacity in elements
+    // (0 = unstated, and the LDE allocates its own). A bigger region lets it batch wider.
     void LDE(gl64_t* d_dst, uint64_t offset_dst,
              gl64_t* d_src, uint64_t offset_src,
              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
              TimerGPU &timer, cudaStream_t stream, bool preserve_src = false,
-             gl64_t* preserve_scratch = nullptr);
+             gl64_t* preserve_scratch = nullptr, size_t scratch_elems = 0);
 
     // legacy tiled backend: ColMajorTiled in/out, pure kernels (graph-capturable). d_src_/d_dst_ disjoint.
     void ldeTiled(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
@@ -150,7 +152,8 @@ public:
 
     // In-house ColMajor LDE
     void ldeColMajor(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
-                 cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr);
+                 cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr,
+                 size_t scratch_elems = 0);
 
     // computeQ runs the in-house ColMajor engine (computeQColMajor). Backends exposed directly for
     // tests/benches.
