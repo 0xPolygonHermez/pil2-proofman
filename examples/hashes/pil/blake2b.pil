@@ -88,9 +88,6 @@ airtemplate Blake2b(const int N = 2**16) {
     }
     println(`The total number of Blake2b's with N = 2^${log2(N)} is ${NUM_OPS}`);
 
-    const int NUM_BLAKE2B = NUM_OPS;
-    println(`The total number of Blake2b's with N = ${N} is ${NUM_BLAKE2B}`);
-
     // Message word permutation schedule
     const int SIGMA[12][16];
     SIGMA[0] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
