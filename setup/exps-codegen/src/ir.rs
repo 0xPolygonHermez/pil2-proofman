@@ -119,6 +119,10 @@ pub struct Ir {
     pub tab: Vec<Instr>,
     pub tab_out: Vec<(u64, u64, u64)>,
     pub tab_words: u64,
+    /// Standalone (non-Q) expression kernels have no scratch table: their
+    /// challenge powers are computed once per thread into registers in the
+    /// kernel prologue instead, and `Operand::Pow` reads `pwreg_<base>_<j>`.
+    pub pow_in_regs: bool,
 }
 
 impl Ir {
@@ -312,6 +316,7 @@ pub fn build_ir_expr(
         tab: Vec::new(),
         tab_out: Vec::new(),
         tab_words: 0,
+        pow_in_regs: false,
     })
 }
 

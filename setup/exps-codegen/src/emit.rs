@@ -135,6 +135,9 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
             let i = *base;
             vec![format!("  g3 {name}; {name}.a=ch[{i}]; {name}.b=ch[{}]; {name}.c=ch[{}];", i + 1, i + 2)]
         }
+        Operand::Pow { base, j } if ir.pow_in_regs => {
+            vec![format!("  g3 {name} = pwreg_{base}_{j};")]
+        }
         Operand::Pow { base, j } => {
             let i = ir.pow_offset(*base) + 3 * *j;
             let (l0, l1, l2) = (pw_load(i), pw_load(i + 1), pw_load(i + 2));
@@ -594,31 +597,61 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
         // explicit output store, `t<id>` when the expression ends in a tmp.
         let last = ir.instrs.last().unwrap();
         let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
-        let store = if *out_dim == 3 {
-            format!("    {{ g3 v_={result}; exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,3); }}")
+        // Value type of this expression and how the plain store receives it.
+        let (vt, vdim) = if *out_dim == 3 { ("g3", 3) } else { ("gl64_t", 1) };
+        let to_g3 = if *out_dim == 3 {
+            "g3 v_=ev_;".to_string()
         } else {
-            format!("    {{ g3 v_; v_.a={result}; v_.b=gl64_t(uint64_t(0)); v_.c=gl64_t(uint64_t(0)); exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,1); }}")
+            "g3 v_; v_.a=ev_; v_.b=gl64_t(uint64_t(0)); v_.c=gl64_t(uint64_t(0));".to_string()
         };
-        kernels.push(format!(
-            r#"__global__ void gen_{sym}_x{exp_id}(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,
-    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,
-    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr) {{
-  const uint64_t NExt = N; const uint64_t MASK = N-1;
+        let store = format!("    {{ {to_g3} exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,{vdim}); }}");
+        // Challenge powers for this kernel, computed once per thread into registers
+        // (the kernel has no scratch table; a thread serves many rows, so the few
+        // cubic multiplies amortize). Same arithmetic as the Q table: repeated
+        // cg_mul33 from the challenge, so the folded chains stay exact.
+        let pwregs: String = if ir.pow_in_regs {
+            let mut lines: Vec<String> = Vec::new();
+            for &(base, n) in &ir.pow {
+                if n < 2 {
+                    continue;
+                }
+                lines.push(format!(
+                    "  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",
+                    base + 1,
+                    base + 2
+                ));
+                for j in 2..n {
+                    lines.push(format!("  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);", j - 1));
+                }
+            }
+            lines.join("\n") + "\n"
+        } else {
+            String::new()
+        };
+        // Per-row evaluation shared by the kernel body.
+        let prologue = format!(
+            r#"  const uint64_t NExt = N; const uint64_t MASK = N-1;
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
   [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
+{pwregs}  auto eval_ = [&](uint64_t row) -> {vt} {{
+{}
+    return {result};
+  }};"#,
+            body.join("\n")
+        );
+        let sig = "(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,\n    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,\n    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
+        kernels.push(format!(
+            r#"__global__ void gen_{sym}_x{exp_id}{sig} {{
+{prologue}
   for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
-{}
-{}
+    {vt} ev_ = eval_(row);
+{store}
   }}
-}}"#,
-            body.join("\n"),
-            store
+}}"#
         ));
-        cases_launch.push(format!(
-            "    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"
-        ));
+        cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
         cases_covered.push(format!("    case {exp_id}ull: return 1;"));
     }
     format!(

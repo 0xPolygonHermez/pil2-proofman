@@ -117,6 +117,8 @@ pub struct OptStats {
     pub horner_terms: usize,
     /// Inner Horner chains folded (any challenge, anywhere but the root chain).
     pub inner_chains: usize,
+    /// Whether the inner-fold variant was the one kept for this AIR.
+    pub inner_selected: bool,
     pub max_live_before: usize,
     pub max_live_after: usize,
     pub remat: usize,
@@ -1605,6 +1607,7 @@ fn linearize(
         tab,
         tab_out,
         tab_words,
+        pow_in_regs: false,
     }
 }
 
@@ -1716,7 +1719,7 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
         max_live_before: max_live(ir),
         ..Default::default()
     };
-    let Some((mut dag, out)) = build_dag(ir) else {
+    let Some((dag, out)) = build_dag(ir) else {
         let clone = linearize_identity(ir);
         stats.ops_after = stats.ops_before;
         stats.cost_after = stats.cost_before;
@@ -1724,6 +1727,58 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
         return (clone, stats);
     };
 
+    // The inner-chain fold is a per-AIR choice, made like the clustering and
+    // schedule choices: both variants run the whole pipeline on a DAG copy and
+    // the slot-aware rule below keeps one. Measured (1.2.0 key, 66-tx block):
+    // folding lowered Main's cost 13.8% -> 10.8% but took its kernel from 0 to 6
+    // cross-chunk slots -- the launcher grid shrinks with slots -- and the kernel
+    // ran 4% slower; on Binary, Rom and the recursion AIRs it won 25-50%. Slots,
+    // not ops, decide for a latency-bound single-chunk kernel.
+    // EXPS_INNER=0 never folds, EXPS_INNER=1 always folds, unset = auto.
+    let inner_mode = std::env::var("EXPS_INNER").ok();
+    let candidates: Vec<bool> = match inner_mode.as_deref() {
+        _ if !powers => vec![false],
+        Some("0") => vec![false],
+        Some(_) => vec![true],
+        None => vec![false, true],
+    };
+    let mut best: Option<(Ir, OptStats, u64)> = None; // (ir, stats, slots at REF_CHUNK)
+    for inner in candidates {
+        let (cand, cstats) = optimize_variant(ir, dag.clone(), out, hoist, powers, inner, stats.clone());
+        let slots = crate::ir::plan_chunks(&cand, REF_CHUNK, "variant").map(|p| p.total_slots).unwrap_or(u64::MAX);
+        let take = match &best {
+            None => true,
+            Some((_, bstats, bslots)) => {
+                // Prefer fewer slots; more slots only for a large cost win. A
+                // variant that introduces slots into a slot-free kernel must
+                // halve the cost to be taken.
+                let cost_ratio = cstats.cost_after as f64 / bstats.cost_after.max(1) as f64;
+                if slots < *bslots {
+                    cost_ratio < 1.25
+                } else if slots == *bslots {
+                    cstats.cost_after < bstats.cost_after
+                } else if *bslots == 0 {
+                    cost_ratio < 0.5
+                } else {
+                    cost_ratio < 0.8
+                }
+            }
+        };
+        if take {
+            best = Some((cand, cstats, slots));
+        }
+    }
+    let (opt, stats, _) = best.expect("at least one variant");
+    (opt, stats)
+}
+
+/// Reference chunk size for comparing the cross-chunk slot count of variants
+/// (the autotuner picks the real size later; the relative comparison is the signal).
+const REF_CHUNK: usize = 512;
+
+/// One full pipeline run for a fixed inner-fold choice: Horner -> powers with
+/// clustering/remat/schedule search on the root chain, then hoisting and SSA.
+fn optimize_variant(ir: &Ir, mut dag: Dag, out: NodeId, hoist: bool, powers: bool, inner: bool, mut stats: OptStats) -> (Ir, OptStats) {
     // Horner -> sum of powers (optionally under a trailing `* Zi`).
     //
     // Two passes, in this order. First every INNER chain, over any challenge and anywhere
@@ -1736,7 +1791,8 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
         _ => (out, None),
     };
     let mut out = out;
-    if powers && std::env::var("EXPS_INNER").map_or(true, |v| v != "0") {
+    stats.inner_selected = inner;
+    if powers && inner {
         let root_chain_head = combination_challenge(&dag).map(|_| strip_zi(&dag, out).0);
         let (new_out, n) = fold_inner_chains(&mut dag, out, root_chain_head);
         stats.inner_chains = n;
@@ -1854,5 +1910,6 @@ fn linearize_identity(ir: &Ir) -> Ir {
         tab: Vec::new(),
         tab_out: Vec::new(),
         tab_words: 0,
+        pow_in_regs: false,
     }
 }

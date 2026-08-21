@@ -314,7 +314,7 @@ fn optimize_checked(ir: ir::Ir, c: &Candidate, cfg: &GenConfig) -> std::result::
     let (nc0, s0) = slots(&ir);
     let (nc1, s1) = slots(&opt);
     eprintln!(
-        "[exps-codegen] {}: ops {} -> {} ({:.1}%), cost {} -> {} ({:.1}%), horner terms {}, max live {} -> {}, remat {}, hoisted {} ops -> {} words, ltd {} terms/{} atoms, chunks {} -> {}, slots {} -> {}",
+        "[exps-codegen] {}: ops {} -> {} ({:.1}%), cost {} -> {} ({:.1}%), horner terms {}, max live {} -> {}, remat {}, hoisted {} ops -> {} words, inner {}{}, ltd {} terms/{} atoms, chunks {} -> {}, slots {} -> {}",
         c.name,
         st.ops_before,
         st.ops_after,
@@ -328,6 +328,8 @@ fn optimize_checked(ir: ir::Ir, c: &Candidate, cfg: &GenConfig) -> std::result::
         st.remat,
         st.tab_ops,
         st.tab_words,
+        st.inner_chains,
+        if st.inner_selected { " (fold)" } else { " (no fold)" },
         st.ltd_terms,
         st.ltd_atoms,
         nc0,
@@ -433,14 +435,30 @@ fn run_pipeline(
                 // EXPS_X_STATS=1: what the Q optimizer would do to this non-Q
                 // expression (equivalence-checked), to size that opportunity.
                 if std::env::var("EXPS_X_STATS").is_ok() {
-                    let xh = std::env::var("EXPS_X_HOIST").is_ok(); // stats only: no table in _x kernels yet
-                    let (o, st) = opt::optimize_opts(&eir, xh, false);
+                    // stats mirror the generated kernel: powers in registers, no hoisting
+                    let xh = std::env::var("EXPS_X_HOIST").is_ok();
+                    let (o, st) = opt::optimize_opts(&eir, xh, true);
                     let ok = check::equivalent(&eir, &o, 3).is_ok();
                     eprintln!(
                         "[exps-x-stats] {} x{}: ops {} -> {}, cost {} -> {}, live {} -> {}, hoisted {} ops -> {} words, equiv {}",
                         c.name, ec.exp_id, st.ops_before, st.ops_after, st.cost_before, st.cost_after, st.max_live_before, st.max_live_after, st.tab_ops, st.tab_words, ok
                     );
                 }
+                // Optimize the standalone expression too (inner-chain fold with the
+                // powers kept in registers, CSE, scheduling; no hoisting: no table).
+                // Equivalence-gated exactly like Q; on mismatch the original is kept.
+                let eir = if cfg.optimize && std::env::var("EXPS_X_OPT").map_or(true, |v| v != "0") {
+                    let (mut o, _st) = opt::optimize_opts(&eir, false, true);
+                    if check::equivalent(&eir, &o, 3).is_ok() {
+                        o.pow_in_regs = true;
+                        o
+                    } else {
+                        eprintln!("[exps-codegen] {} x{}: OPTIMIZED IR MISMATCH; keeping the setup's expression", c.name, ec.exp_id);
+                        eir
+                    }
+                } else {
+                    eir
+                };
                 items.push((ec.exp_id, eir, od));
             }
             if !items.is_empty() {
