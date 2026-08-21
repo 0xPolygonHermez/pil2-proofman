@@ -140,6 +140,9 @@ public:
     // each backend's own storage layout -- see test_ntt_gpu equivalence test).
     // preserve_scratch/scratch_elems: scratch the LDE may trash, and its capacity in elements
     // (0 = unstated, and the LDE allocates its own). A bigger region lets it batch wider.
+    // preserve_src=false means d_src IS OVERWRITTEN: the iNTT runs in place on src (coefficients),
+    // so callers that read src again afterwards must pass preserve_src=true. Do not rely on the old
+    // batched-flow behaviour where src happened to survive.
     void LDE(gl64_t* d_dst, uint64_t offset_dst,
              gl64_t* d_src, uint64_t offset_src,
              uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
