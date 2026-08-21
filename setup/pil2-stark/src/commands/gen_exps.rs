@@ -48,6 +48,7 @@ pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
         stark_src: opts.stark_src.clone(),
         keep_dir: None,
         dry_run: false,
+        optimize: true,
     };
     let summary = proofman_exps_codegen::generate_all(&opts.proving_key, &cfg)?;
     tracing::info!(

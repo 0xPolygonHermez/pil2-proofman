@@ -17,9 +17,12 @@
 //! * [`generate_all`]  — a provingKey dir -> every AIR's `.exps.so`.
 
 mod autotune;
+mod check;
 mod emit;
+mod field;
 mod ir;
 mod model;
+mod opt;
 mod toolchain;
 
 use anyhow::{Context, Result};
@@ -50,6 +53,9 @@ pub struct GenConfig {
     /// provingKey is untouched). Requires `keep_dir`. Used for inspecting the
     /// generated sources.
     pub dry_run: bool,
+    /// Run the Q IR optimizer (CSE, Horner→powers, scheduling; see `opt.rs`).
+    /// `false` emits the expression exactly as the setup wrote it (A/B baseline).
+    pub optimize: bool,
 }
 
 impl Default for GenConfig {
@@ -61,6 +67,7 @@ impl Default for GenConfig {
             stark_src: None,
             keep_dir: None,
             dry_run: false,
+            optimize: true,
         }
     }
 }
@@ -267,6 +274,70 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
     }
 }
 
+/// Optimize the Q IR and prove the result equivalent to the original on random
+/// inputs. A mismatch is a generator bug: the AIR is skipped loudly rather than
+/// emitted (the prover falls back to the interpreter for it).
+fn optimize_checked(ir: ir::Ir, c: &Candidate, cfg: &GenConfig) -> std::result::Result<ir::Ir, String> {
+    if !cfg.optimize {
+        return Ok(ir);
+    }
+    let (opt, st) = opt::optimize(&ir);
+    if let Err(e) = check::equivalent(&ir, &opt, 3) {
+        eprintln!("[exps-codegen] {}: OPTIMIZED IR MISMATCH — {e}; skipping", c.name);
+        return Err("optimizer self-check failed".to_string());
+    }
+    // Decline the optimized IR when CSE inflates live pressure without a large
+    // arithmetic win. Measured (aggregation mode, 66-tx block): recursive2 with
+    // live 40->223 and cost 84% ran +48% slower, the compressors (58->185, 77%)
+    // +21%, vadcop_final (40->223, 75%) +34%; Keccakf (453->349, 76%) ran -35%
+    // and ArithEq (55->92, 39%) -22%. Slots, not ops, decide for those shapes.
+    // Absolute floor: a jump from 5 to 11 live values is free (Dma64AlignedMemCpy
+    // measured -14%); the regressions all sat at 185-223 live, i.e. far past what
+    // a chunk can hold in registers, where every extra value is a scratch slot.
+    let live_ratio = st.max_live_after as f64 / st.max_live_before.max(1) as f64;
+    let cost_ratio = st.cost_after as f64 / st.cost_before.max(1) as f64;
+    let decline =
+        std::env::var("EXPS_NO_DECLINE").is_err() && live_ratio > 2.0 && st.max_live_after > 64 && cost_ratio > 0.5;
+    if decline {
+        eprintln!(
+            "[exps-codegen] {}: optimizer DECLINED (max live {} -> {}, cost {:.1}%): keeping the setup's expression",
+            c.name,
+            st.max_live_before,
+            st.max_live_after,
+            100.0 * cost_ratio
+        );
+        return Ok(ir);
+    }
+    // cross-chunk slots at the dry-run chunk size (or the default), before/after
+    let chunk = cfg.chunk.unwrap_or(DEFAULT_CHUNK);
+    let slots = |x: &ir::Ir| ir::plan_chunks(x, chunk, &c.sym).map(|p| (p.n_chunks, p.total_slots)).unwrap_or((0, 0));
+    let (nc0, s0) = slots(&ir);
+    let (nc1, s1) = slots(&opt);
+    eprintln!(
+        "[exps-codegen] {}: ops {} -> {} ({:.1}%), cost {} -> {} ({:.1}%), horner terms {}, max live {} -> {}, remat {}, hoisted {} ops -> {} words, ltd {} terms/{} atoms, chunks {} -> {}, slots {} -> {}",
+        c.name,
+        st.ops_before,
+        st.ops_after,
+        100.0 * st.ops_after as f64 / st.ops_before.max(1) as f64,
+        st.cost_before,
+        st.cost_after,
+        100.0 * st.cost_after as f64 / st.cost_before.max(1) as f64,
+        st.horner_terms,
+        st.max_live_before,
+        st.max_live_after,
+        st.remat,
+        st.tab_ops,
+        st.tab_words,
+        st.ltd_terms,
+        st.ltd_atoms,
+        nc0,
+        nc1,
+        s0,
+        s1
+    );
+    Ok(opt)
+}
+
 fn run_pipeline(
     tc: &Toolchain,
     work: &Path,
@@ -279,10 +350,10 @@ fn run_pipeline(
     // Build IR for every candidate (catches unhandled operands here). Each entry
     // is (candidate, Ok(ir) | Err(skip-reason)).
     let built: Vec<(&Candidate, std::result::Result<ir::Ir, String>)> = candidates
-        .iter()
+        .par_iter()
         .map(|c| {
             let r = match ir::build_ir(&c.stark_info, &c.expr_info) {
-                Ok(ir) => Ok(ir),
+                Ok(ir) => optimize_checked(ir, c, cfg),
                 Err(e) if e.downcast_ref::<UnhandledOperand>().is_some() => Err("unhandled operand".to_string()),
                 Err(e) => Err(format!("build_ir error: {e}")),
             };
@@ -358,6 +429,17 @@ fn run_pipeline(
                 let Some(od) = eir.out_dim() else { continue };
                 if od != 1 && od != 3 {
                     continue;
+                }
+                // EXPS_X_STATS=1: what the Q optimizer would do to this non-Q
+                // expression (equivalence-checked), to size that opportunity.
+                if std::env::var("EXPS_X_STATS").is_ok() {
+                    let xh = std::env::var("EXPS_X_HOIST").is_ok(); // stats only: no table in _x kernels yet
+                    let (o, st) = opt::optimize_opts(&eir, xh, false);
+                    let ok = check::equivalent(&eir, &o, 3).is_ok();
+                    eprintln!(
+                        "[exps-x-stats] {} x{}: ops {} -> {}, cost {} -> {}, live {} -> {}, hoisted {} ops -> {} words, equiv {}",
+                        c.name, ec.exp_id, st.ops_before, st.ops_after, st.cost_before, st.cost_after, st.max_live_before, st.max_live_after, st.tab_ops, st.tab_words, ok
+                    );
                 }
                 items.push((ec.exp_id, eir, od));
             }

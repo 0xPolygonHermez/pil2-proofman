@@ -17,6 +17,70 @@ pub struct Toolchain {
     compile_flags: Vec<String>,
 }
 
+/// Path of a CUDA binary: PATH first, then $CUDA_HOME/bin, then /usr/local/cuda/bin.
+/// A bare name only works when the CUDA bin dir is on PATH, which a plain shell
+/// often lacks -- the generator then failed before compiling anything.
+pub fn cuda_bin(name: &str) -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(':') {
+            let p = std::path::Path::new(dir).join(name);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("CUDA_HOME") {
+        let p = std::path::Path::new(&home).join("bin").join(name);
+        if p.is_file() {
+            return p;
+        }
+    }
+    let p = std::path::Path::new("/usr/local/cuda/bin").join(name);
+    if p.is_file() {
+        return p;
+    }
+    name.into()
+}
+
+/// Host GPU compute capability as an arch number (e.g. 120). Tries
+/// `__nvcc_device_query` on PATH, then next to nvcc in the usual CUDA
+/// locations, then `nvidia-smi --query-gpu=compute_cap` ("12.0" -> 120).
+/// A bare `__nvcc_device_query` needs /usr/local/cuda/bin on PATH, which a
+/// plain shell often lacks -- that silently built all six major archs.
+fn detect_host_arch() -> Option<u32> {
+    let digits = |txt: &str| -> Option<u32> {
+        let d: String = txt.lines().next().unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect();
+        d.parse::<u32>().ok().filter(|a| (50..2000).contains(a))
+    };
+    let mut candidates: Vec<std::path::PathBuf> = vec!["__nvcc_device_query".into()];
+    if let Ok(p) = std::env::var("CUDA_HOME") {
+        candidates.push(std::path::Path::new(&p).join("bin/__nvcc_device_query"));
+    }
+    candidates.push("/usr/local/cuda/bin/__nvcc_device_query".into());
+    for c in candidates {
+        if let Ok(out) = Command::new(&c).output() {
+            if out.status.success() {
+                if let Some(a) = digits(&String::from_utf8_lossy(&out.stdout)) {
+                    return Some(a);
+                }
+            }
+        }
+    }
+    if let Ok(out) = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output() {
+        if out.status.success() {
+            // "12.0" -> 120, "8.9" -> 89
+            let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+            let mut it = first.split('.');
+            if let (Some(maj), Some(min)) = (it.next(), it.next()) {
+                if let (Ok(m), Ok(n)) = (maj.parse::<u32>(), min.parse::<u32>()) {
+                    return Some(m * 10 + n);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Resolve the requested arch spec into a sorted, de-duplicated arch list.
 /// `auto` (or empty) detects the host GPU and falls back to `major`.
 fn resolve_archs(archspec: &str) -> Vec<u32> {
@@ -25,21 +89,9 @@ fn resolve_archs(archspec: &str) -> Vec<u32> {
         return MAJOR_ARCHS.to_vec();
     }
     if spec.is_empty() || spec == "auto" {
-        // __nvcc_device_query prints the host compute capability (e.g. "120").
-        if let Ok(out) = Command::new("__nvcc_device_query").output() {
-            if out.status.success() {
-                let digits: String = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .chars()
-                    .filter(|c| c.is_ascii_digit())
-                    .collect();
-                if let Ok(a) = digits.parse::<u32>() {
-                    eprintln!("[exps-codegen] auto-detected host GPU arch: sm_{a}");
-                    return vec![a];
-                }
-            }
+        if let Some(a) = detect_host_arch() {
+            eprintln!("[exps-codegen] auto-detected host GPU arch: sm_{a}");
+            return vec![a];
         }
         eprintln!("[exps-codegen] arch auto-detect failed -> building 'major': {MAJOR_ARCHS:?}");
         return MAJOR_ARCHS.to_vec();
@@ -165,7 +217,7 @@ impl Toolchain {
     /// Compile one TU to an object. `extra_inc` (the autotuner probe dir) is
     /// searched in addition to the standard includes. Returns (ok, stderr).
     pub fn compile_tu(&self, cuf: &Path, obj: &Path, extra_inc: Option<&Path>) -> Result<(bool, String)> {
-        let mut cmd = Command::new("nvcc");
+        let mut cmd = Command::new(cuda_bin("nvcc"));
         cmd.arg("-c").args(&self.compile_flags).arg(cuf).arg("-o").arg(obj);
         if let Some(inc) = extra_inc {
             cmd.arg(format!("-I{}", inc.display()));
@@ -176,7 +228,7 @@ impl Toolchain {
 
     /// Link pre-compiled objects into a shared library (uses only gencode).
     pub fn link_objs(&self, objs: &[PathBuf], dest: &Path) -> Result<()> {
-        let out = Command::new("nvcc")
+        let out = Command::new(cuda_bin("nvcc"))
             .arg("-shared")
             .args(&self.gencode)
             .args(objs)
@@ -193,7 +245,7 @@ impl Toolchain {
     /// Compile sources and link them into a shared library in one nvcc call
     /// (the no-autotune fallback, where no objects were kept).
     pub fn compile_link_cus(&self, cus: &[PathBuf], dest: &Path) -> Result<()> {
-        let out = Command::new("nvcc")
+        let out = Command::new(cuda_bin("nvcc"))
             .arg("-shared")
             .args(&self.compile_flags)
             .args(cus)
