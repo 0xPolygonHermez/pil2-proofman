@@ -99,32 +99,6 @@ fn rowexpr(stride: i64) -> String {
     }
 }
 
-/// A read of table word `i` (powers / hoisted invariants): every thread reads
-/// the same address, so it is a broadcast. EXPS_PW_LDG=1 (codegen-time knob,
-/// OFF by default) routes it through `__ldg`; measured no effect on the small
-/// kernels it was meant for (Binary -0.6%, VirtualTableZisk1 0%).
-fn pw_load(i: u64) -> String {
-    if std::env::var("EXPS_PW_LDG").is_ok_and(|v| v == "1") {
-        format!("gl64_t(__ldg((const unsigned long long*)&pw[{i}]))")
-    } else {
-        format!("pw[{i}]")
-    }
-}
-
-/// `__launch_bounds__(GEN_BLK, MINB)` prefix for the per-row kernels when
-/// EXPS_MINB=<minBlocksPerSM> is set at codegen time: caps registers per thread
-/// (2 -> 128, 3 -> 85, 4 -> 64). Experiment knob, OFF by default: Main's
-/// hoisted kernel sits at 255 registers (16.7% occupancy) but every cap
-/// measured +11% slower (129.6 -> 144 ms on the 66-tx block) -- the compiler
-/// pays for the registers with recompute/spills, and occupancy does not buy
-/// it back.
-fn launch_bounds() -> String {
-    match std::env::var("EXPS_MINB").ok().and_then(|v| v.parse::<u32>().ok()) {
-        Some(m) if m >= 1 => format!("__launch_bounds__({GEN_BLK}, {m}) "),
-        _ => String::new(),
-    }
-}
-
 /// Lines that materialize a non-tmp operand into the local `name`.
 fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
     match opnd {
@@ -140,16 +114,14 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
         }
         Operand::Pow { base, j } => {
             let i = ir.pow_offset(*base) + 3 * *j;
-            let (l0, l1, l2) = (pw_load(i), pw_load(i + 1), pw_load(i + 2));
-            vec![format!("  g3 {name}; {name}.a={l0}; {name}.b={l1}; {name}.c={l2};")]
+            vec![format!("  g3 {name}; {name}.a=pw[{i}]; {name}.b=pw[{}]; {name}.c=pw[{}];", i + 1, i + 2)]
         }
         Operand::Tab { idx, dim } => {
             let i = ir.pow_words() + *idx;
             if *dim == 1 {
-                vec![format!("  gl64_t {name} = {};", pw_load(i))]
+                vec![format!("  gl64_t {name} = pw[{i}];")]
             } else {
-                let (l0, l1, l2) = (pw_load(i), pw_load(i + 1), pw_load(i + 2));
-                vec![format!("  g3 {name}; {name}.a={l0}; {name}.b={l1}; {name}.c={l2};")]
+                vec![format!("  g3 {name}; {name}.a=pw[{i}]; {name}.b=pw[{}]; {name}.c=pw[{}];", i + 1, i + 2)]
             }
         }
         Operand::Av { pos, dim } | Operand::Agv { pos, dim } => {
@@ -539,7 +511,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
             lines.push(store_qq(plan.out_dim).to_string());
         }
         kernels.push(format!(
-            r#"__global__ void {lb}gen_{sym}_c{chunk_idx}(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, gl64_t* __restrict__ scratch,
+            r#"__global__ void gen_{sym}_c{chunk_idx}(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, gl64_t* __restrict__ scratch,
     [[maybe_unused]] const gl64_t* __restrict__ pw,
     uint64_t NExt, uint64_t tileBase, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
   const uint64_t MASK = NExt-1; const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x;
@@ -552,7 +524,6 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 {}
 }}"#,
             lines.join("\n"),
-            lb = launch_bounds(),
         ));
     }
 

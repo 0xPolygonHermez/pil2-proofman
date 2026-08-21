@@ -1616,69 +1616,18 @@ fn linearize(
 /// recomputed for that use instead of kept live.
 const REMAT_WINDOW: usize = 64;
 const REMAT_COST_MAX: u64 = 16;
-/// Max Op nodes one clone may duplicate. Overridable while tuning.
+/// Max Op nodes one clone may duplicate.
 const REMAT_OPS_MAX: usize = 3;
-/// Far tier (EXPS_REMAT_FAR_WINDOW / _COST_MAX / _OPS_MAX): users this far
-/// apart justify a costlier clone. 0 window disables the tier.
-const REMAT_FAR_COST_MAX: u64 = 64;
-const REMAT_FAR_OPS_MAX: usize = 12;
-
-fn env_usize(k: &str, d: usize) -> usize {
-    std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
-}
-fn env_u64(k: &str, d: u64) -> u64 {
-    std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
-}
-
 /// Tail of the pipeline for a fixed root: rematerialize far-apart cheap
 /// shared values (twice: clones can expose new far-apart users), then keep the
-/// candidate schedule with the lowest max-live. Returns (order, clones made,
+/// candidate schedule with the lowest max-live. (A costlier "far" remat tier
+/// was tried and measured worse: Keccakf 266 -> 447 ms/proof, issue-bound.) Returns (order, clones made,
 /// max-live, schedule name).
 fn finish(dag: &mut Dag, root: NodeId) -> (Vec<NodeId>, usize, usize, &'static str) {
-    // The far remat tier is tried as a second candidate on a DAG copy and kept
-    // only if it lowers the final max-live (Keccakf: 349 -> 39 for +5% cost,
-    // and ncu shows that kernel is memory-bound, so slots matter more than
-    // ops; the compressor gets worse with it and keeps the near tier only).
-    // EXPS_REMAT_FAR_WINDOW forces: 0 = never, N = always with window N.
-    let forced = std::env::var("EXPS_REMAT_FAR_WINDOW").ok().and_then(|v| v.parse::<usize>().ok());
-    // Default: near tier only. Measured on the GPU (221-tx block): the far tier
-    // took Keccakf from 266 to 447 ms/proof (+42% ops outweighed the slot
-    // saving -- the kernel is issue-bound), so the live-based pick was wrong.
-    let try_far = match forced {
-        Some(0) | None => vec![false],
-        Some(_) => vec![true],
-    };
-    let mut best: Option<(Vec<NodeId>, usize, usize, &'static str, Dag)> = None;
-    for far in try_far {
-        let mut d2 = dag.clone();
-        let (o, rm, live, sw) = finish_with(&mut d2, root, far);
-        let better = best.as_ref().is_none_or(|(bo, _, bl, _, _)| (live, o.len()) < (*bl, bo.len()));
-        if better {
-            best = Some((o, rm, live, if far { "far" } else { sw }, d2));
-        }
-    }
-    let (o, rm, live, sw, d2) = best.unwrap();
-    *dag = d2;
-    (o, rm, live, sw)
-}
-
-fn finish_with(dag: &mut Dag, root: NodeId, far: bool) -> (Vec<NodeId>, usize, usize, &'static str) {
     let mut order = schedule_seq(&sequence(dag, root));
     let mut remat = 0usize;
     for _ in 0..2 {
-        let mut tiers = vec![RematTier {
-            window: env_usize("EXPS_REMAT_WINDOW", REMAT_WINDOW),
-            cost_max: env_u64("EXPS_REMAT_COST_MAX", REMAT_COST_MAX),
-            ops_max: env_usize("EXPS_REMAT_OPS_MAX", REMAT_OPS_MAX),
-        }];
-        if far {
-            let far_window = env_usize("EXPS_REMAT_FAR_WINDOW", 1024);
-            tiers.push(RematTier {
-                window: far_window.max(1),
-                cost_max: env_u64("EXPS_REMAT_FAR_COST_MAX", REMAT_FAR_COST_MAX),
-                ops_max: env_usize("EXPS_REMAT_FAR_OPS_MAX", REMAT_FAR_OPS_MAX),
-            });
-        }
+        let tiers = [RematTier { window: REMAT_WINDOW, cost_max: REMAT_COST_MAX, ops_max: REMAT_OPS_MAX }];
         let n = rematerialize(dag, root, &order, &tiers);
         remat += n;
         order = schedule_seq(&sequence(dag, root));
