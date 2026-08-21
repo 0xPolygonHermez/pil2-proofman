@@ -483,6 +483,20 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
     Ok(())
 }
 
+/// Is `.const_gpu` older than the `.const` it was packed from?
+///
+/// The size check cannot tell: the expected size is pure AIR geometry, so changed
+/// fixed-polynomial *values* leave it byte-identical. `.consttree` checks its root
+/// against the verkey instead; a flat repack has no root. Unreadable metadata means
+/// "cannot tell", so repack.
+fn const_gpu_older_than_source(const_path: &Path, const_gpu_path: &Path) -> bool {
+    let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (modified(const_path), modified(const_gpu_path)) {
+        (Some(src), Some(derived)) => src > derived,
+        _ => true,
+    }
+}
+
 pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
     if !setup.gpu {
         return Ok(false);
@@ -512,6 +526,11 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
             }
         }
         Err(_) => return Ok(true),
+    }
+
+    let source = setup.setup_path.display().to_string() + ".const";
+    if const_gpu_older_than_source(Path::new(&source), Path::new(&setup.const_pols_path)) {
+        return Ok(true);
     }
 
     Ok(false)
@@ -558,6 +577,16 @@ pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult
         }
     } else {
         tracing::trace!("GPU constant polynomials file '{}' does not exist. Generating...", setup.const_pols_path);
+        needs_regeneration = true;
+    }
+
+    let source = setup.setup_path.display().to_string() + ".const";
+    if !needs_regeneration && const_gpu_older_than_source(Path::new(&source), Path::new(&setup.const_pols_path)) {
+        tracing::trace!(
+            "GPU constant polynomials file '{}' is older than '{}'. Regenerating...",
+            setup.const_pols_path,
+            source
+        );
         needs_regeneration = true;
     }
 
@@ -1311,4 +1340,49 @@ pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) ->
     }
 
     Ok(contents.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect())
+}
+
+#[cfg(test)]
+mod const_gpu_staleness_tests {
+    use super::const_gpu_older_than_source;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("const_gpu_stale_{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// What a size check cannot see: `.const` rewritten to the same length with
+    /// different values -- changed fixed pols over unchanged AIR geometry.
+    #[test]
+    fn same_size_newer_source_is_stale() {
+        let d = scratch("same_size");
+        let src = d.join("a.const");
+        let derived = d.join("a.const_gpu");
+        fs::write(&src, vec![1u8; 4096]).unwrap();
+        fs::write(&derived, vec![9u8; 4096]).unwrap();
+        assert!(!const_gpu_older_than_source(&src, &derived), "freshly packed must not look stale");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&src, vec![2u8; 4096]).unwrap();
+        assert_eq!(
+            fs::metadata(&src).unwrap().len(),
+            4096,
+            "length must be unchanged for this to be the interesting case"
+        );
+        assert!(const_gpu_older_than_source(&src, &derived), "same-size source rewrite must be detected");
+    }
+
+    #[test]
+    fn missing_files_are_stale() {
+        let d = scratch("missing");
+        let src = d.join("a.const");
+        let derived = d.join("a.const_gpu");
+        assert!(const_gpu_older_than_source(&src, &derived), "neither present");
+        fs::write(&src, b"x").unwrap();
+        assert!(const_gpu_older_than_source(&src, &derived), "derived missing");
+    }
 }
