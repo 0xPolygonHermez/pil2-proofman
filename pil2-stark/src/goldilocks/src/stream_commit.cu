@@ -450,7 +450,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         CHECKCUDAERR(cudaGetLastError());
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
-        ntt.ldeColMajor(d_rate, d_rate, dims.nBits, dims.nBitsExt, cc, stream, false, d_scratch);
+        ntt.ldeColMajor(d_rate, d_rate, dims.nBits, dims.nBitsExt, cc, stream, false, d_scratch, N);
         if (b3)
             scBlake3AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
                 d_rate, d_cap, cc, k == 0, k == nChunks - 1, NExt);

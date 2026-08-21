@@ -1380,10 +1380,9 @@ uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
 
 } // anonymous namespace
 
-// ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt), over L2-sized column chunks.
-// Each chunk stages its iNTT compactly (stride N) and fuses the coset spread into the forward
-// transform's first launch, so the blowup-1 zeros per element are never materialized -- at
-// blowup 8 that padding was 7/8 of the widest array in the LDE.
+// ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt), over L2-sized column chunks. Each chunk
+// stages its iNTT compactly (stride N) and fuses the coset spread into the forward transform's
+// first launch, so the blowup-1 zeros per element are never materialized.
 void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
                                    uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                                    cudaStream_t stream, bool preserve_src, gl64_t *preserve_scratch,
@@ -1400,16 +1399,19 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     size_t Next = (size_t)1 << nBitsExt;
     uint32_t lg_blowup = (uint32_t)(nBitsExt - nBits);
 
-    // A chunk stages its iNTT into chunk*N of scratch, so a caller-supplied region can only
-    // narrow the chunk; a caller that states no capacity gets a right-sized allocation below.
     uint32_t chunk = nttL2ChunkCols(Next * sizeof(gl64_t), nCols);
-    const bool caller_scratch = preserve_scratch != nullptr && scratch_elems >= N;
-    if (caller_scratch)
-        chunk = (uint32_t)std::min<size_t>(chunk, scratch_elems / N);
+    const uint32_t blowup = 1u << lg_blowup;
+
+    // Integer addresses: relational comparison of pointers into different allocations is
+    // unspecified in C++, and these regions are separate allocations in general.
+    auto rangesOverlap = [](const gl64_t *a, size_t aElems, const gl64_t *b, size_t bElems) {
+        uintptr_t a0 = (uintptr_t)a, b0 = (uintptr_t)b;
+        return a0 < b0 + bElems * sizeof(gl64_t) && b0 < a0 + aElems * sizeof(gl64_t);
+    };
 
     // src may alias dst (constPolsAliasTree); chunks then descend so a chunk's writes stay
     // above the sources still to be read.
-    const bool overlaps = d_src_ < d_dst_ + (size_t)nCols * Next && d_dst_ < d_src_ + (size_t)nCols * N;
+    const bool overlaps = rangesOverlap(d_src_, (size_t)nCols * N, d_dst_, (size_t)nCols * Next);
     if (overlaps && d_src_ != d_dst_) {
         printf("[NTT] ERROR: ldeColMajor overlapping src/dst require equal bases (src-dst = %lld elements)\n",
                (long long)(d_src_ - d_dst_));
@@ -1421,37 +1423,52 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         abort();
     }
 
-    // Scratch is only needed by chunks that stage (see stage below); it holds one chunk's
-    // compact iNTT result.
-    const size_t need = (size_t)chunk * N;
-    gl64_t *scratch = caller_scratch ? preserve_scratch : nullptr;
+    // Scratch holds a staged chunk's compact iNTT result. Narrowing the batch to fit the
+    // caller's region beats allocating one: the prover sizes its arenas to the last byte.
+    gl64_t *scratch = (preserve_scratch != nullptr && scratch_elems >= N) ? preserve_scratch : nullptr;
     bool own_scratch = false;
+    uint32_t stage_cols = 1;
     if (preserve_src || overlaps) {
-        // The fused DIT reads scratch while writing dst, and the staging copy reads src while
-        // writing scratch, so scratch must overlap neither. Callers pass a window of a shared
-        // arena that is disjoint only by layout arithmetic -- check rather than trust it.
-        if (scratch != nullptr &&
-            ((scratch < d_dst_ + (size_t)nCols * Next && d_dst_ < scratch + need) ||
-             (scratch < d_src_ + (size_t)nCols * N    && d_src_ < scratch + need))) {
-            printf("[NTT] ERROR: ldeColMajor scratch (%zu elements) overlaps src or dst\n", need);
-            abort();
-        }
+        size_t cap = scratch != nullptr ? scratch_elems : (size_t)chunk * N;
         if (scratch == nullptr) {
-            CHECKCUDAERR(cudaMallocAsync(&scratch, need * sizeof(gl64_t), stream));
+            static bool warned = false;   // on a prover path this allocates against a full arena
+            if (!warned) {
+                warned = true;
+                printf("[NTT] WARNING: ldeColMajor staging without caller scratch\n");
+            }
+            CHECKCUDAERR(cudaMallocAsync(&scratch, cap * sizeof(gl64_t), stream));
             own_scratch = true;
+        }
+        // preserve_src stages every chunk, so the region caps the width; under aliasing the loop
+        // tapers to a single staged column, so N suffices.
+        if (preserve_src) stage_cols = (uint32_t)std::min<size_t>(chunk, cap / N);
+        const size_t staged = (size_t)stage_cols * N;
+        // The DIT reads scratch while writing dst and the copy reads src, so it must overlap
+        // neither -- and that holds only by arena-layout arithmetic.
+        if (rangesOverlap(scratch, staged, d_dst_, (size_t)nCols * Next) ||
+            rangesOverlap(scratch, staged, d_src_, (size_t)nCols * N)) {
+            printf("[NTT] ERROR: ldeColMajor scratch (%zu elements) overlaps src or dst\n", staged);
+            abort();
         }
     }
 
-    for (uint32_t c0 = (uint32_t)nCols; c0 > 0; ) {
-        uint32_t nc = std::min(chunk, c0);
-        c0 -= nc;
+    for (uint32_t hi = (uint32_t)nCols; hi > 0; ) {
+        uint32_t nc = std::min(chunk, hi);
+        if (preserve_src) {
+            nc = std::min(nc, stage_cols);
+        } else if (overlaps) {
+            // A chunk's writes cover src columns [c0*blowup, (c0+nc)*blowup), already consumed
+            // once c0*(blowup-1) >= nc; take the widest nc that holds, else the last column.
+            uint32_t safe = (uint32_t)((uint64_t)hi * (blowup - 1) / blowup);
+            if (safe < nc) nc = safe != 0 ? safe : 1;
+        }
+        uint32_t c0 = hi - nc;
+        hi = c0;
         gl64_t *dchunk = d_dst_ + (size_t)c0 * Next;
         gl64_t *csrc = d_src_ + (size_t)c0 * N;
 
-        // Stage when src must survive, or when this chunk's output covers its own input -- the
-        // fused first launch would then read the addresses it is writing, which ordering cannot
-        // fix. Under aliasing only the lowest chunks are affected; the rest run in place.
-        if (preserve_src || (overlaps && (size_t)c0 * Next < (size_t)(c0 + nc) * N)) {
+        // Stage when src must survive, or when a chunk's output covers its own input.
+        if (preserve_src || (overlaps && (uint64_t)c0 * (blowup - 1) < nc)) {
             CHECKCUDAERR(cudaMemcpyAsync(scratch, csrc, (size_t)nc * N * sizeof(gl64_t),
                                          cudaMemcpyDeviceToDevice, stream));
             csrc = scratch;
