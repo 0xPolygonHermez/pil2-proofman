@@ -1310,5 +1310,5 @@ pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) ->
         )));
     }
 
-    Ok(contents.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
+    Ok(contents.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect())
 }

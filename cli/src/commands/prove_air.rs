@@ -152,7 +152,7 @@ impl ProveAirCmd {
                 zkin_u8.len()
             ))));
         }
-        let mut zkin: Vec<u64> = zkin_u8.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let mut zkin: Vec<u64> = zkin_u8.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
 
         // Match the file name, not the whole path: a directory that also encodes a proof type would
         // otherwise win. The type is snake_case, so `_` has to be in the class.
