@@ -964,21 +964,36 @@ fn all_chains(dag: &Dag, order: &[NodeId]) -> HashMap<NodeId, (NodeId, Vec<(u64,
 }
 
 /// Rewrite every maximal inner Horner chain into `sum_j Pow{ch,j} * term`, returning
-/// the new root and how many chains fired. `skip` is the head of the chain the caller
-/// handles itself (the root constraint combination), left untouched so its clustering,
-/// rematerialization and scheduling still see the shape they expect.
+/// the new root and how many chains fired. Chains over `skip_ch` are left alone: that is
+/// the constraint-combination challenge, whose chain the caller rewrites itself with
+/// clustering, rematerialization and a schedule search. Skipping it by CHALLENGE and not
+/// by node matters -- every inner prefix of that chain is a chain head too, and folding
+/// one destroys the `ADD(MUL(vc, prev), c)` shape `horner_terms` walks down from.
 ///
 /// Folding is refused unless it lowers the weighted cost: a chain of two variable terms
 /// costs one `mul31` + one add as Horner, and two `mul31`s + one add folded, so it must
 /// not fire there.
-fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (NodeId, usize) {
+fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip_ch: Option<NodeId>) -> (NodeId, usize) {
     let order = post_order(dag, root);
     let chain = all_chains(dag, &order);
+    if std::env::var("EXPS_OPT_DEBUG").is_ok() {
+        let mut by_base: BTreeMap<u64, (usize, usize)> = BTreeMap::new();
+        for (ch, terms) in chain.values() {
+            let Kind::Leaf(Operand::Ch { base }) = dag.nodes[*ch].kind else { continue };
+            let e = by_base.entry(base).or_insert((0, 0));
+            e.0 += 1;
+            e.1 = e.1.max(terms.len());
+        }
+        eprintln!(
+            "[exps-opt-inner] candidate chains by challenge base (count, longest): {:?}",
+            by_base
+        );
+    }
     let mut folded = 0usize;
     // children before parents, so a term is already rewritten when its chain is emitted
     let mut done: HashMap<NodeId, NodeId> = HashMap::new();
     for &v in &order {
-        let worth = chain.get(&v).filter(|_| Some(v) != skip).and_then(|(ch, terms)| {
+        let worth = chain.get(&v).filter(|(ch, _)| Some(*ch) != skip_ch).and_then(|(ch, terms)| {
             let n = terms.len();
             if n < 2 {
                 return None;
@@ -1737,8 +1752,8 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
     };
     let mut out = out;
     if powers && std::env::var("EXPS_INNER").map_or(true, |v| v != "0") {
-        let root_chain_head = combination_challenge(&dag).map(|_| strip_zi(&dag, out).0);
-        let (new_out, n) = fold_inner_chains(&mut dag, out, root_chain_head);
+        let vc_ch = combination_challenge(&dag);
+        let (new_out, n) = fold_inner_chains(&mut dag, out, vc_ch);
         stats.inner_chains = n;
         out = new_out;
     }
@@ -1818,9 +1833,10 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
     stats.remat = remat;
     if std::env::var("EXPS_OPT_DEBUG").is_ok() {
         eprintln!(
-            "[exps-opt-debug] ops {} terms {} cluster winner: {cluster_winner}, schedule winner: {sched_winner} (max-live {live})",
+            "[exps-opt-debug] ops {} terms {} inner chains {} cluster winner: {cluster_winner}, schedule winner: {sched_winner} (max-live {live})",
             order.len(),
-            stats.horner_terms
+            stats.horner_terms,
+            stats.inner_chains
         );
         live_breakdown(&dag, root, &order, "chosen");
     }
