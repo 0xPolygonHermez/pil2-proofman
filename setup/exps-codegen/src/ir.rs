@@ -107,9 +107,11 @@ pub struct Ir {
     pub ncols: HashMap<u64, u64>,
     pub n_constants: u64,
     pub n_bits: u64,
-    /// Challenge-powers table the kernels read: `Some((ch_base, n))` means
-    /// `ch[ch_base..]^j` for j in 0..n (3 elems each) at the head of scratch.
-    pub pow: Option<(u64, u64)>,
+    /// Challenge-powers table the kernels read, one region per challenge and
+    /// sorted by base: `(ch_base, n)` means `ch[ch_base..]^j` for j in 0..n
+    /// (3 elems each). The regions sit end to end at the head of scratch, so a
+    /// challenge's region starts at `pow_offset(ch_base)`.
+    pub pow: Vec<(u64, u64)>,
     /// Row-invariant program run once per launch (thread 0 of the table
     /// kernel, after the powers): straight-line ops over invariant leaves and
     /// its own tmps. `tab_out` exports tmps to table words (`Operand::Tab`):
@@ -120,9 +122,13 @@ pub struct Ir {
 }
 
 impl Ir {
-    /// Words of the powers table (3 per power).
+    /// Words of the powers table (3 per power, summed over the challenges).
     pub fn pow_words(&self) -> u64 {
-        self.pow.map_or(0, |(_, n)| 3 * n)
+        self.pow.iter().map(|&(_, n)| 3 * n).sum()
+    }
+    /// Word offset of `base`'s region inside the powers table.
+    pub fn pow_offset(&self, base: u64) -> u64 {
+        self.pow.iter().take_while(|&&(b, _)| b != base).map(|&(_, n)| 3 * n).sum()
     }
     /// Total per-launch table words carved off the head of scratch.
     pub fn table_words(&self) -> u64 {
@@ -302,7 +308,7 @@ pub fn build_ir_expr(
         ncols,
         n_constants,
         n_bits: stark_info.stark_struct.n_bits,
-        pow: None,
+        pow: Vec::new(),
         tab: Vec::new(),
         tab_out: Vec::new(),
         tab_words: 0,

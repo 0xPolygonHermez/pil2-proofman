@@ -135,8 +135,8 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
             let i = *base;
             vec![format!("  g3 {name}; {name}.a=ch[{i}]; {name}.b=ch[{}]; {name}.c=ch[{}];", i + 1, i + 2)]
         }
-        Operand::Pow { j, .. } => {
-            let i = 3 * *j;
+        Operand::Pow { base, j } => {
+            let i = ir.pow_offset(*base) + 3 * *j;
             let (l0, l1, l2) = (pw_load(i), pw_load(i + 1), pw_load(i + 2));
             vec![format!("  g3 {name}; {name}.a={l0}; {name}.b={l1}; {name}.c={l2};")]
         }
@@ -298,39 +298,51 @@ fn tab_body(ir: &Ir) -> String {
 /// head of scratch and runs it. Empty strings when the IR uses no powers.
 /// One block: thread t starts at `v^t` and strides by `v^blockDim`.
 fn pow_kernel(sym: &str, ir: &Ir) -> (String, String) {
-    if ir.pow.is_none() && ir.tab.is_empty() {
+    if ir.pow.is_empty() && ir.tab.is_empty() {
         return (String::new(), "  const gl64_t* pw = scratch;".to_string());
     }
-    // with no powers the loop body is skipped (n = 0); `base` then only names
-    // a valid challenge slot for the unused `v`
-    let (base, n) = ir.pow.unwrap_or((0, 0));
+    // One fill loop per challenge region, laid out end to end in `pow_offset` order.
+    let regions: String = ir
+        .pow
+        .iter()
+        .map(|&(base, n)| {
+            let off = ir.pow_offset(base);
+            format!(
+                r#"  {{
+    g3 v; v.a=ch[{base}]; v.b=ch[{}]; v.c=ch[{}];
+    g3 cur=one, b=v; uint64_t e=threadIdx.x;
+    while (e) {{ if (e&1) cur=cg_mul33(cur,b); b=cg_mul33(b,b); e>>=1; }}
+    g3 step=one; b=v; e=blockDim.x;
+    while (e) {{ if (e&1) step=cg_mul33(step,b); b=cg_mul33(b,b); e>>=1; }}
+    for (uint64_t k=threadIdx.x; k<{n}ull; k+=blockDim.x) {{
+      pw[{off}+3*k]=cur.a; pw[{off}+3*k+1]=cur.b; pw[{off}+3*k+2]=cur.c; cur=cg_mul33(cur,step);
+    }}
+  }}"#,
+                base + 1,
+                base + 2
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("
+");
     let tab = tab_body(ir);
     let kernel = format!(
-        r#"__global__ void gen_{sym}_pow(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw, uint64_t n) {{
+        r#"__global__ void gen_{sym}_pow(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw) {{
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
   [[maybe_unused]] const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; [[maybe_unused]] const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
-  g3 v; v.a=ch[{base}]; v.b=ch[{}]; v.c=ch[{}];
   g3 one; one.a=gl64_t(uint64_t(1)); one.b=gl64_t(uint64_t(0)); one.c=gl64_t(uint64_t(0));
-  g3 cur=one, b=v; uint64_t e=threadIdx.x;
-  while (e) {{ if (e&1) cur=cg_mul33(cur,b); b=cg_mul33(b,b); e>>=1; }}
-  g3 step=one; b=v; e=blockDim.x;
-  while (e) {{ if (e&1) step=cg_mul33(step,b); b=cg_mul33(b,b); e>>=1; }}
-  for (uint64_t k=threadIdx.x; k<n; k+=blockDim.x) {{
-    pw[3*k]=cur.a; pw[3*k+1]=cur.b; pw[3*k+2]=cur.c; cur=cg_mul33(cur,step);
-  }}
+{regions}
   __syncthreads();
   // row-invariant program: once per launch, after the powers it may read
   if (threadIdx.x == 0) {{
 {tab}
   }}
-}}"#,
-        base + 1,
-        base + 2
+}}"#
     );
     let prologue = format!(
         r#"  const gl64_t* pw = scratch; scratch += {pe}ull; scratchElems -= {pe}ull;
-  gen_{sym}_pow<<<1,256,0,stream>>>(d_params, (gl64_t*)pw, {n}ull);"#,
+  gen_{sym}_pow<<<1,256,0,stream>>>(d_params, (gl64_t*)pw);"#,
         pe = ir.table_words()
     );
     (kernel, prologue)

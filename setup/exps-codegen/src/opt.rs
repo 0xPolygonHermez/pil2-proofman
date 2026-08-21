@@ -18,7 +18,7 @@
 
 use crate::field;
 use crate::ir::{Instr, Ir, Operand};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 
 type NodeId = usize;
 
@@ -115,6 +115,8 @@ pub struct OptStats {
     pub cost_before: u64,
     pub cost_after: u64,
     pub horner_terms: usize,
+    /// Inner Horner chains folded (any challenge, anywhere but the root chain).
+    pub inner_chains: usize,
     pub max_live_before: usize,
     pub max_live_after: usize,
     pub remat: usize,
@@ -873,19 +875,22 @@ fn distribute_linear(
     (out, n_lin, n_atoms)
 }
 
-/// Largest power index read anywhere under `root` (Pow leaves), for sizing
-/// the per-launch powers table.
-fn max_pow_used(dag: &Dag, root: NodeId) -> Option<u64> {
+/// Powers table needed by the `Pow` leaves read under `root`: one `(ch_base, n)`
+/// region per challenge, sorted by base, sized to the largest exponent used.
+fn powers_used(dag: &Dag, root: NodeId) -> Vec<(u64, u64)> {
     let mut seen = vec![false; dag.nodes.len()];
     let mut stack = vec![root];
-    let mut mx: Option<u64> = None;
+    let mut mx: BTreeMap<u64, u64> = BTreeMap::new();
     while let Some(n) = stack.pop() {
         if seen[n] {
             continue;
         }
         seen[n] = true;
         match &dag.nodes[n].kind {
-            Kind::Leaf(Operand::Pow { j, .. }) => mx = Some(mx.map_or(*j, |m| m.max(*j))),
+            Kind::Leaf(Operand::Pow { base, j }) => {
+                let e = mx.entry(*base).or_insert(0);
+                *e = (*e).max(*j);
+            }
             Kind::Op { a, b, .. } => {
                 stack.push(*a);
                 stack.push(*b);
@@ -893,7 +898,170 @@ fn max_pow_used(dag: &Dag, root: NodeId) -> Option<u64> {
             _ => {}
         }
     }
-    mx
+    mx.into_iter().map(|(b, mj)| (b, mj + 1)).collect()
+}
+
+/// Weighted cost of one op, in the same units as `distribute_linear`: a cubic
+/// multiply is the expensive one, an extension-by-base far cheaper.
+fn wcost(op: u8, da: u64, db: u64) -> u64 {
+    let (lo, hi) = (da.min(db), da.max(db));
+    if op == MUL {
+        match (lo, hi) {
+            (1, 1) => 1,
+            (1, 3) => 3,
+            _ => 6,
+        }
+    } else if hi == 3 {
+        3
+    } else {
+        1
+    }
+}
+
+/// Every maximal Horner chain over a single challenge, keyed by the node that
+/// heads it: `(challenge leaf, [(exponent, term)])`. Generalizes `horner_terms`,
+/// which only walks the one chain over `std_vc` that ends at the root, to the
+/// whole DAG and every challenge -- which is what reaches the stage-2 bus
+/// fingerprints `compress_exprs` builds (`e_j = sum_k a_k * alpha^k`), sitting
+/// deep inside the expression rather than at its root.
+///
+/// A `SUB` never extends a chain (it would silently turn `a - b` into `a + b`),
+/// and a chain over one challenge is never extended by a multiply against a
+/// different one (that would invent a power that does not exist).
+fn all_chains(dag: &Dag, order: &[NodeId]) -> HashMap<NodeId, (NodeId, Vec<(u64, NodeId)>)> {
+    let mut chain: HashMap<NodeId, (NodeId, Vec<(u64, NodeId)>)> = HashMap::new();
+    for &v in order {
+        let Kind::Op { op, a, b } = dag.nodes[v].kind else { continue };
+        if op == MUL {
+            for (c, other) in [(a, b), (b, a)] {
+                if !matches!(dag.nodes[c].kind, Kind::Leaf(Operand::Ch { .. })) || other == c {
+                    continue;
+                }
+                let terms = match chain.get(&other) {
+                    // extending this challenge's own chain: every exponent goes up by one
+                    Some((ch, t)) if *ch == c => t.iter().map(|&(p, x)| (p + 1, x)).collect(),
+                    _ => vec![(1u64, other)],
+                };
+                chain.insert(v, (c, terms));
+                break;
+            }
+        } else if op == ADD {
+            let (ca, cb) = (chain.get(&a).cloned(), chain.get(&b).cloned());
+            match (ca, cb) {
+                (Some((ch, mut t)), None) => {
+                    t.push((0, b));
+                    chain.insert(v, (ch, t));
+                }
+                (None, Some((ch, mut t))) => {
+                    t.push((0, a));
+                    chain.insert(v, (ch, t));
+                }
+                _ => {}
+            }
+        }
+    }
+    chain
+}
+
+/// Rewrite every maximal inner Horner chain into `sum_j Pow{ch,j} * term`, returning
+/// the new root and how many chains fired. `skip` is the head of the chain the caller
+/// handles itself (the root constraint combination), left untouched so its clustering,
+/// rematerialization and scheduling still see the shape they expect.
+///
+/// Folding is refused unless it lowers the weighted cost: a chain of two variable terms
+/// costs one `mul31` + one add as Horner, and two `mul31`s + one add folded, so it must
+/// not fire there.
+fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (NodeId, usize) {
+    let order = post_order(dag, root);
+    let chain = all_chains(dag, &order);
+    let mut folded = 0usize;
+    // children before parents, so a term is already rewritten when its chain is emitted
+    let mut done: HashMap<NodeId, NodeId> = HashMap::new();
+    for &v in &order {
+        let worth = chain.get(&v).filter(|_| Some(v) != skip).and_then(|(ch, terms)| {
+            let n = terms.len();
+            if n < 2 {
+                return None;
+            }
+            // Horner: the outermost term multiplies the raw operand, every later step
+            // multiplies the cubic accumulator, and each remaining term costs one add.
+            let head = terms.iter().max_by_key(|&&(p, _)| p).map(|&(_, x)| x).unwrap();
+            let old = wcost(MUL, 3, dag.nodes[head].dim)
+                + (n as u64 - 2) * wcost(MUL, 3, 3)
+                + terms
+                    .iter()
+                    .filter(|&&(_, x)| x != head)
+                    .map(|&(_, x)| wcost(ADD, 3, dag.nodes[x].dim))
+                    .sum::<u64>();
+            // Folded: one extension-by-operand multiply per non-zero exponent (`ch^0`
+            // needs none) and one add per term after the first.
+            let new: u64 = terms
+                .iter()
+                .filter(|&&(p, _)| p > 0)
+                .map(|&(_, x)| wcost(MUL, 3, dag.nodes[x].dim))
+                .sum::<u64>()
+                + (n as u64 - 1) * wcost(ADD, 3, 3);
+            if new < old { Some((*ch, terms.clone())) } else { None }
+        });
+        let nv = match worth {
+            Some((ch_node, terms)) => {
+                let Kind::Leaf(Operand::Ch { base }) = dag.nodes[ch_node].kind else { unreachable!() };
+                folded += 1;
+                let mut acc: Option<NodeId> = None;
+                for &(p, x) in &terms {
+                    let xr = done[&x];
+                    let term = match p {
+                        0 => xr,
+                        1 => dag.op(MUL, ch_node, xr),
+                        j => {
+                            let pw = dag.leaf(&Operand::Pow { base, j });
+                            dag.op(MUL, pw, xr)
+                        }
+                    };
+                    acc = Some(match acc {
+                        None => term,
+                        Some(a) => dag.op(ADD, a, term),
+                    });
+                }
+                acc.expect("a folded chain always yields at least one term")
+            }
+            None => match dag.nodes[v].kind {
+                Kind::Leaf(_) => v,
+                Kind::Op { op, a, b } => {
+                    let (ra, rb) = (done[&a], done[&b]);
+                    if ra == a && rb == b { v } else { dag.op(op, ra, rb) }
+                }
+            },
+        };
+        done.insert(v, nv);
+    }
+    (done[&root], folded)
+}
+
+/// Children-before-parents order over the nodes reachable from `root`.
+fn post_order(dag: &Dag, root: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut seen = vec![false; dag.nodes.len()];
+    let mut stack = vec![(root, false)];
+    while let Some((v, expanded)) = stack.pop() {
+        if expanded {
+            out.push(v);
+            continue;
+        }
+        if seen[v] {
+            continue;
+        }
+        seen[v] = true;
+        stack.push((v, true));
+        if let Kind::Op { a, b, .. } = dag.nodes[v].kind {
+            for c in [a, b] {
+                if !seen[c] {
+                    stack.push((c, false));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Post-order sequence numbers of the nodes reachable from `root`,
@@ -1326,7 +1494,7 @@ fn linearize(
     root: NodeId,
     order: &[NodeId],
     template: &Ir,
-    pow: Option<(u64, u64)>,
+    pow: Vec<(u64, u64)>,
     stats: &mut OptStats,
     allow_hoist: bool,
 ) -> Ir {
@@ -1557,15 +1725,27 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
     };
 
     // Horner -> sum of powers (optionally under a trailing `* Zi`).
+    //
+    // Two passes, in this order. First every INNER chain, over any challenge and anywhere
+    // in the DAG -- that is what reaches the stage-2 bus fingerprints. Then the root
+    // constraint combination below, which additionally gets clustering, remat and a
+    // schedule search, so it is deliberately left for that machinery.
+    let strip_zi = |dag: &Dag, out: NodeId| match dag.nodes[out].kind {
+        Kind::Op { op: MUL, a, b } if matches!(dag.nodes[b].kind, Kind::Leaf(Operand::Zi)) => (a, Some(b)),
+        Kind::Op { op: MUL, a, b } if matches!(dag.nodes[a].kind, Kind::Leaf(Operand::Zi)) => (b, Some(a)),
+        _ => (out, None),
+    };
+    let mut out = out;
+    if powers && std::env::var("EXPS_INNER").map_or(true, |v| v != "0") {
+        let root_chain_head = combination_challenge(&dag).map(|_| strip_zi(&dag, out).0);
+        let (new_out, n) = fold_inner_chains(&mut dag, out, root_chain_head);
+        stats.inner_chains = n;
+        out = new_out;
+    }
     let root = out;
-    let mut pow: Option<(u64, u64)> = None;
     let mut finished: Option<Finished> = None;
     if let Some(vc) = combination_challenge(&dag).filter(|_| powers) {
-        let (acc, zi) = match dag.nodes[out].kind {
-            Kind::Op { op: MUL, a, b } if matches!(dag.nodes[b].kind, Kind::Leaf(Operand::Zi)) => (a, Some(b)),
-            Kind::Op { op: MUL, a, b } if matches!(dag.nodes[a].kind, Kind::Leaf(Operand::Zi)) => (b, Some(a)),
-            _ => (out, None),
-        };
+        let (acc, zi) = strip_zi(&dag, out);
         if let Some(terms) = horner_terms(&dag, acc, vc) {
             stats.horner_terms = terms.len();
             if std::env::var("EXPS_OPT_DEBUG").as_deref() == Ok("3") {
@@ -1618,10 +1798,7 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
                 let key = (live, o.len());
                 if best_key.is_none_or(|bk| key < bk) {
                     best_key = Some(key);
-                    // size the table by the powers actually read under the root
-                    // (coefficients fold powers in, so term exponents alone under-count)
                     let _ = max_pow;
-                    pow = max_pow_used(&d2, r).map(|mj| (base, mj + 1));
                     finished = Some((d2, r, o, rm, live, sw, cname));
                 }
             }
@@ -1634,6 +1811,10 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
             (dag, root, o, rm, live, sw, "none")
         }
     };
+    // Size the table from the powers actually read under the final root: coefficients
+    // fold powers in, so term exponents alone under-count, and the inner pass emits
+    // powers of challenges the root chain never touches.
+    let pow = powers_used(&dag, root);
     stats.remat = remat;
     if std::env::var("EXPS_OPT_DEBUG").is_ok() {
         eprintln!(
@@ -1669,7 +1850,7 @@ fn linearize_identity(ir: &Ir) -> Ir {
         ncols: ir.ncols.clone(),
         n_constants: ir.n_constants,
         n_bits: ir.n_bits,
-        pow: ir.pow,
+        pow: ir.pow.clone(),
         tab: Vec::new(),
         tab_out: Vec::new(),
         tab_words: 0,
