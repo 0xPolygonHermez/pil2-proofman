@@ -1,5 +1,7 @@
 pragma circom 2.1.0;
 
+include "iszero.circom";
+
 template LessThan20Bits() {
     signal input in;
 
@@ -41,86 +43,29 @@ template Num2Ternary(n) {
     lc1 === in;
 }
 
-/*
-cm cl sm sl   res
-0  0  0  0      0
-      0  1      1
-      1  0      1
-      1  1      1        sm + sl - sm*sl
-
-0  1  0  0     -1
-      0  1      0
-      1  0      1
-      1  1      1        -1 + sl + 2*sm - sm*sl
-
-1  0  0  0     -1
-      0  1     -1
-      1  0      0
-      1  1      1        sm*sl -1  +sm
-
-1  1  0  0     -1
-      0  1     -1
-      1  0     -1
-      1  1      0        sm*sl -1
-
-*/
-
-template CompConstant(ct) {
-    signal input in[64];
-    signal output out;
-
-    signal parts[32];
-
-    var clsb;
-    var cmsb;
-    var sl;
-    var sm;
-
-    signal sum[32];
-
-    var e = 1;
-    var i;
-
-    for (i=0;i<32; i++) {
-        clsb = (ct >> (i*2)) & 1;
-        cmsb = (ct >> (i*2+1)) & 1;
-        sl = in[i*2];
-        sm = in[i*2+1];
-
-        if ((cmsb==0)&&(clsb==0)) {
-            parts[i] <== sm*e + sl*e -sm*sl*e;
-        } else if ((cmsb==0)&&(clsb==1)) {
-            parts[i] <== -e + e*sl + e*2*sm - e*sm*sl;
-        } else if ((cmsb==1)&&(clsb==0)) {
-            parts[i] <== e*sm*sl -e  +e*sm;
-        } else {
-            parts[i] <== e*sm*sl -e;
-        }
-
-        if (i==0) {
-            sum[i] <== (1<<32)-1 + parts[i];
-        } else {
-            sum[i] <== sum[i-1] + parts[i];
-        }
-
-        e = e*2;
-    }
-
-    signal num2bits[33] <== Num2Bits(33)(sum[31]);
-
-    for (var i = 0; i < 32; i++) {
-        _ <== num2bits[i];
-    }
-    out <== num2bits[32];
-}
-
-
 template AliasCheck() {
+    signal input {binary} in[64];
 
-    signal input in[64];
+    // The Goldilocks prime p = 2^64 - 2^32 + 1 is expressed in binary as:
+    //  p = 0b1111111111111111111111111111111100000000000000000000000000000001
+    // Thus, checking that in < p is equivalent to checking that if all the 
+    // 32 most-significant bits are 1, then all the 32 least-significant bits must be 0.
+    
+    var least_sig_32_sum = 0;
+    for (var i = 0; i < 32; i++){
+        least_sig_32_sum += in[i];
+    }
 
-    signal compConstant <== CompConstant(-1)(in);
-    compConstant === 0;
+    var most_sig_32_sum = 0;
+    for (var i = 32; i < 64; i++){
+        most_sig_32_sum += in[i];
+    }
+    
+    signal all_zero <== IsZero()(least_sig_32_sum);
+    signal all_one <== IsZero()(32 - most_sig_32_sum);
+    
+    // all_one implies all_zero
+    all_one * (1 - all_zero) === 0; 
 }
 
 template Num2Bits_strict() {

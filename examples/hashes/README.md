@@ -135,9 +135,9 @@ Cost is measured in clocks per column; lower **cost / byte** is better.
 |                               | **Blake3**          | **SHA2-256**                | **Blake2b**                   |
 | ----------------------------- | ------------------- | --------------------------- | ----------------------------- |
 | Clock length                  | 56 rows             | 72 rows                     | 96 rows                       |
-| Fixed                         | 8                  | 5                           | 7                             |
-| Stage1                        | 55                  | 100                         | 100                           |
-| Stage2                        | 48                  | 9                           | 84                            |
+| Fixed                         | 8                   | 5                           | 7                             |
+| Stage1                        | 55                  | 103                         | 100                           |
+| Stage2                        | 48                  | 6                           | 84                            |
 | **Total cols**                | **109**             | **115**                     | **190**                       |
 | Constraints                   | 26                  | 105                         | 47                            |
 | Max degree                    | 3                   | 3                           | 3                             |

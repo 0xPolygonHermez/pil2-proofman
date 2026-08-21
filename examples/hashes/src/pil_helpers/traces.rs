@@ -16,8 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "683543dd975f6a152003dd7a3421015f0da6cd0d086099d7e68cee1454759d25";
-
+pub const PILOUT_HASH: &str = "1fa83f324d81bc676e11881312ef1e01cb37dc609600f2ef297117b97fa499c3";
 
 //AIRGROUP CONSTANTS
 
@@ -49,18 +48,18 @@ trace_row!(Sha2FixedRow<F> {
 pub type Sha2Fixed<F> = GenericTrace<Sha2FixedRow<F>, 65536, 0, 1>;
 
 trace_row!(Sha2TraceRow<F> {
- s0:[bit; 32], s1:[bit; 32], w:[bit; 32], new_s0_carry_bits:ubit(3), new_s1_carry_bits:ubit(3), new_w_carry_bits:ubit(2), mul_range:u64,
+ s0:[bit; 32], s1:[bit; 32], w:[bit; 32], im_new_s0:ubit(35), im_new_s1:ubit(35), im_new_w:ubit(34), new_s0_carry_bits:ubit(3), new_s1_carry_bits:ubit(3), new_w_carry_bits:ubit(2), mul_range:u64,
 });
 
 pub type Sha2Trace<R> = GenericTrace<R, 65536, 0, 1>;
 
 trace_row!(Blake2bFixedRow<F> {
- CLK_0: F, BLOCK_ID: F, RANGE: F, A: F, B: F, C: F, __L1__: F,
+ CLK_0: F, BLOCK_ID: F, A: F, B: F, C: F, __L1__: F,
 });
 pub type Blake2bFixed<F> = GenericTrace<Blake2bFixedRow<F>, 65536, 0, 2>;
 
 trace_row!(Blake2bTraceRow<F> {
- va:[u16; 4], vb:[u8; 8], vc:[u16; 4], vd:[u8; 8], x:[u16; 4], y:[u16; 4], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_pp_xor:[u8; 8], vb_pp_t:[bit; 2], mul_range:u64, mul_table:u64,
+ va:[u16; 4], vb:[u8; 8], vc:[u16; 4], vd:[u8; 8], x:[u16; 4], y:[u16; 4], va_prime:[u8; 8], vd_prime:[u8; 8], vc_prime:[u8; 8], vb_prime:[u8; 8], va_prime_prime:[u8; 8], vd_prime_prime:[u8; 8], vc_prime_prime:[u8; 8], vb_pp_xor:[u8; 8], vb_pp_t:[bit; 2], mul_table:u64, mul_range:u64,
 });
 
 pub type Blake2bTrace<R> = GenericTrace<R, 65536, 0, 2>;
@@ -85,8 +84,8 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     }),
     (0, 1, PackedInfoConst {
         is_packed: true,
-        num_packed_words: 3,
-        unpack_info: &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 2, 64],
+        num_packed_words: 5,
+        unpack_info: &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 35, 35, 34, 3, 3, 2, 64],
     }),
     (0, 2, PackedInfoConst {
         is_packed: true,

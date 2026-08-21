@@ -82,26 +82,11 @@ airtemplate Blake3(const int N = 2**20) {
 
     // Calculate usable capacity
     const int NUM_NON_USABLE_ROWS = N % CLOCKS;
-    const int NUM_OPS;
-    if (NUM_NON_USABLE_ROWS == 0) {
-        // N is perfectly divisible by CLOCKS
-        if (N < CLOCKS) {
-            error(`N must be at least ${CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
-        }
-
-        NUM_OPS = N / CLOCKS;
-    } else {
-        // N is not divisible by CLOCKS
-        if (N < 2*CLOCKS) {
-            error(`N must be at least ${2*CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
-        }
-
-        // Subtract 1 because we can't fit a complete cycle in the remaining rows
-        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    const int NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS;
+    if (NUM_OPS < 1) {
+        error(`N must be at least ${CLOCKS} to fit the Blake3 arithmetization, but received N=${N}`);
     }
-
-    const int NUM_BLAKE3 = NUM_OPS;
-    println(`The total number of Blake3's with N = ${N} is ${NUM_BLAKE3}`);
+    println(`The total number of Blake3's with N = 2^${log2(N)} is ${NUM_OPS}`);
 
     // Message word permutation schedule
     const int SIGMA[7][16];
@@ -122,7 +107,7 @@ airtemplate Blake3(const int N = 2**20) {
     // CLOCK SELECTORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    // Base clock: 1 at first cycle row, 0 elsewhere within each cycle
     if (NUM_NON_USABLE_ROWS == 0) {
         col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
     } else {

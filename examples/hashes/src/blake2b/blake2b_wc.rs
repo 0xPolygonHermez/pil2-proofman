@@ -18,14 +18,7 @@ pub struct Blake2bAir {
 
 impl Blake2bAir {
     pub fn new<F: PrimeField64>() -> Arc<Self> {
-        let num_rows = Blake2bTrace::<Blake2bTraceRow<F>>::NUM_ROWS;
-        let num_non_usable_rows = num_rows % CLOCKS;
-        let num_available_blake2bs = if num_non_usable_rows == 0 {
-            num_rows / CLOCKS
-        } else {
-            // Subtract 1 because we can't fit a complete cycle in the remaining rows
-            (num_rows - num_non_usable_rows) / CLOCKS - 1
-        };
+        let num_available_blake2bs = Blake2bTrace::<Blake2bTraceRow<F>>::NUM_ROWS / CLOCKS;
 
         Arc::new(Self { num_available_blake2bs, instance_ids: RwLock::new(Vec::new()) })
     }
