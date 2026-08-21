@@ -1,176 +1,149 @@
 //! Rust port of the `Transcript` class used in `verify_global_challenge.circom.ejs`
-//! and `verify_global_constraints.circom.ejs`.
+//! and `verify_global_constraints.circom.ejs`. Emits the circom signal
+//! declarations for a GL Fiat-Shamir transcript.
 //!
-//! Builds Circom signal declarations and wiring for a (GL, width 16) transcript
-//! hash chain. The hash family is selected via [`set_poseidon2`](Transcript::set_poseidon2):
-//! Poseidon1 (`Poseidon(nOuts)`, default) or Poseidon2 (`Poseidon2(4, nOuts)`).
-//! Each round absorbs 12 inputs into a 4-cell capacity, producing 16 output cells;
-//! the first 4 cells become the next state and the remaining 12 are the FIFO
-//! consumed by `get_field` / `get_state` callers.
+//! The family is fixed at construction and picks the [`Engine`]; everything else
+//! here is family-independent. The two engines are different machines, not one
+//! machine with a flag:
 //!
-//! Each call to `put` (add one signal to the pending buffer) and `get_field`
-//! (consume three outputs) drives the state machine forward; when the buffer
-//! fills it emits a `Poseidon(...)` signal declaration.
+//! * [`Sponge`] — Poseidon1/Poseidon2. Absorbs 12 into a 4-cell capacity per
+//!   round, producing 16 cells: the first 4 are the next state, the rest a FIFO.
+//! * [`Blake3`] — a real BLAKE3 chunk chain, so a squeeze roots a *copy* of the
+//!   chain rather than permuting it. Mirrors `blake3core::Hasher`; see
+//!   `circuits.gl/hash/blake3/linearhash.circom` for the same thing as a template.
 
-#![allow(dead_code)]
+/// Name suffix on emitted signals: `Some("friQueries")` makes `transcriptHash_0`
+/// into `transcriptHash_friQueries_0`.
+type Suffix<'a> = Option<&'a str>;
 
-pub struct Transcript {
-    /// Optional name suffix on emitted signal names (e.g. `"_bar"` → `"transcriptHash_bar_0"`).
-    pub name: Option<String>,
-    /// Number of rounds already emitted (index of the next `transcriptHash_N` signal).
-    h_cnt: usize,
-    /// Number of output values consumed from the current hash output.
-    hi_cnt: usize,
-    /// Index of the next available output field consumed by `get_fields1`.
-    /// `out` acts as a FIFO; once exhausted a new Poseidon1 round is triggered.
-    out: Vec<String>,
-    /// Inputs pending for the next Poseidon1 call.
-    pending: Vec<String>,
-    /// The four Poseidon1 capacity (state) elements.
-    state: [String; 4],
-    /// Generated code lines (will be joined with newlines by `get_code`).
-    code: Vec<String>,
-    /// Index of first code line not yet returned by `get_code`.
-    last_code_printed: usize,
-    /// Merkle-tree arity (consumer-side parameter; Poseidon1 widths are fixed).
-    arity: usize,
-    /// Per-round "used outputs" for the global-challenge transcript (see JS logic).
-    used_vals_per_round_override: Option<Vec<usize>>,
-    /// Early-rounds scheme: rounds < `early_rounds_threshold` use `early_used_vals`,
-    /// remaining rounds use `late_used_vals`. None means use output_width (no drains).
-    early_rounds_scheme: Option<(usize, usize, usize)>,
-    /// Counter for `transcriptN2b_N` signal names emitted by `get_permutations`.
-    n2b_cnt: usize,
-    /// When true, drain unused outputs of the PREVIOUS hash round BEFORE emitting
-    /// the next Poseidon2 signal — matching the GL `stark_verifier.circom.ejs`
-    /// `Transcript.updateState()` behaviour.  The drain is emitted from
-    /// `max(hi_cnt, 4)` (the first 4 outputs are always consumed as the new state).
-    ///
-    /// Default: false (matches `verify_global_challenge.circom.ejs` behaviour).
-    drain_in_update_state: bool,
-    /// Hash family of the emitted transcript chain. `false` → Poseidon1
-    /// (`Poseidon(nOuts)` template); `true` → Poseidon2 (`Poseidon2(4, nOuts)`).
-    /// Both are width-16 / rate-12 sponges, so only the emitted template name differs.
+// ─────────────────────────────────────────────────────────────────────────────
+// Poseidon sponge engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The width-16 / rate-12 Poseidon transcript sponge, for both Poseidon families.
+/// `IN_W`/`OUT_W` live here, not on `Transcript`, so the blake3 path cannot reach them.
+struct Sponge {
+    /// `true` emits `Poseidon2(4, nOuts)`, `false` `Poseidon(nOuts)`. Both take
+    /// the same `[in[12]], [capacity[4]]`, so only the template head differs.
     poseidon2: bool,
+    /// Index of the next `transcriptHash_N` signal.
+    h_cnt: usize,
+    /// Output cells consumed from the current round.
+    hi_cnt: usize,
+    out: Vec<String>,
+    pending: Vec<String>,
+    state: [String; 4],
+    /// Rounds < `threshold` use `early_used`, the rest `late_used`.
+    early_rounds_scheme: Option<(usize, usize, usize)>,
+    /// Drain the previous round's unread cells BEFORE emitting the next
+    /// permutation, as GL `stark_verifier.circom.ejs` does. False matches
+    /// `verify_global_challenge.circom.ejs`.
+    drain_in_update_state: bool,
 }
 
-impl Transcript {
-    /// Create a new Transcript for `merkle_tree_arity` trees.
-    pub fn new(merkle_tree_arity: usize, name: Option<String>) -> Self {
+impl Sponge {
+    // The arity-4 geometry written out: 4 * (arity - 1) absorbed, 4 * arity
+    // produced. Both Poseidon families are arity 4 and blake3 does not use the
+    // sponge at all, so no caller needs these parameterised -- see
+    // proofman_common::hash_family for the general form.
+    const IN_W: usize = 12;
+    const OUT_W: usize = 16;
+
+    fn new(poseidon2: bool) -> Self {
         Self {
-            name,
+            poseidon2,
             h_cnt: 0,
             hi_cnt: 0,
             out: Vec::new(),
             pending: Vec::new(),
             state: ["0".into(), "0".into(), "0".into(), "0".into()],
-            code: Vec::new(),
-            last_code_printed: 0,
-            arity: merkle_tree_arity,
-            used_vals_per_round_override: None,
             early_rounds_scheme: None,
-            n2b_cnt: 0,
             drain_in_update_state: false,
-            poseidon2: false,
         }
     }
 
-    /// Select the hash family for the emitted transcript chain: `true` emits the
-    /// Poseidon2 sponge (`Poseidon2(4, nOuts)`), `false` (default) emits Poseidon1
-    /// (`Poseidon(nOuts)`). Must be set before any `put`/`get_*` call.
-    pub fn set_poseidon2(&mut self, value: bool) {
-        self.poseidon2 = value;
-    }
-
-    /// Enable draining unused outputs of the previous hash BEFORE emitting the
-    /// next one (matches GL `stark_verifier.circom.ejs` Transcript behaviour).
-    pub fn set_drain_in_update_state(&mut self, value: bool) {
-        self.drain_in_update_state = value;
-    }
-
-    /// Set a per-round override for how many output fields are "used" (all others
-    /// get `_ <== ...` drain lines). Used by the global-challenge transcript.
-    pub fn set_used_vals_override(&mut self, overrides: Vec<usize>) {
-        self.used_vals_per_round_override = Some(overrides);
-    }
-
-    /// Set an early-rounds scheme:
-    /// rounds < `threshold` → `early_used`, remaining → `late_used`.
-    pub fn set_early_rounds_override(&mut self, threshold: usize, early_used: usize, late_used: usize) {
-        self.early_rounds_scheme = Some((threshold, early_used, late_used));
-    }
-
-    // ── Internal helpers ──────────────────────────────────────────────────────
-
-    fn signal_name(&self, idx: usize) -> String {
-        match &self.name {
-            Some(n) => format!("transcriptHash_{}_{idx}", n),
+    fn signal_name(name: Suffix, idx: usize) -> String {
+        match name {
+            Some(n) => format!("transcriptHash_{n}_{idx}"),
             None => format!("transcriptHash_{idx}"),
         }
     }
 
-    /// Poseidon1 absorbs 12 inputs per round (in[12] + capacity[4] = state 16).
-    fn input_width(&self) -> usize {
-        12
+    fn absorb(&mut self, name: Suffix, code: &mut Vec<String>, a: String) {
+        self.out.clear();
+        self.pending.push(a);
+        if self.pending.len() == Self::IN_W {
+            self.update_state(name, code);
+        }
     }
 
-    /// Poseidon1 produces 16 output cells per round (full state).
-    fn output_width(&self) -> usize {
-        16
+    fn squeeze1(&mut self, name: Suffix, code: &mut Vec<String>) -> String {
+        if self.out.is_empty() {
+            while self.pending.len() < Self::IN_W {
+                self.pending.push("0".into());
+            }
+            self.update_state(name, code);
+        }
+        let res = self.out.remove(0);
+        self.hi_cnt += 1;
+        res
     }
 
-    /// Flush pending inputs through Poseidon1 and fill `self.out`.
-    fn update_state(&mut self, used_vals: Option<usize>) {
-        let sig = self.signal_name(self.h_cnt);
-        let out_w = self.output_width();
+    /// JS: `if(this.hiCnt < 4*arity) { code.push(`for(var i = ${hiCnt}; ...`) }`
+    fn drain_unused(&mut self, name: Suffix, code: &mut Vec<String>) {
+        if self.hi_cnt >= Self::OUT_W {
+            return;
+        }
+        let out_w = Self::OUT_W;
+        let prev_sig = Self::signal_name(name, self.h_cnt - 1);
+        code.push(format!(
+            "for(var i = {}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}\n",
+            self.hi_cnt
+        ));
+    }
 
-        // ── Drain outputs of PREVIOUS round (stark_verifier mode) ────────────
-        // Mirrors EJS: if(hCnt > 0) { firstUnused = max(hiCnt,4); drain ... }
-        // The first 4 outputs are always consumed as the new state, so we
-        // drain from max(hi_cnt, 4) rather than hi_cnt.
+    fn update_state(&mut self, name: Suffix, code: &mut Vec<String>) {
+        let sig = Self::signal_name(name, self.h_cnt);
+        let out_w = Self::OUT_W;
+
+        // EJS: if(hCnt > 0) { firstUnused = max(hiCnt,4); drain ... }. From
+        // max(hi_cnt, 4) because the first 4 cells are always the new state.
         if self.drain_in_update_state && self.h_cnt > 0 {
             let first_unused = self.hi_cnt.max(4);
             if first_unused < out_w {
-                let prev_sig = self.signal_name(self.h_cnt - 1);
-                self.code.push(format!(
+                let prev_sig = Self::signal_name(name, self.h_cnt - 1);
+                code.push(format!(
                     "for(var i = {first_unused}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values \n    }}"
                 ));
             }
         }
 
-        // Determine how many output fields are "used" (rest get `_ <== ...`).
-        let used = used_vals
-            .or({
-                // Early-rounds override scheme
-                if let Some((threshold, early_used, late_used)) = self.early_rounds_scheme {
-                    Some(if self.h_cnt < threshold { early_used } else { late_used })
+        // Cells beyond `used` get `_ <== ...` drain lines.
+        let used = match self.early_rounds_scheme {
+            Some((threshold, early, late)) => {
+                if self.h_cnt < threshold {
+                    early
                 } else {
-                    None
+                    late
                 }
-            })
-            .unwrap_or(out_w);
+            }
+            None => out_w,
+        };
 
-        // Poseidon1 uses `Poseidon(nOuts)`; Poseidon2 uses `Poseidon2(arity, nOuts)`
-        // with arity fixed to 4 (the width-16 / rate-12 sponge). Both take the same
-        // `[in[12]], [capacity[4]]` arguments, so only the template head differs.
         let hash_call = if self.poseidon2 { format!("Poseidon2(4, {out_w})") } else { format!("Poseidon({out_w})") };
-        self.code.push(format!(
+        code.push(format!(
             "\n    signal {sig}[{out_w}] <== {hash_call}([{pending}], [{state}]);",
             pending = self.pending.join(","),
             state = self.state.join(","),
         ));
 
-        // Drain unused outputs.
         if used < out_w {
-            self.code.push(format!("    for (var i = {used}; i < {out_w}; i++) {{"));
-            self.code.push(format!("        _ <== {sig}[i]; // Unused transcript values"));
-            self.code.push("    }\n".into());
+            code.push(format!("    for (var i = {used}; i < {out_w}; i++) {{"));
+            code.push(format!("        _ <== {sig}[i]; // Unused transcript values"));
+            code.push("    }\n".into());
         }
 
-        // Collect all output slots.
         self.out = (0..out_w).map(|i| format!("{sig}[{i}]")).collect();
-
-        // Update state to first 4 outputs.
         for i in 0..4 {
             self.state[i] = format!("{sig}[{i}]");
         }
@@ -179,110 +152,354 @@ impl Transcript {
         self.hi_cnt = 0;
         self.pending.clear();
     }
+}
 
-    /// Consume one field from the output FIFO, triggering a new round if empty.
-    fn get_fields1(&mut self) -> String {
-        if self.out.is_empty() {
-            // Pad pending to input_width with zeros.
-            while self.pending.len() < self.input_width() {
-                self.pending.push("0".into());
-            }
-            self.update_state(None);
+// ─────────────────────────────────────────────────────────────────────────────
+// BLAKE3 engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+const B3_IV: [u64; 8] =
+    [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19];
+const B3_CHUNK_START: usize = 1;
+const B3_CHUNK_END: usize = 2;
+const B3_PARENT: usize = 4;
+const B3_ROOT: usize = 8;
+
+/// A real BLAKE3 hasher over the absorbed stream, mirroring `blake3core::Hasher`.
+struct Blake3 {
+    /// Fewer than 8 words, never emitted as a block until more input arrives, so
+    /// the stream's final block is always still here when a squeeze roots it.
+    buf: Vec<String>,
+    /// The open chunk's chaining value; `None` means the IV.
+    cv: Option<String>,
+    /// Chaining values of completed subtrees.
+    stack: Vec<String>,
+    chunk_blocks: usize,
+    chunk_counter: usize,
+    chunks_done: usize,
+    /// The current 8-word XOF output block, while still valid.
+    xof: Option<String>,
+    xof_offset: usize,
+    ob: usize,
+    sig_cnt: usize,
+}
+
+impl Blake3 {
+    /// Words per compression. Not a sponge rate: the chaining value carries the
+    /// capacity, the block does not.
+    const BLOCK_WORDS: usize = 8;
+    const CHUNK_BLOCKS: usize = 16;
+
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            cv: None,
+            stack: Vec::new(),
+            chunk_blocks: 0,
+            chunk_counter: 0,
+            chunks_done: 0,
+            xof: None,
+            xof_offset: 0,
+            ob: 0,
+            sig_cnt: 0,
         }
-        let res = self.out.remove(0);
-        self.hi_cnt += 1;
-        res
     }
 
-    fn _add1(&mut self, a: String) {
-        self.out.clear();
-        self.pending.push(a);
-        if self.pending.len() == self.input_width() {
-            self.update_state(None);
+    fn signal_name(&mut self, name: Suffix, kind: &str) -> String {
+        let n = self.sig_cnt;
+        self.sig_cnt += 1;
+        match name {
+            Some(s) => format!("b3{kind}_{s}_{n}"),
+            None => format!("b3{kind}_{n}"),
+        }
+    }
+
+    fn cv_expr(&self) -> String {
+        match &self.cv {
+            Some(s) => s.clone(),
+            None => format!("[{}]", B3_IV.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
+        }
+    }
+
+    fn absorb(&mut self, name: Suffix, code: &mut Vec<String>, a: String) {
+        // Emit a block only once more input is known to follow.
+        if self.buf.len() == Self::BLOCK_WORDS {
+            self.flush_block(name, code);
+        }
+        self.buf.push(a);
+        // The stream changed, so XOF material from the old prefix is stale.
+        self.xof = None;
+        self.xof_offset = 0;
+        self.ob = 0;
+    }
+
+    fn squeeze1(&mut self, name: Suffix, code: &mut Vec<String>) -> String {
+        if self.xof.is_none() {
+            self.ob = 0;
+        } else if self.xof_offset == Self::BLOCK_WORDS {
+            // Only the output-block counter advances; the root node is unchanged.
+            self.ob += 1;
+        }
+        if self.xof.is_none() || self.xof_offset == Self::BLOCK_WORDS {
+            let ob = self.ob;
+            self.xof = Some(self.finalize(name, code, ob));
+            self.xof_offset = 0;
+        }
+        let sig = self.xof.clone().expect("blake3 xof block");
+        let i = self.xof_offset;
+        self.xof_offset += 1;
+        format!("{sig}[{i}]")
+    }
+
+    /// Emit the buffered words as a non-final block, closing the chunk at 16.
+    fn flush_block(&mut self, name: Suffix, code: &mut Vec<String>) {
+        let bi = self.chunk_blocks;
+        let mut fl = 0;
+        if bi == 0 {
+            fl += B3_CHUNK_START;
+        }
+        if bi == Self::CHUNK_BLOCKS - 1 {
+            // Every chunk's 16th block carries CHUNK_END, not only the stream's.
+            fl += B3_CHUNK_END;
+        }
+        let cv = self.cv_expr();
+        let words = self.buf.join(", ");
+        let ctr = self.chunk_counter;
+        let sig = self.signal_name(name, "blk");
+        code.push(format!("\n    signal {sig}[8] <== Blake3AbsorbBlock()({cv}, [{words}], 64, {ctr}, {fl});"));
+        self.buf.clear();
+        self.chunk_blocks += 1;
+        self.cv = Some(sig.clone());
+
+        if self.chunk_blocks == Self::CHUNK_BLOCKS {
+            // Push the chunk's cv, merging while the completed count is even.
+            // That keeps the stack a canonical binary decomposition.
+            let mut node = sig;
+            let mut total = self.chunks_done + 1;
+            while total.is_multiple_of(2) {
+                let l = self.stack.pop().expect("blake3 cv stack underflow");
+                node = self.emit_parent(name, code, &l, &node);
+                total /= 2;
+            }
+            self.stack.push(node);
+            self.chunks_done += 1;
+            self.chunk_counter += 1;
+            self.chunk_blocks = 0;
+            self.cv = None;
+        }
+    }
+
+    fn emit_parent(&mut self, name: Suffix, code: &mut Vec<String>, left: &str, right: &str) -> String {
+        let p = self.signal_name(name, "par");
+        code.push(format!("\n    signal {p}[8] <== Blake3Parent()({left}, {right}, {B3_PARENT});"));
+        p
+    }
+
+    /// Root a **copy** of the chain and emit 8 XOF words at output block `ob`.
+    /// Must not mutate the absorb state: ROOT is terminal in BLAKE3, but the
+    /// transcript keeps absorbing after a challenge.
+    fn finalize(&mut self, name: Suffix, code: &mut Vec<String>, ob: usize) -> String {
+        let len = 8 * self.buf.len();
+        let mut fl = B3_CHUNK_END;
+        if self.chunk_blocks == 0 {
+            fl += B3_CHUNK_START;
+        }
+        let mut words = self.buf.clone();
+        while words.len() < Self::BLOCK_WORDS {
+            words.push("0".into());
+        }
+        let w = words.join(", ");
+        let cv = self.cv_expr();
+
+        if self.stack.is_empty() {
+            // Single chunk: the held-back block is the root node.
+            let sig = self.signal_name(name, "fin");
+            let root = fl + B3_ROOT;
+            code.push(format!("\n    signal {sig}[8] <== Blake3FinalizeChunk()({cv}, [{w}], {len}, {root}, {ob});"));
+            sig
+        } else {
+            // Multi-chunk: close this chunk without ROOT, merge a copy of the
+            // stack, and the final parent is the root node.
+            let close = self.signal_name(name, "cls");
+            let ctr = self.chunk_counter;
+            code.push(format!("\n    signal {close}[8] <== Blake3AbsorbBlock()({cv}, [{w}], {len}, {ctr}, {fl});"));
+            let mut node = close;
+            for si in (1..self.stack.len()).rev() {
+                let l = self.stack[si].clone();
+                node = self.emit_parent(name, code, &l, &node);
+            }
+            let l0 = self.stack[0].clone();
+            let sig = self.signal_name(name, "fin");
+            code.push(format!("\n    signal {sig}[8] <== Blake3FinalizeParent()({l0}, {node}, {ob});"));
+            sig
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Engine dispatch
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Engine {
+    Sponge(Sponge),
+    Blake3(Blake3),
+}
+
+impl Engine {
+    fn new(family: &str) -> Self {
+        match family {
+            "Poseidon1" => Engine::Sponge(Sponge::new(false)),
+            "Poseidon2" => Engine::Sponge(Sponge::new(true)),
+            "blake3" => Engine::Blake3(Blake3::new()),
+            fam => panic!("unknown hash family: {fam}"),
+        }
+    }
+
+    fn absorb(&mut self, name: Suffix, code: &mut Vec<String>, a: String) {
+        match self {
+            Engine::Sponge(s) => s.absorb(name, code, a),
+            Engine::Blake3(b) => b.absorb(name, code, a),
+        }
+    }
+
+    fn squeeze1(&mut self, name: Suffix, code: &mut Vec<String>) -> String {
+        match self {
+            Engine::Sponge(s) => s.squeeze1(name, code),
+            Engine::Blake3(b) => b.squeeze1(name, code),
+        }
+    }
+
+    /// blake3 has no output FIFO — unread XOF words are never materialised as
+    /// signals — so there is nothing to drain.
+    fn drain_unused(&mut self, name: Suffix, code: &mut Vec<String>) {
+        match self {
+            Engine::Sponge(s) => s.drain_unused(name, code),
+            Engine::Blake3(_) => {}
+        }
+    }
+
+    /// The four words of a digest-shaped read. Both engines consume; for blake3
+    /// that reads `XOF[0..4]`, what the prover's `TranscriptGL::getState`
+    /// returns. `getState` there does not consume, which is unobservable only
+    /// while the read starts at offset 0 — the assert pins that.
+    fn state_words(&mut self, name: Suffix, code: &mut Vec<String>) -> [String; 4] {
+        if let Engine::Blake3(b) = self {
+            debug_assert!(
+                b.xof.is_none() && b.xof_offset == 0,
+                "blake3 get_state must read a fresh XOF to match TranscriptGL::getState"
+            );
+        }
+        [self.squeeze1(name, code), self.squeeze1(name, code), self.squeeze1(name, code), self.squeeze1(name, code)]
+    }
+
+    /// Sponge-only knobs are no-ops for blake3 rather than errors: callers set
+    /// them uniformly, before knowing the family.
+    fn sponge_mut(&mut self) -> Option<&mut Sponge> {
+        match self {
+            Engine::Sponge(s) => Some(s),
+            Engine::Blake3(_) => None,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transcript
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub struct Transcript {
+    pub name: Option<String>,
+    engine: Engine,
+    code: Vec<String>,
+    /// First code line not yet returned by `get_code`.
+    last_code_printed: usize,
+    /// Counter for `transcriptN2b_N` names emitted by `get_permutations`.
+    n2b_cnt: usize,
+}
+
+impl Transcript {
+    pub fn new(name: Option<String>, family: &str) -> Self {
+        Self { name, engine: Engine::new(family), code: Vec::new(), last_code_printed: 0, n2b_cnt: 0 }
+    }
+
+    /// See [`Sponge::drain_in_update_state`].
+    pub fn set_drain_in_update_state(&mut self, value: bool) {
+        if let Some(s) = self.engine.sponge_mut() {
+            s.drain_in_update_state = value;
+        }
+    }
+
+    /// See [`Sponge::early_rounds_scheme`].
+    pub fn set_early_rounds_override(&mut self, threshold: usize, early_used: usize, late_used: usize) {
+        if let Some(s) = self.engine.sponge_mut() {
+            s.early_rounds_scheme = Some((threshold, early_used, late_used));
         }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// Consume one field from the output FIFO (public version for use by other modules).
     pub fn get_fields1_pub(&mut self) -> String {
-        self.get_fields1()
+        let name = self.name.as_deref();
+        self.engine.squeeze1(name, &mut self.code)
     }
 
-    /// Add a single signal `a` to the pending inputs.
     pub fn put_single(&mut self, a: &str) {
-        self._add1(a.into());
+        let name = self.name.as_deref();
+        self.engine.absorb(name, &mut self.code, a.into());
     }
 
-    /// Add `n` elements `a[0]..a[n-1]` to pending inputs.
     pub fn put(&mut self, a: &str, n: usize) {
         for i in 0..n {
-            self._add1(format!("{a}[{i}]"));
+            self.put_single(&format!("{a}[{i}]"));
         }
     }
 
-    /// Add a 2D slice `a[i][j]` for `i in 0..l`, `j in 0..m`.
     pub fn put_2d(&mut self, a: &str, l: usize, m: usize) {
         for i in 0..l {
             for j in 0..m {
-                self._add1(format!("{a}[{i}][{j}]"));
+                self.put_single(&format!("{a}[{i}][{j}]"));
             }
         }
     }
 
-    /// Emit `v <== [f1, f2, f3];` consuming three output fields.
+    /// Emit `v <== [f0, f1, f2];`.
     pub fn get_field(&mut self, v: &str) {
-        let f0 = self.get_fields1();
-        let f1 = self.get_fields1();
-        let f2 = self.get_fields1();
+        let f0 = self.get_fields1_pub();
+        let f1 = self.get_fields1_pub();
+        let f2 = self.get_fields1_pub();
         self.code.push(format!("{v} <== [{f0}, {f1}, {f2}];"));
     }
 
-    /// Emit `v <== [f0, f1, f2, f3];` consuming four output fields.
+    /// Emit `v <== [f0, f1, f2, f3];`.
     pub fn get_state(&mut self, v: &str) {
-        let f0 = self.get_fields1();
-        let f1 = self.get_fields1();
-        let f2 = self.get_fields1();
-        let f3 = self.get_fields1();
+        let name = self.name.as_deref();
+        let [f0, f1, f2, f3] = self.engine.state_words(name, &mut self.code);
         self.code.push(format!("{v} <== [{f0}, {f1}, {f2}, {f3}];"));
     }
 
-    /// Consume `n_fields` output fields from the transcript, emit a
-    /// `Num2Bits_strict()` signal for each, drain any remaining outputs from
-    /// the last hash round, then emit the bit-assignment loops that fill `v`.
+    /// Mirrors `getPermutations(v, n, nBits)` from the GL EJS `Transcript`:
+    /// squeeze enough fields, `Num2Bits_strict` each, drain what the engine left
+    /// unread, then emit the loops that fill `v`.
     ///
-    /// Mirrors `getPermutations(v, n, nBits)` from the GL EJS `Transcript` class.
-    ///
-    /// - `v`          — circom signal name of the 2-D output array (e.g. `"queriesFRI"`)
-    /// - `n_queries`  — first dimension count (e.g. `starkStruct.nQueries`)
-    /// - `query_bits` — second dimension / bits per query (e.g. `starkStruct.steps[0].nBits`)
+    /// - `v`          — 2-D output array, e.g. `"queriesFRI"`
+    /// - `n_queries`  — first dimension, e.g. `starkStruct.nQueries`
+    /// - `query_bits` — bits per query, e.g. `starkStruct.steps[0].nBits`
     pub fn get_permutations(&mut self, v: &str, n_queries: usize, query_bits: usize) {
         let total_bits = n_queries * query_bits;
         // NFields = floor((totalBits - 1) / 63) + 1
         let n_fields = (total_bits - 1) / 63 + 1;
-        let out_w = self.output_width();
 
-        // ── Emit one Num2Bits_strict per required field ───────────────────────
         let mut n2b_names: Vec<String> = Vec::with_capacity(n_fields);
         for _ in 0..n_fields {
-            let f = self.get_fields1();
+            let f = self.get_fields1_pub();
             let name = format!("transcriptN2b_{}", self.n2b_cnt);
             self.n2b_cnt += 1;
             self.code.push(format!("signal {{binary}} {name}[64] <== Num2Bits_strict()({f});"));
             n2b_names.push(name);
         }
 
-        // ── Drain remaining unused outputs of the last hash round ─────────────
-        // JS: if(this.hiCnt < 4*arity) { code.push(`for(var i = ${hiCnt}; ...`) }
-        if self.hi_cnt < out_w {
-            let prev_sig = self.signal_name(self.h_cnt - 1);
-            self.code.push(format!(
-                "for(var i = {}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}\n",
-                self.hi_cnt
-            ));
-        }
+        let name = self.name.as_deref();
+        self.engine.drain_unused(name, &mut self.code);
 
-        // ── Bit-assignment loops ──────────────────────────────────────────────
         self.code.push(
             "// From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions"
                 .into(),
@@ -291,7 +508,7 @@ impl Transcript {
         self.code.push("var b = 0; // Bit number ".into());
 
         for (i, name) in n2b_names.iter().enumerate() {
-            // Bits consumed from this field: 63 for all but the last, remainder for last.
+            // 63 bits from each field but the last, the remainder from that one.
             let bits_this_field = if i + 1 == n_fields { total_bits - 63 * i } else { 63 };
 
             self.code.push(format!(
@@ -308,8 +525,8 @@ impl Transcript {
         }
     }
 
-    /// Return all code lines produced since the last `get_code()` call,
-    /// indented by 4 spaces (matching the JS `getCode()` behaviour).
+    /// Code lines produced since the last `get_code()`, indented 4 spaces to
+    /// match the JS `getCode()`.
     pub fn get_code(&mut self) -> String {
         let lines: Vec<String> = self.code[self.last_code_printed..]
             .iter()
@@ -330,7 +547,7 @@ mod tests {
     fn get_permutations_small_single_round() {
         // Poseidon1: input_width=12, output_width=16
         // n_queries=1, query_bits=3 → total_bits=3, n_fields=1
-        let mut t = Transcript::new(4, Some("friQueries".into()));
+        let mut t = Transcript::new(Some("friQueries".into()), "Poseidon1");
         // Prime with 3 items (doesn't fill input_width=12, so no Poseidon yet).
         t.put("challengeFRIQueries", 3);
         // Call get_permutations — triggers round 0 with pending padded to 12.
@@ -358,8 +575,7 @@ mod tests {
 
     #[test]
     fn poseidon2_emits_poseidon2_template() {
-        let mut t = Transcript::new(4, Some("friQueries".into()));
-        t.set_poseidon2(true);
+        let mut t = Transcript::new(Some("friQueries".into()), "Poseidon2");
         t.put("challengeFRIQueries", 3);
         t.get_permutations("queriesFRI", 1, 3);
         let code = t.get_code();
@@ -377,7 +593,7 @@ mod tests {
     fn get_permutations_last_field_is_63_bits() {
         // total_bits must = 63 * n_fields exactly → last field bits = 63.
         // n_queries=1, query_bits=63 → total_bits=63, n_fields=1.
-        let mut t = Transcript::new(4, Some("friQueries".into()));
+        let mut t = Transcript::new(Some("friQueries".into()), "Poseidon1");
         t.get_permutations("queriesFRI", 1, 63);
         let code = t.get_code();
         // bits_this_field=63 → _ <== transcriptN2b_0[63]; // Unused last bit
@@ -392,7 +608,7 @@ mod tests {
         // Reproduces the calculateFRIQueries0 template for FibonacciSquare:
         //   nQueries=229, steps[0].nBits=23, powBits=16 (nonce present)
         // With Poseidon1: input_width=12, output_width=16.
-        let mut t = Transcript::new(4, Some("friQueries".into()));
+        let mut t = Transcript::new(Some("friQueries".into()), "Poseidon1");
         t.put("challengeFRIQueries", 3);
         t.put_single("nonce");
         t.get_permutations("queriesFRI", 229, 23);
@@ -433,5 +649,62 @@ mod tests {
 
         // Comment line present.
         assert!(code.contains("From each transcript hash converted to bits"), "comment missing");
+    }
+
+    // ── blake3 emitter: semantic validation ──────────────────────────────────
+
+    /// Drive the blake3 emitter through a script that crosses a chunk boundary
+    /// and squeezes several times, and check the shape of what comes out.
+    ///
+    /// The script is all `get_field` on purpose. `get_state` consumes in the
+    /// emitter but not in `TranscriptGL`; that is unobservable in production
+    /// because every `get_state` call site is terminal.
+    #[test]
+    fn blake3_emitter_emits_a_real_chunk_chain() {
+        // (words to absorb, then that many challenge reads)
+        const SCRIPT: &[(usize, usize)] = &[(3, 1), (5, 1), (120, 1), (8, 3), (1, 1)];
+
+        let total: usize = SCRIPT.iter().map(|(n, _)| n).sum();
+        // 137 words exceeds one 128-word BLAKE3 chunk, so the chain must go
+        // multi-chunk partway through and the squeeze must move from rooting a
+        // held-back block to rooting a parent.
+        assert_eq!(total, 137);
+
+        let mut t = Transcript::new(None, "blake3");
+
+        let mut w = 0usize;
+        let mut chal = 0usize;
+        for (n, gets) in SCRIPT {
+            for _ in 0..*n {
+                t.put_single(&format!("w[{w}]"));
+                w += 1;
+            }
+            for _ in 0..*gets {
+                t.get_field(&format!("c{chal}"));
+                chal += 1;
+            }
+        }
+        let body = t.get_code();
+
+        let absorbs = body.matches("Blake3AbsorbBlock()(").count();
+        let fin_chunk = body.matches("Blake3FinalizeChunk()(").count();
+        let fin_parent = body.matches("Blake3FinalizeParent()(").count();
+
+        // Both squeeze shapes must appear: single-chunk early, parent-rooted
+        // once the stream passes 128 words.
+        assert!(fin_chunk > 0, "no single-chunk squeeze:\n{body}");
+        assert!(fin_parent > 0, "no parent-rooted squeeze:\n{body}");
+
+        // Absorption must dominate. A squeeze per absorbed word would mean the
+        // rate-4 sponge shape had crept back in.
+        assert!(absorbs > (fin_chunk + fin_parent) * 2, "absorbs={absorbs} finals={}", fin_chunk + fin_parent);
+
+        // Every absorbed block is full and carries the chunk flags, never a
+        // partial one -- the emitter holds the tail back for the root.
+        assert!(body.contains(", 64, "), "absorbed blocks are not full:\n{body}");
+
+        // The sponge forms must be gone entirely.
+        assert!(!body.contains("Blake3Sponge"), "got:\n{body}");
+        assert!(!body.contains("Poseidon"), "got:\n{body}");
     }
 }

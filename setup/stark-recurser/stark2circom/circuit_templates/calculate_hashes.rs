@@ -40,11 +40,10 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     // The contribution hash must use the same family as the proof being recursed
     // (carried in globalInfo.hash). Poseidon2 ⇒ `Poseidon2(4, …)`, else Poseidon1
     // (`Poseidon(…)`). Defaults to Poseidon2 (the system default) when absent.
-    let poseidon2 = vadcop_info.get("hash").and_then(|v| v.as_str()).map(|s| s == "Poseidon2").unwrap_or(true);
+    let hash_family = vadcop_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2");
 
     // ── Drive the transcript (this part must stay imperative) ─────────────────
-    let mut transcript = Transcript::new(arity, None);
-    transcript.set_poseidon2(poseidon2);
+    let mut transcript = Transcript::new(None, hash_family);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
     for (j, av) in air_values_map.iter().enumerate() {
@@ -68,7 +67,13 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
             y_fields.push(transcript.get_fields1_pub());
         }
     } else {
-        // GL width 16 (Poseidon1 or Poseidon2 per `poseidon2`): 12 inputs + 4 capacity → 16 cells.
+        // Poseidon families: 12 inputs + 4 capacity → 16 cells.
+        //
+        // blake3 no longer has a rate: its transcript is a real BLAKE3 chain, so
+        // the `initial_fields` below come out of the emitter correctly, but the
+        // explicit lattice chain further down still assumes a fixed-width sponge
+        // round. Left unsupported rather than silently wrong -- see the assert
+        // after `chain` is built.
         let stage1_count = air_values_map.iter().filter(|v| v["stage"].as_u64() == Some(1)).count();
         let input_w = 12;
         out_w = 16;
@@ -89,6 +94,16 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
         }
     }
 
+    // The lattice chain emits fixed-width sponge rounds, which blake3 does not
+    // have. It is only reachable when latticeSize > out_w; fail loudly rather
+    // than emit a call to a template that no longer exists.
+    assert!(
+        hash_family != "blake3" || chain.is_empty(),
+        "calculate_hashes: the blake3 lattice chain is not implemented \
+         (latticeSize={lattice_size} would need {} rounds)",
+        chain.len() + 1
+    );
+
     // Snapshot the generated transcript code AFTER all put/get calls are done.
     let transcript_code = transcript.get_code();
 
@@ -107,7 +122,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     ctx.insert("lattice_size", &lattice_size);
     ctx.insert("transcript_code", &transcript_code);
     ctx.insert("unused_air_values", &unused_air_values);
-    ctx.insert("poseidon2", &poseidon2);
+    ctx.insert("hash_family", &hash_family);
 
     if is_ec {
         let curve_constants = &vadcop_info["curveConstants"];

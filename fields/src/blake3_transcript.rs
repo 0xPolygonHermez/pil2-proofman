@@ -8,8 +8,8 @@
 //! Why this is not a `Transcript<F, H: Hash<F>>`: that type is a sponge, with
 //! `WIDTH`/`RATE`/`CAPACITY` and a state carried *as block content*. BLAKE3
 //! carries its state in the chaining value, which no sponge signature can
-//! express — `Blake3_8` only fits `Hash` by pretending BLAKE3 is a width-8
-//! permutation, which is exactly the construction this replaces.
+//! express, so it gets its own type rather than a `Hash` impl pretending BLAKE3
+//! is a width-8 permutation.
 
 use alloc::vec::Vec;
 

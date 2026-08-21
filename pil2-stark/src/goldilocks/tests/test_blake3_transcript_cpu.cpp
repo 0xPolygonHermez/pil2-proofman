@@ -54,7 +54,7 @@ std::vector<uint64_t> makeStream(uint32_t n)
 // computes and which is itself b3sum-verified. Cheap oracle at every length.
 TEST(Blake3Transcript, FinalizeMatchesHashLe64)
 {
-    for (uint32_t n : {0u, 1u, 7u, 8u, 9u, 127u, 128u, 129u, 200u, 256u, 257u, 300u, 641u})
+    for (uint32_t n : {0u, 1u, 7u, 8u, 9u, 127u, 128u, 129u, 200u, 256u, 257u, 300u, 385u, 641u})
     {
         std::vector<uint64_t> in = makeStream(n);
 
