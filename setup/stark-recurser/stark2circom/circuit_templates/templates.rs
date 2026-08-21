@@ -497,7 +497,7 @@ pub fn gen_vadcop_final(
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("verify_global_challenge", &gen_verify_global_challenge(stark_info_0, vadcop_info));
-    ctx.insert("verify_global_constraints", &gen_verify_global_constraints(stark_info_0, vadcop_info));
+    ctx.insert("verify_global_constraints", &gen_verify_global_constraints(vadcop_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0 || !proof_values_map.is_empty()));

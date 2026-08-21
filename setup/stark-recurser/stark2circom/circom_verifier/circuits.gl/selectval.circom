@@ -17,13 +17,22 @@ template SelectValue(arity, nLastLevels, num_nodes_level) {
 
         component selected_values[next_n];
 
-        for (var j = 0; j < next_n; j++) {
-            selected_values[j] = SelectValue1();
-            selected_values[j].key <== key[0];
-            for (var a = 0; a < arity; a++) {
-                selected_values[j].values[a] <== values[arity * j + a];
+        if (arity == 2) {
+            for (var j = 0; j < next_n; j++) {
+                for (var t = 0; t < 4; t++) {
+                    mNext.values[j][t] <== values[2 * j][t]
+                        + key[0][0] * (values[2 * j + 1][t] - values[2 * j][t]);
+                }
             }
-            mNext.values[j] <== selected_values[j].selected_value;
+        } else {
+            for (var j = 0; j < next_n; j++) {
+                selected_values[j] = SelectValue1();
+                selected_values[j].key <== key[0];
+                for (var a = 0; a < arity; a++) {
+                    selected_values[j].values[a] <== values[arity * j + a];
+                }
+                mNext.values[j] <== selected_values[j].selected_value;
+            }
         }
 
         for (var k = next_n; k < arity**(nLastLevels - 1); k++) {
