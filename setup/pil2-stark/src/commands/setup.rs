@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 
 use pil2_pilout::pilout::{self as pb};
@@ -141,12 +141,42 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 fs::create_dir_all(&files_dir)?;
 
                 let const_path = files_dir.join(format!("{}.const", item.air_name));
+
+                // A path that cannot produce `.const` must drop any file an earlier run
+                // left, or the `const_path.exists()` check below builds the const tree
+                // and verkey from stale fixed columns and still exits 0. The verkey pair
+                // goes too: it is only rewritten when `.const` exists.
+                let drop_stale_const = |why: &str| -> Result<()> {
+                    let mut dropped = false;
+                    for stale in [
+                        const_path.clone(),
+                        files_dir.join(format!("{}.verkey.json", item.air_name)),
+                        files_dir.join(format!("{}.verkey.bin", item.air_name)),
+                    ] {
+                        if stale.exists() {
+                            fs::remove_file(&stale)
+                                .with_context(|| format!("removing stale {} ({})", stale.display(), why))?;
+                            dropped = true;
+                        }
+                    }
+                    if dropped {
+                        tracing::warn!(
+                            "Air '{}': dropped stale .const/.verkey in {} — {}",
+                            item.air_name,
+                            files_dir.display(),
+                            why
+                        );
+                    }
+                    Ok(())
+                };
+
                 if let Some(ref fd) = fixed_dir {
                     let src = Path::new(fd).join(format!("{}.fixed", item.air_name));
                     if src.exists() {
                         fs::copy(&src, &const_path)?;
                     } else {
                         tracing::warn!("Fixed file not found: {}, skipping copy", src.display());
+                        drop_stale_const("its .fixed source is missing")?;
                     }
                 } else {
                     // No --fixed-dir: try to generate .const from inline fixed_cols in the pilout.
@@ -158,6 +188,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
                     if air.fixed_cols.is_empty() {
                         tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
+                        drop_stale_const("the air has no fixed columns")?;
                     } else {
                         let has_external = air.fixed_cols.iter().any(|fc| fc.values.is_empty());
                         if has_external {
@@ -167,6 +198,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                              Provide --fixed-dir (-u) to supply the pre-computed .const file.",
                                 item.air_name
                             );
+                            drop_stale_const("no --fixed-dir and its values are not inline")?;
                         } else {
                             // All fixed columns are inline — write .const directly.
                             crate::io::fixed_cols::write_const_file(
