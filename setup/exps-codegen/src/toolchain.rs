@@ -21,9 +21,9 @@ pub struct Toolchain {
 /// A bare name only works when the CUDA bin dir is on PATH, which a plain shell
 /// often lacks -- the generator then failed before compiling anything.
 pub fn cuda_bin(name: &str) -> std::path::PathBuf {
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            let p = std::path::Path::new(dir).join(name);
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let p = dir.join(name);
             if p.is_file() {
                 return p;
             }
@@ -42,27 +42,27 @@ pub fn cuda_bin(name: &str) -> std::path::PathBuf {
     name.into()
 }
 
+/// Is `nvcc` resolvable the way the generator resolves it (PATH, then
+/// `$CUDA_HOME/bin`, then `/usr/local/cuda/bin`)? The gate callers use before
+/// requesting codegen, so it cannot disagree with what `Toolchain` would find.
+pub fn nvcc_present() -> bool {
+    cuda_bin("nvcc").is_file()
+}
+
 /// Host GPU compute capability as an arch number (e.g. 120). Tries
-/// `__nvcc_device_query` on PATH, then next to nvcc in the usual CUDA
-/// locations, then `nvidia-smi --query-gpu=compute_cap` ("12.0" -> 120).
-/// A bare `__nvcc_device_query` needs /usr/local/cuda/bin on PATH, which a
-/// plain shell often lacks -- that silently built all six major archs.
+/// `__nvcc_device_query` resolved like every other CUDA tool (`cuda_bin`), then
+/// `nvidia-smi --query-gpu=compute_cap` ("12.0" -> 120). A bare
+/// `__nvcc_device_query` needs /usr/local/cuda/bin on PATH, which a plain
+/// shell often lacks -- that silently built all six major archs.
 fn detect_host_arch() -> Option<u32> {
     let digits = |txt: &str| -> Option<u32> {
         let d: String = txt.lines().next().unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect();
         d.parse::<u32>().ok().filter(|a| (50..2000).contains(a))
     };
-    let mut candidates: Vec<std::path::PathBuf> = vec!["__nvcc_device_query".into()];
-    if let Ok(p) = std::env::var("CUDA_HOME") {
-        candidates.push(std::path::Path::new(&p).join("bin/__nvcc_device_query"));
-    }
-    candidates.push("/usr/local/cuda/bin/__nvcc_device_query".into());
-    for c in candidates {
-        if let Ok(out) = Command::new(&c).output() {
-            if out.status.success() {
-                if let Some(a) = digits(&String::from_utf8_lossy(&out.stdout)) {
-                    return Some(a);
-                }
+    if let Ok(out) = Command::new(cuda_bin("__nvcc_device_query")).output() {
+        if out.status.success() {
+            if let Some(a) = digits(&String::from_utf8_lossy(&out.stdout)) {
+                return Some(a);
             }
         }
     }

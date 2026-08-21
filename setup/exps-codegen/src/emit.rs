@@ -232,6 +232,26 @@ fn store_qq(out_dim: u64) -> &'static str {
     }
 }
 
+/// Host-side check at the top of every launcher. `exps_min_scratch()` is the
+/// contract with the loader: the per-launch table plus (chunked kernels) one
+/// wave of cross-chunk temps. Below it the table carve-out in the prologue
+/// underflows and the kernels would read/write past the scratch buffer, so
+/// fail loudly instead.
+fn scratch_guard(sym: &str, table_words: u64, total_slots: u64) -> String {
+    let need = if total_slots > 0 {
+        format!("{table_words}ull + {total_slots}ull*{GEN_BLK}ull")
+    } else {
+        format!("{table_words}ull")
+    };
+    format!(
+        r#"  if (scratchElems < {need}) {{
+    fprintf(stderr, "[exps] {sym}: scratch too small (%llu < %llu elements)\n",
+        (unsigned long long)scratchElems, (unsigned long long)({need}));
+    abort();
+  }}"#
+    )
+}
+
 /// The fixed C-ABI the loader dlsym's from each `.exps.so`. `exps_min_scratch`
 /// covers one wave of cross-chunk temps plus the per-launch table (powers +
 /// hoisted invariants).
@@ -338,13 +358,15 @@ fn single_kernel_tu(sym: &str, kernel: &str, launcher_body: &str, ir: &Ir) -> St
 {kernel}
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
+{guard}
 {prologue}
 {launcher_body}
 }}
 #undef OFF
 {}
 "#,
-        c_abi_exports(sym, 0, ir)
+        c_abi_exports(sym, 0, ir),
+        guard = scratch_guard(sym, ir.table_words(), 0),
     )
 }
 
@@ -399,14 +421,7 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
   const uint64_t BLK = {GEN_BLK}ull;
-  // exps_min_scratch() is the contract with the loader: one wave of cross-chunk
-  // temps plus the per-launch table. Below it the table carve-out underflows and
-  // the chunk kernels would write past the scratch buffer, so fail loudly.
-  if (scratchElems < {table_words}ull + {total_slots}ull*BLK) {{
-    fprintf(stderr, "[exps] {sym}: scratch too small (%llu < %llu elements)\n",
-        (unsigned long long)scratchElems, (unsigned long long)({table_words}ull + {total_slots}ull*BLK));
-    abort();
-  }}
+{guard}
 {prologue}
   uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
   if (grid > 512ull) grid = 512ull;
@@ -420,7 +435,7 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
         decls.join("\n"),
         calls.join("\n"),
         c_abi_exports(sym, total_slots, ir),
-        table_words = ir.table_words(),
+        guard = scratch_guard(sym, ir.table_words(), total_slots),
     )
 }
 

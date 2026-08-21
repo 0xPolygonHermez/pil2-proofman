@@ -25,6 +25,8 @@ mod model;
 mod opt;
 mod toolchain;
 
+pub use toolchain::nvcc_present;
+
 use anyhow::{Context, Result};
 use ir::{plan_chunks, UnhandledOperand};
 use model::{ExpressionsInfo, StarkInfo};

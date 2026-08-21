@@ -53,11 +53,12 @@ pub struct SetupOptions {
     pub exps_stark_src: Option<String>,
 }
 
-/// True if the CUDA `nvcc` compiler is resolvable on PATH. Used to gate
-/// `--gen-exps` so a setup run on a machine without the CUDA toolchain skips
-/// expression-kernel codegen cleanly instead of erroring mid-compile.
+/// True if the CUDA `nvcc` compiler is resolvable the way the expression
+/// codegen resolves it (PATH, `$CUDA_HOME/bin`, `/usr/local/cuda/bin`). Used
+/// to gate `--gen-exps` so a setup run on a machine without the CUDA toolchain
+/// skips expression-kernel codegen cleanly instead of erroring mid-compile.
 pub(crate) fn nvcc_present() -> bool {
-    which::which("nvcc").is_ok()
+    proofman_exps_codegen::nvcc_present()
 }
 
 /// Run the non-recursive setup pipeline.
@@ -411,10 +412,11 @@ mod tests {
     #[test]
     fn nvcc_present_returns_bool_without_panicking() {
         // Can't assert true/false (host-dependent), but it must not panic and
-        // must agree with whether `nvcc` is actually resolvable on PATH.
+        // must never be false when nvcc is on PATH (the generator looks there first).
         let got = nvcc_present();
-        let actual = which::which("nvcc").is_ok();
-        assert_eq!(got, actual);
+        if which::which("nvcc").is_ok() {
+            assert!(got);
+        }
     }
 
     #[test]
