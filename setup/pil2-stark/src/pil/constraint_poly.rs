@@ -88,9 +88,7 @@ pub fn generate_constraint_polynomial(
             ..Default::default()
         };
 
-        let constraint_id;
-
-        if boundary == "everyFrame" {
+        let constraint_id = if boundary == "everyFrame" {
             let boundary_id =
                 find_or_add_boundary_every_frame(boundaries, constraint.offset_min, constraint.offset_max);
             let zi = Expression {
@@ -107,7 +105,7 @@ pub fn generate_constraint_polynomial(
                 ..Default::default()
             };
             expressions.push(mul_expr);
-            constraint_id = expressions.len() - 1;
+            expressions.len() - 1
         } else if boundary != "everyRow" {
             let boundary_id = find_or_add_boundary(boundaries, boundary);
             let zi = Expression {
@@ -124,11 +122,11 @@ pub fn generate_constraint_polynomial(
                 ..Default::default()
             };
             expressions.push(mul_expr);
-            constraint_id = expressions.len() - 1;
+            expressions.len() - 1
         } else {
             // everyRow: use the original constraint expression directly
-            constraint_id = constraint.e;
-        }
+            constraint.e
+        };
 
         if i == 0 {
             c_exp_id = Some(constraint_id);
