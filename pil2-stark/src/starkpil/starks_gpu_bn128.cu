@@ -286,7 +286,10 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
     if (nCols > 0)
     {
         NTTGoldilocksGPU ntt;
-        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+        // preserve_src: the stage src (N domain) is read again by the stage-2 witness/im-pols expressions and must survive.
+        // The tree nodes are only written by merkletreeTiles after the LDE, so they serve as the staging scratch.
+        size_t scratch_elems = (size_t)tree_size * sizeof(PoseidonBN128GPU::FrElement) / sizeof(gl64_t);
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, /*preserve_src=*/true, (gl64_t*)pNodes, scratch_elems);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         PoseidonBN128GPU::merkletreeTiles(pNodes, (uint64_t*)pSource, nCols, NExtended, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
