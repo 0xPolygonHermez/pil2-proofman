@@ -40,6 +40,11 @@ pub struct GenExpsCmd {
     /// Requires --keep-dir. For inspection / parity checks.
     #[clap(long)]
     pub emit_only: bool,
+
+    /// Disable the Q IR optimizer (CSE, Horner→powers, scheduling); emit the
+    /// expression exactly as the setup wrote it. For A/B comparisons.
+    #[clap(long)]
+    pub no_opt: bool,
 }
 
 impl GenExpsCmd {
@@ -53,6 +58,7 @@ impl GenExpsCmd {
             stark_src: self.stark_src.clone(),
             keep_dir: self.keep_dir.clone(),
             dry_run: self.emit_only,
+            optimize: !self.no_opt,
         };
         let summary = generate_all(&self.proving_key, &cfg)?;
         tracing::info!(

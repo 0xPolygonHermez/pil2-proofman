@@ -9,18 +9,59 @@ use std::collections::{HashMap, HashSet};
 
 /// A resolved source operand. `dim()` is the field-extension degree (1 = base
 /// Goldilocks, 3 = cubic).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Operand {
-    Tmp { id: u64, dim: u64 },
+    Tmp {
+        id: u64,
+        dim: u64,
+    },
     Num(u64),
-    Cm { stage: u64, pos: u64, dim: u64, stride: i64 },
-    Const { id: u64, stride: i64 },
-    Custom { off: u64, pos: u64, dim: u64, ncols: u64, stride: i64 },
+    Cm {
+        stage: u64,
+        pos: u64,
+        dim: u64,
+        stride: i64,
+    },
+    Const {
+        id: u64,
+        stride: i64,
+    },
+    Custom {
+        off: u64,
+        pos: u64,
+        dim: u64,
+        ncols: u64,
+        stride: i64,
+    },
     Zi,
-    Ch { base: u64 },
-    Av { pos: u64, dim: u64 },
-    Agv { pos: u64, dim: u64 },
-    Pub { id: u64 },
+    Ch {
+        base: u64,
+    },
+    Av {
+        pos: u64,
+        dim: u64,
+    },
+    Agv {
+        pos: u64,
+        dim: u64,
+    },
+    Pub {
+        id: u64,
+    },
+    /// `ch[base..base+3]^j` (j >= 2), read from the challenge-powers table the
+    /// launcher computes once per call at the head of scratch (see `opt.rs`).
+    Pow {
+        base: u64,
+        j: u64,
+    },
+    /// Word `idx` of the hoisted-invariants table that follows the powers in
+    /// the same per-launch region: a subexpression built only from challenges,
+    /// powers, publics and air values, computed once per launch instead of
+    /// once per row (see `Ir::tab`).
+    Tab {
+        idx: u64,
+        dim: u64,
+    },
 }
 
 impl Operand {
@@ -30,8 +71,9 @@ impl Operand {
             | Operand::Cm { dim, .. }
             | Operand::Custom { dim, .. }
             | Operand::Av { dim, .. }
-            | Operand::Agv { dim, .. } => *dim,
-            Operand::Ch { .. } => 3,
+            | Operand::Agv { dim, .. }
+            | Operand::Tab { dim, .. } => *dim,
+            Operand::Ch { .. } | Operand::Pow { .. } => 3,
             Operand::Num(_) | Operand::Const { .. } | Operand::Zi | Operand::Pub { .. } => 1,
         }
     }
@@ -65,9 +107,38 @@ pub struct Ir {
     pub ncols: HashMap<u64, u64>,
     pub n_constants: u64,
     pub n_bits: u64,
+    /// Challenge-powers table the kernels read, one region per challenge and
+    /// sorted by base: `(ch_base, n)` means `ch[ch_base..]^j` for j in 0..n
+    /// (3 elems each). The regions sit end to end at the head of scratch, so a
+    /// challenge's region starts at `pow_offset(ch_base)`.
+    pub pow: Vec<(u64, u64)>,
+    /// Row-invariant program run once per launch (thread 0 of the table
+    /// kernel, after the powers): straight-line ops over invariant leaves and
+    /// its own tmps. `tab_out` exports tmps to table words (`Operand::Tab`):
+    /// (tmp id, word index, dim); `tab_words` is the exported size.
+    pub tab: Vec<Instr>,
+    pub tab_out: Vec<(u64, u64, u64)>,
+    pub tab_words: u64,
+    /// Standalone (non-Q) expression kernels have no scratch table: their
+    /// challenge powers are computed once per thread into registers in the
+    /// kernel prologue instead, and `Operand::Pow` reads `pwreg_<base>_<j>`.
+    pub pow_in_regs: bool,
 }
 
 impl Ir {
+    /// Words of the powers table (3 per power, summed over the challenges).
+    pub fn pow_words(&self) -> u64 {
+        self.pow.iter().map(|&(_, n)| 3 * n).sum()
+    }
+    /// Word offset of `base`'s region inside the powers table.
+    pub fn pow_offset(&self, base: u64) -> u64 {
+        self.pow.iter().take_while(|&&(b, _)| b != base).map(|&(_, n)| 3 * n).sum()
+    }
+    /// Total per-launch table words carved off the head of scratch.
+    pub fn table_words(&self) -> u64 {
+        self.pow_words() + self.tab_words
+    }
+
     pub fn uses_zi(&self) -> bool {
         self.instrs.iter().any(|i| matches!(i.a, Operand::Zi) || matches!(i.b, Operand::Zi))
     }
@@ -226,6 +297,16 @@ pub fn build_ir_expr(
 
     let mut instrs = Vec::with_capacity(code.len());
     for (idx, step) in code.iter().enumerate() {
+        // Only the binary field ops are modelled (by the emitter, the optimizer
+        // and the host evaluator alike); anything else leaves the AIR on the
+        // interpreter instead of failing deep inside a pass.
+        if !matches!(step.op.as_str(), "add" | "sub" | "mul") || step.src.len() != 2 {
+            return Err(anyhow::Error::new(UnhandledOperand(format!(
+                "op {} with {} operands",
+                step.op,
+                step.src.len()
+            ))));
+        }
         instrs.push(Instr {
             op: step.op.clone(),
             a: operand(&step.src[0])?,
@@ -236,13 +317,24 @@ pub fn build_ir_expr(
             idx,
         });
     }
-    Ok(Ir { instrs, ncols, n_constants, n_bits: stark_info.stark_struct.n_bits })
+    Ok(Ir {
+        instrs,
+        ncols,
+        n_constants,
+        n_bits: stark_info.stark_struct.n_bits,
+        pow: Vec::new(),
+        tab: Vec::new(),
+        tab_out: Vec::new(),
+        tab_words: 0,
+        pow_in_regs: false,
+    })
 }
 
 /// Liveness + chunking + scratch-slot coloring for one chunk size.
 pub struct ChunkPlan {
-    pub chunk: usize,
     pub n_chunks: usize,
+    /// Chunk i covers ops `bounds[i]..bounds[i+1]`; len = n_chunks + 1.
+    pub bounds: Vec<usize>,
     pub out_dim: u64,
     pub def_idx: HashMap<u64, usize>,
     pub dim_of: HashMap<u64, u64>,
@@ -253,11 +345,79 @@ pub struct ChunkPlan {
 
 impl ChunkPlan {
     pub fn chunk_of(&self, op_idx: usize) -> usize {
-        op_idx / self.chunk
+        chunk_of_bounds(&self.bounds, op_idx)
+    }
+    pub fn range(&self, chunk_idx: usize) -> (usize, usize) {
+        (self.bounds[chunk_idx], self.bounds[chunk_idx + 1])
     }
     pub fn slot_index(&self, t: u64) -> u64 {
         self.slot_index[&t]
     }
+}
+
+/// Index of the chunk containing `op_idx` for sorted `bounds` (bounds[0] = 0).
+pub fn chunk_of_bounds(bounds: &[usize], op_idx: usize) -> usize {
+    // number of starts <= op_idx, minus one
+    bounds.partition_point(|&b| b <= op_idx) - 1
+}
+
+/// Choose chunk boundaries minimizing the scratch words crossing them.
+/// `cross[p]` = words of temps defined before op p and last used at or after
+/// it; a cut at p costs cross[p] + CUT_PENALTY (a kernel launch per wave and
+/// the load/store pair around it), chunks are at most `max_chunk` ops.
+/// DP over positions, O(n_ops * max_chunk).
+fn adaptive_bounds(
+    n_ops: usize,
+    max_chunk: usize,
+    def_idx: &HashMap<u64, usize>,
+    last_use: &HashMap<u64, usize>,
+    dim_of: &HashMap<u64, u64>,
+) -> Vec<usize> {
+    const CUT_PENALTY: u64 = 2;
+    // difference array: temp t crosses every boundary p with def < p <= last_use
+    let mut diff = vec![0i64; n_ops + 2];
+    for (&t, &d) in def_idx {
+        if let Some(&lu) = last_use.get(&t) {
+            if lu > d {
+                let w = dim_of.get(&t).copied().unwrap_or(1) as i64;
+                diff[d + 1] += w;
+                diff[lu + 1] -= w;
+            }
+        }
+    }
+    let mut cross = vec![0u64; n_ops + 1];
+    let mut acc = 0i64;
+    for p in 0..=n_ops {
+        acc += diff[p];
+        cross[p] = acc.max(0) as u64;
+    }
+    // best[p] = min cost of cutting ops [0, p) into chunks (cut at p included, except p = n_ops)
+    let inf = u64::MAX / 4;
+    let mut best = vec![inf; n_ops + 1];
+    let mut prev = vec![usize::MAX; n_ops + 1];
+    best[0] = 0;
+    for p in 1..=n_ops {
+        let cut_cost = if p == n_ops { 0 } else { cross[p] + CUT_PENALTY };
+        let lo = p.saturating_sub(max_chunk);
+        let mut bq = inf;
+        let mut bi = usize::MAX;
+        for (off, &b) in best[lo..p].iter().enumerate() {
+            if b < bq {
+                bq = b;
+                bi = lo + off;
+            }
+        }
+        best[p] = bq + cut_cost;
+        prev[p] = bi;
+    }
+    let mut bounds = vec![n_ops];
+    let mut p = n_ops;
+    while p > 0 {
+        p = prev[p];
+        bounds.push(p);
+    }
+    bounds.reverse();
+    bounds
 }
 
 /// Build the liveness/chunk/coloring plan for `ir` at the given chunk size.
@@ -288,8 +448,20 @@ pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<Chunk
     }
 
     let chunk = chunk_req.clamp(1, n_ops.max(1));
-    let n_chunks = n_ops.div_ceil(chunk);
-    let chunk_of = |op_idx: usize| op_idx / chunk;
+    // Cut points. Fixed every `chunk` ops, or (default) placed where few values
+    // are live: every temp alive across a boundary costs a scratch slot word per
+    // row and shrinks the launcher grid, so boundaries belong at the live-range
+    // minima, subject to each chunk staying within the spill-free size.
+    let adaptive = std::env::var("EXPS_ADAPTIVE_CHUNKS").map_or(true, |v| v != "0");
+    let bounds: Vec<usize> = if adaptive && n_ops > chunk {
+        adaptive_bounds(n_ops, chunk, &def_idx, &last_use, &dim_of)
+    } else {
+        let mut b: Vec<usize> = (0..n_ops).step_by(chunk).collect();
+        b.push(n_ops);
+        b
+    };
+    let n_chunks = bounds.len() - 1;
+    let chunk_of = |op_idx: usize| chunk_of_bounds(&bounds, op_idx);
 
     let mut out_dim = 3u64;
     for instr in &ir.instrs {
@@ -350,5 +522,5 @@ pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<Chunk
         slot_index.insert(t, s);
     }
 
-    Ok(ChunkPlan { chunk, n_chunks, out_dim, def_idx, dim_of, cut_temps, total_slots, slot_index })
+    Ok(ChunkPlan { n_chunks, bounds, out_dim, def_idx, dim_of, cut_temps, total_slots, slot_index })
 }

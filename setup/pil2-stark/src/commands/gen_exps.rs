@@ -35,7 +35,7 @@ pub struct GenExpsOptions {
 pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
     if !nvcc_present() {
         tracing::warn!(
-            "gen-exps requested but nvcc not found on PATH; skipping expression kernel codegen (AIRs use the interpreter)"
+            "gen-exps requested but nvcc not found on PATH, $CUDA_HOME/bin or /usr/local/cuda/bin; skipping expression kernel codegen (AIRs use the interpreter)"
         );
         return Ok(());
     }
@@ -48,6 +48,7 @@ pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
         stark_src: opts.stark_src.clone(),
         keep_dir: None,
         dry_run: false,
+        optimize: true,
     };
     let summary = proofman_exps_codegen::generate_all(&opts.proving_key, &cfg)?;
     tracing::info!(
