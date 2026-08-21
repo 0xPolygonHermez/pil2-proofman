@@ -61,15 +61,15 @@ airtemplate Blake2b(const int N = 2**16) {
         |------|----------|----------|----------|----------|----------|----------|---------|----------------|
         | ...  |   ...    |   ...    |   ...    |   ...    |   ...    |   ...    |   ...   |       ...      |
         |------|----------|----------|----------|----------|----------|----------|---------|----------------|
-        |  56  |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    8    |  G1 - COL MIX  |
-        |  57  |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    8    |  G2 - COL MIX  |
-        |  58  |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    8    |  G3 - COL MIX  |
-        |  59  |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    8    |  G4 - COL MIX  |
+        |  88  |  v[0]    |  v[4]    |  v[8]    |  v[12]   |   m[0]   |   m[1]   |    12   |  G1 - COL MIX  |
+        |  89  |  v[1]    |  v[5]    |  v[9]    |  v[13]   |   m[2]   |   m[3]   |    12   |  G2 - COL MIX  |
+        |  90  |  v[2]    |  v[6]    |  v[10]   |  v[14]   |   m[4]   |   m[5]   |    12   |  G3 - COL MIX  |
+        |  91  |  v[3]    |  v[7]    |  v[11]   |  v[15]   |   m[6]   |   m[7]   |    12   |  G4 - COL MIX  |
         |------|----------|----------|----------|----------|----------|----------|---------|----------------|
-        |  60  |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    8    |  G1 - DIA MIX  | <-- V OUT
-        |  61  |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    8    |  G2 - DIA MIX  | <-- V OUT
-        |  62  |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    8    |  G3 - DIA MIX  | <-- V OUT
-        |  63  |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    8    |  G4 - DIA MIX  | <-- V OUT
+        |  92  |  v[0]    |  v[5]    |  v[10]   |  v[15]   |   m[8]   |   m[9]   |    12   |  G1 - DIA MIX  | <-- V OUT
+        |  93  |  v[1]    |  v[6]    |  v[11]   |  v[12]   |   m[10]  |   m[11]  |    12   |  G2 - DIA MIX  | <-- V OUT
+        |  94  |  v[2]    |  v[7]    |  v[8]    |  v[13]   |   m[12]  |   m[13]  |    12   |  G3 - DIA MIX  | <-- V OUT
+        |  95  |  v[3]    |  v[4]    |  v[9]    |  v[14]   |   m[14]  |   m[15]  |    12   |  G4 - DIA MIX  | <-- V OUT
         |------|----------|----------|----------|----------|----------|----------|---------|----------------|
     */
 
@@ -82,23 +82,11 @@ airtemplate Blake2b(const int N = 2**16) {
 
     // Calculate usable capacity
     const int NUM_NON_USABLE_ROWS = N % CLOCKS;
-    const int NUM_OPS;
-    if (NUM_NON_USABLE_ROWS == 0) {
-        // N is perfectly divisible by CLOCKS
-        if (N < CLOCKS) {
-            error(`N must be at least ${CLOCKS} to fit the Blake2b arithmetization, but received N=${N}`);
-        }
-
-        NUM_OPS = N / CLOCKS;
-    } else {
-        // N is not divisible by CLOCKS
-        if (N < 2*CLOCKS) {
-            error(`N must be at least ${2*CLOCKS} to fit the Blake2b arithmetization, but received N=${N}`);
-        }
-
-        // Subtract 1 because we can't fit a complete cycle in the remaining rows
-        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    const int NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS;
+    if (NUM_OPS < 1) {
+        error(`N must be at least ${CLOCKS} to fit the Blake2b arithmetization, but received N=${N}`);
     }
+    println(`The total number of Blake2b's with N = 2^${log2(N)} is ${NUM_OPS}`);
 
     const int NUM_BLAKE2B = NUM_OPS;
     println(`The total number of Blake2b's with N = ${N} is ${NUM_BLAKE2B}`);
@@ -127,7 +115,7 @@ airtemplate Blake2b(const int N = 2**16) {
     // CLOCK SELECTORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    // Base clock: 1 at first cycle row, 0 elsewhere within each cycle
     if (NUM_NON_USABLE_ROWS == 0) {
         col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
     } else {
