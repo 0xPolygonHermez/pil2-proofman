@@ -136,6 +136,24 @@ void get_instances_ready_gpu(void *d_buffers_, int64_t* instances_ready) {
     }
 }
 
+// On a fatal CUDA error: what every stream was doing. The error is sticky and reported by
+// the next sync on any thread, so the stream that reported it is usually not the one that
+// faulted; the full table lets the log be read against the per-air timeline.
+static DeviceCommitBuffers *g_diag_buffers = nullptr;
+static void dump_streams_state_on_error() {
+    DeviceCommitBuffers *b = g_diag_buffers;
+    if (b == nullptr) return;
+    fprintf(stderr, "[CUDA] stream state at failure (%u streams):\n", b->n_total_streams);
+    for (uint32_t i = 0; i < b->n_total_streams; i++) {
+        StreamData &sd = b->streamsData[i];
+        fprintf(stderr, "[CUDA]   stream %u gpu %u local %llu status %u proofType %s airgroup %llu air %llu instance %lld witnessResident %d constTreeResident %d\n",
+                i, sd.gpuId, (unsigned long long)sd.localStreamId, (unsigned)sd.status.load(),
+                sd.proofType.c_str(), (unsigned long long)sd.airgroupId, (unsigned long long)sd.airId,
+                (long long)sd.instanceId, (int)sd.witnessResident, (int)sd.constTreeResident);
+    }
+    fflush(stderr);
+}
+
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     int32_t numa_node = (numa_nodes != nullptr && node_rank < node_size) ? numa_nodes[node_rank] : -1;
@@ -328,6 +346,8 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
 
     // Create and initialize DeviceCommitBuffers structure
     DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
+    g_diag_buffers = d_buffers;
+    cudaErrorDumpHook() = dump_streams_state_on_error;
     d_buffers->n_gpus = n_gpus;
     d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
     d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));

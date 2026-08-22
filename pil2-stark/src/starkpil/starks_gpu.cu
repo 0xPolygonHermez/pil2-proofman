@@ -1015,6 +1015,13 @@ __global__ void getTreeTracePolsBlocks(gl64_t *d_treeTrace, uint64_t nCols, uint
     if (idx_x < nCols && idx_y < nQueries)
     {
         uint64_t row = d_friQueries[idx_y];
+        if (row >= nRows) {
+            // A query index comes from the transcript and is always < nRows; anything else means
+            // the query buffer was clobbered. Name it instead of faulting on a wild read.
+            printf("[CUDA] getTreeTracePolsBlocks: query %llu row %llu >= nRows %llu (nCols %llu)\n",
+                   (unsigned long long)idx_y, (unsigned long long)row, (unsigned long long)nRows, (unsigned long long)nCols);
+            __trap();
+        }
         uint64_t idx_buffer = idx_y * bufferWidth + idx_x;
         uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, layout);
         d_buffer[idx_buffer] = d_treeTrace[idx_trace];
@@ -1050,6 +1057,11 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_fr
     if (idx_query < nQueries)
     {
         uint64_t row = d_friQueries[idx_query];
+        if (row >= nLeaves) {
+            printf("[CUDA] genMerkleProof: query %llu row %llu >= nLeaves %llu\n",
+                   (unsigned long long)idx_query, (unsigned long long)row, (unsigned long long)nLeaves);
+            __trap();
+        }
         uint64_t idx_buffer = idx_query * bufferWidth + maxTreeWidth;
         genMerkleProof_(d_nodes, &d_buffer[idx_buffer], row, 0, nLeaves, nFieldElements, arity, lastLevel);
     }
