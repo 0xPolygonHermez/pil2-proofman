@@ -7,7 +7,7 @@
 //! nvcc compiles, so treat these strings as code, not free-form text.
 
 use crate::ir::{ChunkPlan, Instr, Ir, Operand};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
 pub const GEN_BLK: u64 = 256;
@@ -43,6 +43,7 @@ static __device__ __noinline__ g3 cg_inv3(g3 v){
   gl64_t t = abc+abc+abc+abb-aaa-aac-aac-acc-bbb+bcc-ccc;
   gl64_t tinv = t.reciprocal();
   g3 r; r.a=(bc+bb-aa-ac-ac-cc)*tinv; r.b=(ba-cc)*tinv; r.c=(ac+cc-bb)*tinv; return r; }
+__device__ __forceinline__ bool g3_is_zero(g3 v){ return v.a.is_zero() && v.b.is_zero() && v.c.is_zero(); }
 __device__ __forceinline__ void exps_expr_store(gl64_t* dest, uint64_t row, uint64_t destDomain,
     uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr,
     uint64_t mode, uint64_t scalar, g3 v, uint64_t vdim)
@@ -576,25 +577,120 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 // combine into the second kernel's store — no scratch, no pair kernels.
 // ---------------------------------------------------------------------------
 
-/// Emit the `gen_<sym>_cexprs.cu` TU covering `items` = (expId, ir, out_dim).
-pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
+/// Numerator of an `im_col` hint: an expression (by id, present in `items`)
+/// or a literal.
+#[derive(Clone, Copy, Debug)]
+pub enum ImNum {
+    Expr(i64),
+    Scalar(u64),
+    /// A base-field committed column read directly: `cm` id (for the prover's
+    /// hint match), its stage, position and the stage's column count.
+    Col {
+        cm_id: u64,
+        stage: u64,
+        pos: u64,
+        stage_cols: u64,
+    },
+}
+
+/// One `im_col` hint the batched kernels cover: `cm[cm_id] = num / den` per
+/// row, the column living in stage `stage` at `stage_pos` (cubic).
+#[derive(Clone, Debug)]
+pub struct ImColHint {
+    pub cm_id: u64,
+    pub stage: u64,
+    pub stage_pos: u64,
+    pub stage_cols: u64,
+    pub num: ImNum,
+    pub den: i64,
+}
+
+/// A batch of im_col hints as emitted: the hints, and optionally one merged IR
+/// that computes every numerator/denominator with shared subtrees evaluated
+/// once (`roots[i]` = tmp of hint i's denominator, `num_roots[i]` = tmp of its
+/// expression numerator, when it has one). Without `merged` each expression is
+/// evaluated by its own lambda.
+#[derive(Clone, Debug)]
+pub struct ImColBatch {
+    pub hints: Vec<ImColHint>,
+    pub merged: Option<MergedBatch>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MergedBatch {
+    pub ir: crate::ir::Ir,
+    pub den_roots: Vec<u64>,
+    pub num_roots: Vec<Option<u64>>,
+}
+
+/// Register-resident challenge powers `pwreg_<base>_<j>` for every (base, n)
+/// in `pows` (deduped by base, max n): repeated `cg_mul33` from the challenge,
+/// the same arithmetic as the Q table, so folded chains stay exact.
+fn pwreg_lines(pows: &[(u64, u64)]) -> String {
+    let mut need: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+    for &(base, n) in pows {
+        let e = need.entry(base).or_insert(0);
+        *e = (*e).max(n);
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (&base, &n) in &need {
+        if n < 2 {
+            continue;
+        }
+        lines.push(format!(
+            "  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",
+            base + 1,
+            base + 2
+        ));
+        for j in 2..n {
+            lines.push(format!(
+                "  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);",
+                j - 1
+            ));
+        }
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        lines.join("\n") + "\n"
+    }
+}
+
+/// Common kernel prologue: the trace / constant / challenge pointers every
+/// expression body reads.
+const EXPR_PROLOGUE: &str = r#"  const uint64_t NExt = N; const uint64_t MASK = N-1;
+  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
+  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
+  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;"#;
+
+/// `auto <name> = [&](uint64_t row) -> <g3|gl64_t> { ... }` evaluating `ir` at
+/// one row. Temps are local to the lambda, so several can share a kernel.
+fn expr_lambda(name: &str, ir: &crate::ir::Ir, out_dim: u64) -> String {
+    let mut body: Vec<String> = Vec::new();
+    let mut declared: HashSet<u64> = HashSet::new();
+    for instr in &ir.instrs {
+        let (op_lines, is_out) = emit_op(instr, ir, &declared);
+        body.extend(op_lines);
+        if !is_out {
+            declared.insert(instr.dst_id.unwrap());
+        }
+    }
+    // The result lives in the last instruction's destination: `qq` for an
+    // explicit output store, `t<id>` when the expression ends in a tmp.
+    let last = ir.instrs.last().unwrap();
+    let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
+    let vt = if out_dim == 3 { "g3" } else { "gl64_t" };
+    format!("  auto {name} = [&](uint64_t row) -> {vt} {{\n{}\n    return {result};\n  }};", body.join("\n"))
+}
+
+/// Emit the `gen_<sym>_cexprs.cu` TU covering `items` = (expId, ir, out_dim),
+/// plus one fused kernel per `im_col` batch (see `imcol_kernel`).
+pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)], batches: &[ImColBatch]) -> String {
     let mut kernels: Vec<String> = Vec::new();
     let mut cases_launch: Vec<String> = Vec::new();
     let mut cases_covered: Vec<String> = Vec::new();
     for (exp_id, ir, out_dim) in items {
-        let mut body: Vec<String> = Vec::new();
-        let mut declared: HashSet<u64> = HashSet::new();
-        for instr in &ir.instrs {
-            let (op_lines, is_out) = emit_op(instr, ir, &declared);
-            body.extend(op_lines);
-            if !is_out {
-                declared.insert(instr.dst_id.unwrap());
-            }
-        }
-        // The result lives in the last instruction's destination: `qq` for an
-        // explicit output store, `t<id>` when the expression ends in a tmp.
-        let last = ir.instrs.last().unwrap();
-        let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
         // Value type of this expression and how the plain store receives it.
         let (vt, vdim) = if *out_dim == 3 { ("g3", 3) } else { ("gl64_t", 1) };
         let to_g3 = if *out_dim == 3 {
@@ -605,47 +701,14 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
         let store = format!("    {{ {to_g3} exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,{vdim}); }}");
         // Challenge powers for this kernel, computed once per thread into registers
         // (the kernel has no scratch table; a thread serves many rows, so the few
-        // cubic multiplies amortize). Same arithmetic as the Q table: repeated
-        // cg_mul33 from the challenge, so the folded chains stay exact.
-        let pwregs: String = if ir.pow_in_regs {
-            let mut lines: Vec<String> = Vec::new();
-            for &(base, n) in &ir.pow {
-                if n < 2 {
-                    continue;
-                }
-                lines.push(format!(
-                    "  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",
-                    base + 1,
-                    base + 2
-                ));
-                for j in 2..n {
-                    lines.push(format!(
-                        "  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);",
-                        j - 1
-                    ));
-                }
-            }
-            lines.join("\n") + "\n"
-        } else {
-            String::new()
-        };
-        // Per-row evaluation shared by the kernel body.
-        let prologue = format!(
-            r#"  const uint64_t NExt = N; const uint64_t MASK = N-1;
-  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
-  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
-  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
-{pwregs}  auto eval_ = [&](uint64_t row) -> {vt} {{
-{}
-    return {result};
-  }};"#,
-            body.join("\n")
-        );
+        // cubic multiplies amortize).
+        let pwregs = if ir.pow_in_regs { pwreg_lines(&ir.pow) } else { String::new() };
+        let lambda = expr_lambda("eval_", ir, *out_dim);
         let sig = "(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,\n    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,\n    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
         kernels.push(format!(
             r#"__global__ void gen_{sym}_x{exp_id}{sig} {{
-{prologue}
+{EXPR_PROLOGUE}
+{pwregs}{lambda}
   for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
     {vt} ev_ = eval_(row);
 {store}
@@ -655,8 +718,33 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
         cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
         cases_covered.push(format!("    case {exp_id}ull: return 1;"));
     }
+    let by_id: HashMap<i64, (&crate::ir::Ir, u64)> = items.iter().map(|(id, ir, od)| (*id, (ir, *od))).collect();
+    let mut imb_launch: Vec<String> = Vec::new();
+    let mut imb_info: Vec<String> = Vec::new();
+    for (k, batch) in batches.iter().enumerate() {
+        kernels.push(imcol_kernel(sym, k, batch, &by_id));
+        imb_launch.push(format!(
+            "    case {k}ull: gen_{sym}_imb{k}<<<grid,{GEN_BLK},0,stream>>>(P,N,off_cm1,off_cm2,off_cm3); return 1;"
+        ));
+        let mut words: Vec<String> = Vec::new();
+        for h in &batch.hints {
+            // numerator word: expId; ~0 = literal (value in the next word); ~0-1 = raw
+            // column (its cm id in the next word)
+            let (nid, sc) = match h.num {
+                ImNum::Expr(id) => (id as u64, 0u64),
+                ImNum::Scalar(v) => (u64::MAX, v),
+                ImNum::Col { cm_id, .. } => (u64::MAX - 1, cm_id),
+            };
+            words.push(format!("{nid}ull,{sc}ull,{}ull,{}ull", h.den, h.cm_id));
+        }
+        imb_info.push(format!(
+            "    case {k}ull: {{ static const unsigned long long w[] = {{{}}}; n = {}; src = w; break; }}",
+            words.join(","),
+            batch.hints.len()
+        ));
+    }
     format!(
-        r#"// AUTO-GENERATED generic expression kernels for {sym} ({} expressions)
+        r#"// AUTO-GENERATED generic expression kernels for {sym} ({} expressions, {} im_col batches)
 #include "gen_common.cuh"
 #define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
 {}
@@ -680,11 +768,140 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     default: return 0;
   }}
 }}
+// im_col batches: `exps_imcol_batches()` fused kernels, each covering the hints
+// `exps_imcol_batch_info(k, out, cap)` lists as 4 words per hint
+// (numerator expId, or ~0 for a literal / ~0-1 for a raw column; literal value
+// or column cm id; denominator expId; destination cm id). The prover launches a batch only when every hint it
+// lists is an im_col hint of the instance.
+extern "C" unsigned long long exps_imcol_batches() {{ return {}ull; }}
+extern "C" unsigned long long exps_imcol_batch_info(unsigned long long k, unsigned long long* out, unsigned long long cap) {{
+  const unsigned long long* src = nullptr; unsigned long long n = 0;
+  switch (k) {{
+{}
+    default: return 0;
+  }}
+  for (unsigned long long i = 0; i < 4ull*n && i < cap; ++i) out[i] = src[i];
+  return n;
+}}
+extern "C" int exps_launch_imcol_batch(unsigned long long k, StepsParams* P, unsigned long long N,
+    unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, cudaStream_t stream) {{
+  uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
+  if (grid > 512ull) grid = 512ull;
+  if (grid < 1ull) grid = 1ull;
+  switch (k) {{
+{}
+    default: return 0;
+  }}
+}}
 #undef OFF
 "#,
         items.len(),
+        batches.len(),
         kernels.join("\n"),
         cases_covered.join("\n"),
-        cases_launch.join("\n")
+        cases_launch.join("\n"),
+        batches.len(),
+        imb_info.join("\n"),
+        imb_launch.join("\n")
+    )
+}
+
+/// One fused kernel for a batch of `im_col` hints: per row every numerator and
+/// denominator is evaluated (the column loads and challenge powers are shared
+/// across the hints), the denominators are inverted with one cubic inverse via
+/// Montgomery's trick, and each column gets `num * den^-1`. A zero denominator
+/// in the row falls back to per-hint inverses, so the result matches the
+/// unbatched path exactly (including 0^-1 = 0).
+fn imcol_kernel(sym: &str, k: usize, batch: &ImColBatch, by_id: &HashMap<i64, (&crate::ir::Ir, u64)>) -> String {
+    let m = batch.hints.len();
+    let mut pows: Vec<(u64, u64)> = Vec::new();
+    let mut lambdas: Vec<String> = Vec::new();
+    let mut evals: Vec<String> = Vec::new();
+    let mut stores: Vec<String> = Vec::new();
+    // Merged form: one straight-line body evaluating every expression of the batch
+    // once (shared subtrees deduplicated); numerators/denominators are its tmps.
+    let merged_body: Option<String> = batch.merged.as_ref().map(|mb| {
+        pows.extend(mb.ir.pow.iter().copied());
+        let mut body: Vec<String> = Vec::new();
+        let mut declared: HashSet<u64> = HashSet::new();
+        for instr in &mb.ir.instrs {
+            let (op_lines, is_out) = emit_op(instr, &mb.ir, &declared);
+            body.extend(op_lines);
+            if !is_out {
+                declared.insert(instr.dst_id.unwrap());
+            }
+        }
+        body.join("\n")
+    });
+    for (i, h) in batch.hints.iter().enumerate() {
+        let num_val: String;
+        if let Some(mb) = &batch.merged {
+            evals.push(format!("      d_[{i}] = t{}; z_ |= g3_is_zero(d_[{i}]);", mb.den_roots[i]));
+            num_val = mb.num_roots[i].map(|r| format!("t{r}")).unwrap_or_default();
+        } else {
+            let &(dir, _) = &by_id[&h.den];
+            pows.extend(dir.pow.iter().copied());
+            lambdas.push(expr_lambda(&format!("den{i}_"), dir, 3));
+            evals.push(format!("      d_[{i}] = den{i}_(row); z_ |= g3_is_zero(d_[{i}]);"));
+            num_val = format!("num{i}_(row)");
+        }
+        let prod = match h.num {
+            ImNum::Expr(id) => {
+                let &(nir, nod) = &by_id[&id];
+                if batch.merged.is_none() {
+                    pows.extend(nir.pow.iter().copied());
+                    lambdas.push(expr_lambda(&format!("num{i}_"), nir, nod));
+                }
+                if nod == 3 {
+                    format!("cg_mul33({num_val}, inv_[{i}])")
+                } else {
+                    format!("cg_mul31(inv_[{i}], {num_val})")
+                }
+            }
+            ImNum::Scalar(v) => format!("cg_mul31(inv_[{i}], gl64_t(uint64_t({v}ull)))"),
+            ImNum::Col { stage, pos, stage_cols, .. } => format!(
+                "cg_mul31(inv_[{i}], aux[off_cm{stage} + OFF(row,{pos},N,{stage_cols},{})])",
+                cm_layout(0, stage_cols)
+            ),
+        };
+        stores.push(format!(
+            "      {{ g3 r_ = {prod}; gl64_t* o_ = auxw + off_cm{}; o_[OFF(row,{p},N,{c},{lyt})]=r_.a; o_[OFF(row,{p}+1,N,{c},{lyt})]=r_.b; o_[OFF(row,{p}+2,N,{c},{lyt})]=r_.c; }}",
+            h.stage,
+            p = h.stage_pos,
+            c = h.stage_cols,
+            lyt = cm_layout(0, h.stage_cols)
+        ));
+    }
+    let pwregs = pwreg_lines(&pows);
+    format!(
+        r#"__global__ void gen_{sym}_imb{k}(const StepsParams* __restrict__ P, uint64_t N, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3) {{
+{EXPR_PROLOGUE}
+  gl64_t* auxw = (gl64_t*)P->aux_trace;
+{pwregs}{}
+  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
+    // inv_ doubles as the prefix-product array: p_[i] is dead once inv_[i] is
+    // formed (the backward pass only reads p_[i-1]), so both live in inv_.
+    g3 d_[{m}]; g3 inv_[{m}]; bool z_ = false;
+{merged}
+{}
+    if (z_) {{
+      #pragma unroll
+      for (int i_ = 0; i_ < {m}; ++i_) inv_[i_] = cg_inv3(d_[i_]);
+    }} else {{
+      inv_[0] = d_[0];
+      #pragma unroll
+      for (int i_ = 1; i_ < {m}; ++i_) inv_[i_] = cg_mul33(inv_[i_-1], d_[i_]);
+      g3 t_ = cg_inv3(inv_[{m}-1]);
+      #pragma unroll
+      for (int i_ = {m}-1; i_ > 0; --i_) {{ g3 v_ = cg_mul33(t_, inv_[i_-1]); t_ = cg_mul33(t_, d_[i_]); inv_[i_] = v_; }}
+      inv_[0] = t_;
+    }}
+{}
+  }}
+}}"#,
+        lambdas.join("\n"),
+        evals.join("\n"),
+        stores.join("\n"),
+        merged = merged_body.unwrap_or_default()
     )
 }

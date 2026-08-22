@@ -38,12 +38,24 @@ typedef int (*ExprLaunchFn)(unsigned long long expId, StepsParams*, gl64_t* dest
 //   qMinScratch: scratch elements one Q wave needs (`exps_min_scratch`; 0 if unchunked)
 //   exprCovered/exprLaunch: per-expId trace-domain kernels for the non-Q expressions
 //                (`exps_expr_covered` / `exps_launch_expr`; optional -- older .so lack them)
+// im_col batches: fused kernels computing several `cm = num / den` hint columns
+// per row with one shared inverse. `imcolBatches()` = count; `imcolBatchInfo(k,
+// out, cap)` lists the hints of batch k as 4 words each (numerator expId or
+// ~0ull for a literal, literal value, denominator expId, destination cm id) and
+// returns how many; `imcolLaunch` runs it. Optional: older .so lack them.
+typedef unsigned long long (*ImcolBatchesFn)();
+typedef unsigned long long (*ImcolBatchInfoFn)(unsigned long long k, unsigned long long* out, unsigned long long cap);
+typedef int (*ImcolLaunchFn)(unsigned long long k, StepsParams*, unsigned long long N,
+                             unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, cudaStream_t);
 struct ExpsKernel {
     void* lib = nullptr;
     ExpsQLaunchFn qLaunch = nullptr;
     uint64_t qMinScratch = 0;
     ExprCoveredFn exprCovered = nullptr;
     ExprLaunchFn exprLaunch = nullptr;
+    ImcolBatchesFn imcolBatches = nullptr;
+    ImcolBatchInfoFn imcolBatchInfo = nullptr;
+    ImcolLaunchFn imcolLaunch = nullptr;
 };
 
 // The library sits next to the AIR's .bin with the .exps.so suffix: swap a trailing ".bin" -> ".exps.so".
@@ -77,6 +89,10 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     r.exprCovered = (ExprCoveredFn)dlsym(h, "exps_expr_covered");
     r.exprLaunch = (ExprLaunchFn)dlsym(h, "exps_launch_expr");
     if ((r.exprCovered == nullptr) != (r.exprLaunch == nullptr)) { r.exprCovered = nullptr; r.exprLaunch = nullptr; }
+    r.imcolBatches = (ImcolBatchesFn)dlsym(h, "exps_imcol_batches");
+    r.imcolBatchInfo = (ImcolBatchInfoFn)dlsym(h, "exps_imcol_batch_info");
+    r.imcolLaunch = (ImcolLaunchFn)dlsym(h, "exps_launch_imcol_batch");
+    if (!r.imcolBatches || !r.imcolBatchInfo || !r.imcolLaunch) { r.imcolBatches = nullptr; r.imcolBatchInfo = nullptr; r.imcolLaunch = nullptr; }
     return r;
 }
 

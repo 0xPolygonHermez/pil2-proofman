@@ -197,6 +197,13 @@ fn max_live(ir: &Ir) -> usize {
 /// node, or `None` if the IR is not a single-output expression.
 fn build_dag(ir: &Ir) -> Option<(Dag, NodeId)> {
     let mut dag = Dag::new();
+    let root = build_into(&mut dag, ir)?;
+    Some((dag, root))
+}
+
+/// Insert `ir` into an existing hash-consed DAG (shared subtrees of earlier
+/// expressions are reused) and return its root node.
+fn build_into(dag: &mut Dag, ir: &Ir) -> Option<NodeId> {
     let mut tmp: HashMap<u64, NodeId> = HashMap::new();
     let mut out: Option<NodeId> = None;
     let n = ir.instrs.len();
@@ -207,8 +214,8 @@ fn build_dag(ir: &Ir) -> Option<(Dag, NodeId)> {
                 leaf => Some(dag.leaf(leaf)),
             }
         };
-        let a = resolve(&mut dag, &ins.a)?;
-        let b = resolve(&mut dag, &ins.b)?;
+        let a = resolve(&mut *dag, &ins.a)?;
+        let b = resolve(&mut *dag, &ins.b)?;
         let node = dag.op(op_code(&ins.op), a, b);
         if ins.dst_is_tmp {
             let id = ins.dst_id?;
@@ -232,7 +239,104 @@ fn build_dag(ir: &Ir) -> Option<(Dag, NodeId)> {
             *tmp.get(&id)?
         }
     };
-    Some((dag, out))
+    Some(out)
+}
+
+/// Merge several (already optimized, powers-in-registers) expressions into one
+/// straight-line IR that computes all of them with shared subtrees evaluated
+/// once: the fused stage-2 batch kernels evaluate every numerator and
+/// denominator of a batch, and across an AIR's bus terms 30-50% of the ops are
+/// common (same `alpha^k * col` products). Returns the IR and, per input, the
+/// tmp id holding its root. All instructions write tmps (no output store); the
+/// powers regions are the union of the inputs'.
+pub fn merge_exprs(irs: &[&Ir]) -> Option<(Ir, Vec<u64>)> {
+    let template = *irs.first()?;
+    let mut dag = Dag::new();
+    let mut roots: Vec<NodeId> = Vec::with_capacity(irs.len());
+    for ir in irs {
+        roots.push(build_into(&mut dag, ir)?);
+    }
+    // Emit in a post-order over all roots (shared nodes once), SSA tmps by emission index.
+    let mut emitted: HashMap<NodeId, u64> = HashMap::new();
+    let mut instrs: Vec<Instr> = Vec::new();
+    let mut stack: Vec<(NodeId, bool)> = roots.iter().rev().map(|&r| (r, false)).collect();
+    while let Some((n, expanded)) = stack.pop() {
+        if emitted.contains_key(&n) || dag.is_leaf(n) {
+            continue;
+        }
+        let Kind::Op { op, a, b } = dag.nodes[n].kind else { unreachable!() };
+        if !expanded {
+            stack.push((n, true));
+            for c in [b, a] {
+                if !dag.is_leaf(c) && !emitted.contains_key(&c) {
+                    stack.push((c, false));
+                }
+            }
+            continue;
+        }
+        let operand = |c: NodeId| -> Operand {
+            match &dag.nodes[c].kind {
+                Kind::Leaf(o) => o.clone(),
+                Kind::Op { .. } => Operand::Tmp { id: emitted[&c], dim: dag.nodes[c].dim },
+            }
+        };
+        let id = instrs.len() as u64;
+        instrs.push(Instr {
+            op: op_name(op).to_string(),
+            a: operand(a),
+            b: operand(b),
+            dst_is_tmp: true,
+            dst_id: Some(id),
+            ddim: dag.nodes[n].dim,
+            idx: instrs.len(),
+        });
+        emitted.insert(n, id);
+    }
+    // A root that is a bare leaf (expression = one operand) has no instruction: copy it
+    // through a multiply by one so every root is a tmp.
+    let mut root_ids: Vec<u64> = Vec::with_capacity(roots.len());
+    for &r in &roots {
+        let id = match emitted.get(&r) {
+            Some(&id) => id,
+            None => {
+                let Kind::Leaf(o) = &dag.nodes[r].kind else { unreachable!() };
+                let id = instrs.len() as u64;
+                instrs.push(Instr {
+                    op: "mul".to_string(),
+                    a: o.clone(),
+                    b: Operand::Num(1),
+                    dst_is_tmp: true,
+                    dst_id: Some(id),
+                    ddim: dag.nodes[r].dim,
+                    idx: instrs.len(),
+                });
+                emitted.insert(r, id);
+                id
+            }
+        };
+        root_ids.push(id);
+    }
+    let mut pow: BTreeMap<u64, u64> = BTreeMap::new();
+    for ir in irs {
+        for &(base, n) in &ir.pow {
+            let e = pow.entry(base).or_insert(0);
+            *e = (*e).max(n);
+        }
+    }
+    Some((
+        Ir {
+            instrs,
+            ncols: template.ncols.clone(),
+            n_constants: template.n_constants,
+            n_bits: template.n_bits,
+            pow: pow.into_iter().collect(),
+            tab: Vec::new(),
+            tab_out: Vec::new(),
+            tab_words: 0,
+            pow_in_regs: true,
+        },
+        root_ids,
+    ))
 }
 
 /// Detect the Horner chain `acc = vc·acc + c` ending at `root`. Returns the

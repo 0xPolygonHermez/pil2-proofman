@@ -119,10 +119,60 @@ pub struct ExprCode {
     pub code: Vec<Step>,
 }
 
+/// One value of a hint field (`hintsInfo[].fields[].values[]`): an operand
+/// reference (`cm`/`tmp`/`number`/`airvalue`/...) with the fields each kind uses.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintValue {
+    pub op: String,
+    #[serde(default)]
+    pub id: Option<u64>,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintField {
+    pub name: String,
+    #[serde(default)]
+    pub values: Vec<HintValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintInfo {
+    pub name: String,
+    #[serde(default)]
+    pub fields: Vec<HintField>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExpressionsInfo {
     pub expressions_code: Vec<ExprCode>,
+    /// Hints the std library attaches to the AIR (im_col, gsum_col, ...); the
+    /// setup emits them next to the expression code. Absent in older files.
+    #[serde(default)]
+    pub hints_info: Vec<HintInfo>,
+}
+
+impl HintInfo {
+    /// First value of the named field, if present.
+    pub fn field(&self, name: &str) -> Option<&HintValue> {
+        self.fields.iter().find(|f| f.name == name).and_then(|f| f.values.first())
+    }
+}
+
+impl HintValue {
+    /// The literal of a `number` value (decimal string or JSON number).
+    pub fn number_value(&self) -> Option<u64> {
+        match &self.value {
+            Some(serde_json::Value::String(s)) => s.parse::<u64>().ok(),
+            Some(serde_json::Value::Number(n)) => n.as_u64(),
+            _ => None,
+        }
+    }
 }
 
 impl StarkInfo {

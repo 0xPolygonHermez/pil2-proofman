@@ -89,7 +89,7 @@ impl Operand {
 
 /// One IR step: `dst = op(a, b)`. `idx` is the global op index, used to name
 /// loaded operand temps `a{idx}` / `b{idx}`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instr {
     pub op: String,
     pub a: Operand,
@@ -102,6 +102,7 @@ pub struct Instr {
 
 /// The resolved expression: straight-line IR + the column counts and constant
 /// count needed to compute buffer offsets during emission.
+#[derive(Debug, Clone)]
 pub struct Ir {
     pub instrs: Vec<Instr>,
     pub ncols: HashMap<u64, u64>,

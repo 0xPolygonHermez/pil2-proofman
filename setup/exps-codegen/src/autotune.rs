@@ -53,6 +53,36 @@ fn max_stack(obj: &Path) -> i64 {
     best
 }
 
+/// STACK (spill) bytes of every fused im_col batch kernel (`gen_<sym>_imb<k>`) in an
+/// object, as (batch index, bytes). Empty when cuobjdump cannot run or the object
+/// has no batch kernels.
+pub fn imb_spills(obj: &Path) -> Vec<(usize, i64)> {
+    let Ok(out) =
+        std::process::Command::new(crate::toolchain::cuda_bin("cuobjdump")).arg("-res-usage").arg(obj).output()
+    else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let re_fn = Regex::new(r"Function\s+(\S+?):\s*$").unwrap();
+    // mangled: `..._imb12PK11StepsParams...`
+    let re_imb = Regex::new(r"_imb(\d+)(?:PK|P\d|\(|:|\s|$)").unwrap();
+    let re_st = Regex::new(r"STACK:(\d+)").unwrap();
+    let mut cur: Option<usize> = None;
+    let mut worst: std::collections::BTreeMap<usize, i64> = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        if let Some(c) = re_fn.captures(line) {
+            cur = re_imb.captures(&c[1]).and_then(|m| m[1].parse().ok());
+            continue;
+        }
+        if let (Some(k), Some(c)) = (cur, re_st.captures(line)) {
+            let v: i64 = c[1].parse().unwrap_or(0);
+            let e = worst.entry(k).or_insert(0);
+            *e = (*e).max(v);
+        }
+    }
+    worst.into_iter().collect()
+}
+
 /// Returns the largest chunk size (halving from the start size) that compiles
 /// with STACK=0, or None if it still spills at CHUNK_MIN (or fails to compile).
 /// On success the winning objects are copied into `out_dir` so the final link

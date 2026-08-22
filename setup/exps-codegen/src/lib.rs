@@ -344,6 +344,174 @@ fn optimize_checked(ir: ir::Ir, c: &Candidate, cfg: &GenConfig) -> std::result::
     Ok(opt)
 }
 
+/// Group the AIR's `im_col` hints (`cm = numerator / denominator` per row)
+/// into batches for the fused kernels. A hint qualifies when its destination
+/// is a cubic committed column and both operands are covered expressions (or
+/// the numerator is a literal); anything else stays on the per-expression
+/// path. EXPS_IMCOL_BATCH=<n> sets the batch size (default 8, 0 disables).
+fn imcol_batches(c: &Candidate, items: &[(i64, ir::Ir, u64)]) -> Vec<Vec<emit::ImColHint>> {
+    let size: usize = std::env::var("EXPS_IMCOL_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    if size == 0 {
+        return Vec::new();
+    }
+    let dims: std::collections::HashMap<i64, u64> = items.iter().map(|(id, _, od)| (*id, *od)).collect();
+    let mut hints: Vec<emit::ImColHint> = Vec::new();
+    for h in c.expr_info.hints_info.iter().filter(|h| h.name == "im_col") {
+        let (Some(r), Some(n), Some(d)) = (h.field("reference"), h.field("numerator"), h.field("denominator")) else {
+            continue;
+        };
+        if r.op != "cm" || d.op != "tmp" {
+            continue;
+        }
+        let (Some(cm_id), Some(den)) = (r.id, d.id) else { continue };
+        let Some(cm) = c.stark_info.cm_pols_map.get(cm_id as usize) else { continue };
+        if cm.dim != 3 || dims.get(&(den as i64)) != Some(&3) {
+            continue;
+        }
+        let num = match n.op.as_str() {
+            "tmp" => match n.id.and_then(|id| dims.get(&(id as i64)).map(|_| id)) {
+                Some(id) => emit::ImNum::Expr(id as i64),
+                None => continue,
+            },
+            "number" => match n.number_value() {
+                Some(v) => emit::ImNum::Scalar(v),
+                None => continue,
+            },
+            "cm" => {
+                let Some(nid) = n.id else { continue };
+                let Some(np) = c.stark_info.cm_pols_map.get(nid as usize) else { continue };
+                let Some(&ncols) = c.stark_info.map_sections_n.get(&format!("cm{}", np.stage)) else { continue };
+                // base-field column of an earlier stage only (later stages are being
+                // written by this very phase)
+                if np.dim != 1 || np.stage >= cm.stage || !(1..=3).contains(&np.stage) {
+                    continue;
+                }
+                emit::ImNum::Col { cm_id: nid, stage: np.stage, pos: np.stage_pos, stage_cols: ncols }
+            }
+            _ => continue,
+        };
+        let Some(&stage_cols) = c.stark_info.map_sections_n.get(&format!("cm{}", cm.stage)) else { continue };
+        if !(1..=3).contains(&cm.stage) {
+            continue;
+        }
+        // The batch evaluates every operand of a row before it writes any column
+        // of that row, so an operand that reads a column of the destination's
+        // stage (e.g. an earlier im_col) would see the pre-write value: such hints
+        // keep the sequential per-hint path.
+        let reads_stage = |id: i64| {
+            items.iter().find(|(i, _, _)| *i == id).is_none_or(|(_, ir, _)| {
+                ir.instrs.iter().any(|ins| {
+                    [&ins.a, &ins.b].iter().any(|o| matches!(o, ir::Operand::Cm { stage, .. } if *stage >= cm.stage))
+                })
+            })
+        };
+        if reads_stage(den as i64) || matches!(num, emit::ImNum::Expr(id) if reads_stage(id)) {
+            continue;
+        }
+        hints.push(emit::ImColHint {
+            cm_id,
+            stage: cm.stage,
+            stage_pos: cm.stage_pos,
+            stage_cols,
+            num,
+            den: den as i64,
+        });
+    }
+    // Group by cost, not just count: a batch's temps and the Montgomery arrays
+    // must stay in registers. EXPS_IMCOL_OPS caps the summed expression ops per
+    // batch (default 256); the spill probe in run_pipeline then splits whatever
+    // still spills, so the cap only bounds the first attempt.
+    let ops_cap: usize = std::env::var("EXPS_IMCOL_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(256);
+    let ops_of = |id: i64| items.iter().find(|(i, _, _)| *i == id).map(|(_, ir, _)| ir.instrs.len()).unwrap_or(0);
+    let cost = |h: &emit::ImColHint| {
+        ops_of(h.den)
+            + match h.num {
+                emit::ImNum::Expr(id) => ops_of(id),
+                _ => 1,
+            }
+    };
+    let mut batches: Vec<Vec<emit::ImColHint>> = Vec::new();
+    let mut cur: Vec<emit::ImColHint> = Vec::new();
+    let mut cur_ops = 0usize;
+    for h in hints {
+        let c = cost(&h);
+        if !cur.is_empty() && (cur.len() >= size || cur_ops + c > ops_cap) {
+            batches.push(std::mem::take(&mut cur));
+            cur_ops = 0;
+        }
+        cur_ops += c;
+        cur.push(h);
+    }
+    if !cur.is_empty() {
+        batches.push(cur);
+    }
+    batches
+}
+
+/// A stage-2 TU whose fused im_col batches get spill-probed (phase 3a).
+struct CexprsJob {
+    name: String,
+    sym: String,
+    items: Vec<(i64, ir::Ir, u64)>,
+    batches: Vec<emit::ImColBatch>,
+}
+
+/// Turn hint groups into emitted batches: each group's numerator/denominator
+/// expressions are merged into one DAG (shared subtrees once) when the merged
+/// program reproduces every expression on random assignments; otherwise the
+/// batch keeps one lambda per expression. EXPS_IMCOL_MERGE=0 disables merging.
+fn plan_batches(name: &str, items: &[(i64, ir::Ir, u64)], groups: Vec<Vec<emit::ImColHint>>) -> Vec<emit::ImColBatch> {
+    let merge_on = std::env::var("EXPS_IMCOL_MERGE").ok().is_none_or(|v| v != "0");
+    let by_id: std::collections::HashMap<i64, &ir::Ir> = items.iter().map(|(id, ir, _)| (*id, ir)).collect();
+    let mut ops_sep = 0usize;
+    let mut ops_merged = 0usize;
+    let out: Vec<emit::ImColBatch> = groups
+        .into_iter()
+        .map(|hints| {
+            let mut merged = None;
+            if merge_on {
+                let mut irs: Vec<&ir::Ir> = Vec::new();
+                let mut den_idx: Vec<usize> = Vec::new();
+                let mut num_idx: Vec<Option<usize>> = Vec::new();
+                for h in &hints {
+                    den_idx.push(irs.len());
+                    irs.push(by_id[&h.den]);
+                    if let emit::ImNum::Expr(id) = h.num {
+                        num_idx.push(Some(irs.len()));
+                        irs.push(by_id[&id]);
+                    } else {
+                        num_idx.push(None);
+                    }
+                }
+                if let Some((mir, roots)) = opt::merge_exprs(&irs) {
+                    match check::equivalent_multi(&irs, &mir, &roots, 3) {
+                        Ok(()) => {
+                            ops_sep += irs.iter().map(|i| i.instrs.len()).sum::<usize>();
+                            ops_merged += mir.instrs.len();
+                            merged = Some(emit::MergedBatch {
+                                ir: mir,
+                                den_roots: den_idx.iter().map(|&i| roots[i]).collect(),
+                                num_roots: num_idx.iter().map(|i| i.map(|i| roots[i])).collect(),
+                            });
+                        }
+                        Err(e) => eprintln!(
+                            "[exps-codegen] {name}: im_col batch merge MISMATCH ({e}); keeping per-expression lambdas"
+                        ),
+                    }
+                }
+            }
+            emit::ImColBatch { hints, merged }
+        })
+        .collect();
+    if ops_sep > 0 {
+        eprintln!(
+            "[exps-codegen] {name}: im_col batch merge: {ops_sep} -> {ops_merged} ops ({:.1}%)",
+            100.0 * ops_merged as f64 / ops_sep as f64
+        );
+    }
+    out
+}
+
 fn run_pipeline(
     tc: &Toolchain,
     work: &Path,
@@ -386,6 +554,8 @@ fn run_pipeline(
     let mut generated: Vec<GeneratedAir> = Vec::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut max_scratch: u64 = 0;
+    // Stage-2 TUs with fused im_col batches: probed for spills below (phase 3a).
+    let mut cexprs_jobs: Vec<CexprsJob> = Vec::new();
     for (c, r) in &built {
         let ir = match r {
             Ok(ir) => ir,
@@ -462,7 +632,14 @@ fn run_pipeline(
                 items.push((ec.exp_id, eir, od));
             }
             if !items.is_empty() {
-                std::fs::write(work.join(format!("gen_{}_cexprs.cu", c.sym)), emit::emit_exprs_tu(&c.sym, &items))?;
+                let batches = plan_batches(&c.name, &items, imcol_batches(c, &items));
+                std::fs::write(
+                    work.join(format!("gen_{}_cexprs.cu", c.sym)),
+                    emit::emit_exprs_tu(&c.sym, &items, &batches),
+                )?;
+                if !batches.is_empty() {
+                    cexprs_jobs.push(CexprsJob { name: c.name.clone(), sym: c.sym.clone(), items, batches });
+                }
             }
         }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;
@@ -477,6 +654,73 @@ fn run_pipeline(
             n_ops: c.n_ops,
             slots: plan.total_slots,
         });
+    }
+
+    // Phase 3a: fused im_col batches must stay register-resident; a spilling batch
+    // costs more than the per-hint kernels it replaces (measured: Keccakf +53% with
+    // 8-hint batches at 254 regs + 496 B stack). Compile each stage-2 TU, read the
+    // batch kernels' STACK, split every spilling batch in half, re-emit, repeat.
+    // The clean object is left in place so phase 3b does not recompile it.
+    if !cfg.dry_run && !cexprs_jobs.is_empty() {
+        let errs: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = cexprs_jobs
+                .iter()
+                .map(|job| {
+                    scope.spawn(move || -> Option<String> {
+                        let CexprsJob { name, sym, items, batches } = job;
+                        let cu = work.join(format!("gen_{sym}_cexprs.cu"));
+                        let obj = cu.with_extension("o");
+                        let mut batches: Vec<emit::ImColBatch> = batches.clone();
+                        for round in 0..6 {
+                            match tc.compile_tu(&cu, &obj, Some(work)) {
+                                Ok((true, _)) => {}
+                                Ok((false, log)) => return Some(format!("nvcc failed for {}: {log}", cu.display())),
+                                Err(e) => return Some(format!("nvcc spawn failed for {}: {e}", cu.display())),
+                            }
+                            let spills = autotune::imb_spills(&obj);
+                            let splittable: Vec<usize> = spills
+                                .iter()
+                                .filter(|&&(k, st)| st > 0 && batches.get(k).is_some_and(|b| b.hints.len() > 1))
+                                .map(|&(k, _)| k)
+                                .collect();
+                            let sizes: Vec<usize> = batches.iter().map(|b| b.hints.len()).collect();
+                            if splittable.is_empty() {
+                                let spilling = spills.iter().filter(|&&(_, st)| st > 0).count();
+                                eprintln!(
+                                    "[exps-codegen] {name}: {} im_col hints in {} batch kernels (sizes {:?}), {} spilling singleton(s), {} probe round(s)",
+                                    sizes.iter().sum::<usize>(),
+                                    batches.len(),
+                                    sizes,
+                                    spilling,
+                                    round + 1
+                                );
+                                return None;
+                            }
+                            let mut next: Vec<Vec<emit::ImColHint>> = Vec::with_capacity(batches.len() + splittable.len());
+                            for (k, b) in batches.iter().enumerate() {
+                                if splittable.contains(&k) {
+                                    let mid = b.hints.len() / 2;
+                                    next.push(b.hints[..mid].to_vec());
+                                    next.push(b.hints[mid..].to_vec());
+                                } else {
+                                    next.push(b.hints.clone());
+                                }
+                            }
+                            batches = plan_batches(name, items, next);
+                            if let Err(e) = std::fs::write(&cu, emit::emit_exprs_tu(sym, items, &batches)) {
+                                return Some(format!("rewrite {} failed: {e}", cu.display()));
+                            }
+                            let _ = std::fs::remove_file(&obj);
+                        }
+                        Some(format!("{name}: im_col batches still spill after 6 split rounds"))
+                    })
+                })
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+        });
+        if let Some(e) = errs.into_iter().next() {
+            anyhow::bail!(e);
+        }
     }
 
     // Phase 3b: compile every emitted .cu that does not already have its .o

@@ -6,11 +6,14 @@
 #include "cuda_utils.cuh"
 #include "goldilocks_tooling.cuh"
 #include "expressions_gpu.cuh"
+#include "expressions_codegen.cuh"
 #include "starks_gpu.cuh"
 #include "hints.cuh"
 #include "gpu_timer.cuh"
 #include "cuda_graph_cache.cuh"
 #include <iomanip>
+#include <map>
+#include <tuple>
 
 // TOTO list: //rick
 // carregar-me els d_trees
@@ -43,12 +46,96 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     uint64_t hint[1];
     setupCtx.expressionsBin.getHintIdsByName(hint, name);
 
-    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
+    uint64_t nImColHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
     uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
+    std::vector<uint64_t> imColHints(nImColHints);
+    if (nImColHints > 0) setupCtx.expressionsBin.getHintIdsByName(imColHints.data(), "im_col");
+    // Fused im_col batches from the AIR's generated kernels: a batch is launched
+    // when every hint it lists is an im_col hint of this AIR (matched by numerator
+    // / denominator expression ids and destination column), and those hints are
+    // dropped from the per-hint path below. EXPS_IMCOL=0 disables;
+    // EXPS_IMCOL_VERIFY=1 also runs the per-hint path first and compares the
+    // stage columns word by word.
+    std::vector<bool> imColHandled(nImColHints, false);
+    {
+        const char *imEnv = getenv("EXPS_IMCOL");
+        const bool imOn = imEnv == nullptr || std::string(imEnv) != "0";
+        const bool imVerify = getenv("EXPS_IMCOL_VERIFY") != nullptr;
+        if (imOn && nImColHints > 0 && expressionsCtxGPU->imcolBatchesFn != nullptr) {
+            auto nBatches = ((ImcolBatchesFn)expressionsCtxGPU->imcolBatchesFn)();
+            auto batchInfo = (ImcolBatchInfoFn)expressionsCtxGPU->imcolBatchInfoFn;
+            auto batchLaunch = (ImcolLaunchFn)expressionsCtxGPU->imcolLaunchFn;
+            std::map<std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>, uint64_t> byKey; // (numId|~0, literal, denId, cmId) -> index in imColHints
+            for (uint64_t i = 0; i < nImColHints; ++i) {
+                Hint &hint = setupCtx.expressionsBin.hints[imColHints[i]];
+                const HintFieldValue *ref = nullptr, *num = nullptr, *den = nullptr;
+                for (auto &f : hint.fields) {
+                    if (f.values.empty()) continue;
+                    if (f.name == "reference") ref = &f.values[0];
+                    else if (f.name == "numerator") num = &f.values[0];
+                    else if (f.name == "denominator") den = &f.values[0];
+                }
+                if (!ref || !num || !den || ref->operand != opType::cm || den->operand != opType::tmp) continue;
+                uint64_t numId = ~0ull, lit = 0;
+                if (num->operand == opType::tmp) numId = num->id;
+                else if (num->operand == opType::number) lit = num->value;
+                else if (num->operand == opType::cm) { numId = ~0ull - 1; lit = num->id; }
+                else continue;
+                byKey[std::make_tuple(numId, lit, den->id, ref->id)] = i;
+            }
+            const uint64_t N = 1ull << setupCtx.starkInfo.starkStruct.nBits;
+            auto offc = [&](const char *sec) -> uint64_t {
+                auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(sec), false));
+                return it != setupCtx.starkInfo.mapOffsets.end() ? it->second : 0;
+            };
+            const uint64_t o1 = offc("cm1"), o2 = offc("cm2"), o3 = offc("cm3");
+            std::vector<unsigned long long> words(4 * 256);
+            for (uint64_t k = 0; k < nBatches; ++k) {
+                uint64_t n = batchInfo(k, words.data(), words.size());
+                if (n == 0 || 4 * n > words.size()) continue;
+                std::vector<uint64_t> idx;
+                bool all = true;
+                for (uint64_t j = 0; j < n && all; ++j) {
+                    auto it = byKey.find(std::make_tuple(words[4*j], words[4*j+1], words[4*j+2], words[4*j+3]));
+                    if (it == byKey.end() || imColHandled[it->second]) all = false; else idx.push_back(it->second);
+                }
+                if (!all) continue;
+                std::vector<Goldilocks::Element> ref;
+                uint64_t cm2Words = 0;
+                if (imVerify) {
+                    // per-hint path first, snapshot stage 2, then the batch overwrites it
+                    std::vector<uint64_t> ids; std::vector<std::string> d, f1, f2; std::vector<HintFieldOptions> op1, op2;
+                    for (uint64_t i : idx) { ids.push_back(imColHints[i]); d.push_back("reference"); f1.push_back("numerator"); f2.push_back("denominator"); HintFieldOptions a, b; b.inverse = true; op1.push_back(a); op2.push_back(b); }
+                    multiplyHintFieldsGPU(setupCtx, h_params, d_params, ids.size(), ids.data(), d.data(), f1.data(), f2.data(), op1.data(), op2.data(), expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+                    cm2Words = N * setupCtx.starkInfo.mapSectionsN["cm2"];
+                    ref.resize(cm2Words);
+                    CHECKCUDAERR(cudaStreamSynchronize(stream));
+                    CHECKCUDAERR(cudaMemcpy(ref.data(), h_params.aux_trace + o2, cm2Words * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+                }
+                TimerStartCategoryGPU(timer, EXPRESSIONS);
+                int ok = batchLaunch(k, d_params, N, o1, o2, o3, stream);
+                TimerStopCategoryGPU(timer, EXPRESSIONS);
+                if (!ok) continue;
+                CHECKCUDAERR(cudaGetLastError());
+                if (imVerify) {
+                    std::vector<Goldilocks::Element> got(cm2Words);
+                    CHECKCUDAERR(cudaStreamSynchronize(stream));
+                    CHECKCUDAERR(cudaMemcpy(got.data(), h_params.aux_trace + o2, cm2Words * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+                    uint64_t diff = 0, first = ~0ull;
+                    for (uint64_t w = 0; w < cm2Words; ++w) if (Goldilocks::toU64(got[w]) != Goldilocks::toU64(ref[w])) { if (first == ~0ull) first = w; ++diff; }
+                    zklog.info("[exps-imcol-verify] air " + std::to_string(setupCtx.starkInfo.airgroupId) + "/" + std::to_string(setupCtx.starkInfo.airId) + " batch " + std::to_string(k) + " (" + std::to_string(n) + " hints): " + std::to_string(diff) + " of " + std::to_string(cm2Words) + " stage-2 words differ" + (diff ? " (first at word " + std::to_string(first) + ")" : ""));
+                }
+                for (uint64_t i : idx) imColHandled[i] = true;
+            }
+        }
+    }
+    uint64_t nImHints = 0;
+    for (uint64_t i = 0; i < nImColHints; ++i) if (!imColHandled[i]) ++nImHints;
     uint64_t nImTotalHints = nImHints + nImHintsAirVals;
     if(nImTotalHints > 0) {
         uint64_t imHints[nImHints + nImHintsAirVals];
-        setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
+        uint64_t w = 0;
+        for (uint64_t i = 0; i < nImColHints; ++i) if (!imColHandled[i]) imHints[w++] = imColHints[i];
         setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
         std::string hintFieldDest[nImTotalHints];
         std::string hintField1[nImTotalHints];

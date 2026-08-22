@@ -73,6 +73,42 @@ fn eval(ir: &Ir, env: &mut Env) -> Result<(F3, u64), String> {
     out.ok_or_else(|| "empty IR".to_string())
 }
 
+/// Like `eval`, but returns the values of the given tmps (a merged multi-root IR).
+fn eval_tmps(ir: &Ir, env: &mut Env, roots: &[u64]) -> Result<Vec<F3>, String> {
+    env.tab.clear();
+    let mut tmps: HashMap<u64, F3> = HashMap::new();
+    for instr in &ir.instrs {
+        let a = env.value(&instr.a, &tmps)?;
+        let b = env.value(&instr.b, &tmps)?;
+        let v = field::apply(&instr.op, a, instr.a.dim(), b, instr.b.dim());
+        if instr.dst_is_tmp {
+            tmps.insert(instr.dst_id.ok_or("tmp op without dst id")?, v);
+        }
+    }
+    roots.iter().map(|r| tmps.get(r).copied().ok_or_else(|| format!("root tmp t{r} undefined"))).collect()
+}
+
+/// `Ok(())` if `merged` (roots `roots[i]`) reproduces every `originals[i]` on
+/// `rounds` random assignments (same assignment for all, so shared leaves agree).
+pub fn equivalent_multi(originals: &[&Ir], merged: &Ir, roots: &[u64], rounds: u64) -> Result<(), String> {
+    if originals.len() != roots.len() {
+        return Err("root count mismatch".to_string());
+    }
+    for round in 0..rounds {
+        let mut env = Env { rng: Rng(0x5eed_1000 + round), leaves: HashMap::new(), tab: HashMap::new() };
+        let got = eval_tmps(merged, &mut env, roots).map_err(|e| format!("merged IR: {e}"))?;
+        for (i, orig) in originals.iter().enumerate() {
+            let (vo, do_) = eval(orig, &mut env).map_err(|e| format!("original {i}: {e}"))?;
+            let norm = |v: F3, d: u64| if d == 1 { F3::base(v.a) } else { v };
+            let dm = merged.instrs.iter().find(|x| x.dst_id == Some(roots[i])).map(|x| x.ddim).unwrap_or(3);
+            if norm(vo, do_) != norm(got[i], dm) {
+                return Err(format!("round {round} expr {i}: original={vo:?} merged={:?}", got[i]));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `Ok(())` if both IRs produce identical outputs on `rounds` random
 /// assignments; `Err` with the first mismatch otherwise.
 pub fn equivalent(original: &Ir, optimized: &Ir, rounds: u64) -> Result<(), String> {

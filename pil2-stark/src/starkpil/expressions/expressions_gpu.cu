@@ -78,6 +78,9 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     qMinScratch = ek.qMinScratch;
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
+    imcolBatchesFn = (void *)ek.imcolBatches;
+    imcolBatchInfoFn = (void *)ek.imcolBatchInfo;
+    imcolLaunchFn = (void *)ek.imcolLaunch;
 };
 
 ExpressionsGPU::~ExpressionsGPU()
