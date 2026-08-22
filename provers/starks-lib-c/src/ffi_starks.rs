@@ -1579,6 +1579,45 @@ pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n
     unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
 }
 
+pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
+    unsafe { set_pipeline_mode(d_buffers, enable) }
+}
+
+pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { harvest_pipeline(d_buffers) }
+}
+
+pub fn configure_prefetch_zone_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    witness_bytes: u64,
+    fixed_bytes: u64,
+    packed_bytes: u64,
+) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, fixed_bytes, packed_bytes) }
+}
+
+pub fn prefetch_fixed_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    const_tree_path: &str,
+    bytes: u64,
+) -> i64 {
+    let path = std::ffi::CString::new(const_tree_path).unwrap();
+    unsafe { prefetch_fixed(d_buffers, airgroup_id, air_id, path.as_ptr(), bytes) }
+}
+
+pub fn prefetch_witness_c(
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    trace: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn commit_witness_streaming_c(
     d_buffers: *mut ::std::os::raw::c_void,

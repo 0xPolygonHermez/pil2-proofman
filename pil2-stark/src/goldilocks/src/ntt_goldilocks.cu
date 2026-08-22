@@ -1488,6 +1488,46 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         CHECKCUDAERR(cudaFreeAsync(scratch, stream));
 }
 
+// Split-LDE first half: in-place DIF iNTT (natural evaluations -> BIT-REVERSED coefficients,
+// 1/N scaled), batched in L2-sized column chunks. Pairs exclusively with
+// extendFromCoeffsColMajor below, whose fused coset DIT consumes rev-order coefficients --
+// the same convention as ldeColMajor's serial flow.
+void NTTGoldilocksGPU::inttToCoeffsRevColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBits <= NTT_MAX_LG);
+    const NttTables &ti = nttEnsureTables(true);
+    size_t N = (size_t)1 << nBits;
+    uint32_t chunk = nttL2ChunkCols(N * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        NttRun{dst + (size_t)c0 * N, N, nc, (int)nBits, true, ti, stream, false}.run();
+    }
+}
+
+// Split-LDE second half: per column, forward DIT over the extended domain with the coset
+// spread fused into the first launch, reading the bit-reversed coefficients (disjoint from
+// dst -- enforced by the base/ext zone layout). ncols=1 per NttRun: the fused coset load
+// requires it.
+void NTTGoldilocksGPU::extendFromCoeffsColMajor(gl64_t *d_dst, const gl64_t *d_coeffs, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBitsExt > nBits && nBitsExt <= NTT_MAX_LG);
+    const NttTables &tf = nttEnsureTables(false);
+    size_t N = (size_t)1 << nBits;
+    size_t Next = (size_t)1 << nBitsExt;
+    uint32_t lg_blowup = (uint32_t)(nBitsExt - nBits);
+    for (uint64_t c = 0; c < nCols; ++c) {
+        NttRun fwd{d_dst + (size_t)c * Next, Next, 1, (int)nBitsExt, false, tf, stream, true};
+        fwd.cosetSrc = d_coeffs + (size_t)c * N;
+        fwd.cosetPows = (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows;
+        fwd.lgBlowup = lg_blowup;
+        fwd.run();
+    }
+}
+
 // ColMajor in-place INTT of nCols flat columns of 2^nBits rows (column c at dst + c*N).
 // NN order (natural in/out), matching the reference flow. Used for the LEv vector.
 void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)

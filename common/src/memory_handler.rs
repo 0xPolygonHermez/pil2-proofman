@@ -302,6 +302,10 @@ pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
+    pub fn buffer_size(&self) -> usize {
+        self.pool.buffer_size
+    }
+
     pub fn new(pctx: Arc<ProofCtx<F>>, n_buffers: usize, buffer_size: usize) -> Self {
         let instance_ids_to_be_released = Arc::new(SegQueue::new());
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -404,6 +408,65 @@ where
     F: Send + Sync + 'static,
 {
     fn take_buffer(&self) -> Vec<F>;
+}
+
+/// Pool-less buffer source: every take is a fresh allocation, releases are drops.
+/// Used by the demand-driven witness path (single-stream prefetch mode), where at
+/// most one witness is being computed ahead: pooling and pinning buy nothing
+/// there (the H2D runs on the copy stream under the previous proof), and taking
+/// from the shared pool would deadlock against stored witnesses only the same
+/// worker can free. Buffers from here must NOT be released into a real pool
+/// (bounded channel) -- the caller routes them by provenance.
+pub struct FreshBufferPool {
+    buffer_size: usize,
+}
+
+impl FreshBufferPool {
+    pub fn new(buffer_size: usize) -> Self {
+        Self { buffer_size }
+    }
+}
+
+impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for FreshBufferPool {
+    fn take_buffer(&self) -> Vec<F> {
+        proofman_util::create_buffer_fast(self.buffer_size)
+    }
+}
+
+/// Small unbounded-take recycling pool for the demand-driven witness path: takes
+/// pop a recycled buffer or allocate fresh; releases keep at most `keep` buffers
+/// and drop the rest. Kills the alloc/madvise churn of pure fresh allocation
+/// (jemalloc pages_purge showed up in warm profiles) while never blocking.
+pub struct RecyclingBufferPool<F> {
+    buffer_size: usize,
+    keep: usize,
+    free: std::sync::Mutex<Vec<Vec<F>>>,
+}
+
+impl<F: PrimeField64 + Send + Sync + 'static> RecyclingBufferPool<F> {
+    pub fn new(buffer_size: usize, keep: usize) -> Self {
+        Self { buffer_size, keep, free: std::sync::Mutex::new(Vec::new()) }
+    }
+
+    pub fn release(&self, buf: Vec<F>) {
+        if buf.len() == self.buffer_size {
+            let mut g = self.free.lock().unwrap();
+            if g.len() < self.keep {
+                g.push(buf);
+            }
+        }
+    }
+}
+
+impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for RecyclingBufferPool<F> {
+    fn take_buffer(&self) -> Vec<F> {
+        if let Some(b) = self.free.lock().unwrap().pop() {
+            // No re-zeroing: the shared pool also reuses buffers without clearing,
+            // so collectors already tolerate stale contents (they overwrite fully).
+            return b;
+        }
+        proofman_util::create_buffer_fast(self.buffer_size)
+    }
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for MemoryHandler<F> {

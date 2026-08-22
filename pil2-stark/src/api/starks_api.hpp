@@ -213,6 +213,11 @@ extern "C" {
     uint64_t get_stream_commit_floor(void *d_buffers_);
     uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
     void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedBytes, uint64_t packedBytes);
+    void set_pipeline_mode(void *d_buffers_, bool enable);
+    void harvest_pipeline(void *d_buffers_);
+    int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *trace);
+    int64_t prefetch_fixed(void *d_buffers_, uint64_t airgroupId, uint64_t airId, const char *constTreePath, uint64_t bytes);
     int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void stream_commit_pause();
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);

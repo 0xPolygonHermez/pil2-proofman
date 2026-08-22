@@ -137,7 +137,7 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints, uint64_t scratchShift)
 {
     // Generated-kernel fast path for trace-domain dests: a single covered
     // expression, or the hint pair (numerator x denominator^{-1}) fused as two
@@ -208,9 +208,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)] + scratchShift;
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)] + scratchShift;
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)] + scratchShift;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
@@ -277,13 +277,13 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
+void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint64_t scratchShift)
 {
     // Generated Q kernel first: it takes everything by value, so the interpreter's
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
     if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, scratchShift);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());
@@ -310,9 +310,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)] + scratchShift;
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)] + scratchShift;
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)] + scratchShift;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {

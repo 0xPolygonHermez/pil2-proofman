@@ -10,13 +10,30 @@
 #include "hints.cuh"
 #include "gpu_timer.cuh"
 #include "cuda_graph_cache.cuh"
+#include "proofman_sumcheck.cuh"
 #include <iomanip>
 
 // TOTO list: //rick
 // carregar-me els d_trees
 // _inplace not good name
 
-void calculateWitnessExpr_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+// Fence-bisection knob: how far the previous proof must have progressed before the next
+// same-air proof's phase-A may start (0 = after its extends [design], 4 = fully serial).
+inline int splitAFenceLevel() {
+    static const int lvl = [](){ const char* v = std::getenv("PROOFMAN_SPLIT_AFENCE"); return v ? atoi(v) : 0; }();
+    return lvl;
+}
+
+// Stage-1 commit on a side stream, overlapped with stage 2+ (basics only). Off by default.
+inline bool stage1OverlapEnabled() {
+    static const bool enabled = []() {
+        const char *v = std::getenv("PROOFMAN_STAGE1_OVERLAP");
+        return v != nullptr && v[0] == '1';
+    }();
+    return enabled;
+}
+
+void calculateWitnessExpr_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint64_t scratchShift = 0) {
 
     uint64_t nWitnessHints = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
@@ -32,11 +49,11 @@ void calculateWitnessExpr_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPa
             hintOptions[i] = options;
         }
 
-        calculateExprGPU(setupCtx, h_params, d_params, nWitnessHints, witnessHints, hintFieldDest, hintField, hintOptions, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        calculateExprGPU(setupCtx, h_params, d_params, nWitnessHints, witnessHints, hintFieldDest, hintField, hintOptions, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift);
     }
 }
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint64_t scratchShift = 0, uint64_t hintValsOffset = 0) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -66,7 +83,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift);
     }
 
     HintFieldOptions options1;
@@ -75,11 +92,11 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 
     std::string hintFieldNameAirgroupVal = setupCtx.starkInfo.airgroupValuesMap.size() > 0 ? "result" : "";
 
-    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", hintFieldNameAirgroupVal, "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", hintFieldNameAirgroupVal, "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift, hintValsOffset);
+    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift, hintValsOffset);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false) {
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool splitPhases = false) {
     // Per-stream timer is reused: drop categories a prior aborted job left open.
     TimerResetCategoriesGPU(timer);
     TimerStartGPU(timer, STARK_GPU_PROOF);
@@ -116,17 +133,51 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //   0x515559   "QUY"   query proofs (+ d_const_tree in key: preloaded trees repoint it)
     //   0x57455843 "WEXC"  contributions witness expressions   (commit_witness_gpu, starks_api.cu)
     //   0x574c4445 "WLDE"  contributions LDE + Merkle + root   (commit_witness_gpu, starks_api.cu)
-    const uint64_t graphCtxId = (uint64_t)(uintptr_t)&setupCtx;
 
-    StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params;
-    Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
-    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
-    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
-    TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;
-    TranscriptGL_GPU *d_transcript_helper = d_buffers->streamsData[stream_id].transcript_helper;
-    StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
-    ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
-    DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
+    // Deep pipeline: parity-sliced pinned staging (see StreamData::PipelineSlot).
+    // launchSeq increments at the ring push AFTER this call, so the parity here
+    // matches the slot gen_proof_gpu records for this proof. Slot 0 outside
+    // pipeline mode and for recursive proofs (never pipelined).
+    const uint32_t pipeSlot = (d_buffers->pipelineMode && !recursive)
+        ? (uint32_t)(d_buffers->streamsData[stream_id].launchSeq & 1) : 0;
+    // Base/ext split parity: odd-parity proofs relocate the early-phase smalls (publics..
+    // challenges) and the expression scratch to their parity copies, so the next proof's early
+    // phase never touches this proof's live state. Must match gen_proof_gpu's upload shift.
+    const uint64_t smallsShift = (setupCtx.starkInfo.baseSplit && pipeSlot)
+        ? setupCtx.starkInfo.mapOffsets[std::make_pair("smalls_parity", false)] - setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)]
+        : 0;
+    const uint64_t scratchShift = (setupCtx.starkInfo.baseSplit && pipeSlot) ? setupCtx.starkInfo.expsScratchShift() : 0;
+    // Base-zone scratch for the gsum accumulation (stock code borrows the ("q",true) region,
+    // which the previous proof's tail still folds under the phase split).
+    const uint64_t hintValsOffset = setupCtx.starkInfo.baseSplit
+        ? setupCtx.starkInfo.mapOffsets[std::make_pair(pipeSlot ? "hint_vals_parity" : "hint_vals", false)]
+        : 0;
+    // (declared after the parity shifts it keys on)
+    const uint64_t graphCtxId = (uint64_t)(uintptr_t)&setupCtx ^ (smallsShift ? 0x9E3779B97F4A7C15ULL : 0ULL);
+    StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params + pipeSlot;
+    Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof
+        + (uint64_t)pipeSlot * d_buffers->streamsData[stream_id].maxProofSize;
+    // Deep pipeline: per-air pinned exps staging (frozen post-capture; see
+    // AirInstanceInfo). Shared per-stream buffers otherwise.
+    // Base/ext split parity: the odd-parity proof's per-proof device/pinned argument state
+    // must be its own copy -- the even proof's tail kernels still read theirs while this
+    // proof's early phase stages and launches.
+    const bool parityOdd = setupCtx.starkInfo.baseSplit && (d_buffers->pipelineMode && !recursive)
+        && (d_buffers->streamsData[stream_id].launchSeq & 1);
+    const bool perAirExps = d_buffers->pipelineMode && !recursive && air_instance_info->pinnedExpsParams != nullptr;
+    Goldilocks::Element *pinned_exps_params = perAirExps
+        ? air_instance_info->pinnedExpsParams + (parityOdd ? (uint64_t)PINNED_EXPS_SLOTS * 2 * sizeof(DestParamsGPU) / sizeof(Goldilocks::Element) : 0)
+        : d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_exps_args = perAirExps
+        ? air_instance_info->pinnedExpsArgs + (parityOdd ? (uint64_t)PINNED_EXPS_SLOTS * sizeof(ExpsArguments) / sizeof(Goldilocks::Element) : 0)
+        : d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
+    TranscriptGL_GPU *d_transcript = parityOdd ? d_buffers->streamsData[stream_id].transcript_parity
+                                               : d_buffers->streamsData[stream_id].transcript;
+    TranscriptGL_GPU *d_transcript_helper = parityOdd ? d_buffers->streamsData[stream_id].transcript_helper_parity
+                                                      : d_buffers->streamsData[stream_id].transcript_helper;
+    StepsParams *d_params =  d_buffers->streamsData[stream_id].params + (parityOdd ? 1 : 0);
+    ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs + (parityOdd ? 1 : 0);
+    DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams + (parityOdd ? 2 : 0);
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -146,18 +197,18 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
-    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-    uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
-    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
+    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)] + smallsShift;
+    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)] + smallsShift;
+    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)] + smallsShift;
+    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)] + smallsShift;
+    uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)] + smallsShift;
+    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)] + smallsShift;
     uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsets[std::make_pair("xdivxsub", false)];
     uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
-    uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
-    uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
-    uint64_t offsetNonceBlocks = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce_blocks", false)];
-    uint64_t offsetInputHashNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("input_hash_nonce", false)];
+    uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)] + smallsShift;
+    uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)] + smallsShift;
+    uint64_t offsetNonceBlocks = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce_blocks", false)] + smallsShift;
+    uint64_t offsetInputHashNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("input_hash_nonce", false)] + smallsShift;
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
     uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
 
@@ -167,6 +218,11 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
         unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx.starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
         CHECKCUDAERR(cudaGetLastError());
+        // No-const-buffer mode: mark the packed zone segment's last read so the
+        // next slot's staging cannot overwrite it mid-unpack.
+        if (d_buffers->prefetchPacked != nullptr && (gl64_t *)packed_const_pols == d_buffers->prefetchPacked) {
+            CHECKCUDAERR(cudaEventRecord(d_buffers->packedDrained, stream));
+        }
     }
 
     StepsParams h_params = {
@@ -186,7 +242,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     memcpy(params_pinned, &h_params, sizeof(StepsParams));
     
-    CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+    // Split phases: the early phase's expression kernels read d_params on the SIDE stream --
+    // upload there so it lands before them without waiting the previous proof's tail on main.
+    // (bit 2 of PROOFMAN_SPLIT_EARLY_UPLOAD; bisection knob)
+    static const int earlyUpG = [](){ const char* v = std::getenv("PROOFMAN_SPLIT_EARLY_UPLOAD"); return v ? atoi(v) : 0; }();
+    CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice,
+                                 (splitPhases && (earlyUpG & 2)) ? d_buffers->streamsData[stream_id].phaseStream : stream));
     
     Goldilocks::Element *d_challenge = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
     
@@ -201,6 +262,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
     TimerStartCategoryGPU(timer, TRANSCRIPT);
+    if (!splitPhases) {
     d_transcript->reset(stream);
     if (recursive) {
         d_transcript->put(air_instance_info->verkeyRoot, HASH_SIZE, stream);
@@ -219,9 +281,10 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     } else {
        d_transcript->put(d_challenge, FIELD_EXTENSION, stream);
     }
+    }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
 
-    if (!skipRecalculation) {
+    if (!skipRecalculation && !splitPhases) {
         uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
         if (d_buffers->packedTrace && air_instance_info->is_packed) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
@@ -233,14 +296,113 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopGPU(timer, STARK_STEP_0);
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
+    StreamData &sdPh = d_buffers->streamsData[stream_id];
+    StreamData &sdOv = sdPh;
+    // Stage-1 side-stream overlap is subsumed by the phase split (its halves live in the
+    // phases); active only in the non-split path.
+    bool overlapStage1 = stage1OverlapEnabled() && !recursive && !skipRecalculation && !splitPhases;
+    if (splitPhases) {
+        // ================= PHASE A (base zone, side stream) =================
+        // The zone->trace transpose was already enqueued on the side stream by gen_proof_gpu
+        // (under the prefetch mutex). Everything here reads/writes ONLY base-zone regions and
+        // the parity smalls/scratch, so it may execute while the PREVIOUS proof's tail still
+        // owns the ext zone.
+        cudaStream_t aStream = sdPh.phaseStream;
+        // Smalls (publics/airvalues/globalChallenge) upload runs on the main stream.
+        CHECKCUDAERR(cudaStreamWaitEvent(aStream, sdPh.smallsUp, 0));
+        PROOFMAN_SUMCHECK("splitA_trace_i%u", (gl64_t*)h_params.trace, N * setupCtx.starkInfo.mapSectionsN["cm1"], aStream, (unsigned)instance_id);
+        PROOFMAN_SUMCHECK("splitA_smalls_i%u", (gl64_t*)h_params.publicInputs, setupCtx.starkInfo.nPublics + setupCtx.starkInfo.proofValuesSize + setupCtx.starkInfo.airgroupValuesSize + setupCtx.starkInfo.airValuesSize + FIELD_EXTENSION, aStream, (unsigned)instance_id);
+        d_transcript->reset(aStream);
+        d_transcript->put(d_challenge, FIELD_EXTENSION, aStream);
+        calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, aStream, scratchShift);
+        for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
+            if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
+                d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], aStream);
+            }
+        }
+        calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, aStream, scratchShift, hintValsOffset);
+        calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, aStream, scratchShift, hintValsOffset);
+        calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, aStream, scratchShift);
+        PROOFMAN_SUMCHECK("splitA_wexpstd_i%u", (gl64_t*)h_params.trace, N * setupCtx.starkInfo.mapSectionsN["cm1"], aStream, (unsigned)instance_id);
+        PROOFMAN_SUMCHECK("splitA_cm2b_i%u", (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)], N * setupCtx.starkInfo.mapSectionsN["cm2"], aStream, (unsigned)instance_id);
+        {
+            NTTGoldilocksGPU nttA;
+            // In-place iNTTs AFTER the last base-domain readers (STD2/imPols): evaluations
+            // become bit-reversed coefficients that phase B extends from.
+            nttA.inttToCoeffsRevColMajor((gl64_t*)h_params.trace, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm1"], aStream);
+            nttA.inttToCoeffsRevColMajor((gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)], setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm2"], aStream);
+        }
+        PROOFMAN_SUMCHECK("splitA_intt1_i%u", (gl64_t*)h_params.trace, N * setupCtx.starkInfo.mapSectionsN["cm1"], aStream, (unsigned)instance_id);
+        PROOFMAN_SUMCHECK("splitA_intt2_i%u", (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)], N * setupCtx.starkInfo.mapSectionsN["cm2"], aStream, (unsigned)instance_id);
+        CHECKCUDAERR(cudaEventRecord(sdPh.phaseADone, aStream));
+        // ================= PHASE B (ext zone, main stream) =================
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, sdPh.phaseADone, 0));
+        {
+            NTTGoldilocksGPU nttB;
+            uint64_t NExtB = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+            Goldilocks::Element *dstGL = (Goldilocks::Element*)h_params.aux_trace;
+            // stage 1: extend + tree (root1 is never absorbed for basics)
+            {
+                uint64_t nC = setupCtx.starkInfo.mapSectionsN["cm1"];
+                uint64_t offD = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
+                Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[std::make_pair("mt1", true)];
+                starks.treesGL[0]->setSource(dstGL + offD);
+                starks.treesGL[0]->setNodes(pNodes);
+                TimerStartCategoryGPU(timer, NTT);
+                nttB.extendFromCoeffsColMajor((gl64_t*)h_params.aux_trace + offD, (const gl64_t*)h_params.trace, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nC, stream);
+                TimerStopCategoryGPU(timer, NTT);
+                TimerStartCategoryGPU(timer, MERKLE_TREE);
+                buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dstGL + offD), nC, NExtB, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nC), stream);
+                TimerStopCategoryGPU(timer, MERKLE_TREE);
+            }
+            // stage 2: extend, THEN release the base zone (both coefficient reads done), then tree + root2
+            {
+                uint64_t nC = setupCtx.starkInfo.mapSectionsN["cm2"];
+                uint64_t offS = setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)];
+                uint64_t offD = setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", true)];
+                Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[std::make_pair("mt2", true)];
+                starks.treesGL[1]->setSource(dstGL + offD);
+                starks.treesGL[1]->setNodes(pNodes);
+                TimerStartCategoryGPU(timer, NTT);
+                nttB.extendFromCoeffsColMajor((gl64_t*)h_params.aux_trace + offD, (const gl64_t*)(h_params.aux_trace + offS), setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nC, stream);
+                TimerStopCategoryGPU(timer, NTT);
+                if (splitAFenceLevel() == 0) CHECKCUDAERR(cudaEventRecord(sdPh.baseFree, stream));
+                TimerStartCategoryGPU(timer, MERKLE_TREE);
+                buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dstGL + offD), nC, NExtB, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nC), stream);
+                TimerStopCategoryGPU(timer, MERKLE_TREE);
+                uint64_t tree_size = starks.treesGL[1]->getNumNodes(NExtB);
+                PROOFMAN_SUMCHECK("splitB_ext1_i%u", (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)], NExtB * setupCtx.starkInfo.mapSectionsN["cm1"], stream, (unsigned)instance_id);
+                PROOFMAN_SUMCHECK("splitB_ext2_i%u", (gl64_t*)h_params.aux_trace + offD, NExtB * nC, stream, (unsigned)instance_id);
+                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+            }
+            uint64_t a = 0;
+            for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); i++) {
+                if(setupCtx.starkInfo.airValuesMap[i].stage == 1) a++;
+                if(setupCtx.starkInfo.airValuesMap[i].stage == 2) {
+                    d_transcript->put(&h_params.airValues[a], FIELD_EXTENSION, stream);
+                    a += 3;
+                }
+            }
+        }
+    } else {
     cudagraph::run(cudagraph::key(0x57455850ULL ^ graphCtxId), countId, stream, [&] {
-        calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift);
     });
+    // Stage-1 overlap (PROOFMAN_STAGE1_OVERLAP): basics never absorb root1 into the transcript,
+    // so the stage-1 commit is off the Fiat-Shamir critical path (see hoisted flag above).
+    if (overlapStage1) {
+        CHECKCUDAERR(cudaEventRecord(sdOv.cm1Fork, stream));
+        CHECKCUDAERR(cudaStreamWaitEvent(sdOv.sideStream, sdOv.cm1Fork, 0));
+        // Not graph-wrapped: capture runs on the main stream and would not see side-stream work.
+        extendAndMerkelize_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, nullptr, false, timer, sdOv.sideStream, sdOv.cm1LdeDone);
+        CHECKCUDAERR(cudaEventRecord(sdOv.cm1TreeDone, sdOv.sideStream));
+    } else {
     cudagraph::run(cudagraph::key(0x434d5431ULL ^ graphCtxId, recursive, skipRecalculation), countId, stream, [&] {
     // The transcript differs between the two, but skipRecalculation is the caller's answer to
     // "is the witness already committed" and must be honoured either way.
     commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, skipRecalculation, timer, stream);
     });
+    }
     TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
 
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
@@ -252,17 +414,23 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         }
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
-    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift, hintValsOffset);
+    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift, hintValsOffset);
 
     TimerStopGPU(timer, STARK_CALCULATE_WITNESS_STD);
 
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
     });
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
+    // Stage-1 overlap fence #1: only needed here when cm2-extended aliases cm1(false) (the side
+    // LDE's src) -- with the un-aliased layout commit-2 is conflict-free and the LDE fence moves
+    // to the quotient expressions (the first reader of the stage-1 LDE output).
+    if (overlapStage1 && !setupCtx.starkInfo.cm2Unaliased) {
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, sdOv.cm1LdeDone, 0));
+    }
     cudagraph::run(cudagraph::key(0x434d5432ULL ^ graphCtxId), countId, stream, [&] {
     commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
 
@@ -277,6 +445,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     });
+    }
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
     TimerStartGPU(timer, STARK_STEP_Q);
     TimerStartCategoryGPU(timer, TRANSCRIPT);
@@ -287,6 +456,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         }
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
+    PROOFMAN_SUMCHECK("tail_qch_i%u", (gl64_t*)h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION, stream, (unsigned)instance_id);
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
@@ -298,13 +468,30 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
+    // Stage-1 overlap fence #1 (un-aliased layout): quotient expressions read cm1-extended.
+    if (overlapStage1 && setupCtx.starkInfo.cm2Unaliased) {
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, sdOv.cm1LdeDone, 0));
+    }
+    // (legacy base-zone release moved to just before setProof: a residual boundary race --
+    // intermittent Binary#1 'Invalid evaluations' -- survives the earlier release point, and
+    // legacy predecessors are only the first proof of each same-air run, so the conservative
+    // fence costs overlap at ~5 boundary pairs per block.)
+    if (setupCtx.starkInfo.baseSplit && !recursive &&
+        ((splitPhases && splitAFenceLevel() == 1) || (!splitPhases && splitAFenceLevel() == 5))) {
+        // Level 5: LEGACY proofs also release the base zone early (post-commit-2) -- the
+        // boundary-cost experiment; the conservative default keeps legacy release at setProof
+        // because of the unfound Binary#1 boundary race.
+        CHECKCUDAERR(cudaEventRecord(sdPh.baseFree, stream));
+    }
     cudagraph::run(cudagraph::key(0x51455850ULL ^ graphCtxId), countId, stream, [&] {
-        calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift);
     });
+    PROOFMAN_SUMCHECK("tail_q_i%u", (gl64_t*)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBitsExt) * FIELD_EXTENSION, stream, (unsigned)instance_id);
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     cudagraph::run(cudagraph::key(0x434d5451ULL ^ graphCtxId), countId, stream, [&] {
         commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, false, timer, stream);
     });
+    if (setupCtx.starkInfo.baseSplit && !recursive && splitPhases && splitAFenceLevel() == 2) CHECKCUDAERR(cudaEventRecord(sdPh.baseFree, stream));
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
     
@@ -355,6 +542,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     });
     TimerStopGPU(timer, STARK_STEP_EVALS);
+    if (setupCtx.starkInfo.baseSplit && !recursive && splitPhases && splitAFenceLevel() == 3) CHECKCUDAERR(cudaEventRecord(sdPh.baseFree, stream));
+    PROOFMAN_SUMCHECK("tail_evals_i%u", (gl64_t*)h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream, (unsigned)instance_id);
+    PROOFMAN_SUMCHECK("tail_evch_i%u", (gl64_t*)h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION, stream, (unsigned)instance_id);
     //--------------------------------
     // 6. Compute FRI
     //--------------------------------
@@ -412,6 +602,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         });
     }
 
+    PROOFMAN_SUMCHECK("tail_f_i%u", (gl64_t*)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBitsExt) * FIELD_EXTENSION, stream, (unsigned)instance_id);
     TimerStartCategoryGPU(timer, GRINDING);
     Goldilocks::Element *d_input_hash_nonce = (Goldilocks::Element *)d_aux_trace + offsetInputHashNonce;
     CHECKCUDAERR(cudaMemcpyAsync(d_input_hash_nonce, d_challenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
@@ -427,18 +618,49 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     Goldilocks::Element *permScratch = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries_perm", false)];
     d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, permScratch, stream);
 
+    // Stage-1 overlap fence #2: the query phase is the first reader of the cm1 Merkle nodes.
+    if (overlapStage1) {
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, sdOv.cm1TreeDone, 0));
+    }
+    // Query split: the FRI-tree openings go to the side stream (per-tree slices of
+    // d_queries_buff are disjoint, the query indices are read-only, and the FRI trees were
+    // built earlier on this stream so the fork event orders them). These are small
+    // latency-bound kernels that under-occupy the GPU, so the two sets genuinely co-execute.
+    if (overlapStage1) {
+        CHECKCUDAERR(cudaEventRecord(sdOv.friQFork, stream));
+        CHECKCUDAERR(cudaStreamWaitEvent(sdOv.sideStream, sdOv.friQFork, 0));
+        // proveFRIQueries mutates its index buffer in place (moduleQueries folds it per step),
+        // and the main stream's commitment-tree openings read the originals concurrently --
+        // the side stream folds its own copy.
+        uint64_t *friQueriesSide_gpu = (uint64_t *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries_side", false)];
+        CHECKCUDAERR(cudaMemcpyAsync(friQueriesSide_gpu, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries * sizeof(uint64_t), cudaMemcpyDeviceToDevice, sdOv.sideStream));
+        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+            proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueriesSide_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], sdOv.sideStream);
+        }
+        CHECKCUDAERR(cudaEventRecord(sdOv.friQDone, sdOv.sideStream));
+    }
     // d_const_tree joins the key: preloaded const trees give the same air a different
     // (but per-stream-stable) tree pointer, and the query kernels read through it.
     cudagraph::run(cudagraph::key(0x515559ULL ^ graphCtxId ^ (uint64_t)(uintptr_t)d_const_tree, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps.size()), countId, stream, [&] {
         proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
+        if (!overlapStage1) {
         for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
             proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
         }
+        }
     });
+    // setProof reads the whole d_queries_buff, including the side stream's FRI slices.
+    if (overlapStage1) {
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, sdOv.friQDone, 0));
+    }
+    PROOFMAN_SUMCHECK("tail_queries_i%u", d_queries_buff, (nTrees + nTreesFRI) * setupCtx.starkInfo.maxProofBuffSize * setupCtx.starkInfo.starkStruct.nQueries, stream, (unsigned)instance_id);
+    PROOFMAN_SUMCHECK("tail_nonce_i%u", (gl64_t*)d_nonce, 1, stream, (unsigned)instance_id);
+    PROOFMAN_SUMCHECK("tail_mt1root_i%u", (gl64_t*)((Goldilocks::Element*)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt1", true)] + setupCtx.starkInfo.getNumNodesMT(1ULL << setupCtx.starkInfo.starkStruct.nBitsExt) - HASH_SIZE), HASH_SIZE, stream, (unsigned)instance_id);
     TimerStopCategoryGPU(timer, FRI);
     TimerStopGPU(timer, STARK_STEP_FRI);
 
-    setProof(setupCtx, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_const_tree, proof_buffer_pinned, stream);
+    if (setupCtx.starkInfo.baseSplit && !recursive && ((splitPhases && splitAFenceLevel() >= 4) || (!splitPhases && splitAFenceLevel() != 5))) CHECKCUDAERR(cudaEventRecord(sdPh.baseFree, stream));
+    setProof(setupCtx, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_const_tree, proof_buffer_pinned, stream, smallsShift);
 
     TimerStopGPU(timer, STARK_GPU_PROOF);
 }

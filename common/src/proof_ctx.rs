@@ -570,6 +570,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
@@ -1018,7 +1019,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut total_const_area = 0;
         let mut total_const_area_aggregation = 0;
 
-        if gpu {
+        // No-const-buffer mode: basic const pols/trees never become GPU-resident
+        // (they stage per fixed-slot switch through the prefetch zone), so their
+        // area drops out of the budget entirely.
+        let no_const_buf = std::env::var("PROOFMAN_NO_CONST_BUF").map(|v| v == "1").unwrap_or(false);
+        if gpu && !no_const_buf {
             total_const_area += sctx.total_const_pols_size as u64;
             total_const_area += sctx.total_const_tree_size as u64;
             if aggregation {
@@ -1056,7 +1061,32 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
 
+        // Single-proof model (PROOFMAN_SINGLE_PROOF_GB=<n>, GPU): ONE proof in
+        // flight in ONE proof buffer of exactly <n> GB (headroom for future
+        // larger air-instance N), plus the prefetch zone carved separately.
+        // Streams beyond the compute one exist only for copies / intra-proof
+        // work, never for a second concurrent proof.
+        let single_proof_gb: Option<usize> = std::env::var("PROOFMAN_SINGLE_PROOF_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|gb| *gb > 0);
         let layout = match gpu {
+            true if single_proof_gb.is_some() => {
+                let want = single_proof_gb.unwrap() * (1usize << 30) / 8;
+                let s0 = want.max(sctx.max_prover_buffer_size.max(recursive_capable_size));
+                if s0 > max_size_buffer as usize {
+                    return Err(ProofmanError::InvalidConfiguration(format!(
+                        "PROOFMAN_SINGLE_PROOF_GB={} does not fit: {} elements available",
+                        single_proof_gb.unwrap(),
+                        max_size_buffer
+                    )));
+                }
+                StreamLayout {
+                    basic: vec![StreamClass { size: s0, count: 1 }],
+                    recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                    unused: max_size_buffer as usize - s0,
+                }
+            }
             true => plan_stream_layout(
                 max_size_buffer as usize,
                 &basic_sizes,

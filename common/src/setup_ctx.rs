@@ -367,7 +367,12 @@ impl<F: PrimeField64> SetupRepository<F> {
 
         for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const);
+                // No-const-buffer mode: nothing is GPU-resident, so no air may use the
+                // preallocate layout -- its starkinfo would carve NO aux slot for the
+                // const tree, and gen_proof's aux-tree route would then read offset 0
+                // (map operator[] insertion) and merkelize over the aux base.
+                let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const)
+                    && !std::env::var("PROOFMAN_NO_CONST_BUF").map(|v| v == "1").unwrap_or(false);
                 let single_use = table_airs.contains(&(airgroup_id, air_id));
                 let setup_path = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
                 let setup = Setup::new(
@@ -463,6 +468,11 @@ impl<F: PrimeField64> SetupRepository<F> {
         }
 
         prover_buffer_sizes.sort_by(|(ka, sa), (kb, sb)| sb.cmp(sa).then(ka.cmp(kb)));
+        if std::env::var("PROOFMAN_PRINT_AUX_SIZES").is_ok() {
+            for ((ag, air), sz) in prover_buffer_sizes.iter() {
+                tracing::info!("AUXSIZE {ag}:{air} = {:.2} GB", *sz as f64 * 8.0 / (1u64 << 30) as f64);
+            }
+        }
 
         Ok(Self {
             setups,

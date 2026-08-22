@@ -85,13 +85,13 @@ inline void expsClose(void* lib) { if (lib) dlclose(lib); }
 // Launch the AIR's pre-resolved Q kernel. Returns false (caller falls back to the interpreter) if
 // the kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
 inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
-                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream) {
+                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream, uint64_t scratchShift = 0) {
     uint64_t scratchAvail = expsScratchAvail(sc);
     if (minScratch > scratchAvail) return false;
     uint64_t NExt = 1ull << sc.starkInfo.starkStruct.nBitsExt;
     uint64_t oq = sc.starkInfo.mapOffsets[std::make_pair("q", true)];
     uint64_t otmp = sc.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    gl64_t*  os = d_q - oq + otmp;  // scratch offset == aux_trace (d_q - oq) + offsetTmp1 (otmp)
+    gl64_t*  os = d_q - oq + otmp + scratchShift;  // scratch offset == aux_trace (d_q - oq) + offsetTmp1 (otmp) [+ parity copy]
     uint64_t o1 = sc.starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t o2 = sc.starkInfo.mapOffsets[std::make_pair("cm2", true)];
     uint64_t o3 = sc.starkInfo.mapOffsets[std::make_pair("cm3", true)];

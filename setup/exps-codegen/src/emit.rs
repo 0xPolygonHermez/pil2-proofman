@@ -423,8 +423,9 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
   const uint64_t BLK = {GEN_BLK}ull;
 {guard}
 {prologue}
-  uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
-  if (grid > 512ull) grid = 512ull;
+  uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 1024ull;
+  if (grid > 1024ull) grid = 1024ull;
+  if (grid < 1ull) grid = 1ull;
   const uint64_t WAVE = grid * BLK;
   for (uint64_t base=0; base<NExt; base+=WAVE) {{
 {}
@@ -471,7 +472,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
             store_qq(plan.out_dim)
         );
         let launcher_body = format!(
-            "  (void)scratchElems; gen_{sym}_kernel<<<512,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi);"
+            "  (void)scratchElems; gen_{sym}_kernel<<<1024,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi);"
         );
         return vec![(format!("gen_{sym}.cu"), single_kernel_tu(sym, &kernel, &launcher_body, ir))];
     }
@@ -673,7 +674,7 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     unsigned long long stagePos, unsigned long long stageCols,
     unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
   uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
-  if (grid > 512ull) grid = 512ull;
+  if (grid > 1024ull) grid = 1024ull;
   if (grid < 1ull) grid = 1ull;
   switch (expId) {{
 {}

@@ -196,6 +196,28 @@ public:
     // proofs: afterwards the region holds Merkle nodes.
     bool constPolsAliasTree = false;
 
+    // Stage-1 overlap layout (PROOFMAN_STAGE1_OVERLAP): cm2-extended normally aliases the base
+    // trace, which forces the overlapped stage-1 LDE (whose src IS the base trace) to complete
+    // before commit-2. With its own region, commit-2 runs fence-free and the LDE fence moves to
+    // the quotient expressions. Costs the un-aliased bytes in mapTotalN.
+    bool cm2Unaliased = false;
+
+    // Base/ext split layout (PROOFMAN_BASE_SPLIT): base-domain regions (steps 0-5) disjoint from
+    // extended-domain regions (Q+), enabling the next same-air proof's early phase to run during
+    // this proof's tail. Implies cm2Unaliased; adds a parity copy of the early-phase smalls.
+    bool baseSplit = false;
+    // Size of the expression scratch (tmp1..destVals); under baseSplit an equal-size parity copy
+    // sits at mapOffsets["exps_scratch_parity"] - the shift below relocates odd-parity proofs.
+    uint64_t expsScratchSize = 0;
+
+    // Element shift from the primary expression scratch to the parity copy (0 when !baseSplit).
+    uint64_t expsScratchShift() const {
+        if (!baseSplit) return 0;
+        auto it = mapOffsets.find(std::make_pair("exps_scratch_parity", false));
+        auto it1 = mapOffsets.find(std::make_pair("tmp1", false));
+        return (it != mapOffsets.end() && it1 != mapOffsets.end()) ? it->second - it1->second : 0;
+    }
+
     uint64_t mapTotalN;
     uint64_t mapTotalNContributions;
     uint64_t mapTotalNCustomCommitsFixed;

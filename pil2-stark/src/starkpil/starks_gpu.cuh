@@ -93,7 +93,7 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_openingPoints, Goldilocks::Element *d_xiChallenge, cudaStream_t stream);
 
 void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream);
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream);
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, cudaEvent_t ldeDoneEvent = nullptr);
 void extendAndMerkelizeFixed(SetupCtx&, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 
@@ -108,14 +108,14 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t ste
 void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, gl64_t *d_aux_trace, gl64_t* d_const_tree, uint32_t nStages, cudaStream_t stream);
 void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL *treeFRI, cudaStream_t stream);
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU *expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream);
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU *expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, uint64_t scratchShift = 0);
 
-void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream);
+void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, uint64_t scratchShift = 0);
 
 void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream);
 
 void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream);
 
-void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *h_const_tree, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream);
+void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *h_const_tree, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream, uint64_t smallsShift = 0);
 void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile);
 #endif

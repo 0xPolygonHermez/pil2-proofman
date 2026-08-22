@@ -42,7 +42,13 @@ public:
         return true;
     }
 
+    // Pipeline mode disables per-proof GPU timing: two proofs interleave on one
+    // stream, so timings would be garbage, and startCategory would otherwise
+    // accumulate event entries that only closeStreamTimer (skipped there) drains.
+    bool enabled = true;
+
     void start(const std::string& name) {
+        if (!enabled) return;
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
             if (!createEvent(start) || !createEvent(stop)) return;
@@ -53,6 +59,7 @@ public:
     }
 
     void stop(const std::string& name) {
+        if (!enabled) return;
         auto it = timers.find(name);
         if (it == timers.end()) {
 #ifndef __GOLDILOCKS_ENV__
@@ -64,6 +71,7 @@ public:
     }
 
     void startCategory(const std::string& name) {
+        if (!enabled) return;
         if (activeCategoryTimers.find(name) != activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
@@ -81,6 +89,7 @@ public:
     }
 
     void stopCategory(const std::string& name) {
+        if (!enabled) return;
         auto it = activeCategoryTimers.find(name);
         if (it == activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
