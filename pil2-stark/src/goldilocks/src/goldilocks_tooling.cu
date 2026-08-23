@@ -1,6 +1,7 @@
 #include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "goldilocks_trace_layout.cuh"
+#include <cstdio>
 
 // When the source is already host-pinned (e.g. via register_host_memory) and
 // large, skip the pinned-staging double-buffer and issue a single direct H2D.
@@ -18,6 +19,29 @@ static bool copy_direct_registered_h2d_if_enabled(const void *src, void *dst, ui
     }
     // Only take the fast path when src is host memory the driver can DMA directly.
     if (attrs.type != cudaMemoryTypeHost) return false;
+
+    // TEMP-DIAG: the direct DMA reads [src, src+total_size). Only the FIRST byte was checked
+    // above; if the tail is not registered host memory the copy engine reads unmapped pages ->
+    // cudaErrorIllegalAddress, surfacing later at the trace_copy_event sync. Probe the last byte.
+    {
+        static int diagShown = 0;
+        if (diagShown < 3) {
+            diagShown++;
+            fprintf(stderr, "[H2D-DIAG] direct path ACTIVE (probe live): src=%p size=%llu\n",
+                    src, (unsigned long long)total_size);
+            fflush(stderr);
+        }
+        cudaPointerAttributes endAttrs;
+        const void *last = (const void *)((const uint8_t *)src + total_size - 1);
+        cudaError_t e2 = cudaPointerGetAttributes(&endAttrs, last);
+        if (e2 != cudaSuccess || endAttrs.type != cudaMemoryTypeHost) {
+            fprintf(stderr, "[H2D-DIAG] SOURCE RANGE NOT FULLY REGISTERED: src=%p size=%llu last=%p err=%d type=%d\n",
+                    src, (unsigned long long)total_size, last, (int)e2,
+                    (e2 == cudaSuccess) ? (int)endAttrs.type : -1);
+            fflush(stderr);
+            cudaGetLastError();
+        }
+    }
 
     CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
     return true;

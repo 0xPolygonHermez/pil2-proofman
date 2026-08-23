@@ -35,6 +35,15 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <map>
 #include "stream_commit.cuh"
 
+// CUDA >= 12 defaults to CUDA_MODULE_LOADING=LAZY, so a generated .exps.so's cubin only reaches
+// the device on its FIRST kernel launch -- mid-run, while other streams are executing. Load eagerly
+// instead: it makes the device footprint of the generated kernels appear at dlopen (a deterministic
+// point) rather than inside the proving window. Must run before the first CUDA call, hence the
+// constructor; overwrite=0 so an explicit setting still wins.
+__attribute__((constructor)) static void proofmanForceEagerModuleLoading() {
+    setenv("CUDA_MODULE_LOADING", "EAGER", 0);
+}
+
 // Process-global handle for stream_commit_pause: the gpu-mops borrower calls
 // it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
 static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
@@ -46,6 +55,250 @@ void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
+
+// TEMP-DIAG: every launch writes its air's full mapTotalN into the stream's aux-trace slice. Slices
+// are carved from ONE cudaMalloc, so an overflow is SILENT until it runs off the end of the arena --
+// then it surfaces as cudaErrorIllegalAddress at an unrelated later sync. The selection paths check
+// this, but a scheduler-reserved streamId is trusted unchecked, so assert where the write happens.
+// Record which launch this thread is driving, so a CUDA abort anywhere below names it.
+static void diagSetLaunch(const char *kind, uint64_t airgroupId, uint64_t airId,
+                          int64_t instanceId, uint64_t streamId) {
+    snprintf(cudaDiagContext(), 256, "%s air %llu:%llu instance %lld stream %llu",
+             kind, (unsigned long long)airgroupId, (unsigned long long)airId,
+             (long long)instanceId, (unsigned long long)streamId);
+}
+
+// GPU diagnostics, opt-in via PROOFMAN_GPU_DIAG so this is safe to deploy:
+//   unset   : ALL of the below (default). Set PROOFMAN_GPU_DIAG=0 to disable.
+//   0       : only the two free checks (launch fits its slice; air setup is registered)
+//   1       : + device-free-memory watermark, NTT own-scratch allocations, H2D source-range probe
+//   2       : + per-launch canary in [mapTotalN, auxTraceCapacity)  (catches an overrun that stays
+//             inside the slice, e.g. the expression scratch, which ends exactly at mapTotalN)
+//   3       : + guard bands between stream slices (costs one band of extra device memory per stream)
+static int diagLevel() {
+    static const int lvl = [] {
+        const char *e = getenv("PROOFMAN_GPU_DIAG");
+        if (e == nullptr || *e == '\0') return 3;   // ON by default; set 0 to disable
+        char *end = nullptr;
+        long v = strtol(e, &end, 10);
+        if (end == e || *end != '\0' || v < 0) return 0;
+        return v > 3 ? 3 : (int)v;
+    }();
+    return lvl;
+}
+
+// TEMP-DIAG: the expression scratch (tmp1..destVals) ends EXACTLY at mapTotalN for every
+// recursive-family setup, so an overrun of even one element lands in the [mapTotalN, capacity)
+// gap -- which is INSIDE the slice and therefore invisible to the inter-slice guard bands.
+// Arm a canary there at launch and verify it when the proof is harvested.
+#define DIAG_TAIL_BYTES (4ull * 1024 * 1024)
+#define DIAG_TAIL_BYTE  0xA5
+static std::vector<gl64_t *> gDiagTailPtr;
+static std::vector<uint64_t> gDiagTailLen;
+static std::vector<std::string> gDiagTailWho;
+static std::mutex gDiagTailMutex;
+
+static void diagArmTail(DeviceCommitBuffers *d_buffers, uint64_t streamId, void *pSetupCtx_,
+                        const std::string &what, cudaStream_t stream) {
+    if (diagLevel() < 2) return;
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    if (setupCtx == nullptr || d_buffers == nullptr || streamId >= d_buffers->n_total_streams) return;
+    StreamData &sd = d_buffers->streamsData[streamId];
+    const uint64_t need = setupCtx->starkInfo.mapTotalN;
+    if (need >= sd.auxTraceCapacity) return;                 // no tail to watch
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[sd.gpuId];
+    gl64_t *base = sd.recursive
+        ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][sd.localStreamId]
+        : d_buffers->d_aux_trace[gpuLocalId][sd.localStreamId];
+    if (base == nullptr) return;
+    uint64_t bytes = (sd.auxTraceCapacity - need) * sizeof(gl64_t);
+    if (bytes > DIAG_TAIL_BYTES) bytes = DIAG_TAIL_BYTES;
+    gl64_t *tail = base + need;
+    if (cudaMemsetAsync(tail, DIAG_TAIL_BYTE, bytes, stream) != cudaSuccess) { cudaGetLastError(); return; }
+    std::lock_guard<std::mutex> lk(gDiagTailMutex);
+    if (gDiagTailPtr.size() < d_buffers->n_total_streams) {
+        gDiagTailPtr.resize(d_buffers->n_total_streams, nullptr);
+        gDiagTailLen.resize(d_buffers->n_total_streams, 0);
+        gDiagTailWho.resize(d_buffers->n_total_streams);
+    }
+    gDiagTailPtr[streamId] = tail;
+    gDiagTailLen[streamId] = bytes;
+    gDiagTailWho[streamId] = what + " mapTotalN=" + std::to_string(need) +
+                             " cap=" + std::to_string(sd.auxTraceCapacity);
+    static std::atomic<uint32_t> armed{0};
+    uint32_t n = armed.fetch_add(1);
+    if (n == 0 || n == 200) {
+        zklog.info("[TAIL-DIAG] armed #" + std::to_string(n) + " (" + gDiagTailWho[streamId] +
+                   ", watching " + std::to_string(bytes) + " bytes past mapTotalN) -- probe is LIVE");
+    }
+}
+
+static void diagCheckTail(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
+    if (diagLevel() < 2) return;
+    std::lock_guard<std::mutex> lk(gDiagTailMutex);
+    if (streamId >= gDiagTailPtr.size() || gDiagTailPtr[streamId] == nullptr) return;
+    const uint64_t bytes = gDiagTailLen[streamId];
+    static std::vector<uint8_t> host;
+    if (host.size() < bytes) host.resize(bytes);
+    // MUST be a non-blocking stream: a synchronous legacy-default-stream memcpy from this
+    // (harvester) thread implicitly syncs every blocking stream and INVALIDATES any graph
+    // capture in flight on another stream -> spurious cudaErrorStreamCaptureInvalidated (901).
+    static cudaStream_t tailStream = nullptr;
+    if (tailStream == nullptr && cudaStreamCreateWithFlags(&tailStream, cudaStreamNonBlocking) != cudaSuccess) {
+        cudaGetLastError(); return;
+    }
+    if (cudaMemcpyAsync(host.data(), gDiagTailPtr[streamId], bytes, cudaMemcpyDeviceToHost, tailStream) != cudaSuccess ||
+        cudaStreamSynchronize(tailStream) != cudaSuccess) {
+        cudaGetLastError(); return;
+    }
+    for (uint64_t b = 0; b < bytes; ++b) {
+        if (host[b] != DIAG_TAIL_BYTE) {
+            zklog.error("[TAIL-DIAG] WRITE PAST mapTotalN on stream " + std::to_string(streamId) +
+                        " (" + gDiagTailWho[streamId] + "): first bad byte at +" + std::to_string(b) +
+                        " past mapTotalN");
+            break;
+        }
+    }
+    gDiagTailPtr[streamId] = nullptr;
+}
+
+static void diagCheckLaunchFits(DeviceCommitBuffers *d_buffers, uint64_t streamId,
+                                void *pSetupCtx_, const std::string &what,
+                                uint64_t airgroupId, uint64_t airId) {
+    if (d_buffers == nullptr || d_buffers->streamsData == nullptr) return;
+    if (streamId >= d_buffers->n_total_streams) {
+        zklog.error("[FIT-DIAG] " + what + " got streamId " + std::to_string(streamId) +
+                    " >= n_total_streams " + std::to_string(d_buffers->n_total_streams));
+        return;
+    }
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    if (setupCtx == nullptr) return;
+    StreamData &sd = d_buffers->streamsData[streamId];
+    const uint64_t need = setupCtx->starkInfo.mapTotalN;
+    if (need > sd.auxTraceCapacity) {
+        zklog.error("[FIT-DIAG] OVERFLOW " + what + " air " + std::to_string(airgroupId) + ":" +
+                    std::to_string(airId) + " needs " + std::to_string(need) + " elems, stream " +
+                    std::to_string(streamId) + (sd.recursive ? " (recursive)" : " (basic)") +
+                    " holds " + std::to_string(sd.auxTraceCapacity) + " -- overruns by " +
+                    std::to_string(need - sd.auxTraceCapacity) + " elems");
+    }
+}
+
+// TEMP-DIAG: canary guard bands placed AFTER every aux-trace slice. Slices are carved from one
+// cudaMalloc, so a write past a slice is silent unless it runs off the end of the whole arena.
+// A guard band turns any cross-slice overflow into a detectable event and names the culprit slice.
+#define DIAG_GUARD_ELEMS_RAW (2ull * 1024 * 1024)   // 16 MB per band
+static uint64_t gDiagGuardElems = 0;   // set in alloc_device_large_buffers_gpu
+#define DIAG_GUARD_ELEMS (gDiagGuardElems)
+#define DIAG_GUARD_BYTE  0xA5
+// How much of each band to verify (an overflow is contiguous from the slice boundary).
+#define DIAG_GUARD_CHECK_ELEMS (128ull * 1024)  // 1 MB
+static std::vector<gl64_t *> gDiagGuards;       // one entry per band, in carve order
+static std::vector<uint64_t> gDiagGuardOffsets;  // byte offset of each band from the arena base
+static std::vector<uint32_t> gDiagGuardStream;    // global stream id whose slice the band follows
+static std::vector<std::string> gDiagGuardNames;
+static std::mutex gDiagGuardMutex;
+
+// TEMP-DIAG: the gpu-mops borrower is handed [0, streamCommitFloorBytes) and may write anywhere in
+// it -- which legitimately includes the bands. Re-arm them when the borrow is released so anything
+// the checker reports afterwards (i.e. during proving) is a genuine prover overflow.
+static void diagRearmGuards() {
+    if (diagLevel() < 3) return;
+    if (gDiagGuards.empty()) return;
+    std::lock_guard<std::mutex> lk(gDiagGuardMutex);
+    static cudaStream_t rearmStream = nullptr;
+    if (rearmStream == nullptr && cudaStreamCreateWithFlags(&rearmStream, cudaStreamNonBlocking) != cudaSuccess) {
+        cudaGetLastError(); return;
+    }
+    for (size_t g = 0; g < gDiagGuards.size(); ++g) {
+        if (cudaMemsetAsync(gDiagGuards[g], DIAG_GUARD_BYTE, DIAG_GUARD_ELEMS * sizeof(gl64_t), rearmStream) != cudaSuccess)
+            cudaGetLastError();
+    }
+    cudaStreamSynchronize(rearmStream);
+}
+
+static void diagCheckGuards(const char *where) {
+    if (diagLevel() < 3) return;
+    if (gDiagGuards.empty()) return;
+    std::lock_guard<std::mutex> lk(gDiagGuardMutex);
+    static std::vector<uint8_t> host;
+    const size_t bytes = DIAG_GUARD_CHECK_ELEMS * sizeof(gl64_t);
+    if (host.size() < bytes) host.resize(bytes);
+    // Dedicated non-blocking stream: a plain cudaMemcpy on the legacy default stream would
+    // implicitly synchronize every other stream and destroy the concurrency under test.
+    static cudaStream_t guardStream = nullptr;
+    if (guardStream == nullptr && cudaStreamCreateWithFlags(&guardStream, cudaStreamNonBlocking) != cudaSuccess) {
+        cudaGetLastError();
+        return;
+    }
+    // The streaming-commit slots are carved top-down from the const-pols-aggregation offset and
+    // legitimately overlap the upper slices (and any band in there). Skip those bands.
+    uint64_t slotLo = UINT64_MAX, slotHi = 0;
+    {
+        DeviceCommitBuffers *db = gStreamCommitBuffers.load(std::memory_order_acquire);
+        if (db != nullptr && db->streamCommitSlots != 0) {
+            slotLo = db->streamCommitFloorBytes;
+            slotHi = db->streamCommitFloorBytes + db->streamCommitSlots * db->streamCommitSlotBytes;
+        }
+    }
+    for (size_t g = 0; g < gDiagGuards.size(); ++g) {
+        const uint64_t lo = gDiagGuardOffsets[g];
+        const uint64_t hi = lo + DIAG_GUARD_ELEMS * sizeof(gl64_t);
+        if (slotHi > slotLo && lo < slotHi && hi > slotLo) continue;   // inside the slot region
+        if (cudaMemcpyAsync(host.data(), gDiagGuards[g], bytes, cudaMemcpyDeviceToHost, guardStream) != cudaSuccess ||
+            cudaStreamSynchronize(guardStream) != cudaSuccess) {
+            cudaGetLastError();
+            continue;
+        }
+        size_t firstBad = bytes, lastBad = 0, nBad = 0;
+        for (size_t b = 0; b < bytes; ++b) {
+            if (host[b] != DIAG_GUARD_BYTE) {
+                if (firstBad == bytes) firstBad = b;
+                lastBad = b; nBad++;
+            }
+        }
+        if (nBad != 0) {
+            static std::atomic<uint32_t> seq{0};
+            std::string who = "?";
+            if (g < gDiagGuardStream.size()) {
+                DeviceCommitBuffers *db2 = gStreamCommitBuffers.load(std::memory_order_acquire);
+                if (db2 != nullptr && db2->streamsData != nullptr && gDiagGuardStream[g] < db2->n_total_streams) {
+                    StreamData &osd = db2->streamsData[gDiagGuardStream[g]];
+                    who = "stream " + std::to_string(gDiagGuardStream[g]) + " air " +
+                          std::to_string(osd.airgroupId) + ":" + std::to_string(osd.airId) +
+                          " type '" + osd.proofType + "' instance " + std::to_string(osd.instanceId) +
+                          " cap " + std::to_string(osd.auxTraceCapacity);
+                }
+            }
+            zklog.error("[GUARD-DIAG] #" + std::to_string(seq.fetch_add(1)) + " OVERFLOW past " +
+                        gDiagGuardNames[g] + " at " + where + ": bytes [" + std::to_string(firstBad) +
+                        ".." + std::to_string(lastBad) + "] (" + std::to_string(nBad) + " bad) | owner " + who);
+            // Re-arm so the next overflow is reported as a NEW event rather than 300 repeats.
+            cudaMemsetAsync(gDiagGuards[g], DIAG_GUARD_BYTE, bytes, guardStream);
+            cudaStreamSynchronize(guardStream);
+        }
+    }
+}
+
+// TEMP-DIAG: air_instances[key][type][gpuLocalId] is an unchecked vector::operator[]. An
+// unregistered triple yields an empty vector and reads out of bounds -> garbage AirInstanceInfo*
+// -> wild device pointers. Report instead of silently proceeding.
+static void diagCheckAirRegistered(DeviceCommitBuffers *d_buffers, uint64_t airgroupId, uint64_t airId,
+                                   const std::string &proofType, uint32_t gpuLocalId, const std::string &what) {
+    auto air = d_buffers->air_instances.find({airgroupId, airId});
+    if (air == d_buffers->air_instances.end()) {
+        zklog.error("[AIR-DIAG] " + what + ": air " + std::to_string(airgroupId) + ":" +
+                    std::to_string(airId) + " has NO registered setups (wanted " + proofType + ")");
+        return;
+    }
+    auto byType = air->second.find(proofType);
+    if (byType == air->second.end() || byType->second.size() <= gpuLocalId) {
+        zklog.error("[AIR-DIAG] " + what + ": air " + std::to_string(airgroupId) + ":" +
+                    std::to_string(airId) + " type '" + proofType + "' NOT registered (have " +
+                    std::to_string(byType == air->second.end() ? 0 : byType->second.size()) +
+                    " entries, need index " + std::to_string(gpuLocalId) + ")");
+    }
+}
 
 
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
@@ -435,8 +688,13 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
    
     gStreamCommitBuffers.store(d_buffers, std::memory_order_release);
 
-    d_buffers->auxTraceTotalBytes = totalAuxTraceSize;
-    d_buffers->auxTraceRecursiveBytes = auxTraceRecursiveSize;
+    // TEMP-DIAG: guard bands sit between slices, so they are part of each stream's STRIDE.
+    // Publishing the strides here keeps constAggOffsetBytes / the slot floor /
+    // overlapsStreamCommitRegion consistent with the actual carve. auxTraceCapacity is set
+    // separately from auxTraceSizes, so it still reflects the TRUE usable size and no
+    // legitimate launch can reach a band.
+    d_buffers->auxTraceTotalBytes = totalAuxTraceSize + d_buffers->n_streams * DIAG_GUARD_ELEMS * sizeof(gl64_t);
+    d_buffers->auxTraceRecursiveBytes = auxTraceRecursiveSize + DIAG_GUARD_ELEMS * sizeof(gl64_t);
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -449,6 +707,21 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
                    std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB / " + 
                    std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
         
+        // Guard bands are diagnostics: never let them cost a run. Take them only out of headroom
+        // that is genuinely spare, and drop them (once, loudly) when it is not.
+        {
+            const uint64_t nSlices = d_buffers->n_streams + d_buffers->n_recursive_streams;
+            const uint64_t want = (diagLevel() >= 3) ? DIAG_GUARD_ELEMS_RAW : 0ull;
+            const uint64_t wantBytes = want * nSlices * sizeof(gl64_t);
+            if (want != 0 && freeMem > totalGpuMemoryPerGpu + constPolsSize + wantBytes) {
+                gDiagGuardElems = want;
+            } else if (want != 0 && gDiagGuardElems == 0) {
+                zklog.warning("[GUARD-DIAG] not enough spare device memory for inter-slice guard "
+                              "bands (" + std::to_string(wantBytes / (1024.0 * 1024.0)) +
+                              " MB); inter-slice overflow detection disabled, other diagnostics stay on");
+            }
+        }
+
         if (freeMem < totalGpuMemoryPerGpu + constPolsSize) {
             zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
                        ": Insufficient memory. Need " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
@@ -458,7 +731,9 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         
         // Allocate one large contiguous block of GPU memory (unified buffer)
         gl64_t *gpuMemoryBlock;
-        CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
+        // TEMP-DIAG: + one guard band per aux-trace slice
+        CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu +
+            DIAG_GUARD_ELEMS * (d_buffers->n_streams + d_buffers->n_recursive_streams) * sizeof(gl64_t)));
         d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
         
         // Allocate separate buffer for constant polynomials
@@ -476,12 +751,26 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         for (int j = 0; j < d_buffers->n_streams; ++j) {
             d_buffers->d_aux_trace[i][j] = gpuMemoryBlock + offset;
             offset += d_buffers->aux_trace_sizes[j];
+            // TEMP-DIAG guard band
+            CHECKCUDAERR(cudaMemset(gpuMemoryBlock + offset, DIAG_GUARD_BYTE, DIAG_GUARD_ELEMS * sizeof(gl64_t)));
+            gDiagGuards.push_back(gpuMemoryBlock + offset);
+            gDiagGuardOffsets.push_back(offset * sizeof(gl64_t));
+            gDiagGuardStream.push_back((uint32_t)(i * (d_buffers->n_streams + d_buffers->n_recursive_streams) + j));
+            gDiagGuardNames.push_back("gpu" + std::to_string(d_buffers->my_gpu_ids[i]) + " basic slice " + std::to_string(j));
+            offset += DIAG_GUARD_ELEMS;
         }
 
         // Auxiliary trace buffers (recursive)
         for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {
             d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
             offset += auxTraceRecursiveArea;
+            // TEMP-DIAG guard band
+            CHECKCUDAERR(cudaMemset(gpuMemoryBlock + offset, DIAG_GUARD_BYTE, DIAG_GUARD_ELEMS * sizeof(gl64_t)));
+            gDiagGuards.push_back(gpuMemoryBlock + offset);
+            gDiagGuardOffsets.push_back(offset * sizeof(gl64_t));
+            gDiagGuardStream.push_back((uint32_t)(i * (d_buffers->n_streams + d_buffers->n_recursive_streams) + d_buffers->n_streams + j));
+            gDiagGuardNames.push_back("gpu" + std::to_string(d_buffers->my_gpu_ids[i]) + " recursive slice " + std::to_string(j));
+            offset += DIAG_GUARD_ELEMS;
         }
 
         // Constant polynomials aggregation
@@ -493,7 +782,8 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         
         // Verify we used exactly the amount we calculated
-        if (offset != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
+        const uint64_t diagGuardTotal = DIAG_GUARD_ELEMS * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+        if (offset != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element) + diagGuardTotal) {
             zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) +
                        ": Memory offset mismatch! Expected " + std::to_string(totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) +
                        " but got " + std::to_string(offset) + " elements");
@@ -718,7 +1008,56 @@ void free_device_buffers_gpu(void *d_buffers_)
 }
 
 
+// TEMP-DIAG: the expression scratch (tmp1..destVals) is placed at mem_exps and deliberately
+// overlaps regions laid out after it; safety rests on TEMPORAL separation only. Report which
+// live regions it actually overlaps, per air, so the assumption is visible instead of implicit.
+static void diagScratchOverlap(uint64_t airgroupId, uint64_t airId, const char *proofType, SetupCtx *setupCtx) {
+    if (setupCtx == nullptr) return;
+    StarkInfo &si = setupCtx->starkInfo;
+    auto off = [&](const char *n, bool ext) -> long long {
+        auto it = si.mapOffsets.find(std::make_pair(std::string(n), ext));
+        return it == si.mapOffsets.end() ? -1 : (long long)it->second;
+    };
+    const long long t1 = off("tmp1", false), dv = off("destVals", false);
+    if (t1 < 0 || dv < 0) return;
+    const uint64_t nrp = si.nrowsPack, mnb = si.maxNBlocks;
+    const long long scratchEnd = dv + (long long)(2ull * FIELD_EXTENSION * nrp * mnb);
+    const uint64_t N = 1ull << si.starkStruct.nBits, NExt = 1ull << si.starkStruct.nBitsExt;
+    struct R { const char *name; long long lo, len; };
+    std::vector<R> regs = {
+        {"q(ext)",        off("q", true),            (long long)(NExt * FIELD_EXTENSION)},
+        {"zi(ext)",       off("zi", true),           (long long)(si.boundaries.size() * NExt)},
+        {"x(ext)",        off("x", true),            (long long)NExt},
+        {"cm1(ext)",      off("cm1", true),          (long long)(NExt * si.mapSectionsN["cm1"])},
+        {"cm2(ext)",      off("cm2", true),          (long long)(NExt * si.mapSectionsN["cm2"])},
+        {"const(ext)",    off("const", true),        (long long)(NExt * si.nConstants)},
+        {"evals",         off("evals", false),       (long long)(si.evMap.size() * FIELD_EXTENSION)},
+        {"challenges",    off("challenges", false),  (long long)(si.challengesMap.size() * FIELD_EXTENSION)},
+        {"xdivxsub",      off("xdivxsub", false),    (long long)(si.openingPoints.size() * FIELD_EXTENSION)},
+        {"fri_folded",    off("fri_folded", false),  (long long)((si.evMap.size() + si.openingPoints.size()) * FIELD_EXTENSION)},
+        {"fri_queries",   off("fri_queries", false), (long long)si.starkStruct.nQueries},
+        {"buff_helper",   off("buff_helper", false), (long long)(NExt * FIELD_EXTENSION)},
+        {"fri_1",         off("fri_1", true),        1},
+        {"mt_fri_1",      off("mt_fri_1", true),     1},
+    };
+    std::string hits;
+    for (auto &r : regs) {
+        if (r.lo < 0) continue;
+        if (t1 < r.lo + r.len && r.lo < scratchEnd) {
+            hits += std::string(" ") + r.name + "[" + std::to_string(r.lo) + "," +
+                    std::to_string(r.lo + r.len) + ")";
+        }
+    }
+    if (!hits.empty()) {
+        zklog.info("[SCRATCH-DIAG] air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                   " " + proofType + " scratch[" + std::to_string(t1) + "," + std::to_string(scratchEnd) +
+                   ") nrowsPack=" + std::to_string(nrp) + " maxNBlocks=" + std::to_string(mnb) +
+                   " mapTotalN=" + std::to_string(si.mapTotalN) + " OVERLAPS:" + hits);
+    }
+}
+
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info) {
+    diagScratchOverlap(airgroupId, airId, proofType, (SetupCtx *)pSetupCtx_);
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
@@ -846,6 +1185,10 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    diagSetLaunch("basic", airgroupId, airId, (int64_t)instanceId, streamId);
+    diagCheckAirRegistered(d_buffers, airgroupId, airId, "basic", gpuLocalId, "gen_proof_gpu");
+    diagCheckLaunchFits(d_buffers, streamId, pSetupCtx_, "gen_proof_gpu", airgroupId, airId);
+    diagArmTail(d_buffers, streamId, pSetupCtx_, std::string("gen_proof_gpu ") + std::to_string(airgroupId) + ":" + std::to_string(airId), d_buffers->streamsData[streamId].stream);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -972,6 +1315,8 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    diagCheckLaunchFits(d_buffers, streamId, pSetupCtx_, "launch@974", airgroupId, airId);
+    diagArmTail(d_buffers, streamId, pSetupCtx_, std::string("launch@974 ") + std::to_string(airgroupId) + ":" + std::to_string(airId), d_buffers->streamsData[streamId].stream);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -1080,6 +1425,8 @@ void calculate_trace_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    diagCheckLaunchFits(d_buffers, streamId, pSetupCtx_, "launch@1082", airgroupId, airId);
+    diagArmTail(d_buffers, streamId, pSetupCtx_, std::string("launch@1082 ") + std::to_string(airgroupId) + ":" + std::to_string(airId), d_buffers->streamsData[streamId].stream);
 
     calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, timer, stream);
 }
@@ -1102,13 +1449,52 @@ void verify_constraints_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airI
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    diagCheckLaunchFits(d_buffers, streamId, pSetupCtx_, "launch@1104", airgroupId, airId);
+    diagArmTail(d_buffers, streamId, pSetupCtx_, std::string("launch@1104 ") + std::to_string(airgroupId) + ":" + std::to_string(airId), d_buffers->streamsData[streamId].stream);
 
     verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
 }
 
+// TEMP-DIAG: watch device free memory across proofs. Allocation on the prover path is supposed to
+// stop after startup; anything that leaks (a retained cudaMallocAsync pool block, an unfreed
+// cudaMalloc, graph-owned memory nodes) shows here as a monotonic decline, and on an arena sized to
+// 99.99% of VRAM it ends as a hard allocation failure mid-run.
+static void diagMemWatermark(const char *where) {
+    if (diagLevel() < 1) return;
+    static std::mutex m;
+    static size_t baseline = 0, low = 0;
+    static uint64_t n = 0;
+    std::lock_guard<std::mutex> lk(m);
+    size_t freeB = 0, totalB = 0;
+    if (cudaMemGetInfo(&freeB, &totalB) != cudaSuccess) { cudaGetLastError(); return; }
+    ++n;
+    if (baseline == 0) {
+        baseline = low = freeB;
+        zklog.info("[MEM-DIAG] baseline free = " + std::to_string(freeB / (1024.0 * 1024.0)) + " MB");
+        return;
+    }
+    // Report only new lows, and only drops worth looking at, so a steady state stays silent.
+    if (freeB + (16ull << 20) < low) {
+        low = freeB;
+        zklog.error("[MEM-DIAG] device free memory fell to " + std::to_string(freeB / (1024.0 * 1024.0)) +
+                    " MB at " + where + " (baseline " + std::to_string(baseline / (1024.0 * 1024.0)) +
+                    " MB, lost " + std::to_string((baseline - freeB) / (1024.0 * 1024.0)) +
+                    " MB over " + std::to_string(n) + " proofs)");
+    }
+}
+
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
+    diagCheckGuards("get_proof");
+    diagCheckTail(d_buffers, streamId);
+    diagMemWatermark("get_proof");
+    if (getenv("PROOFMAN_GPU_DIAG_INJECT") != nullptr) {
+        // Deliberate capture-invalidating fault, to verify the attribution path reports it.
+        static int dummy = 0;
+        cudaMemcpy(&dummy, d_buffers->gpuMemoryBuffer[0], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaGetLastError();
+    }
     SetupCtx *setupCtx = (SetupCtx*) d_buffers->streamsData[streamId].pSetupCtx;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
@@ -1228,6 +1614,10 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+    diagSetLaunch(proofType, airgroupId, airId, (int64_t)instanceId, streamId);
+    diagCheckAirRegistered(d_buffers, airgroupId, airId, string(proofType), gpuLocalId, "gen_recursive_proof_gpu");
+    diagCheckLaunchFits(d_buffers, streamId, pSetupCtx_, string("gen_recursive_proof_gpu:") + proofType, airgroupId, airId);
+    diagArmTail(d_buffers, streamId, pSetupCtx_, string("gen_recursive_proof_gpu:") + proofType + " " + std::to_string(airgroupId) + ":" + std::to_string(airId), d_buffers->streamsData[streamId].stream);
 
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
@@ -1625,6 +2015,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     auto key = std::make_pair(airgroupId, airId);
     cudaSetDevice(gpuId);
+    diagSetLaunch("witness", airgroupId, airId, (int64_t)instanceId, streamId);
+    diagCheckAirRegistered(d_buffers, airgroupId, airId, "basic", gpuLocalId, "commit_witness_gpu");
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key]["basic"][gpuLocalId];
 
     uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
@@ -1772,7 +2164,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
             calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
         };
-        cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
+        cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, "WEXC(contrib-witness-exprs)", witnessExprBody);
     }
 
     PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
@@ -1787,7 +2179,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     };
     uint64_t commitLdeCountId = 0;   // no expression launches in this body; dummy cursor
-    cudagraph::run(cudagraph::key(0x574c4445ULL ^ witnessCtxId), commitLdeCountId, stream, commitLdeBody);
+    cudagraph::run(cudagraph::key(0x574c4445ULL ^ witnessCtxId), commitLdeCountId, stream, "WLDE(contrib-lde+merkle)", commitLdeBody);
     PROOFMAN_SUMCHECK("contrib_after_lde", d_aux_trace + offset_dst, NExtended * nCols, stream);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
@@ -2423,6 +2815,7 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
         d_buffers->streamsData[i].instanceId = -1;        // clobbered witness, not ready
     }
     d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
+    diagRearmGuards();   // TEMP-DIAG: borrower legitimately wrote below the floor
 }
 
 uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_) {

@@ -10,6 +10,7 @@
 #include "fri_expression.cuh"
 #include "proof2zkinStark.hpp"
 #include "proofman_sumcheck.cuh"
+#include <cstdlib>
 
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
@@ -360,6 +361,12 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
+
+        // Fault injection (PROOFMAN_GPU_DIAG_INJECT=1): a stream sync is illegal during capture and
+        // invalidates it deterministically. Used to verify that an abort names THIS region.
+        if (getenv("PROOFMAN_GPU_DIAG_INJECT") != nullptr) {
+            cudaStreamSynchronize(stream);
+        }
 
         if (nCols > 0)
         {

@@ -62,7 +62,12 @@ pub type InstanceMap = HashMap<usize, InstancesInfo>;
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 /// GPU memory (in MB) left unallocated for consumers outside our arena.
-const GPU_MEMORY_RESERVE_MB: u64 = 512;
+// Headroom left outside the arena for device memory the prover allocates AFTER sizing it: the
+// generated .exps.so modules (load_device_setups runs after set_device_buffers, and their cubins
+// are pushed to the device there), plus the async-allocator pools. Measured on the zisk key with
+// the generated Q/expression kernels: ~630 MB consumed post-arena, so 512 MB was under-reserved by
+// ~120 MB -- an arena that overcommits by that much fails allocation mid-run instead of at startup.
+const GPU_MEMORY_RESERVE_MB: u64 = 1024;
 
 #[derive(Clone)]
 pub struct ProofOptions {

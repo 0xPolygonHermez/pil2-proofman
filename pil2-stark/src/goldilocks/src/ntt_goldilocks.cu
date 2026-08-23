@@ -1431,10 +1431,16 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     if (preserve_src || overlaps) {
         size_t cap = scratch != nullptr ? scratch_elems : (size_t)chunk * N;
         if (scratch == nullptr) {
-            static bool warned = false;   // on a prover path this allocates against a full arena
-            if (!warned) {
-                warned = true;
-                printf("[NTT] WARNING: ldeColMajor staging without caller scratch\n");
+            static std::atomic<uint64_t> nOwnScratch{0};
+            uint64_t seen = nOwnScratch.fetch_add(1);
+            if (seen == 0 || (seen % 64) == 0) {
+                // On a prover path this allocates against a full arena, and cudaFreeAsync only
+                // returns the block to the mempool -- which retains it. Report every occurrence
+                // batch so a steady-state allocation here is visible instead of silent.
+                printf("[NTT] WARNING: ldeColMajor staging without caller scratch (occurrence %llu, "
+                       "requesting %llu bytes)\n",
+                       (unsigned long long)(seen + 1), (unsigned long long)(cap * sizeof(gl64_t)));
+                fflush(stdout);
             }
             CHECKCUDAERR(cudaMallocAsync(&scratch, cap * sizeof(gl64_t), stream));
             own_scratch = true;

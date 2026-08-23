@@ -4,6 +4,7 @@
 #ifdef USE_CUDA_GRAPH
 
 #include <cuda_runtime.h>
+#include "cuda_utils.cuh"
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdint>
@@ -211,6 +212,26 @@ namespace cudagraph {
         return CudaGraphCache::makeKey(a, b, c, d, e, f, g);
     }
 
+    // Last capture region this thread entered. A sticky CUDA error (illegal address, invalidated
+    // capture) is reported by whichever CHECKCUDAERR runs next, which is routinely in an unrelated
+    // file -- the breadcrumb says which region actually produced it.
+    inline const char *&phase() { return cudaDiagPhase(); }
+
+    // Checked at every region boundary so a fault is attributed to the region that caused it.
+    // Peek, never Get: clearing here would hide the error from the real CHECKCUDAERR.
+    inline void checkBoundary(const char *label, const char *when, cudaStream_t stream) {
+        cudaError_t err = cudaPeekAtLastError();
+        cudaStreamCaptureStatus st = cudaStreamCaptureStatusNone;
+        unsigned long long gid = 0;
+        bool haveSt = cudaStreamGetCaptureInfo_v2(stream, &st, &gid, nullptr, nullptr, nullptr) == cudaSuccess;
+        if (err == cudaSuccess && (!haveSt || st != cudaStreamCaptureStatusInvalidated)) return;
+        fprintf(stderr,
+                "[GRAPH-DIAG] region '%s' %s: err=%s(%d) captureStatus=%d stream=%p prevPhase='%s'\n",
+                label, when, cudaGetErrorString(err), (int)err, haveSt ? (int)st : -1,
+                (void *)stream, phase());
+        fflush(stderr);
+    }
+
     // The ONE capture-region wrapper: replay a cached graph for `key`, else capture the
     // body above the threshold, else run it directly. A failed or poisoned capture
     // re-executes the body — safe because stream capture RECORDS work without executing
@@ -226,7 +247,14 @@ namespace cudagraph {
     //  2. Shape-determinism: every variable that changes WHICH work the body enqueues
     //     must be part of `key`.
     template <typename Body>
-    inline void run(uint64_t key, uint64_t &countId, cudaStream_t stream, Body&& body) {
+    inline void run(uint64_t key, uint64_t &countId, cudaStream_t stream, const char *label, Body&& body) {
+        checkBoundary(label, "on entry", stream);
+        const char *prev = phase();
+        phase() = label;
+        struct Restore {
+            const char *p; const char *l; cudaStream_t s;
+            ~Restore() { checkBoundary(l, "on exit", s); phase() = p; }
+        } restore{prev, label, stream};
         CudaGraphCache *gc = enabled() ? current() : nullptr;
         if (gc) {
             if (gc->tryLaunch(key, stream)) return;
@@ -256,8 +284,9 @@ namespace cudagraph {
     inline bool enabled() { return false; }
     inline uint64_t key(uint64_t, uint64_t = 0, uint64_t = 0, uint64_t = 0,
                         uint64_t = 0, uint64_t = 0, uint64_t = 0) { return 0; }
+    inline const char *&phase() { return cudaDiagPhase(); }
     template <typename Body>
-    inline void run(uint64_t, uint64_t&, cudaStream_t, Body&& body) { body(); }
+    inline void run(uint64_t, uint64_t&, cudaStream_t, const char *, Body&& body) { body(); }
 }
 
 #endif // USE_CUDA_GRAPH

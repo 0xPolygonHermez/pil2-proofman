@@ -12,6 +12,23 @@
 
 #define LOG_TIME_GPU 1
 
+
+// A cudaEventRecord issued inside a graph-capture region becomes a capture node rather than a
+// real record: the event is then unusable for host queries (cudaEventSynchronize and
+// cudaEventElapsedTime both fail on it), so a captured region's categories report garbage. It also
+// puts event calls -- whose returns are not checked below -- inside the capture, where any failure
+// silently invalidates it and resurfaces as cudaErrorStreamCaptureInvalidated at an unrelated call.
+// Replays skip host code, so those timings were never collectable anyway; skip while capturing.
+static inline bool timerStreamCapturing(cudaStream_t s) {
+    cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+    unsigned long long id = 0;
+    if (cudaStreamGetCaptureInfo_v2(s, &status, &id, nullptr, nullptr, nullptr) != cudaSuccess) {
+        cudaGetLastError();
+        return false;
+    }
+    return status != cudaStreamCaptureStatusNone;
+}
+
 struct TimerEntry {
     cudaEvent_t start = nullptr;
     cudaEvent_t stop = nullptr;
@@ -43,6 +60,7 @@ public:
     }
 
     void start(const std::string& name) {
+        if (timerStreamCapturing(stream)) return;
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
             if (!createEvent(start) || !createEvent(stop)) return;
@@ -53,6 +71,7 @@ public:
     }
 
     void stop(const std::string& name) {
+        if (timerStreamCapturing(stream)) return;
         auto it = timers.find(name);
         if (it == timers.end()) {
 #ifndef __GOLDILOCKS_ENV__
@@ -64,6 +83,7 @@ public:
     }
 
     void startCategory(const std::string& name) {
+        if (timerStreamCapturing(stream)) return;
         if (activeCategoryTimers.find(name) != activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
@@ -81,6 +101,7 @@ public:
     }
 
     void stopCategory(const std::string& name) {
+        if (timerStreamCapturing(stream)) return;
         auto it = activeCategoryTimers.find(name);
         if (it == activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
