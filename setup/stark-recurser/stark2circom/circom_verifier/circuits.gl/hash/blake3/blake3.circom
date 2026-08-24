@@ -6,12 +6,18 @@ include "blake3_core.circom";
 /*
     Blake3 custom gate and the primitives built on it.
 
-    One registered gate: a full BLAKE3 compression (7 rounds of 8 G functions).
-    Circom passes values and does no arithmetic of its own -- every hash the
-    verifier needs (leaf hash, Merkle node, chunk parent, transcript absorb,
-    transcript squeeze, PoW) is this gate with different wires.
+    Every hash the verifier needs (leaf hash, Merkle node, chunk parent,
+    transcript absorb, transcript squeeze, PoW) is one BLAKE3 compression --
+    7 rounds of 8 G functions. Circom passes values and does no arithmetic of
+    its own.
 
-    Two input shapes over one 16-cell row geometry, selected by `raw`:
+    Two gates compute it. Blake3Compress is the general one, taking a chaining
+    value and either input shape; Blake3Node is the Merkle-node specialisation,
+    which is most of a verifier's compressions and spends a third of the rows
+    per call. See the note on Blake3Node.
+
+    Blake3Compress takes two input shapes over one 16-cell row geometry,
+    selected by `raw`:
 
       raw = 0   `in[0..8]` is the chaining value (u32), `in[8..16]` a block of
                 eight full-range Goldilocks words, which the gate splits into
@@ -31,8 +37,7 @@ include "blake3_core.circom";
     compression in sixteen. The Merkle tree and PoW go through Blake3Hash8,
     which is raw = 0.
 
-    Both shapes need exactly 16 input cells, which is why one gate serves both:
-    a second gate would mean a second 3080-cell AIR for those few percent.
+    Both shapes need exactly 16 input cells, so one gate serves both.
 
     Packing u32 back to Goldilocks needs no gate: to_canonical(lo + 2^32*hi) is
     exactly reduction mod p for any u64 (a u64 is always below 2p), so a digest
@@ -47,7 +52,7 @@ include "blake3_core.circom";
     parameter would spawn one gate id per chunk index.
 */
 
-// ─── Gate ────────────────────────────────────────────────────────────────────
+// ─── Gates ───────────────────────────────────────────────────────────────────
 
 template custom extern_c Blake3Compress() {
     signal input in[16];       // raw=0: cv[0..8] (u32), then the Goldilocks block
@@ -58,23 +63,51 @@ template custom extern_c Blake3Compress() {
     signal input flags;        //                  -> st[15]
     signal input key;          // raw=0: 0 identity, 1 swaps the halves. raw=1: unused
     signal input raw;          // 0: split `b` from Goldilocks.  1: `a`||`b` is the block
-    signal output im[3080];    // raw=1 leaves the split section zero and unconstrained
     signal output out[16];     // out[i]=st[i]^st[i+8]; out[8+i]=st[8+i]^cv[i]
 
-    // `key` and `raw` must be boolean, but that cannot be asserted here: this
+    // `key` and `raw` must be boolean, but no assert here can enforce it: this
     // body is dead under extern_c (the compiler replaces it with a call into
     // blake3_goldilocks.cpp), so a witness-time assert on a signal never runs.
-    // Verified by planting a false one and watching generation succeed. Their
-    // booleanity is the AIR's job, and the witness side treats any nonzero as 1.
+    // Booleanity is the AIR's job; the witness side treats any nonzero as 1.
 
-    var iv[16] = in;
-    var r[3096] = b3_compress_gate(iv, blockLen, counterLo, 0, flags, key, raw);
+    var cells[16] = in;
+    var r[16] = b3_compress_gate(cells, blockLen, counterLo, 0, flags, key, raw);
 
-    for (var i = 0; i < 3080; i++) {
-        im[i] <-- r[i];
-    }
     for (var i = 0; i < 16; i++) {
-        out[i] <-- r[3080 + i];
+        out[i] <-- r[i];
+    }
+}
+
+/*
+    The Merkle-node compression: eight Goldilocks words at the IV with the root
+    flags, digest packed back to four words. The overwhelming majority of a
+    verifier's compressions; Blake3Compress serves the rest.
+
+    Its own gate because every wire crossing a custom-gate boundary costs a
+    linear constraint that --O2 cannot substitute through -- the application
+    names signal indices. This shape spends 5 per call where driving
+    Blake3Compress spends 17, the difference being eight constant B3_IV cells
+    and eight u32 output halves a caller would recombine.
+
+    The AIR binds less here, not more: the chaining value is a constant rather
+    than eight input cells, and out[i] ties to its own final-state u32 columns
+    as lo + 2^32*hi -- exactly reduction mod p for any u64, so no range check
+    of its own.
+*/
+template custom extern_c Blake3Node() {
+    signal input in[8];
+    signal input key;
+    signal output out[4];
+
+    var iv[16];
+    for (var i = 0; i < 8; i++) {
+        iv[i]     = B3_IV(i);
+        iv[8 + i] = in[i];
+    }
+    var r[16] = b3_compress_gate(iv, 64, 0, 0,
+                                 B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT(), key, 0);
+    for (var i = 0; i < 4; i++) {
+        out[i] <-- r[2 * i] + 4294967296 * r[2 * i + 1];
     }
 }
 
@@ -95,6 +128,25 @@ template Blake3Hash8() {
     signal input key;
     signal output out[4];
 
+    component c = Blake3Node();
+    c.in <== in;
+    c.key <== key;
+    out <== c.out;
+}
+
+
+/*
+    blake3core::permute8: absorb eight Goldilocks words, squeeze the whole 64-byte XOF
+    block back. Drop-in for a width-8 sponge permutation, and the same single
+    compression as Blake3Hash8 -- that one just truncates to the four digest words.
+
+    Drives the general gate rather than Blake3Node because it needs all eight
+    squeezed words, and Blake3Node publishes only the four digest ones.
+*/
+template Blake3Permute8() {
+    signal input in[8];
+    signal output out[8];
+
     component c = Blake3Compress();
     for (var i = 0; i < 8; i++) {
         c.in[i]     <== B3_IV(i);
@@ -103,15 +155,11 @@ template Blake3Hash8() {
     c.blockLen <== 64;
     c.counterLo <== 0;
     c.flags <== B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT();
-    c.key <== key;
+    c.key <== 0;
     c.raw <== 0;
 
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 8; i++) {
         out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
-    }
-    _ <== c.im;
-    for (var i = 8; i < 16; i++) {
-        _ <== c.out[i];
     }
 }
 
@@ -147,7 +195,6 @@ template Blake3AbsorbBlock() {
     for (var i = 0; i < 8; i++) {
         cvOut[i] <== c.out[i];
     }
-    _ <== c.im;
     for (var i = 8; i < 16; i++) {
         _ <== c.out[i];
     }
@@ -177,7 +224,6 @@ template Blake3Parent() {
     for (var i = 0; i < 8; i++) {
         cvOut[i] <== c.out[i];
     }
-    _ <== c.im;
     for (var i = 8; i < 16; i++) {
         _ <== c.out[i];
     }
@@ -220,7 +266,6 @@ template Blake3FinalizeChunk() {
     for (var i = 0; i < 8; i++) {
         out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
     }
-    _ <== c.im;
 }
 
 /*
@@ -247,5 +292,4 @@ template Blake3FinalizeParent() {
     for (var i = 0; i < 8; i++) {
         out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
     }
-    _ <== c.im;
 }

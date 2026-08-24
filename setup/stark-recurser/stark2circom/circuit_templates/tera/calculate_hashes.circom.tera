@@ -29,7 +29,11 @@ template CalculateStage1Hash() {
     values[{{ loop.index0 }}] <== {{ f }};
 {%- endfor %}
 {% for r in chain %}
+{%- if hash_family == "blake3" %}
+    signal {{ r.sig }}[{{ out_w }}] <== Blake3Permute8()([{{ r.inputs | join(sep=", ") }}]);
+{%- else %}
     signal {{ r.sig }}[{{ out_w }}] <== {% if hash_family == "Poseidon2" %}Poseidon2(4, {{ out_w }}){% else %}Poseidon({{ out_w }}){% endif %}([{{ r.inputs | join(sep=", ") }}], [{{ r.state | join(sep=", ") }}]);
+{%- endif %}
     for (var j = 0; j < {{ out_w }}; j++) {
         values[{{ r.base_next }} + j] <== {{ r.sig }}[j];
     }

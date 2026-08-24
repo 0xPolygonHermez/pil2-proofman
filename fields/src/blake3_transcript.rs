@@ -32,8 +32,12 @@ fn canon(x: u64) -> u64 {
 const XOF_BLOCK_WORDS: usize = 8;
 
 /// Words `get_state` returns: the 32-byte BLAKE3 digest, matching `HASH_SIZE`
-/// on the C++ side (`TranscriptGL::transcriptStateSize`).
+/// on the C++ side (`TranscriptGL::transcriptStateSize`). Do not widen this: it is
+/// the digest width, and publicsHash / evalsHash / lastPolFRIHash all depend on it.
 pub const BLAKE3_TRANSCRIPT_STATE_WORDS: usize = 4;
+
+/// Words a full XOF block carries, i.e. the width of `blake3core::permute8`.
+pub const BLAKE3_TRANSCRIPT_XOF_WORDS: usize = XOF_BLOCK_WORDS;
 
 pub struct Blake3Transcript<F: PrimeField64> {
     hasher: ::blake3::Hasher,
@@ -110,6 +114,21 @@ impl<F: PrimeField64> Blake3Transcript<F> {
         let mut buf = [0u8; 8 * BLAKE3_TRANSCRIPT_STATE_WORDS];
         reader.fill(&mut buf);
         (0..BLAKE3_TRANSCRIPT_STATE_WORDS)
+            .map(|i| F::from_u64(canon(u64::from_le_bytes(buf[8 * i..8 * i + 8].try_into().unwrap()))))
+            .collect()
+    }
+
+    /// A full 64-byte XOF block: the same eight words `blake3core::permute8` squeezes.
+    ///
+    /// `get_state` reads only the first four, because that is the digest width the C++
+    /// `TranscriptGL::getState` returns. Anything that wants a width-8 permutation --
+    /// the lattice chain -- wants this instead: the eight words cost the same single
+    /// compression, so halving a chain's rounds is free.
+    pub fn get_xof_block(&mut self) -> Vec<F> {
+        let mut reader = self.hasher.finalize_xof();
+        let mut buf = [0u8; 8 * XOF_BLOCK_WORDS];
+        reader.fill(&mut buf);
+        (0..XOF_BLOCK_WORDS)
             .map(|i| F::from_u64(canon(u64::from_le_bytes(buf[8 * i..8 * i + 8].try_into().unwrap()))))
             .collect()
     }

@@ -14,10 +14,14 @@
 //! against the real custom-gate witness implementation (setup/circom), and the
 //! resulting witness is compared word for word.
 //!
-//! End-to-end hash agreement is necessary but not sufficient: the gate also
-//! writes 3080 `im` cells per compression that the AIR constrains but the digest
-//! does not depend on, so a bug there is invisible to both tests above.
-//! `gate_witness_cells_match_scalar_path` closes that gap.
+//! Three narrower tests cover what the two above cannot reach.
+//! `spec_and_witness_gate_agree` differences the gate against the circom function
+//! that is its spec, over both input shapes, both key orderings and the packing
+//! boundary. `node_gate_matches_general_gate` holds Blake3Node to the general gate
+//! driven into the same shape. `lattice_chain_step_matches_prover` holds the
+//! emitted contributions chain to the prover's, which nothing else checks: the
+//! compressor publishes it as an unconstrained output, so a divergence would only
+//! surface a recursion level later.
 //!
 //! Requires the goldilocks `circom` fork and a C++ toolchain. When either is
 //! missing the tests print why and pass, so `cargo test --workspace` still works
@@ -27,7 +31,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use proofman_fields::{Blake3Transcript, Goldilocks, PrimeField64};
+use proofman_fields::{hash_state, Blake3Transcript, Goldilocks, PrimeField64};
 
 use super::transcript::Transcript;
 
@@ -313,129 +317,112 @@ fn transcript_matches_reference_blake3() {
     assert_eq!(got, want, "emitted transcript disagrees with reference BLAKE3\n{src}");
 }
 
-/// Every `im` cell the gate writes, compared between the AVX2 store path and the
-/// `#else` scalar fallback.
+/// One round of the contributions lattice chain, circom against the prover.
 ///
-/// These must agree bit for bit: they are two spellings of one decomposition.
-/// The end-to-end tests above cannot see a disagreement, because `im` holds the
-/// byte and limb witnesses the AIR range-checks while the digest is computed
-/// independently of them -- so corrupting a `put_bytes` shift silently changes
-/// every affected AIR cell and leaves the hash correct.
+/// `gen_calculate_hashes` emits the blake3 chain as `Blake3Permute8` rounds eight words
+/// wide; the prover steps it with `hash_state` at the width
+/// `TranscriptDyn::get_chain_state` returns. Those are two separate implementations of one
+/// function and they must agree, or prover and verifier derive different contributions --
+/// and nothing downstream would catch it, because the compressor emits `sv_stage1Hash` as
+/// an unconstrained output. Its values are only consumed a recursion level later.
 ///
-/// Needs only a C++ compiler, not circom.
-const CELL_CMP_CPP: &str = r##"
-#include <cstdint>
-#include <cstdio>
-#include <initializer_list>
-#include <sys/types.h>   // uint, as the gate's extern signature spells it
-static const uint64_t GP = 18446744069414584321ull;
-extern void Blake3Compress(uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,
-                           uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*);
-extern void Blake3Compress_scalar(uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,
-                                  uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*);
-int main() {
-    uint s16 = 16, s3080 = 3080, sO = 16, s1 = 1;
-    long cases = 0, bad = 0;
-    for (int trial = 0; trial < 400; trial++) {
-        uint64_t in[16];
-        for (int i = 0; i < 16; i++) {
-            uint64_t v = (uint64_t)(trial * 16 + i + 1) * 0x9E3779B97F4A7C15ull;
-            // Force the packing boundary (hi = 2^32-1) into some block words.
-            if (i >= 8 && (trial % 7) == (i % 7)) v = 0xFFFFFFFF00000000ull + (trial % 3);
-            in[i] = (i < 8) ? (v >> 32) : (v >= GP ? v - GP : v);
-        }
-        for (uint64_t raw = 0; raw < 2; raw++)
-        for (uint64_t key = 0; key < 2; key++)
-        for (uint64_t bl : {8ull, 40ull, 64ull})
-        for (uint64_t fl : {1ull, 2ull, 3ull, 11ull, 12ull}) {
-            uint64_t a[3080] = {0}, b[3080] = {0}, oa[16] = {0}, ob[16] = {0};
-            uint64_t ctr = trial % 97, r = raw, k = key, l = bl, f = fl;
-            Blake3Compress       (a,&s3080,oa,&sO,in,&s16,&l,&s1,&ctr,&s1,&f,&s1,&k,&s1,&r,&s1);
-            Blake3Compress_scalar(b,&s3080,ob,&sO,in,&s16,&l,&s1,&ctr,&s1,&f,&s1,&k,&s1,&r,&s1);
-            cases++;
-            for (int i = 0; i < 3080; i++) if (a[i] != b[i]) {
-                if (bad < 3) printf("im[%d] avx=%llu scalar=%llu raw=%llu key=%llu blockLen=%llu flags=%llu\n",
-                                    i, (unsigned long long)a[i], (unsigned long long)b[i],
-                                    (unsigned long long)raw, (unsigned long long)key,
-                                    (unsigned long long)bl, (unsigned long long)fl);
-                bad++; break;
-            }
-            for (int i = 0; i < 16; i++) if (oa[i] != ob[i]) {
-                if (bad < 3) printf("out[%d] differs raw=%llu\n", i, (unsigned long long)raw);
-                bad++; break;
-            }
-        }
-    }
-    printf("compared %ld invocations, %ld mismatching\n", cases, bad);
-    return bad != 0;
-}
-"##;
-
+/// The seed is checked the same way: the chain starts from the eight words the transcript
+/// squeezes, which is what the emitted circom reads one field at a time.
 #[test]
-fn gate_witness_cells_match_scalar_path() {
-    if !have("g++", &["--version"]) {
-        eprintln!("SKIP gate_witness_cells_match_scalar_path: g++ not on PATH");
+fn lattice_chain_step_matches_prover() {
+    if let Some(why) = missing_prerequisite() {
+        eprintln!("SKIP lattice_chain_step_matches_prover: {why}");
         return;
     }
-    let root = repo_root();
-    let support = root.join("setup/circom");
-    let goldilocks = root.join("pil2-stark/src/goldilocks/src");
-    let gate = support.join("blake3_goldilocks.cpp");
-    if !gate.exists() {
-        eprintln!("SKIP gate_witness_cells_match_scalar_path: {} not present", gate.display());
+    let src = "pragma circom 2.1.0;\n\
+        pragma custom_templates;\n\
+        include \"hash/blake3/blake3.circom\";\n\n\
+        template Probe() {\n\
+        \x20   signal input a[8];\n\
+        \x20   signal output o[8];\n\
+        \x20   o <== Blake3Permute8()(a);\n\
+        }\n\
+        component main = Probe();\n";
+
+    // Words that straddle the packing boundary, where a split can disagree.
+    let mut words = sample_inputs(8);
+    words[2] = Goldilocks::ORDER_U64 - 1;
+    words[5] = 0xFFFFFFFF_00000000;
+
+    let got = run_circuit("lattice", src, &words, 8);
+
+    let mut state: Vec<Goldilocks> = words.iter().map(|&w| Goldilocks::from_u64(w)).collect();
+    hash_state("blake3", &mut state);
+    let want: Vec<u64> = state.iter().map(|f| f.as_canonical_u64()).collect();
+
+    assert_eq!(got, want, "circom lattice round disagrees with the prover's hash_state");
+}
+
+/// `Blake3Node` against the general gate driven into the same shape.
+///
+/// Blake3Node exists only to spend fewer wires on a node hash than
+/// Blake3Compress does (see blake3.circom), so it has to compute exactly what
+/// the general gate computes at the IV with the root flags -- including the key
+/// ordering and the packing of the digest halves. Both gates run for real here:
+/// circom emits the circuit, it links against setup/circom, and the two halves
+/// of the output must agree.
+///
+/// This is a relative check by construction, and the two gates share
+/// `split_ordered`, so it cannot see a bug in shared code -- flipping the key
+/// ordering there flips both sides equally and this test still passes. The
+/// absolute oracle is the other three: `spec_and_witness_gate_agree` differences
+/// the C++ against the circom spec, and the two tests above difference the whole
+/// emitted circuit against the `blake3` crate. All three catch that flip.
+#[test]
+fn node_gate_matches_general_gate() {
+    if let Some(why) = missing_prerequisite() {
+        eprintln!("SKIP node_gate_matches_general_gate: {why}");
         return;
     }
+    let src = "pragma circom 2.1.0;\n\
+        pragma custom_templates;\n\
+        include \"hash/blake3/blake3.circom\";\n\n\
+        template Probe() {\n\
+        \x20   signal input args[9];   // in[0..8], then key\n\
+        \x20   signal output o[8];     // Blake3Node, then the general gate\n\
+        \x20   component n = Blake3Node();\n\
+        \x20   for (var i = 0; i < 8; i++) { n.in[i] <== args[i]; }\n\
+        \x20   n.key <== args[8];\n\
+        \x20   for (var i = 0; i < 4; i++) { o[i] <== n.out[i]; }\n\
+        \x20   component c = Blake3Compress();\n\
+        \x20   for (var i = 0; i < 8; i++) { c.in[i] <== B3_IV(i); c.in[8 + i] <== args[i]; }\n\
+        \x20   c.blockLen <== 64;\n\
+        \x20   c.counterLo <== 0;\n\
+        \x20   c.flags <== B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT();\n\
+        \x20   c.key <== args[8];\n\
+        \x20   c.raw <== 0;\n\
+        \x20   for (var i = 0; i < 4; i++) { o[4 + i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1]; }\n\
+        \x20   for (var i = 8; i < 16; i++) { _ <== c.out[i]; }\n\
+        }\n\
+        component main = Probe();\n";
 
-    let dir = std::env::temp_dir().join("b3_equiv_cells");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("cmp.cpp"), CELL_CMP_CPP).unwrap();
-
-    // The fallback is selected by __AVX2__, which gcc defines from -mavx2 alone,
-    // so the scalar object must be built with neither. Only the symbol is
-    // renamed, so both objects really are the same source.
-    let scalar_obj = dir.join("scalar.o");
-    let out = Command::new("g++")
-        .args(["-std=c++17", "-O2", "-D__USE_ASSEMBLY__", "-DBlake3Compress=Blake3Compress_scalar", "-w", "-c"])
-        .arg(&gate)
-        .arg("-I")
-        .arg(&support)
-        .arg("-I")
-        .arg(&goldilocks)
-        .arg("-o")
-        .arg(&scalar_obj)
-        .output()
-        .expect("failed to run g++");
-    assert!(out.status.success(), "scalar build failed:\n{}", String::from_utf8_lossy(&out.stderr));
-
-    let exe = dir.join("cmp");
-    let out = Command::new("g++")
-        .args(["-std=c++17", "-O2", "-mavx2", "-D__AVX2__", "-D__USE_ASSEMBLY__", "-w"])
-        .arg("-I")
-        .arg(&support)
-        .arg("-I")
-        .arg(&goldilocks)
-        .arg(dir.join("cmp.cpp"))
-        .arg(&scalar_obj)
-        .arg(&gate)
-        .arg(goldilocks.join("goldilocks_base_field.cpp"))
-        .arg("-o")
-        .arg(&exe)
-        .args(["-lgmp", "-lgmpxx", "-fopenmp", "-pthread"])
-        .output()
-        .expect("failed to run g++");
-    assert!(out.status.success(), "avx2 build failed:\n{}", String::from_utf8_lossy(&out.stderr));
-
-    let out = Command::new(&exe).output().expect("failed to run comparator");
-    let report = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "gate witness cells differ between store paths:\n{report}");
-    assert!(report.contains(", 0 mismatching"), "unexpected comparator output:\n{report}");
-    let _ = fs::remove_dir_all(&dir);
+    // Both key orderings, and words that straddle the packing boundary
+    // (hi = 2^32-1), which is where a split can disagree.
+    let mut words = sample_inputs(8);
+    words[3] = Goldilocks::ORDER_U64 - 1;
+    words[6] = 0xFFFFFFFF_00000000;
+    for key in [0u64, 1] {
+        let mut inputs = words.clone();
+        inputs.push(key);
+        let got = run_circuit("node", src, &inputs, 8);
+        assert_eq!(
+            &got[0..4],
+            &got[4..8],
+            "Blake3Node disagrees with the general gate at key={key}\n  node={:?}\n  general={:?}",
+            &got[0..4],
+            &got[4..8]
+        );
+    }
 }
 
 /// Driver for `spec_and_witness_gate_agree`: runs the probe circuit (which
 /// executes the circom `b3_compress_gate`) and the C++ `Blake3Compress` on the
-/// same arguments, comparing all 3096 values.
+/// same arguments, comparing the sixteen xof words the gate publishes.
 const SPEC_CMP_CPP: &str = r##"
 #include <cstdint>
 #include <cstdio>
@@ -445,12 +432,12 @@ extern "C" uint64_t getSizeWitness();
 extern "C" void *initCircuit(char *);
 extern "C" int64_t getWitness(uint64_t *, void *, void *, uint64_t);
 extern void Blake3Compress(uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,
-                           uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*);
+                           uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*);
 static const uint64_t GP = 18446744069414584321ull;
 int main(int argc, char **argv) {
     void *circuit = initCircuit(argv[1]);
     if (!circuit) { fprintf(stderr, "initCircuit failed\n"); return 1; }
-    uint s16 = 16, s3080 = 3080, sO = 16, s1 = 1;
+    uint s16 = 16, sO = 16, s1 = 1;
     long bad = 0, cases = 0;
     for (int trial = 0; trial < 12; trial++)
     for (uint64_t raw = 0; raw < 2; raw++)
@@ -459,8 +446,8 @@ int main(int argc, char **argv) {
         uint64_t args[21];
         for (int i = 0; i < 16; i++) {
             uint64_t v = (uint64_t)(trial * 16 + i + 1) * 0x9E3779B97F4A7C15ull;
-            // Force the packing boundary into some block words, so the split
-            // section's isMax branch is exercised alongside the dInv one.
+            // Force the packing boundary (hi = 2^32-1) into some block words:
+            // p-1 = (2^32-1)*2^32, so that is where the split can disagree.
             if (i >= 8 && (trial % 5) == (i % 5)) v = 0xFFFFFFFF00000000ull + (trial % 3);
             // cv words and raw blocks are u32; a Goldilocks block is full-range.
             args[i] = (i < 8 || raw) ? (v >> 32) : (v >= GP ? v - GP : v);
@@ -471,14 +458,14 @@ int main(int argc, char **argv) {
         std::vector<uint64_t> w(getSizeWitness());
         if (getWitness(args, circuit, w.data(), 8) != 0) { fprintf(stderr, "getWitness failed\n"); return 1; }
 
-        uint64_t im[3080] = {0}, out[16] = {0}, in16[16];
+        uint64_t out[16] = {0}, in16[16];
         for (int i = 0; i < 16; i++) in16[i] = args[i];
         uint64_t l = args[16], c = args[17], f = args[18], k = key, r = raw;
-        Blake3Compress(im,&s3080,out,&sO,in16,&s16,&l,&s1,&c,&s1,&f,&s1,&k,&s1,&r,&s1);
+        Blake3Compress(out,&sO,in16,&s16,&l,&s1,&c,&s1,&f,&s1,&k,&s1,&r,&s1);
 
         cases++;
-        for (int i = 0; i < 3096; i++) {
-            const uint64_t want = (i < 3080) ? im[i] : out[i - 3080];
+        for (int i = 0; i < 16; i++) {
+            const uint64_t want = out[i];
             if (w[1 + i] != want) {
                 if (bad < 6) printf("cell %d circom=%llu cpp=%llu raw=%llu key=%llu blockLen=%llu\n",
                     i, (unsigned long long)w[1 + i], (unsigned long long)want,
@@ -493,15 +480,16 @@ int main(int argc, char **argv) {
 "##;
 
 /// blake3_core.circom's `b3_compress_gate` against blake3_goldilocks.cpp's
-/// `Blake3Compress`, all 3096 values.
+/// `Blake3Compress`, over the sixteen xof words.
 ///
 /// These are two independent implementations of one function, and normally only
 /// the C++ one runs: the circom gate body is dead under `extern_c`, replaced by
 /// a call into the witness library. But the circom side is the readable spec,
-/// it is where the `im` layout is documented, and the PIL will be written from
-/// it -- so a divergence would mean constraining a layout the prover does not
-/// produce, with nothing to catch it. Instantiating the function in a plain
-/// (non-custom) template makes it execute, so the two can be differenced.
+/// and the PIL will be written from it -- so a divergence would mean
+/// constraining something the prover does not produce, with nothing to catch
+/// it. Instantiating the function in a plain (non-custom) template makes it
+/// execute, so the two can be differenced. Covers both input shapes, both key
+/// orderings and the packing boundary, which is where the split can disagree.
 #[test]
 fn spec_and_witness_gate_agree() {
     if let Some(why) = missing_prerequisite() {
@@ -512,11 +500,11 @@ fn spec_and_witness_gate_agree() {
         include \"hash/blake3/blake3_core.circom\";\n\n\
         template Probe() {\n\
         \x20   signal input args[21];   // in[0..16], then blockLen, counterLo, flags, key, raw\n\
-        \x20   signal output r[3096];\n\
+        \x20   signal output r[16];\n\
         \x20   var iv[16];\n\
         \x20   for (var i = 0; i < 16; i++) { iv[i] = args[i]; }\n\
-        \x20   var res[3096] = b3_compress_gate(iv, args[16], args[17], 0, args[18], args[19], args[20]);\n\
-        \x20   for (var i = 0; i < 3096; i++) { r[i] <-- res[i]; }\n\
+        \x20   var res[16] = b3_compress_gate(iv, args[16], args[17], 0, args[18], args[19], args[20]);\n\
+        \x20   for (var i = 0; i < 16; i++) { r[i] <-- res[i]; }\n\
         }\n\
         component main = Probe();\n";
 

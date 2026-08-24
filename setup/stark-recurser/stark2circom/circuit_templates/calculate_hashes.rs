@@ -12,6 +12,8 @@ use serde::Serialize;
 use serde_json::Value;
 use tera::Context as TeraCtx;
 
+use proofman_fields::BLAKE3_TRANSCRIPT_XOF_WORDS;
+
 use crate::stark2circom::transcript::Transcript;
 
 const CALCULATE_HASHES_TMPL: &str = include_str!("tera/calculate_hashes.circom.tera");
@@ -66,14 +68,28 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
         for _ in 0..5 {
             y_fields.push(transcript.get_fields1_pub());
         }
+    } else if hash_family == "blake3" {
+        // The chain width must be the one the prover steps with, which is what
+        // `TranscriptDyn::get_chain_state` returns -- a whole XOF block for blake3, not
+        // the digest's four words. Eight per round for the same one compression, so the
+        // chain runs at half the rounds. Both sides read this constant.
+        out_w = BLAKE3_TRANSCRIPT_XOF_WORDS;
+        for _ in 0..out_w {
+            initial_fields.push(transcript.get_fields1_pub());
+        }
+        let n_rounds = lattice_size.div_ceil(out_w);
+        for i in 0..n_rounds.saturating_sub(1) {
+            let base = i * out_w;
+            chain.push(ChainRound {
+                sig: format!("latticeHash_{i}"),
+                base_next: base + out_w,
+                inputs: (0..out_w).map(|j| format!("values[{}]", base + j)).collect(),
+                // Permute8 takes no capacity; the sponge form threads one.
+                state: Vec::new(),
+            });
+        }
     } else {
         // Poseidon families: 12 inputs + 4 capacity → 16 cells.
-        //
-        // blake3 no longer has a rate: its transcript is a real BLAKE3 chain, so
-        // the `initial_fields` below come out of the emitter correctly, but the
-        // explicit lattice chain further down still assumes a fixed-width sponge
-        // round. Left unsupported rather than silently wrong -- see the assert
-        // after `chain` is built.
         let stage1_count = air_values_map.iter().filter(|v| v["stage"].as_u64() == Some(1)).count();
         let input_w = 12;
         out_w = 16;
@@ -94,14 +110,13 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
         }
     }
 
-    // The lattice chain emits fixed-width sponge rounds, which blake3 does not
-    // have. It is only reachable when latticeSize > out_w; fail loudly rather
-    // than emit a call to a template that no longer exists.
+    // The chain fills `values` in whole rounds, so a lattice that is not a multiple of
+    // the round width would leave a tail unassigned -- circom would fail far from here.
+    // The prover asserts the same thing (`contributions_size % w == 0`).
     assert!(
-        hash_family != "blake3" || chain.is_empty(),
-        "calculate_hashes: the blake3 lattice chain is not implemented \
-         (latticeSize={lattice_size} would need {} rounds)",
-        chain.len() + 1
+        is_ec || lattice_size.is_multiple_of(out_w),
+        "calculate_hashes: latticeSize ({lattice_size}) must be a multiple of the {hash_family} \
+         round width ({out_w})"
     );
 
     // Snapshot the generated transcript code AFTER all put/get calls are done.
@@ -221,6 +236,41 @@ mod tests {
             2,
             "exactly one drain line per non-stage-1 entry"
         );
+    }
+
+    /// The blake3 chain, at the width the prover steps with.
+    ///
+    /// `calculate_internal_contributions` derives its round count from
+    /// `get_chain_state().len()`, so the emitter must use the same width or the two build
+    /// different `values` arrays. Nothing downstream catches that: the compressor
+    /// publishes the chain as an unconstrained output. Both sides read
+    /// BLAKE3_TRANSCRIPT_XOF_WORDS; this pins the emitter's half.
+    #[test]
+    fn lattice_blake3_rounds_match_the_prover() {
+        const LATTICE: usize = 368;
+        let stark = stark_info(2, json!([]));
+        let vadcop = json!({ "curve": "None", "latticeSize": LATTICE, "hash": "blake3" });
+        let out = gen_calculate_hashes(&stark, &vadcop);
+
+        // One Blake3Permute8 per round, and the prover runs contributions_size / w - 1.
+        let rounds = out.matches("Blake3Permute8()(").count();
+        assert_eq!(rounds, LATTICE / BLAKE3_TRANSCRIPT_XOF_WORDS - 1, "chain rounds\n{out}");
+
+        assert!(out.contains(&format!("signal output values[{LATTICE}]")));
+        // A sponge round would thread a capacity; permute8 takes none.
+        assert!(!out.contains("Poseidon"), "must not emit a sponge round:\n{out}");
+        // The seed is the first whole block, so the round after it starts at out_w.
+        assert!(out.contains(&format!("values[{BLAKE3_TRANSCRIPT_XOF_WORDS} + j]")), "out:\n{out}");
+    }
+
+    /// A lattice that is not a whole number of rounds would leave a tail of `values`
+    /// undriven, which circom reports far from the cause. The prover asserts the same.
+    #[test]
+    #[should_panic(expected = "must be a multiple of")]
+    fn lattice_not_a_multiple_of_the_round_width_is_rejected() {
+        let stark = stark_info(2, json!([]));
+        let vadcop = json!({ "curve": "None", "latticeSize": 12, "hash": "blake3" });
+        let _ = gen_calculate_hashes(&stark, &vadcop);
     }
 
     #[test]
