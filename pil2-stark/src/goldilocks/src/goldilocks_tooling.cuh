@@ -485,9 +485,14 @@ struct StreamData{
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
 
-        // Clear stale open timer categories: a cancel mid-category leaves one open, and the next
-        // job's stopCategory then mismatches and CHECKCUDAERR-aborts. Host-side only, no CUDA calls.
-        timer.resetCategories();
+        // Release the timer completely. resetCategories() only dropped the open-category
+        // bookkeeping and left every recorded cudaEvent alive; the events are destroyed solely by
+        // closeStreamTimer, which collectStreamResult skips whenever a stream carries neither a
+        // root nor a proof buffer. Those events then accumulated for the process lifetime -- they
+        // are device allocations, so a long-running worker drained GPU free memory until
+        // cudaEventCreate failed and poisoned the context. Always runs after
+        // get_proof/get_commit_root have logged, so no timing is lost.
+        timer.clear();
     }
 
     // Invalidate the const-reuse identity so the next proof reloads constants.

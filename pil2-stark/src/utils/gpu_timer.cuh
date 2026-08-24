@@ -85,7 +85,8 @@ public:
         if (timerStreamCapturing(stream)) return;
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
-            if (!createEvent(start) || !createEvent(stop)) return;
+            if (!createEvent(start)) return;
+            if (!createEvent(stop)) { cudaEventDestroy(start); timerEventDelta(-1); return; }
             timers[name] = {start, stop, -1.0f};
             order.push_back(name);
         }
@@ -114,7 +115,8 @@ public:
         }
 
         cudaEvent_t start, stop;
-        if (!createEvent(start) || !createEvent(stop)) return;
+        if (!createEvent(start)) return;
+        if (!createEvent(stop)) { cudaEventDestroy(start); timerEventDelta(-1); return; }
 
         auto& entries = multiTimers[name];
         entries.emplace_back(TimerEntry{start, stop, -1.0f});
