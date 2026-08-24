@@ -48,7 +48,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
     let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector); // 30 signals = band width -> 1 row/gate
-    let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
+    let n_sel_val1_rows = cgi.n(GateRole::SelectValArity4);
 
     // Per-gate row tiers for plonk piggyback. Band cells a[0..29] host 10 gates
     // (q0 = gates 0..5 on a[0..17], q1 = gates 6..9 on a[18..29]). The chain slot a[30..45]
@@ -140,7 +140,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
         n_tree_selector8: cgi.n(GateRole::TreeSelector),
-        n_select_val1: cgi.n(GateRole::SelectVal1),
+        n_select_val1: cgi.n(GateRole::SelectValArity4),
     });
 
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
@@ -177,7 +177,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
     let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
     let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
-    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
+    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectValArity4));
 
     let mut r = 0usize;
 

@@ -11,7 +11,8 @@ pub enum GateRole {
     CMul,
     Fft4,
     EvPol4,
-    SelectVal1,
+    SelectValArity4,
+    SelectValArity2,
 }
 
 pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
@@ -90,7 +91,8 @@ const GATES: &[(&str, GateRole, Option<&str>)] = &[
     ("CMul", GateRole::CMul, None),
     ("FFT4", GateRole::Fft4, None),
     ("EvPol4", GateRole::EvPol4, None),
-    ("SelectValue1", GateRole::SelectVal1, None),
+    ("SelectValueArity4", GateRole::SelectValArity4, None),
+    ("SelectValueArity2", GateRole::SelectValArity2, None),
 ];
 
 pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {

@@ -3,7 +3,7 @@
 //! Given only an R1CS file this computes — without compiling anything — how many
 //! witness *cells* the verifier circuit actually uses, broken down per component
 //! (PLONK, Poseidon Sponge, Poseidon Compression, CMul, FFT4, EvPol4,
-//! TreeSelector, SelectVal1).
+//! TreeSelector, SelectValueArity4).
 //!
 //! A **cell** is a single value placed into the witness (`s_map`). The per-unit
 //! cell costs below are read directly off the placement loops in compressor.rs /
@@ -35,11 +35,15 @@ pub fn cells_per_gate(role: GateRole) -> Option<usize> {
     match role {
         GateRole::PoseidonSponge => Some(198),
         GateRole::PoseidonCompression => Some(200),
-        GateRole::CMul => Some(9),        // signals.len() == 9
-        GateRole::EvPol4 => Some(21),     // take(21)
-        GateRole::Fft4 => Some(24),       // take(24)
-        GateRole::TreeSelector => None,   // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
-        GateRole::SelectVal1 => Some(22), // take(22)
+        GateRole::CMul => Some(9),             // signals.len() == 9
+        GateRole::EvPol4 => Some(21),          // take(21)
+        GateRole::Fft4 => Some(24),            // take(24)
+        GateRole::TreeSelector => None,        // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
+        GateRole::SelectValArity4 => Some(22), // take(22)
+        // 2*4 values + 1 key + 4 selected = 13 signals, but no AIR places this gate
+        // yet (the arity-2 families have no plonk2pil setup), so the row width is not
+        // decided. None keeps the estimate honest rather than guessing.
+        GateRole::SelectValArity2 => None,
     }
 }
 
@@ -116,7 +120,8 @@ fn estimate_with_plonk_count(r1cs: &R1csFile, n_plonk: usize) -> CellEstimate {
         mk_gate("FFT4", GateRole::Fft4),
         mk_gate("EvPol4", GateRole::EvPol4),
         mk_gate("TreeSelector", GateRole::TreeSelector),
-        mk_gate("SelectVal1", GateRole::SelectVal1),
+        mk_gate("SelectValueArity4", GateRole::SelectValArity4),
+        mk_gate("SelectValueArity2", GateRole::SelectValArity2),
     ];
 
     let total_cells = components.iter().map(|c| c.cells).sum();
