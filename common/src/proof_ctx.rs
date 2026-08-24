@@ -62,7 +62,7 @@ pub type InstanceMap = HashMap<usize, InstancesInfo>;
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 /// GPU memory (in MB) left unallocated for consumers outside our arena.
-const GPU_MEMORY_RESERVE_MB: u64 = 512;
+const GPU_MEMORY_RESERVE_MB: u64 = 1536;
 
 #[derive(Clone)]
 pub struct ProofOptions {
