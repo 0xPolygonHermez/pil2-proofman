@@ -1179,13 +1179,6 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
-pub fn read_exec_file_c(exec_data: *mut u64, exec_file: &str, nCols: u64) {
-    let exec_file_name = CString::new(exec_file).unwrap();
-    let exec_file_ptr = exec_file_name.as_ptr() as *mut std::os::raw::c_char;
-    unsafe {
-        read_exec_file(exec_data, exec_file_ptr, nCols);
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
@@ -1210,6 +1203,13 @@ pub fn get_committed_pols_c(
             nCols,
         );
     }
+}
+
+/// Fills the trace cells `get_committed_pols_c` leaves unmapped, from the boundary cells it
+/// placed. No-op when the setup's exec file carries no band section, so it is safe to call
+/// unconditionally. Returns the number of bands expanded.
+pub fn expand_gate_bands_c(witness: *mut u8, exec_data: *mut u64, n_cols: u64, exec_words: u64, n: u64) -> u64 {
+    unsafe { expand_gate_bands(witness as *mut std::os::raw::c_void, exec_data, n_cols, exec_words, n) }
 }
 
 pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
@@ -1640,6 +1640,9 @@ pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     }
 }
 
+/// `exec_data`/`exec_words` carry the whole `.exec` file, whose tail holds the gate bands the
+/// GPU expander needs. Pass a null pointer and 0 for setups without one (basic airs).
+#[allow(clippy::too_many_arguments)]
 pub fn load_device_setup_c(
     airgroup_id: u64,
     air_id: u64,
@@ -1648,6 +1651,8 @@ pub fn load_device_setup_c(
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
     packed_info: *mut ::std::os::raw::c_void,
+    exec_data: *mut u64,
+    exec_words: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1661,6 +1666,8 @@ pub fn load_device_setup_c(
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
             packed_info,
+            exec_data,
+            exec_words,
         );
     }
 }

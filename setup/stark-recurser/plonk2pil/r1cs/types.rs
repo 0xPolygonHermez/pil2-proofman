@@ -92,6 +92,32 @@ pub struct FixedPol {
     pub values: Vec<u64>,
 }
 
+/// One expandable row band: where it starts, and which gate shape fills it. The layout
+/// within a band is fixed per shape, so nothing else needs recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateBand {
+    pub row: u32,
+    pub kind: GateBandKind,
+}
+
+/// Gate shapes with recomputable interiors. Serialized into the exec file, so the discriminants
+/// are a wire format -- append, never renumber.
+///
+/// Both axes are encoded because an expander needs both: the setup type fixes the band geometry
+/// (10 rows with one chain slot, or 5 with two) and the family picks the permutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u64)]
+pub enum GateBandKind {
+    Poseidon1CompressorSponge = 1,
+    Poseidon1CompressorCompression = 2,
+    Poseidon1AggregationSponge = 3,
+    Poseidon1AggregationCompression = 4,
+    Poseidon2CompressorSponge = 5,
+    Poseidon2CompressorCompression = 6,
+    Poseidon2AggregationSponge = 7,
+    Poseidon2AggregationCompression = 8,
+}
+
 /// Result returned by every setup function.
 #[derive(Debug, Clone)]
 pub struct SetupResult {
@@ -101,6 +127,10 @@ pub struct SetupResult {
     /// Number of rows actually used (before power-of-2 padding). Mirrors JS `NUsed`.
     pub n_used: usize,
     pub s_map: Vec<Vec<u32>>,
+    /// Row bands whose interior cells a trace expander recomputes from their boundary cells
+    /// rather than gathering them out of the circom witness. One per hash-gate application --
+    /// the only gates whose row band is wider than its inputs and outputs.
+    pub gate_bands: Vec<GateBand>,
     pub plonk_additions: Vec<[u64; 4]>,
     pub airgroup_name: String,
     pub air_name: String,

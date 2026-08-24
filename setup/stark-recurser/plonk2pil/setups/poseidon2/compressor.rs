@@ -4,7 +4,7 @@
 //! full-round rows piggyback all 10; overflow anchors on the PR row.
 
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
-use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp, PlonkBand};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 const COMMITTED_POLS: usize = 46;
 const N_COLS: usize = 30; // S connection columns
 const POSEIDON_ROWS: usize = 10;
-const COL_P: usize = 30; // first Poseidon chain column offset (width-16 slot a[30..45]; off-band)
+const POSEIDON_WIDTH: usize = 16;
 const CMUL_PER_ROW: usize = 3;
 
 // Allowed-plonk-gate masks per row type (bit g = gate g on a[3g..3g+2]). These MIRROR the
@@ -145,6 +145,8 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
     let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
     let mut band = PlonkBand::new(n);
+    // Bands whose interiors the trace expander rebuilds; see GateBand.
+    let mut gate_bands: Vec<GateBand> = Vec::new();
 
     // Extra-constraint row queues. Band a[0..29] = 10 gates (q0 0..5, q1 6..9).
     //   ten_extra   : R1,R2,R3,R4,R26,R27,R28 — all 10 gates.
@@ -171,36 +173,24 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── Poseidon custom / compressor (10 rows) ────────────────────────────────
     tracing::info!("Processing {} poseidon custom gates...", poseidon_cust_uses.len());
     for cgu in &poseidon_cust_uses {
-        assert_eq!(cgu.signals.len(), 14 * 16 + 2);
+        assert_eq!(
+            cgu.signals.len(),
+            2 * POSEIDON_WIDTH + 2,
+            "unexpected Poseidon2 compression signal count"
+        );
         let s = &cgu.signals;
-        let (input, fb, sb) = (&s[0..16], s[16], s[17]);
-        let (round0, round1, round2, round3, round4) = (&s[18..34], &s[34..50], &s[50..66], &s[66..82], &s[82..98]);
-        let (im1, _r15, im2) = (&s[98..114], &s[114..130], &s[130..146]);
-        let (round26, round27, round28, round29, output) =
-            (&s[146..162], &s[162..178], &s[178..194], &s[194..210], &s[210..226]);
-        for i in 0..16 {
+        let input = &s[0..POSEIDON_WIDTH];
+        let output = &s[POSEIDON_WIDTH + 2..2 * POSEIDON_WIDTH + 2];
+
+        // Boundary only; the chain slots and anchor row belong to the expander. See gate_bands.hpp.
+        for i in 0..POSEIDON_WIDTH {
             s_map[i][r] = input[i] as u32;
-            s_map[i + COL_P][r] = round0[i] as u32;
-            s_map[i + COL_P][r + 1] = round1[i] as u32;
-            s_map[i + COL_P][r + 2] = round2[i] as u32;
-            s_map[i + COL_P][r + 3] = round3[i] as u32;
-            s_map[i + COL_P][r + 4] = round4[i] as u32;
-            s_map[i + COL_P][r + 6] = round26[i] as u32;
-            s_map[i + COL_P][r + 7] = round27[i] as u32;
-            s_map[i + COL_P][r + 8] = round28[i] as u32;
-            s_map[i + COL_P][r + 9] = round29[i] as u32;
             s_map[i][r + 9] = output[i] as u32;
         }
-        s_map[16][r] = fb as u32;
-        s_map[17][r] = sb as u32;
-        for i in 0..11 {
-            s_map[i + COL_P][r + 5] = im1[i] as u32;
-            if i < 5 {
-                s_map[i + COL_P + 11][r + 5] = im2[i] as u32; // anchors[11..15] @ PR chain-slot tail (a[41..45])
-            } else {
-                s_map[(i - 5) + 18][r + 5] = im2[i] as u32; // anchors[16..21] @ PR row a[18..23]
-            }
-        }
+        // Key bits at a[16]/a[17] of the band's first row; the expander reads them back there.
+        s_map[16][r] = s[POSEIDON_WIDTH] as u32;
+        s_map[17][r] = s[POSEIDON_WIDTH + 1] as u32;
+
         for off in 0..10 {
             for item in cv.iter_mut() {
                 item[r + off] = 0;
@@ -222,6 +212,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             band.allow(r + off, G_ALL);
         }
         band.allow(r + 5, G_PR);
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorCompression });
         r += 10;
     }
     assert_eq!(r, 10 * poseidon_cust_uses.len());
@@ -229,34 +220,17 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── Poseidon sponge (10 rows) ─────────────────────────────────────────────
     tracing::info!("Processing {} poseidon gates...", poseidon_uses.len());
     for cgu in &poseidon_uses {
-        assert_eq!(cgu.signals.len(), 14 * 16);
+        assert_eq!(cgu.signals.len(), 2 * POSEIDON_WIDTH, "unexpected Poseidon2 sponge signal count");
         let s = &cgu.signals;
-        let (input, round0, round1, round2, round3, round4) =
-            (&s[0..16], &s[16..32], &s[32..48], &s[48..64], &s[64..80], &s[80..96]);
-        let (im1, _r15, im2) = (&s[96..112], &s[112..128], &s[128..144]);
-        let (round26, round27, round28, round29, output) =
-            (&s[144..160], &s[160..176], &s[176..192], &s[192..208], &s[208..224]);
+        let input = &s[0..POSEIDON_WIDTH];
+        let output = &s[POSEIDON_WIDTH..2 * POSEIDON_WIDTH];
+
+        // Boundary only; the chain slots and anchor row belong to the expander. See gate_bands.hpp.
         for i in 0..16 {
             s_map[i][r] = input[i] as u32;
-            s_map[i + COL_P][r] = round0[i] as u32;
-            s_map[i + COL_P][r + 1] = round1[i] as u32;
-            s_map[i + COL_P][r + 2] = round2[i] as u32;
-            s_map[i + COL_P][r + 3] = round3[i] as u32;
-            s_map[i + COL_P][r + 4] = round4[i] as u32;
-            s_map[i + COL_P][r + 6] = round26[i] as u32;
-            s_map[i + COL_P][r + 7] = round27[i] as u32;
-            s_map[i + COL_P][r + 8] = round28[i] as u32;
-            s_map[i + COL_P][r + 9] = round29[i] as u32;
             s_map[i][r + 9] = output[i] as u32;
         }
-        for i in 0..11 {
-            s_map[i + COL_P][r + 5] = im1[i] as u32;
-            if i < 5 {
-                s_map[i + COL_P + 11][r + 5] = im2[i] as u32; // anchors[11..15] @ PR chain-slot tail (a[41..45])
-            } else {
-                s_map[(i - 5) + 18][r + 5] = im2[i] as u32; // anchors[16..21] @ PR row a[18..23]
-            }
-        }
+
         for off in 0..10 {
             for item in cv.iter_mut() {
                 item[r + off] = 0;
@@ -278,6 +252,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             band.allow(r + off, G_ALL);
         }
         band.allow(r + 5, G_PR);
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorSponge });
         r += 10;
     }
     assert_eq!(r, 10 * poseidon_cust_uses.len() + 10 * poseidon_uses.len());
@@ -506,6 +481,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 
     SetupResult {
+        gate_bands,
         fixed_pols,
         pil_str,
         n_bits,

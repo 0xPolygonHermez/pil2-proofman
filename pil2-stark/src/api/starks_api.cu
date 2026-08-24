@@ -34,6 +34,12 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <algorithm>
 #include <map>
 #include "stream_commit.cuh"
+#include "gate_bands.hpp"
+
+// gate_bands_gpu.cu
+extern "C" void uploadGateBandConstantsGPU();
+extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols,
+                                   const uint64_t *d_bands, uint64_t nBands, void *stream);
 
 // Process-global handle for stream_commit_pause: the gpu-mops borrower calls
 // it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
@@ -718,7 +724,7 @@ void free_device_buffers_gpu(void *d_buffers_)
 }
 
 
-void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info) {
+void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info, uint64_t *execData, uint64_t execWords) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
@@ -732,12 +738,51 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         d_buffers->air_instances[key][proofType].resize(d_buffers->n_gpus, nullptr);
     }
 
+    // Circom setups carry the hash gates' row bands past their exec map. Uploaded here, with
+    // the setup, so a proof that finds an AirInstanceInfo finds its bands too.
+    gate_bands::BandsView bandView;
+    if (execData != nullptr) {
+        bandView = gate_bands::band_section(execData, setupCtx->starkInfo.mapSectionsN["cm1"], execWords);
+        const std::string air = "air (" + std::to_string(airgroupId) + "," + std::to_string(airId) + ")";
+        if (bandView.status == gate_bands::BandSection::Malformed) {
+            zklog.error("load_device_setup: " + air + " has a gate-band section that does not describe "
+                        "its exec buffer; the proving key is corrupt");
+            exitProcess();
+        }
+        if (bandView.status == gate_bands::BandSection::UnsupportedVersion) {
+            zklog.error("load_device_setup: " + air + " has gate-band section format version " +
+                        std::to_string(bandView.version) + ", but this build understands version " +
+                        std::to_string(gate_bands::GATE_BAND_FORMAT_VERSION) +
+                        "; the proving key and this build disagree on the exec format -- "
+                        "regenerate the proving key with a matching setup");
+            exitProcess();
+        }
+    }
+    const uint64_t *hostBands = bandView.bands;
+    const uint64_t nBands = bandView.n;
+    if (nBands > 0) {
+        // Checked once here rather than per thread in the kernel.
+        uint64_t nRows = 1ULL << setupCtx->starkInfo.starkStruct.nBits;
+        uint64_t bad = gate_bands::first_bad_band(hostBands, nBands, nRows);
+        if (bad != nBands) {
+            zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                        ") band " + std::to_string(bad) + " is row " + std::to_string(hostBands[bad * 2]) +
+                        " kind " + std::to_string(hostBands[bad * 2 + 1]) +
+                        ", which this build cannot expand into a trace of " + std::to_string(nRows) + " rows");
+            exitProcess();
+        }
+    }
+
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         if (d_buffers->air_instances[key][proofType][i] != nullptr) {
             delete d_buffers->air_instances[key][proofType][i];
         }
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
+        if (nBands > 0) {
+            uploadGateBandConstantsGPU();
+            d_buffers->air_instances[key][proofType][i]->set_gate_bands(hostBands, nBands);
+        }
     }
 }
 
@@ -1253,6 +1298,11 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer);
+
+    // The host copied up the boundary cells; the interiors get rebuilt here. Stream-ordered
+    // behind the copy. Airs whose setup registered no bands skip it.
+    expandGateBandsGPU((uint64_t*)(d_aux_trace + offsetStage1Extended), nCols,
+                       air_instance_info->d_gate_bands, air_instance_info->n_gate_bands, stream);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
     // Stage publics into the per-stream pinned region for an async copy (no stream

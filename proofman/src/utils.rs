@@ -13,7 +13,6 @@ use proofman_common::{
     format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
 use proofman_starks_lib_c::load_device_const_pols_c;
-use proofman_starks_lib_c::load_device_setup_c;
 use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
@@ -877,15 +876,7 @@ pub fn load_device_setups<F: PrimeField64>(
             }
             let packed_info_air =
                 packed_info.get(&(airgroup_id, air_id)).cloned().unwrap_or_else(|| PackedInfo::new(false, 0, vec![]));
-            load_device_setup_c(
-                airgroup_id as u64,
-                air_id as u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers,
-                setup.verkey.as_ptr() as *mut u8,
-                packed_info_air.as_ffi().get_ptr(),
-            );
+            setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, packed_info_air.as_ffi().get_ptr());
         }
     }
 
@@ -898,15 +889,7 @@ pub fn load_device_setups<F: PrimeField64>(
                     if setup.gpu {
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                     }
-                    load_device_setup_c(
-                        airgroup_id as u64,
-                        air_id as u64,
-                        proof_type,
-                        (&setup.p_setup).into(),
-                        d_buffers,
-                        setup.verkey.as_ptr() as *mut u8,
-                        std::ptr::null_mut(),
-                    );
+                    setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, std::ptr::null_mut());
                 }
             }
         }
@@ -918,15 +901,7 @@ pub fn load_device_setups<F: PrimeField64>(
                 if setup.gpu {
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 }
-                load_device_setup_c(
-                    airgroup_id as u64,
-                    air_id as u64,
-                    proof_type,
-                    (&setup.p_setup).into(),
-                    d_buffers,
-                    setup.verkey.as_ptr() as *mut u8,
-                    std::ptr::null_mut(),
-                );
+                setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, std::ptr::null_mut());
             }
         }
 
@@ -937,15 +912,7 @@ pub fn load_device_setups<F: PrimeField64>(
             if setup.gpu {
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
             }
-            load_device_setup_c(
-                airgroup_id as u64,
-                0_u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers,
-                setup.verkey.as_ptr() as *mut u8,
-                std::ptr::null_mut(),
-            );
+            setup.load_device(airgroup_id as u64, 0, d_buffers, std::ptr::null_mut());
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
@@ -953,30 +920,14 @@ pub fn load_device_setups<F: PrimeField64>(
         if setup_vadcop_final.gpu {
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
+        setup_vadcop_final.load_device(0, 0, d_buffers, std::ptr::null_mut());
 
         let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
         let proof_type: &str = setup_vadcop_final_compressed.setup_type.into();
         if setup_vadcop_final_compressed.gpu {
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final_compressed.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
+        setup_vadcop_final_compressed.load_device(0, 0, d_buffers, std::ptr::null_mut());
     }
     Ok(())
 }

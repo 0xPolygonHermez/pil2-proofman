@@ -54,12 +54,25 @@ pub struct PlonkResult {
 /// - [1]: number of rows per sMap column
 /// - [2..2+adds*4]: additions (sl, sr, coef_l, coef_r) flattened
 /// - [2+adds*4..]: sMap values interleaved by row (for each row: col0, col1, ...)
-fn write_exec_file(adds: &[r1cs::to_plonk::PlonkAddition], s_map: &[Vec<u32>]) -> Vec<u64> {
+/// - then the gate-band section: format version, band count, then (row, kind) per band
+///
+/// The band section sits after the map so a reader that stops at `2 + adds*4 + rows*cols` words
+/// is unaffected. The version leads it so a reader that does know about bands refuses an
+/// unfamiliar layout instead of misparsing it.
+/// Layout version of the gate-band section. Must match `GATE_BAND_FORMAT_VERSION` in
+/// pil2-stark/src/starkpil/gate_bands.hpp, which reads it.
+pub const GATE_BAND_FORMAT_VERSION: u64 = 1;
+
+fn write_exec_file(
+    adds: &[r1cs::to_plonk::PlonkAddition],
+    s_map: &[Vec<u32>],
+    gate_bands: &[r1cs::types::GateBand],
+) -> Vec<u64> {
     let n_adds = adds.len();
     let n_cols = s_map.len();
     let n_rows = if n_cols > 0 { s_map[0].len() } else { 0 };
 
-    let size = 2 + n_adds * 4 + n_cols * n_rows;
+    let size = 2 + n_adds * 4 + n_cols * n_rows + 2 + gate_bands.len() * 2;
     let mut buff = vec![0u64; size];
 
     buff[0] = n_adds as u64;
@@ -77,6 +90,14 @@ fn write_exec_file(adds: &[r1cs::to_plonk::PlonkAddition], s_map: &[Vec<u32>]) -
         for c in 0..n_cols {
             buff[base + n_cols * i + c] = s_map[c][i] as u64;
         }
+    }
+
+    let bands_at = base + n_cols * n_rows;
+    buff[bands_at] = GATE_BAND_FORMAT_VERSION;
+    buff[bands_at + 1] = gate_bands.len() as u64;
+    for (i, b) in gate_bands.iter().enumerate() {
+        buff[bands_at + 2 + i * 2] = b.row as u64;
+        buff[bands_at + 2 + i * 2 + 1] = b.kind as u64;
     }
 
     buff
@@ -104,7 +125,7 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
         _ => unreachable!(),
     };
 
-    let exec = write_exec_file(&res.plonk_additions, &res.s_map);
+    let exec = write_exec_file(&res.plonk_additions, &res.s_map, &res.gate_bands);
 
     Ok(PlonkResult {
         exec,
@@ -213,7 +234,7 @@ mod tests {
         let adds: Vec<PlonkAddition> = vec![[10, 20, 30, 40], [50, 60, 70, 80]];
         let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
 
-        let exec = write_exec_file(&adds, &s_map);
+        let exec = write_exec_file(&adds, &s_map, &[]);
 
         assert_eq!(exec[0], 2); // 2 additions
         assert_eq!(exec[1], 4); // 4 rows
@@ -237,6 +258,35 @@ mod tests {
         // row 1 => col0=2, col1=6
         assert_eq!(exec[base + 2], 2);
         assert_eq!(exec[base + 3], 6);
+    }
+
+    /// The band section lands after the map, where a reader that loads only
+    /// `2 + adds*4 + rows*cols` words does not see it.
+    #[test]
+    fn write_exec_file_appends_bands_past_the_map() {
+        use r1cs::types::{GateBand, GateBandKind};
+        let adds = vec![[10u64, 20, 1, 1]];
+        let s_map = vec![vec![1u32, 2], vec![3, 4]];
+        let bands = vec![
+            GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorCompression },
+            GateBand { row: 10, kind: GateBandKind::Poseidon1CompressorSponge },
+        ];
+
+        let without = write_exec_file(&adds, &s_map, &[]);
+        let with = write_exec_file(&adds, &s_map, &bands);
+
+        let prefix = 2 + adds.len() * 4 + s_map.len() * s_map[0].len();
+        assert_eq!(with[..prefix], without[..prefix], "the map must not move");
+        assert_eq!(with[prefix], GATE_BAND_FORMAT_VERSION, "section version leads");
+        assert_eq!(with[prefix + 1], 2, "band count");
+        assert_eq!(with[prefix + 2], 0);
+        assert_eq!(with[prefix + 3], GateBandKind::Poseidon1CompressorCompression as u64);
+        assert_eq!(with[prefix + 4], 10);
+        assert_eq!(with[prefix + 5], GateBandKind::Poseidon1CompressorSponge as u64);
+        assert_eq!(with.len(), prefix + 2 + bands.len() * 2);
+        // No bands still writes version and count, so the tail is always well-formed.
+        assert_eq!(without[prefix], GATE_BAND_FORMAT_VERSION);
+        assert_eq!(without[prefix + 1], 0);
     }
 
     #[test]

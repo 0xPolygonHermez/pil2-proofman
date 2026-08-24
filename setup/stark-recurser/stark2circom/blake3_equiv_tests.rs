@@ -87,7 +87,7 @@ fn missing_prerequisite() -> Option<String> {
     if !have("g++", &["--version"]) {
         return Some("g++ not on PATH".into());
     }
-    let gate = repo_root().join("setup/circom/blake3_goldilocks.cpp");
+    let gate = repo_root().join("setup/circom/blake3_gate.cpp");
     if !gate.exists() {
         return Some(format!("{} not present", gate.display()));
     }
@@ -151,7 +151,7 @@ fn build(tag: &str, src: &str, driver_src: &str) -> (PathBuf, PathBuf) {
         .arg(dir.join("verifier.cpp"))
         .arg(support.join("calcwit.cpp"))
         .arg(support.join("main.cpp"))
-        .arg(support.join("blake3_goldilocks.cpp"))
+        .arg(support.join("blake3_gate.cpp"))
         .arg(goldilocks.join("goldilocks_base_field.cpp"))
         .arg("-o")
         .arg(&exe)
@@ -479,7 +479,7 @@ int main(int argc, char **argv) {
 }
 "##;
 
-/// blake3_core.circom's `b3_compress_gate` against blake3_goldilocks.cpp's
+/// blake3_core.circom's `b3_compress_gate` against blake3_gate.cpp's
 /// `Blake3Compress`, over the sixteen xof words.
 ///
 /// These are two independent implementations of one function, and normally only

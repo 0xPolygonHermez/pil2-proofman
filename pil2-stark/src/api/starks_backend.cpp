@@ -18,7 +18,7 @@ void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32
 void use_packed_trace_cpu(void *d_buffers_, bool packed);
 void register_instruction_table_cpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry);
 void free_device_buffers_cpu(void *d_buffers);
-void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
+void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
 void *gen_recursive_proof_final_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void *init_final_snark_prover_cpu(char* zkeyFile, void* d_buffers_recursivef);
@@ -59,7 +59,7 @@ void free_device_buffers_gpu(void *d_buffers);
 void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
 void free_device_buffers_recursivef_gpu(void *d_buffers);
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
-void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
+void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
 void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
 void get_instances_ready_gpu(void *d_buffers, int64_t* instances_ready);
@@ -398,9 +398,9 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     if (backend->load_device_const_pols) backend->load_device_const_pols(airgroupId, airId, initial_offset, d_buffers, constFilename, constSize, constTreeFilename, constTreeSize, proofType, onlyFirstGPU, alreadyLoaded);
 }
 
-void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo) {
+void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    backend->load_device_setup(airgroupId, airId, proofType, pSetupCtx_, d_buffers_, verkeyRoot_, packedInfo);
+    backend->load_device_setup(airgroupId, airId, proofType, pSetupCtx_, d_buffers_, verkeyRoot_, packedInfo, execData, execWords);
 }
 
 uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {

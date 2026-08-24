@@ -9,7 +9,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c, load_device_setup_c};
+use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
@@ -2136,15 +2136,7 @@ where
         }
         let proof_type: &str = setup.setup_type.into();
         let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
-        load_device_setup_c(
-            0,
-            0,
-            proof_type,
-            (&setup.p_setup).into(),
-            d_buffers_ptr,
-            setup.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
+        setup.load_device(0, 0, d_buffers_ptr, std::ptr::null_mut());
         load_device_const_pols_c(
             0,
             0,

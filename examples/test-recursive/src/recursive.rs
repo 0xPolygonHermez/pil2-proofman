@@ -2,10 +2,10 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, load_exec_file, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
-use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
+use proofman_starks_lib_c::{expand_gate_bands_c, get_committed_pols_c};
 
 use std::fs::File;
 use std::io::Read;
@@ -78,22 +78,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
             let exec_filename = setup.setup_path.display().to_string() + ".exec";
-
-            let mut file = File::open(exec_filename.clone()).unwrap();
-
-            let mut bytes = [0u8; 8];
-
-            file.read_exact(&mut bytes).unwrap();
-            let n_adds = u64::from_le_bytes(bytes);
-
-            file.read_exact(&mut bytes).unwrap();
-            let n_smap = u64::from_le_bytes(bytes);
-
             let n_cols = setup.stark_info.map_sections_n["cm1"];
-
-            let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
-            let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
+            // Whole file, gate-band tail included.
+            let mut exec_file_data = load_exec_file(&exec_filename, n_cols)?;
+            let exec_words = exec_file_data.len() as u64;
 
             let library: Library = unsafe { Library::new(rust_lib_path).unwrap() };
 
@@ -128,6 +116,15 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 1 << (setup.stark_info.stark_struct.n_bits),
                 setup.stark_info.n_publics,
                 n_cols,
+            );
+            // The hash gates map only their boundary; fill the rest from it. No-op on an exec
+            // file without a band section.
+            expand_gate_bands_c(
+                trace.as_ptr() as *mut u8,
+                exec_file_data.as_mut_ptr(),
+                n_cols,
+                exec_words,
+                1 << setup.stark_info.stark_struct.n_bits,
             );
 
             for (index, public) in publics.iter().enumerate() {

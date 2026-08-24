@@ -55,7 +55,6 @@ function matmul_external_16(in) {
 template custom extern_c Poseidon2_16() {
     var arity = 4;
     signal input in[arity * 4];
-    signal output im[12][arity * 4];
     signal output out[arity * 4];
 
     var st[arity * 4];
@@ -63,24 +62,16 @@ template custom extern_c Poseidon2_16() {
 
     st = matmul_external_16(st);
 
-    var row = 0;
-    var index = 0;
-    im[row] <-- st;
-    row++;
-
     for(var r = 0; r < 4; r++) {
         for(var t=0; t < arity * 4; t++) {
             st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
             st[t] = st[t] ** 7;
         }
         st = matmul_external_16(st);
-        im[row] <-- st;
-        row++;
     }
 
     
     for(var i = 0; i < 22; i++) {
-        im[row][index] <-- st[0];
         st[0] += CONSTANTS(arity, 4*(arity*4) + i);
         st[0] = st[0] ** 7;
 
@@ -94,13 +85,7 @@ template custom extern_c Poseidon2_16() {
             st[j] += sum;
         }
         
-        index++;
         if(i == 10 || i == 21) {
-            im[row][index] <-- 0;
-            index = 0;
-            row++;
-            im[row] <-- st;
-            row++;
         }
     }
 
@@ -112,10 +97,9 @@ template custom extern_c Poseidon2_16() {
 
         st = matmul_external_16(st);
 
-        if(r < 3) {
-            im[row] <-- st;
-            row++;
-        } else {
+        // Only the last round's state leaves the gate; the rest is recomputed when the
+        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
+        if(r == 3) {
             out <-- st;
         }
     }
@@ -127,7 +111,6 @@ template custom extern_c CustPoseidon2_16() {
     var arity = 4;
     signal input in[arity * 4];
     signal input key[2];
-    signal output im[12][arity * 4];
     signal output out[arity * 4];
 
     assert(key[0]*(key[0] - 1) == 0);
@@ -193,26 +176,19 @@ template custom extern_c CustPoseidon2_16() {
     
 
     var st[arity * 4] = initialSt;
-    var row = 0;
-    var index = 0;
 
     st = matmul_external_16(st);
-    im[row] <-- st;
-    row++;
     for(var r = 0; r < 4; r++) {
         for(var t=0; t < arity * 4; t++) {
             st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
             st[t] = st[t] ** 7;
         }
         st = matmul_external_16(st);
-        im[row] <-- st;
-        row++;
     }
 
    
 
     for(var r = 0; r < 22; r++) {
-        im[row][index] <-- st[0];
         st[0] += CONSTANTS(arity, 4*arity*4 + r);
         st[0] = st[0] ** 7;
 
@@ -226,14 +202,6 @@ template custom extern_c CustPoseidon2_16() {
             st[j] += sum;
         }
 
-        index++;
-        if(r == 10 || r == 21) {
-            im[row][index] <-- 0;
-            index = 0;
-            row++;
-            im[row] <-- st;
-            row++;
-        }
     }
 
     for(var r = 0; r < 4; r++) {
@@ -243,10 +211,9 @@ template custom extern_c CustPoseidon2_16() {
         }
 
         st = matmul_external_16(st);
-        if(r < 3) {
-            im[row] <-- st;
-            row++;
-        } else {
+        // Only the last round's state leaves the gate; the rest is recomputed when the
+        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
+        if(r == 3) {
             out <-- st;
         }
     }
@@ -276,8 +243,6 @@ template Poseidon2(arity, nOuts) {
         out[j] <== p.out[j];
     }
 
-    _ <== p.im;
-
     for (var j=nOuts; j<arity*4; j++) {
         _ <== p.out[j];
     }
@@ -300,7 +265,6 @@ template CustPoseidon2(arity, nOuts) {
         out[j] <== p.out[j];
     }
 
-    _ <== p.im;
     
     for (var j=nOuts; j<arity*4; j++) {
         _ <== p.out[j];

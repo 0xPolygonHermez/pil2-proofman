@@ -4,7 +4,7 @@
 //! Plonk band is a[0..15] on Poseidon rows (a[16..47] = chains); a[0..23] elsewhere.
 
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
-use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -14,8 +14,6 @@ use std::collections::HashMap;
 const COMMITTED_POLS: usize = 48;
 const N_COLS: usize = 24;
 const POSEIDON_ROWS: usize = 5;
-const COL_P1: usize = 16; // chain 1 slot (width-16: cols 16..31)
-const COL_P2: usize = 32; // chain 2 slot (width-16: cols 32..47)
 const CMUL_PER_ROW: usize = 2;
 const TREESEL_ROWS: usize = 2; // TreeSelector8 now spans 2 rows (a[0..14] + a[0..14]')
 const POSEIDON_WIDTH: usize = 16;
@@ -159,6 +157,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
     let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectValArity4));
 
+    // Bands whose interiors the trace expander rebuilds; see GateBand.
+    let mut gate_bands: Vec<GateBand> = Vec::new();
+
     let mut r = 0usize;
 
     // ── Poseidon1 — 5 rows per gate (compression then sponge) ────────────────
@@ -188,60 +189,22 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                              three_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
-        let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        let expected = POSEIDON_WIDTH + key_off + POSEIDON_WIDTH;
         assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
 
         let input = &s[0..POSEIDON_WIDTH];
         let key = if is_compression { Some(&s[POSEIDON_WIDTH..POSEIDON_WIDTH + 2]) } else { None };
-        let im_base = POSEIDON_WIDTH + key_off;
-        let r0 = &s[im_base..im_base + POSEIDON_WIDTH]; // im[0]
-        let r1 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
-        let r2 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
-        let r3 = &s[im_base + 3 * POSEIDON_WIDTH..im_base + 4 * POSEIDON_WIDTH]; // im[3]
-        let r4 = &s[im_base + 4 * POSEIDON_WIDTH..im_base + 5 * POSEIDON_WIDTH]; // im[4]: post-P transition
-        let anchors_h1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: anchors rounds 0..10
-                                                                                         // im[6] = midState (intermediate, not stored)
-        let anchors_h2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: anchors rounds 11..21
-        let r26 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
-        let r27 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
-        let r28 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
-        let r29 = &s[im_base + 11 * POSEIDON_WIDTH..im_base + 12 * POSEIDON_WIDTH]; // im[11]
-        let output = &s[im_base + 12 * POSEIDON_WIDTH..im_base + 13 * POSEIDON_WIDTH];
+        let output = &s[POSEIDON_WIDTH + key_off..POSEIDON_WIDTH + key_off + POSEIDON_WIDTH];
 
+        // Boundary only. The two chain slots and the anchor row hold round snapshots, which
+        // the trace expander recomputes from these cells -- see gate_bands.hpp. An
+        // aggregation band is 5 rows with two chains, where a compressor band is 10 with one.
         for i in 0..POSEIDON_WIDTH {
             s_map[i][r] = input[i] as u32;
-            s_map[i + COL_P1][r] = r0[i] as u32; // row 0 chain 1 = R0 (= circom im[0], permuted input signal)
-            s_map[i + COL_P2][r] = r1[i] as u32; // row 0 chain 2 = R1
-            s_map[i + COL_P1][r + 1] = r2[i] as u32; // row 1 chain 1 = R2
-            s_map[i + COL_P2][r + 1] = r3[i] as u32; // row 1 chain 2 = R3
-            s_map[i + COL_P1][r + 2] = r4[i] as u32; // row 2 chain 1 = R4 (stored transition)
-            s_map[i + COL_P1][r + 3] = r26[i] as u32; // row 3 chain 1 = R26
-            s_map[i + COL_P2][r + 3] = r27[i] as u32; // row 3 chain 2 = R27
-            s_map[i + COL_P1][r + 4] = r28[i] as u32; // row 4 chain 1 = R28
-            s_map[i + COL_P2][r + 4] = r29[i] as u32; // row 4 chain 2 = R29
-            s_map[i][r + 4] = output[i] as u32; // row 4 a[0..15] = output
+            s_map[i][r + 4] = output[i] as u32;
         }
 
-        // 22 lane-0 partial anchors: rounds 0..10 = anchors_h1[0..10], rounds 11..21 =
-        // anchors_h2[0..10]. anchors[0..15] → chain-2 a[32..47] @ PR (row r+2); the 6
-        // overflow anchors[16..21] → a[9..14] on the SAME PR row (read unprimed by the PIL).
-        let anchor = |round: usize| -> u64 {
-            if round <= 10 {
-                anchors_h1[round]
-            } else {
-                anchors_h2[round - 11]
-            }
-        };
-        for round in 0..16 {
-            s_map[round + COL_P2][r + 2] = anchor(round) as u32; // anchors[0..15] → chain-2 @ PR
-        }
-        for round in 16..22 {
-            s_map[(round - 16) + 9][r + 2] = anchor(round) as u32; // anchors[16..21] → a[9..14] @ PR
-        }
-
-        // Key bits (compression only) relocated to a[15]: key0 on PR' (row r+1), key1 on
-        // PR (row r+2). a[15] is the spare cell after 5 plonk gates (a[0..14]) on those rows.
-        // Can't use a[16..17] (chain-1 R0 at INIT) as the old layout did.
+        // Key bits (compression only) at a[15]: key0 on PR' (row r+1), key1 on PR (row r+2).
         if let Some(k) = key {
             s_map[15][r + 1] = k[0] as u32;
             s_map[15][r + 2] = k[1] as u32;
@@ -272,6 +235,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             &mut three_extra,
             r,
         );
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon1AggregationCompression });
         r += POSEIDON_ROWS;
     }
 
@@ -286,6 +250,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             &mut three_extra,
             r,
         );
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon1AggregationSponge });
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, n_poseidon_rows);
@@ -554,6 +519,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 
     SetupResult {
+        gate_bands,
         fixed_pols,
         pil_str,
         n_bits,

@@ -44,7 +44,13 @@ witness: $(WITNESS_DIR)/$(WITNESS_FILE)
 clean:
 	$(RM) -r $(BUILD_DIR)
 
-SRCS_WITNESS_LIB := calcwit.cpp main.cpp verifier.cpp poseidon2_goldilocks.cpp poseidon_goldilocks.cpp blake3_goldilocks.cpp goldilocks_base_field.cpp cmul.cpp
+# Gate wrappers are *_gate.cpp, never *_goldilocks.cpp: the witness build dir is flat and the
+# pil2-stark goldilocks sources are copied into it, so a wrapper sharing a filename with the
+# implementation it wraps overwrites it and whatever that defined goes undefined at link time.
+SRCS_WITNESS_LIB := calcwit.cpp main.cpp verifier.cpp \
+                   poseidon_gate.cpp poseidon2_gate.cpp blake3_gate.cpp \
+                   poseidon_goldilocks.cpp poseidon2_goldilocks.cpp blake3_goldilocks.cpp \
+                   goldilocks_base_field.cpp cmul.cpp
 OBJS_WITNESS_LIB := $(SRCS_WITNESS_LIB:%=$(BUILD_DIR)/%.o)
 DEPS_WITNESS_LIB := $(OBJS_WITNESS_LIB:.o=.d)
 

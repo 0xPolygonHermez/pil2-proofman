@@ -349,7 +349,9 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on setup").as_ptr() as *mut u64;
+    let exec = setup.exec_data.as_ref().expect("exec_data missing on setup");
+    let exec_data_ptr = exec.as_ptr() as *mut u64;
+    let exec_words = exec.len() as u64;
 
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
@@ -361,6 +363,17 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         setup.stark_info.n_publics,
         witness.n_cols as u64,
     );
+    // The hash gates map only their boundary; the rest is rebuilt from it. On GPU that happens
+    // device-side inside gen_recursive_proof_c, right after the trace copy.
+    if !pctx.gpu {
+        expand_gate_bands_c(
+            trace.as_mut_ptr() as *mut u8,
+            exec_data_ptr,
+            witness.n_cols as u64,
+            exec_words,
+            1 << setup.stark_info.stark_struct.n_bits,
+        );
+    }
     // Witness no longer needed; drop the lease to return it to its pool now.
     drop(circom_witness);
 
@@ -851,7 +864,9 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    let exec_data_ptr = setup.exec_data.as_ref().expect("exec_data missing on RecursiveF setup").as_ptr() as *mut u64;
+    let exec = setup.exec_data.as_ref().expect("exec_data missing on RecursiveF setup");
+    let exec_data_ptr = exec.as_ptr() as *mut u64;
+    let exec_words = exec.len() as u64;
 
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
@@ -862,6 +877,15 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         setup.stark_info.map_sections_n["cm1"],
+    );
+    // Host-side unconditionally: gen_recursive_proof_final_c has no device expander, and
+    // RecursiveF is a bn128 circuit whose exec carries no bands, so this is a no-op there.
+    expand_gate_bands_c(
+        trace.as_mut_ptr() as *mut u8,
+        exec_data_ptr,
+        setup.stark_info.map_sections_n["cm1"],
+        exec_words,
+        1 << setup.stark_info.stark_struct.n_bits,
     );
     memory_handler_recursive_witness.release_buffer_witness(circom_witness)?;
 
@@ -949,11 +973,12 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     let n_cols = setup.n_cols;
     let mut publics = vec![F::ZERO; n_publics as usize];
     let mut trace: Vec<F> = vec![F::ZERO; (1usize << n_bits) * n_cols as usize];
-    let exec_data_ptr = setup
+    let exec = setup
         .exec_data
         .as_ref()
-        .map(|v| v.as_ptr() as *mut u64)
         .ok_or_else(|| ProofmanError::InvalidSetup("recurser setup has no exec_data".into()))?;
+    let exec_data_ptr = exec.as_ptr() as *mut u64;
+    let exec_words = exec.len() as u64;
 
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
@@ -965,6 +990,10 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         n_publics,
         n_cols,
     );
+    // See generate_recursive_proof: device-side on GPU, host-side otherwise.
+    if !setup.gpu {
+        expand_gate_bands_c(trace.as_mut_ptr() as *mut u8, exec_data_ptr, n_cols, exec_words, 1 << n_bits);
+    }
     memory_handler_recursive_witness.release_buffer_witness(circom_witness)?;
 
     let mut final_proof: Vec<u64> = vec![0; (1 + n_publics + setup.proof_size) as usize];

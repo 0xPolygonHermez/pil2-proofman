@@ -45,7 +45,9 @@ ifeq ($(UNAME_S),Linux)
     NVCC := /usr/local/cuda/bin/nvcc
     include CudaArch.mk
     BUILD_DIR_GPU := ./build_gpu
-    CUDA_SRC_DIRS := ./src ../utils ./utils ../../external/sppark/ff
+    # ../starkpil is on the path so the gate-band expander (and its test) resolve
+    # gate_bands.hpp; that expander lives with the trace code, not the field code.
+    CUDA_SRC_DIRS := ./src ../utils ./utils ../starkpil ../../external/sppark/ff
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
     NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ -DGL64_PARTIALLY_REDUCED $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -U STARK_POSEIDON1
 endif
@@ -76,6 +78,10 @@ TEST_SRCS  := $(wildcard $(TEST_DIR)/*_cpu.cpp)
 TEST_OBJS  := $(patsubst $(TEST_DIR)/%.cpp, $(BUILD_DIR)/tests/%.o, $(TEST_SRCS))
 BENCH_SRCS := $(wildcard benchs/*_cpu.cpp)
 BENCH_OBJS := $(patsubst benchs/%.cpp, $(BUILD_DIR)/benchs/%.o, $(BENCH_SRCS))
+# Included by the -include below. Without them a test that exists to catch a header change is
+# never rebuilt when that header changes, so it can only ever pass.
+TEST_DEPS  := $(TEST_OBJS:.o=.d)
+BENCH_DEPS := $(BENCH_OBJS:.o=.d)
 
 ifeq ($(UNAME_S),Linux)
 GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
@@ -93,6 +99,7 @@ GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)
 GPU_TEST_OBJS := $(patsubst $(TEST_DIR)/%.cu, $(BUILD_DIR_GPU)/tests/%.cu.o, $(GPU_TEST_SRCS))
 GPU_BENCH_SRCS := $(wildcard benchs/*_gpu.cu)
 GPU_BENCH_OBJS := $(patsubst benchs/%.cu, $(BUILD_DIR_GPU)/benchs/%.cu.o, $(GPU_BENCH_SRCS))
+GPU_DEPS := $(GPU_SRC_OBJS:.o=.d) $(GPU_TEST_OBJS:.o=.d) $(GPU_BENCH_OBJS:.o=.d)
 endif
 
 # ----------------------
@@ -130,9 +137,11 @@ $(BUILD_DIR)/tests/%.o: $(TEST_DIR)/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
 
+# -MMD -MF makes nvcc emit the header dependency list alongside the object, so editing a header
+# rebuilds what includes it.
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
-	$(NVCC) $(NVCCFLAGS) -c $< --output-file $@
+	$(NVCC) $(NVCCFLAGS) -MMD -MF $(@:.o=.d) -c $< --output-file $@
 
 $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 	$(MKDIR_P) $(dir $@)
@@ -161,6 +170,6 @@ ifeq ($(UNAME_S),Linux)
 endif
 	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
 
--include $(DEPS)
+-include $(DEPS) $(TEST_DEPS) $(BENCH_DEPS) $(GPU_DEPS)
 
 MKDIR_P ?= mkdir -p

@@ -7,8 +7,11 @@
 //!
 //! A **cell** is a single value placed into the witness (`s_map`). The per-unit
 //! cell costs below are read directly off the placement loops in compressor.rs /
-//! aggregation.rs, so they match what the setup actually writes. The cell count
-//! is the real footprint and is independent of how the rows are laid out.
+//! aggregation.rs, so they match what the setup actually writes.
+//!
+//! The hash gates map only their boundary; each row band's interior is recomputed at
+//! trace-fill time (see gate_bands.hpp) and is not an `s_map` placement. So this counts the
+//! witness footprint, not the trace's -- the AIR still has those columns.
 
 use proofman_common::hash_family::GateRole;
 
@@ -22,10 +25,9 @@ pub const PLONK_CELLS: usize = 3;
 /// Cells a single instance of `role` writes into `s_map`, read off the placement
 /// loops in the setup files.
 ///
-/// Poseidon (compressor.rs:147-213): the `0..16` loop writes 11 cells each
-/// (input, round0-4, round26-29, output) = 176; the `0..11` loop writes im1 (11)
-/// plus im2 (11) = 22, so the Sponge body = 198. The Compression variant additionally
-/// writes fb and sb (`s_map[16]`/`s_map[17]`), giving 200.
+/// Poseidon: boundary only -- input (16) and output (16) = 32 for the Sponge, plus two key bits
+/// for the Compression variant, giving 34. The round snapshots that fill the rest of the band
+/// belong to the trace expander, not the map.
 ///
 /// `GateRole::TreeSelector` is NOT fixed-width: it covers TreeSelector4 (17 signals,
 /// Poseidon2) and TreeSelector8 (30 signals, Poseidon1). Its cell count must be read from
@@ -33,8 +35,8 @@ pub const PLONK_CELLS: usize = 3;
 /// function returns `None` for it and callers must resolve it from the r1cs.
 pub fn cells_per_gate(role: GateRole) -> Option<usize> {
     match role {
-        GateRole::PoseidonSponge => Some(198),
-        GateRole::PoseidonCompression => Some(200),
+        GateRole::PoseidonSponge => Some(32),
+        GateRole::PoseidonCompression => Some(34),
         GateRole::CMul => Some(9),             // signals.len() == 9
         GateRole::EvPol4 => Some(21),          // take(21)
         GateRole::Fft4 => Some(24),            // take(24)
@@ -229,8 +231,8 @@ mod tests {
 
     #[test]
     fn cells_per_gate_matches_placement_widths() {
-        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), Some(198));
-        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), Some(200));
+        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), Some(32));
+        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), Some(34));
         assert_eq!(cells_per_gate(GateRole::CMul), Some(9));
         assert_eq!(cells_per_gate(GateRole::Fft4), Some(24));
         // TreeSelector is width-variable (TreeSelector4=17 / TreeSelector8=30) — resolved

@@ -11,6 +11,9 @@
 #include <unistd.h>
 #include "utils.hpp"
 
+// Reads the header and the s_map and stops there. An exec file may carry a gate-band section
+// past the map, which this does NOT load, leaving the hash gates' interiors missing. Rust reads
+// the whole file itself (load_exec_file).
 void readExecFile(uint64_t *exec_data, std::string execFile, uint64_t nCommitedPols) {
     uint64_t nAdds;
     uint64_t nSMap;

@@ -2,14 +2,14 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, init_gpu_setup, initialize_logger, ProofmanOptions, SetupCtx, SetupsVadcop, MpiCtx, ProofCtx,
-    ProofmanError, ProofType,
+    calculate_fixed_tree, init_gpu_setup, initialize_logger, load_exec_file, ProofmanOptions, SetupCtx, SetupsVadcop,
+    MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;
 use proofman_starks_lib_c::{
-    add_publics_aggregation_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
-    load_device_const_pols_c, load_device_setup_c, read_exec_file_c,
+    add_publics_aggregation_c, expand_gate_bands_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
+    load_device_const_pols_c,
 };
 use libloading::{Library, Symbol};
 use std::fs::File;
@@ -221,20 +221,12 @@ impl ProveAirCmd {
         let dat_filename_str = std::ffi::CString::new(dat_filename)?;
         let dat_filename_ptr = dat_filename_str.as_ptr() as *mut c_char;
 
-        // Header is n_adds then n_smap, body follows.
+        // Whole file, gate-band tail included -- the same loader Setup uses, so this AIR gets
+        // the same trace a full run would build for it.
         let exec_filename = setup.setup_path.display().to_string() + ".exec";
-        let mut exec_header_file = File::open(&exec_filename)?;
-        let mut bytes = [0u8; 8];
-        exec_header_file.read_exact(&mut bytes)?;
-        let n_adds = u64::from_le_bytes(bytes);
-        exec_header_file.read_exact(&mut bytes)?;
-        let n_smap = u64::from_le_bytes(bytes);
-        drop(exec_header_file);
-
         let n_cols = setup.stark_info.map_sections_n["cm1"];
-        let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
-        let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-        read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
+        let mut exec_file_data = load_exec_file(&exec_filename, n_cols)?;
+        let exec_words = exec_file_data.len() as u64;
 
         let library: Library = unsafe { Library::new(rust_lib_path)? };
 
@@ -283,14 +275,15 @@ impl ProveAirCmd {
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();
         let d_buffers = pctx.get_device_buffers_ptr();
-        load_device_setup_c(
+        // This AIR's own exec buffer, loaded above: `Setup::new` only populates `exec_data` for
+        // setups it built the circom state for, which a standalone recursive AIR leaves unset.
+        setup.load_device_as(
+            proof_type_str,
             airgroup_id as u64,
             air_id as u64,
-            proof_type_str,
-            (&setup.p_setup).into(),
             d_buffers,
-            setup.verkey.as_ptr() as *mut u8,
             std::ptr::null_mut(),
+            Some(&exec_file_data),
         );
         let tree_path = if load_tree { setup.const_pols_tree_path.as_str() } else { "" };
         load_device_const_pols_c(
@@ -324,6 +317,12 @@ impl ProveAirCmd {
             setup.stark_info.n_publics,
             n_cols,
         );
+        // The hash gates map only their boundary; fill the rest from it. On GPU the same
+        // reconstruction happens device-side inside gen_recursive_proof_c, so only do it here
+        // when proving on the host. No-op on an exec file without a band section.
+        if !self.gpu {
+            expand_gate_bands_c(trace.as_mut_ptr() as *mut u8, exec_file_data.as_mut_ptr(), n_cols, exec_words, n);
+        }
 
         // Layout: aggregation publics in [0..publics_aggregation), then the proof itself.
         let publics_aggregation = n_publics_aggregation(&pctx, airgroup_id);

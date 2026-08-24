@@ -91,6 +91,24 @@ struct AirInstanceInfo {
     uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
     uint64_t  num_entries = 0;
 
+    // Row bands the hash gates leave interior-blank, expanded on device after the trace copy
+    // (see expandGateBandsGPU). A property of the circuit, so uploaded once with the setup.
+    uint64_t *d_gate_bands = nullptr;   // n_gate_bands * 2 words: {row, kind}
+    uint64_t  n_gate_bands = 0;
+
+    // Caller must have selected the target GPU. Replaces whatever was there.
+    void set_gate_bands(const uint64_t *bands, uint64_t nBands) {
+        if (d_gate_bands != nullptr) {
+            CHECKCUDAERR(cudaFree(d_gate_bands));
+            d_gate_bands = nullptr;
+        }
+        n_gate_bands = nBands;
+        if (nBands > 0) {
+            CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 2 * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+    }
+
     // Upload (replacing any previous) the program-specific instruction table. Caller must
     // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
     // while work using d_instr_table is in flight on this GPU -- the cudaFree below would
@@ -323,6 +341,10 @@ struct AirInstanceInfo {
 
         if (d_instr_table != nullptr) {
             CHECKCUDAERR(cudaFree(d_instr_table));
+        }
+
+        if (d_gate_bands != nullptr) {
+            CHECKCUDAERR(cudaFree(d_gate_bands));
         }
     }
 };
