@@ -1,4 +1,5 @@
 #include "starks_gpu_bn128.cuh"
+#include "cuda_utils.cuh"
 #include "transcript/transcriptBN128.cuh"
 #include "setup_ctx.hpp"
 #include "ntt_goldilocks.cuh"
@@ -279,7 +280,7 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
     treesGL[step - 1]->setSource(pSource);
     PoseidonBN128GPU::FrElement * pNodes;
     int64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
+    diagCudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
     treesGL[step - 1]->setNodes((RawFr::Element*)pNodes);
 
 
@@ -318,7 +319,7 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
     treesGL[step - 1]->setSource(pSource);
     PoseidonBN128GPU::FrElement * pNodes;
     int64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
+    diagCudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
     treesGL[step - 1]->setNodes((RawFr::Element*)pNodes);
 
     if (nCols > 0)
@@ -352,7 +353,7 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     PoseidonBN128GPU::FrElement * pNodes;
     int64_t tree_size = treeFRI->getNumNodes(treeFRI->height);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
+    diagCudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
     treeFRI->setNodes((RawFr::Element*)pNodes);
     PoseidonBN128GPU::merkletree((PoseidonBN128GPU::FrElement*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
     

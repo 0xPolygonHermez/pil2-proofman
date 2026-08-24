@@ -1,4 +1,5 @@
 #include "transcriptBN128.cuh"
+#include "cuda_utils.cuh"
 #include "goldilocks_base_field.hpp"
 #include "poseidon/poseidon_bn128_constants.hpp"
 #include "goldilocks_tooling.cuh"
@@ -376,13 +377,13 @@ TranscriptBN128_GPU::TranscriptBN128_GPU(uint64_t arity, bool custom, cudaStream
 {
     this->arity = custom ? arity : 16;
     
-    CHECKCUDAERR(cudaMalloc((void**)&state, sizeof(PoseidonBN128GPU::FrElement)));
-    CHECKCUDAERR(cudaMalloc((void**)&pending, this->arity * sizeof(PoseidonBN128GPU::FrElement)));
-    CHECKCUDAERR(cudaMalloc((void**)&out, (1 + this->arity) * sizeof(PoseidonBN128GPU::FrElement)));
-    CHECKCUDAERR(cudaMalloc((void**)&out3, 3 * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
-    CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
-    CHECKCUDAERR(cudaMalloc((void**)&out3_cursor, sizeof(uint)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&state, sizeof(PoseidonBN128GPU::FrElement)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&pending, this->arity * sizeof(PoseidonBN128GPU::FrElement)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&out, (1 + this->arity) * sizeof(PoseidonBN128GPU::FrElement)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&out3, 3 * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&pending_cursor, sizeof(uint)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&out_cursor, sizeof(uint)));
+    CHECKCUDAERR(diagCudaMalloc((void**)&out3_cursor, sizeof(uint)));
     
     reset(stream);
 }
@@ -401,16 +402,16 @@ void TranscriptBN128_GPU::reset(cudaStream_t stream)
 
 // Helper macro for initializing constants for a single t value
 #define INIT_TRANSCRIPT_T_CONSTANTS(t_val) do { \
-    CHECKCUDAERR(cudaMalloc(&h_TRANSCRIPT_GPU_C, sizeof(PoseidonBN128Constants::C##t_val))); \
+    CHECKCUDAERR(diagCudaMalloc(&h_TRANSCRIPT_GPU_C, sizeof(PoseidonBN128Constants::C##t_val))); \
     CHECKCUDAERR(cudaMemcpy(h_TRANSCRIPT_GPU_C, PoseidonBN128Constants::C##t_val, sizeof(PoseidonBN128Constants::C##t_val), cudaMemcpyHostToDevice)); \
     CHECKCUDAERR(cudaMemcpyToSymbol(TRANSCRIPT_GPU_C_ptr, &h_TRANSCRIPT_GPU_C, sizeof(PoseidonBN128GPU::FrElement*))); \
-    CHECKCUDAERR(cudaMalloc(&h_TRANSCRIPT_GPU_M, sizeof(PoseidonBN128Constants::M##t_val))); \
+    CHECKCUDAERR(diagCudaMalloc(&h_TRANSCRIPT_GPU_M, sizeof(PoseidonBN128Constants::M##t_val))); \
     CHECKCUDAERR(cudaMemcpy(h_TRANSCRIPT_GPU_M, PoseidonBN128Constants::M##t_val, sizeof(PoseidonBN128Constants::M##t_val), cudaMemcpyHostToDevice)); \
     CHECKCUDAERR(cudaMemcpyToSymbol(TRANSCRIPT_GPU_M_ptr, &h_TRANSCRIPT_GPU_M, sizeof(PoseidonBN128GPU::FrElement*))); \
-    CHECKCUDAERR(cudaMalloc(&h_TRANSCRIPT_GPU_P, sizeof(PoseidonBN128Constants::P##t_val))); \
+    CHECKCUDAERR(diagCudaMalloc(&h_TRANSCRIPT_GPU_P, sizeof(PoseidonBN128Constants::P##t_val))); \
     CHECKCUDAERR(cudaMemcpy(h_TRANSCRIPT_GPU_P, PoseidonBN128Constants::P##t_val, sizeof(PoseidonBN128Constants::P##t_val), cudaMemcpyHostToDevice)); \
     CHECKCUDAERR(cudaMemcpyToSymbol(TRANSCRIPT_GPU_P_ptr, &h_TRANSCRIPT_GPU_P, sizeof(PoseidonBN128GPU::FrElement*))); \
-    CHECKCUDAERR(cudaMalloc(&h_TRANSCRIPT_GPU_S, sizeof(PoseidonBN128Constants::S##t_val))); \
+    CHECKCUDAERR(diagCudaMalloc(&h_TRANSCRIPT_GPU_S, sizeof(PoseidonBN128Constants::S##t_val))); \
     CHECKCUDAERR(cudaMemcpy(h_TRANSCRIPT_GPU_S, PoseidonBN128Constants::S##t_val, sizeof(PoseidonBN128Constants::S##t_val), cudaMemcpyHostToDevice)); \
     CHECKCUDAERR(cudaMemcpyToSymbol(TRANSCRIPT_GPU_S_ptr, &h_TRANSCRIPT_GPU_S, sizeof(PoseidonBN128GPU::FrElement*))); \
 } while(0)

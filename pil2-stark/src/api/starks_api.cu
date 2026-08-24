@@ -1,4 +1,5 @@
 #include "bn128.cuh"
+#include "cuda_utils.cuh"
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
@@ -549,7 +550,7 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     // we end on an assigned GPU rather than syncing back to GPU 0.
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
-        cudaFree(0);
+        diagCudaFree(0);
         cudaDeviceSynchronize();
     }
     cudaSetDevice(my_gpu_ids[0]);
@@ -732,12 +733,12 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         // Allocate one large contiguous block of GPU memory (unified buffer)
         gl64_t *gpuMemoryBlock;
         // TEMP-DIAG: + one guard band per aux-trace slice
-        CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu +
+        CHECKCUDAERR(diagCudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu +
             DIAG_GUARD_ELEMS * (d_buffers->n_streams + d_buffers->n_recursive_streams) * sizeof(gl64_t)));
         d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
         
         // Allocate separate buffer for constant polynomials
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
+        CHECKCUDAERR(diagCudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
         
         zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
                    ": Allocated " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
@@ -778,8 +779,8 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         offset += totalConstPolsAggregation;
         
         // Allocate pinned host buffers separately (one block per buffer type)
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         
         // Verify we used exactly the amount we calculated
         const uint64_t diagGuardTotal = DIAG_GUARD_ELEMS * (d_buffers->n_streams + d_buffers->n_recursive_streams);
@@ -932,11 +933,11 @@ void free_device_buffers_gpu(void *d_buffers_)
         
         // All other GPU pointers point into this single large block, so free it once via the base pointer.
         if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
-            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
+            CHECKCUDAERR(diagCudaFree(d_buffers->gpuMemoryBuffer[i]));
         }
         
         if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[i] != nullptr) {
-            CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
+            CHECKCUDAERR(diagCudaFree(d_buffers->d_constPols[i]));
         }
 
         // Free CPU pointer arrays
@@ -960,7 +961,7 @@ void free_device_buffers_gpu(void *d_buffers_)
         CHECKCUDAERR(cudaGetDevice(&prevDevice));
         CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
         for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
-            CHECKCUDAERR(cudaStreamDestroy(d_buffers->streamCommitStreams[j]));
+            CHECKCUDAERR(diagCudaStreamDestroy(d_buffers->streamCommitStreams[j]));
         CHECKCUDAERR(cudaSetDevice(prevDevice));
         free(d_buffers->streamCommitStreams);
         d_buffers->streamCommitStreams = nullptr;
@@ -1491,6 +1492,7 @@ static void diagMemWatermark(const char *where) {
         }
 #endif
         cudaGetLastError();
+        gpuDiagCensus("new-low");
         zklog.error("[MEM-DIAG] mempool reserved=" + std::to_string(poolReserved / (1024.0 * 1024.0)) +
                     " MB used=" + std::to_string(poolUsed / (1024.0 * 1024.0)) + " MB");
         zklog.error("[MEM-DIAG] device free memory fell to " + std::to_string(freeB / (1024.0 * 1024.0)) +
@@ -1501,6 +1503,8 @@ static void diagMemWatermark(const char *where) {
 }
 
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
+    // Census every 256 harvested proofs: a leak shows as one counter tracking the fall in `free`.
+    if ((gpuDiag().proofs.fetch_add(1) % 256) == 0) gpuDiagCensus("get_proof");
     diagCheckGuards("get_proof");
     diagCheckTail(d_buffers, streamId);
     diagMemWatermark("get_proof");
@@ -1762,13 +1766,13 @@ void tile_const_pols_gpu(void *pStarkinfo, void *pConstPols, char *constFile, vo
     uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
 
     cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
+    CHECKCUDAERR(diagCudaStreamCreate(&stream));
 
     gl64_t *d_helper;
     gl64_t *d_helperAux;
     if (unified_buffer_gpu == nullptr) {
-        CHECKCUDAERR(cudaMalloc(&d_helper, sizeConstPolsExtended));
-        CHECKCUDAERR(cudaMalloc(&d_helperAux, sizeConstPolsExtended));
+        CHECKCUDAERR(diagCudaMalloc(&d_helper, sizeConstPolsExtended));
+        CHECKCUDAERR(diagCudaMalloc(&d_helperAux, sizeConstPolsExtended));
     } else {
         gl64_t * d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
         d_helper = d_unifiedBuffer;
@@ -1809,10 +1813,10 @@ void tile_const_pols_gpu(void *pStarkinfo, void *pConstPols, char *constFile, vo
 
     free(h_helperTiled);
     if (unified_buffer_gpu == nullptr) {
-        CHECKCUDAERR(cudaFree(d_helper));
-        CHECKCUDAERR(cudaFree(d_helperAux));
+        CHECKCUDAERR(diagCudaFree(d_helper));
+        CHECKCUDAERR(diagCudaFree(d_helperAux));
     }
-    CHECKCUDAERR(cudaStreamDestroy(stream));
+    CHECKCUDAERR(diagCudaStreamDestroy(stream));
 
 }
 
@@ -1856,8 +1860,8 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
         // Allocate new device buffers
         d_buffers->owns_aux_trace = true;
         d_buffers->owns_const_tree = true;
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+        CHECKCUDAERR(diagCudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
+        CHECKCUDAERR(diagCudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
         d_buffers->aux_trace_size = sizeAuxTrace;
     } else {
         DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
@@ -1874,7 +1878,7 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
     rawFr.fromString(verkeyElement, verkey);
     
     // Allocate GPU memory and copy verkey to device
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_verkey, sizeof(RawFr::Element)));
+    CHECKCUDAERR(diagCudaMalloc(&d_buffers->d_verkey, sizeof(RawFr::Element)));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_verkey, &verkeyElement, sizeof(RawFr::Element), cudaMemcpyHostToDevice));
 
     return (void*)d_buffers;
@@ -1891,7 +1895,7 @@ void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_) {
         return;
     }
     
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuLocalId], d_buffers->constPolsSize));
+    CHECKCUDAERR(diagCudaMalloc(&d_buffers->d_constPols[gpuLocalId], d_buffers->constPolsSize));
 }
 
 void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_) {
@@ -1900,7 +1904,7 @@ void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_) {
     uint32_t gpuId = d_buffers->my_gpu_ids[0];
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuLocalId]));
+    CHECKCUDAERR(diagCudaFree(d_buffers->d_constPols[gpuLocalId]));
     d_buffers->d_constPols[gpuLocalId] = nullptr;
 }
 
@@ -1948,10 +1952,10 @@ void free_device_buffers_recursivef_gpu(void *d_buffers_) {
         cudaGetLastError();  // clear the sticky status left by the last query
     }
     if (d_buffers->owns_const_tree) {
-        CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
+        CHECKCUDAERR(diagCudaFree(d_buffers->d_const_tree));
     }
     if (d_buffers->owns_aux_trace) {
-        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+        CHECKCUDAERR(diagCudaFree(d_buffers->d_aux_trace));
     }
     delete d_buffers;
 }
@@ -2244,8 +2248,8 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
     gl64_t *d_pol;
     gl64_t *d_aux;
     if (unified_buffer_gpu == nullptr) {
-        CHECKCUDAERR(cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t)));
-        CHECKCUDAERR(cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(diagCudaMalloc(&d_pol, N * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(diagCudaMalloc(&d_aux, N * nCols * sizeof(gl64_t)));
     } else {
         gl64_t *d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
         d_pol = d_unifiedBuffer;
@@ -2254,7 +2258,7 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
     cudaMemcpy(d_pol, pol, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
     cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    diagCudaStreamCreate(&stream);
 
     TimerGPU timer;
     int deviceId;
@@ -2266,10 +2270,10 @@ void prepare_blocks_gpu(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     if (unified_buffer_gpu == nullptr) {
-        CHECKCUDAERR(cudaFree(d_pol));
-        CHECKCUDAERR(cudaFree(d_aux));
+        CHECKCUDAERR(diagCudaFree(d_pol));
+        CHECKCUDAERR(diagCudaFree(d_aux));
     }
-    cudaStreamDestroy(stream);
+    diagCudaStreamDestroy(stream);
 }
 
 void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
@@ -2346,7 +2350,7 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     assert(starkInfo.starkStruct.verificationHashType == "GL");
 
     cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    diagCudaStreamCreate(&stream);
     TimerGPU timer;
     TimerStartGPU(timer, STARK_GPU_CONST_TREE);
 
@@ -2358,8 +2362,8 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     Goldilocks::Element* d_fixedPols;
     Goldilocks::Element* d_fixedTree;
     if (unified_buffer_gpu == nullptr) {
-        cudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
-        cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+        diagCudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
+        diagCudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
     } else {
         Goldilocks::Element *d_unifiedBuffer = (Goldilocks::Element *)unified_buffer_gpu;
         d_fixedPols = d_unifiedBuffer;
@@ -2380,11 +2384,11 @@ void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *p
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     if (unified_buffer_gpu == nullptr) {
-        cudaFree(d_fixedPols);
-        cudaFree(d_fixedTree);
+        diagCudaFree(d_fixedPols);
+        diagCudaFree(d_fixedTree);
     }
     TimerStopGPU(timer, STARK_GPU_CONST_TREE);
-    cudaStreamDestroy(stream);
+    diagCudaStreamDestroy(stream);
 }
 
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size)
@@ -2619,7 +2623,7 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     int leastPriority = 0, greatestPriority = 0;
     CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
     for (uint64_t j = 0; j < nSlots; j++)
-        CHECKCUDAERR(cudaStreamCreateWithPriority(&d_buffers->streamCommitStreams[j],
+        CHECKCUDAERR(diagCudaStreamCreateWithPriority(&d_buffers->streamCommitStreams[j],
                                                   cudaStreamNonBlocking, leastPriority));
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     // Set last: the count is the enable flag readers check.
@@ -3242,8 +3246,8 @@ void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffe
             uint64_t requiredSize = getFinalSnarkProverRequiredGpuSizeGPU(snark_prover);
             if (requiredSize > 0) {
                 if (requiredSize > d_buffers->aux_trace_size) {
-                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
-                    CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, requiredSize));
+                    CHECKCUDAERR(diagCudaFree(d_buffers->d_aux_trace));
+                    CHECKCUDAERR(diagCudaMalloc((void **)&d_buffers->d_aux_trace, requiredSize));
                     d_buffers->aux_trace_size = requiredSize;
                 }
                 unified_buffer_gpu = d_buffers->d_aux_trace;

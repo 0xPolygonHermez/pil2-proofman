@@ -1221,7 +1221,7 @@ void nttBuildTables(NttTables &t, bool inverse)
         off += n;
     }
 
-    CHECKCUDAERR(cudaMalloc(&t.base, total * sizeof(gl64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&t.base, total * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(t.base, h.data(), total * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
     t.partialRoots = t.base;
@@ -1770,11 +1770,11 @@ void NTTGoldilocksGPU::initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_
         } else {
             assert(d_fwd_twiddle_factors[gpu_ids[i]] == nullptr && d_inv_twiddle_factors[gpu_ids[i]] == nullptr && d_r[gpu_ids[i]] == nullptr);
             cudaSetDevice(gpu_ids[i]);
-            cudaStreamCreate(&stream[i]);
+            diagCudaStreamCreate(&stream[i]);
             stream_created[i] = true;
-            cudaMalloc(&d_fwd_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
-            cudaMalloc(&d_inv_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
-            cudaMalloc(&d_r[gpu_ids[i]], (1 << maxLogDomainSize) * sizeof(gl64_t));
+            diagCudaMalloc(&d_fwd_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
+            diagCudaMalloc(&d_inv_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
+            diagCudaMalloc(&d_r[gpu_ids[i]], (1 << maxLogDomainSize) * sizeof(gl64_t));
             evalTwiddleFactors(d_fwd_twiddle_factors[gpu_ids[i]], d_inv_twiddle_factors[gpu_ids[i]], maxLogDomainSize, stream[i]);
             evalCosetShifts(d_r[gpu_ids[i]], maxLogDomainSize, stream[i]);
         }
@@ -1783,7 +1783,7 @@ void NTTGoldilocksGPU::initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_
         if (stream_created[i]) {
             cudaSetDevice(gpu_ids[i]);
             cudaStreamSynchronize(stream[i]);
-            cudaStreamDestroy(stream[i]);
+            diagCudaStreamDestroy(stream[i]);
         }
     }
 
@@ -1806,9 +1806,9 @@ void NTTGoldilocksGPU::freeConstants() {
     for(int i = 0; i < nGPUs_available; i++) {
         if(d_fwd_twiddle_factors[i] != nullptr && d_inv_twiddle_factors[i] != nullptr && d_r[i] != nullptr) {
             cudaSetDevice(i);
-            cudaFree(d_fwd_twiddle_factors[i]);
-            cudaFree(d_inv_twiddle_factors[i]);
-            cudaFree(d_r[i]);
+            diagCudaFree(d_fwd_twiddle_factors[i]);
+            diagCudaFree(d_inv_twiddle_factors[i]);
+            diagCudaFree(d_r[i]);
         } else {
             assert(d_fwd_twiddle_factors[i] == nullptr && d_inv_twiddle_factors[i] == nullptr && d_r[i] == nullptr);
         }

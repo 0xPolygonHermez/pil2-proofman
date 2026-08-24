@@ -38,13 +38,13 @@ void proofman_sumcheck_impl(const void *d_ptr, uint64_t n_u64, cudaStream_t stre
     va_end(ap);
 
     unsigned long long *d_out = nullptr;
-    if (cudaMalloc(&d_out, sizeof(unsigned long long)) != cudaSuccess) return;
+    if (diagCudaMalloc(&d_out, sizeof(unsigned long long)) != cudaSuccess) return;
     CHECKCUDAERR(cudaMemsetAsync(d_out, 0, sizeof(unsigned long long), stream));
     proofman_sumcheck_kernel<<<256, 256, 0, stream>>>((const uint64_t *)d_ptr, n_u64, d_out);
     unsigned long long h = 0;
     CHECKCUDAERR(cudaMemcpyAsync(&h, d_out, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    cudaFree(d_out);
+    diagCudaFree(d_out);
     printf("[SUMCHECK] inst=%lu airgroup=%lu air=%lu stage=%-22s n=%lu cksum=%016llx\n",
            (unsigned long)instanceId, (unsigned long)airgroupId, (unsigned long)airId, label,
            (unsigned long)n_u64, h);

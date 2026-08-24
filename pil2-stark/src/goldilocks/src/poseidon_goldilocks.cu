@@ -633,7 +633,7 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
     }
 
     uint64_t *d_tree;
-    CHECKCUDAERR(cudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemcpyAsync(d_tree, d_input,
                                  num_elements * CAPACITY * sizeof(uint64_t),
                                  cudaMemcpyDeviceToDevice, stream));
@@ -678,7 +678,7 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
                                  CAPACITY * sizeof(uint64_t),
                                  cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    CHECKCUDAERR(cudaFree(d_tree));
+    CHECKCUDAERR(diagCudaFree(d_tree));
 }
 
 // ---------------------------------------------------------------------------

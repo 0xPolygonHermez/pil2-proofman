@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <string>
 #include <cuda_runtime.h>
+#include "cuda_utils.cuh"
 #include <vector>
 #include <atomic>
 #ifndef __GOLDILOCKS_ENV__
@@ -20,11 +21,17 @@
 // puts event calls -- whose returns are not checked below -- inside the capture, where any failure
 // silently invalidates it and resurfaces as cudaErrorStreamCaptureInvalidated at an unrelated call.
 // Replays skip host code, so those timings were never collectable anyway; skip while capturing.
-static inline std::atomic<long long> &timerEventsLive() {
-    static std::atomic<long long> v{0};
-    return v;
+inline std::atomic<long long> &timerEventsLive() { return gpuDiag().events; }
+// Report WHICH TimerGPU and WHICH category is growing: the global count alone cannot distinguish a
+// per-stream timer that is cleared each proof from a long-lived one that never is.
+inline void timerReportOwner(const void *owner, const char *what, size_t n) {
+#ifndef __GOLDILOCKS_ENV__
+    zklog.error(std::string("[EVT-OWNER] timer=") + std::to_string((unsigned long long)(uintptr_t)owner) +
+                " category='" + what + "' entries=" + std::to_string(n));
+#endif
 }
-static inline void timerEventDelta(int d) {
+
+inline void timerEventDelta(int d) {
     long long now = timerEventsLive().fetch_add(d) + d;
     static std::atomic<long long> peak{0};
     if (d > 0) {
@@ -39,7 +46,7 @@ static inline void timerEventDelta(int d) {
     }
 }
 
-static inline bool timerStreamCapturing(cudaStream_t s) {
+inline bool timerStreamCapturing(cudaStream_t s) {
     cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
     // cudaStreamIsCapturing: available and signature-stable since CUDA 10.0. Do NOT use
     // cudaStreamGetCaptureInfo_v2 here -- it is not present in every toolkit we build against.
@@ -121,6 +128,10 @@ public:
         auto& entries = multiTimers[name];
         entries.emplace_back(TimerEntry{start, stop, -1.0f});
         activeCategoryTimers[name] = entries.size() - 1;
+        // Any single category holding this many intervals means nothing is releasing them.
+        if (entries.size() == 2048 || entries.size() == 8192) {
+            timerReportOwner(this, name.c_str(), entries.size());
+        }
         cudaEventRecord(entries.back().start, stream);
     }
 

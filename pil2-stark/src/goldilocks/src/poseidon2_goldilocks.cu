@@ -118,7 +118,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeReduce(uint64_t * d_root,
 
     // Allocate tree buffer on device and copy input digests.
     uint64_t *d_tree;
-    CHECKCUDAERR(cudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemcpyAsync(d_tree, d_input, num_elements * CAPACITY * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
 
     // Tree reduction: hash groups of `arity` digests using merkleNodeKernel.
@@ -146,7 +146,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeReduce(uint64_t * d_root,
     // Copy root (last CAPACITY elements) to output.
     CHECKCUDAERR(cudaMemcpyAsync(d_root, d_tree + nextIndex, CAPACITY * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    CHECKCUDAERR(cudaFree(d_tree));
+    CHECKCUDAERR(diagCudaFree(d_tree));
 }
 
 template<uint32_t SPONGE_WIDTH_T>

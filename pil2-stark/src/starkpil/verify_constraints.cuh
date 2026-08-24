@@ -1,4 +1,5 @@
 #include "verify_constraints.hpp"
+#include "cuda_utils.cuh"
 #include "gpu_timer.cuh"
 #include "goldilocks_tooling.cuh"
 #include "starks_gpu.cuh"
@@ -112,9 +113,9 @@ void verifyConstraintGPU(
     uint32_t* d_invalidRows;
     uint64_t* d_invalidValues;
 
-    CHECKCUDAERR(cudaMalloc(&d_totalInvalid, sizeof(uint32_t)));
-    CHECKCUDAERR(cudaMalloc(&d_invalidRows, maxSample * sizeof(uint32_t)));
-    CHECKCUDAERR(cudaMalloc(&d_invalidValues, maxSample * 3 * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&d_totalInvalid, sizeof(uint32_t)));
+    CHECKCUDAERR(diagCudaMalloc(&d_invalidRows, maxSample * sizeof(uint32_t)));
+    CHECKCUDAERR(diagCudaMalloc(&d_invalidValues, maxSample * 3 * sizeof(uint64_t)));
 
     CHECKCUDAERR(cudaMemsetAsync(d_totalInvalid, 0, sizeof(uint32_t), stream));
 
@@ -168,9 +169,9 @@ void verifyConstraintGPU(
         }
     }
 
-    cudaFree(d_totalInvalid);
-    cudaFree(d_invalidRows);
-    cudaFree(d_invalidValues);
+    diagCudaFree(d_totalInvalid);
+    diagCudaFree(d_invalidRows);
+    diagCudaFree(d_invalidValues);
 }
 
 void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, Goldilocks::Element *airgroupValuesCPU, TimerGPU &timer, cudaStream_t stream) {

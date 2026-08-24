@@ -1,4 +1,5 @@
 #include "transcriptGL.cuh"
+#include "cuda_utils.cuh"
 #include "starks_api_internal.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
@@ -445,11 +446,11 @@ TranscriptGL_GPU::TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t str
         transcriptPendingSize = TRX_PENDING_SIZE(arity);
         transcriptOutSize = TRX_OUT_SIZE(arity);
 
-        CHECKCUDAERR(cudaMalloc((void**)&state, transcriptOutSize * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&pending, transcriptPendingSize * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&out, transcriptOutSize * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
-        CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
+        CHECKCUDAERR(diagCudaMalloc((void**)&state, transcriptOutSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMalloc((void**)&pending, transcriptPendingSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMalloc((void**)&out, transcriptOutSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMalloc((void**)&pending_cursor, sizeof(uint)));
+        CHECKCUDAERR(diagCudaMalloc((void**)&out_cursor, sizeof(uint)));
 
         reset(stream);
 }

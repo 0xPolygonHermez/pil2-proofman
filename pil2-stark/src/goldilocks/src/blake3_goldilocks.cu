@@ -244,7 +244,7 @@ void Blake3GoldilocksGPU::merkletreeReduce(uint64_t *d_root, uint64_t *d_input,
     }
 
     uint64_t *d_tree;
-    CHECKCUDAERR(cudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemcpyAsync(d_tree, d_input, num_elements * CAPACITY * sizeof(uint64_t),
                                  cudaMemcpyDeviceToDevice, stream));
 
@@ -272,7 +272,7 @@ void Blake3GoldilocksGPU::merkletreeReduce(uint64_t *d_root, uint64_t *d_input,
     CHECKCUDAERR(cudaMemcpyAsync(d_root, d_tree + nextIndex, CAPACITY * sizeof(uint64_t),
                                  cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    CHECKCUDAERR(cudaFree(d_tree));
+    CHECKCUDAERR(diagCudaFree(d_tree));
 }
 
 void Blake3GoldilocksGPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,

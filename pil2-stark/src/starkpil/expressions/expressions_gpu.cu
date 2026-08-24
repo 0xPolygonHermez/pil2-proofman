@@ -31,14 +31,14 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     
     h_deviceArgs.zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
 
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsCustomFixed, nCustoms * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsCustomFixedExtended, nCustoms * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.nextStrides, nOpenings * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.nextStridesExtended, nOpenings * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapSectionsN, ns * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapSectionsNCustomFixed, nCustoms * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapOffsetsCustomFixed, nCustoms * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapOffsetsCustomFixedExtended, nCustoms * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.nextStrides, nOpenings * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.nextStridesExtended, nOpenings * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapSectionsN, ns * sizeof(uint64_t)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.mapSectionsNCustomFixed, nCustoms * sizeof(uint64_t)));
 
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.mapOffsets, mapOffsets, ns * sizeof(uint64_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.mapOffsetsExtended, mapOffsetsExtended, ns * sizeof(uint64_t), cudaMemcpyHostToDevice));
@@ -51,25 +51,25 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
 
     ParserArgs parserArgs = setupCtx.expressionsBin.expressionsBinArgsExpressions;
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.numbers, parserArgs.nNumbers * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.numbers, parserArgs.nNumbers * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, parserArgs.nNumbers * sizeof(Goldilocks::Element),cudaMemcpyHostToDevice));
 
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t)));   
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t))); 
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t)));   
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t))); 
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.args, parserArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice));
 
     ParserArgs parserArgsConstraints = setupCtx.expressionsBin.expressionsBinArgsConstraints;
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.numbersConstraints, parserArgsConstraints.nNumbers * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.numbersConstraints, parserArgsConstraints.nNumbers * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.numbersConstraints, (Goldilocks::Element *)parserArgsConstraints.numbers, parserArgsConstraints.nNumbers * sizeof(Goldilocks::Element),cudaMemcpyHostToDevice));
 
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.opsConstraints, setupCtx.expressionsBin.nOpsDebug * sizeof(uint8_t)));   
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.argsConstraints, setupCtx.expressionsBin.nArgsDebug * sizeof(uint16_t))); 
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.opsConstraints, setupCtx.expressionsBin.nOpsDebug * sizeof(uint8_t)));   
+    CHECKCUDAERR(diagCudaMalloc(&h_deviceArgs.argsConstraints, setupCtx.expressionsBin.nArgsDebug * sizeof(uint16_t))); 
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.opsConstraints, parserArgsConstraints.ops, setupCtx.expressionsBin.nOpsDebug * sizeof(uint8_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.argsConstraints, parserArgsConstraints.args, setupCtx.expressionsBin.nArgsDebug * sizeof(uint16_t), cudaMemcpyHostToDevice));
 
 
-    CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
+    CHECKCUDAERR(diagCudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
     CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
 
     ExpsKernel ek = expsOpenForAir(setupCtx);
@@ -82,22 +82,22 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
 ExpressionsGPU::~ExpressionsGPU()
 {
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsets));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsExtended));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.nextStrides));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.nextStridesExtended));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixed));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsN));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsNCustomFixed));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.args));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.numbersConstraints));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.opsConstraints));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.argsConstraints));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapOffsets));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapOffsetsExtended));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.nextStrides));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.nextStridesExtended));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapOffsetsCustomFixed));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapSectionsN));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.mapSectionsNCustomFixed));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.numbers));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.ops));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.args));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.numbersConstraints));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.opsConstraints));
+    CHECKCUDAERR(diagCudaFree(h_deviceArgs.argsConstraints));
 
-    CHECKCUDAERR(cudaFree(d_deviceArgs));
+    CHECKCUDAERR(diagCudaFree(d_deviceArgs));
 
     expsClose(expsLib);
 }

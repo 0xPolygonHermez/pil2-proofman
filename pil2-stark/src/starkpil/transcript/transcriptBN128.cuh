@@ -41,13 +41,13 @@ public:
     TranscriptBN128_GPU(uint64_t arity, bool custom, cudaStream_t stream);
     ~TranscriptBN128_GPU()
     {
-        CHECKCUDAERR(cudaFree(state));
-        CHECKCUDAERR(cudaFree(pending));
-        CHECKCUDAERR(cudaFree(out));
-        CHECKCUDAERR(cudaFree(out3));
-        CHECKCUDAERR(cudaFree(pending_cursor));
-        CHECKCUDAERR(cudaFree(out_cursor));
-        CHECKCUDAERR(cudaFree(out3_cursor));
+        CHECKCUDAERR(diagCudaFree(state));
+        CHECKCUDAERR(diagCudaFree(pending));
+        CHECKCUDAERR(diagCudaFree(out));
+        CHECKCUDAERR(diagCudaFree(out3));
+        CHECKCUDAERR(diagCudaFree(pending_cursor));
+        CHECKCUDAERR(diagCudaFree(out_cursor));
+        CHECKCUDAERR(diagCudaFree(out3_cursor));
     }
     
     void reset(cudaStream_t stream);

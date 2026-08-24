@@ -348,13 +348,13 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
     {
         if (i != setupCtx.starkInfo.nStages + 1) {
-            cudaFree(starks.treesGL[i]->get_nodes_ptr());
+            diagCudaFree(starks.treesGL[i]->get_nodes_ptr());
         }
     }
     // free FRI trees
     for (uint64_t i = 0; i < nTreesFRI; i++)
     {
-        cudaFree(starks.treesFRI[i]->get_nodes_ptr());
+        diagCudaFree(starks.treesFRI[i]->get_nodes_ptr());
     }
 
     // Free AirInstanceInfo (and all its GPU allocations)

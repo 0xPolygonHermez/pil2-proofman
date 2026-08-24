@@ -37,10 +37,7 @@ namespace cudagraph {
 // capture state below (pending_key_, capturing_, poisoned_) is only valid between the
 // owner's bind of cudagraph::current() (thread_local) and its guard-scoped unbind. Do not
 // touch a stream's cache from CUDA callbacks or any thread that has not reserved the stream.
-inline std::atomic<long long> &liveGraphExecs() {
-    static std::atomic<long long> v{0};
-    return v;
-}
+inline std::atomic<long long> &liveGraphExecs() { return gpuDiag().graphExecs; }
 inline void graphExecDelta(int d, size_t cacheSize) {
     long long now = liveGraphExecs().fetch_add(d) + d;
     static std::atomic<long long> peak{0};
@@ -155,16 +152,17 @@ public:
 
         cudaGraph_t graph = nullptr;
         cudaError_t err = cudaStreamEndCapture(stream, &graph);
+        if (err == cudaSuccess && graph != nullptr) gpuDiag().graphs += 1;
         if (err != cudaSuccess || graph == nullptr) {
             clearCudaError();
-            if (graph) cudaGraphDestroy(graph);
+            if (graph) { cudaGraphDestroy(graph); gpuDiag().graphs -= 1; }
             return false;
         }
 
         if (poisoned_) {
             poisoned_ = false;
             blacklist_.insert(pending_key_);
-            cudaGraphDestroy(graph);
+            cudaGraphDestroy(graph); gpuDiag().graphs -= 1;
             return false;
         }
 
@@ -176,7 +174,7 @@ public:
 #endif
         if (err != cudaSuccess) {
             clearCudaError();
-            cudaGraphDestroy(graph);
+            cudaGraphDestroy(graph); gpuDiag().graphs -= 1;
             return false;
         }
 
@@ -184,13 +182,13 @@ public:
         if (err != cudaSuccess) {
             clearCudaError();
             cudaGraphExecDestroy(exec);
-            cudaGraphDestroy(graph);
+            cudaGraphDestroy(graph); gpuDiag().graphs -= 1;
             return false;
         }
 
         cache_[pending_key_] = exec;
         graphExecDelta(1, cache_.size());
-        cudaGraphDestroy(graph);
+        cudaGraphDestroy(graph); gpuDiag().graphs -= 1;
         return true;
     }
 

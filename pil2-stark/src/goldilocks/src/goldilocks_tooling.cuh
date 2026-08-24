@@ -98,20 +98,20 @@ struct AirInstanceInfo {
     // words_per_entry (seeded from PackedInfo at setup); the live program wins.
     void set_instruction_table(const uint64_t *table, uint64_t entries, uint64_t words) {
         if (d_instr_table != nullptr) {
-            CHECKCUDAERR(cudaFree(d_instr_table));
+            CHECKCUDAERR(diagCudaFree(d_instr_table));
             d_instr_table = nullptr;
         }
         num_entries = entries;
         words_per_entry = words;
         if (entries > 0 && words > 0) {
-            CHECKCUDAERR(cudaMalloc(&d_instr_table, entries * words * sizeof(uint64_t)));
+            CHECKCUDAERR(diagCudaMalloc(&d_instr_table, entries * words * sizeof(uint64_t)));
             CHECKCUDAERR(cudaMemcpy(d_instr_table, table, entries * words * sizeof(uint64_t), cudaMemcpyHostToDevice));
         }
     }
 
     AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
-        CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
+        CHECKCUDAERR(diagCudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
@@ -121,12 +121,12 @@ struct AirInstanceInfo {
         }
         else {
             Goldilocks::Element *d_verkeyRoot;
-            CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(diagCudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
             verkeyRoot = d_verkeyRoot;
         }
 
-        CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
+        CHECKCUDAERR(diagCudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
@@ -172,7 +172,7 @@ struct AirInstanceInfo {
             }
 
             EvalInfo* d_evalsInfo = nullptr;
-            CHECKCUDAERR(cudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
+            CHECKCUDAERR(diagCudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
             CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfoHost, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
 
             evalsInfo[count] = d_evalsInfo;
@@ -233,19 +233,19 @@ struct AirInstanceInfo {
         }
 
         for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
-            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
+            CHECKCUDAERR(diagCudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
             CHECKCUDAERR(cudaMemcpy(evalsInfoFRI_[opening], evalsInfoByOpeningPos[opening],
                                     evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
                                     cudaMemcpyHostToDevice));
             delete[] evalsInfoByOpeningPos[opening];
         }
         
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
+        CHECKCUDAERR(diagCudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
         CHECKCUDAERR(cudaMemcpy(evalsInfoFRI, evalsInfoFRI_, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyHostToDevice));
         
         delete[] evalsInfoFRI_;
         
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
+        CHECKCUDAERR(diagCudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
         CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
         
         delete[] evalsInfoFRISizes_;
@@ -256,7 +256,7 @@ struct AirInstanceInfo {
             num_packed_words = packedInfo->num_packed_words;
             uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
             if (is_packed && num_packed_words > 0) {
-                CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
+                CHECKCUDAERR(diagCudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
@@ -265,7 +265,7 @@ struct AirInstanceInfo {
             if (packedInfo->col_source != nullptr) {
                 index_bits = packedInfo->index_bits;
                 words_per_entry = packedInfo->words_per_entry;
-                CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
+                CHECKCUDAERR(diagCudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
             }
         }
@@ -273,24 +273,24 @@ struct AirInstanceInfo {
 
     ~AirInstanceInfo() {
         if (opening_points != nullptr) {
-            CHECKCUDAERR(cudaFree(opening_points));
+            CHECKCUDAERR(diagCudaFree(opening_points));
         }
 
         if (verkeyRoot != nullptr) {
-            CHECKCUDAERR(cudaFree(verkeyRoot));
+            CHECKCUDAERR(diagCudaFree(verkeyRoot));
         }
 
         delete expressions_gpu;
 
         for (uint64_t i = 0; i < numBatchesEvals; ++i) {
             if (evalsInfo[i] != nullptr) {
-                CHECKCUDAERR(cudaFree(evalsInfo[i]));
+                CHECKCUDAERR(diagCudaFree(evalsInfo[i]));
             }
         }
 
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
-        CHECKCUDAERR(cudaFree(d_num_packed_words));
+        CHECKCUDAERR(diagCudaFree(d_num_packed_words));
 
         if (evalsInfoFRI != nullptr) {
             uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -300,29 +300,29 @@ struct AirInstanceInfo {
             
             for (uint64_t i = 0; i < nOpeningPoints; ++i) {
                 if (host_evalsInfoFRI[i] != nullptr) {
-                    CHECKCUDAERR(cudaFree(host_evalsInfoFRI[i]));
+                    CHECKCUDAERR(diagCudaFree(host_evalsInfoFRI[i]));
                 }
             }
             
             delete[] host_evalsInfoFRI;
             
-            CHECKCUDAERR(cudaFree(evalsInfoFRI));
+            CHECKCUDAERR(diagCudaFree(evalsInfoFRI));
         }
 
         if (evalsInfoFRISizes != nullptr) {
-            CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+            CHECKCUDAERR(diagCudaFree(evalsInfoFRISizes));
         }
 
         if (unpack_info != nullptr) {
-            CHECKCUDAERR(cudaFree(unpack_info));
+            CHECKCUDAERR(diagCudaFree(unpack_info));
         }
 
         if (d_col_source != nullptr) {
-            CHECKCUDAERR(cudaFree(d_col_source));
+            CHECKCUDAERR(diagCudaFree(d_col_source));
         }
 
         if (d_instr_table != nullptr) {
-            CHECKCUDAERR(cudaFree(d_instr_table));
+            CHECKCUDAERR(diagCudaFree(d_instr_table));
         }
     }
 };
@@ -425,7 +425,7 @@ struct StreamData{
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
-        CHECKCUDAERR(cudaStreamCreate(&stream));
+        CHECKCUDAERR(diagCudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -434,11 +434,11 @@ struct StreamData{
         cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -461,17 +461,17 @@ struct StreamData{
                                            true,
                                            stream);
 
-        CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
+        CHECKCUDAERR(diagCudaMalloc(&params, sizeof(StepsParams)));
+        CHECKCUDAERR(diagCudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(diagCudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
     }
 
     ~StreamData() {
         delete transcript;
         delete transcript_helper;
-        CHECKCUDAERR(cudaFree(params));
-        CHECKCUDAERR(cudaFree(d_destParams));
-        CHECKCUDAERR(cudaFree(d_expsArgs));
+        CHECKCUDAERR(diagCudaFree(params));
+        CHECKCUDAERR(diagCudaFree(d_destParams));
+        CHECKCUDAERR(diagCudaFree(d_expsArgs));
     }
 
     void reset(bool reset_status){
@@ -533,7 +533,7 @@ struct StreamData{
 #ifdef USE_CUDA_GRAPH
         graph_cache.reset();
 #endif
-        cudaStreamDestroy(stream);
+        diagCudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
         cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);
@@ -571,33 +571,33 @@ struct DeviceRecursiveFBuffers
 
     DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
         uint64_t maxExps = PINNED_EXPS_SLOTS;
-        cudaStreamCreate(&stream);
-        cudaStreamCreate(&stream_const_tree);
+        diagCudaStreamCreate(&stream);
+        diagCudaStreamCreate(&stream_const_tree);
         timer.init(stream);
         
-        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
-        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBufferConstTree, pinnedBufferSize));
+        CHECKCUDAERR(diagCudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
+        CHECKCUDAERR(diagCudaMallocHost((void**)&pinnedBufferConstTree, pinnedBufferSize));
         // Allocate reusable buffers
-        CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(diagCudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(diagCudaMalloc((void **)&d_params, sizeof(StepsParams)));
+        CHECKCUDAERR(diagCudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(diagCudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
     }
     
     ~DeviceRecursiveFBuffers() {
-        cudaStreamDestroy(stream);
-        cudaStreamDestroy(stream_const_tree);
+        diagCudaStreamDestroy(stream);
+        diagCudaStreamDestroy(stream_const_tree);
         cudaFreeHost(pinnedBuffer);
         cudaFreeHost(pinnedBufferConstTree);
         cudaFreeHost(params_pinned);
         cudaFreeHost(pinned_exps_params);
         cudaFreeHost(pinned_exps_args);
-        cudaFree(d_params);
-        cudaFree(d_expsArgs);
-        cudaFree(d_destParams);
-        if (d_verkey) cudaFree(d_verkey);
+        diagCudaFree(d_params);
+        diagCudaFree(d_expsArgs);
+        diagCudaFree(d_destParams);
+        if (d_verkey) diagCudaFree(d_verkey);
     }
 };
 struct DeviceCommitBuffers
