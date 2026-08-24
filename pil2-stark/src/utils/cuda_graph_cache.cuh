@@ -7,6 +7,7 @@
 #include "cuda_utils.cuh"
 #include <unordered_map>
 #include <unordered_set>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,21 @@ namespace cudagraph {
 // capture state below (pending_key_, capturing_, poisoned_) is only valid between the
 // owner's bind of cudagraph::current() (thread_local) and its guard-scoped unbind. Do not
 // touch a stream's cache from CUDA callbacks or any thread that has not reserved the stream.
+inline std::atomic<long long> &liveGraphExecs() {
+    static std::atomic<long long> v{0};
+    return v;
+}
+inline void graphExecDelta(int d, size_t cacheSize) {
+    long long now = liveGraphExecs().fetch_add(d) + d;
+    static std::atomic<long long> peak{0};
+    if (d > 0 && now > peak.load() + 32) {
+        peak.store(now);
+        fprintf(stderr, "[GRAPH-LEAK] live cudaGraphExec = %lld (this stream's cache holds %zu)\n",
+                now, cacheSize);
+        fflush(stderr);
+    }
+}
+
 class CudaGraphCache {
     std::unordered_map<uint64_t, cudaGraphExec_t> cache_;
     std::unordered_map<uint64_t, uint32_t> hitCount_;
@@ -100,6 +116,7 @@ public:
         if (err != cudaSuccess) {
             clearCudaError();
             cudaGraphExecDestroy(it->second);
+            graphExecDelta(-1, cache_.size());
             cache_.erase(it);
             return false;
         }
@@ -172,6 +189,7 @@ public:
         }
 
         cache_[pending_key_] = exec;
+        graphExecDelta(1, cache_.size());
         cudaGraphDestroy(graph);
         return true;
     }
@@ -181,6 +199,7 @@ public:
     void clear() {
         for (auto& kv : cache_) {
             cudaGraphExecDestroy(kv.second);
+            graphExecDelta(-1, cache_.size());
         }
         cache_.clear();
         hitCount_.clear();
@@ -222,8 +241,8 @@ namespace cudagraph {
     inline void checkBoundary(const char *label, const char *when, cudaStream_t stream) {
         cudaError_t err = cudaPeekAtLastError();
         cudaStreamCaptureStatus st = cudaStreamCaptureStatusNone;
-        unsigned long long gid = 0;
-        bool haveSt = cudaStreamGetCaptureInfo_v2(stream, &st, &gid, nullptr, nullptr, nullptr) == cudaSuccess;
+        // cudaStreamIsCapturing: stable since CUDA 10.0, unlike cudaStreamGetCaptureInfo_v2.
+        bool haveSt = cudaStreamIsCapturing(stream, &st) == cudaSuccess;
         if (err == cudaSuccess && (!haveSt || st != cudaStreamCaptureStatusInvalidated)) return;
         fprintf(stderr,
                 "[GRAPH-DIAG] region '%s' %s: err=%s(%d) captureStatus=%d stream=%p prevPhase='%s'\n",

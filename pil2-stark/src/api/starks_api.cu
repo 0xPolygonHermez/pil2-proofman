@@ -1478,6 +1478,21 @@ static void diagMemWatermark(const char *where) {
     // Report only new lows, and only drops worth looking at, so a steady state stays silent.
     if (freeB + (16ull << 20) < low) {
         low = freeB;
+        // Split the loss: memory retained by the async allocator's pool (cudaMallocAsync /
+        // cudaFreeAsync never returns it to the driver) vs everything else (plain cudaMalloc,
+        // module loads, graph-owned memory). This says which allocator is responsible.
+        unsigned long long poolReserved = 0, poolUsed = 0;
+#if CUDART_VERSION >= 11020
+        cudaMemPool_t pool = nullptr;
+        int dev = 0;
+        if (cudaGetDevice(&dev) == cudaSuccess && cudaDeviceGetDefaultMemPool(&pool, dev) == cudaSuccess) {
+            cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &poolReserved);
+            cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &poolUsed);
+        }
+#endif
+        cudaGetLastError();
+        zklog.error("[MEM-DIAG] mempool reserved=" + std::to_string(poolReserved / (1024.0 * 1024.0)) +
+                    " MB used=" + std::to_string(poolUsed / (1024.0 * 1024.0)) + " MB");
         zklog.error("[MEM-DIAG] device free memory fell to " + std::to_string(freeB / (1024.0 * 1024.0)) +
                     " MB at " + where + " (baseline " + std::to_string(baseline / (1024.0 * 1024.0)) +
                     " MB, lost " + std::to_string((baseline - freeB) / (1024.0 * 1024.0)) +

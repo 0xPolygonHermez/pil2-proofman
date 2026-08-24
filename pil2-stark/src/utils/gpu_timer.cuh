@@ -6,6 +6,7 @@
 #include <string>
 #include <cuda_runtime.h>
 #include <vector>
+#include <atomic>
 #ifndef __GOLDILOCKS_ENV__
 #include "zklog.hpp"
 #endif
@@ -19,10 +20,30 @@
 // puts event calls -- whose returns are not checked below -- inside the capture, where any failure
 // silently invalidates it and resurfaces as cudaErrorStreamCaptureInvalidated at an unrelated call.
 // Replays skip host code, so those timings were never collectable anyway; skip while capturing.
+static inline std::atomic<long long> &timerEventsLive() {
+    static std::atomic<long long> v{0};
+    return v;
+}
+static inline void timerEventDelta(int d) {
+    long long now = timerEventsLive().fetch_add(d) + d;
+    static std::atomic<long long> peak{0};
+    if (d > 0) {
+        long long p = peak.load();
+        // Report each new high-water mark decade so unbounded growth is obvious.
+        if (now > p + 512) {
+            peak.store(now);
+#ifndef __GOLDILOCKS_ENV__
+            zklog.error("[EVT-LEAK] live cudaEvents from TimerGPU = " + std::to_string(now));
+#endif
+        }
+    }
+}
+
 static inline bool timerStreamCapturing(cudaStream_t s) {
     cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
-    unsigned long long id = 0;
-    if (cudaStreamGetCaptureInfo_v2(s, &status, &id, nullptr, nullptr, nullptr) != cudaSuccess) {
+    // cudaStreamIsCapturing: available and signature-stable since CUDA 10.0. Do NOT use
+    // cudaStreamGetCaptureInfo_v2 here -- it is not present in every toolkit we build against.
+    if (cudaStreamIsCapturing(s, &status) != cudaSuccess) {
         cudaGetLastError();
         return false;
     }
@@ -50,6 +71,7 @@ public:
 
     bool createEvent(cudaEvent_t& event) {
         cudaError_t err = cudaEventCreate(&event);
+        if (err == cudaSuccess) timerEventDelta(1);
         if (err != cudaSuccess) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("cudaEventCreate failed: " + std::string(cudaGetErrorString(err)));
@@ -203,16 +225,16 @@ public:
 
     void clear() {
         for (auto& [_, entry] : timers) {
-            cudaEventDestroy(entry.start);
-            cudaEventDestroy(entry.stop);
+            cudaEventDestroy(entry.start); timerEventDelta(-1);
+            cudaEventDestroy(entry.stop);  timerEventDelta(-1);
         }
         timers.clear();
         order.clear();
 
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
+                cudaEventDestroy(entry.start); timerEventDelta(-1);
+                cudaEventDestroy(entry.stop);  timerEventDelta(-1);
             }
         }
         multiTimers.clear();
