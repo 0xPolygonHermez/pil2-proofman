@@ -488,7 +488,7 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
     d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
 }
 
-__global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
+__global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_, uint64_t nBits, uint64_t domainInv_)
 {
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -509,7 +509,83 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
         d_shiftedValues[i * FIELD_EXTENSION] = xi[0];
         d_shiftedValues[i * FIELD_EXTENSION + 1] = xi[1];
         d_shiftedValues[i * FIELD_EXTENSION + 2] = xi[2];
+
+        Goldilocks3GPU::Element xiN, factor, one;
+        Goldilocks3GPU::copy(xiN, xi);
+        for (uint64_t bit = 0; bit < nBits; ++bit)
+            Goldilocks3GPU::mul(xiN, xiN, xiN);
+        Goldilocks3GPU::one(one);
+        Goldilocks3GPU::sub(factor, one, xiN);
+        gl64_t domainInv(domainInv_);
+        Goldilocks3GPU::mul(factor, factor, domainInv);
+        gl64_t *d_factors = d_shiftedValues + nOpeningPoints * FIELD_EXTENSION;
+        d_factors[i * FIELD_EXTENSION] = factor[0];
+        d_factors[i * FIELD_EXTENSION + 1] = factor[1];
+        d_factors[i * FIELD_EXTENSION + 2] = factor[2];
     }
+}
+
+__global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
+                                     uint64_t N, gl64_t *d_shiftedValues,
+                                     uint64_t rootInv_)
+{
+    constexpr uint32_t BATCH = 4;
+    const uint64_t opening = blockIdx.y;
+    const uint64_t batch = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const uint64_t row0 = batch * BATCH;
+    if (opening >= nOpeningPoints || row0 >= N) return;
+
+    const uint32_t count = (uint32_t)min((uint64_t)BATCH, N - row0);
+    Goldilocks3GPU::Element xi, factor;
+    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k) {
+        xi[k] = d_shiftedValues[opening * FIELD_EXTENSION + k];
+        factor[k] = d_shiftedValues[(nOpeningPoints + opening) * FIELD_EXTENSION + k];
+    }
+    const bool factorZero = factor[0].is_zero() && factor[1].is_zero() && factor[2].is_zero();
+    gl64_t rootInv(rootInv_);
+    gl64_t root = rootInv ^ (uint32_t)row0;
+    gl64_t roots[BATCH];
+    Goldilocks3GPU::Element prefix[BATCH], scaled, den, one;
+    Goldilocks3GPU::one(one);
+    for (uint32_t b = 0; b < count; ++b) {
+        roots[b] = root;
+        Goldilocks3GPU::mul(scaled, xi, root);
+        Goldilocks3GPU::sub(den, one, scaled);
+        if (b == 0) Goldilocks3GPU::copy(prefix[0], den);
+        else Goldilocks3GPU::mul(prefix[b], prefix[b - 1], den);
+        root *= rootInv;
+    }
+    const Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
+    if (factorZero) {
+        for (uint32_t b = 0; b < count; ++b) {
+            Goldilocks3GPU::mul(scaled, xi, roots[b]);
+            Goldilocks3GPU::sub(den, one, scaled);
+            const bool match = den[0].is_zero() && den[1].is_zero() && den[2].is_zero();
+            const uint64_t row = row0 + b;
+            for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
+                d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
+                                      nOpeningPoints * FIELD_EXTENSION, layout)] =
+                    match && k == 0 ? gl64_t(uint64_t(1)) : gl64_t(uint64_t(0));
+        }
+        return;
+    }
+    Goldilocks3GPU::Element inv, weight, out;
+    Goldilocks3GPU::inv(inv, prefix[count - 1]);
+    for (uint32_t b = count - 1; b > 0; --b) {
+        Goldilocks3GPU::mul(weight, inv, prefix[b - 1]);
+        Goldilocks3GPU::mul(out, factor, weight);
+        const uint64_t row = row0 + b;
+        for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
+            d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
+                                  nOpeningPoints * FIELD_EXTENSION, layout)] = out[k];
+        Goldilocks3GPU::mul(scaled, xi, roots[b]);
+        Goldilocks3GPU::sub(den, one, scaled);
+        Goldilocks3GPU::mul(inv, inv, den);
+    }
+    Goldilocks3GPU::mul(out, factor, inv);
+    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
+        d_LEv[getBufferOffset(row0, opening * FIELD_EXTENSION + k, N,
+                              nOpeningPoints * FIELD_EXTENSION, layout)] = out[k];
 }
 
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream)
@@ -524,18 +600,17 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     // Evaluate the shifted value for each opening point
     dim3 nThreads_(32);
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
-    evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
-
-    dim3 nThreads(512, 1);
-    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
-    fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
+    Goldilocks::Element domainInv = Goldilocks::inv(Goldilocks::fromU64(N));
+    evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(
+        d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe,
+        nOpeningPoints, d_openingPoints, invShift.fe, nBits, domainInv.fe);
+    constexpr uint32_t directBatch = 4;
+    dim3 nThreads(256, 1);
+    dim3 nBlocks((N + nThreads.x * directBatch - 1) / (nThreads.x * directBatch), nOpeningPoints);
+    Goldilocks::Element rootInv = Goldilocks::inv(Goldilocks::w(nBits));
+    fillLEvDirectBatched<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N, d_shiftedValues, rootInv.fe);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
-
-    TimerStartCategoryGPU(timer, NTT);
-    NTTGoldilocksGPU ntt;
-    ntt.INTT(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
-    TimerStopCategoryGPU(timer, NTT);
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
@@ -583,7 +658,7 @@ __global__ void computeEvals_v2(
     gl64_t *d_helper)
 {
 
-    extern __shared__ Goldilocks3GPU::Element shared_sum[];
+    extern __shared__ Goldilocks3GPU::Element warp_sum[];
     uint64_t evalIdx = blockIdx.x;
     uint64_t chunkIdx = blockIdx.y;
 
@@ -612,10 +687,9 @@ __global__ void computeEvals_v2(
             polLayout = fixedLayout();
         }
 
+        Goldilocks3GPU::Element sum;
         for (int i = 0; i < FIELD_EXTENSION; i++)
-        {
-            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0));
-        }
+            sum[i] = gl64_t(uint64_t(0));
         uint64_t tid = chunkIdx * blockDim.x + threadIdx.x;
         while (tid < N)
         {
@@ -638,29 +712,35 @@ __global__ void computeEvals_v2(
                 val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols, polLayout)];
                 Goldilocks3GPU::mul(res, LEv, val);
             }
-            Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
+            Goldilocks3GPU::add(sum, sum, res);
             tid += blockDim.x * gridDim.y;
         }
-        __syncthreads();
-        int s = (blockDim.x + 1) / 2;
-        while (s > 0)
-        {
-            if (threadIdx.x < s)
-            {
-                Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], shared_sum[threadIdx.x + s]);
-            }
-            __syncthreads();
-            if (s == 1)
-                break;
-            s = (s + 1) / 2;
+
+        const uint32_t lane = threadIdx.x & 31;
+        const uint32_t warp = threadIdx.x >> 5;
+        for (uint32_t offset = 16; offset > 0; offset >>= 1) {
+            Goldilocks3GPU::Element other;
+            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                other[i][0] = __shfl_down_sync(0xffffffffu, sum[i][0], offset);
+            if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
         }
-        
+        if (lane == 0) Goldilocks3GPU::copy(warp_sum[warp], sum);
         __syncthreads();
-        if (threadIdx.x == 0) {
-            uint64_t partial_pos = evalIdx * gridDim.y + chunkIdx;
-            d_helper[partial_pos * FIELD_EXTENSION] = shared_sum[0][0];
-            d_helper[partial_pos * FIELD_EXTENSION + 1] = shared_sum[0][1];
-            d_helper[partial_pos * FIELD_EXTENSION + 2] = shared_sum[0][2];
+        if (warp == 0) {
+            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                sum[i] = lane < 8 ? warp_sum[lane][i] : gl64_t(uint64_t(0));
+            for (uint32_t offset = 16; offset > 0; offset >>= 1) {
+                Goldilocks3GPU::Element other;
+                for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                    other[i][0] = __shfl_down_sync(0xffffffffu, sum[i][0], offset);
+                if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
+            }
+            if (lane == 0) {
+                uint64_t partial_pos = evalIdx * gridDim.y + chunkIdx;
+                d_helper[partial_pos * FIELD_EXTENSION] = sum[0];
+                d_helper[partial_pos * FIELD_EXTENSION + 1] = sum[1];
+                d_helper[partial_pos * FIELD_EXTENSION + 2] = sum[2];
+            }
         }
     }
 }
@@ -699,7 +779,7 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
     
     dim3 nThreads(256);
     dim3 nBlocks(nEvals, n_eval_chunks);
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
+    computeEvals_v2<<<nBlocks, nThreads, 8 * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
 
     dim3 nBlocks_2((nEvals + nThreads.x - 1) / nThreads.x);
     computeEvalsReduction<<<nBlocks_2, nThreads, 0, stream>>>((gl64_t *)h_params.evals, d_helper, d_evalsInfo, nEvals, n_eval_chunks);
