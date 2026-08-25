@@ -121,8 +121,60 @@ pub struct ExprCode {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HintValue {
+    pub op: String,
+    #[serde(default)]
+    pub id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintField {
+    pub name: String,
+    pub values: Vec<HintValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintInfo {
+    pub fields: Vec<HintField>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExpressionsInfo {
     pub expressions_code: Vec<ExprCode>,
+    #[serde(default)]
+    pub hints_info: Vec<HintInfo>,
+}
+
+impl ExpressionsInfo {
+    pub fn quotient_pairs(&self) -> Vec<(i64, i64)> {
+        let mut pairs = Vec::new();
+        for hint in &self.hints_info {
+            for (num_name, den_name) in [
+                ("numerator", "denominator"),
+                ("numerator_air", "denominator_air"),
+                ("numerator_direct", "denominator_direct"),
+            ] {
+                let num = hint.fields.iter().find(|f| f.name == num_name);
+                let den = hint.fields.iter().find(|f| f.name == den_name);
+                let (Some(num), Some(den)) = (num, den) else { continue };
+                if num.values.len() != 1 || den.values.len() != 1 {
+                    continue;
+                }
+                let (n, d) = (&num.values[0], &den.values[0]);
+                if n.op == "tmp" && d.op == "tmp" {
+                    if let (Some(nid), Some(did)) = (n.id, d.id) {
+                        pairs.push((nid, did));
+                    }
+                }
+            }
+        }
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    }
 }
 
 impl StarkInfo {
