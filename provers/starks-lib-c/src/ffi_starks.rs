@@ -1492,9 +1492,16 @@ pub fn alloc_device_large_buffers_c(
     aux_trace_recursive_area: u64,
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
+    unified_buffer_pad_area: u64,
 ) {
     unsafe {
-        alloc_device_large_buffers(d_buffers, aux_trace_recursive_area, const_pols_area, const_pols_aggregation_area);
+        alloc_device_large_buffers(
+            d_buffers,
+            aux_trace_recursive_area,
+            const_pols_area,
+            const_pols_aggregation_area,
+            unified_buffer_pad_area,
+        );
     }
 }
 
@@ -1615,18 +1622,6 @@ pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers_recursivef: *mut ::std::os::raw::c_void,
 ) -> *mut ::std::os::raw::c_void {
     unsafe { get_unified_buffer_gpu_for_recursivef(d_buffers, d_buffers_recursivef) }
-}
-
-pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe {
-        alloc_fixed_pols_buffer_gpu(d_buffers);
-    }
-}
-
-pub fn free_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe {
-        free_fixed_pols_buffer_gpu(d_buffers);
-    }
 }
 
 pub fn load_fixed_pols_recursivef_c(

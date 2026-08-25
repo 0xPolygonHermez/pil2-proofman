@@ -678,7 +678,8 @@ extern "C" {
         auxTraceRecursiveArea: u64,
         totalConstPols: u64,
         totalConstPolsAggregation: u64,
-    );   
+        unifiedBufferPadArea: u64,
+    );
     
     pub fn get_instances_ready(
         d_buffers_: *mut ::std::os::raw::c_void,
@@ -730,8 +731,6 @@ extern "C" {
     pub fn stream_commit_pause();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
-    pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
-    pub fn free_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
     pub fn load_fixed_pols_recursivef(pSetupCtx: *mut ::std::os::raw::c_void, pConstTree: *mut ::std::os::raw::c_void, d_buffers: *mut ::std::os::raw::c_void);
 
     // Callback Management

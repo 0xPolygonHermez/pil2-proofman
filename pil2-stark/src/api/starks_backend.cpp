@@ -61,7 +61,7 @@ void free_device_buffers_recursivef_gpu(void *d_buffers);
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
 void get_instances_ready_gpu(void *d_buffers, int64_t* instances_ready);
 void reset_device_streams_gpu(void *d_buffers_);
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size);
@@ -81,8 +81,6 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
-void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
-void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
 void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef);
 void free_final_snark_prover_gpu(void *snark_prover);
@@ -148,8 +146,6 @@ StarksBackend cpu_backend = []() {
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
-    backend.alloc_fixed_pols_buffer_gpu = nullptr;
-    backend.free_fixed_pols_buffer_gpu = nullptr;
     backend.load_fixed_pols_recursivef = nullptr;
     backend.init_final_snark_prover = init_final_snark_prover_cpu;
     backend.free_final_snark_prover = free_final_snark_prover_cpu;
@@ -212,8 +208,6 @@ StarksBackend gpu_backend = []() {
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
-    backend.alloc_fixed_pols_buffer_gpu = alloc_fixed_pols_buffer_gpu_gpu;
-    backend.free_fixed_pols_buffer_gpu = free_fixed_pols_buffer_gpu_gpu;
     backend.load_fixed_pols_recursivef = load_fixed_pols_recursivef_gpu;
     backend.init_final_snark_prover = init_final_snark_prover_gpu;
     backend.free_final_snark_prover = free_final_snark_prover_gpu;
@@ -414,9 +408,9 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_rec
     return backend->gen_device_streams ? backend->gen_device_streams(d_buffers_, n_streams, n_recursive_streams, auxTraceSizes, maxSizeProverBufferAggregation, maxProofSize, merkleTreeArity) : 1;
 }
 
-void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation);
+    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation, unifiedBufferPadArea);
 }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {
@@ -534,15 +528,7 @@ void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_re
     return backend->get_unified_buffer_gpu_for_recursivef ? backend->get_unified_buffer_gpu_for_recursivef(d_buffers_, d_buffers_recursivef_) : nullptr;
 }
 
-void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->alloc_fixed_pols_buffer_gpu) backend->alloc_fixed_pols_buffer_gpu(d_buffers_);
-}
 
-void free_fixed_pols_buffer_gpu(void *d_buffers_) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->free_fixed_pols_buffer_gpu) backend->free_fixed_pols_buffer_gpu(d_buffers_);
-}
 
 void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
