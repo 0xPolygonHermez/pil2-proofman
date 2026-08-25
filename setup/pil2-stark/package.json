@@ -4,7 +4,7 @@
   "description": "Node tooling dependencies for proofman proving-key generation",
   "dependencies": {
     "circomlib": "^2.0.5",
-    "pil2-compiler": "https://github.com/0xPolygonHermez/pil2-compiler.git#develop-0.13.0",
+    "pil2-compiler": "https://github.com/0xPolygonHermez/pil2-compiler.git#develop-0.14.0",
     "snarkjs": "0.7.6"
   }
 }
