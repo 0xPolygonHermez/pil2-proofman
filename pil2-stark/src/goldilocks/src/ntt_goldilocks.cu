@@ -1293,7 +1293,7 @@ struct NttRun {
         // waste, and the positioning roots are derived once per thread then extended
         // to the other Z-1 slots with one multiply each (the zStepRoots tables).
         // Grid and shared memory scale with it: num_blocks/Z blocks, Z*shared_sz bytes.
-        const int Z = 4;
+        const int Z = 8;
         size_t shared_sz = sizeof(gl64_t) << (radix - 1);
 
 #ifdef NTT_ARGS
@@ -1313,20 +1313,20 @@ struct NttRun {
                     nttDitColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             } else if (stage == 0 || lg < 12) {
                 if (fuse)
-                    nttDitColMajorKernel<4, false, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup, cosetStride);
+                    nttDitColMajorKernel<8, false, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup, cosetStride);
                 else
-                    nttDitColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
+                    nttDitColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             } else {
-                nttDitColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
+                nttDitColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             }
             stage += iterations;
         } else {
             if (num_blocks < (uint32_t)Z)
                 nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
             else if (stage == iterations || lg < 12)
-                nttDifColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
             else
-                nttDifColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
             stage -= iterations;
         }
         #undef NTT_ARGS
