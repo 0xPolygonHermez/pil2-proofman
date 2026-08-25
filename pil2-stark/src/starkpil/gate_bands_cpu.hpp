@@ -109,10 +109,11 @@ inline bool expand_poseidon_band(Goldilocks::Element *trace, uint64_t nCols, uin
 // the field; the API boundary owns the logging and the abort.
 enum class ExpandStatus {
     Ok = 0,
-    MalformedSection,   // the band section does not describe this buffer
-    UnsupportedVersion, // the key's section layout is not the one this build reads
-    UnexpandableBand,   // unknown kind, or a band that would run off the end of the trace
-    OutputMismatch,     // the band's own input does not hash to the output already in place
+    MalformedSection,       // the band section does not describe this buffer
+    UnsupportedVersion,     // the key's section layout is not the one this build reads
+    UnsupportedExecFormat,  // the enclosing exec file's layout is not the one this build reads
+    UnexpandableBand,       // unknown kind, or a band that would run off the end of the trace
+    OutputMismatch,         // the band's own input does not hash to the output already in place
 };
 
 struct ExpandResult {
@@ -128,12 +129,14 @@ struct ExpandResult {
 inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t *exec, uint64_t nCols,
                                       uint64_t execWords, uint64_t nRows) {
     ExpandResult res;
-    const BandsView view = band_section(exec, nCols, execWords);
+    const BandsView view = band_section(exec, execWords);
     res.version = view.version;
     switch (view.status) {
         case BandSection::Absent: return res;
         case BandSection::Malformed:          res.status = ExpandStatus::MalformedSection;   return res;
         case BandSection::UnsupportedVersion: res.status = ExpandStatus::UnsupportedVersion; return res;
+        case BandSection::UnsupportedExecFormat:
+            res.status = ExpandStatus::UnsupportedExecFormat; return res;
         case BandSection::Ok: break;
     }
 

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <climits>
 #include "goldilocks_base_field.hpp"
+#include "exec_layout.hpp"
 
 // Mirrors GateBandKind. Serialized, so these are a wire format: append, never renumber.
 enum GateBandKind : uint64_t {
@@ -102,10 +103,11 @@ constexpr int band_rows(uint64_t kind) { return is_aggregation(kind) ? AGG_ROWS 
 constexpr uint64_t GATE_BAND_FORMAT_VERSION = 1;
 
 enum class BandSection {
-    Absent,              // exec file written before bands existed: nothing to expand
+    Absent,                 // no section past the map: nothing to expand
     Ok,
-    Malformed,           // header or count does not describe this buffer
-    UnsupportedVersion,  // the key's section layout is not the one this build reads
+    Malformed,              // header or count does not describe this buffer
+    UnsupportedVersion,     // the key's section layout is not the one this build reads
+    UnsupportedExecFormat,  // the enclosing exec file's layout is not the one this build reads
 };
 
 struct BandsView {
@@ -117,18 +119,19 @@ struct BandsView {
 
 // The band section of an exec buffer: version, count, then (row, kind) per band. `execWords` is
 // the buffer's true length, which is how absence is detected -- the prefix alone is a complete
-// exec file.
-inline BandsView band_section(const uint64_t *exec, uint64_t nCols, uint64_t execWords) {
+// exec file. Where the section starts comes from the exec header, so this needs no trace width.
+inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
     BandsView v;
-    if (execWords < 2) return v;
-    const uint64_t nAdds = exec[0], nSMap = exec[1];
-    // Guard the products: a corrupt header must not wrap into a small prefix.
-    if (nAdds > (UINT64_MAX / 4) || (nCols != 0 && nSMap > (UINT64_MAX / nCols))) {
-        v.status = BandSection::Malformed;
+    const exec_layout::Header h = exec_layout::header(exec, execWords);
+    if (!h.valid) {
+        // Without a header this build reads, the section's offset is unknown. A refused version
+        // is reported apart from a corrupt header, since only one of them is worth regenerating.
+        v.version = h.version;
+        v.status = h.magic && !h.versionOk ? BandSection::UnsupportedExecFormat : BandSection::Malformed;
         return v;
     }
-    const uint64_t prefix = 2 + nAdds * 4 + nSMap * nCols;
-    if (prefix < 2 || execWords <= prefix) return v;          // Absent
+    const uint64_t prefix = exec_layout::bands_at(h);
+    if (execWords <= prefix) return v;                        // Absent
     if (execWords < prefix + 2) {                             // version without a count
         v.status = BandSection::Malformed;
         return v;

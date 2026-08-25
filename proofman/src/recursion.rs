@@ -1099,7 +1099,7 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 
 /// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
 /// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
-fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) {
+fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
     let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
         return;
     };
@@ -1110,7 +1110,9 @@ fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) {
     }
 
     let dir = std::env::var_os("TMPDIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    let path = dir.join(format!("zkin_ag{}_air{}_t{proof_type}.bin", setup.airgroup_id, setup.air_id));
+    // The instance is in the name because an air with several instances would otherwise have all
+    // but the first capture dropped, and which one won would depend on scheduling.
+    let path = dir.join(format!("zkin_ag{}_air{}_i{instance_id}_t{proof_type}.bin", setup.airgroup_id, setup.air_id));
     // create_new: the parallel prover would otherwise race on the same name. A leftover file from an
     // earlier run wins, so say so rather than looking like the capture happened.
     match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
@@ -1150,13 +1152,19 @@ fn generate_witness<F: PrimeField64>(
     // Capture the zkin feeding this recursion witness, to build test-recursive fixtures from a real
     // run. `PIL2_DUMP_ZKIN=recursive2` (or `all`) writes the first proof of each kind. Diagnostic
     // only: a dump that cannot be written must never fail the proof.
-    dump_zkin_if_requested(setup, zkin);
+    dump_zkin_if_requested(setup, instance_id, zkin);
 
+    // `take` blocks until a proof finishes and hands a buffer back. That wait is real time in this
+    // stage but it is not witness generation, and on CPU it dominates -- so the two are timed apart:
+    // the enclosing GENERATING_*_WITNESS stays end-to-end, CIRCOM_WITNESS is the circuit's own cost.
+    timer_start_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
     let mut witness: Vec<F> = match setup.setup_type {
         ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
         _ => memory_handler_recursive_witness.take_buffer_witness(),
     };
+    timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
 
+    timer_start_debug!(CIRCOM_WITNESS, "CIRCOM_WITNESS_{:?}", setup.setup_type);
     let res: i64 = unsafe {
         get_witness_fn(
             zkin.as_ptr() as *mut u64,
@@ -1165,6 +1173,7 @@ fn generate_witness<F: PrimeField64>(
             nmutex as u64,
         )
     };
+    timer_stop_and_log_debug!(CIRCOM_WITNESS, "CIRCOM_WITNESS_{:?}", setup.setup_type);
     drop(state);
 
     if res != 0 {

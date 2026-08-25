@@ -125,42 +125,75 @@ TEST(GateBands, SnapshotsFillEveryGroupExactly)
 }
 
 // The band section is parsed out of a buffer whose length is not otherwise checked, so the
-// reader has to refuse a truncated, mis-headered, or unknown-version one.
+// reader has to refuse a truncated, mis-headered, or unknown-version one. Where the section
+// starts now comes from the exec header, so a header this build cannot read has to be refused
+// too rather than guessed at.
 TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
 {
     const uint64_t V = gate_bands::GATE_BAND_FORMAT_VERSION;
+    const uint64_t H = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION;
+    // nAdds=0, a 1x2 map -> one packed word, so the section starts at word 5.
+    const uint64_t M = 0x0000000500000004ull;   // two u32 entries, arbitrary
 
-    // No tail past the map: a pre-bands exec file, which must read as Absent, not an error.
-    std::vector<uint64_t> prefixOnly{0, 1, 5, 5};   // nAdds=0, nSMap=1, nCols=2
-    auto v = gate_bands::band_section(prefixOnly.data(), 2, prefixOnly.size());
+    // No tail past the map: nothing to expand, which must read as Absent rather than an error.
+    std::vector<uint64_t> prefixOnly{H, 0, 1, 2, M};
+    auto v = gate_bands::band_section(prefixOnly.data(), prefixOnly.size());
     ASSERT_EQ((int)v.status, (int)gate_bands::BandSection::Absent);
     ASSERT_EQ(v.n, 0u);
 
     // Version word with no count behind it.
-    std::vector<uint64_t> versionOnly{0, 1, 5, 5, V};
-    ASSERT_EQ((int)gate_bands::band_section(versionOnly.data(), 2, versionOnly.size()).status,
+    std::vector<uint64_t> versionOnly{H, 0, 1, 2, M, V};
+    ASSERT_EQ((int)gate_bands::band_section(versionOnly.data(), versionOnly.size()).status,
               (int)gate_bands::BandSection::Malformed);
 
     // Count present but the pairs are missing.
-    std::vector<uint64_t> truncated{0, 1, 5, 5, V, 3, 0, 1};   // claims 3 bands, carries 1
-    ASSERT_EQ((int)gate_bands::band_section(truncated.data(), 2, truncated.size()).status,
+    std::vector<uint64_t> truncated{H, 0, 1, 2, M, V, 3, 0, 1};   // claims 3 bands, carries 1
+    ASSERT_EQ((int)gate_bands::band_section(truncated.data(), truncated.size()).status,
               (int)gate_bands::BandSection::Malformed);
 
     // Header whose map cannot fit the buffer.
-    std::vector<uint64_t> lying{0, 1000, 5, 5, V, 1, 0, 1};
-    ASSERT_EQ((int)gate_bands::band_section(lying.data(), 2, lying.size()).status,
+    std::vector<uint64_t> lying{H, 0, 1000, 2, M, V, 1, 0, 1};
+    ASSERT_EQ((int)gate_bands::band_section(lying.data(), lying.size()).status,
               (int)gate_bands::BandSection::Absent);
 
+    // A buffer with no exec header at all -- the pre-magic layout -- is refused, not parsed
+    // with the offsets this build happens to use.
+    std::vector<uint64_t> headerless{0, 1, 5, 5, V, 1, 0, 1};
+    ASSERT_EQ((int)gate_bands::band_section(headerless.data(), headerless.size()).status,
+              (int)gate_bands::BandSection::Malformed);
+
+    // An exec file from a newer setup: the section's offset is unknown, so it is refused as an
+    // exec-format problem rather than misread at this build's offset.
+    const uint64_t newerExec = exec_layout::EXEC_MAGIC | (exec_layout::EXEC_FORMAT_VERSION + 1);
+    std::vector<uint64_t> newerFile{newerExec, 0, 1, 2, M, V, 1, 0, 1};
+    auto ev = gate_bands::band_section(newerFile.data(), newerFile.size());
+    ASSERT_EQ((int)ev.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
+    ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION + 1);
+
     // A section from a newer setup is refused, not misparsed.
-    std::vector<uint64_t> newer{0, 1, 5, 5, V + 1, 1, 0, 1};
-    auto nv = gate_bands::band_section(newer.data(), 2, newer.size());
+    std::vector<uint64_t> newer{H, 0, 1, 2, M, V + 1, 1, 0, 1};
+    auto nv = gate_bands::band_section(newer.data(), newer.size());
     ASSERT_EQ((int)nv.status, (int)gate_bands::BandSection::UnsupportedVersion);
     ASSERT_EQ(nv.version, V + 1);
 
+    // Dimensions whose own offsets overflow describe no real buffer. That is a corrupt header,
+    // not a version this build refuses -- only one of the two is worth regenerating a key over.
+    std::vector<uint64_t> overflowing{H, 0, UINT64_MAX, 2, M, V, 1, 0, 1};
+    auto qv = gate_bands::band_section(overflowing.data(), overflowing.size());
+    ASSERT_EQ((int)qv.status, (int)gate_bands::BandSection::Malformed);
+
+    // An odd entry count leaves half a word unused, and the section still starts on the next
+    // whole word. Losing that round-up reads the map's last word as the section's version.
+    std::vector<uint64_t> oddMap{H, 0, 1, 1, 7, V, 1, 4, GB_POSEIDON1_AGGREGATION_SPONGE};
+    auto ov = gate_bands::band_section(oddMap.data(), oddMap.size());
+    ASSERT_EQ((int)ov.status, (int)gate_bands::BandSection::Ok);
+    ASSERT_EQ(ov.n, 1u);
+    ASSERT_EQ(ov.bands[0], 4u);
+
     // A well-formed section reads back exactly.
-    std::vector<uint64_t> good{0, 1, 5, 5, V, 2, 0, GB_POSEIDON1_COMPRESSOR_SPONGE,
+    std::vector<uint64_t> good{H, 0, 1, 2, M, V, 2, 0, GB_POSEIDON1_COMPRESSOR_SPONGE,
                                10, GB_POSEIDON2_AGGREGATION_COMPRESSION};
-    v = gate_bands::band_section(good.data(), 2, good.size());
+    v = gate_bands::band_section(good.data(), good.size());
     ASSERT_EQ((int)v.status, (int)gate_bands::BandSection::Ok);
     ASSERT_EQ(v.n, 2u);
     ASSERT_EQ(v.bands[0], 0u);

@@ -1179,6 +1179,12 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
+/// Gathers the circom witness into the committed-polynomial trace, zeroing every cell the
+/// exec file's map does not cover.
+///
+/// `exec_data` must come from `load_exec_file`, which is what rejects a header this build
+/// cannot read and a map wider than the trace. Passing an unvalidated buffer yields a
+/// zero-filled trace at best.
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     circomWitness: *mut u8,

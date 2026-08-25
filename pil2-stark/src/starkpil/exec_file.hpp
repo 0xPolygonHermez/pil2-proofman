@@ -1,42 +1,34 @@
 #ifndef EXEC_FILE
 #define EXEC_FILE
 
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include "utils.hpp"
+#include <cstring>
+#include "goldilocks_base_field.hpp"
+#include "exec_layout.hpp"
 
-// Reads the header and the s_map and stops there. An exec file may carry a gate-band section
-// past the map, which this does NOT load, leaving the hash gates' interiors missing. Rust reads
-// the whole file itself (load_exec_file).
-void readExecFile(uint64_t *exec_data, std::string execFile, uint64_t nCommitedPols) {
-    uint64_t nAdds;
-    uint64_t nSMap;
-
-    std::ifstream file(execFile, std::ios::binary);
-    file.read(reinterpret_cast<char *>(&nAdds), sizeof(uint64_t));
-    file.read(reinterpret_cast<char *>(&nSMap), sizeof(uint64_t));
-    
-    loadFileParallel(exec_data, execFile, (2 + nAdds * 4 + nSMap * nCommitedPols) * sizeof(uint64_t));
-}
-
+// Gathers the circom witness into the committed-polynomial trace. Cells outside the map's live
+// extent (see exec_layout.hpp), and mapped cells holding the unused-signal sentinel 0, are zero.
 void getCommitedPols(Goldilocks::Element *circomWitness, uint64_t *exec_data, Goldilocks::Element *witness, Goldilocks::Element* publics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols)  {
 
-    uint64_t nAdds = exec_data[0];
-    uint64_t nSMap = exec_data[1];
-    uint64_t *p_adds = &exec_data[2];
-    uint64_t *p_sMap = &exec_data[2 + nAdds * 4];
+    // load_exec_file rejected any header this build cannot read, so the buffer is at least
+    // HEADER_WORDS long. One that slipped through still degrades safely: the extent reads as
+    // empty and the trace comes out zero rather than misparsed.
+    const exec_layout::Header h = exec_layout::header(exec_data, exec_layout::HEADER_WORDS);
+    const uint64_t *p_adds = &exec_data[exec_layout::HEADER_WORDS];
+    // Entries are u32 pairs inside the u64 buffer, read through a byte pointer because aliasing
+    // a uint64_t array as uint32_t is undefined. Compiles to the same load.
+    const char *p_sMap = reinterpret_cast<const char *>(&exec_data[exec_layout::map_at(h)]);
+
+    // The loader rejects a map wider than the trace but cannot check the height, not knowing
+    // nBits. Clamp both so a bad key cannot walk off either buffer.
+    const uint64_t mapRows = h.mapRows < N ? h.mapRows : N;
+    const uint64_t mapCols = h.mapCols < nCommitedPols ? h.mapCols : nCommitedPols;
 
     for(uint64_t i = 0; i < nPublics; ++i) {
         publics[i] = circomWitness[1 + i];
     }
-        
-    for (uint64_t i = 0; i < nAdds; i++) {
+
+    // Serial: an addition may read a signal an earlier one produced.
+    for (uint64_t i = 0; i < h.nAdds; i++) {
         uint64_t idx_1 = p_adds[i * 4];
         uint64_t idx_2 = p_adds[i * 4 + 1];
 
@@ -45,15 +37,18 @@ void getCommitedPols(Goldilocks::Element *circomWitness, uint64_t *exec_data, Go
         circomWitness[sizeWitness + i] = c + d;
     }
 
-    for (uint i = 0; i < N; i++) {
-        for (uint j = 0; j < nCommitedPols; j++) {
-            if (i < nSMap && p_sMap[nCommitedPols * i + j] != 0) {
-                witness[i * nCommitedPols + j] = circomWitness[p_sMap[nCommitedPols * i + j]];
-            } else {
-                witness[i * nCommitedPols + j] = Goldilocks::zero();
-            }
+#pragma omp parallel for schedule(static)
+    for (uint64_t i = 0; i < N; i++) {
+        Goldilocks::Element *row = &witness[i * nCommitedPols];
+        const uint64_t mapped = i < mapRows ? mapCols : 0;
+        for (uint64_t j = 0; j < mapped; j++) {
+            uint32_t idx;
+            memcpy(&idx, p_sMap + (i * h.mapCols + j) * sizeof(uint32_t), sizeof(uint32_t));
+            row[j] = idx != 0 ? circomWitness[idx] : Goldilocks::zero();
         }
-    } 
+        // Element is a bare uint64_t whose zero is all-zero bits.
+        memset(row + mapped, 0, (nCommitedPols - mapped) * sizeof(Goldilocks::Element));
+    }
 }
 
 #endif

@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, load_exec_file, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
+use proofman_common::{exec_header, load_exec_file, AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expand_gate_bands_c, get_committed_pols_c};
@@ -95,7 +95,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 get_size_witness()
             };
 
-            let witness_size = size_witness + exec_file_data.first().unwrap();
+            let witness_size = size_witness + exec_header(&exec_file_data).n_adds;
 
             let witness: Vec<F> = vec![F::ZERO; witness_size as usize];
 

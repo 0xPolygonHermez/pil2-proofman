@@ -942,10 +942,6 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 
 
 
-void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
-    readExecFile(exec_data, string(exec_file), nCommitedPols);
-}
-
 void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
@@ -961,6 +957,11 @@ uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommited
         case gate_bands::ExpandStatus::MalformedSection:
             zklog.error("expand_gate_bands: the exec file's gate-band section does not describe a "
                         "buffer of " + std::to_string(execWords) + " words; the proving key is corrupt");
+            break;
+        case gate_bands::ExpandStatus::UnsupportedExecFormat:
+            zklog.error("expand_gate_bands: the exec file's format version is not the version " +
+                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) + " this build reads; "
+                        "regenerate the proving key with a matching setup");
             break;
         case gate_bands::ExpandStatus::UnsupportedVersion:
             zklog.error("expand_gate_bands: gate-band section is format version " +

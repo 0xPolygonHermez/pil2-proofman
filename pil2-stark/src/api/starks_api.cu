@@ -742,11 +742,18 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     // the setup, so a proof that finds an AirInstanceInfo finds its bands too.
     gate_bands::BandsView bandView;
     if (execData != nullptr) {
-        bandView = gate_bands::band_section(execData, setupCtx->starkInfo.mapSectionsN["cm1"], execWords);
+        bandView = gate_bands::band_section(execData, execWords);
         const std::string air = "air (" + std::to_string(airgroupId) + "," + std::to_string(airId) + ")";
         if (bandView.status == gate_bands::BandSection::Malformed) {
             zklog.error("load_device_setup: " + air + " has a gate-band section that does not describe "
                         "its exec buffer; the proving key is corrupt");
+            exitProcess();
+        }
+        if (bandView.status == gate_bands::BandSection::UnsupportedExecFormat) {
+            zklog.error("load_device_setup: " + air + " has exec file format version " +
+                        std::to_string(bandView.version) + ", but this build reads version " +
+                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) +
+                        "; regenerate the proving key with a matching setup");
             exitProcess();
         }
         if (bandView.status == gate_bands::BandSection::UnsupportedVersion) {

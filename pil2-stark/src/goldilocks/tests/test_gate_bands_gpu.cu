@@ -90,9 +90,10 @@ TEST(GateBandsGPU, MatchesTheHostExpander)
     std::vector<GL> seed(l.nRows * nCols, Goldilocks::zero());
     for (uint64_t i = 0; i < nBands; i++) placeBoundary(seed, nCols, l.bands[i * 2], l.bands[i * 2 + 1], rng);
 
-    // An exec buffer carrying just this band section: nAdds = 0, nSMap = 0, then the
-    // section's version and count.
-    std::vector<uint64_t> exec{0, 0, gate_bands::GATE_BAND_FORMAT_VERSION, nBands};
+    // An exec buffer carrying just this band section: an empty header -- no additions and no
+    // map -- then the section's version and count.
+    std::vector<uint64_t> exec{exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION, 0, 0, 0,
+                               gate_bands::GATE_BAND_FORMAT_VERSION, nBands};
     exec.insert(exec.end(), l.bands.begin(), l.bands.end());
 
     std::vector<GL> host = seed;

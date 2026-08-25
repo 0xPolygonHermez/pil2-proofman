@@ -2,8 +2,8 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, init_gpu_setup, initialize_logger, load_exec_file, ProofmanOptions, SetupCtx, SetupsVadcop,
-    MpiCtx, ProofCtx, ProofmanError, ProofType,
+    calculate_fixed_tree, exec_header, init_gpu_setup, initialize_logger, load_exec_file, ProofmanOptions, SetupCtx,
+    SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;
@@ -241,7 +241,7 @@ impl ProveAirCmd {
         };
 
         // Total circom witness size = circuit witness + the n_adds from the exec header.
-        let witness_size = (size_witness + exec_file_data[0]) as usize;
+        let witness_size = (size_witness + exec_header(&exec_file_data).n_adds) as usize;
         let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
 
         timer_start_info!(WITNESS_GENERATION);
