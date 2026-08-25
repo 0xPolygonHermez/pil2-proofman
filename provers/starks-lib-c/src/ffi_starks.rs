@@ -1474,12 +1474,30 @@ pub fn gen_device_streams_c(
     max_pinned_proof_size: u64,
     merkle_tree_arity: u64,
 ) -> u64 {
+    // With four streams the planner can produce one maximum-sized stream and
+    // three equal smaller streams.  On the 32 GiB prover workload that puts
+    // Main just above all three small streams, serializing every Main proof on
+    // the same stream as Keccak.  Keep the stream count and total allocation
+    // unchanged, but make the second stream 53% of the largest by transferring
+    // space from the last stream.  The narrow shape check leaves every other
+    // layout untouched.
+    let mut balanced_sizes = aux_trace_sizes.to_vec();
+    if balanced_sizes.len() == 4
+        && balanced_sizes[0] > balanced_sizes[1]
+        && balanced_sizes[1] == balanced_sizes[2]
+        && balanced_sizes[2] == balanced_sizes[3]
+    {
+        let target = balanced_sizes[0].saturating_mul(53).div_ceil(100);
+        let moved = target.saturating_sub(balanced_sizes[1]).min(balanced_sizes[3].saturating_sub(1));
+        balanced_sizes[1] += moved;
+        balanced_sizes[3] -= moved;
+    }
     unsafe {
         gen_device_streams(
             d_buffers,
-            aux_trace_sizes.len() as u64,
+            balanced_sizes.len() as u64,
             n_recursive_streams,
-            aux_trace_sizes.as_ptr(),
+            balanced_sizes.as_ptr(),
             max_size_buffer_aggregation,
             max_pinned_proof_size,
             merkle_tree_arity,
