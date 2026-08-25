@@ -80,8 +80,10 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false) {
-    // Per-stream timer is reused: drop categories a prior aborted job left open.
+    // Per-stream timer is reused: drop categories left open by an aborted job, and the load
+    // phase's, so KERNELS CONTRIBUTIONS covers the proof window only.
     TimerResetCategoriesGPU(timer);
+    TimerClearCategoriesGPU(timer);
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
 
@@ -105,7 +107,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // (air, stream, region) gets its own graph:
     //   0x57455850 "WEXP"  witness expressions
     //   0x434d5431 "CM1"   commit stage 1 (+ recursive, skipRecalculation in key)
-    //   0x53544432 "STD2"  stage-2 getFields + gsum/gprod + im hints + im pols
+    //   0x53544432 "STD2"  stage-2 getFields + gsum/gprod + im hints
+    //   0x494d504c "IMPL"  im pols
     //   0x434d5432 "CM2"   commit stage 2 + airValues transcript puts
     //   0x51455850 "QEXP"  Q expression
     //   0x434d5451 "CMQ"   commit stage Q
@@ -254,13 +257,16 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-
+    });
     TimerStopGPU(timer, STARK_CALCULATE_WITNESS_STD);
 
+    // Own capture region so the section timers stay outside every region body: a replay returns
+    // before the body, so a start/stop pair split across it loses the stop event.
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    TimerStopGPU(timer, CALCULATE_IM_POLS);
+    cudagraph::run(cudagraph::key(0x494d504cULL ^ graphCtxId), countId, stream, [&] {
+        calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     });
+    TimerStopGPU(timer, CALCULATE_IM_POLS);
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
     cudagraph::run(cudagraph::key(0x434d5432ULL ^ graphCtxId), countId, stream, [&] {

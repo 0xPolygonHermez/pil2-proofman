@@ -456,36 +456,75 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-__global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
+// LEv[i][row] = A_i / (xi_i w^{-r} - 1), A_i = (xi_i^N - 1)/N: the closed form of the iNTT of a
+// geometric sequence, so the power vector AND the length-N iNTT of 3*nOpeningPoints columns are gone.
+// Vanishes only if the challenge lands on the domain, which already divides by zero in the DEEP
+// quotient. w^{-r} comes from two small tables (thread + block) instead of a per-thread pow().
+__global__ void prepareLEvBary(uint64_t nOpeningPoints, uint64_t N, uint64_t blockSize,
+                               gl64_t *d_shiftedValues, gl64_t *d_A, gl64_t *d_tabT, gl64_t *d_tabB,
+                               uint64_t nBlocks, uint64_t wInv_)
 {
-    uint64_t i  = blockIdx.y;                  // opening point index
-    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
-    if (i >= nOpeningPoints || row >= N) return;
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    Goldilocks3GPU::Element xi;
-    xi[0] = d_shiftedValues[i * FIELD_EXTENSION + 0];
-    xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
-    xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
-
-    __shared__ Goldilocks3GPU::Element basePow;
-
-    if (threadIdx.x == 0) {
-        Goldilocks3GPU::pow(xi, k0, basePow);
+    if (idx < nOpeningPoints) {
+        Goldilocks3GPU::Element xi, xiN, one;
+        xi[0] = d_shiftedValues[idx * FIELD_EXTENSION + 0];
+        xi[1] = d_shiftedValues[idx * FIELD_EXTENSION + 1];
+        xi[2] = d_shiftedValues[idx * FIELD_EXTENSION + 2];
+        Goldilocks3GPU::Element base;                       // pow() squares its base in place
+        Goldilocks3GPU::copy(base, xi);
+        Goldilocks3GPU::pow(base, N, xiN);
+        Goldilocks3GPU::one(one);
+        Goldilocks3GPU::sub(xiN, xiN, one);
+        gl64_t invN = gl64_t(N).reciprocal();               // the iNTT's 1/N scaling
+        Goldilocks3GPU::mul(xiN, xiN, invN);
+        d_A[idx * FIELD_EXTENSION + 0] = xiN[0];
+        d_A[idx * FIELD_EXTENSION + 1] = xiN[1];
+        d_A[idx * FIELD_EXTENSION + 2] = xiN[2];
     }
-    __syncthreads();
 
-    Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
+    if (idx < blockSize) { gl64_t w(wInv_); w ^= (uint32_t)idx;             d_tabT[idx] = w; }
+    if (idx < nBlocks)   { gl64_t w(wInv_); w ^= (uint32_t)(idx * blockSize); d_tabB[idx] = w; }
+}
 
-    Goldilocks3GPU::Element res;
-    Goldilocks3GPU::mul(res, basePow, xi_t);
+// One thread per row: the group's denominators are batch-inverted, so one cubic inversion serves
+// all nOpeningPoints outputs instead of one each.
+__global__ void fillLEvBary(gl64_t *d_LEv, uint64_t nOpeningPoints, uint64_t N,
+                            gl64_t *d_shiftedValues, gl64_t *d_A, gl64_t *d_tabT, gl64_t *d_tabB)
+{
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= N) return;
+
+    gl64_t wr = d_tabB[blockIdx.x] * d_tabT[threadIdx.x];   // w^{-row}
+
+    Goldilocks3GPU::Element den[MAX_LEV_OPENINGS], prefix[MAX_LEV_OPENINGS], one, t;
+    Goldilocks3GPU::one(one);
+    for (uint64_t o = 0; o < nOpeningPoints; ++o) {
+        Goldilocks3GPU::Element xi;
+        xi[0] = d_shiftedValues[o * FIELD_EXTENSION + 0];
+        xi[1] = d_shiftedValues[o * FIELD_EXTENSION + 1];
+        xi[2] = d_shiftedValues[o * FIELD_EXTENSION + 2];
+        Goldilocks3GPU::mul(den[o], xi, wr);
+        Goldilocks3GPU::sub(den[o], den[o], one);
+        if (o == 0) Goldilocks3GPU::copy(prefix[0], den[0]);
+        else Goldilocks3GPU::mul(prefix[o], prefix[o - 1], den[o]);
+    }
+    Goldilocks3GPU::inv(t, prefix[nOpeningPoints - 1]);
 
     Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
-    
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
+    for (uint64_t o = nOpeningPoints; o-- > 0;) {
+        Goldilocks3GPU::Element inv_o, res;
+        if (o == 0) {
+            Goldilocks3GPU::copy(inv_o, t);
+        } else {
+            Goldilocks3GPU::mul(inv_o, t, prefix[o - 1]);
+            Goldilocks3GPU::mul(t, t, den[o]);
+        }
+        Goldilocks3GPU::mul(res, inv_o, *(Goldilocks3GPU::Element *)(d_A + o * FIELD_EXTENSION));
+        d_LEv[getBufferOffset(row, o * FIELD_EXTENSION,     N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
+        d_LEv[getBufferOffset(row, o * FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
+        d_LEv[getBufferOffset(row, o * FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
+    }
 }
 
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
@@ -517,7 +556,19 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     TimerStartCategoryGPU(timer, LEV);
     uint64_t N = 1 << nBits;
 
+    // fillLEvBary keeps one denominator per opening in registers, so the caller's grouping
+    // (fours, in gen_proof / gen_recursivef) is a hard bound, not a convention.
+    if (nOpeningPoints > MAX_LEV_OPENINGS) {
+        zklog.error("computeLEv_inplace: nOpeningPoints " + std::to_string(nOpeningPoints) +
+                    " exceeds MAX_LEV_OPENINGS " + std::to_string(MAX_LEV_OPENINGS));
+        exitProcess();
+    }
+
+    // extra_helper_fft_lev layout: xi_i | A_i | w^{-t} | w^{-blockSize*b}. blockSize <= N keeps the
+    // two tables under N elements, so it fits every domain.
     gl64_t * d_shiftedValues = d_aux_trace + offset_helper;
+    gl64_t * d_A     = d_shiftedValues + MAX_LEV_OPENINGS * FIELD_EXTENSION;
+    gl64_t * d_tabT  = d_A + MAX_LEV_OPENINGS * FIELD_EXTENSION;
 
     Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
 
@@ -526,16 +577,19 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
 
-    dim3 nThreads(512, 1);
-    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
-    fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
-    TimerStopCategoryGPU(timer, LEV);
-    CHECKCUDAERR(cudaGetLastError());
+    uint64_t blockSize = std::min((uint64_t)512, N);
+    uint64_t nBlocks = (N + blockSize - 1) / blockSize;
+    gl64_t * d_tabB = d_tabT + blockSize;
+    uint64_t wInv = Goldilocks::inv(Goldilocks::w(nBits)).fe;
 
-    TimerStartCategoryGPU(timer, NTT);
-    NTTGoldilocksGPU ntt;
-    ntt.INTT(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
-    TimerStopCategoryGPU(timer, NTT);
+    uint64_t prepThreads = 256;
+    uint64_t prepItems = std::max(std::max(nOpeningPoints, blockSize), nBlocks);
+    prepareLEvBary<<<(prepItems + prepThreads - 1) / prepThreads, prepThreads, 0, stream>>>(
+        nOpeningPoints, N, blockSize, d_shiftedValues, d_A, d_tabT, d_tabB, nBlocks, wInv);
+
+    fillLEvBary<<<nBlocks, blockSize, 0, stream>>>(d_LEv, nOpeningPoints, N, d_shiftedValues, d_A, d_tabT, d_tabB);
+    CHECKCUDAERR(cudaGetLastError());
+    TimerStopCategoryGPU(timer, LEV);
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
@@ -823,16 +877,18 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
         }
         else
         {
-            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-            {
-                friPol[id * FIELD_EXTENSION + i] = ppar[(ratio - 1) * FIELD_EXTENSION + i];
-            }
+            // Horner in registers -- see fold_reg.
+            Goldilocks3GPU::Element acc, ch;
+            Goldilocks3GPU::copy(ch, *((Goldilocks3GPU::Element *)&d_challenge[0]));
+            Goldilocks3GPU::copy(acc, *((Goldilocks3GPU::Element *)&ppar[(ratio - 1) * FIELD_EXTENSION]));
             for (int i = ratio - 2; i >= 0; i--)
             {
-                Goldilocks3GPU::Element aux;
-                Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)&d_challenge[0]));
-                Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
+                Goldilocks3GPU::mul(acc, acc, ch);
+                Goldilocks3GPU::add(acc, acc, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
             }
+            friPol[id * FIELD_EXTENSION + 0] = acc[0];
+            friPol[id * FIELD_EXTENSION + 1] = acc[1];
+            friPol[id * FIELD_EXTENSION + 2] = acc[2];
         }
     }
 }
@@ -896,16 +952,19 @@ __global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Elemen
         Goldilocks3GPU::mul(*component, *component, r);
         r *= sinv;
     }
-    for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-    {
-        friPol[id * FIELD_EXTENSION + i] = ppar[(RATIO - 1) * FIELD_EXTENSION + i];
-    }
+    // Horner in registers: the accumulator used to be friPol itself, so every step was a global
+    // read-modify-write of a cubic value (RATIO-1 of them per row) plus a re-read of the challenge.
+    Goldilocks3GPU::Element acc, ch;
+    Goldilocks3GPU::copy(ch, *((Goldilocks3GPU::Element *)&d_challenge[0]));
+    Goldilocks3GPU::copy(acc, *((Goldilocks3GPU::Element *)&ppar[(RATIO - 1) * FIELD_EXTENSION]));
     for (int i = RATIO - 2; i >= 0; i--)
     {
-        Goldilocks3GPU::Element aux;
-        Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)&d_challenge[0]));
-        Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
+        Goldilocks3GPU::mul(acc, acc, ch);
+        Goldilocks3GPU::add(acc, acc, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
     }
+    friPol[id * FIELD_EXTENSION + 0] = acc[0];
+    friPol[id * FIELD_EXTENSION + 1] = acc[1];
+    friPol[id * FIELD_EXTENSION + 2] = acc[2];
 }
 
 void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream)

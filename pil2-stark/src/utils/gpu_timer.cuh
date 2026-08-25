@@ -16,6 +16,9 @@ struct TimerEntry {
     cudaEvent_t start = nullptr;
     cudaEvent_t stop = nullptr;
     float timeMs = -1.0f;
+    // Nesting level at the first start(): sections wrap each other, and a flat log of them
+    // reads as double counting.
+    uint32_t depth = 0;
 };
 
 class TimerGPU {
@@ -24,6 +27,8 @@ public:
     std::unordered_map<std::string, std::vector<TimerEntry>> multiTimers;
     std::unordered_map<std::string, size_t> activeCategoryTimers;
     std::vector<std::string> order;
+    // Open sections, innermost last; only its size is used, as the next section's depth.
+    std::vector<std::string> openSections;
     cudaStream_t stream = nullptr;
 
     TimerGPU() = default;
@@ -46,9 +51,10 @@ public:
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
             if (!createEvent(start) || !createEvent(stop)) return;
-            timers[name] = {start, stop, -1.0f};
+            timers[name] = {start, stop, -1.0f, (uint32_t)openSections.size()};
             order.push_back(name);
         }
+        openSections.push_back(name);
         cudaEventRecord(timers[name].start, stream);
     }
 
@@ -61,6 +67,9 @@ public:
             return;
         }
         cudaEventRecord(it->second.stop, stream);
+        for (size_t i = openSections.size(); i-- > 0;) {
+            if (openSections[i] == name) { openSections.erase(openSections.begin() + i); break; }
+        }
     }
 
     void startCategory(const std::string& name) {
@@ -138,7 +147,7 @@ public:
         for (const auto& name : order) {
             auto& entry = timers[name];
             if (entry.timeMs < 0.0f) syncAndCompute(name);
-            zklog.trace("<-- " + name + " : " + std::to_string(entry.timeMs / 1000.0f) + " s");
+            zklog.trace("<-- " + std::string(2 * entry.depth, ' ') + name + " : " + std::to_string(entry.timeMs / 1000.0f) + " s");
         }
         if (order.empty()) {
             for (auto& [category, entries] : multiTimers) {
@@ -175,8 +184,22 @@ public:
         }
     }
 
-    // Clear stale open categories so an aborted job can't leak state into the next.
+    // Clear stale open categories/sections so an aborted job can't leak state into the next.
     void resetCategories() {
+        activeCategoryTimers.clear();
+        openSections.clear();
+    }
+
+    // Drop recorded categories so the next window's report covers only that window: the prove
+    // path records some before the proof opens (the load phase).
+    void clearCategories() {
+        for (auto& [_, entries] : multiTimers) {
+            for (auto& entry : entries) {
+                cudaEventDestroy(entry.start);
+                cudaEventDestroy(entry.stop);
+            }
+        }
+        multiTimers.clear();
         activeCategoryTimers.clear();
     }
 
@@ -187,6 +210,7 @@ public:
         }
         timers.clear();
         order.clear();
+        openSections.clear();
 
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
@@ -202,6 +226,8 @@ public:
 #ifndef __GOLDILOCKS_ENV__
         if (timers.find(total_name) == timers.end()) return;
 
+        // clearCategories() at the proof window's start means everything left belongs to
+        // total_name; mixing in the load phase used to push the total over 100%.
         double time_total = getTimeSec(total_name);
         if (multiTimers.empty()) return;
         zklog.trace("     KERNELS CONTRIBUTIONS:");
@@ -270,6 +296,8 @@ inline std::string makeTimerName(const std::string& base, int id) {
 
 #define TimerResetCategoriesGPU(timer) (timer.resetCategories())
 
+#define TimerClearCategoriesGPU(timer) (timer.clearCategories())
+
 #define TimerGetElapsedCategoryGPU(timer, category) \
     (timer.getCategoryTotalTimeSec(#category))
 
@@ -289,6 +317,7 @@ inline std::string makeTimerName(const std::string& base, int id) {
 #define TimerSyncCategoriesGPU(timer)
 #define TimerResetGPU(timer)
 #define TimerResetCategoriesGPU(timer)
+#define TimerClearCategoriesGPU(timer)
 #define TimerGetElapsedCategoryGPU(timer, category) 0.0
 #define TimerLogCategoryContributionsGPU(timer, total_name)
 #define TimerSyncCategoriesGPU(timer)

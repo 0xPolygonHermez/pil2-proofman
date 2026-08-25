@@ -26,6 +26,9 @@
 // Replaced a Horner form (accum = accum*vf2 + (p_j - e_j), then fri = fri*vf1 +
 // accum*inv_g) that recomputed all of that per row; measured 10-37% faster
 // across the zisk AIR shapes.
+//
+// The 1/(x[r] - xi_o) factors fold too: carrying the row as a single fraction costs ONE cubic
+// inversion per row instead of one per group of four.
 
 // One thread per opening point. coef is indexed by evalPos so it lines up with
 // the eval map; K is indexed by opening.
@@ -76,79 +79,70 @@ static __global__ void computeFRIExpressionFolded(uint64_t domainSize, uint64_t 
     uint64_t nchunks = domainSize / blockDim.x;
 
     while (chunk_idx < nchunks) {
-        Goldilocks3GPU::Element fri_pol, accum, res, term, val;
+        Goldilocks3GPU::Element accum, res, term, val, num, den, d, t;
 
         uint64_t i = chunk_idx * blockDim.x;
         uint64_t r = i + threadIdx.x;
-        // Montgomery-batched denominators, groups of 4 openings: one Fp3 inversion
-        // per group instead of one per opening
-        Goldilocks3GPU::Element inv_g[4];
-        for (uint64_t og = 0; og < nOpeningPoints; og += 4) {
-            const uint32_t gn = (nOpeningPoints - og < 4) ? (uint32_t)(nOpeningPoints - og) : 4u;
 
-            // Batch-invert the gn denominators (x[r] - xDivXSub[og+k]):
-            // forward prefix products, one Fp3 inversion, backward unwind.
-            Goldilocks3GPU::Element den, t;
-            for (uint32_t k = 0; k < gn; ++k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                if (k == 0) Goldilocks3GPU::copy(inv_g[0], den);
-                else Goldilocks3GPU::mul(inv_g[k], inv_g[k - 1], den);
-            }
-            Goldilocks3GPU::inv(t, inv_g[gn - 1]);
-            for (uint32_t k = gn - 1; k > 0; --k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                Goldilocks3GPU::mul(inv_g[k], t, inv_g[k - 1]);
-                Goldilocks3GPU::mul(t, t, den);
-            }
-            Goldilocks3GPU::copy(inv_g[0], t);
+        // num/den += accum/d  <=>  num = num*d + accum*den, den = den*d. One inversion per ROW
+        // instead of one per group of four, and no inv_g[] batch in registers.
+        // A zero d_o (challenge on the domain) poisons the row either way, as before.
+        for (uint64_t o = 0; o < nOpeningPoints; ++o) {
+            // K_o carries the folded evaluations; an opening with no columns
+            // contributes K_o = 0.
+            Goldilocks3GPU::copy(accum, *(Goldilocks3GPU::Element *)(d_k + o * FIELD_EXTENSION));
 
-            for (uint64_t o = og; o < og + gn; ++o) {
-                // K_o carries the folded evaluations; an opening with no columns
-                // contributes K_o = 0.
-                Goldilocks3GPU::copy(accum, *(Goldilocks3GPU::Element *)(d_k + o * FIELD_EXTENSION));
-
-                for (uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
-                    EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
-                    Goldilocks3GPU::Element &coef =
-                        *(Goldilocks3GPU::Element *)(d_coef + evalInfo.evalPos * FIELD_EXTENSION);
-                    // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
-                    // commits (1) and fixed/const (2) follow fixedLayout().
-                    gl64_t *pol;
-                    Layout polLayout;
-                    if (evalInfo.type == 0) {
-                        pol = d_cmPols;
-                        polLayout = resolveLayout(nBits, evalInfo.stageCols);
-                    } else if (evalInfo.type == 1) {
-                        pol = d_customComits;
-                        polLayout = fixedLayout();
-                    } else {
-                        pol = d_fixedPols;
-                        polLayout = fixedLayout();
-                    }
-
-                    if (evalInfo.dim == 1) {
-                        gl64_t v = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::mul(term, coef, v);
-                    } else {
-                        val[0] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        val[1] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
-                        val[2] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::mul(term, coef, val);
-                    }
-                    Goldilocks3GPU::add(accum, accum, term);
+            for (uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
+                EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
+                Goldilocks3GPU::Element &coef =
+                    *(Goldilocks3GPU::Element *)(d_coef + evalInfo.evalPos * FIELD_EXTENSION);
+                // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
+                // commits (1) and fixed/const (2) follow fixedLayout().
+                gl64_t *pol;
+                Layout polLayout;
+                if (evalInfo.type == 0) {
+                    pol = d_cmPols;
+                    polLayout = resolveLayout(nBits, evalInfo.stageCols);
+                } else if (evalInfo.type == 1) {
+                    pol = d_customComits;
+                    polLayout = fixedLayout();
+                } else {
+                    pol = d_fixedPols;
+                    polLayout = fixedLayout();
                 }
 
-                Goldilocks3GPU::copy(res, inv_g[o - og]);
-                Goldilocks3GPU::mul(accum, accum, res);
-                if (o == 0) Goldilocks3GPU::copy(fri_pol, accum);
-                else Goldilocks3GPU::add(fri_pol, fri_pol, accum);
+                if (evalInfo.dim == 1) {
+                    gl64_t v = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
+                    Goldilocks3GPU::mul(term, coef, v);
+                } else {
+                    val[0] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
+                    val[1] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
+                    val[2] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
+                    Goldilocks3GPU::mul(term, coef, val);
+                }
+                Goldilocks3GPU::add(accum, accum, term);
+            }
+
+            Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[o * FIELD_EXTENSION]);
+            Goldilocks3GPU::sub(d, d_x[r], xdiv);
+
+            if (o == 0) {
+                Goldilocks3GPU::copy(num, accum);
+                Goldilocks3GPU::copy(den, d);
+            } else {
+                Goldilocks3GPU::mul(num, num, d);
+                Goldilocks3GPU::mul(t, accum, den);
+                Goldilocks3GPU::add(num, num, t);
+                Goldilocks3GPU::mul(den, den, d);
             }
         }
-        d_fri[r * FIELD_EXTENSION] = fri_pol[0];
-        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[1];
-        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[2];
+
+        Goldilocks3GPU::inv(t, den);
+        Goldilocks3GPU::mul(res, num, t);
+
+        d_fri[r * FIELD_EXTENSION] = res[0];
+        d_fri[r * FIELD_EXTENSION + 1] = res[1];
+        d_fri[r * FIELD_EXTENSION + 2] = res[2];
         chunk_idx += gridDim.x;
     }
 }

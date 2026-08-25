@@ -53,7 +53,12 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
 
 __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset, uint64_t stride, Goldilocks::Element *d_pol, uint64_t dim, uint64_t N);
 
-__global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
+// Opening points per computeLEv_inplace call (gen_proof groups them in fours); sizes the
+// per-thread denominator/prefix arrays in fillLEvBary.
+#define MAX_LEV_OPENINGS 4
+
+__global__ void prepareLEvBary(uint64_t nOpeningPoints, uint64_t N, uint64_t blockSize, gl64_t *d_shiftedValues, gl64_t *d_A, gl64_t *d_tabT, gl64_t *d_tabB, uint64_t nBlocks, uint64_t wInv_);
+__global__ void fillLEvBary(gl64_t* d_LEv, uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues, gl64_t *d_A, gl64_t *d_tabT, gl64_t *d_tabB);
 
 __global__ void computeEvals_v2(
     uint64_t domainSize,
