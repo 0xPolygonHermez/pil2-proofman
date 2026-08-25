@@ -78,6 +78,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     qMinScratch = ek.qMinScratch;
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
+    exprPairLaunchFn = (void *)ek.exprPairLaunch;
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -168,10 +169,12 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
             if (p1.op == opType::tmp && p1.inverse && exprCovered(p1.expId)) {
                 if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
                     TimerStartCategoryGPU(timer, EXPRESSIONS);
-                    exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
-                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_MUL_INV, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    auto pairLaunch=(ExprPairLaunchFn)exprPairLaunchFn;
+                    bool paired=pairLaunch && pairLaunch(p0.expId,p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                    if (!paired) {
+                        exprLaunch(p0.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_WRITE,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                        exprLaunch(p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_MUL_INV,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                    }
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
                     handled = true;
                 } else if (p0.op == opType::number && !p0.inverse) {
