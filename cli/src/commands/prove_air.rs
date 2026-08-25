@@ -278,7 +278,7 @@ impl ProveAirCmd {
         if load_tree {
             setups_vadcop.total_const_tree_size = setup.const_tree_size;
         }
-        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false)?;
 
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();
