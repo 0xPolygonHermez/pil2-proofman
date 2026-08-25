@@ -15,9 +15,8 @@ use std::ffi::c_void;
 use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
-    get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c,
-    free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c, set_gpu_mode_c,
-    get_num_gpus_c, init_gpu_setup_c,
+    get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};

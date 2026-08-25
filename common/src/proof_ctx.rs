@@ -199,7 +199,7 @@ pub struct ProofmanOptions {
     /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
     /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
     pub table_airs_gpu: Vec<(usize, usize)>,
-    /// This run produces a final SNARK 
+    /// This run produces a final SNARK
     pub final_snark: bool,
 }
 
