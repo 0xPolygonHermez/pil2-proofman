@@ -62,6 +62,7 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         exps_cap: 60000,
         exps_chunk: None,
         exps_stark_src: None,
+        agg_arity: proofman_common::global_info::default_aggregation_arity(),
     })
     .map_err(|e| format!("setup: {e}"))
 }

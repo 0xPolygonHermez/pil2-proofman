@@ -84,6 +84,10 @@ struct SetupArgs {
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
 
+    /// Proofs each recursive2 circuit aggregates. Must be 2 or 3.
+    #[arg(long, default_value_t = 3)]
+    agg_arity: usize,
+
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end
     /// of setup. No-op if nvcc is not on PATH.
     #[arg(long, default_value_t = false)]
@@ -313,6 +317,14 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
 
+            if !proofman_common::global_info::is_valid_aggregation_arity(args.agg_arity) {
+                anyhow::bail!(
+                    "unsupported --agg-arity {}; valid values: {:?}",
+                    args.agg_arity,
+                    proofman_common::global_info::VALID_AGGREGATION_ARITIES
+                );
+            }
+
             let opts = SetupOptions {
                 airout_path: args.airout,
                 build_dir: args.build_dir,
@@ -323,6 +335,7 @@ fn main() -> anyhow::Result<()> {
                 setup_jobs,
                 stats_output_path: args.output,
                 hash: args.hash,
+                agg_arity: args.agg_arity,
                 gen_exps: args.gen_exps,
                 exps_arch: args.exps_arch,
                 exps_cap: args.exps_cap,

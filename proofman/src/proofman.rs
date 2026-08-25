@@ -73,7 +73,7 @@ use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
-    load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    load_device_const_pols,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -2929,7 +2929,7 @@ where
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
-                let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+                let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
                 if n_recursive2_proofs.has_remaining || n_proofs == 0 {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
@@ -3062,25 +3062,23 @@ where
                                 recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                             recursive2_airgroup_proofs.push(proof);
 
-                            if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                                let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                                Some((p1, p2, p3))
+                            let arity = pctx_clone.global_info.aggregation_arity;
+                            if recursive2_airgroup_proofs.len() >= arity {
+                                let chunk: Vec<_> =
+                                    (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
+                                Some(chunk)
                             } else {
                                 None
                             }
                         };
 
                         match recursive2_proof {
-                            Some((p1, p2, p3)) => {
+                            Some(chunk) => {
                                 match gen_witness_aggregation(
                                     &pctx_clone,
                                     &memory_handler_recursive_witness,
                                     &setups_clone,
-                                    &p1,
-                                    &p2,
-                                    &p3,
+                                    &chunk.iter().collect::<Vec<_>>(),
                                 ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
@@ -4041,7 +4039,8 @@ where
                         continue;
                     }
                     total_proofs_received[airgroup_id] = n_agg_proofs;
-                    let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
+                    let n_agg_proofs_to_be_done =
+                        total_recursive_proofs(n_agg_proofs, self.pctx.global_info.aggregation_arity);
                     if n_agg_proofs_to_be_done.has_remaining {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
@@ -4229,18 +4228,15 @@ where
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
 
-                    if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                        let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                    let arity = pctx_clone.global_info.aggregation_arity;
+                    if recursive2_airgroup_proofs.len() >= arity {
+                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
 
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
+                            &chunk.iter().collect::<Vec<_>>(),
                         );
 
                         let witness = match w {
@@ -4469,7 +4465,7 @@ where
 
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
-            let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+            let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
             if n_recursive2_proofs.has_remaining {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
@@ -4584,17 +4580,14 @@ where
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
 
-                    if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                        let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                    let arity = pctx_clone.global_info.aggregation_arity;
+                    if recursive2_airgroup_proofs.len() >= arity {
+                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
+                            &chunk.iter().collect::<Vec<_>>(),
                         );
                         let witness = match w {
                             Ok(witness) => witness,
@@ -5197,6 +5190,7 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
+
         // Components must pack exactly the airs the device will unpack: it gates every packed
         // read path on `packedTrace && is_packed`, so a global flag alone would corrupt the trace.
         if options.packed {

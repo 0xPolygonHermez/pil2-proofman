@@ -179,7 +179,15 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     }
 
     // Generate final circom
-    let gen_circom_opts = GenCircomOptions { is_final: true, ..Default::default() };
+    // One proof per airgroup, not an aggregation fan-in: the template never reads
+    // `agg_arity`, and `gen_recursive2` rejects 0 outright.
+    let gen_circom_opts = GenCircomOptions {
+        airgroup_id: None,
+        has_compressor: false,
+        has_recursion: false,
+        is_final: true,
+        agg_arity: 0,
+    };
 
     let gen_input = GenCircomInput {
         template_name: "src/vadcop/templates/final.circom.ejs",

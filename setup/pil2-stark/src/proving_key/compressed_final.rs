@@ -90,8 +90,15 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         // Build per-airgroup, per-air VKs as String vecs matching GenCircomCircuitInput format.
         let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys.to_vec();
 
-        let rust_opts =
-            CircomGenOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: false };
+        // Aggregates nothing: the template never reads `agg_arity`, and `gen_recursive2`
+        // rejects 0 outright, so it cannot pass for one.
+        let rust_opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: false,
+            agg_arity: 0,
+        };
         let rust_input = GenCircomCircuitInput {
             template_name: "src/vadcop/templates/final_compressed.circom.ejs",
             stark_infos: std::slice::from_ref(config.stark_info),

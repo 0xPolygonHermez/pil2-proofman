@@ -199,6 +199,7 @@ pub(crate) fn run_recursive_setup(
                         let cfg = RecursiveSetupConfig {
                             build_dir,
                             hash: &opts.hash,
+                            agg_arity: opts.agg_arity,
                             template: RecursiveTemplate::Compressor,
                             airgroup_name: &airgroup_name,
                             airgroup_id: ag_idx,
@@ -248,6 +249,7 @@ pub(crate) fn run_recursive_setup(
                     let r1_cfg = RecursiveSetupConfig {
                         build_dir,
                         hash: &opts.hash,
+                        agg_arity: opts.agg_arity,
                         template: RecursiveTemplate::Recursive1,
                         airgroup_name: &airgroup_name,
                         airgroup_id: ag_idx,
@@ -489,6 +491,7 @@ pub(crate) fn run_recursive_setup(
             let r2_config = RecursiveSetupConfig {
                 build_dir,
                 hash: &opts.hash,
+                agg_arity: opts.agg_arity,
                 template: RecursiveTemplate::Recursive2,
                 airgroup_name: &airgroup_name,
                 airgroup_id: ag_idx,
@@ -735,6 +738,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -780,6 +784,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -828,6 +833,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,

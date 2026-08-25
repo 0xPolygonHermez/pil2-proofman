@@ -12,6 +12,17 @@ fn default_hash_id() -> String {
     DEFAULT_HASH_ID.to_string()
 }
 
+/// Arities the `recursive2` circuit can be generated for. Larger values are not known to work.
+pub const VALID_AGGREGATION_ARITIES: [usize; 2] = [2, 3];
+
+pub fn is_valid_aggregation_arity(n: usize) -> bool {
+    VALID_AGGREGATION_ARITIES.contains(&n)
+}
+
+pub fn default_aggregation_arity() -> usize {
+    3
+}
+
 #[derive(Clone, Deserialize)]
 pub struct ProofValueMap {
     pub name: String,
@@ -66,6 +77,10 @@ pub struct GlobalInfo {
 
     #[serde(rename = "transcriptArity")]
     pub transcript_arity: usize,
+
+    /// Proofs each `recursive2` circuit aggregates. Fixed at setup, read back here.
+    #[serde(rename = "aggregationArity", default = "default_aggregation_arity")]
+    pub aggregation_arity: usize,
 
     #[serde(default = "default_hash_id")]
     pub hash: String,
@@ -131,6 +146,15 @@ impl GlobalInfo {
                 "unknown hash family {:?}; known: {:?}",
                 global_info.hash,
                 hash_family::FAMILIES
+            )));
+        }
+
+        // Every proving key loads through here, so this catches an arity this build has no
+        // aggregation path for before any consumer chunks proofs or derives MPI tags from it.
+        if !is_valid_aggregation_arity(global_info.aggregation_arity) {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "proving key has aggregationArity {}, which this build does not support; valid values: {:?}",
+                global_info.aggregation_arity, VALID_AGGREGATION_ARITIES
             )));
         }
 
@@ -236,5 +260,60 @@ impl GlobalInfo {
             }
         }
         Err(ProofmanError::InvalidConfiguration(format!("Public '{}' not found in publics_map", public_name)))
+    }
+}
+
+#[cfg(test)]
+mod aggregation_arity_tests {
+    use super::*;
+
+    #[test]
+    fn only_two_and_three_are_valid_arities() {
+        assert!(is_valid_aggregation_arity(2));
+        assert!(is_valid_aggregation_arity(3));
+        for n in [0usize, 1, 4, 5, 16] {
+            assert!(!is_valid_aggregation_arity(n), "{n} must be rejected");
+        }
+    }
+
+    #[test]
+    fn a_key_without_the_field_is_arity_three() {
+        // A key written before the field existed. Must load as 3; Default::default() gives 0.
+        let json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16
+        });
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.aggregation_arity, 3);
+    }
+
+    #[test]
+    fn from_file_rejects_an_unsupported_arity() {
+        // Covers `check_setup`, `prove_air` and `soundness`, not just the full proving path.
+        let dir = std::env::temp_dir().join(format!("gi_arity_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = serde_json::json!({
+            "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 4
+        });
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+
+        let result = GlobalInfo::from_file(&dir.display().to_string());
+        let Err(err) = result else { panic!("arity 4 must be rejected at load") };
+        assert!(err.to_string().contains("aggregationArity 4"), "unexpected error: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_field_round_trips() {
+        let json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 2
+        });
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.aggregation_arity, 2);
     }
 }

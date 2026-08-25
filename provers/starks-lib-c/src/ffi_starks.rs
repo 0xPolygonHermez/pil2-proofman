@@ -1179,7 +1179,6 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
-
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     circomWitness: *mut u8,

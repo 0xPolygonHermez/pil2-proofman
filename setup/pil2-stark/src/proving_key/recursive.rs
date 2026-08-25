@@ -125,6 +125,9 @@ pub struct RecursiveSetupConfig<'a> {
     pub stark_struct: Option<&'a Value>,
     pub has_compressor: bool,
     pub hash: &'a str,
+    /// Number of proofs the `recursive2` circuit aggregates. Ignored by the
+    /// compressor and recursive1 templates.
+    pub agg_arity: usize,
 
     /// When `Some`, the path to the original air's `{air_name}.starkinfo.json` on disk.
     /// Used by the A2 nQueries adjustment: if the recursive1 circuit is smaller than
@@ -277,7 +280,9 @@ pub fn gen_recursive_setup(
         let gen_opts = crate::io::recurser::GenCircomOptions {
             airgroup_id: Some(config.airgroup_id as u64),
             has_compressor: config.has_compressor,
-            ..Default::default()
+            has_recursion: false,
+            is_final: false,
+            agg_arity: config.agg_arity,
         };
         let gen_input = crate::io::recurser::GenCircomInput {
             template_name: template.ejs_template(),

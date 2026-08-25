@@ -100,8 +100,15 @@ pub fn gen_snark_setup(
 
     // gen_circom: generate recursivef.circom using the recursivef.circom.ejs template.
     // basic_vk = [[constRoot]] (one airgroup, one air with the vadcop_final constRoot)
-    let gen_opts_rf =
-        GenCircomOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: false };
+    // recursivef wraps a single proof: the template never reads `agg_arity`, and 0 is
+    // rejected outright by `gen_recursive2`.
+    let gen_opts_rf = GenCircomOptions {
+        airgroup_id: None,
+        has_compressor: false,
+        has_recursion: false,
+        is_final: false,
+        agg_arity: 0,
+    };
     let rf_basic_vk: Vec<Vec<Vec<String>>> = vec![vec![const_root_str.to_vec()]];
     let gen_input_rf = GenCircomInput {
         template_name: "src/recursion/templates/recursivef.circom.ejs",
@@ -388,8 +395,15 @@ pub fn gen_snark_setup(
     // gen_circom: generate final.circom using final.circom.ejs template.
     let publics_vec: Vec<Value> =
         if let Some(ref pi) = config.publics_info { vec![pi.clone()] } else { vec![Value::Null] };
-    let gen_opts_final =
-        GenCircomOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: true };
+    // The snark final circuit wraps a single recursivef proof: the template never reads
+    // `agg_arity`, and 0 is rejected outright by `gen_recursive2`.
+    let gen_opts_final = GenCircomOptions {
+        airgroup_id: None,
+        has_compressor: false,
+        has_recursion: false,
+        is_final: true,
+        agg_arity: 0,
+    };
     let gen_input_final = GenCircomInput {
         template_name: "src/recursion/templates/final.circom.ejs",
         stark_infos: std::slice::from_ref(&starkinfo_rf_val),

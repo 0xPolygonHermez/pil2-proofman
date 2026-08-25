@@ -13,7 +13,7 @@
 //! - `calculate_hashes.circom.tera`  → [`super::calculate_hashes::gen_calculate_hashes`]
 //! - `get_sha256_inputs.circom.tera` → [`super::get_sha256_inputs::gen_get_sha256_inputs`]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use tera::{Context as TeraCtx, Tera};
 
@@ -321,8 +321,19 @@ pub fn gen_recursive2(
     vadcop_info: &Value,
     airgroup_id: usize,
     basic_vk: &[Vec<String>],
-    _opts: &CircomGenOptions,
+    opts: &CircomGenOptions,
 ) -> Result<String> {
+    // `pub` in a library crate, so an external caller reaches this ahead of the CLI's
+    // `--agg-arity` check. Reject anything outside the supported set before it becomes a
+    // panicking slice index (`slot_prefixes[1..]` at 0) or nonsense slot names (past 'z').
+    let agg_arity = opts.agg_arity;
+    if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
+        bail!(
+            "gen_recursive2: unsupported aggregation arity {agg_arity}; valid values: {:?}",
+            proofman_common::global_info::VALID_AGGREGATION_ARITIES
+        );
+    }
+
     let n_publics_raw = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let n_publics_vad = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
@@ -355,10 +366,19 @@ pub fn gen_recursive2(
         .collect::<Vec<_>>()
         .join("\n");
 
-    // aggregationTypes consistency block
+    // Slot names come from the index, so N=3 still emits a/b/c and the generated
+    // circom is unchanged.
+    let slot_names: Vec<String> = (0..agg_arity).map(|i| ((b'a' + i as u8) as char).to_string()).collect();
+    let slot_prefixes: Vec<String> = slot_names.iter().map(|s| format!("{s}_sv")).collect();
+
+    // aggregationTypes consistency block: every slot must agree with slot 0.
     let agg_types_consistency = if agg_types_len > 0 {
+        let eqs: String = slot_prefixes[1..]
+            .iter()
+            .map(|p| format!("        a_sv_aggregationTypes[i] === {p}_aggregationTypes[i];\n"))
+            .collect();
         format!(
-            "    signal aggregationTypes[{n}];\n    for(var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== a_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === b_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === c_sv_aggregationTypes[i];\n    }}",
+            "    signal aggregationTypes[{n}];\n    for(var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== a_sv_aggregationTypes[i];\n{eqs}    }}",
             n = agg_types_len
         )
     } else {
@@ -386,21 +406,29 @@ pub fn gen_recursive2(
     ctx.insert("n_publics", &n_publics_vad);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
     ctx.insert("num_proof_values", &num_proof_values);
-    ctx.insert("vadcop_define_a", &define_vadcop_inputs(vadcop_info, airgroup_id, "a_sv", true, None));
-    ctx.insert("stark_signals_a", &define_stark_inputs(stark_info, "a", &def_opts));
-    ctx.insert("vadcop_define_b", &define_vadcop_inputs(vadcop_info, airgroup_id, "b_sv", true, None));
-    ctx.insert("stark_signals_b", &define_stark_inputs(stark_info, "b", &def_opts));
-    ctx.insert("vadcop_define_c", &define_vadcop_inputs(vadcop_info, airgroup_id, "c_sv", true, None));
-    ctx.insert("stark_signals_c", &define_stark_inputs(stark_info, "c", &def_opts));
+    // serde_json values, not tera::Context: a Context is not Serialize and cannot be
+    // nested inside another Context.
+    let slots: Vec<serde_json::Value> = slot_names
+        .iter()
+        .zip(slot_prefixes.iter())
+        .map(|(name, prefix)| {
+            let upper = name.to_uppercase();
+            let comp = format!("v{upper}");
+            serde_json::json!({
+                "lower": name,
+                "upper": upper,
+                "prefix": prefix,
+                "vadcop_define": define_vadcop_inputs(vadcop_info, airgroup_id, prefix, true, None),
+                "stark_signals": define_stark_inputs(stark_info, name, &def_opts),
+                "stark_assign": assign_stark_inputs(&comp, name, stark_info, &par_opts, &EnableInput::None),
+                "vadcop_assign": assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, prefix, name, &av_opts),
+            })
+        })
+        .collect();
+    ctx.insert("slots", &slots);
     ctx.insert("agg_types_consistency", &agg_types_consistency);
-    ctx.insert("stark_assign_a", &assign_stark_inputs("vA", "a", stark_info, &par_opts, &EnableInput::None));
-    ctx.insert("stark_assign_b", &assign_stark_inputs("vB", "b", stark_info, &par_opts, &EnableInput::None));
-    ctx.insert("stark_assign_c", &assign_stark_inputs("vC", "c", stark_info, &par_opts, &EnableInput::None));
-    ctx.insert("vadcop_assign_a", &assign_vadcop_inputs("vA", vadcop_info, airgroup_id, "a_sv", "a", &av_opts));
-    ctx.insert("vadcop_assign_b", &assign_vadcop_inputs("vB", vadcop_info, airgroup_id, "b_sv", "b", &av_opts));
-    ctx.insert("vadcop_assign_c", &assign_vadcop_inputs("vC", vadcop_info, airgroup_id, "c_sv", "c", &av_opts));
     ctx.insert("sel_fn", sel_fn);
-    ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, "a_sv", "b_sv", "c_sv", "sv"));
+    ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv"));
     ctx.insert("n_publics_minus_4", &(n_publics_raw - 4));
     ctx.insert("pub_names", &pub_names.join(", "));
 

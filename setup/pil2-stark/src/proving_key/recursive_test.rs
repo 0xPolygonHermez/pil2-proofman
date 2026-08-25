@@ -318,7 +318,17 @@ pub fn gen_recursive_test_setup(
     // We pass pilout_name = "build" to match JS airout.name = "build".
     // -------------------------------------------------------------------------
     let empty_settings = crate::types::stark_struct::StarkStructsConfig::default();
-    crate::output::global_info::write_global_info(pilout, "build", build_dir, &empty_settings, hash)?;
+    // The test-recursive fixture is a single compressor/aggregation circuit with no
+    // recursive2 stage, and `setup-recursive-test` takes no --agg-arity, so no caller can
+    // supply a real one. Write the documented default rather than a bare literal.
+    crate::output::global_info::write_global_info(
+        pilout,
+        "build",
+        build_dir,
+        &empty_settings,
+        hash,
+        proofman_common::global_info::default_aggregation_arity(),
+    )?;
 
     println!("files Generated Correctly");
     Ok(())

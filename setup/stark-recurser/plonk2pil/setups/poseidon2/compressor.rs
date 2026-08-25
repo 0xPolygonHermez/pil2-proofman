@@ -173,11 +173,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // ── Poseidon custom / compressor (10 rows) ────────────────────────────────
     tracing::info!("Processing {} poseidon custom gates...", poseidon_cust_uses.len());
     for cgu in &poseidon_cust_uses {
-        assert_eq!(
-            cgu.signals.len(),
-            2 * POSEIDON_WIDTH + 2,
-            "unexpected Poseidon2 compression signal count"
-        );
+        assert_eq!(cgu.signals.len(), 2 * POSEIDON_WIDTH + 2, "unexpected Poseidon2 compression signal count");
         let s = &cgu.signals;
         let input = &s[0..POSEIDON_WIDTH];
         let output = &s[POSEIDON_WIDTH + 2..2 * POSEIDON_WIDTH + 2];

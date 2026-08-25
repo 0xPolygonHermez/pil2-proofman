@@ -433,23 +433,49 @@ impl MpiCtx {
         }
     }
 
+    /// Fail loudly if the ranks disagree on the aggregation arity.
+    ///
+    /// Tags are arity-derived, so disagreeing ranks would send to tags nobody receives on and
+    /// hang silently. The all-gather is symmetric: every rank sees the mismatch and panics.
+    #[cfg(feature = "mpi")]
+    fn check_aggregation_arity_agreement(&self, arity: usize) {
+        if self.n_processes <= 1 {
+            return;
+        }
+        let send: [u64; 1] = [arity as u64];
+        let mut all: Vec<u64> = vec![0u64; self.n_processes as usize];
+        self.world.all_gather_into(&send[..], &mut all[..]);
+        if let Some((other_rank, &other)) = all.iter().enumerate().find(|&(_, &v)| v != arity as u64) {
+            panic!(
+                "aggregation arity disagreement across MPI ranks: rank {} has {}, rank {} has {}. \
+                 Every rank must load a proving key built with the same aggregationArity.",
+                self.rank, arity, other_rank, other
+            );
+        }
+    }
+
     #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
+    pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>], arity: usize) {
         #[cfg(feature = "mpi")]
         {
+            // Must run before any tagged send/receive below: the tags are arity-derived.
+            self.check_aggregation_arity_agreement(arity);
+
             // Count number of aggregations that will be done
             let n_groups = alives.len();
-            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(3)).sum();
+            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(arity)).sum();
             let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
 
             let mut i_proof = 0;
             // tags codes:
-            // 0,...,ngroups-1: proofs that need to be sent to rank0 from another rank for a group with alive == 1
-            // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
+            // 0,...,ngroups-1: proofs sent to rank0 from another rank for a group with alive == 1
+            // ngroups, ..., ngroups + arity*n_aggregations - 1: proofs sent to the owner of the
+            // aggregation task. Every rank must derive `arity` from the same proving key, or
+            // senders and receivers use different tags and the exchange deadlocks.
 
             for (group_idx, &alive) in alives.iter().enumerate() {
                 let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
-                let n_aggs_group = alive.div_ceil(3);
+                let n_aggs_group = alive.div_ceil(arity);
 
                 if n_aggs_group == 0 {
                     assert!(alive == 1);
@@ -470,36 +496,23 @@ impl MpiCtx {
                     let chunk = i_proof / aggs_per_process;
                     let owner_rank =
                         if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
-                    let left_idx = i * 3;
-                    let mid_idx = i * 3 + 1;
-                    let right_idx = i * 3 + 2;
 
                     if owner_rank == self.rank as usize {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
+                        for k in 0..arity {
+                            let idx = i * arity + k;
                             if idx < alive && group_proofs[idx].is_none() {
-                                let tag = if idx == left_idx {
-                                    i_proof * 3 + n_groups
-                                } else if idx == mid_idx {
-                                    i_proof * 3 + n_groups + 1
-                                } else {
-                                    i_proof * 3 + n_groups + 2
-                                };
-                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                let tag = (i_proof * arity + n_groups + k) as i32;
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
                                 group_proofs[idx] = Some(msg);
                             }
                         }
                     } else if self.n_processes > 1 {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
+                        for k in 0..arity {
+                            let idx = i * arity + k;
                             if idx < alive {
                                 if let Some(proof) = group_proofs[idx].take() {
-                                    let tag = if idx == left_idx {
-                                        i_proof * 3 + n_groups
-                                    } else if idx == mid_idx {
-                                        i_proof * 3 + n_groups + 1
-                                    } else {
-                                        i_proof * 3 + n_groups + 2
-                                    };
-                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
+                                    let tag = (i_proof * arity + n_groups + k) as i32;
+                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag);
                                 }
                             }
                         }

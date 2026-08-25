@@ -28,8 +28,6 @@ pub type GetWitnessFunc =
 pub type GetWitnessFinalFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
 
-pub const N_RECURSIVE_PROOFS_PER_AGGREGATION: usize = 3;
-
 /// Joins a background FFI thread on drop, so an early `?` or panic can't detach a thread still
 /// writing shared device state (the const-tree buffer) and let the next proof race it.
 pub struct JoinOnDrop(Option<std::thread::JoinHandle<()>>);
@@ -197,26 +195,27 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
-    proof1: &Proof<F>,
-    proof2: &Proof<F>,
-    proof3: &Proof<F>,
+    proofs: &[&Proof<F>],
 ) -> ProofmanResult<Proof<F>> {
     timer_start_debug!(GENERATE_WITNESS_AGGREGATION);
-    let proof_len = proof1.proof.len();
-    if proof_len != proof2.proof.len() || proof_len != proof3.proof.len() {
+    let arity = pctx.global_info.aggregation_arity;
+    if proofs.len() != arity {
+        return Err(ProofmanError::ProofmanError(format!("Aggregation expects {arity} proofs, got {}", proofs.len())));
+    }
+
+    let proof_len = proofs[0].proof.len();
+    if let Some((i, p)) = proofs.iter().enumerate().find(|(_, p)| p.proof.len() != proof_len) {
         return Err(ProofmanError::ProofmanError(format!(
-            "Inconsistent proof sizes: proof1 size {}, proof2 size {}, proof3 size {}",
-            proof1.proof.len(),
-            proof2.proof.len(),
-            proof3.proof.len()
+            "Inconsistent proof sizes: proof 0 size {proof_len}, proof {i} size {}",
+            p.proof.len()
         )));
     }
 
-    let airgroup_id = proof1.airgroup_id;
-    if airgroup_id != proof2.airgroup_id || airgroup_id != proof3.airgroup_id {
+    let airgroup_id = proofs[0].airgroup_id;
+    if let Some((i, p)) = proofs.iter().enumerate().find(|(_, p)| p.airgroup_id != airgroup_id) {
         return Err(ProofmanError::ProofmanError(format!(
-            "Inconsistent airgroup_ids: proof1 airgroup_id {}, proof2 airgroup_id {}, proof3 airgroup_id {}",
-            proof1.airgroup_id, proof2.airgroup_id, proof3.airgroup_id
+            "Inconsistent airgroup_ids: proof 0 airgroup_id {airgroup_id}, proof {i} airgroup_id {}",
+            p.airgroup_id
         )));
     }
 
@@ -225,14 +224,13 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 
     let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
 
-    let updated_proof_size = N_RECURSIVE_PROOFS_PER_AGGREGATION * proof_len + publics_circom_size;
+    let updated_proof_size = arity * proof_len + publics_circom_size;
 
     let mut updated_proof_recursive2: Vec<u64> = vec![0; updated_proof_size];
-
-    updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_len)].copy_from_slice(&proof1.proof);
-    updated_proof_recursive2[publics_circom_size + proof_len..publics_circom_size + 2 * proof_len]
-        .copy_from_slice(&proof2.proof);
-    updated_proof_recursive2[publics_circom_size + 2 * proof_len..].copy_from_slice(&proof3.proof);
+    for (i, p) in proofs.iter().enumerate() {
+        let start = publics_circom_size + i * proof_len;
+        updated_proof_recursive2[start..start + proof_len].copy_from_slice(&p.proof);
+    }
 
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, Some(&setup_recursive2.verkey));
     let circom_witness =
@@ -500,61 +498,48 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
+    let arity = pctx.global_info.aggregation_arity;
+
     // agregation loop
     loop {
         mpi_ctx.barrier();
-        mpi_ctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
+        mpi_ctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs, arity);
         let mut pending_agregations = false;
         for airgroup in 0..n_airgroups {
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
             if alive > 1 {
-                let n_agg_proofs = alive / N_RECURSIVE_PROOFS_PER_AGGREGATION;
-                let n_remaining_proofs = alive % N_RECURSIVE_PROOFS_PER_AGGREGATION;
-                for i in 0..alive.div_ceil(N_RECURSIVE_PROOFS_PER_AGGREGATION) {
-                    let j = i * N_RECURSIVE_PROOFS_PER_AGGREGATION;
+                let n_agg_proofs = alive / arity;
+                let n_remaining_proofs = alive % arity;
+                for i in 0..alive.div_ceil(arity) {
+                    let j = i * arity;
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
                     }
-                    if (j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1 < alive)
-                        || alive <= N_RECURSIVE_PROOFS_PER_AGGREGATION
-                    {
+                    if (j + arity - 1 < alive) || alive <= arity {
+                        // A chunk needs at least two real proofs; the remaining
+                        // slots are null-padded. At arity 2 padding never happens.
                         if airgroup_proofs[airgroup][j + 1].is_none() {
                             return Err(ProofmanError::ProofmanError("Recursive2 proof is missing".into()));
                         }
 
-                        let proof1 = Proof::new(
-                            ProofType::Recursive2,
-                            airgroup,
-                            0,
-                            None,
-                            airgroup_proofs[airgroup][j].take().unwrap(),
-                        );
+                        let chunk: Vec<Proof<F>> = (0..arity)
+                            .map(|k| {
+                                let slot = j + k;
+                                let data = if slot < alive {
+                                    airgroup_proofs[airgroup][slot]
+                                        .take()
+                                        .expect("chunk slot within alive must hold a proof")
+                                } else {
+                                    null_proofs[airgroup].clone()
+                                };
+                                Proof::new(ProofType::Recursive2, airgroup, 0, None, data)
+                            })
+                            .collect();
+                        let chunk_refs: Vec<&Proof<F>> = chunk.iter().collect();
 
-                        let proof2 = Proof::new(
-                            ProofType::Recursive2,
-                            airgroup,
-                            0,
-                            None,
-                            airgroup_proofs[airgroup][j + 1].take().unwrap(),
-                        );
-
-                        let proof_3 = if j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1 < alive {
-                            airgroup_proofs[airgroup][j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1].take().unwrap()
-                        } else {
-                            null_proofs[airgroup].clone()
-                        };
-
-                        let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
-
-                        let mut circom_witness = gen_witness_aggregation::<F>(
-                            pctx,
-                            memory_handler_recursive_witness,
-                            setups,
-                            &proof1,
-                            &proof2,
-                            &proof3,
-                        )?;
+                        let mut circom_witness =
+                            gen_witness_aggregation::<F>(pctx, memory_handler_recursive_witness, setups, &chunk_refs)?;
                         circom_witness.global_idx = Some(rank);
 
                         let recursive2_proof = match gen_recursive_proof_size::<F>(pctx, setups, &circom_witness) {
@@ -599,13 +584,12 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
                 //compact elements
                 for i in 0..n_agg_proofs {
-                    airgroup_proofs[airgroup][i] =
-                        airgroup_proofs[airgroup][i * N_RECURSIVE_PROOFS_PER_AGGREGATION].take();
+                    airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * arity].take();
                 }
 
                 for i in 0..n_remaining_proofs {
                     airgroup_proofs[airgroup][n_agg_proofs + i] =
-                        airgroup_proofs[airgroup][N_RECURSIVE_PROOFS_PER_AGGREGATION * n_agg_proofs + i].take();
+                        airgroup_proofs[airgroup][arity * n_agg_proofs + i].take();
                 }
                 alives[airgroup] = alive;
                 if alive > 1 {
@@ -1244,6 +1228,12 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     Ok(max_prover_size as usize)
 }
 
+/// Aggregation proofs needed to reduce `n` proofs to one, and whether the last chunk needs a
+/// null proof to fill it.
+///
+/// A short chunk needs `arity - rem` nulls, which is 0 or 1 only while `arity <= 3` — hence the
+/// bool. Raising `VALID_AGGREGATION_ARITIES` past 3 means making this a count and updating the
+/// `push(null_proof)` sites in proofman.rs.
 #[derive(Debug)]
 pub struct Recursive2Proofs {
     pub n_proofs: usize,
@@ -1256,12 +1246,12 @@ impl Recursive2Proofs {
     }
 }
 
-pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
+pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
     let mut total = 0;
-    let mut rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
+    let mut rem = n % arity;
     while n > 1 {
-        let next = n / N_RECURSIVE_PROOFS_PER_AGGREGATION;
-        rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
+        let next = n / arity;
+        rem = n % arity;
         total += next;
         if next != 0 {
             n = next + rem;
@@ -1270,9 +1260,65 @@ pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
         }
     }
 
-    if rem == 2 {
+    // A remainder of 2 or more needs one more aggregation, null-padded up to the arity.
+    // At arity 2 the remainder is never >= 2, so this never fires.
+    if rem >= 2 {
         Recursive2Proofs::new(total + 1, true)
     } else {
         Recursive2Proofs::new(total, false)
+    }
+}
+
+#[cfg(test)]
+mod arity_tests {
+    use super::*;
+
+    /// Model of the aggregation loop in `aggregate_recursive2_proofs`: repeatedly
+    /// chunk `alive` proofs by `arity`, aggregating full chunks and any final short
+    /// chunk, until one proof remains.
+    fn simulate(n: usize, arity: usize) -> usize {
+        if n == 0 {
+            return 0;
+        }
+        let (mut alive, mut done) = (n, 0);
+        while alive > 1 {
+            let full = alive / arity;
+            let rem = alive % arity;
+            for i in 0..alive.div_ceil(arity) {
+                let j = i * arity;
+                if (j + arity - 1 < alive) || alive <= arity {
+                    assert!(j + 1 < alive, "a chunk must hold at least 2 real proofs");
+                    done += 1;
+                }
+            }
+            alive = if full > 0 { full + rem } else { 1 };
+        }
+        done
+    }
+
+    #[test]
+    fn the_formula_matches_the_loop_for_every_supported_arity() {
+        // 4 is included as a pure-arithmetic check that the formula is not
+        // accidentally 3-shaped. It is not a usable setup.
+        for arity in [2usize, 3, 4] {
+            for n in 0..200 {
+                assert_eq!(total_recursive_proofs(n, arity).n_proofs, simulate(n, arity), "arity={arity} n={n}");
+            }
+        }
+    }
+
+    #[test]
+    fn arity_three_counts_are_unchanged() {
+        // Values pinned from the pre-change implementation.
+        for (n, expected) in [(0usize, 0usize), (1, 0), (2, 1), (3, 1), (4, 2), (5, 2), (10, 5), (100, 50)] {
+            assert_eq!(total_recursive_proofs(n, 3).n_proofs, expected, "n={n}");
+        }
+    }
+
+    #[test]
+    fn arity_two_is_a_binary_tree() {
+        for n in 1..100 {
+            assert_eq!(total_recursive_proofs(n, 2).n_proofs, n - 1, "n={n}");
+        }
     }
 }

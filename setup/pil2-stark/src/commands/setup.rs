@@ -39,6 +39,8 @@ pub struct SetupOptions {
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
     pub hash: String,
+    /// Proofs each recursive2 circuit aggregates. 2 or 3.
+    pub agg_arity: usize,
     /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
     /// end of setup. No-op (logged) if `nvcc` is not on PATH.
     pub gen_exps: bool,
@@ -110,7 +112,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // written once at the end after hasCompressor flags are known.
     write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
     if !opts.recursive {
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash, opts.agg_arity)?;
     }
 
     // Thread pool for per-AIR processing.  setup_jobs > 1 enables parallel AIR
@@ -345,7 +347,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash);
+        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash, opts.agg_arity);
         let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -355,7 +357,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for air_name in &airs_with_compressor {
             final_settings.set_has_compressor(air_name);
         }
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash, opts.agg_arity)?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 
@@ -429,6 +431,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -481,6 +484,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -526,6 +530,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
+            agg_arity: 3,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
