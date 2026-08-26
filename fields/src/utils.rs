@@ -53,6 +53,17 @@ const fn split(x: u128) -> (u64, u64) {
     (x as u64, (x >> 64) as u64)
 }
 
+pub(crate) const fn bit_reverse(mut x: u32, bits: usize) -> u32 {
+    // layers of bit swaps
+    x = ((x >> 1) & 0x5555_5555) | ((x & 0x5555_5555) << 1);
+    x = ((x >> 2) & 0x3333_3333) | ((x & 0x3333_3333) << 2);
+    x = ((x >> 4) & 0x0F0F_0F0F) | ((x & 0x0F0F_0F0F) << 4);
+    x = ((x >> 8) & 0x00FF_00FF) | ((x & 0x00FF_00FF) << 8);
+    x = x.rotate_left(16);
+    // drop upper bits
+    x >> (32 - bits)
+}
+
 /// Fast addition modulo ORDER for x86-64.
 /// This function is marked unsafe for the following reasons:
 ///   - It is only correct if x + y < 2**64 + ORDER = 0x1ffffffff00000001.
