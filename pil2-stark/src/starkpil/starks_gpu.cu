@@ -456,38 +456,6 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-__global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
-{
-    uint64_t i  = blockIdx.y;                  // opening point index
-    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
-    if (i >= nOpeningPoints || row >= N) return;
-
-    Goldilocks3GPU::Element xi;
-    xi[0] = d_shiftedValues[i * FIELD_EXTENSION + 0];
-    xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
-    xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
-
-    __shared__ Goldilocks3GPU::Element basePow;
-
-    if (threadIdx.x == 0) {
-        Goldilocks3GPU::pow(xi, k0, basePow);
-    }
-    __syncthreads();
-
-    Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
-
-    Goldilocks3GPU::Element res;
-    Goldilocks3GPU::mul(res, basePow, xi_t);
-
-    Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
-    
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
-}
-
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_, uint64_t nBits, uint64_t domainInv_)
 {
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -525,11 +493,18 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
     }
 }
 
+// Direct (barycentric) Lagrange-kernel fill: LEv[row] = factor / (1 - z*w^{-row}) with
+// factor = (1 - z^N)/N precomputed per opening point (see evalXiShifted), which equals
+// L_row(z) by the closed form (z^N - 1) w^row / (N (z - w^row)). Each thread owns BATCH
+// consecutive rows and inverts their denominators with ONE cubic inversion (Montgomery
+// prefix trick), so the inversion cost is amortized BATCH ways.
+// factor == 0 means z^N = 1, i.e. z landed exactly on a domain node (negligible-probability
+// challenge, but exact): LEv is then the indicator vector of the matching row.
+template<uint32_t BATCH>
 __global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
                                      uint64_t N, gl64_t *d_shiftedValues,
                                      uint64_t rootInv_)
 {
-    constexpr uint32_t BATCH = 4;
     const uint64_t opening = blockIdx.y;
     const uint64_t batch = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     const uint64_t row0 = batch * BATCH;
@@ -547,7 +522,9 @@ __global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
     gl64_t roots[BATCH];
     Goldilocks3GPU::Element prefix[BATCH], scaled, den, one;
     Goldilocks3GPU::one(one);
-    for (uint32_t b = 0; b < count; ++b) {
+    #pragma unroll
+    for (uint32_t b = 0; b < BATCH; ++b) {
+        if (b >= count) break;
         roots[b] = root;
         Goldilocks3GPU::mul(scaled, xi, root);
         Goldilocks3GPU::sub(den, one, scaled);
@@ -556,36 +533,38 @@ __global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
         root *= rootInv;
     }
     const Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
+    auto store = [&](uint64_t row, const Goldilocks3GPU::Element &v) {
+        for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
+            d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
+                                  nOpeningPoints * FIELD_EXTENSION, layout)] = v[k];
+    };
     if (factorZero) {
+        Goldilocks3GPU::Element out;
         for (uint32_t b = 0; b < count; ++b) {
             Goldilocks3GPU::mul(scaled, xi, roots[b]);
             Goldilocks3GPU::sub(den, one, scaled);
             const bool match = den[0].is_zero() && den[1].is_zero() && den[2].is_zero();
-            const uint64_t row = row0 + b;
-            for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
-                d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
-                                      nOpeningPoints * FIELD_EXTENSION, layout)] =
-                    match && k == 0 ? gl64_t(uint64_t(1)) : gl64_t(uint64_t(0));
+            out[0] = match ? gl64_t(uint64_t(1)) : gl64_t(uint64_t(0));
+            out[1] = gl64_t(uint64_t(0));
+            out[2] = gl64_t(uint64_t(0));
+            store(row0 + b, out);
         }
         return;
     }
+    // Montgomery unwind: inv = (prod of remaining dens)^{-1}; each step peels one den
+    // (recomputed rather than stored -- one cubic mul against BATCH extra registers).
     Goldilocks3GPU::Element inv, weight, out;
     Goldilocks3GPU::inv(inv, prefix[count - 1]);
     for (uint32_t b = count - 1; b > 0; --b) {
         Goldilocks3GPU::mul(weight, inv, prefix[b - 1]);
         Goldilocks3GPU::mul(out, factor, weight);
-        const uint64_t row = row0 + b;
-        for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
-            d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
-                                  nOpeningPoints * FIELD_EXTENSION, layout)] = out[k];
+        store(row0 + b, out);
         Goldilocks3GPU::mul(scaled, xi, roots[b]);
         Goldilocks3GPU::sub(den, one, scaled);
         Goldilocks3GPU::mul(inv, inv, den);
     }
     Goldilocks3GPU::mul(out, factor, inv);
-    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
-        d_LEv[getBufferOffset(row0, opening * FIELD_EXTENSION + k, N,
-                              nOpeningPoints * FIELD_EXTENSION, layout)] = out[k];
+    store(row0, out);
 }
 
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream)
@@ -593,22 +572,28 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     TimerStartCategoryGPU(timer, LEV);
     uint64_t N = 1 << nBits;
 
+    // Helper-region footprint: 2 * nOpeningPoints * FIELD_EXTENSION elements -- the shifted
+    // points z = xi * g^{+-k} * s^{-1}, followed by their factors (1 - z^N)/N (see
+    // evalXiShifted). Both are consumed by fillLEvDirectBatched.
     gl64_t * d_shiftedValues = d_aux_trace + offset_helper;
 
     Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
 
-    // Evaluate the shifted value for each opening point
+    // Evaluate the shifted value and its factor for each opening point
     dim3 nThreads_(32);
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     Goldilocks::Element domainInv = Goldilocks::inv(Goldilocks::fromU64(N));
     evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(
         d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe,
         nOpeningPoints, d_openingPoints, invShift.fe, nBits, domainInv.fe);
+
+    // BATCH = 4: measured optimum (BATCH = 8 amortizes the per-thread inversion further
+    // but the extra cubic registers cost more than it saves: 31.4 vs 22.0 ms per phase).
     constexpr uint32_t directBatch = 4;
     dim3 nThreads(256, 1);
     dim3 nBlocks((N + nThreads.x * directBatch - 1) / (nThreads.x * directBatch), nOpeningPoints);
     Goldilocks::Element rootInv = Goldilocks::inv(Goldilocks::w(nBits));
-    fillLEvDirectBatched<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N, d_shiftedValues, rootInv.fe);
+    fillLEvDirectBatched<directBatch><<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N, d_shiftedValues, rootInv.fe);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -718,6 +703,7 @@ __global__ void computeEvals_v2(
 
         const uint32_t lane = threadIdx.x & 31;
         const uint32_t warp = threadIdx.x >> 5;
+        const uint32_t nWarps = (blockDim.x + 31) >> 5;   // warp_sum is sized to this at launch
         for (uint32_t offset = 16; offset > 0; offset >>= 1) {
             Goldilocks3GPU::Element other;
             for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
@@ -728,8 +714,8 @@ __global__ void computeEvals_v2(
         __syncthreads();
         if (warp == 0) {
             for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-                sum[i] = lane < 8 ? warp_sum[lane][i] : gl64_t(uint64_t(0));
-            for (uint32_t offset = 16; offset > 0; offset >>= 1) {
+                sum[i] = lane < nWarps ? warp_sum[lane][i] : gl64_t(uint64_t(0));
+            for (uint32_t offset = nWarps >> 1; offset > 0; offset >>= 1) {
                 Goldilocks3GPU::Element other;
                 for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
                     other[i][0] = __shfl_down_sync(0xffffffffu, sum[i][0], offset);
@@ -779,7 +765,7 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
     
     dim3 nThreads(256);
     dim3 nBlocks(nEvals, n_eval_chunks);
-    computeEvals_v2<<<nBlocks, nThreads, 8 * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
+    computeEvals_v2<<<nBlocks, nThreads, (nThreads.x / 32) * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
 
     dim3 nBlocks_2((nEvals + nThreads.x - 1) / nThreads.x);
     computeEvalsReduction<<<nBlocks_2, nThreads, 0, stream>>>((gl64_t *)h_params.evals, d_helper, d_evalsInfo, nEvals, n_eval_chunks);
