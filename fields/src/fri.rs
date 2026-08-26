@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::{CubicExtensionField, Field, Goldilocks};
+use crate::{CubicExtensionField, Field, Goldilocks, bit_reverse};
 
 const OMEGAS_INV: [u64; 33] = [
     0x1,
@@ -73,17 +73,6 @@ const DOMAIN_SIZE_INVERSE: [u64; 33] = [
     0xfffffffd00000003,
     0xfffffffe00000002, // (1 << 32)^{-1}
 ];
-
-fn bit_reverse(mut x: u32, bits: usize) -> u32 {
-    // layers of bit swaps
-    x = ((x >> 1) & 0x5555_5555) | ((x & 0x5555_5555) << 1);
-    x = ((x >> 2) & 0x3333_3333) | ((x & 0x3333_3333) << 2);
-    x = ((x >> 4) & 0x0F0F_0F0F) | ((x & 0x0F0F_0F0F) << 4);
-    x = ((x >> 8) & 0x00FF_00FF) | ((x & 0x00FF_00FF) << 8);
-    x = x.rotate_left(16);
-    // drop upper bits
-    x >> (32 - bits)
-}
 
 pub fn intt_tiny(data: &mut [Goldilocks], n_bits: usize, n_cols: usize) {
     let n = 1 << n_bits;

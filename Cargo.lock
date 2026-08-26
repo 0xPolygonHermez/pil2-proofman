@@ -1479,6 +1479,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proofman-multilinear"
+version = "1.2.0-alpha"
+dependencies = [
+ "proofman-fields",
+ "rand 0.10.2",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
 name = "proofman-soundness"
 version = "1.2.0-alpha"
 dependencies = [
