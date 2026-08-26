@@ -285,20 +285,24 @@ static void GRINDING_GPU_POS1_BENCH(benchmark::State &state)
 
     uint32_t n_bits = state.range(0);
 
+    // The kernel reads only in[0..2] (the FIELD_EXTENSION challenge) and writes
+    // the nonce itself into slot 3.
+    constexpr int GRIND_CHALLENGE_ELEMS = 3;
+
     gl64_t *d_in, *d_nonce, *d_nonceBlock;
     CHECKCUDAERR(cudaMalloc((void **)&d_in,          PoseidonGoldilocksGPUGrinding::SPONGE_WIDTH * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_nonce,       sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock,  NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock,  POSEIDON1_GRIND_GRID * sizeof(gl64_t)));
 
-    Goldilocks::Element h_in[PoseidonGoldilocksGPUGrinding::SPONGE_WIDTH];
+    Goldilocks::Element h_in[GRIND_CHALLENGE_ELEMS];
     uint64_t iteration = 0;
 
     for (auto _ : state) {
         iteration++;
-        for (int i = 0; i < (int)(PoseidonGoldilocksGPUGrinding::SPONGE_WIDTH - 1); ++i)
+        for (int i = 0; i < GRIND_CHALLENGE_ELEMS; ++i)
             h_in[i] = Goldilocks::fromU64((iteration * 1000 + i) * 123456789ULL);
         CHECKCUDAERR(cudaMemcpy(d_in, h_in,
-                                (PoseidonGoldilocksGPUGrinding::SPONGE_WIDTH - 1) * sizeof(gl64_t),
+                                GRIND_CHALLENGE_ELEMS * sizeof(gl64_t),
                                 cudaMemcpyHostToDevice));
 
         PoseidonGoldilocksGPUGrinding::grinding(
@@ -367,7 +371,7 @@ BENCHMARK(MERKLETREE_HYBRID_W12POS1_W16POS2_AR4_TILES_GPU_BENCH)
 // grinding
 BENCHMARK(GRINDING_GPU_POS1_BENCH)
     ->Unit(benchmark::kMillisecond)
-    ->Arg(16)->Arg(20)->Arg(23)->Arg(24)->Arg(25)
+    ->Arg(16)->Arg(20)->Arg(23)->Arg(24)->Arg(25)->Arg(26)->Arg(27)->Arg(28)
     ->UseRealTime();
 
 #undef REG_NCOLS

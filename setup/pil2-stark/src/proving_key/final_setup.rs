@@ -294,10 +294,12 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         blowup_factor: Some(4),
         folding_factor: Some(4),
         pow_bits: Some(22),
-        last_level_verification: Some(2),
+        // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
+        last_level_verification: None,
         ..Default::default()
     };
-    let final_stark_struct = crate::types::stark_struct::generate_stark_struct(&final_settings, plonk_result.n_bits);
+    let final_stark_struct =
+        crate::types::stark_struct::generate_stark_struct(&final_settings, plonk_result.n_bits, config.hash);
 
     // Run real starkSetup via pil_info on the compiled vadcop_final pilout
     let starkinfo_path = files_dir.join("vadcop_final.starkinfo.json");

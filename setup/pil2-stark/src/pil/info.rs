@@ -308,7 +308,12 @@ pub fn pil_info(
         im_dim3_sum
     ));
 
-    summary.push_str(&format!("| Total: {} | nConstraints: {}", n_columns_base_field, setup.constraints.len()));
+    summary.push_str(&format!(
+        "| Total: {} | nConstraints: {} | nExpressions: {}",
+        n_columns_base_field,
+        setup.constraints.len(),
+        setup.expressions.len()
+    ));
     if !options.debug {
         summary.push_str(&format!(" | nOpeningPoints: {}", opening_points.len()));
     }
@@ -316,6 +321,7 @@ pub fn pil_info(
 
     println!("Total Columns: {} -> Columns in the basefield: {}", n_columns, n_columns_base_field);
     println!("Total Constraints: {}", setup.constraints.len());
+    println!("Total Expressions: {}", setup.expressions.len());
     if !options.debug {
         println!("Number of opening points: {}", opening_points.len());
         println!("Number of evaluations: {}", pil_code.ev_map.len());

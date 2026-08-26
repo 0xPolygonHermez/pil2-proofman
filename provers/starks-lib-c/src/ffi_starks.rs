@@ -186,7 +186,10 @@ pub fn set_hash_family_c(family: &str) {
     let fam: u8 = match family {
         "Poseidon1" => 1,
         "Poseidon2" => 2,
-        other => panic!("set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\" or \"Poseidon2\")"),
+        "blake3" => 3,
+        other => panic!(
+            "set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\", \"Poseidon2\" or \"blake3\")"
+        ),
     };
     unsafe { set_hash_family(fam) }
 }
@@ -966,6 +969,9 @@ pub fn gen_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     custom_commits_fixed_path: &str,
+    // true: seed the transcript from this AIR's own verkey + publics instead of the
+    // global challenge (self-contained proof, no contributions phase).
+    self_contained: bool,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -995,6 +1001,7 @@ pub fn gen_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             custom_commits_path_ptr,
+            self_contained,
         )
     }
 }
@@ -1485,9 +1492,16 @@ pub fn alloc_device_large_buffers_c(
     aux_trace_recursive_area: u64,
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
+    unified_buffer_pad_area: u64,
 ) {
     unsafe {
-        alloc_device_large_buffers(d_buffers, aux_trace_recursive_area, const_pols_area, const_pols_aggregation_area);
+        alloc_device_large_buffers(
+            d_buffers,
+            aux_trace_recursive_area,
+            const_pols_area,
+            const_pols_aggregation_area,
+            unified_buffer_pad_area,
+        );
     }
 }
 
@@ -1608,18 +1622,6 @@ pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers_recursivef: *mut ::std::os::raw::c_void,
 ) -> *mut ::std::os::raw::c_void {
     unsafe { get_unified_buffer_gpu_for_recursivef(d_buffers, d_buffers_recursivef) }
-}
-
-pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe {
-        alloc_fixed_pols_buffer_gpu(d_buffers);
-    }
-}
-
-pub fn free_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe {
-        free_fixed_pols_buffer_gpu(d_buffers);
-    }
 }
 
 pub fn load_fixed_pols_recursivef_c(

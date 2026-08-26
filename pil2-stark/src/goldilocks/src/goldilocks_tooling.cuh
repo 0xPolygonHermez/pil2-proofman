@@ -183,6 +183,17 @@ struct AirInstanceInfo {
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
 
+        // mapOffsets is a std::map, so a missing key silently reads back as offset 0 --
+        // calculateFRIExpression would scribble the head of the arena rather than fail.
+        // Checked here because that call site sits inside a cudagraph capture region.
+        // Only for proof-generating setups: the verify and verify-constraints branches of
+        // StarkInfo::load lay out their own arena and never reach FRI, so the region is
+        // legitimately absent there.
+        if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify &&
+            setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
+            throw std::runtime_error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
+        }
+
         EvalInfo **evalsInfoFRI_ = new EvalInfo*[nOpeningPoints];
         uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
 

@@ -64,7 +64,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
     updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool recursive = false) {
+void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool selfContained = false) {
     TimerStart(STARK_PROOF);
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
     NTT_Goldilocks nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt);
@@ -79,6 +79,13 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
+    // The NTT scratch is a property of the setup, not of the transcript mode: a recursion air
+    // reserves no buff_helper, while a wide basic air must not malloc one per stage instead.
+    auto buffHelper = [&](const char *name) -> Goldilocks::Element * {
+        auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(name), false));
+        return it == setupCtx.starkInfo.mapOffsets.end() ? nullptr : &params.aux_trace[it->second];
+    };
+
     TimerStart(STARK_STEP_0);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
@@ -90,7 +97,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
 
-    if(recursive) {
+    if(selfContained) {
         Goldilocks::Element verkey[HASH_SIZE];
         starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
         starks.addTranscript(transcript, &verkey[0], HASH_SIZE);
@@ -111,11 +118,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStart(STARK_STEP_1);
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
-    if(recursive) {
-        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
+    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    if(selfContained) {
         starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
-    } else {
-        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
     }
     TimerStopAndLog(STARK_STEP_1);
 
@@ -136,11 +141,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    if (recursive) {
-        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt);
-    } else {
-        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
-    }
+    starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_2"));
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
 
@@ -169,11 +170,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    if (recursive) {
-        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended);
-    } else {
-        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
-    }
+    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, buffHelper("buff_helper_fft_3"));
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);

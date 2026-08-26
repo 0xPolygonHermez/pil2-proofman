@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::RwLock,
+};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -59,7 +62,12 @@ pub type InstanceMap = HashMap<usize, InstancesInfo>;
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 /// GPU memory (in MB) left unallocated for consumers outside our arena.
-const GPU_MEMORY_RESERVE_MB: u64 = 512;
+const GPU_MEMORY_RESERVE_MB: u64 = 1536;
+
+/// Unified-buffer floor (bytes) for final-snark runs: the snark prover borrows the buffer
+/// whole and carves ~27.97 GiB (2^24 plonk key), regardless of what the streams need.
+/// Padded from the layout's unused slack only, so it never eats into the reserve.
+const GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES: u64 = 30_386_893_620;
 
 #[derive(Clone)]
 pub struct ProofOptions {
@@ -191,6 +199,8 @@ pub struct ProofmanOptions {
     /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
     /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
     pub table_airs_gpu: Vec<(usize, usize)>,
+    /// This run produces a final SNARK
+    pub final_snark: bool,
 }
 
 impl Default for ProofmanOptions {
@@ -209,6 +219,7 @@ impl Default for ProofmanOptions {
             packed_info: HashMap::new(),
             preloaded_const_tree_gpu: Vec::new(),
             table_airs_gpu: Vec::new(),
+            final_snark: false,
         }
     }
 }
@@ -236,6 +247,19 @@ impl ProofmanOptions {
 
     pub fn packed(&mut self) {
         self.packed = true;
+    }
+
+    /// Declare that this run will produce a final SNARK (plonk/fflonk wrapper). Gates the
+    /// unified-buffer snark floor (GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES): runs without a wrapper never
+    /// borrow the buffer at that size, so they skip the padding and keep the layout slack free.
+    pub fn final_snark(&mut self) {
+        self.final_snark = true;
+    }
+
+    /// Undoes `gpu()`'s implied packing. Without this `--no-packed` relies on `packed_info` being
+    /// empty, which stops being true as soon as a caller populates it unconditionally.
+    pub fn no_packed(&mut self) {
+        self.packed = false;
     }
 
     pub fn gpu(&mut self) {
@@ -289,6 +313,9 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
+    /// Airs whose rows components must write packed. Holds the same `packedTrace && is_packed`
+    /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
+    pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -348,6 +375,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
+            packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
         })
@@ -657,6 +685,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].table
     }
 
+    /// Whether this air's witness rows must be written packed.
+    pub fn is_packed(&self, airgroup_id: usize, air_id: usize) -> bool {
+        self.packed_airs.contains(&(airgroup_id, air_id))
+    }
+
     pub fn is_shared_buffer(&self, global_idx: usize) -> bool {
         self.air_instances[global_idx].read().unwrap().is_shared_buffer()
     }
@@ -959,6 +992,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         gpu: bool,
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
+        final_snark: bool,
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
@@ -1094,11 +1128,40 @@ impl<F: PrimeField64> ProofCtx<F> {
             self.global_info.transcript_arity as u64,
         );
 
+        // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
+        // taking only the layout's unused slack. Runs without a wrapper skip it.
+        let unified_buffer_pad_area: u64 = if gpu && final_snark {
+            let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
+                + n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                + total_const_area_aggregation
+                + total_const_area;
+            let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);
+            let pad = floor_elems.saturating_sub(predicted_unified_buffer).min(layout.unused as u64);
+            if pad > 0 {
+                tracing::info!(
+                    "Padding the unified buffer by {} to reach the {} snark floor",
+                    format_bytes(pad as f64 * 8.0),
+                    format_bytes(GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES as f64),
+                );
+                if floor_elems.saturating_sub(predicted_unified_buffer) > layout.unused as u64 {
+                    tracing::warn!(
+                        "Snark floor not reachable: layout slack is {} short; the final snark \
+                         prover will not fit the unified buffer",
+                        format_bytes((floor_elems - predicted_unified_buffer - layout.unused as u64) as f64 * 8.0),
+                    );
+                }
+            }
+            pad
+        } else {
+            0
+        };
+
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
             max_prover_recursive2_buffer_size as u64,
             total_const_area,
             total_const_area_aggregation,
+            unified_buffer_pad_area,
         );
 
         self.d_buffers = d_buffers;

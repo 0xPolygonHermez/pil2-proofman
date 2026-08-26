@@ -13,7 +13,7 @@ use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
 use commands::verify_snark::VerifySnark;
-use commands::prove_recursive::ProveRecursiveCmd;
+use commands::prove_air::ProveAirCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
@@ -46,7 +46,7 @@ pub enum Commands {
     VerifySnark(VerifySnark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
-    ProveRecursive(ProveRecursiveCmd),
+    ProveAir(ProveAirCmd),
     GenExps(GenExpsCmd),
 }
 
@@ -78,7 +78,7 @@ fn main() {
             Commands::VerifySnark(args) => args.run(),
             Commands::Stats(args) => args.run(),
             Commands::Execute(args) => args.run(),
-            Commands::ProveRecursive(args) => args.run(),
+            Commands::ProveAir(args) => args.run(),
             Commands::GenExps(args) => args.run(),
         })
         .expect("failed to spawn main thread")

@@ -185,3 +185,55 @@ pub fn build_fixed_pols(airgroup_name: &str, cv: &[Vec<u64>], sv: &[Vec<u64>]) -
     }
     pols
 }
+
+/// Per-row bookkeeping for the plonk "piggyback" band, shared by both compressor setups.
+///
+/// The band is a fixed list of 3-cell plonk gates: gate `g` occupies `a[3g..3g+2]`. Which
+/// gates actually fire on a row is decided by the gate's selector in `compressor.pil`;
+/// which gates the setup is allowed to fill must be exactly that set, or a constraint gets
+/// placed into a gate that is never evaluated (silently unenforced — unsound) or into cells
+/// a custom gate already owns (a real overlap). [`PlonkBand`] makes both a hard error:
+/// each row declares its allowed-gate mask via [`PlonkBand::allow`] (the mirror of the PIL
+/// selectors), and every placement goes through [`PlonkBand::put`].
+pub struct PlonkBand {
+    allowed: Vec<u16>,
+    written: Vec<u16>,
+}
+
+impl PlonkBand {
+    pub fn new(n: usize) -> Self {
+        Self { allowed: vec![0u16; n], written: vec![0u16; n] }
+    }
+
+    /// Declare the gates whose PIL selector fires on `row` (bit `g` = gate `g`).
+    pub fn allow(&mut self, row: usize, mask: u16) {
+        self.allowed[row] = mask;
+    }
+
+    /// Place plonk constraint `c` into gate `g` of `row`.
+    pub fn put(&mut self, s_map: &mut [Vec<u32>], row: usize, g: usize, c: &[u64]) {
+        assert!(
+            self.allowed[row] & (1 << g) != 0,
+            "plonk gate {g} placed at row {row}, but its PIL selector does not fire there \
+             (allowed mask {:#012b}) — the constraint would be unenforced",
+            self.allowed[row]
+        );
+        if self.written[row] & (1 << g) == 0 {
+            // First write to this gate: its cells must still be free, i.e. the gate does not
+            // overlap the cells the row's custom gate owns. Later writes to the same gate are
+            // refinements of an already-placed constraint with the same selector constants.
+            for j in 0..3 {
+                assert_eq!(
+                    s_map[3 * g + j][row],
+                    0,
+                    "plonk gate {g} at row {row} overlaps a custom-gate cell a[{}]",
+                    3 * g + j
+                );
+            }
+            self.written[row] |= 1 << g;
+        }
+        s_map[3 * g][row] = c[0] as u32;
+        s_map[3 * g + 1][row] = c[1] as u32;
+        s_map[3 * g + 2][row] = c[2] as u32;
+    }
+}

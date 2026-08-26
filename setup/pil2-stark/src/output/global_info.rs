@@ -11,7 +11,6 @@ use std::path::Path;
 
 use anyhow::Result;
 use pil2_pilout::pilout::{self as pb, SymbolType};
-use proofman_starks_lib_c::GOLDILOCKS_MERKLE_TREE_ARITY;
 use serde_json::json;
 
 use crate::types::stark_struct::StarkStructsConfig;
@@ -58,7 +57,7 @@ pub(crate) fn build_global_info_json(
     let proof_values_map = build_global_proof_values_map(&pilout.symbols);
     let publics_map = build_global_publics_map(&pilout.symbols);
 
-    let transcript_arity: u64 = GOLDILOCKS_MERKLE_TREE_ARITY;
+    let transcript_arity: u64 = proofman_common::hash_family::transcript_arity(hash);
 
     json!({
         "name": pilout_name,

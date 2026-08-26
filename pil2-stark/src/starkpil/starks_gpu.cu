@@ -7,6 +7,7 @@
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include "goldilocks_cubic_extension.cuh"
+#include "fri_expression.cuh"
 #include "proof2zkinStark.hpp"
 #include "proofman_sumcheck.cuh"
 
@@ -364,7 +365,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         {
             // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
             PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
-            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes);
+            // pNodes is free scratch until the merkelize below fills it; its capacity lets the
+            // LDE stage a wider column chunk.
+            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
             PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
             buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
@@ -394,7 +397,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     // Const sections are stored fixedLayout() (ColMajor); the Merkle build reads dst in that
     // layout. pNodes is free scratch: above the LDE's writes, filled by the merkelize below.
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes);
+    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
@@ -834,6 +837,77 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
     }
 }
 
+// fold with the per-thread ppar workspace in local memory instead of global
+// scratch. The generic kernel keys each thread's RATIO*FIELD_EXTENSION slots
+// contiguously in d_ppar, so every intt_tinny access is a fully scattered
+// global round-trip. Local memory is hardware-interleaved per thread, so the same
+// accesses coalesce; the arithmetic and its order are bit-identical.
+template<uint32_t RATIO>
+__global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Element omega_inv,
+                         uint64_t invShiftPow_, uint64_t invW_, uint64_t currentBits)
+{
+    extern __shared__ gl64_t s_twiddles[];
+    if (threadIdx.x == 0) {
+        s_twiddles[0] = gl64_t(uint64_t(1));
+        for (uint32_t i = 1; i < RATIO / 2; i++) {
+            s_twiddles[i] = s_twiddles[i - 1] * gl64_t(omega_inv.fe);
+        }
+    }
+    __syncthreads();
+
+    constexpr uint32_t LOG_RATIO = (RATIO == 2) ? 1 : (RATIO == 4) ? 2 : (RATIO == 8) ? 3 : (RATIO == 16) ? 4 : 5;
+    static_assert((1u << LOG_RATIO) == RATIO, "RATIO must be a power of two");
+    uint64_t sizeFoldedPol = 1ull << currentBits;
+
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= (int64_t)sizeFoldedPol)
+        return;
+
+    gl64_t invShift(invShiftPow_);
+    gl64_t invW(invW_);
+    gl64_t sinv = invShift;
+    gl64_t base = invW;
+    uint32_t exponent = id;
+    while (exponent > 0)
+    {
+        if (exponent % 2 == 1)
+        {
+            sinv *= base;
+        }
+        base *= base;
+        exponent /= 2;
+    }
+
+    gl64_t ppar[RATIO * FIELD_EXTENSION];
+    for (uint32_t i = 0; i < RATIO; i++)
+    {
+        uint32_t ind = i * FIELD_EXTENSION;
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++)
+        {
+            ppar[ind + k] = gl64_t(friPol[(i * sizeFoldedPol + id) * FIELD_EXTENSION + k]);
+        }
+    }
+    intt_tinny(ppar, RATIO, LOG_RATIO, s_twiddles, FIELD_EXTENSION);
+
+    gl64_t r(1);
+    for (uint32_t i = 0; i < RATIO; i++)
+    {
+        Goldilocks3GPU::Element *component = (Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION];
+        Goldilocks3GPU::mul(*component, *component, r);
+        r *= sinv;
+    }
+    for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+    {
+        friPol[id * FIELD_EXTENSION + i] = ppar[(RATIO - 1) * FIELD_EXTENSION + i];
+    }
+    for (int i = RATIO - 2; i >= 0; i--)
+    {
+        Goldilocks3GPU::Element aux;
+        Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)&d_challenge[0]));
+        Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
+    }
+}
+
 void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream)
 {
 
@@ -858,7 +932,26 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     dim3 nBlocks((sizeFoldedPol + nThreads.x - 1) / nThreads.x);
     size_t sharedMem = halfRatio * sizeof(gl64_t);
     TimerStartCategoryGPU(timer, FRI);
-    fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+    // Register/local-resident ppar for the common power-of-two ratios (every
+    // zisk FRI step folds by 3 bits -> ratio 8); the global-scratch kernel
+    // stays as the fallback for anything else.
+    switch (ratio) {
+    case 2:
+        fold_reg<2><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
+        break;
+    case 4:
+        fold_reg<4><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
+        break;
+    case 8:
+        fold_reg<8><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
+        break;
+    case 16:
+        fold_reg<16><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
+        break;
+    default:
+        fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+        break;
+    }
     TimerStopCategoryGPU(timer, FRI);
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -1236,8 +1329,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     Goldilocks::Element *finalPol = airValues + starkInfo.airValuesSize;
     Goldilocks::Element *nonce = finalPol + finalPolDegree * FIELD_EXTENSION;
 
-    double arityLog2 = std::log2(arity);
-    uint64_t nSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[0].nBits / arityLog2) - lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, arity, lastLevelVerification, false);
     uint64_t siblingWords = nSiblings * (arity - 1) * HASH_SIZE;
 
     // Address of query `q` in tree `tree` within the query openings block.
@@ -1302,7 +1394,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
         uint64_t stepIndex = step - 1;
         uint64_t width = (1ULL << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION;
-        uint64_t stepSiblings = (uint64_t)std::ceil(starkInfo.starkStruct.steps[step].nBits / arityLog2) - lastLevelVerification;
+        uint64_t stepSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, arity, lastLevelVerification, false);
         uint64_t stepSiblingWords = stepSiblings * (arity - 1) * HASH_SIZE;
         uint64_t buffSize = width + stepSiblingWords;
         Goldilocks::Element *queriesFRI = queries + (nTrees + stepIndex) * nQueries * starkInfo.maxProofBuffSize;
@@ -1330,106 +1422,9 @@ void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, Se
     d_transcript->getState(hash, stream);
 };
 
-__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nBits, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits)
-{
-    int chunk_idx = blockIdx.x;
-    uint64_t nchunks = domainSize / blockDim.x;
-
-    Goldilocks3GPU::Element &vf1e = *(Goldilocks3GPU::Element *)vf1;
-    Goldilocks3GPU::Element &vf2e = *(Goldilocks3GPU::Element *)vf2;
-
-    while (chunk_idx < nchunks) {
-        Goldilocks3GPU::Element fri_pol, accum, res, term;
-
-        uint64_t i = chunk_idx * blockDim.x;
-        uint64_t r = i + threadIdx.x;
-        // Montgomery-batched denominators, groups of 4 openings: one Fp3 inversion
-        // per group instead of one per opening
-        Goldilocks3GPU::Element inv_g[4];
-        for (uint64_t og = 0; og < nOpeningPoints; og += 4) {
-            const uint32_t gn = (nOpeningPoints - og < 4) ? (uint32_t)(nOpeningPoints - og) : 4u;
-
-            // Batch-invert the gn denominators (x[r] - xDivXSub[og+k]):
-            // forward prefix products, one Fp3 inversion, backward unwind.
-            Goldilocks3GPU::Element den, t;
-            for (uint32_t k = 0; k < gn; ++k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                if (k == 0) Goldilocks3GPU::copy(inv_g[0], den);
-                else Goldilocks3GPU::mul(inv_g[k], inv_g[k - 1], den);
-            }
-            Goldilocks3GPU::inv(t, inv_g[gn - 1]);
-            for (uint32_t k = gn - 1; k > 0; --k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                Goldilocks3GPU::mul(inv_g[k], t, inv_g[k - 1]);
-                Goldilocks3GPU::mul(t, t, den);
-            }
-            Goldilocks3GPU::copy(inv_g[0], t);
-
-            for (uint64_t o = og; o < og + gn; ++o) {
-                if (d_countsPerOpeningPos[o] == 0) {
-                    accum[0] = gl64_t(uint64_t(0));
-                    accum[1] = gl64_t(uint64_t(0));
-                    accum[2] = gl64_t(uint64_t(0));
-                }
-                for (uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
-                    EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
-                    Goldilocks3GPU::Element &eval = *(Goldilocks3GPU::Element *)(d_evals + evalInfo.evalPos * FIELD_EXTENSION);
-                    // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
-                    // commits (1) and fixed/const (2) follow fixedLayout().
-                    gl64_t *pol;
-                    Layout polLayout;
-                    if (evalInfo.type == 0) {
-                        pol = d_cmPols;
-                        polLayout = resolveLayout(nBits, evalInfo.stageCols);
-                    } else if (evalInfo.type == 1) {
-                        pol = d_customComits;
-                        polLayout = fixedLayout();
-                    } else {
-                        pol = d_fixedPols;
-                        polLayout = fixedLayout();
-                    }
-
-                    Goldilocks3GPU::Element &out = (j == 0) ? accum : term;
-                    if (evalInfo.dim == 1) {
-                        gl64_t v = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::sub(out, v, eval);
-                    } else {
-                        out[0] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        out[1] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
-                        out[2] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::sub(out, out, eval);
-                    }
-                    if (j != 0) {
-                        Goldilocks3GPU::mul(accum, accum, vf2e);
-                        Goldilocks3GPU::add(accum, accum, term);
-                    }
-                }
-
-                Goldilocks3GPU::copy(res, inv_g[o - og]);
-
-                if (o == 0) {
-                    Goldilocks3GPU::mul(fri_pol, accum, res);
-                } else {
-                    Goldilocks3GPU::mul(accum, accum, res);
-                    Goldilocks3GPU::mul(fri_pol, fri_pol, vf1e);
-                    Goldilocks3GPU::add(fri_pol, fri_pol, accum);
-                }
-            }
-        }
-        d_fri[r * FIELD_EXTENSION] = fri_pol[0];
-        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[1];
-        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[2];
-        chunk_idx += gridDim.x;
-    }
-}
-
 void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream) {
-    Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
-
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    // computeFRIExpression strides by domainSize/blockDim.x with no remainder handling,
+    // computeFRIExpressionFolded strides by domainSize/blockDim.x with no remainder handling,
     // so blockDim.x must divide domainSize or leftover rows are silently dropped.
     // Raise nrowsPack up to a 256-thread minimum (memory-constrained instances halve
     // nrowsPack below 256 and would otherwise underpopulate blocks), then cap at
@@ -1441,16 +1436,39 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     uint32_t nblocks_ = (uint32_t)((domainSize + nthreads_ - 1) / nthreads_);
     dim3 nThreads(nthreads_);
     dim3 nBlocks(nblocks_);
-    computeFRIExpression<<<nBlocks, nThreads, 0, stream>>>(
-        domainSize,
-        setupCtx.starkInfo.starkStruct.nBits,
-        setupCtx.starkInfo.openingPoints.size(),
-        (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)],
+
+    // Fold the vf1/vf2 challenge powers and the openings' evaluations into per-column
+    // constants first, so the per-row loop is one mul31 + one add33 per base column
+    // instead of a sub33 + mul33 + add33. Lives in the per-stream aux_trace, so
+    // concurrent proofs of the same AIR cannot race on it.
+    uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
+    // The fri_folded region's presence is asserted at setup (AirInstanceInfo); this
+    // runs inside a cudagraph capture region, where throwing would strand the stream
+    // in capture mode.
+    gl64_t *d_fri = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    gl64_t *d_friFoldedCoef = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_folded", false)];
+    gl64_t *d_friFoldedK = d_friFoldedCoef + setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+
+    computeFRIFoldedConstants<<<(nOpeningPoints + 63) / 64, 64, 0, stream>>>(
+        nOpeningPoints,
         air_instance_info->evalsInfoFRISizes,
         air_instance_info->evalsInfoFRI,
         (gl64_t*)h_params.evals,
         (gl64_t*)h_params.challenges + 4 * FIELD_EXTENSION,
         (gl64_t*)h_params.challenges + 5 * FIELD_EXTENSION,
+        d_friFoldedCoef,
+        d_friFoldedK);
+    CHECKCUDAERR(cudaGetLastError());
+
+    computeFRIExpressionFolded<<<nBlocks, nThreads, 0, stream>>>(
+        domainSize,
+        setupCtx.starkInfo.starkStruct.nBits,
+        nOpeningPoints,
+        d_fri,
+        air_instance_info->evalsInfoFRISizes,
+        air_instance_info->evalsInfoFRI,
+        d_friFoldedCoef,
+        d_friFoldedK,
         (gl64_t*)h_params.aux_trace,
         (gl64_t*)h_params.xDivXSub,
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)],

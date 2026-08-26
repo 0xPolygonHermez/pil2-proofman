@@ -27,7 +27,7 @@ struct StarksBackend {
     // Proof generation
     // customCommitsFixedPath: path to the on-disk custom-commits-fixed file for this
     // (airgroupId, airId). Empty string means no custom commits for this instance.
-    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath);
+    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained);
     void (*get_stream_proofs)(void *d_buffers_);
     void (*get_stream_proofs_non_blocking)(void *d_buffers_);
     void (*get_stream_id_proof)(void *d_buffers_, uint64_t streamId);
@@ -58,7 +58,7 @@ struct StarksBackend {
     void (*load_device_const_pols)(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void (*load_device_setup)(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
     uint64_t (*gen_device_streams)(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
+    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
     void (*get_instances_ready)(void *d_buffers, int64_t* instances_ready);
     void (*reset_device_streams)(void *d_buffers_);
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
@@ -78,8 +78,6 @@ struct StarksBackend {
     int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
-    void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);
-    void (*free_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*load_fixed_pols_recursivef)(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
 
     // Final SNARK

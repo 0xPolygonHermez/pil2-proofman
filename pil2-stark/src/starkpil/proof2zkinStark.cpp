@@ -60,7 +60,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         }
     }
 
-    uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
 
     j["s0_siblingsC"] = json::array();
@@ -164,7 +164,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
             j["s" + std::to_string(step) + "_siblings"][i] = json::array();
-            uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
+            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
             uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
             for(uint64_t l = 0; l < nSiblings; ++l) {
                 for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {

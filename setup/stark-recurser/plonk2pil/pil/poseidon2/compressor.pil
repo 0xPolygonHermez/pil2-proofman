@@ -17,49 +17,51 @@ require "circuits/plonk.pil";
 // witness columns a[] on disjoint rows.
 //
 // Poseidon2 (Goldilocks, width 16) = 8 full + 22 partial = 30 rounds, packed
-// into a 10-ROW gate with ONE chain slot per row on cols a[27..42] (firstColP):
+// into a 10-ROW gate with ONE chain slot per row on cols a[30..45] (firstColP):
 //
-//   PIL row | round | selector alias         | chain slot a[27..42]
+//   PIL row | round | selector alias         | chain slot a[30..45]
 //   --------+-------+------------------------+----------------------------------
-//    0 INIT |  R0   | POSEIDON_R0 (SP/COMP)  | full round 0 (+ input @a[0..15], key @a[16..17])
+//    0 INIT |  R0   | POSEIDON_R0 (COMP/SP)  | full round 0 (+ input @a[0..15], key @a[16..17])
 //    1      |  R1   | POSEIDON_R1            | full round 1
 //    2      |  R2   | POSEIDON_R2            | full round 2
 //    3      |  R3   | POSEIDON_R3            | full round 3
-//    4      |  R4   | POSEIDON_R4            | full→partial P-matrix transition; feeds the chain ('a[27..42])
-//    5 PR   |  —    | POSEIDON_PARTIAL_ROUND | 22 partial rounds (anchors a[27..42] + a[18..23]@PR)
+//    4      |  R4   | POSEIDON_R4            | full→partial P-matrix transition; feeds the chain ('a[30..45])
+//    5 PR   |  —    | POSEIDON_PARTIAL_ROUND | 22 partial rounds (anchors a[30..45] + a[18..23]@PR)
 //    6      |  R26  | POSEIDON_R26           | full round 26
 //    7      |  R27  | POSEIDON_R27           | full round 27
 //    8      |  R28  | POSEIDON_R28           | full round 28
 //    9 FINAL|  R29  | POSEIDON_R29           | full round 29 → output a[0..15]
 //
 // The R0..R29 aliases below resolve each round's row via primes off the INIT
-// (POSEIDONSPONGE/COMPRESSION, row 0), PARTIAL_ROUND (row 5) and FINAL (row 9)
-// anchors: prefix 'X = row r-1, postfix X' = row r+1, (k)'X = row r∓k.
+// (POSEIDONCOMPRESSION/SPONGE, row 0), PARTIAL_ROUND (row 5) and FINAL (row 9)
+// anchors: prefix 'X = row r-1, postfix X' = row r∓k.
 // (R4 is defined for the transition row; constantsPoseidonF below consumes the
 //  set {R0,R1,R2,R3, PARTIAL, R26,R27,R28,R29} — the 8 full rounds + the chain.)
 //
-// Reduced a[43]/S[27] layout (chain a[36..51]->a[27..42], band a[0..35]->a[0..26],
-// cmul 4/row -> 3/row; the 6 overflow partial anchors moved to the PR row a[18..23]).
 // Columns:  a[0..15] = input @INIT / output @FINAL ; a[16..17] = compression key bits ;
-//           a[18..26] = plonk band tail / 6 partial overflow anchors @PR (a[18..23]) ;
-//           a[27..42] = chain state ; S[27] = connection band.
+//           a[18..29] = plonk band tail (+ 6 partial overflow anchors @PR at a[18..23]) ;
+//           a[30..45] = chain state ; S[30] = connection band (a[0..29]).
+// The chain slot is DISJOINT from the band, so every band cell a Poseidon row leaves
+// free is available to the plonk piggyback: the 7 inner full-round rows expose all 10
+// gates, exactly like a pure-plonk row. This layout is identical to the Poseidon1
+// compressor's — only the round algebra and the tree-selector arity differ.
 // ============================================================================
 airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
-    col witness a[43];
+    col witness a[46];
 
     #pragma fixed_external
-    col fixed S[27];
-    
+    col fixed S[30];
+
     #pragma fixed_external
     col fixed C[10];
-    
+
     const int nPoseidon = nPoseidonCompressor + nPoseidonSponge;
 
-    col fixed POSEIDONSPONGE = [[1,0:9]:nPoseidonSponge,0...];
-    col fixed POSEIDONCOMPRESSION = [[0:10]:nPoseidonSponge,[1,0:9]:nPoseidonCompressor,0...]; 
+    col fixed POSEIDONCOMPRESSION = [[1,0:9]:nPoseidonCompressor,0...];
+    col fixed POSEIDONSPONGE = [[0:10]:nPoseidonCompressor,[1,0:9]:nPoseidonSponge,0...];
     col fixed POSEIDON_PARTIAL_ROUND = [[0:5,1,0:4]:nPoseidon,0...];
     col fixed POSEIDON_FINAL = [[0:9,1]:nPoseidon,0...];
-    
+
     const expr POSEIDON_R0 = (POSEIDONSPONGE + POSEIDONCOMPRESSION);
     const expr POSEIDON_R1 = ('POSEIDONSPONGE + 'POSEIDONCOMPRESSION);
     const expr POSEIDON_R2 = ((2)'POSEIDONSPONGE + (2)'POSEIDONCOMPRESSION);
@@ -81,10 +83,14 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
 
-    // Band a[0..26] = 9 plonk gates: q0 = gates 0..5 (a[0..17]), q1 = gates 6..8 (a[18..26]).
-    // The 6 overflow anchors live on the PR row at a[18..23] (gates 6,7), so gates 6,7 must
-    // NOT fire on PR — use CHECK_PLONK_NOPR. INIT (R0), whose a[18..23] is free, hosts gates
-    // 6,7,8. Gate 8 (a[24..26]) is free on every row incl. PR.
+    // Plonk band a[0..29] = 10 gates: q0 = gates 0..5 (a[0..17]), q1 = gates 6..9 (a[18..29]).
+    // Per-row availability (chain lives off-band at a[30..45], so it never blocks a gate):
+    //   R1,R2,R3,R4,R26,R27,R28 : all 10 gates (band fully free)
+    //   PR                      : gates 0..5 + 8,9 (a[18..23] hold the overflow anchors)
+    //   INIT(R0), FINAL         : gates 6..9 only (a[0..15] input/output, a[16..17] key)
+    //   TreeSelector4           : gates 6..9 (a[0..16] used)
+    //   EvPol4                  : gates 7..9 (gate 6 collides with resEVPOL a[18..20])
+    //   SelectVal1              : gates 8,9 (a[0..21] used)
     const expr CHECK_PLONK = PLONK + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R4 + POSEIDON_PARTIAL_ROUND + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28;
     const expr CHECK_PLONK_NOPR = PLONK + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R4 + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28;
 
@@ -96,12 +102,13 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     plonk([a[15], a[16], a[17]], q0, CHECK_PLONK);
     plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0);
     plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4);
-    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + EVPOL4 + SELECTVAL1 + POSEIDON_R0);
+    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL1);
+    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL1);
 
     const expr b0 = a[16];
     const expr b1 = a[17];
 
-    const int firstColP = 27;
+    const int firstColP = 30;
 
     const expr inputO[POSEIDON2_WIDTH];
     const expr outputO[POSEIDON2_WIDTH];
@@ -200,8 +207,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
     selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
 
-    const expr A[27];
-    for (int i = 0; i < 27; i++) {
+    const expr A[30];
+    for (int i = 0; i < 30; i++) {
         A[i] = a[i];
     }
     connection(1, A, S, PIOP_BUS_PROD);

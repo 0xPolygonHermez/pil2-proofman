@@ -42,8 +42,11 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     ntt.LDE(pConstPolsExt, pConstPols, NExtended, N, nPols);
     TimerStopAndLog(EXTEND_CONST_POLS);
 
-    // pConstPols was mmap'd by loadFileParallel; unmap to avoid address-space waste.
-    munmap(pConstPols, constPolsSize);
+    // loadFileParallel's allocating overload returns malloc'd memory (utils.cpp),
+    // so this must be free(). munmap() here unmapped whole pages out from under
+    // glibc's arena -- destroying neighbouring live allocations and malloc's own
+    // metadata -- which crashed a later, unrelated allocation.
+    free(pConstPols);
 
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
@@ -81,6 +84,10 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
 
         TimerStopAndLog(GENERATING_FILES);
 
+        // setNodes leaves isNodesAllocated false, so ~MerkleTreeGL does not
+        // free this; without the delete the whole node buffer leaks per call.
+        delete[] buffNodes;
+
     } else if(verificationHashType == "BN128"){
         TimerStart(MERKELIZE_CONST_TREE);
         RawFr::Element rootC;
@@ -113,6 +120,9 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
             mt.writeFile(constTreeFile);
         }
         TimerStopAndLog(GENERATING_FILES);
+
+        // As above: setNodes means the tree does not own this buffer.
+        delete[] buffNodes;
     } else {
         throw runtime_error("Invalid Hash Type: " + verificationHashType);
     }

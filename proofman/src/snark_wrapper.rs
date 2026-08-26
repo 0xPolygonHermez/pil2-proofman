@@ -15,9 +15,8 @@ use std::ffi::c_void;
 use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
-    get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
-    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c, set_gpu_mode_c,
-    get_num_gpus_c, init_gpu_setup_c, GOLDILOCKS_MERKLE_TREE_ARITY,
+    get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -287,10 +286,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        if let Some(d_buffer) = self.d_buffers {
-            free_fixed_pols_buffer_gpu_c(d_buffer);
-        }
-
         if vadcop_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
@@ -373,8 +368,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        if let Some(d_buffer) = self.d_buffers {
-            alloc_fixed_pols_buffer_gpu_c(d_buffer);
+        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
+        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
+        if self.d_buffers.is_some() {
             if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
                 reload_flag.store(true, Ordering::SeqCst);
             }
@@ -492,7 +488,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     ensure_gpu_available(gpu)?;
     if gpu {
-        init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
+        init_gpu_setup_c(setup_recursivef.stark_info.stark_struct.merkle_tree_arity);
     }
 
     check_const_tree(&setup_recursivef, &None)?;

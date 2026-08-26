@@ -62,10 +62,10 @@ impl GenCustomCommitsFixedCmd {
         let sctx =
             Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], self.gpu)?);
 
-        init_gpu_setup(self.gpu)?;
+        init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?);
-        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1, false)?;
         pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
 
         let pctx = Arc::new(pctx);

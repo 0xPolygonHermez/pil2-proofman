@@ -563,7 +563,7 @@ TEST(PoseidonV1Gpu, grinding_W8_gpu_cpu_reverify)
     gl64_t *d_in, *d_nonce, *d_nonceBlock;
     CHECKCUDAERR(cudaMalloc((void **)&d_in, 3 * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, POSEIDON1_GRIND_GRID * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_in, in, 3 * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
     uint32_t n_bits = 8;

@@ -48,7 +48,6 @@ struct ProofCtx {
     num_stages: u32,
     pilout_filename: String,
     pilout_hash: String,
-    merkle_tree_arity: u64,
     air_groups: Vec<AirGroupsCtx>,
     constant_airgroups: Vec<(String, usize)>,
     constant_airs: Vec<(String, usize, Vec<usize>, String)>,
@@ -57,8 +56,6 @@ struct ProofCtx {
     has_packed: bool,
     packed_info: Vec<PackInfo>,
 }
-
-use proofman_starks_lib_c::GOLDILOCKS_MERKLE_TREE_ARITY as MERKLE_TREE_ARITY_DEFAULT;
 
 #[derive(Clone, Debug, Serialize)]
 struct AirGroupsCtx {
@@ -513,7 +510,6 @@ impl PilHelpersCmd {
         let context = ProofCtx {
             project_name: pilout.name.as_ref().unwrap().to_case(Case::Pascal),
             pilout_hash,
-            merkle_tree_arity: MERKLE_TREE_ARITY_DEFAULT,
             num_stages: pilout.num_stages(),
             pilout_filename: self.pilout.file_name().unwrap().to_str().unwrap().to_string(),
             air_groups: wcctxs,

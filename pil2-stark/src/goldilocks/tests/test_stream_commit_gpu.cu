@@ -1,13 +1,14 @@
-// Streaming sponge commit (stream_commit.cu) validation.
+// Streaming commit (stream_commit.cu) validation.
 //
 // The production entry streamCommitPacked commits a bit-packed wide-trace
 // witness (zisk Main shape) inside one slot buffer: chunked unpack ->
-// in-place aliased LDE -> Poseidon1 W=16 sponge absorb (capacity columns
-// carry the digest) -> arity-4 node reduction carved from the dead rate
-// region. These tests assert the root is BIT-IDENTICAL to the production
-// path (full unpack + ldeColMajor + PoseidonGoldilocksGPU<16>::merkletree)
-// and exercise both aliased-LDE flows of ldeColMajor (batched at small NExt,
-// serial per-column at the Main shape).
+// in-place aliased LDE -> chunked hash fold (Poseidon1 W=16 sponge absorb,
+// or blake3 block compression with a carried chaining value) -> node
+// reduction carved from the dead data region (arity 4 / arity 2). These
+// tests assert the root is BIT-IDENTICAL to the production path (full
+// unpack + ldeColMajor + PoseidonGoldilocksGPU<16>::merkletree or
+// Blake3GoldilocksGPU::merkletree) and exercise both aliased-LDE flows of
+// ldeColMajor (batched at small NExt, serial per-column at the Main shape).
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include "stream_commit.cuh"
 #include "ntt_goldilocks.cuh"
 #include "poseidon_goldilocks.cuh"
+#include "blake3_goldilocks.cuh"
 #include "cuda_utils.cuh"
 
 // Main cm1 bit widths (zisk pil_helpers PACKED_INFO for airgroup 0 / air 0):
@@ -96,17 +98,19 @@ static uint64_t treeNumElements(uint64_t nLeaves, uint32_t arity)
 }
 
 // Assert streamCommitPacked's root equals the production commit path's root.
-static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps)
+static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
+                                   StreamCommitHash hash = StreamCommitHash::Poseidon1)
 {
     using P16 = PoseidonGoldilocksGPU<16>;
+    const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint64_t nBitsExt = nBits + 1;
-    const uint32_t arity    = 4;
+    const uint32_t arity    = b3 ? 2 : 4;
     const uint32_t CAP      = 4;
     const uint32_t TPB      = 128;
     const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
 
     uint32_t gpu = 0; cudaGetDevice((int*)&gpu);
-    P16::initConstants(&gpu, 1);
+    if (!b3) P16::initConstants(&gpu, 1);
     cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
     NTTGoldilocksGPU ntt;
 
@@ -140,7 +144,8 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps)
         const uint32_t ublk = (uint32_t)((N + TPB - 1) / TPB);
         refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, MAIN_WORDS);
         ntt.ldeColMajor(d_ext, d_src, nBits, nBitsExt, nCols, s, true, nullptr);
-        P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else    P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
         CHECKCUDAERR(cudaStreamSynchronize(s));
         CHECKCUDAERR(cudaMemcpy(rootRef.data(), d_tref + treeElems - CAP, CAP*8, cudaMemcpyDeviceToHost));
         CHECKCUDAERR(cudaFree(d_packed)); CHECKCUDAERR(cudaFree(d_src));
@@ -149,7 +154,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps)
 
     // Production entry: one slot buffer, packed witness uploaded by the lib.
     StreamCommitDims dims{nBits, nBitsExt, nCols, MAIN_WORDS};
-    const uint64_t slotElems = streamCommitSlotElems(dims);
+    const uint64_t slotElems = streamCommitSlotElems(dims, hash);
     gl64_t *d_slot; CHECKCUDAERR(cudaMalloc(&d_slot, slotElems * 8));
 
     std::vector<uint64_t> rootCmp(CAP);
@@ -157,15 +162,15 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps)
     for (int r = 0; r < reps; r++) {
         auto t0 = std::chrono::steady_clock::now();
         int64_t rc = streamCommitPacked(d_slot, dims, MAIN_WIDTHS, hPacked.data(),
-                                        rootCmp.data(), s);
+                                        rootCmp.data(), s, nullptr, nullptr, hash);
         auto t1 = std::chrono::steady_clock::now();
         ASSERT_EQ(rc, 0);
         if (r) total_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
     }
     if (reps > 1) total_ms /= (reps - 1);
 
-    printf("[stream-commit] nBits=%lu nCols=%lu lib entry (H2D + commit): %.2f ms, slot %.0f MiB\n",
-           nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
+    printf("[stream-commit] %s nBits=%lu nCols=%lu lib entry (H2D + commit): %.2f ms, slot %.0f MiB\n",
+           b3 ? "blake3" : "poseidon1", nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
 
     for (uint32_t i = 0; i < CAP; i++)
         ASSERT_EQ(rootRef[i], rootCmp[i]) << "root element " << i << " differs";
@@ -186,7 +191,8 @@ TEST(GOLDILOCKS_TEST, stream_commit_reduced_small)
 // only a 32-bit index plus its runtime columns. The slot root must be identical
 // to committing the equivalent FULL packed trace -- that equality is what lets
 // try_slot_commit hand indexed airs to a slot at all.
-static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEntries)
+static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEntries,
+                                   StreamCommitHash hash = StreamCommitHash::Poseidon1)
 {
     const uint64_t nBitsExt = nBits + 1;
     const uint32_t CAP = 4;
@@ -249,8 +255,9 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
     std::vector<uint64_t> rootRef(CAP), rootIdx(CAP);
     {
         StreamCommitDims d{nBits, nBitsExt, nCols, MAIN_WORDS};
-        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
-        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hFull.data(), rootRef.data(), s), 0);
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hFull.data(), rootRef.data(), s,
+                                     nullptr, nullptr, hash), 0);
         CHECKCUDAERR(cudaFree(slot));
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
@@ -260,8 +267,8 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
         CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
         CHECKCUDAERR(cudaMemcpy(dT, table.data(), table.size() * 8, cudaMemcpyHostToDevice));
-        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
-        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, dT), 0);
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, dT, hash), 0);
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
     }
 
@@ -274,7 +281,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
     {
         StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
-        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d) * 8));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
         EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr), 0);
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
     }
@@ -298,4 +305,22 @@ TEST(GOLDILOCKS_TEST, stream_commit_indexed_main_shape)
 TEST(GOLDILOCKS_TEST, stream_commit_reduced_main_shape)
 {
     runStreamCommitReduced(22, 38, 4);
+}
+
+// blake3: same shapes, root compared against Blake3GoldilocksGPU::merkletree.
+// 38 = 8+8+8+8+6 exercises the multi-block CV carry and the partial last block.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_small)
+{
+    runStreamCommitReduced(16, 38, 2, StreamCommitHash::Blake3);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_shape)
+{
+    runStreamCommitReduced(22, 38, 4, StreamCommitHash::Blake3);
+}
+
+// blake3 indexed: compact-vs-full slot parity under the blake3 absorb.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_small)
+{
+    runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Blake3);
 }
