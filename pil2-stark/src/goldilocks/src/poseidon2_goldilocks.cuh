@@ -9,6 +9,17 @@
 #include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset
 #include "poseidon_gpu_common.cuh"      // pow7(gl64_t&), scratchpad
 
+#include "grinding_launch.hpp"
+
+// Grinding launch geometry for POSEIDON2. 
+#define POSEIDON2_GRIND_BITS   19
+#define POSEIDON2_GRIND_BLOCKS 512
+#define POSEIDON2_GRIND_GRID \
+    ((((1ULL << POSEIDON2_GRIND_BITS) + POSEIDON2_GRIND_BLOCKS - 1) / POSEIDON2_GRIND_BLOCKS))
+
+static_assert(POSEIDON2_GRIND_GRID <= GRIND_NONCE_BLOCKS_MAX,
+              "POSEIDON2 grinding grid exceeds the reserved nonce_blocks region");
+
 
 
 template<uint32_t SPONGE_WIDTH_T>

@@ -9,8 +9,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
-use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
+use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
@@ -19,7 +18,7 @@ use crate::add_publics_circom;
 use proofman_verifier::verifier;
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
@@ -62,7 +61,7 @@ use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -76,7 +75,7 @@ use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
-use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
+use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
@@ -84,7 +83,6 @@ use crate::{
 };
 use crate::total_recursive_proofs;
 use crate::check_const_pols_gpu;
-use crate::ensure_gpu_available;
 use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
@@ -478,6 +476,12 @@ struct SlotCommitCtx {
     pool_rx: Receiver<u64>,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     committed: AtomicU64,
+}
+
+fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
+    proofman_common::hash_family::supports_stream_commit(hash)
+        && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
+        && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -897,10 +901,7 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
 
-        ensure_gpu_available(gpu)?;
-        if gpu {
-            init_gpu_setup_c(GOLDILOCKS_MERKLE_TREE_ARITY);
-        }
+        proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -1825,7 +1826,163 @@ where
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
+    /// Proves a single AIR standing alone: the transcript is seeded from its own verkey + publics,
+    /// so the proof verifies by itself without a global challenge.
+    pub fn generate_air_proof(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        air_name: &str,
+        verbose_mode: VerboseMode,
+        verify: bool,
+    ) -> ProofmanResult<()> {
+        if !witness_lib_path.exists() {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
+            )));
+        }
+
+        if let Some(ref publics_path) = public_inputs_path {
+            if !publics_path.exists() {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Public inputs file not found at path: {publics_path:?}"
+                )));
+            }
+        }
+
+        if self.options.verify_constraints {
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has been initialized in verify_constraints mode".into(),
+            ));
+        }
+
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.register_witness(&mut *witness_lib, library)?;
+
+        self.generate_air_proof_from_lib(air_name, verify)
+    }
+
+    pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("generate_air_proof");
+
+        self.set_partition(1, vec![0], 0)?;
+        self.cancellation_info.write_recover().reset();
+        self.reset()?;
+        self.pctx.dctx_reset();
+
+        let _ = self.exec()?;
+
+        // Each custom commit's tree root is a public input; without this they stay zero.
+        Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
+
+        // Resolve the requested AIR by name over the planned instances of this process.
+        let instances = self.pctx.dctx_get_process_instances();
+        let mut targets: Vec<(usize, usize, usize)> = Vec::new();
+        for &instance_id in instances.iter() {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+            if self.pctx.global_info.get_air_name(airgroup_id, air_id) == air_name {
+                targets.push((instance_id, airgroup_id, air_id));
+            }
+        }
+
+        if targets.is_empty() {
+            // Only now is the name list worth building.
+            let available: BTreeSet<&str> = instances
+                .iter()
+                .filter_map(|&id| self.pctx.dctx_get_instance_info(id).ok())
+                .map(|(ag, air)| self.pctx.global_info.get_air_name(ag, air))
+                .collect();
+            return Err(ProofmanError::InvalidParameters(format!(
+                "No planned instance of air '{air_name}'. Planned airs: [{}]",
+                available.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
+
+        for &(instance_id, airgroup_id, air_id) in targets.iter() {
+            tracing::info!("··· Proving {air_name} (instance #{instance_id}) standalone, without global challenge");
+
+            timer_start_info!(WITNESS_GENERATION);
+            self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+            self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+            timer_stop_and_log_info!(WITNESS_GENERATION);
+            self.check_cancel(false)?;
+
+            timer_start_info!(GENERATING_AIR_PROOF);
+            let stream_id = Self::gen_proof(
+                &self.proofs,
+                &self.pctx,
+                &self.sctx,
+                instance_id,
+                &self.aux_trace,
+                &self.const_pols,
+                &self.const_tree,
+                None,
+                None,
+                true,
+            )?;
+            if self.pctx.gpu {
+                // gen_proof is async on GPU: the proof buffer is only filled once the stream drains.
+                get_stream_id_proof_c(self.pctx.get_device_buffers_ptr(), stream_id as u64);
+            }
+            timer_stop_and_log_info!(GENERATING_AIR_PROOF);
+
+            // Safe now that the stream is drained: the H2D copy of this trace is done.
+            if self.pctx.is_shared_buffer(instance_id) {
+                self.memory_handler.to_be_released_buffer(instance_id, true);
+            }
+
+            let proof =
+                self.proofs[instance_id].write().unwrap().take().ok_or_else(|| {
+                    ProofmanError::ProofmanError(format!("No proof produced for instance {instance_id}"))
+                })?;
+
+            if verify {
+                timer_start_info!(VERIFYING_AIR_PROOF);
+                let setup_path = self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
+                // global_challenge = None: the verifier reseeds from verkey + publics, matching
+                // the self-contained prover transcript.
+                let valid = verify_proof::<F>(
+                    proof.proof.as_ptr() as *mut u64,
+                    setup_path.display().to_string() + ".starkinfo.json",
+                    setup_path.display().to_string() + ".verifier.bin",
+                    setup_path.display().to_string() + ".verkey.json",
+                    Some(self.pctx.get_publics().clone()),
+                    Some(self.pctx.get_proof_values().clone()),
+                    None,
+                );
+                timer_stop_and_log_info!(VERIFYING_AIR_PROOF);
+
+                if !valid {
+                    tracing::info!(
+                        "··· {}",
+                        format!("\u{2717} Proof of {air_name} (instance #{instance_id}) was NOT verified")
+                            .bright_red()
+                            .bold()
+                    );
+                    return Err(ProofmanError::InvalidProof(format!(
+                        "Proof of {air_name} (instance #{instance_id}) failed verification"
+                    )));
+                }
+                tracing::info!(
+                    "    {}",
+                    format!("\u{2713} Proof of {air_name} (instance #{instance_id}) was verified")
+                        .bright_green()
+                        .bold()
+                );
+            }
+
+            drop(proof);
+        }
+
+        Ok(())
+    }
+
     pub fn generate_proof(
         &self,
         witness_lib_path: PathBuf,
@@ -3042,6 +3199,7 @@ where
                 &self.const_tree,
                 Some(stream_id),
                 None, // resident/pinned witness: skip path, no reserved stream
+                false,
             ) {
                 Ok(sid) => {
                     pending.commit();
@@ -3232,6 +3390,7 @@ where
                                 &const_tree_clone,
                                 None,
                                 reserved,
+                                false,
                             ) {
                                 Ok(sid) => {
                                     pending.commit();
@@ -4913,6 +5072,9 @@ where
         const_tree: &[F],
         stream_id_: Option<usize>,
         reserved_stream: Option<usize>,
+        // true: no global challenge -- the transcript is seeded from this AIR's own
+        // verkey + publics (see genProof's `recursive` branch).
+        self_contained: bool,
     ) -> ProofmanResult<usize> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -4974,6 +5136,7 @@ where
             const_pols_path,
             const_pols_tree_path,
             &custom_commits_fixed_path,
+            self_contained,
         );
 
         if proof_stream_id == u64::MAX {
@@ -5010,6 +5173,12 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
+        // Components must pack exactly the airs the device will unpack: it gates every packed
+        // read path on `packedTrace && is_packed`, so a global flag alone would corrupt the trace.
+        if options.packed {
+            pctx.packed_airs =
+                options.packed_info.iter().filter(|(_, info)| info.is_packed).map(|(key, _)| *key).collect();
+        }
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -5079,6 +5248,7 @@ where
             options.gpu,
             options.max_number_streams,
             options.max_number_recursive_streams,
+            options.final_snark,
         )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
@@ -5101,9 +5271,7 @@ where
                     }
                     let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
                     let ss = &setup.stark_info.stark_struct;
-                    if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
-                        || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
-                    {
+                    if !stream_commit_eligible(&pctx.global_info.hash, setup) {
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
@@ -5369,9 +5537,7 @@ where
             return false;
         }
         let ss = &setup.stark_info.stark_struct;
-        if ss.merkle_tree_arity != GOLDILOCKS_MERKLE_TREE_ARITY
-            || n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") != 0
-        {
+        if !stream_commit_eligible(&pctx.global_info.hash, setup) {
             return false;
         }
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {

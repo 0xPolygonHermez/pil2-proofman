@@ -4,4 +4,4 @@ pub use ffi_goldilocks::*;
 pub use ffi_starks::*;
 
 #[doc(hidden)]
-pub const GOLDILOCKS_MERKLE_TREE_ARITY: u64 = 4;
+pub const GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY: u64 = 4;

@@ -58,7 +58,12 @@ uint64_t MerkleTreeBN128::getMerkleTreeWidth()
 
 uint64_t MerkleTreeBN128::getMerkleProofLength()
 {
-    return ceil((double)log(height) / log(arity)) - last_level_verification;
+    if (height <= 1) return 0;
+    // Same integer form the BN128 consumers use (merkleProofLevels), so the prover and the
+    // serializer cannot disagree on a non-power-of-two arity.
+    uint64_t nBits = (uint64_t)std::ceil(std::log2(height));
+    uint64_t levels = (uint64_t)std::floor((nBits - 1) / std::ceil(std::log2(arity))) + 1;
+    return levels > last_level_verification ? levels - last_level_verification : 0;
 }
 
 

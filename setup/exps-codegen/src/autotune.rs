@@ -2,6 +2,7 @@
 //! with zero register spill (STACK=0 per `cuobjdump -res-usage`), bisecting down
 //! from the start size.
 
+use anyhow::Context;
 use crate::emit::emit_air;
 use crate::ir::{plan_chunks, Ir};
 use crate::toolchain::Toolchain;
@@ -18,13 +19,38 @@ const BIG_START_CHUNK: usize = 250; // autotuner start chunk for AIRs with > BIG
 /// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
 /// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
 fn max_stack(obj: &Path) -> i64 {
-    let out = match std::process::Command::new("cuobjdump").arg("-res-usage").arg(obj).output() {
-        Ok(o) => o,
-        Err(_) => return -1,
-    };
+    let out =
+        match std::process::Command::new(crate::toolchain::cuda_bin("cuobjdump")).arg("-res-usage").arg(obj).output() {
+            Ok(o) => o,
+            Err(_) => return -1,
+        };
     let text = String::from_utf8_lossy(&out.stdout);
-    let re = Regex::new(r"STACK:(\d+)").unwrap();
-    re.captures_iter(&text).filter_map(|c| c[1].parse::<i64>().ok()).max().unwrap_or(0)
+    // Per function: the once-per-launch table kernel (`*_pow`, one thread runs
+    // the hoisted-invariants program straight-line) may spill freely; its
+    // stack must not gate the per-row chunk kernels -- it made the autotuner
+    // reject Main at every chunk size ("still spills at CHUNK_MIN").
+    // names are mangled: `..._powPK11StepsParams...` (table kernel) vs
+    // `..._c12PK11StepsParams...` (chunk kernels) / `..._kernelPK...`
+    let re_fn = Regex::new(r"Function\s+(\S+?):\s*$").unwrap();
+    let re_pow = Regex::new(r"_pow(?:PK|P\d|\(|:|\s|$)").unwrap();
+    let re_st = Regex::new(r"STACK:(\d+)").unwrap();
+    let mut best = 0i64;
+    let mut skip = false;
+    for line in text.lines() {
+        if let Some(c) = re_fn.captures(line) {
+            skip = re_pow.is_match(&c[1]);
+            continue;
+        }
+        if skip {
+            continue;
+        }
+        if let Some(c) = re_st.captures(line) {
+            if let Ok(v) = c[1].parse::<i64>() {
+                best = best.max(v);
+            }
+        }
+    }
+    best
 }
 
 /// Returns the largest chunk size (halving from the start size) that compiles
@@ -52,6 +78,7 @@ fn tune_inner(
     out_dir: &Path,
 ) -> anyhow::Result<Option<usize>> {
     let mut chunk = n_ops.min(if n_ops > BIG_OPS { BIG_START_CHUNK } else { CHUNK_MAX });
+    let mut last_spill: Option<usize> = None;
     while chunk >= CHUNK_MIN {
         let plan = plan_chunks(ir, chunk, sym)?;
         let files = emit_air(ir, &plan, sym);
@@ -84,13 +111,88 @@ fn tune_inner(
         }
         let st = stacks.into_iter().max().unwrap_or(0);
         eprintln!("  [tune] {sym} chunk={chunk} ({} TUs) -> STACK={st}", files.len());
-        if st == 0 {
-            for obj in &objs {
-                let _ = std::fs::copy(obj, out_dir.join(obj.file_name().unwrap()));
+        // A single-kernel AIR (chunk covers every op) may keep a few bytes of
+        // local memory: splitting it in two costs a launch plus cross-chunk
+        // slots, which measured worse (VirtualTableZisk1: 8-byte spill at 280
+        // ops -> 2 chunks -> +30% kernel time). Chunked kernels stay at zero.
+        const SINGLE_SPILL_TOL: i64 = 32;
+        if st == 0 || (chunk >= n_ops && st <= SINGLE_SPILL_TOL) {
+            // Halving overshoots: a 24-byte spill at 512 used to cost Poseidon half
+            // its chunk (and doubled its cross-chunk slots). Bisect upward between
+            // this clean size and the last spilling one; keep the largest clean.
+            let (best_chunk, best_objs) = refine_up(tc, ir, sym, probe, chunk, last_spill, objs)?;
+            for obj in &best_objs {
+                let dest = out_dir.join(obj.file_name().unwrap());
+                std::fs::copy(obj, &dest)
+                    .with_context(|| format!("staging tuned object {} -> {}", obj.display(), dest.display()))?;
             }
-            return Ok(Some(chunk));
+            return Ok(Some(best_chunk));
         }
+        last_spill = Some(chunk);
         chunk /= 2;
     }
     Ok(None)
+}
+
+/// Bisection between a clean chunk `lo` and a spilling `hi` (None = `lo` was the
+/// first probe, nothing above it to try). Returns the largest clean chunk found
+/// and its compiled objects (the probe dir is shared, so objects are re-emitted
+/// for the winner when a larger probe overwrote them).
+fn refine_up(
+    tc: &Toolchain,
+    ir: &Ir,
+    sym: &str,
+    probe: &Path,
+    lo: usize,
+    hi: Option<usize>,
+    lo_objs: Vec<PathBuf>,
+) -> anyhow::Result<(usize, Vec<PathBuf>)> {
+    let compile_at = |chunk: usize| -> anyhow::Result<(Option<i64>, Vec<PathBuf>)> {
+        let plan = plan_chunks(ir, chunk, sym)?;
+        let files = emit_air(ir, &plan, sym);
+        let objs: Vec<PathBuf> =
+            files.iter().map(|(fname, _)| probe.join(fname.strip_suffix(".cu").unwrap().to_string() + ".o")).collect();
+        for (fname, text) in &files {
+            std::fs::write(probe.join(fname), text)?;
+        }
+        let results: Vec<(bool, String)> = files
+            .par_iter()
+            .zip(&objs)
+            .map(|((fname, _), obj)| tc.compile_tu(&probe.join(fname), obj, Some(probe)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if results.iter().any(|(ok, _)| !ok) {
+            return Ok((None, objs));
+        }
+        let stacks: Vec<i64> = objs.iter().map(|o| max_stack(o)).collect();
+        if stacks.iter().any(|&s| s < 0) {
+            return Ok((None, objs));
+        }
+        Ok((Some(stacks.into_iter().max().unwrap_or(0)), objs))
+    };
+    let Some(mut hi) = hi else {
+        return Ok((lo, lo_objs)); // first probe was clean: nothing above it to try
+    };
+    let mut lo = lo;
+    // stop when the bracket is within ~1/8 of lo: the slot/grid payoff below that is noise
+    while hi - lo > (lo / 8).max(8) {
+        let mid = (lo + hi) / 2;
+        let (st, _) = compile_at(mid)?;
+        match st {
+            Some(0) => {
+                eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK=0");
+                lo = mid;
+            }
+            Some(st) => {
+                eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK={st}");
+                hi = mid;
+            }
+            None => {
+                eprintln!("  [tune] {sym} chunk={mid} (refine) -> compile failed, treated as spilling");
+                hi = mid;
+            }
+        }
+    }
+    // re-emit the winner so the returned objects match `lo` (probes overwrote them)
+    let (_, objs) = compile_at(lo)?;
+    Ok((lo, objs))
 }

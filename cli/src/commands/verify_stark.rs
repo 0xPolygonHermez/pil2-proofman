@@ -37,7 +37,7 @@ impl VerifyStark {
         if vk_bytes.len() % 8 != 0 {
             return Err(format!("Verkey file size ({} bytes) is not a multiple of 8", vk_bytes.len()).into());
         }
-        let vk: Vec<u64> = vk_bytes.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let vk: Vec<u64> = vk_bytes.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
 
         timer_start_info!(VERIFY_STARK);
         // The hash family travels inside the proof, so the verifier dispatches

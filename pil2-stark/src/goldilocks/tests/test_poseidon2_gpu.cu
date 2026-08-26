@@ -99,7 +99,7 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaMalloc((void **)&d_in, 3 * sizeof(gl64_t));
     cudaMemcpy(d_in, in, 3 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_out, sizeof(gl64_t));
-    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, POSEIDON2_GRIND_GRID * sizeof(gl64_t)));
 
     uint32_t n_bits = 8;
     cudaStream_t stream;

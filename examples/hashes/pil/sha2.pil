@@ -34,21 +34,21 @@ airtemplate Sha2(const int N = 2**8) {
 
             • Mixer:
                 for i in 0..63:
-                    s1 := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
-                    ch := (e & f) ^ ((~e) & g)
-                    temp1 := h + s1 + ch + k[i] + w[i]
-                    s0 := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
+                    s1  := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
+                    ch  := (e & f) ^ ((~e) & g)
+                    t1  := h + s1 + ch + k[i] + w[i]
+                    s0  := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
                     maj := (a & b) ^ (a & c) ^ (b & c)
-                    temp2 := s0 + maj
+                    t2  := s0 + maj
 
                     h := g
                     g := f
                     f := e
-                    e := d + temp1
+                    e := d + t1
                     d := c
                     c := b
                     b := a
-                    a := temp1 + temp2
+                    a := t1 + t2
 
             • Variable finalization:
                 state[0] := state[0] + a
@@ -92,26 +92,11 @@ airtemplate Sha2(const int N = 2**8) {
 
     // Calculate usable capacity
     const int NUM_NON_USABLE_ROWS = N % CLOCKS;
-    const int NUM_OPS;
-    if (NUM_NON_USABLE_ROWS == 0) {
-        // N is perfectly divisible by CLOCKS
-        if (N < CLOCKS) {
-            error(`N must be at least ${CLOCKS} to fit the SHA2-256 arithmetization, but received N=${N}`);
-        }
-
-        NUM_OPS = N / CLOCKS;
-    } else {
-        // N is not divisible by CLOCKS
-        if (N < 2*CLOCKS) {
-            error(`N must be at least ${2*CLOCKS} to fit the SHA2-256 arithmetization, but received N=${N}`);
-        }
-
-        // Subtract 1 because we can't fit a complete cycle in the remaining rows
-        NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS - 1;
+    const int NUM_OPS = (N - NUM_NON_USABLE_ROWS) / CLOCKS;
+    if (NUM_OPS < 1) {
+        error(`N must be at least ${CLOCKS} to fit the SHA2-256 arithmetization, but received N=${N}`);
     }
-
-    const int NUM_SHA2 = NUM_OPS;
-    println(`The total number of SHA2-256's with N = ${N} is ${NUM_SHA2}`);
+    println(`The total number of SHA2-256's with N = 2^${log2(N)} is ${NUM_OPS}`);
 
     // Round constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
     const int RC[64] = [
@@ -132,7 +117,7 @@ airtemplate Sha2(const int N = 2**8) {
     // CLOCK SELECTORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Base clock: 1 at row 0, 0 elsewhere within each cycle
+    // Base clock: 1 at first cycle row, 0 elsewhere within each cycle
     if (NUM_NON_USABLE_ROWS == 0) {
         col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
     } else {
@@ -197,11 +182,22 @@ airtemplate Sha2(const int N = 2**8) {
     const expr new_s0_packed = new_state[0];
     const expr new_s1_packed = new_state[1];
 
+    // The new a/e/w expressions have degree 3 (3-input XORs, ch and maj).
+    // We commit them into intermediate columns so that following constraints has degree at most 3.
+    // The new a/e values are sums of 7 and 6 32-bit numbers, respectively, so they fit in 35 bits,
+    // while the new w value is a sum of 4 32-bit numbers, so it fits in 34 bits.
+    col witness bits(35) im_new_s0;
+    col witness bits(35) im_new_s1;
+    col witness bits(34) im_new_w;
+    im_new_s0 <== new_s0_packed;
+    im_new_s1 <== new_s1_packed;
+    im_new_w <== new_w_packed;
+
     // We should prove that the unpacking of the new a/e/w values is correct.
-    // For the new a/e values, we add 6 and 5 32-bit numbers, respectively, and this
-    // generates numbers of at most 35 bits, since 2^34 < 5*(2^32-1),6*(2^32-1) < 2^35
-    // Similarly, for the new w value, we add 3 32-bit numbers, and this generates
-    // a number of at most 34 bits, since 2^33 < 3*(2^32-1) < 2^34
+    // For the new a/e values, we add 7 and 6 32-bit numbers, respectively, and this
+    // generates numbers of at most 35 bits, since 2^34 < 6*(2^32-1),7*(2^32-1) < 2^35
+    // Similarly, for the new w value, we add 4 32-bit numbers, and this generates
+    // a number of at most 34 bits, since 2^33 < 4*(2^32-1) < 2^34
     // We use the following columns to store the carry bits
     col witness bits(3) new_s0_carry_bits;
     col witness bits(3) new_s1_carry_bits;
@@ -213,15 +209,15 @@ airtemplate Sha2(const int N = 2**8) {
     const expr w_packed = pack_bits(w);
     s0_packed + new_s0_carry_bits * P2_32
         - is_loading_state * s0_packed
-        - (is_loading_input + is_mixing) * new_s0_packed
+        - (is_loading_input + is_mixing) * im_new_s0
         - is_writing_state * ((CLOCKS_WRITE_STATE)'s0_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s0_packed) === 0;
     s1_packed + new_s1_carry_bits * P2_32
         - is_loading_state * s1_packed
-        - (is_loading_input + is_mixing) * new_s1_packed 
+        - (is_loading_input + is_mixing) * im_new_s1
         - is_writing_state * ((CLOCKS_WRITE_STATE)'s1_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s1_packed) === 0;
     w_packed + new_w_carry_bits * P2_32
         - is_loading_input * w_packed
-        - is_mixing * new_w_packed === 0;
+        - is_mixing * im_new_w === 0;
 
     // Given w[i-2], w[i-7], w[i-15], w[i-16], computes the new w[i] value
     function compute_new_w(const expr w2[], const expr w7[], const expr w15[], const expr w16[]): expr {

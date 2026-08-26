@@ -56,6 +56,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")
                 .join(&hash_family);
+            // The inner proof this fixture recurses over: a recursive2 proof, so the AIR built from
+            // it matches the production aggregator. The name keeps `tCompressor` because prove-air
+            // parses the proof type out of it to resolve the setup path, and the harness names every
+            // recursive-test AIR "Compressor".
             let proof_path = current_dir.join("ag0_air0_tCompressor.bin");
 
             let mut file = File::open(proof_path).unwrap();
@@ -63,7 +67,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             file.read_to_end(&mut buffer).unwrap();
 
             assert!(buffer.len().is_multiple_of(8), "proof file length is not a multiple of 8");
-            let proof: Vec<u64> = buffer.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+            let proof: Vec<u64> = buffer.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
 
             let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
             let rust_lib_filename = setup.setup_path.display().to_string() + lib_extension;

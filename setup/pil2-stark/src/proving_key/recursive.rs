@@ -17,6 +17,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+/// Grinding bits every recursion layer is built at. Pinned rather than taken from the hash
+/// family because the committed verifiers and fixtures encode the resulting query count.
+pub const RECURSIVE_POW_BITS: usize = 20;
+
 /// Sentinel error returned when recursive1 detects that a compressor is required.
 ///
 /// This is returned instead of a generic error so the caller can distinguish
@@ -573,16 +577,23 @@ pub fn gen_recursive_setup(
                     blowup_factor: Some(blowup),
                     folding_factor: Some(3),
                     final_degree: Some(5),
+                    // Pinned: the committed native verifiers and circom fixtures encode the query
+                    // count this buys (73 at blowup 3), so it cannot follow the family default.
+                    pow_bits: Some(RECURSIVE_POW_BITS),
                     last_level_verification: None,
                     ..Default::default()
                 }
             };
             let stark_struct = if let Some(ss_val) = config.stark_struct {
                 serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone()).unwrap_or_else(|_| {
-                    crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air)
+                    crate::types::stark_struct::generate_stark_struct(
+                        &make_recursive_settings(),
+                        n_bits_air,
+                        config.hash,
+                    )
                 })
             } else {
-                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air)
+                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air, config.hash)
             };
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo

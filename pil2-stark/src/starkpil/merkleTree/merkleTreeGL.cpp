@@ -55,7 +55,9 @@ uint64_t MerkleTreeGL::getMerkleTreeWidth()
 
 uint64_t MerkleTreeGL::getMerkleProofLength() {
     if(height > 1) {
-        return (uint64_t)ceil(std::log2(height) / std::log2(arity)) - last_level_verification;
+        // Saturating: last_level_verification can exceed a short tree's depth.
+        uint64_t levels = (uint64_t)ceil(std::log2(height) / std::log2(arity));
+        return levels > last_level_verification ? levels - last_level_verification : 0;
     } 
     return 0;
 }
@@ -194,6 +196,9 @@ bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, Goldilocks::Eleme
             default: zklog.error("MerkleTreeGL::verifyGroupProof: Unsupported arity (Poseidon2 supports 2, 3, 4)"); exitProcess(); exit(-1);
         }
         break;
+    case HashFamily::Blake3:
+        Blake3Goldilocks::linearHash(value, v.data(), v.size());
+        break;
     }
     
 
@@ -307,6 +312,19 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
             default: zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity (Poseidon2 supports 2, 3, 4)"); exitProcess(); exit(-1);
         }
         break;
+    case HashFamily::Blake3: {
+       
+        Goldilocks::Element inputs[8]; 
+        for (uint64_t i = 0; i < arity * nFieldElements; ++i) inputs[i] = Goldilocks::zero();
+        uint64_t p = 0;
+        for (uint64_t i = 0; i < arity; ++i) {
+            if (i == currIdx) continue;
+            std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
+        }
+        std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
+        Blake3Goldilocks::linearHash(value, inputs, arity * nFieldElements);
+        break;
+    }
     }
 
     calculateRootFromProof(value, mp, idx, offset + 1);
@@ -331,6 +349,9 @@ void MerkleTreeGL::merkelize()
             case 4: Poseidon2Goldilocks<16>::merkletree(nodes, source, width, height, arity); break;
             default: zklog.error("MerkleTreeGL::merkelize: Unsupported arity (Poseidon2 supports 2, 3, 4)"); exitProcess(); exit(-1);
         }
+        break;
+    case HashFamily::Blake3:
+        Blake3Goldilocks::merkletree(nodes, source, width, height, arity);
         break;
     }
 }

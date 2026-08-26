@@ -39,5 +39,12 @@ pub const SIGMA: [[usize; 16]; ROUNDS] = [
 /// Range checker size
 pub const RANGE_SIZE: usize = 1 << 16;
 
-/// XOR-rotate table size (3 rotation blocks of 4 offsets × 2^16 input pairs)
-pub const TABLE_SIZE: usize = (1 << 19) + (1 << 18);
+/// XOR-rotate table size (2 rotation blocks (0, 12) × 2^16 input pairs)
+pub const TABLE_SIZE: usize = 1 << 17;
+
+/// Witness columns each Blake3 lane occupies: 16 inputs (va, vb, vc, vd, x, y) plus 37
+/// intermediates. Used to recover the PIL's `LANES` from the proving key's cm1 width.
+pub const COLS_PER_LANE: usize = 53;
+
+/// Witness columns shared by every lane: the two table multiplicities.
+pub const SHARED_COLS: usize = 2;

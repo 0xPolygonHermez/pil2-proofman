@@ -14,6 +14,8 @@ use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
 pub struct StatsOptions {
     /// Path to compiled .pilout file.
     pub airout_path: String,
+    /// Hash family (tree/transcript geometry), as in the setup command.
+    pub hash: String,
     /// Output file for detailed per-AIR stats (default: `tmp/stats.txt`).
     pub output_path: Option<String>,
     /// Optional path to starkstructs.json.
@@ -73,18 +75,48 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_stark_struct(&air_settings, n_bits);
+            let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
 
             let prepare_opts = PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages };
 
             tracing::info!("Computing stats for air '{}'", air_name);
             let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts);
 
-            let summary = format!("{} | {} | {}", airgroup_name, air_name, pil_result.summary);
-            summary_lines.push(summary.clone());
+            // Both the native and the in-circuit verifier run the same algorithm, so one count
+            // serves both; only the price of a single hash differs.
+            let family = opts.hash.as_str();
+            let geom = crate::verifier_hashes::geometry_for_family(
+                &stark_struct,
+                &pil_result.setup,
+                pil_result.pil_code.ev_map.len(),
+            );
+            let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
+
+            summary_lines.push(format!(
+                "{} | {} | {} | verifierHashes: {}",
+                airgroup_name,
+                air_name,
+                pil_result.summary,
+                counts.total()
+            ));
 
             stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", pil_result.summary));
+            stats_lines.push(format!("Verifier hashes ({family}):"));
+            stats_lines.push(format!(
+                "    total: {:>9} | leaf: {:>8} merkle: {:>8} fri: {:>8} transcript: {:>5} grinding: {} \
+                 (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",
+                counts.total(),
+                counts.leaf,
+                counts.merkle,
+                counts.fri,
+                counts.transcript,
+                counts.grinding,
+                geom.arity,
+                geom.n_queries,
+                geom.last_level_verification,
+                geom.pow_bits,
+            ));
 
             let (base_field, extended_field) = &pil_result.im_pols_info;
             if !base_field.is_empty() {

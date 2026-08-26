@@ -258,7 +258,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64
 
     uint64_t log_launch_iters = 7; //128 launch iterations
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = NONCES_LAUNCH_BITS; //~512K nonces per launch
+    uint64_t log_N = POSEIDON2_GRIND_BITS; //~512K nonces per launch
     uint64_t N = 1 << log_N;
     uint64_t security = 128;
     // we need to determine log_hashesPerThread such that, the probabilty of not finding a valid nonce is lower
@@ -280,8 +280,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64
     }
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
 
-    dim3 blockSize( NONCES_LAUNCH_BLOCKS );
-    dim3 gridSize( NONCES_LAUNCH_GRID_SIZE );
+    dim3 blockSize( POSEIDON2_GRIND_BLOCKS );
+    dim3 gridSize( POSEIDON2_GRIND_GRID );
 
     size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
     uint64_t nonces_offset = 0;

@@ -13,6 +13,17 @@
 #include "goldilocks_trace_layout.cuh"
 #include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
 
+#include "grinding_launch.hpp"
+
+// Grinding launch geometry for POSEIDON1.
+#define POSEIDON1_GRIND_BITS   19
+#define POSEIDON1_GRIND_BLOCKS 512
+#define POSEIDON1_GRIND_GRID \
+    ((((1ULL << POSEIDON1_GRIND_BITS) + POSEIDON1_GRIND_BLOCKS - 1) / POSEIDON1_GRIND_BLOCKS))
+
+static_assert(POSEIDON1_GRIND_GRID <= GRIND_NONCE_BLOCKS_MAX,
+              "POSEIDON1 grinding grid exceeds the reserved nonce_blocks region");
+
 // ---------------------------------------------------------------------------
 // Public class (W=12).
 // ---------------------------------------------------------------------------
@@ -28,6 +39,7 @@ public:
     static constexpr uint32_t CAPACITY            = 4;
     static constexpr uint32_t RATE                = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH        = SPONGE_WIDTH_T;
+    static constexpr uint32_t ARITY               = SPONGE_WIDTH_T / CAPACITY;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = 4;
     static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;

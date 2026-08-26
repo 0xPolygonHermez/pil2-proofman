@@ -1,4 +1,5 @@
 #include "transcriptGL.hpp"
+#include "blake3_goldilocks.hpp"
 #include "math.h"
 
 void TranscriptGL::put(Goldilocks::Element *input, uint64_t size)
@@ -33,6 +34,9 @@ void TranscriptGL::_updateState()
             case 4: Poseidon2Goldilocks<16>::permute((Goldilocks::Element(&)[16])*out, (const Goldilocks::Element(&)[16])*inputs, Poseidon2Mode::Scalar); break;
             default: zklog.error("TranscriptGL::_updateState: Poseidon2 supports arity 2, 3 or 4"); exitProcess(); exit(-1);
         }
+        break;
+    case HashFamily::Blake3:
+        Blake3Goldilocks::permuteTranscript(out, inputs, transcriptOutSize);
         break;
     }
     out_cursor = transcriptOutSize;

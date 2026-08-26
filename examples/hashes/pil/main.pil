@@ -5,5 +5,7 @@ require "blake3.pil"
 airgroup Hashes {
     Sha2(2**16);
     Blake2b(2**16);
-    Blake3(2**20);
+
+    set_max_constraint_degree(5);
+    Blake3(2**19, 4);
 }

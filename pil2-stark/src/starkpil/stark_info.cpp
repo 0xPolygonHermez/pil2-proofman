@@ -4,6 +4,7 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
+#include "grinding_launch.hpp"
 
 StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
 {
@@ -350,7 +351,7 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
-    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkStruct.steps[0].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
 
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
@@ -375,7 +376,7 @@ void StarkInfo::getProofSize() {
     }
 
     for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
-        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+        uint64_t nSiblings = merkleProofLevels(starkStruct.steps[i].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
         proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
         proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
@@ -415,7 +416,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
         }
     }
 
-    uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+    uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
     uint64_t maxProofSize = nSiblings * nSiblingsPerLevel;
 
@@ -512,7 +513,7 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += 1;
 
         mapOffsets[std::make_pair("nonce_blocks", false)] = mapTotalN;
-        mapTotalN += NONCES_LAUNCH_GRID_SIZE;
+        mapTotalN += GRIND_NONCE_BLOCKS_MAX;
 
         // Align to 4 Goldilocks elements (32 bytes) for BN128 FrElement alignment
         if (starkStruct.verificationHashType == "BN128") {
@@ -533,6 +534,11 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("xdivxsub", false)] = mapTotalN;
         mapTotalN += openingPoints.size() * FIELD_EXTENSION;
+
+        // Folded FRI constants (computeFRIFoldedConstants): one cubic coefficient per
+        // eval-map entry followed by one cubic constant per opening point.
+        mapOffsets[std::make_pair("fri_folded", false)] = mapTotalN;
+        mapTotalN += (evMap.size() + openingPoints.size()) * FIELD_EXTENSION;
 
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
@@ -559,7 +565,7 @@ void StarkInfo::setMapOffsets() {
             }
         }
 
-        uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+        uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel;
         if (starkStruct.verificationHashType == "BN128") {
             // BN128: all arity siblings per level, each is 4 uint64_t (32 bytes)
