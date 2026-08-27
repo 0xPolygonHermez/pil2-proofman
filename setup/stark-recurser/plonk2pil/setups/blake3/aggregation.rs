@@ -51,6 +51,10 @@ fn rand_hex() -> String {
 /// Plonk gates on one row of the `a[0..17]` band: six, at three wires each.
 pub const PLONK_GATES_PER_ROW: usize = 6;
 
+/// `coefs[5][3] + x[3] + out[3] + s[3] + acc[3]`; the last six are the Estrin intermediates, which
+/// every family's gate publishes and only this air binds.
+pub const EVPOL4_SIGNALS: usize = 27;
+
 /// How many rows a set of plonk constraints needs, and how they split between the free interior of
 /// the BLAKE3 blocks and a dedicated band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,16 +515,17 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
         }
     }
 
-    // ── EvPol4: 21 signals over two rows (a[0..18], then a[0..3]) ─────────────
+    // ── EvPol4: 27 signals over two rows (a[0..18], then a[0..9]) ─────────────
+    // The poseidon airs place only the first 21 and bind nothing to the rest.
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
     alloc.open(n_ev_pol4, 2);
     for cgu in &ev_pol4_uses {
-        assert_eq!(cgu.signals.len(), 21);
+        assert_eq!(cgu.signals.len(), EVPOL4_SIGNALS);
         let r = alloc.take();
         for (j, sig) in cgu.signals[..BAND_COLS].iter().enumerate() {
             s_map[j][r] = *sig as u32;
         }
-        for (j, sig) in cgu.signals[BAND_COLS..21].iter().enumerate() {
+        for (j, sig) in cgu.signals[BAND_COLS..EVPOL4_SIGNALS].iter().enumerate() {
             s_map[j][r + 1] = *sig as u32;
         }
     }
@@ -879,7 +884,7 @@ mod tests {
     fn gate_signal_counts_match_the_circom_templates() {
         assert_eq!(8 + 1 + 4, 13, "Blake3Node: in[8] + key + out[4]");
         assert_eq!(3 + 3 + 3, 9, "CMul: ina[3] + inb[3] + out[3]");
-        assert_eq!(5 * 3 + 3 + 3, 21, "EvPol4: coefs[5][3] + x[3] + out[3]");
+        assert_eq!(5 * 3 + 3 + 3 + 3 + 3, EVPOL4_SIGNALS, "EvPol4: coefs + x + out + s + acc");
         assert_eq!(4 * 3 + 4 * 3, 24, "FFT4: in[4][3] + out[4][3]");
         assert_eq!(4 * 3 + 2 + 3, 17, "TreeSelector4: values[4][3] + keys[2] + out[3]");
         assert_eq!(2 * 4 + 1 + 4, 13, "SelectValueArity2: values[2][4] + key[1] + selected[4]");
@@ -888,7 +893,7 @@ mod tests {
         for (signals, rows) in [(13, 2), (9, 1), (21, 2), (24, 2), (17, 1), (13, 1)] {
             let _ = (signals, rows);
         }
-        assert_eq!(21_usize.div_ceil(BAND_COLS), 2, "EvPol4 does not fit one row");
+        assert_eq!(EVPOL4_SIGNALS.div_ceil(BAND_COLS), 2, "EvPol4 still fits two rows");
         assert_eq!(24_usize.div_ceil(BAND_COLS), 2, "FFT4 does not fit one row");
         assert_eq!(17_usize.div_ceil(BAND_COLS), 1, "TreeSelector4 fits one row");
         assert_eq!(13_usize.div_ceil(BAND_COLS), 1, "SelectValueArity2 fits one row");

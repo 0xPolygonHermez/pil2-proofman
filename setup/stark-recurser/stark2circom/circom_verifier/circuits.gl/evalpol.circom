@@ -23,18 +23,23 @@ function CMulAddF(ina, inb, inc) {
 // Evaluate a Polynomial of degree 4 (with 5 coefficients) and each coefficient made of 3 values at x using Horner's rule
 // Given the polynomial p(x) = coefs[4]*x⁴ + coefs[3]*x³ + coefs[2]*x² + coefs[1]*x + coefs[0], we can calculate
 // its value by doing p(x) = ((((coefs[4]*x + coefs[3])*x + coefs[2])*x + coefs[1])*x + coefs[0]) 
+// `s` = x*x and `acc` = coefs[4]*s + coefs[3]*x + coefs[2], so out = acc*s + coefs[1]*x + coefs[0].
+// An air that binds them checks the evaluation at degree 3 where Horner needs 6; one that does not
+// binds nothing to them. See evpol4Estrin in circuits/evpol.pil.
 template custom extern_c EvPol4() {
     signal input coefs[5][3]; // Coeficients in the extended field
     signal input x[3]; // Point at which we are evaluating the polynomial
-    signal output out[3]; 
+    signal output out[3];
+    signal output s[3];
+    signal output acc[3];
 
-    // Apply Horner's rule to calculate the evaluation of the polynomial at point x
-    var acc[3] = coefs[4];
-    acc = CMulAddF(acc, x, coefs[3]);
-    acc = CMulAddF(acc, x, coefs[2]);
-    acc = CMulAddF(acc, x, coefs[1]);
-    acc = CMulAddF(acc, x, coefs[0]);
-    out <-- acc;
+    // One Estrin chain: out falls out of the same products as s and acc.
+    var zero[3] = [0, 0, 0];
+    var sv[3] = CMulAddF(x, x, zero);
+    var hi[3] = CMulAddF(coefs[4], sv, CMulAddF(coefs[3], x, coefs[2]));
+    s <-- sv;
+    acc <-- hi;
+    out <-- CMulAddF(hi, sv, CMulAddF(coefs[1], x, coefs[0]));
 }
 
 /*
@@ -76,6 +81,14 @@ template EvalPol(n) {
             evs4[i].coefs[4] <== evs4[i+1].out;
         }
         evs4[i].x <== x;
+    }
+
+    // The air that placed the gate is the only consumer of the intermediates.
+    for (var i = 0; i < nEvs4; i++) {
+        for (var j = 0; j < 3; j++) {
+            _ <== evs4[i].s[j];
+            _ <== evs4[i].acc[j];
+        }
     }
 
     // If n = 0 return an empty array. Otherwise return the evaluation of the polynomial

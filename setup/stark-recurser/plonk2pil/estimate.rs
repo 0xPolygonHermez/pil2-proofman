@@ -38,7 +38,7 @@ pub fn cells_per_gate(role: GateRole) -> Option<usize> {
         GateRole::PoseidonSponge => Some(32),
         GateRole::PoseidonCompression => Some(34),
         GateRole::CMul => Some(9),             // signals.len() == 9
-        GateRole::EvPol4 => Some(21),          // take(21)
+        GateRole::EvPol4 => Some(21),          // 21 of the gate's 27; blake3 binds six more
         GateRole::Fft4 => Some(24),            // take(24)
         GateRole::TreeSelector => None,        // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
         GateRole::SelectValArity4 => Some(22), // take(22)

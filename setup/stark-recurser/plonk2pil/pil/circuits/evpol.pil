@@ -23,3 +23,42 @@ function evpol4(const expr coefs[][], const expr x[], const expr res[], const ex
     sel * (acc[4][1] - res[1]) === 0;
     sel * (acc[4][2] - res[2]) === 0;
 }
+
+// Same evaluation at degree 3 instead of 6, which is what an air at blowup 1 admits. Horner's four
+// chained multiplications make the final equality degree 6; splitting at x^2 anchors both halves on
+// cells the EvPol4 gate supplies, so every term is a product of two cells.
+//
+// coefs[0] is the LEADING coefficient, as in evpol4 above.
+
+// One component of a*b in Fp3 = Fp[X]/(X^3 - X - 1): the long product, then the reduction.
+// X^3 = X + 1 folds p[3] into components 0 and 1; X^4 = X^2 + X folds p[4] into 1 and 2.
+function fp3mul(const expr a[], const expr b[], int c): expr {
+    expr p[5];
+    for (int k = 0; k < 5; k++) {
+        p[k] = 0;
+    }
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            p[i + j] += a[i] * b[j];
+        }
+    }
+    if (c == 0) {
+        return p[0] + p[3];
+    }
+    if (c == 1) {
+        return p[1] + p[3] + p[4];
+    }
+    return p[2] + p[4];
+}
+
+function evpol4Estrin(const expr coefs[][], const expr x[], const expr s[], const expr acc[],
+                      const expr res[], const expr sel) {
+    for (int c = 0; c < 3; c++) {
+        //   s   = x*x
+        sel * (s[c] - fp3mul(x, x, c)) === 0;
+        //   acc = coefs[0]*s + coefs[1]*x + coefs[2]
+        sel * (acc[c] - fp3mul(coefs[0], s, c) - fp3mul(coefs[1], x, c) - coefs[2][c]) === 0;
+        //   res = acc*s + coefs[3]*x + coefs[4]
+        sel * (res[c] - fp3mul(acc, s, c) - fp3mul(coefs[3], x, c) - coefs[4][c]) === 0;
+    }
+}

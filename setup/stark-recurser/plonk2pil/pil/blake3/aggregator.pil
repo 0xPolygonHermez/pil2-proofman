@@ -256,8 +256,11 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     coefs[3] = [a[3], a[4], a[5]];
     coefs[4] = [a[0], a[1], a[2]];
     const expr x[3] = [a[15], a[16], a[17]];
+    // Row 0 is coefs + x, exactly the band's width, so out and the two intermediates land on row 1.
     const expr resEVPOL[3] = [a[0]', a[1]', a[2]'];
-    evpol4(coefs, x, resEVPOL, EVPOL4);
+    const expr sEVPOL[3]   = [a[3]', a[4]', a[5]'];
+    const expr accEVPOL[3] = [a[6]', a[7]', a[8]'];
+    evpol4Estrin(coefs, x, sEVPOL, accEVPOL, resEVPOL, EVPOL4);
 
     const expr treevals[4][3];
     treevals[0] = [a[0],  a[1],  a[2]];
