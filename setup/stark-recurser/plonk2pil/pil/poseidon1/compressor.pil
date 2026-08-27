@@ -13,7 +13,7 @@ require "circuits/plonk.pil";
 // Poseidon1 (Hades-Goldilocks) COMPRESSOR
 //
 // Recursive-proof compression AIR. Each row hosts at most one custom gate
-// (Poseidon1 round, CMul, FFT4, EvPol4, TreeSelector8, SelectVal1, Plonk),
+// (Poseidon1 round, CMul, FFT4, EvPol4, TreeSelector8, SelectValueArity4, Plonk),
 // selected by mutually-exclusive fixed columns; gates reuse witness cols a[].
 //
 // Poseidon1 (width 16) = 8 full + 22 partial = 30 rounds, packed into a 10-ROW gate
@@ -30,7 +30,7 @@ require "circuits/plonk.pil";
 // all 10 gates, exactly like a pure-plonk row. This layout is identical to the
 // Poseidon2 compressor's — only the round algebra and the tree-selector arity differ.
 // ============================================================================
-airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectVal1) {
+airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectValArity4) {
     col witness a[46];
 
     #pragma fixed_external
@@ -74,8 +74,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     col fixed FFT4          = [0:(nPoseidonRows + nCMulRows + nEvPol4),                                             1:nFFT4,            0...];
     // TreeSelector8's 30 signals are exactly the band width, so the gate fits in ONE row.
     col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                     1:nTreeSelector8,   0...];
-    col fixed SELECTVAL1    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8),                    1:nSelectVal1,      0...];
-    col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8 + nSelectVal1),       1:nPlonkRows,       0...];
+    col fixed SELECTVAL_ARITY4    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8),                    1:nSelectValArity4,      0...];
+    col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8 + nSelectValArity4),       1:nPlonkRows,       0...];
 
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
@@ -86,7 +86,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     //   PR                      : gates 0..5 + 8,9 (a[18..23] hold the overflow anchors)
     //   INIT, FINAL             : gates 6..9 only (a[0..15] input/output, a[16..17] key)
     //   EvPol4                  : gates 7..9 (gate 6 collides with resEVPOL a[18..20])
-    //   SelectVal1              : gates 8,9 (a[0..21] used)
+    //   SelectValueArity4              : gates 8,9 (a[0..21] used)
     const expr CHECK_PLONK = PLONK
         + POSEIDON1_R1 + POSEIDON1_R2 + POSEIDON1_PR_PRIME + POSEIDON1_R4
         + POSEIDON1_PR
@@ -103,8 +103,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     plonk([a[15], a[16], a[17]], q0, CHECK_PLONK);
     plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT);
     plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4);
-    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
-    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
+    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL_ARITY4);
+    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL_ARITY4);
 
     const int firstColP = 30;
 
@@ -262,7 +262,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     selectvals[3] = [a[12], a[13], a[14], a[15]];
     const expr selectvals_key[2] = [a[16], a[17]];
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
-    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+    selectValueArity4(selectvals, selectvals_key, selected, SELECTVAL_ARITY4);
 
     const expr A[30];
     for (int i = 0; i < 30; i++) {

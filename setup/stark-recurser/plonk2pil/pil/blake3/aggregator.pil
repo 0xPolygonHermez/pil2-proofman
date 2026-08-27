@@ -1,0 +1,285 @@
+require "std_constants.pil";
+require "std_connection.pil";
+
+require "circuits/common.pil";
+require "circuits/cmul.pil";
+require "circuits/fft.pil";
+require "circuits/evpol.pil";
+require "circuits/treeselector.pil";
+require "circuits/selectval.pil";
+require "circuits/blake3.pil";
+require "circuits/plonk.pil";
+
+// ============================================================================
+// BLAKE3 AGGREGATOR
+//
+// Recursive-proof aggregation AIR over the BLAKE3 hash family. a[0..17] is the
+// plonk/custom-gate band and the connection band S[18]; the BLAKE3 permutation
+// owns its own columns, 51 per lane, declared by blake3Lanes.
+//
+// BLAKE3 is a 56-row gate (7 rounds x 8 G), not a 1-row one, so the geometry is
+// a BLOCK: 56 consecutive rows hosting LANES independent permutations in
+// parallel column groups. Within a block,
+//
+//   clock          | a[0..17]                        | lane columns
+//   ---------------+---------------------------------+---------------------
+//   l              | lane l's input: a[0..8], a[8]=k | round 0 G l
+//   LANES..55-LANES| free -> plonk piggyback         | rounds 0..6
+//   56-LANES+l     | lane l's output: a[0..4]        | round 6 G
+//
+// The middle rows are the point: at LANES=4 that is 48 rows x 6 plonk gates per
+// block, so the plonk work rides inside the BLAKE3 blocks instead of needing
+// rows of its own.
+//
+// Boundary cells sit within a few rows of the clock that binds them -- message
+// binding at clocks 0..7, output binding at clocks 54..55 -- because each
+// distinct shift of a witness column is another opening. That is what caps
+// LANES at 8, not the row count.
+// ============================================================================
+airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectValArity2, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
+    col witness a[18];
+
+    #pragma fixed_external
+    col fixed S[18];
+
+    #pragma fixed_external
+    col fixed C[5];
+
+    // ── Geometry ────────────────────────────────────────────────────────────────
+    // air-scoped: clock_set/clock_map in circuits/common.pil reach for air.CLK and
+    // air.CLOCKS directly rather than taking them as parameters.
+    const int air.CLOCKS = 56;
+
+    if (LANES < 1 || LANES > 8) {
+        error(`LANES must be in 1..8 (above 8 the boundary opening depth exceeds 7), got ${LANES}`);
+    }
+
+    const int nBlocks = nNodeBlocks + nChunkBlocks + nParentBlocks;
+    const int nBlake3Rows = air.CLOCKS * nBlocks;
+
+    // air.CLK[i] = (i)'CLK_0 reads row r - i, which wraps for r < i, so the last CLOCKS-1 rows
+    // must be padding or every clock selector fires spuriously on the first rows.
+    if (nBlake3Rows + air.CLOCKS - 1 > N) {
+        error(`${nBlocks} Blake3 blocks need ${nBlake3Rows} rows plus ${air.CLOCKS - 1} of ` +
+              `wrap padding for the clock selectors, but N=${N}`);
+    }
+
+    // Argument identifiers
+    const int RANGE_CHECKER_ID = 250;
+    const int BLAKE3_MSG_ID = 500;
+    const int BLAKE3_TABLE_ID = 1000;
+
+    // One anchor for nBlocks blocks of every kind. A second anchor at the midpoint would halve the
+    // deepest prime (55 -> 27) but costs a fixed column and shrinks nothing: measured, nEvals does
+    // not move and the rows it frees already sit unused in the block interiors.
+    col fixed CLK_0 = [[1, 0:(air.CLOCKS-1)]:nBlocks, 0...];
+    const expr air.CLK[air.CLOCKS];
+    for (int i = 0; i < air.CLOCKS; i++) {
+        air.CLK[i] = (i)'CLK_0;
+    }
+
+    col fixed BLOCK_ID;
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        BLOCK_ID[i] = i / air.CLOCKS;
+    }
+
+    // ── Kind selector, and the folded selector x clock columns ──────────────────
+    // BLAKE3_NODE is 1 on all 56 rows of a block, not just its first: a start-row
+    // selector would have to be reached with primes of depth up to 55.
+    /*
+        One block-wide selector per kind, grouped so the patterns stay compact. `isParent` is not a
+        column: it IS which of the two Compress selectors is 1 on a block, which is why the two
+        shapes need no mask and no degree bump.
+    */
+    col fixed BLAKE3_NODE   = [[1:air.CLOCKS]:nNodeBlocks, 0...];
+    col fixed BLAKE3_CHUNK  = [[0:air.CLOCKS]:nNodeBlocks, [1:air.CLOCKS]:nChunkBlocks, 0...];
+    col fixed BLAKE3_PARENT = [[0:air.CLOCKS]:(nNodeBlocks + nChunkBlocks), [1:air.CLOCKS]:nParentBlocks, 0...];
+    const expr BLAKE3_ANY = BLAKE3_NODE + BLAKE3_CHUNK + BLAKE3_PARENT;
+
+    // flags is st[15], a per-block BLAKE3 constant the packer reads off the gate id's parameters.
+    #pragma fixed_external
+    col fixed FLAGS;
+
+    // The chunk shape's canonicity gadget, on clocks 0..7 as a whole. Lands at exactly maxDeg 5
+    // unfolded, so it needs no column of its own.
+    expr CHUNK_ROUND0 = 0;
+    for (int k = 0; k < 8; k++) {
+        CHUNK_ROUND0 += BLAKE3_CHUNK * air.CLK[k];
+    }
+
+    // NODE_IN_CLK[i] = BLAKE3_NODE * CLK[i] and NODE_OUT_CLK[k] = BLAKE3_NODE * CLK[OUT_FIRST+k],
+    // precomputed as single fixed columns. The fold is load-bearing, not cosmetic: the message
+    // binding is selector x clock x (degree-2 key ordering), so unfolded every one of those eight
+    // constraints is degree 4 and the setup pays im pols to pull it back down.
+    //
+    // Only the clocks that actually carry a boundary are declared -- inputs at 0..7, outputs from
+    // min(52, 56-LANES) on -- because a fixed column costs N field elements times the blowup.
+    // One set of eight, clocks 48..55: the feedforward already needs all eight, and the output row
+    // (clock 56-LANES+lane, so 48..55 for LANES <= 8) is always inside it. A separate four-wide
+    // NODE_OUT_CLK was exactly its last four columns.
+    const int OUT_FIRST = air.CLOCKS - 16;
+
+    // Plain products, not folded fixed columns: every constraint that reads these stays within
+    // maxDeg 5 (the canonicity gadget is the tightest, at exactly 5) and so costs no column.
+    const expr NODE_IN_CLK[8];
+    for (int k = 0; k < 8; k++) {
+        NODE_IN_CLK[k] = BLAKE3_NODE * air.CLK[k];
+    }
+
+    // CLK_0 is zero beyond the BLAKE3 band, so air.CLK[40+k] alone identifies an output row -- no
+    // kind factor needed, which keeps these lookup operands at degree 1.
+    const expr OUT_CLK16[16];
+    for (int k = 0; k < 16; k++) {
+        OUT_CLK16[k] = air.CLK[air.CLOCKS - 16 + k];
+    }
+    const expr NODE_OUT_CLK[16];
+    for (int k = 0; k < 16; k++) {
+        NODE_OUT_CLK[k] = BLAKE3_NODE * OUT_CLK16[k];
+    }
+
+    // ── Custom-gate selectors ───────────────────────────────────────────────────
+    // The gates that need two rows (their outputs land on the next row) get the [1,0] pattern.
+    // They sit after the BLAKE3 band; plonk is the only one that piggybacks inside it.
+    // SelectValueArity2 is 13 signals, so it fits ONE row of the 18-wide band; every other
+    // two-row gate here needs a second row for its outputs.
+    const int nGateRows = nCMulRows + 2*(nEvPol4 + nFFT4) + nTreeSelector4 + nSelectValArity2;
+
+    /*
+        The six band circuits below all bind the same eighteen columns a[0..17] and are told apart
+        only by which selector is 1 on the row, so ANY row can host ANY one of them. Every BLAKE3
+        block leaves its interior free -- the first LANES rows carry the lanes' inputs and the last
+        LANES their outputs -- so the interior is `air.CLOCKS - 2*LANES` rows, 48 at LANES=4, and
+        that is where the band lives instead of in rows appended after the BLAKE3 band.
+
+        Each circuit takes a whole number of BLOCKS and fills their interiors. Block granularity is
+        what lets each selector stay a repeating fixed pattern instead of an externally supplied
+        column; it wastes only the tail of each circuit's last block.
+
+        EVPOL4 and FFT4 read the next row through primes, so their selector is 1 on the first row
+        of each pair. `air.CLOCKS - 2*LANES` is always even, so the pairs fill an interior exactly
+        and no pair ever straddles a block boundary.
+    */
+    const int INTERIOR = air.CLOCKS - 2*LANES;
+    const int nCMulBlocks   = (nCMulRows + INTERIOR - 1) / INTERIOR;
+    const int nEvPol4Blocks = (nEvPol4 + INTERIOR/2 - 1) / (INTERIOR/2);
+    const int nFFT4Blocks   = (nFFT4 + INTERIOR/2 - 1) / (INTERIOR/2);
+    const int nTreeBlocks   = (nTreeSelector4 + INTERIOR - 1) / INTERIOR;
+    const int nSelValBlocks = (nSelectValArity2 + INTERIOR - 1) / INTERIOR;
+    const int nPlonkBlocks  = (nPlonkRows + INTERIOR - 1) / INTERIOR;
+
+    // Where each circuit's run of blocks starts.
+    const int cmulAt   = 0;
+    const int evPol4At = cmulAt   + nCMulBlocks;
+    const int fft4At   = evPol4At + nEvPol4Blocks;
+    const int treeAt   = fft4At   + nFFT4Blocks;
+    const int selValAt = treeAt   + nTreeBlocks;
+    const int plonkAt  = selValAt + nSelValBlocks;
+    if (plonkAt + nPlonkBlocks > nNodeBlocks + nChunkBlocks + nParentBlocks) {
+        error(`The band needs ${plonkAt + nPlonkBlocks} blocks' interiors but the air has only ${nNodeBlocks + nChunkBlocks + nParentBlocks}`);
+    }
+
+    col fixed CMUL             = [[0:air.CLOCKS]:cmulAt,   [0:LANES, 1:INTERIOR,          0:LANES]:nCMulBlocks,   0...];
+    col fixed EVPOL4           = [[0:air.CLOCKS]:evPol4At, [0:LANES, [1,0]:(INTERIOR/2),  0:LANES]:nEvPol4Blocks, 0...];
+    col fixed FFT4             = [[0:air.CLOCKS]:fft4At,   [0:LANES, [1,0]:(INTERIOR/2),  0:LANES]:nFFT4Blocks,   0...];
+    col fixed TREESELECTOR4    = [[0:air.CLOCKS]:treeAt,   [0:LANES, 1:INTERIOR,          0:LANES]:nTreeBlocks,   0...];
+    col fixed SELECTVAL_ARITY2 = [[0:air.CLOCKS]:selValAt, [0:LANES, 1:INTERIOR,          0:LANES]:nSelValBlocks, 0...];
+    col fixed PLONK            = [[0:air.CLOCKS]:plonkAt,  [0:LANES, 1:INTERIOR,          0:LANES]:nPlonkBlocks,  0...];
+
+    const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
+
+    plonk([a[0], a[1], a[2]], q0, PLONK);
+    plonk([a[3], a[4], a[5]], q0, PLONK);
+    plonk([a[6], a[7], a[8]], q0, PLONK);
+    plonk([a[9], a[10], a[11]], q0, PLONK);
+    plonk([a[12], a[13], a[14]], q0, PLONK);
+    plonk([a[15], a[16], a[17]], q0, PLONK);
+
+    // ── BLAKE3 ──────────────────────────────────────────────────────────────────
+    // The boundary columns are declared BEFORE the call and handed in: blake3Lanes binds them
+    // itself, because PIL2 gives a function no way to hand its own values back. Passing them the
+    // other way -- as out-parameters for the callee to fill -- compiles clean and binds every
+    // boundary constraint against zero, since an initialised `const expr` array keeps the caller's
+    // value. See the comment on blake3Lanes in circuits/blake3.pil.
+    //
+    // The canonicity witness, the three extra vb'' top bits and the feedforward result bytes are not
+    // part of the permutation, so they belong here.
+    col witness dinv[LANES];
+    col witness bits(1) vbTopHi[LANES][3];
+    // Blake3Node binds out[0..8]; Compress binds all sixteen words, because the three finalizers
+    // pack every one of them.
+    col witness bits(8) outBytes[LANES][1][4];
+
+    // cv[0..4]'s bytes, for the chunk shape's out[8..16]: that half of the chaining value arrives as
+    // va, two 16-bit limbs, while cv[4..8] arrives as vb which already is bytes. They ALIAS the
+    // outBytes group, live at clocks 40..55 while cv is written at 0..3 -- disjoint rows, and both
+    // are bits(8), so unlike the dinv aliasing this one is type-sound. Four columns per lane saved.
+    const expr cvBytes[LANES][4];
+    for (int l = 0; l < LANES; l++) {
+        for (int i = 0; i < 4; i++) {
+            cvBytes[l][i] = outBytes[l][0][i];
+        }
+    }
+
+    // BIND_BOUNDARY 1, VC_AT_IV 1: every block here is a BLAKE3 compression, so st[8..12] is the
+    // IV and blake3Lanes builds vc as an expression rather than a column.
+    blake3Lanes(LANES, BLOCK_ID, BLAKE3_ANY, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
+                1, 1, a, dinv, vbTopHi, outBytes, cvBytes,
+                NODE_IN_CLK, NODE_OUT_CLK, OUT_FIRST,
+                BLAKE3_CHUNK, CHUNK_ROUND0, BLAKE3_PARENT, FLAGS,
+                OUT_CLK16, air.CLOCKS);
+
+    // After the lanes: mul_table and mul_range are the trace's last two columns.
+    blake3Tables(N, BLAKE3_TABLE_ID, RANGE_CHECKER_ID);
+
+    // ── Remaining custom-gate circuits ──────────────────────────────────────────
+    // CMul: 2 per row (a[0..8], a[9..17])
+    const expr inA1[3] = [a[0], a[1], a[2]];
+    const expr inB1[3] = [a[3], a[4], a[5]];
+    const expr res[3] = [a[6], a[7], a[8]];
+    cmul(inA1, inB1, res, CMUL);
+
+    const expr inA2[3] = [a[9], a[10], a[11]];
+    const expr inB2[3] = [a[12], a[13], a[14]];
+    const expr res2[3] = [a[15], a[16], a[17]];
+    cmul(inA2, inB2, res2, CMUL);
+
+    const expr inpFFT[12] = [a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]];
+    const expr outFFT[12] = [a[0]', a[1]', a[2]', a[3]', a[4]', a[5]', a[6]', a[7]', a[8]', a[9]', a[10]', a[11]'];
+    const expr constFFT[9] = [C[0], C[1], C[2], C[3], C[4], C[0]', C[1]', C[2]', C[3]'];
+    fft4(inpFFT, constFFT, outFFT, FFT4);
+
+    const expr coefs[5][3];
+    coefs[0] = [a[12], a[13], a[14]];
+    coefs[1] = [a[9], a[10], a[11]];
+    coefs[2] = [a[6], a[7], a[8]];
+    coefs[3] = [a[3], a[4], a[5]];
+    coefs[4] = [a[0], a[1], a[2]];
+    const expr x[3] = [a[15], a[16], a[17]];
+    const expr resEVPOL[3] = [a[0]', a[1]', a[2]'];
+    evpol4(coefs, x, resEVPOL, EVPOL4);
+
+    const expr treevals[4][3];
+    treevals[0] = [a[0],  a[1],  a[2]];
+    treevals[1] = [a[3],  a[4],  a[5]];
+    treevals[2] = [a[6],  a[7],  a[8]];
+    treevals[3] = [a[9],  a[10], a[11]];
+    const expr key[2] = [a[12], a[13]];
+    const expr resTREE[3] = [a[14], a[15], a[16]];
+    treeselector4(treevals, key, resTREE, TREESELECTOR4);
+
+    // Arity 2 because hash_family::merkle_tree_arity("blake3") is 2 and the setup rejects any other.
+    const expr selectvals[2][4];
+    selectvals[0] = [a[0], a[1], a[2], a[3]];
+    selectvals[1] = [a[4], a[5], a[6], a[7]];
+    const expr selectvals_key[1] = [a[8]];
+    const expr selected[4] = [a[9], a[10], a[11], a[12]];
+    selectValueArity2(selectvals, selectvals_key, selected, SELECTVAL_ARITY2);
+
+    const expr A[18];
+    for (int i = 0; i < 18; i++) {
+        A[i] = a[i];
+    }
+    // PROD, not SUM: folding these 36 terms into the blake3 gsum measured stage2 129 cols vs 117.
+    connection(1, A, S, PIOP_BUS_PROD);
+}

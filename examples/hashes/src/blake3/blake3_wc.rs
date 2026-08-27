@@ -149,8 +149,9 @@ impl Blake3Air {
                 // top bit of rotr8(z) is bit 7 of z's byte 0
                 row.set_vb_pp_t(lane, (z >> 7) & 1 == 1);
 
-                // ── 16-bit range checks ──
-                for w in [va_l, vc_l, x_l, y_l] {
+                // Every 16-bit limb, every row: no clock folding, which would read each limb at a
+                // new shift and so a new opening. See blake3Lanes.
+                for w in [x_l, y_l, va_l, vc_l] {
                     range_counts[range_row(w[0])] += 1;
                     range_counts[range_row(w[1])] += 1;
                 }
@@ -219,7 +220,7 @@ impl Blake3Air {
         table_counts[table_row(0, 0, 0)] += (padding_lookups * 12) as u64;
         table_counts[table_row(0, 0, 12)] += (padding_lookups * 4) as u64;
 
-        // Perform the padding range checks: 8 zero limbs per lane
+        // SEL is 1 on every row here, padding included: eight zero limbs per lane.
         let count_zeros = padding_lookups * 8;
         range_counts[range_row(0)] += count_zeros as u64;
 

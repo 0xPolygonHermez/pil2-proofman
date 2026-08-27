@@ -37,7 +37,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
     let n_tree_sel4_rows = cgi.n(GateRole::TreeSelector);
-    let n_sel_val1_rows = cgi.n(GateRole::SelectValArity4);
+    let n_sel_val_arity4_rows = cgi.n(GateRole::SelectValArity4);
 
     // Plonk piggyback tiers (a[48] band). 8 gates: q0 = gates 0,1 (a[0..5]); q1 = gates 2..7
     // (a[6..23]). A row = one q0 constraint (gates 0,1) + one q1 constraint (its q1 gates).
@@ -45,7 +45,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     //   PR          : q0 (gates 0,1) + q1 gate 2       (a[0..8]; a[9..14]=anchors) → "three" rows.
     //   cmul / tree : q1 gates 6,7   (a[18..23]).
     //   evpol       : q1 gate 7      (a[21..23]).
-    //   INIT/FINAL host input/output → no plonk; FFT4/SelectVal1 fill the band → no plonk.
+    //   INIT/FINAL host input/output → no plonk; FFT4/SelectValueArity4 fill the band → no plonk.
     let five_count = n_poseidon * 2; // PR' + FINAL'
     let three_count = n_poseidon; // PR
     let cmul_plonk_count = n_cmul_rows + n_tree_sel4_rows; // gates 6,7 on cmul + tree rows
@@ -98,9 +98,13 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         + n_fft4_rows
         + n_ev_pol4_rows
         + n_tree_sel4_rows
-        + n_sel_val1_rows;
+        + n_sel_val_arity4_rows;
 
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
+    // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
+    // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
+    let n_bits_natural = n_bits;
+    let n_bits = n_bits.max(options.min_n_bits.unwrap_or(0));
     let n = 1usize << n_bits;
     let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let max_degree = options.max_constraint_degree.unwrap_or(8);
@@ -120,7 +124,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
         n_tree_selector4: cgi.n(GateRole::TreeSelector),
-        n_select_val1: cgi.n(GateRole::SelectValArity4),
+        n_select_val_arity4: cgi.n(GateRole::SelectValArity4),
     });
 
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
@@ -169,7 +173,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         five_extra.push(r + 1); // PR'
         three_extra.push(r + 2); // PR
         five_extra.push(r + 3); // FINAL'
-        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2AggregationSponge });
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2AggregationSponge, payload: 0 });
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, POSEIDON_ROWS * poseidon_uses.len());
@@ -204,7 +208,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         five_extra.push(r + 1); // PR'
         three_extra.push(r + 2); // PR
         five_extra.push(r + 3); // FINAL'
-        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2AggregationCompression });
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2AggregationCompression, payload: 0 });
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, 5 * poseidon_uses.len() + 5 * poseidon_cust_uses.len());
@@ -302,7 +306,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         r += 1;
     }
 
-    // ── SelectVal1 ────────────────────────────────────────────────────────────
+    // ── SelectValueArity4 ────────────────────────────────────────────────────────────
     // Uses a[0..21]; only a[22..23] free (not a full 3-cell gate) → no plonk piggyback.
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
@@ -444,10 +448,12 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         fixed_pols,
         pil_str,
         n_bits,
+        n_bits_natural,
         n_used,
         s_map,
         plonk_additions,
         airgroup_name: airgroup_name.clone(),
         air_name: airgroup_name,
+        band_aux: 0,
     }
 }

@@ -1,4 +1,5 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
 
 use tracing::info;
 
@@ -121,6 +122,7 @@ pub fn calculate_intermediate_polynomials(
     c_exp_id: usize,
     max_q_deg: usize,
     q_dim: usize,
+    symbols: &[SymbolInfo],
 ) -> ImPolsResult {
     info!("-------------------- POSSIBLE DEGREES ----------------------");
     let blowup = if max_q_deg > 1 { (max_q_deg as f64 - 1.0).log2() } else { 0.0 };
@@ -164,9 +166,105 @@ pub fn calculate_intermediate_polynomials(
         }
     }
 
-    best.unwrap_or_else(|| {
+    let chosen = best.unwrap_or_else(|| {
         panic!("No feasible intermediate-polynomial split found for constraint degrees 2..={}", max_q_deg.max(2))
-    })
+    });
+    describe_im_pols(expressions, &chosen, symbols);
+    chosen
+}
+
+/// Say WHICH subexpressions were promoted, not just how many.
+///
+/// The counts above answer "what does this degree cost"; they cannot answer "why". Every im pol is a
+/// node of the one composition-polynomial tree whose degree exceeded the cap, so what identifies it
+/// is its operator, the stage its columns live in, whether it is base-field or extension, and above
+/// all the degree it had before promotion -- promotion pins it to a committed column, so its degree
+/// becomes 1 and the excess is what it was bought to remove.
+fn describe_im_pols(expressions: &[Expression], chosen: &ImPolsResult, symbols: &[SymbolInfo]) {
+    if chosen.im_exps.is_empty() {
+        info!("No intermediate polynomials needed: every constraint already fits the degree");
+        return;
+    }
+    info!("------------------------------------------------------------");
+    info!("The {} intermediate polynomial(s) chosen, and what each was promoted from:", chosen.im_exps.len());
+    let mut by_stage: BTreeMap<usize, usize> = BTreeMap::new();
+    for &exp_id in &chosen.im_exps {
+        let e = &expressions[exp_id];
+        *by_stage.entry(e.stage).or_insert(0) += e.dim;
+        info!(
+            "  exp {:>6}  op {:<10} stage {}  {}  degree {} -> 1  ({} column{})",
+            exp_id,
+            e.op,
+            e.stage,
+            if e.dim == 1 { "base     " } else { "extension" },
+            e.exp_deg,
+            e.dim,
+            if e.dim == 1 { "" } else { "s" }
+        );
+    }
+    let parts: Vec<String> = by_stage.iter().map(|(st, cols)| format!("stage{st} {cols}")).collect();
+    info!("  columns by stage: {}", parts.join(" + "));
+    info!("  the expressions themselves, in PIL terms:");
+    for &exp_id in &chosen.im_exps {
+        info!("    exp {exp_id} = {}", render_expr(expressions, symbols, &expressions[exp_id], 0));
+    }
+}
+
+/// The column's name as the PIL wrote it, so a promoted expression can be read back against the
+/// source rather than as arena indices.
+fn symbol_name(symbols: &[SymbolInfo], sym_type: &str, e: &Expression) -> String {
+    let by_pol = e.id.and_then(|id| symbols.iter().find(|s| s.pol_id == Some(id) && s.sym_type == sym_type));
+    let by_stage = || {
+        symbols
+            .iter()
+            .find(|s| s.sym_type == sym_type && s.stage == Some(e.stage) && s.stage_id == e.stage_id)
+    };
+    match by_pol.or_else(by_stage) {
+        Some(sym) => match sym.idx {
+            Some(i) if sym.lengths.as_ref().is_some_and(|l| !l.is_empty()) => format!("{}[{}]", sym.name, i),
+            _ => sym.name.clone(),
+        },
+        None => format!("{sym_type}#{}", e.id.map_or_else(|| "?".to_string(), |i| i.to_string())),
+    }
+}
+
+/// Render an expression the way the PIL reads: named columns, `(k)'x` for a row offset, and
+/// parenthesised arithmetic. `exp` children are followed so the whole promoted subtree is visible;
+/// past `MAX_DEPTH` it prints the arena id instead, which keeps a pathological tree from filling the
+/// log while still saying where to look.
+fn render_expr(expressions: &[Expression], symbols: &[SymbolInfo], e: &Expression, depth: usize) -> String {
+    const MAX_DEPTH: usize = 24;
+    let offset = |name: String| match e.row_offset {
+        Some(k) if k != 0 => format!("({k})'{name}"),
+        _ => name,
+    };
+    if depth > MAX_DEPTH {
+        return format!("exp#{}", e.id.map_or_else(|| "?".to_string(), |i| i.to_string()));
+    }
+    let child = |i: usize| {
+        e.values
+            .get(i)
+            .map(|c| render_expr(expressions, symbols, c.resolve(expressions), depth + 1))
+            .unwrap_or_else(|| "?".to_string())
+    };
+    match e.op.as_str() {
+        "add" => format!("({} + {})", child(0), child(1)),
+        "sub" => format!("({} - {})", child(0), child(1)),
+        "mul" => format!("({} * {})", child(0), child(1)),
+        "neg" => format!("(-{})", child(0)),
+        "cm" => offset(symbol_name(symbols, "witness", e)),
+        "const" => offset(symbol_name(symbols, "fixed", e)),
+        "custom" => offset(symbol_name(symbols, "custom", e)),
+        "number" => e.value.clone().unwrap_or_else(|| "0".to_string()),
+        "challenge" | "public" | "eval" | "airvalue" | "airgroupvalue" | "proofvalue" => {
+            format!("{}#{}", e.op, e.id.map_or_else(|| "?".to_string(), |i| i.to_string()))
+        }
+        "exp" => match e.id {
+            Some(id) if id < expressions.len() => render_expr(expressions, symbols, &expressions[id], depth + 1),
+            _ => "exp#?".to_string(),
+        },
+        other => format!("{other}({})", (0..e.values.len()).map(child).collect::<Vec<_>>().join(", ")),
+    }
 }
 
 fn calculate_added_cols(
@@ -363,9 +461,8 @@ fn calc_im_pols_expr(
                 return (Some(im_pols.clone()), 1);
             }
 
-            // calc_im_pols_inner handles memoization at its own entry; the
-            // outer memo lookup and the redundant post-recurse memo write that
-            // used to live here both reused the same key, so we drop them.
+            // calc_im_pols_inner memoizes at its own entry, so an outer lookup and a
+            // post-recurse write here would reuse the same key and add nothing.
             let (e, d) = calc_im_pols_inner(expressions, id, im_pols, absolute_max, absolute_max, abs_max_d, memo);
 
             match e {
@@ -711,7 +808,7 @@ mod tests {
             make_cm(1, 1),     // 1
             make_mul(0, 1, 2), // 2: deg 2
         ];
-        let result = calculate_intermediate_polynomials(&exprs, 2, 3, 1);
+        let result = calculate_intermediate_polynomials(&exprs, 2, 3, 1, &[]);
         assert!(
             result.im_exps.is_empty(),
             "No intermediate polynomials should be needed for degree-2 expr with maxQDeg=3"
@@ -735,7 +832,7 @@ mod tests {
         exprs[3].exp_deg = 2;
         exprs[7].exp_deg = 2;
 
-        let result = calculate_intermediate_polynomials(&exprs, 8, 2, 1);
+        let result = calculate_intermediate_polynomials(&exprs, 8, 2, 1, &[]);
         assert!(
             !result.im_exps.is_empty(),
             "Intermediate polynomials should be needed for degree-4 expr with maxQDeg=2"

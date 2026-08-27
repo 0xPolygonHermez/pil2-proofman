@@ -102,18 +102,26 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 None,
             )?;
 
-            let setup_vadcop_final_compressed = Setup::new(
-                &global_info.get_setup_path("vadcop_final_compressed"),
-                0,
-                0,
-                &GlobalInfoAir::new("VadcopFinalCompressed".to_string()),
-                &ProofType::VadcopFinalCompressed,
-                verify_constraints,
-                false,
-                false,
-                gpu,
-                None,
-            )?;
+            // Only if the key says it carries the stage. `Setup::new` reads the starkinfo from disk
+            // and panics if it is absent, so a key built without the compressed final -- which is
+            // the default for blake3, where it measured a 2% smaller proof for a whole extra
+            // recursion layer -- would fail here, before proving even starts.
+            let setup_vadcop_final_compressed = if global_info.has_compressed_final {
+                Some(Setup::new(
+                    &global_info.get_setup_path("vadcop_final_compressed"),
+                    0,
+                    0,
+                    &GlobalInfoAir::new("VadcopFinalCompressed".to_string()),
+                    &ProofType::VadcopFinalCompressed,
+                    verify_constraints,
+                    false,
+                    false,
+                    gpu,
+                    None,
+                )?)
+            } else {
+                None
+            };
 
             let recurser_const_slot_size = if gpu {
                 let n_constants = setup_vadcop_final.stark_info.n_constants as usize;
@@ -127,7 +135,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 + sctx_recursive1.total_const_pols_size
                 + sctx_recursive2.total_const_pols_size
                 + setup_vadcop_final.const_pols_size_packed
-                + setup_vadcop_final_compressed.const_pols_size_packed
+                + setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_pols_size_packed)
                 + recurser_const_slot_size;
 
             let mut total_const_tree_size = sctx_compressor.total_const_tree_size
@@ -141,9 +149,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)
                 + setup_vadcop_final.stark_info.n_publics;
 
-            let vadcop_final_compressed_trace_size = setup_vadcop_final_compressed.stark_info.map_sections_n["cm1"]
-                * (1 << setup_vadcop_final_compressed.stark_info.stark_struct.n_bits)
-                + setup_vadcop_final_compressed.stark_info.n_publics;
+            // Zero when the stage is absent: nothing will ever be written into a buffer for it.
+            let vadcop_final_compressed_trace_size = setup_vadcop_final_compressed.as_ref().map_or(0, |s| {
+                s.stark_info.map_sections_n["cm1"] * (1 << s.stark_info.stark_struct.n_bits)
+                    + s.stark_info.n_publics
+            });
 
             let max_const_size = sctx_compressor
                 .max_const_size
@@ -155,7 +165,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_const_tree_size)
                 .max(sctx_recursive2.max_const_tree_size)
                 .max(setup_vadcop_final.const_tree_size)
-                .max(setup_vadcop_final_compressed.const_tree_size);
+                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_tree_size));
             let max_prover_trace_size = sctx_compressor
                 .max_prover_trace_size
                 .max(sctx_recursive1.max_prover_trace_size)
@@ -166,7 +176,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize)
-                .max(setup_vadcop_final_compressed.prover_buffer_size as usize);
+                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size as usize));
 
             let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
                 + sctx_recursive2.max_prover_trace_size)
@@ -177,7 +187,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
                 .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize)
-                .max(setup_vadcop_final_compressed.prover_buffer_size as usize + vadcop_final_trace_size as usize);
+                // Its OWN trace size, not vadcop_final's. The two airs have had identical geometry
+                // so far, which is why pairing the compressed buffer with the uncompressed trace
+                // never showed; it would undersize the buffer the moment they diverged.
+                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| {
+                    c.prover_buffer_size as usize + vadcop_final_compressed_trace_size as usize
+                }));
 
             // This floors every non-recursive GPU stream class, so which term dominates decides
             // whether a regular class fits at all.
@@ -196,7 +211,9 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     (setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize) as f64 * 8.0
                 ),
                 format_bytes(
-                    (setup_vadcop_final_compressed.prover_buffer_size as usize + vadcop_final_trace_size as usize)
+                    setup_vadcop_final_compressed.as_ref().map_or(0, |c| {
+                        c.prover_buffer_size as usize + vadcop_final_compressed_trace_size as usize
+                    })
                         as f64
                         * 8.0
                 ),
@@ -207,7 +224,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_pinned_proof_size)
                 .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize)
-                .max(setup_vadcop_final_compressed.proof_size as usize);
+                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.proof_size as usize));
 
             let max_n_bits_ext = sctx_compressor
                 .max_n_bits_ext
@@ -219,7 +236,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max_witness_size
                 .max(sctx_recursive2.max_witness_size)
                 .max(setup_vadcop_final.get_circom_witness_size())
-                .max(setup_vadcop_final_compressed.get_circom_witness_size());
+                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.get_circom_witness_size()));
 
             let max_trace_size = sctx_recursive1
                 .max_trace_size
@@ -235,7 +252,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive1: Some(sctx_recursive1),
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
-                setup_vadcop_final_compressed: Some(setup_vadcop_final_compressed),
+                setup_vadcop_final_compressed,
                 max_const_tree_size,
                 max_const_size,
                 max_prover_trace_size,

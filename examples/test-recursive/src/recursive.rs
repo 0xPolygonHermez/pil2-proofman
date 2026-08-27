@@ -56,10 +56,14 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")
                 .join(&hash_family);
-            // The inner proof this fixture recurses over: a recursive2 proof, so the AIR built from
-            // it matches the production aggregator. The name keeps `tCompressor` because prove-air
-            // parses the proof type out of it to resolve the setup path, and the harness names every
-            // recursive-test AIR "Compressor".
+            // The inner proof this fixture recurses over. Which recursion level it is depends on the
+            // family's fixture -- poseidon2 recurses over a recursive2 zkin, blake3 over a
+            // recursive1 one -- and either builds the same production aggregator AIR. What matters
+            // is that the .bin and the test.circom come from the SAME setup: the zkin is just the
+            // circom's input vector, so a mismatched pair generates a witness that fails an assert
+            // and every constraint that reads it then reports as broken. The name keeps
+            // `tCompressor` because prove-air parses the proof type out of it to resolve the setup
+            // path, and the harness names every recursive-test AIR "Compressor".
             let proof_path = current_dir.join("ag0_air0_tCompressor.bin");
 
             let mut file = File::open(proof_path).unwrap();
@@ -115,6 +119,10 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 size_witness,
                 1 << (setup.stark_info.stark_struct.n_bits),
                 setup.stark_info.n_publics,
+                // Full width, NOT recursion_trace_stride: expand_gate_bands_c below runs on the
+                // host unconditionally and rebuilds the interiors in place, so it needs the real
+                // layout. This fixture hands the finished trace to the ordinary prove path, which
+                // never reaches gen_recursive_proof_gpu's compact reader.
                 n_cols,
             );
             // The hash gates map only their boundary; fill the rest from it. No-op on an exec

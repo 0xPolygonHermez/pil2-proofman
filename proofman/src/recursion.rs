@@ -359,7 +359,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         setup.size_witness.unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
-        witness.n_cols as u64,
+        recursion_trace_stride(exec, witness.n_cols as u64, pctx.gpu),
     );
     // The hash gates map only their boundary; the rest is rebuilt from it. On GPU that happens
     // device-side inside gen_recursive_proof_c, right after the trace copy.
@@ -860,6 +860,9 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.size_witness.unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
+        // Full width, NOT recursion_trace_stride: the expander below runs on the HOST here
+        // unconditionally (gen_recursive_proof_final_c has no device one), and it rebuilds the
+        // interiors in place, so it needs the real layout.
         setup.stark_info.map_sections_n["cm1"],
     );
     // Host-side unconditionally: gen_recursive_proof_final_c has no device expander, and
@@ -972,7 +975,10 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         setup.size_witness.ok_or_else(|| ProofmanError::InvalidSetup("recurser setup has no size_witness".into()))?,
         1 << n_bits,
         n_publics,
-        n_cols,
+        // Compact on GPU, full width otherwise -- the same rule the device side applies. This path
+        // reaches gen_recursive_proof_c, so filling wide while that reads compact hands it mapCols
+        // columns' worth of an n_cols-wide row.
+        recursion_trace_stride(exec, n_cols, setup.gpu),
     );
     // See generate_recursive_proof: device-side on GPU, host-side otherwise.
     if !setup.gpu {
@@ -1099,6 +1105,39 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 
 /// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
 /// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
+/// Row stride to fill the recursion trace with: the exec map's width when the device widens it, the
+/// air's own width otherwise.
+///
+/// `getCommitedPols` takes this as the row stride, so handing it the map's width makes it write a
+/// compact `N x map_cols` buffer with no gaps. The columns it then skips belong to a gate-band
+/// expander, which rebuilds them on device -- so on the GPU path they need never cross PCIe.
+///
+/// The CPU path keeps the air's width: `expand_gate_bands_c` rebuilds the interiors in place and
+/// needs the real layout to do it.
+///
+/// Every caller that can reach `gen_recursive_proof_c`'s GPU implementation must go through this,
+/// because that side decides the same question from the same exec header. Filling wide while it reads
+/// compact hands it `map_cols` columns' worth of an `n_cols`-wide row, and the proof then fails its
+/// evaluations check with nothing pointing at the cause.
+pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
+    // Mirrors `plonk2pil::{EXEC_MAGIC, EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS}`, which write the
+    // header, and `exec_layout` in pil2-stark/src/starkpil/exec_layout.hpp, which reads it. Spelled
+    // out rather than imported: the prover does not depend on the setup crate.
+    // Header: [magic|version, n_adds, map_rows, map_cols].
+    const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000; // "PXEC" in the high half
+    const EXEC_FORMAT_VERSION: u64 = 2;
+    const EXEC_HEADER_WORDS: usize = 4;
+    if !gpu {
+        return n_cols;
+    }
+    let Some(header) = exec.get(..EXEC_HEADER_WORDS) else { return n_cols };
+    if header[0] != EXEC_MAGIC | EXEC_FORMAT_VERSION {
+        return n_cols;
+    }
+    let map_cols = header[3];
+    if map_cols > 0 && map_cols < n_cols { map_cols } else { n_cols }
+}
+
 fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
     let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
         return;
@@ -1232,7 +1271,9 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 
     max_prover_size = max_prover_size
         .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
-        .max(setups.setup_vadcop_final_compressed.as_ref().unwrap().prover_buffer_size);
+        // Absent when the key was built without the compressed final stage, which contributes
+        // nothing to the buffer it never fills.
+        .max(setups.setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size));
 
     Ok(max_prover_size as usize)
 }

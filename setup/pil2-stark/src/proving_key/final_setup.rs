@@ -20,6 +20,8 @@ use serde_json::Value;
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+
+
 use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
@@ -254,9 +256,18 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("FinalVadcop".to_string()),
-        max_constraint_degree: None,
+        // Follow the blowup instead of taking the packer's default of 5. The extra degree is paid
+        // back out of stage2: `std_sum` packs maxDeg-1 bus terms behind each im pol, so 5 -> 8 takes
+        // stage2 from 114 columns to 66. Derived from the same family-scoped blowup the stark struct
+        // uses, so the two cannot disagree about what the quotient can carry.
+        max_constraint_degree: Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
+            proofman_common::hash_family::final_blowup_factor(config.hash),
+        )),
         hash_id: config.hash.to_string(),
         merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        min_n_bits: None,
     };
     let plonk_result: PlonkResult =
         plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
@@ -299,9 +310,13 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
+        blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
         folding_factor: Some(4),
-        pow_bits: Some(22),
+        // Per family: poseidon's 22 is what its committed verifiers encode, blake3 affords 24.
+        pow_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
+        // The terminal the FRI walk stops at. For a family whose steps are solved rather than folded
+        // uniformly this is the ceiling the solver works under, not the degree it lands on.
+        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
         // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
         last_level_verification: None,
         ..Default::default()
@@ -427,7 +442,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             const_path.to_str().unwrap(),
             starkinfo_path.to_str().unwrap(),
             verkey_json_path.to_str().unwrap(),
-        );
+        )?;
 
         let mut verkey_bin = Vec::with_capacity(32);
         for &val in root.iter() {

@@ -266,7 +266,7 @@ impl Blake3 {
         let words = self.buf.join(", ");
         let ctr = self.chunk_counter;
         let sig = self.signal_name(name, "blk");
-        code.push(format!("\n    signal {sig}[8] <== Blake3AbsorbBlock()({cv}, [{words}], 64, {ctr}, {fl});"));
+        code.push(format!("\n    signal {sig}[8] <== Blake3AbsorbBlock({fl})({cv}, [{words}], 64, {ctr});"));
         self.buf.clear();
         self.chunk_blocks += 1;
         self.cv = Some(sig.clone());
@@ -291,7 +291,7 @@ impl Blake3 {
 
     fn emit_parent(&mut self, name: Suffix, code: &mut Vec<String>, left: &str, right: &str) -> String {
         let p = self.signal_name(name, "par");
-        code.push(format!("\n    signal {p}[8] <== Blake3Parent()({left}, {right}, {B3_PARENT});"));
+        code.push(format!("\n    signal {p}[8] <== Blake3Parent({B3_PARENT})({left}, {right});"));
         p
     }
 
@@ -315,14 +315,14 @@ impl Blake3 {
             // Single chunk: the held-back block is the root node.
             let sig = self.signal_name(name, "fin");
             let root = fl + B3_ROOT;
-            code.push(format!("\n    signal {sig}[8] <== Blake3FinalizeChunk()({cv}, [{w}], {len}, {root}, {ob});"));
+            code.push(format!("\n    signal {sig}[8] <== Blake3FinalizeChunk({root})({cv}, [{w}], {len}, {ob});"));
             sig
         } else {
             // Multi-chunk: close this chunk without ROOT, merge a copy of the
             // stack, and the final parent is the root node.
             let close = self.signal_name(name, "cls");
             let ctr = self.chunk_counter;
-            code.push(format!("\n    signal {close}[8] <== Blake3AbsorbBlock()({cv}, [{w}], {len}, {ctr}, {fl});"));
+            code.push(format!("\n    signal {close}[8] <== Blake3AbsorbBlock({fl})({cv}, [{w}], {len}, {ctr});"));
             let mut node = close;
             for si in (1..self.stack.len()).rev() {
                 let l = self.stack[si].clone();
@@ -686,9 +686,9 @@ mod tests {
         }
         let body = t.get_code();
 
-        let absorbs = body.matches("Blake3AbsorbBlock()(").count();
-        let fin_chunk = body.matches("Blake3FinalizeChunk()(").count();
-        let fin_parent = body.matches("Blake3FinalizeParent()(").count();
+        let absorbs = body.matches("Blake3AbsorbBlock(").count();
+        let fin_chunk = body.matches("Blake3FinalizeChunk(").count();
+        let fin_parent = body.matches("Blake3FinalizeParent(").count();
 
         // Both squeeze shapes must appear: single-chunk early, parent-rooted
         // once the stream passes 128 words.

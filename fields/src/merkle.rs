@@ -160,10 +160,13 @@ where
     LH: crate::Hash<F>,
     NH: crate::Hash<F>,
 {
-    let leaf_hash = linear_hash_seq::<F, LH>(v);
+    // Through the trait, not `linear_hash_seq` directly: a family whose leaf digest is not a sponge
+    // absorb -- BLAKE3 -- overrides it, and calling the loop here would compute a digest its prover
+    // never produced.
+    let leaf_hash = LH::linear_hash(v);
 
     let mut value: NH::State = NH::State::default();
-    value.as_mut()[..4].copy_from_slice(&leaf_hash.as_ref()[..4]);
+    value.as_mut()[..4].copy_from_slice(&leaf_hash);
 
     let mut query_idx = idx;
     calculate_root_from_proof::<F, NH>(&mut value, mp, &mut query_idx, 0, arity);

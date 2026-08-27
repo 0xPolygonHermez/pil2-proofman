@@ -44,7 +44,19 @@ pub fn reorder_plonk_pols_for_pilout(
     let mut result = Vec::new();
     for sym in fixed_syms {
         if sym.lengths.is_empty() {
-            // Scalar fixed col: has inline values in pilout, no entry in plonk_pols.
+            // A scalar fixed col. Most are pilout-inline selectors, which carry their own values and
+            // must contribute nothing here -- `write_const_file` draws from this list only for
+            // columns whose pilout `values` are EMPTY, so an extra entry would shift every later
+            // column. A scalar declared `#pragma fixed_external` is exactly such an empty column,
+            // though, so honour a FixedPol when the packer supplied one; when it did not, this still
+            // pushes nothing and the old behaviour stands.
+            //
+            // Skipping scalars unconditionally leaves such a column reading zero down the whole
+            // trace, and does it quietly: a scalar sorts after every array slot, so the miss consumes
+            // no other column's values and everything else stays correct.
+            if let Some(vals) = pol_map.get(&(sym.name.clone(), 0)) {
+                result.push((*vals).clone());
+            }
             continue;
         }
         let total: usize = sym.lengths.iter().map(|&l| l as usize).product();
@@ -290,4 +302,64 @@ fn bytes_to_u64_be(bytes: &[u8]) -> u64 {
         val = (val << 8) | (b as u64);
     }
     val
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pil2_pilout::pilout::Symbol;
+
+    fn fixed_sym(name: &str, id: u32, lengths: &[u32]) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            air_group_id: Some(0),
+            air_id: Some(0),
+            r#type: 1, // FIXED_COL
+            id,
+            lengths: lengths.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    fn pol(name: &str, index: usize, marker: u64) -> pil2_stark_recurser::plonk2pil::FixedPol {
+        pil2_stark_recurser::plonk2pil::FixedPol { name: name.to_string(), index, values: vec![marker] }
+    }
+
+    /// `write_const_file` walks the air's fixed cols and draws the next entry from this list for
+    /// every column whose pilout values are EMPTY. So the list must hold one entry per such column,
+    /// in symbol-id order -- an entry too few and each later column reads its neighbour's values.
+    ///
+    /// Skipping every scalar assumes a scalar always carries inline values, which
+    /// `#pragma fixed_external` breaks: such a column has an empty pilout slot and needs its values
+    /// from here. Missing one leaves that column reading zero down the whole trace, and quietly -- a
+    /// scalar sorts after every array slot, so no other column's values shift.
+    #[test]
+    fn a_scalar_external_fixed_col_gets_its_values() {
+        let symbols = vec![fixed_sym("A.C", 0, &[2]), fixed_sym("A.FLAGS", 1, &[])];
+        let pols = vec![pol("A.C", 0, 10), pol("A.C", 1, 11), pol("A.FLAGS", 0, 99)];
+
+        let out = reorder_plonk_pols_for_pilout(&pols, &symbols, 0, 0);
+
+        assert_eq!(out.len(), 3, "the scalar's slot has to be filled or later columns shift");
+        assert_eq!(out[0][0], 10);
+        assert_eq!(out[1][0], 11);
+        assert_eq!(out[2][0], 99, "FLAGS read as its own values, not a neighbour's");
+    }
+
+    /// The other half of the same rule: an inline scalar has no FixedPol, contributes nothing, and
+    /// must not consume a slot -- pushing a placeholder for it would shift every later column.
+    #[test]
+    fn an_inline_scalar_contributes_nothing() {
+        let symbols =
+            vec![fixed_sym("A.SEL", 0, &[]), fixed_sym("A.C", 1, &[2]), fixed_sym("A.CLK", 2, &[])];
+        let pols = vec![pol("A.C", 0, 10), pol("A.C", 1, 11)];
+
+        let out = reorder_plonk_pols_for_pilout(&pols, &symbols, 0, 0);
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0][0], 10);
+        assert_eq!(out[1][0], 11);
+    }
 }

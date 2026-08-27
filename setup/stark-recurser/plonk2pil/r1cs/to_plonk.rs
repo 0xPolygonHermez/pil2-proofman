@@ -195,6 +195,15 @@ use proofman_common::hash_family::{lookup_gate, GateRole};
 pub struct CustomGatesInfo {
     pub gate_ids: HashMap<GateRole, u32>,
     pub fft4_parameters: HashMap<u32, Vec<u64>>,
+    /// `Blake3Compress(flags, isParent)` parameters, per gate id.
+    ///
+    /// Circom mints one gate id per distinct parameter pair -- about eight across a whole verifier
+    /// -- so this role, like Fft4, has no single id and is exempt from the duplicate-role check.
+    /// The setup needs the VALUES: `flags` becomes an air fixed column and `isParent` picks which of
+    /// the two Compress block kinds a block belongs to, so neither takes a trace cell. Reading them
+    /// here is what makes that sound -- the alternative was pattern-matching the r1cs constraint
+    /// that pins each one.
+    pub blake3_compress_parameters: HashMap<u32, Vec<u64>>,
     pub n_per_role: HashMap<GateRole, usize>,
     pub n_plonk_rows: usize,
 }
@@ -221,6 +230,17 @@ pub fn get_custom_gates_info(r1cs: &R1csFile) -> CustomGatesInfo {
             GateRole::Fft4 => {
                 info.fft4_parameters.insert(i, gate.parameters.clone());
             }
+            GateRole::Blake3Compress => {
+                assert_eq!(
+                    gate.parameters.len(),
+                    2,
+                    "Blake3Compress is Blake3Compress(flags, isParent); gate {i} has {} parameters",
+                    gate.parameters.len()
+                );
+                let is_parent = gate.parameters[1];
+                assert!(is_parent <= 1, "isParent must be 0 or 1, gate {i} has {is_parent}");
+                info.blake3_compress_parameters.insert(i, gate.parameters.clone());
+            }
             _ => {
                 assert!(gate.parameters.is_empty(), "{name} expected to be parameter-less");
                 if let Some(prev) = info.gate_ids.insert(role, i) {
@@ -245,6 +265,8 @@ pub fn get_custom_gates_info(r1cs: &R1csFile) -> CustomGatesInfo {
             *role
         } else if info.fft4_parameters.contains_key(&cgu.id) {
             GateRole::Fft4
+        } else if info.blake3_compress_parameters.contains_key(&cgu.id) {
+            GateRole::Blake3Compress
         } else {
             panic!("Custom gate not defined: {}", cgu.id);
         };
@@ -265,6 +287,18 @@ pub fn filter_fft4_gate_uses<'a>(
     fft4_params: &HashMap<u32, Vec<u64>>,
 ) -> Vec<&'a CustomGateUse> {
     uses.iter().filter(|cgu| fft4_params.contains_key(&cgu.id)).collect()
+}
+
+/// One `Blake3Compress` use with the `(flags, isParent)` its gate id was minted for.
+///
+/// The packer needs both: `flags` goes into an air fixed column and `isParent` decides whether the
+/// block joins the chunk band or the parent band. Neither is a trace cell, so neither can be read
+/// off `cgu.signals` -- they live on the gate, not the use.
+pub fn blake3_compress_gate_uses<'a>(
+    uses: &'a [CustomGateUse],
+    params: &HashMap<u32, Vec<u64>>,
+) -> Vec<(&'a CustomGateUse, u64, u64)> {
+    uses.iter().filter_map(|cgu| params.get(&cgu.id).map(|p| (cgu, p[0], p[1]))).collect()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

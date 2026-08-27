@@ -16,6 +16,21 @@ const CHUNK_MIN: usize = 64; // give-up floor
 const BIG_OPS: usize = 20000; // ops threshold for "large expressions"
 const BIG_START_CHUNK: usize = 250; // autotuner start chunk for AIRs with > BIG_OPS ops
 
+/// Start chunk for the recursion phases, whatever their op count.
+///
+/// This tuner takes the LARGEST chunk that does not spill, and largest is not fastest: past some size
+/// the register pressure costs more than the launches it saves, and the recursion AIRs sit past that
+/// point at CHUNK_MAX. Scoped to those phases rather than lowered globally because the optimum is
+/// per-AIR: the recursion AIRs are the same handful of shapes on every proof, while a basic AIR is
+/// whatever the project makes it -- opt.rs records Main preferring the opposite of Binary and Rom on
+/// the neighbouring fold decision. `--exps-chunk N` pins it per run.
+const RECURSION_START_CHUNK: usize = 250;
+
+/// Whether an AIR's phase (the `sym` prefix, see `proof_phase`) is one of the recursion ones.
+fn is_recursion_phase(sym: &str) -> bool {
+    ["compressor_", "recursive_", "final_"].iter().any(|p| sym.starts_with(p))
+}
+
 /// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
 /// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
 fn max_stack(obj: &Path) -> i64 {
@@ -77,7 +92,14 @@ fn tune_inner(
     probe: &Path,
     out_dir: &Path,
 ) -> anyhow::Result<Option<usize>> {
-    let mut chunk = n_ops.min(if n_ops > BIG_OPS { BIG_START_CHUNK } else { CHUNK_MAX });
+    let start = if is_recursion_phase(sym) {
+        RECURSION_START_CHUNK
+    } else if n_ops > BIG_OPS {
+        BIG_START_CHUNK
+    } else {
+        CHUNK_MAX
+    };
+    let mut chunk = n_ops.min(start);
     let mut last_spill: Option<usize> = None;
     while chunk >= CHUNK_MIN {
         let plan = plan_chunks(ir, chunk, sym)?;
@@ -117,9 +139,9 @@ fn tune_inner(
         // ops -> 2 chunks -> +30% kernel time). Chunked kernels stay at zero.
         const SINGLE_SPILL_TOL: i64 = 32;
         if st == 0 || (chunk >= n_ops && st <= SINGLE_SPILL_TOL) {
-            // Halving overshoots: a 24-byte spill at 512 used to cost Poseidon half
-            // its chunk (and doubled its cross-chunk slots). Bisect upward between
-            // this clean size and the last spilling one; keep the largest clean.
+            // Halving overshoots: a spill of a few bytes at one size costs the whole
+            // next size down, and with it double the cross-chunk slots. Bisect upward
+            // between this clean size and the last spilling one; keep the largest clean.
             let (best_chunk, best_objs) = refine_up(tc, ir, sym, probe, chunk, last_spill, objs)?;
             for obj in &best_objs {
                 let dest = out_dir.join(obj.file_name().unwrap());
@@ -195,4 +217,20 @@ fn refine_up(
     // re-emit the winner so the returned objects match `lo` (probes overwrote them)
     let (_, objs) = compile_at(lo)?;
     Ok((lo, objs))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The recursion phases take the smaller start chunk; a basic AIR keeps the old bounds. Pinned
+    /// because the discriminator is the `sym` prefix, which `make_sym` builds from `proof_phase` --
+    /// rename a phase there and this silently stops firing.
+    #[test]
+    fn only_the_recursion_phases_get_the_smaller_start() {
+        for sym in ["compressor_a0_0_b19_e12056", "recursive_a0_1_b21_e900", "final_a0_0_b18_e400"] {
+            assert!(super::is_recursion_phase(sym), "{sym} should be a recursion phase");
+        }
+        for sym in ["basic_a0_2_b19_e4634", "basic_a0_0_b19_e12056", "other_a0_0_b16_e10"] {
+            assert!(!super::is_recursion_phase(sym), "{sym} should not be");
+        }
+    }
 }

@@ -23,6 +23,7 @@ pub(crate) fn build_global_info_json(
     settings_map: &StarkStructsConfig,
     hash: &str,
     agg_arity: usize,
+    has_compressed_final: bool,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
@@ -69,6 +70,10 @@ pub(crate) fn build_global_info_json(
         "latticeSize": 368,
         "transcriptArity": transcript_arity,
         "aggregationArity": agg_arity,
+        // Whether this key carries the vadcop_final_compressed stage. Written so a consumer can
+        // tell a key built without it from a key that is missing files: the loader must not try to
+        // read a starkinfo for a stage that was never generated.
+        "hasCompressedFinal": has_compressed_final,
         "nPublics": pilout.num_public_values,
         "numChallenges": num_challenges,
         "numProofValues": pilout.num_proof_values,
@@ -86,10 +91,11 @@ pub(crate) fn write_global_info_json(
     settings_map: &StarkStructsConfig,
     hash: &str,
     agg_arity: usize,
+    has_compressed_final: bool,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let global_info = build_global_info_json(pilout, pilout_name, settings_map, hash, agg_arity);
+    let global_info = build_global_info_json(pilout, pilout_name, settings_map, hash, agg_arity, has_compressed_final);
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
     Ok(())
@@ -113,7 +119,10 @@ pub(crate) fn write_global_constraints(
         pilout_name,
         settings_map,
         proofman_common::hash_family::DEFAULT_HASH_ID,
-        proofman_common::global_info::default_aggregation_arity(),
+        proofman_common::global_info::fallback_aggregation_arity(),
+        // Same reason as the hash and the arity above: this JSON is dropped, so the value is
+        // never read back and any of the two would do.
+        true,
     );
 
     let global_constraints = build_global_constraints_json(pilout)?;
@@ -159,9 +168,10 @@ pub(crate) fn write_global_info(
     settings_map: &StarkStructsConfig,
     hash: &str,
     agg_arity: usize,
+    has_compressed_final: bool,
 ) -> Result<()> {
     write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
-    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash, agg_arity)?;
+    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash, agg_arity, has_compressed_final)?;
     tracing::info!("Global info and constraints written");
     Ok(())
 }
@@ -634,7 +644,7 @@ mod agg_arity_tests {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
         for arity in [2usize, 3] {
-            let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", arity);
+            let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", arity, true);
             assert_eq!(v["aggregationArity"], serde_json::json!(arity));
         }
     }
@@ -667,7 +677,7 @@ mod tests {
 
         let build_dir = "/tmp/r39_test_global_info";
         let _ = std::fs::remove_dir_all(build_dir);
-        write_global_info(&pilout, &pilout_name, build_dir, &settings_map, "Poseidon2", 3).unwrap();
+        write_global_info(&pilout, &pilout_name, build_dir, &settings_map, "Poseidon2", 3, true).unwrap();
 
         let gi_str = std::fs::read_to_string(format!("{}/provingKey/pilout.globalInfo.json", build_dir)).unwrap();
         let gi: serde_json::Value = serde_json::from_str(&gi_str).unwrap();

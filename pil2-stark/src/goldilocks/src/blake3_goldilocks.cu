@@ -124,7 +124,14 @@ __global__ void b3_merkleNodeKernel(uint64_t *cursor, uint64_t nextN, uint64_t n
     if (tid >= nextN) return;
     uint64_t base = nextIndex + tid * (uint64_t)arity * 4ull;
     uint64_t dig[4];
-    blake3core::hash_le64(&cursor[base], arity * 4u, dig);
+    // A node is `arity * 4` words -- 8 at arity 2, and never more than a 128-word chunk -- so this
+    // is hash_le64's single-chunk path, taken inline. Calling hash_le64 itself would be identical
+    // arithmetic but drags in its multi-chunk cv stack: `uint32_t stack[CV_STACK*8]` is a 768-byte
+    // per-thread stack frame that ptxas allocates whether or not the branch is ever taken, and this
+    // kernel is 81% of a recursion's compressions.
+    uint32_t cv[8];
+    blake3core::compress_chunk(&cursor[base], arity * 4u, 0ull, true, cv);
+    blake3core::pack4(cv, dig);
     uint64_t *o = &cursor[nextIndex + (pending + tid) * 4ull];
 #pragma unroll
     for (int i = 0; i < 4; ++i) o[i] = dig[i];

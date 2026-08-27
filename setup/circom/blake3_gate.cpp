@@ -15,16 +15,16 @@
 // really is a witness rather than the IV. See blake3.circom for why the node
 // shape is worth its own gate.
 //
-// Blake3Compress(in[16], blockLen, counterLo, flags, key, raw).
-// Two input shapes over one row geometry, selected by `raw`:
+// Blake3Compress(in[16], blockLen, counterLo, flags, isParent).
+// Two input shapes over one row geometry, selected by `isParent`:
 //
-//   raw = 0   `in[0..8]` is the chaining value, `in[8..16]` a block of eight
+//   isParent = 0  chunk block: `in[0..8]` is the chaining value, `in[8..16]` a block of eight
 //             full-range Goldilocks words, ordered by `key` and split here.
-//   raw = 1   `in` IS the sixteen u32 block words -- the parent shape, two
+//   isParent = 1  parent node: `in` IS the sixteen u32 block words, two
 //             chaining values side by side -- and the compression's own
 //             chaining value is the IV. `key` is a don't-care on this path.
 //
-// A cv plus a Goldilocks block is exactly 16 cells, the same as a raw block,
+// A cv plus a Goldilocks block is exactly 16 cells, the same as a parent block,
 // which is why the parent shape needs no block input of its own.
 //
 // counterHi is not passed: st[13] is identically zero across the design (chunk
@@ -98,18 +98,20 @@ void Blake3Node(uint64_t *out, uint *size_out,
     }
 }
 
-void Blake3Compress(uint64_t *out, uint *size_out,
+// `flags` and `isParent` are TEMPLATE PARAMETERS, so the fork emits them as leading scalar
+// arguments of this one function -- the generated header is named after the bare template, not the
+// parameterized instance, so eight (flags, isParent) pairs still share a single implementation.
+// They come before the io_signals because the generator pushes `instance.arguments` first.
+void Blake3Compress(uint64_t flags, uint64_t isParent,
+                    uint64_t *out, uint *size_out,
                     uint64_t *in, uint *size_in,
                     uint64_t *blockLen, uint *size_blockLen,
-                    uint64_t *counterLo, uint *size_counterLo,
-                    uint64_t *flags, uint *size_flags,
-                    uint64_t *key, uint *size_key,
-                    uint64_t *raw, uint *size_raw)
+                    uint64_t *counterLo, uint *size_counterLo)
 {
     uint32_t cv[8];
     uint32_t block[16];
 
-    if (raw[0] != 0) {
+    if (isParent != 0) {
         for (int i = 0; i < 8; ++i) {
             cv[i] = blake3core::b3_iv(i);
             block[i] = (uint32_t)in[i];
@@ -118,13 +120,14 @@ void Blake3Compress(uint64_t *out, uint *size_out,
     } else {
         for (int i = 0; i < 8; ++i) cv[i] = (uint32_t)in[i];
 
-        // Any nonzero key is 1; booleanity is the AIR's job.
-        split_ordered(block, in + 8, in + 12, key[0]);
+        // No key on this gate: every caller drives the Merkle path bit through Blake3Node
+        // instead, so the halves are never swapped here.
+        split_ordered(block, in + 8, in + 12, 0);
     }
 
     uint32_t xof[16];
     blake3core::compress_xof(cv, block, (uint8_t)blockLen[0],
-                             (uint64_t)counterLo[0], (uint8_t)flags[0], xof);
+                             (uint64_t)counterLo[0], (uint8_t)flags, xof);
     for (int i = 0; i < 16; ++i) out[i] = xof[i];
 }
 

@@ -12,6 +12,15 @@ pub fn write_verifier_rust_file(
     vadcop_final_proof: bool,
     hash_id: &str,
 ) -> Result<()> {
+    if !hash_family::supports_native_rust_verifier(hash_id) {
+        tracing::warn!(
+            "Skipping the native Rust verifier for {path}: the {hash_id} family has no \
+             proofman_fields::Hash implementation, so no verifier can be emitted for it. The proving \
+             key is complete for proving and for C++ verification; only this artifact is absent."
+        );
+        return Ok(());
+    }
+
     println!("> Writing rust verifier file");
 
     let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;

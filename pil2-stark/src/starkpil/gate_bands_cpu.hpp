@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include "gate_bands.hpp"
+#include "gate_bands_blake3.hpp"
 #include "goldilocks_base_field.hpp"
 
 #include "gate_bands_poseidon1.hpp"
@@ -148,25 +149,61 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
     if (bad != nBands) {
         res.status = ExpandStatus::UnexpandableBand;
         res.badBand = bad;
-        res.row = b[bad * 2];
-        res.kind = b[bad * 2 + 1];
+        res.row = b[bad * 3];
+        res.kind = b[bad * 3 + 1];
         return res;
     }
 
+    // Does this air have BLAKE3 bands? They alone need lookup multiplicities, and the accumulators
+    // are 1.5 MB apiece, so they are not allocated for an air that has none.
+    bool anyBlake3 = false;
+    for (uint64_t i = 0; i < nBands && !anyBlake3; i++) anyBlake3 = is_blake3(b[i * 3 + 1]);
+    const uint64_t lanes = view.aux;
+    if (anyBlake3 && lanes == 0) {
+        res.status = ExpandStatus::MalformedSection;  // LANES must travel with a BLAKE3 air
+        return res;
+    }
+    blake3::Multiplicities total;
+
     // Bands never overlap -- the setup lays them out end to end -- so they fill independently.
+    //
+    // The multiplicities do NOT: every lane's lookups land in one shared table. Each thread
+    // accumulates into its own copy and reduces once at the end, rather than an atomic per lookup
+    // -- at 16 XOR lookups per lane per row over 56 rows a block, atomics would dominate.
     uint64_t firstMismatch = nBands;
-#pragma omp parallel for
-    for (uint64_t i = 0; i < nBands; i++) {
-        if (!expand_poseidon_band(trace, nCols, b[i * 2], b[i * 2 + 1])) {
+#pragma omp parallel
+    {
+        blake3::Multiplicities local;
+        bool touched = false;
+#pragma omp for nowait
+        for (uint64_t i = 0; i < nBands; i++) {
+            const uint64_t row = b[i * 3], kind = b[i * 3 + 1], payload = b[i * 3 + 2];
+            if (is_blake3(kind)) {
+                const blake3::Kind k = kind == GB_BLAKE3_NODE            ? blake3::Kind::Node
+                                     : kind == GB_BLAKE3_COMPRESS_CHUNK  ? blake3::Kind::Chunk
+                                                                         : blake3::Kind::Parent;
+                blake3::HostSink sink{local};
+                blake3::expand_block(trace, nCols, row, lanes, k, payload, sink);
+                touched = true;
+            } else if (!expand_poseidon_band(trace, nCols, row, kind)) {
 #pragma omp critical
-            if (i < firstMismatch) firstMismatch = i;
+                if (i < firstMismatch) firstMismatch = i;
+            }
+        }
+        if (touched) {
+#pragma omp critical
+            {
+                for (uint64_t j = 0; j < blake3::TABLE_SIZE; j++) total.table[j] += local.table[j];
+                for (uint64_t j = 0; j < blake3::RANGE_SIZE; j++) total.range[j] += local.range[j];
+            }
         }
     }
+    if (anyBlake3) blake3::write_multiplicities(trace, nCols, nRows, lanes, total);
     if (firstMismatch != nBands) {
         res.status = ExpandStatus::OutputMismatch;
         res.badBand = firstMismatch;
-        res.row = b[firstMismatch * 2];
-        res.kind = b[firstMismatch * 2 + 1];
+        res.row = b[firstMismatch * 3];
+        res.kind = b[firstMismatch * 3 + 1];
     }
     return res;
 }

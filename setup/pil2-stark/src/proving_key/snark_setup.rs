@@ -172,6 +172,9 @@ pub fn gen_snark_setup(
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
         merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        min_n_bits: None,
     };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
@@ -298,7 +301,7 @@ pub fn gen_snark_setup(
         const_rf.to_str().unwrap(),
         starkinfo_rf_path.to_str().unwrap(),
         verkey_rf_path.to_str().unwrap(),
-    );
+    )?;
     let mut verkey_bin_rf = Vec::with_capacity(32);
     for &v in rf_const_root.iter() {
         verkey_bin_rf.extend_from_slice(&v.to_le_bytes());

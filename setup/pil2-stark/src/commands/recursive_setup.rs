@@ -200,6 +200,7 @@ pub(crate) fn run_recursive_setup(
                             build_dir,
                             hash: &opts.hash,
                             agg_arity: opts.agg_arity,
+                            recursive_n_bits: opts.recursive_n_bits,
                             template: RecursiveTemplate::Compressor,
                             airgroup_name: &airgroup_name,
                             airgroup_id: ag_idx,
@@ -250,6 +251,7 @@ pub(crate) fn run_recursive_setup(
                         build_dir,
                         hash: &opts.hash,
                         agg_arity: opts.agg_arity,
+                            recursive_n_bits: opts.recursive_n_bits,
                         template: RecursiveTemplate::Recursive1,
                         airgroup_name: &airgroup_name,
                         airgroup_id: ag_idx,
@@ -307,8 +309,11 @@ pub(crate) fn run_recursive_setup(
                             // Bump the compressor's nQueries so recursive1 fills to 2^(THRESHOLD-1).
                             // recursive1's n_used scales ~linearly with the compressor's nQueries;
                             // target NUsed = 2^(THRESHOLD-1)+2^12 (identical to the non-compressor A2).
-                            const RECURSIVE_BITS_THRESHOLD: usize = 17; // must match gen_recursive_setup
-                            const TARGET_ROWS: u64 = (1u64 << (RECURSIVE_BITS_THRESHOLD - 1)) + (1u64 << 12);
+                            // One source of truth with gen_recursive_setup. Spelling the threshold
+                            // out here instead, with a "must match" comment, is the shape a
+                            // family-scoped value breaks silently.
+                            let threshold = proofman_common::hash_family::recursive_bits_threshold(&opts.hash);
+                            let target_rows: u64 = (1u64 << (threshold - 1)) + (1u64 << 12);
                             let comp_ss = compressor_result
                                 .as_ref()
                                 .and_then(|cr| cr.stark_info.as_ref())
@@ -345,12 +350,12 @@ pub(crate) fn run_recursive_setup(
                                     let d_used = hi_u.saturating_sub(lo_u).max(1);
                                     let d_q = hi_q - lo_q;
                                     // want = cur_q + ceil((TARGET - cur_used) * d_q / d_used)
-                                    let deficit = TARGET_ROWS.saturating_sub(cur_used);
+                                    let deficit = target_rows.saturating_sub(cur_used);
                                     cur_q + (deficit * d_q).div_ceil(d_used)
                                 }
                                 // First bump (or degenerate): proportional guess, which under the
                                 // affine model is a lower bound — the secant corrects it next round.
-                                _ => (TARGET_ROWS * cur_q).div_ceil(cur_used),
+                                _ => (target_rows * cur_q).div_ceil(cur_used),
                             };
                             // Always make real progress even if the model rounds flat.
                             let want_q = want_q.max(cur_q + 1);
@@ -361,7 +366,7 @@ pub(crate) fn run_recursive_setup(
                                 item.air_name,
                                 too_small.n_bits,
                                 too_small.n_used,
-                                RECURSIVE_BITS_THRESHOLD,
+                                threshold,
                                 cur_q,
                                 want_q,
                                 attempt + 1,
@@ -435,8 +440,13 @@ pub(crate) fn run_recursive_setup(
         if air_items.len() > 1 {
             let existing_for_rest = ag_existing_pil_info[ag_idx].clone();
 
+            // 64 MB per worker, matching every other pool that runs this work (main.rs's global
+            // pool, setup.rs's setup-jobs pool). These workers run the same pil_info and
+            // expression machinery, whose recursion depth follows the air's size, and rayon's
+            // default stack is far too small for it -- the airs after the first overflowed it.
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(recursive_jobs)
+                .stack_size(64 * 1024 * 1024)
                 .build()
                 .context("Failed to build recursive-jobs rayon pool")?;
 
@@ -492,6 +502,7 @@ pub(crate) fn run_recursive_setup(
                 build_dir,
                 hash: &opts.hash,
                 agg_arity: opts.agg_arity,
+                            recursive_n_bits: opts.recursive_n_bits,
                 template: RecursiveTemplate::Recursive2,
                 airgroup_name: &airgroup_name,
                 airgroup_id: ag_idx,
@@ -553,8 +564,17 @@ pub(crate) fn run_recursive_setup(
     let final_result = final_setup::gen_final_setup(&final_config, &witness_tracker).context("Final setup failed")?;
     tracing::info!("Final setup complete");
 
-    // Run compressed final setup
-    {
+    // Run compressed final setup, unless this key is built without it. Skipping leaves the rest of
+    // the key complete: nothing downstream requires the stage, and `witness_rebuild` already treats
+    // it as optional.
+    if !opts.compressed_final {
+        tracing::info!(
+            "Skipping the compressed final stage: it is off for the {} family, which measured a 2% \
+             smaller proof for a whole extra recursion layer. `proofman-setup setup-compressed-final` \
+             adds it to this key later if it is wanted.",
+            opts.hash
+        );
+    } else {
         let fr = &final_result;
         tracing::info!("Running compressed final setup...");
         let const_root_str: [String; 4] = [
@@ -739,6 +759,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -785,6 +807,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -834,6 +858,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,

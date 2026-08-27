@@ -44,6 +44,10 @@ pub const TABLE_SIZE: usize = 1 << 17;
 
 /// Witness columns each Blake3 lane occupies: 16 inputs (va, vb, vc, vd, x, y) plus 37
 /// intermediates. Used to recover the PIL's `LANES` from the proving key's cm1 width.
+///
+/// 53, not the recursion airs' 51: this air passes `VC_AT_IV: 0` to `blake3Lanes` because it runs
+/// the permutation over an ARBITRARY initial state, where st[8..12] is not the IV, so `vc` is a
+/// committed column here.
 pub const COLS_PER_LANE: usize = 53;
 
 /// Witness columns shared by every lane: the two table multiplicities.

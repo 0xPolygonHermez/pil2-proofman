@@ -74,7 +74,12 @@ template Blake3ChunkHead(nw, c) {
     component blk[nHead + 1];    // +1: circom needs a non-empty component array
 
     for (var j = 0; j < nHead; j++) {
-        blk[j] = Blake3AbsorbBlock();
+        // A head block is never the chunk's last, so never CHUNK_END.
+        var hf = 0;
+        if (j == 0) {
+            hf = B3_CHUNK_START();
+        }
+        blk[j] = Blake3AbsorbBlock(hf);
         for (var i = 0; i < 8; i++) {
             if (j > 0) {
                 blk[j].cv[i] <== blk[j - 1].cvOut[i];
@@ -85,12 +90,6 @@ template Blake3ChunkHead(nw, c) {
         blk[j].in <== Blake3BlockWords(nw, j)(in);
         blk[j].blockLen <== 64;      // only a chunk's last block can be short
         blk[j].counterLo <== c;
-        // A head block is never the chunk's last, so never CHUNK_END.
-        if (j == 0) {
-            blk[j].flags <== B3_CHUNK_START();
-        } else {
-            blk[j].flags <== 0;
-        }
     }
 
     for (var i = 0; i < 8; i++) {
@@ -116,9 +115,9 @@ template Blake3ChunkCV(nw, c) {
         fl += B3_CHUNK_START();
     }
 
-    cv <== Blake3AbsorbBlock()(Blake3ChunkHead(nw, c)(in),
-                               Blake3BlockWords(nw, bl)(in),
-                               8 * (nw - 8 * bl), c, fl);
+    cv <== Blake3AbsorbBlock(fl)(Blake3ChunkHead(nw, c)(in),
+                                 Blake3BlockWords(nw, bl)(in),
+                                 8 * (nw - 8 * bl), c);
 }
 
 /*
@@ -154,7 +153,7 @@ template Blake3Subtree(n, c0, nc) {
             r.in[i] <== in[wl + i];
         }
 
-        cv <== Blake3Parent()(l.cv, r.cv, B3_PARENT());
+        cv <== Blake3Parent(B3_PARENT())(l.cv, r.cv);
     }
 }
 
@@ -189,9 +188,9 @@ template Blake3StreamXof(n, ob) {
         if (bl == 0) {
             fl += B3_CHUNK_START();
         }
-        out <== Blake3FinalizeChunk()(Blake3ChunkHead(n, 0)(in),
-                                      Blake3BlockWords(n, bl)(in),
-                                      8 * (n - 8 * bl), fl, ob);
+        out <== Blake3FinalizeChunk(fl)(Blake3ChunkHead(n, 0)(in),
+                                        Blake3BlockWords(n, bl)(in),
+                                        8 * (n - 8 * bl), ob);
     } else {
         var nl = 1;
         while (2 * nl < nChunks) {

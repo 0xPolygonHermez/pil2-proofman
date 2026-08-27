@@ -937,8 +937,9 @@ where
 
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
-            let setup_vadcop_final_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final_compressed);
+            if let Some(setup_vadcop_final_compressed) = setups_aggregation.setup_vadcop_final_compressed.as_ref() {
+                calculate_fixed_tree(setup_vadcop_final_compressed);
+            }
         }
 
         Ok(())

@@ -24,7 +24,7 @@ const G_ALL: u16 = 0x3FF; // gates 0..9  — inner Poseidon rows + pure-plonk ro
 const G_PR: u16 = 0x33F; // gates 0..5 + 8,9 — PR row (a[18..23] = overflow anchors)
 const G_Q1: u16 = 0x3C0; // gates 6..9 — INIT / FINAL / TreeSelector4 rows
 const G_EVPOL: u16 = 0x380; // gates 7..9 — EvPol4 rows (gate 6 = resEVPOL a[18..20])
-const G_SELVAL: u16 = 0x300; // gates 8,9 — SelectVal1 rows (a[0..21] used)
+const G_SELVAL: u16 = 0x300; // gates 8,9 — SelectValueArity4 rows (a[0..21] used)
 
 fn rand_hex() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,7 +47,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
     let n_tree_sel4_rows = cgi.n(GateRole::TreeSelector);
-    let n_sel_val1_rows = cgi.n(GateRole::SelectValArity4);
+    let n_sel_val_arity4_rows = cgi.n(GateRole::SelectValArity4);
 
     // Row-count tiers (used to pre-compute n_plonk_rows). Plonk band a[0..29] = 10 gates:
     // q0 = gates 0..5 (a[0..17]), q1 = gates 6..9 (a[18..29]). The chain slot a[30..45] is
@@ -56,14 +56,14 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     //   PR (1 row)                            — q0 0..5 + q1 8,9 (a[18..23]=anchors) → pr tier.
     //   INIT(R0), FINAL, TreeSelector4        — q1 gates 6..9 → four tier.
     //   EvPol4                                — q1 gates 7..9 → three tier.
-    //   SelectVal1                            — q1 gates 8,9 → two tier.
+    //   SelectValueArity4                            — q1 gates 8,9 → two tier.
     // FFT4 needs cv[0..9] for its own parameters, so it never piggybacks; CMul leaves only
     // a[27..29] free and is left alone.
     let ten_count = n_poseidon * 7;
     let pr_count = n_poseidon;
     let four_count = n_poseidon * 2 + n_tree_sel4_rows;
     let three_count = n_ev_pol4_rows;
-    let two_count = n_sel_val1_rows;
+    let two_count = n_sel_val_arity4_rows;
 
     cgi.n_plonk_rows = {
         let mut partial: HashMap<String, (usize, usize)> = HashMap::new(); // (n_used, max_used)
@@ -116,9 +116,13 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         + n_fft4_rows
         + n_ev_pol4_rows
         + n_tree_sel4_rows
-        + n_sel_val1_rows;
+        + n_sel_val_arity4_rows;
 
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
+    // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
+    // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
+    let n_bits_natural = n_bits;
+    let n_bits = n_bits.max(options.min_n_bits.unwrap_or(0));
     let n = 1usize << n_bits;
     let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Compressor{}", rand_hex()));
@@ -137,7 +141,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
         n_tree_selector4: cgi.n(GateRole::TreeSelector),
-        n_select_val1: cgi.n(GateRole::SelectValArity4),
+        n_select_val_arity4: cgi.n(GateRole::SelectValArity4),
     });
 
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
@@ -153,7 +157,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     //   pr_extra    : PR row — q0 gates 0..5 + q1 gates 8,9 (a[18..23] = overflow anchors).
     //   four_extra  : INIT(R0), FINAL, TreeSelector4 — q1 gates 6..9.
     //   three_extra : EvPol4 — q1 gates 7..9 (gate 6 collides with resEVPOL).
-    //   two_extra   : SelectVal1 — q1 gates 8,9.
+    //   two_extra   : SelectValueArity4 — q1 gates 8,9.
     let mut ten_extra: Vec<usize> = Vec::new();
     let mut pr_extra: Vec<usize> = Vec::new();
     let mut four_extra: Vec<usize> = Vec::new();
@@ -208,7 +212,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             band.allow(r + off, G_ALL);
         }
         band.allow(r + 5, G_PR);
-        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorCompression });
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorCompression, payload: 0 });
         r += 10;
     }
     assert_eq!(r, 10 * poseidon_cust_uses.len());
@@ -248,7 +252,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             band.allow(r + off, G_ALL);
         }
         band.allow(r + 5, G_PR);
-        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorSponge });
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon2CompressorSponge, payload: 0 });
         r += 10;
     }
     assert_eq!(r, 10 * poseidon_cust_uses.len() + 10 * poseidon_uses.len());
@@ -345,7 +349,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         r += 1;
     }
 
-    // ── SelectVal1 ────────────────────────────────────────────────────────────
+    // ── SelectValueArity4 ────────────────────────────────────────────────────────────
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
         assert_eq!(cgu.signals.len(), 22);
@@ -439,7 +443,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             }
             partial.insert(k, (row, 8, 10));
         } else if !two_extra.is_empty() {
-            let row = two_extra.remove(0); // SelectVal1: q1 gates 8,9
+            let row = two_extra.remove(0); // SelectValueArity4: q1 gates 8,9
             cv[5][row] = c[3];
             cv[6][row] = c[4];
             cv[7][row] = c[5];
@@ -481,10 +485,12 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         fixed_pols,
         pil_str,
         n_bits,
+        n_bits_natural,
         n_used,
         s_map,
         plonk_additions,
         airgroup_name: airgroup_name.clone(),
         air_name: airgroup_name,
+        band_aux: 0,
     }
 }

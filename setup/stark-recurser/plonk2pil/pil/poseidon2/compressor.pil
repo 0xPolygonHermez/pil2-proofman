@@ -46,7 +46,7 @@ require "circuits/plonk.pil";
 // gates, exactly like a pure-plonk row. This layout is identical to the Poseidon1
 // compressor's — only the round algebra and the tree-selector arity differ.
 // ============================================================================
-airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
+airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectValArity4) {
     col witness a[46];
 
     #pragma fixed_external
@@ -76,9 +76,9 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     col fixed EVPOL4 = [0:(10*nPoseidon + nCMulRows), 1:nEvPol4, 0...];
     col fixed FFT4 = [0:(10*nPoseidon + nCMulRows + nEvPol4), 1:nFFT4, 0...];
     col fixed TREESELECTOR4 = [0:(10*nPoseidon + nCMulRows + nEvPol4 + nFFT4), 1:nTreeSelector4, 0...];
-    col fixed SELECTVAL1 = [0:(10*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4), 1:nSelectVal1, 0...];
+    col fixed SELECTVAL_ARITY4 = [0:(10*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4), 1:nSelectValArity4, 0...];
 
-    col fixed PLONK = [0:(10*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelectVal1),1:nPlonkRows, 0...];
+    col fixed PLONK = [0:(10*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelectValArity4),1:nPlonkRows, 0...];
 
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
@@ -90,7 +90,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     //   INIT(R0), FINAL         : gates 6..9 only (a[0..15] input/output, a[16..17] key)
     //   TreeSelector4           : gates 6..9 (a[0..16] used)
     //   EvPol4                  : gates 7..9 (gate 6 collides with resEVPOL a[18..20])
-    //   SelectVal1              : gates 8,9 (a[0..21] used)
+    //   SelectValueArity4              : gates 8,9 (a[0..21] used)
     const expr CHECK_PLONK = PLONK + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R4 + POSEIDON_PARTIAL_ROUND + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28;
     const expr CHECK_PLONK_NOPR = PLONK + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R4 + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28;
 
@@ -102,8 +102,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     plonk([a[15], a[16], a[17]], q0, CHECK_PLONK);
     plonk([a[18], a[19], a[20]], q1, CHECK_PLONK_NOPR + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0);
     plonk([a[21], a[22], a[23]], q1, CHECK_PLONK_NOPR + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4);
-    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL1);
-    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL1);
+    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL_ARITY4);
+    plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + TREESELECTOR4 + POSEIDON_FINAL + POSEIDON_R0 + EVPOL4 + SELECTVAL_ARITY4);
 
     const expr b0 = a[16];
     const expr b1 = a[17];
@@ -205,7 +205,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     selectvals[3] = [a[12], a[13], a[14], a[15]];
     const expr selectvals_key[2] = [a[16], a[17]];
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
-    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+    selectValueArity4(selectvals, selectvals_key, selected, SELECTVAL_ARITY4);
 
     const expr A[30];
     for (int i = 0; i < 30; i++) {

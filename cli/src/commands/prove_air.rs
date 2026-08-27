@@ -315,7 +315,10 @@ impl ProveAirCmd {
             size_witness,
             n,
             setup.stark_info.n_publics,
-            n_cols,
+            // Same stride the device side expects; see recursion_trace_stride. This is the second
+            // caller of get_committed_pols_c, and converting only the other one is what made the
+            // GPU proof fail its evaluations check.
+            proofman::recursion_trace_stride(&exec_file_data, n_cols, self.gpu),
         );
         // The hash gates map only their boundary; fill the rest from it. On GPU the same
         // reconstruction happens device-side inside gen_recursive_proof_c, so only do it here

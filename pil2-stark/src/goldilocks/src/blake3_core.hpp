@@ -40,7 +40,13 @@ static constexpr uint8_t FLAG_ROOT        = 1u << 3;
 
 static constexpr uint32_t BLOCK_U64 = 8;     // u64 words per block (64 bytes)
 static constexpr uint32_t CHUNK_U64 = 128;   // u64 words per chunk (1024 bytes)
-static constexpr int      CV_STACK  = 24;    // handles up to 2^24 chunks
+// Chaining values held while the chunk tree merges. `slen` after k chunks is popcount(k), so the
+// peak is the bit width of the chunk count. `hash_le64` takes `n_u64` as a uint32_t, giving at most
+// ceil((2^32-1)/128) = 2^25 chunks and a peak of 25 -- so 24 was one short of what its own signature
+// admits, and overflowing it is a silent stack smash rather than an error. 26 makes it impossible by
+// construction. Every real caller is far below: a Merkle node is 8 words (1 chunk) and a trace-row
+// leaf 256 (2), so this costs 64 bytes nothing ever touches.
+static constexpr int      CV_STACK  = 26;
 
 // IV / message schedule. A plain namespace-scope constexpr array is host-only
 // for nvcc when indexed at runtime in device code, so keep a host copy and a

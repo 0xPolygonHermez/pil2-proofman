@@ -19,7 +19,13 @@ pub fn is_valid_aggregation_arity(n: usize) -> bool {
     VALID_AGGREGATION_ARITIES.contains(&n)
 }
 
-pub fn default_aggregation_arity() -> usize {
+/// Arity to assume when a `globalInfo.json` carries no `aggregationArity` at all.
+///
+/// This is Poseidon's value, kept because it is what every key written before the field existed
+/// implied. It is NOT "the default arity": blake3 aggregates at 2, and anything choosing an arity
+/// for a family must call [`crate::hash_family::default_aggregation_arity`] instead. Named apart
+/// from that one so a glob import cannot silently resolve to the wrong one.
+pub fn fallback_aggregation_arity() -> usize {
     3
 }
 
@@ -79,11 +85,23 @@ pub struct GlobalInfo {
     pub transcript_arity: usize,
 
     /// Proofs each `recursive2` circuit aggregates. Fixed at setup, read back here.
-    #[serde(rename = "aggregationArity", default = "default_aggregation_arity")]
+    #[serde(rename = "aggregationArity", default = "fallback_aggregation_arity")]
     pub aggregation_arity: usize,
 
     #[serde(default = "default_hash_id")]
     pub hash: String,
+
+    /// Whether this proving key carries the `vadcop_final_compressed` stage.
+    ///
+    /// Defaults to `true`, which is what every key written before the flag existed means: the stage
+    /// was unconditional then. A key that skipped it says so, and the loader honours that rather
+    /// than trying to read a starkinfo that was never written.
+    #[serde(rename = "hasCompressedFinal", default = "default_has_compressed_final")]
+    pub has_compressed_final: bool,
+}
+
+fn default_has_compressed_final() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

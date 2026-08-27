@@ -46,6 +46,13 @@ pub fn cells_per_gate(role: GateRole) -> Option<usize> {
         // yet (the arity-2 families have no plonk2pil setup), so the row width is not
         // decided. None keeps the estimate honest rather than guessing.
         GateRole::SelectValArity2 => None,
+        // Boundary only, per the blake3 recursion AIR design (spec 3.2): the 56-row block's
+        // interior belongs to the trace expander, as poseidon's chain slot does.
+        // Node: 8 inputs + key + 4 packed outputs. Compress: 16 inputs + blockLen + counterLo
+        // + 16 u32 outputs; `flags` is a fixed column and `raw` is the gate kind, so neither
+        // takes a cell.
+        GateRole::Blake3Node => Some(13),
+        GateRole::Blake3Compress => Some(34),
     }
 }
 

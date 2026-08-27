@@ -71,6 +71,16 @@ pub struct PlonkOptions {
     /// then enforces the equality. Soundness depends on the s_map remap sweep being
     /// applied to custom-gate I/O cells (see [`crate::plonk2pil::merge_copies`]).
     pub merge_copies: bool,
+    /// Parallel BLAKE3 permutations per 56-row block. Only the blake3 family reads this; the air
+    /// caps it at 8 (above that the boundary opening depth exceeds 7). Defaults to 4, the point
+    /// spec 5.3 settles on: 37,444 permutations of capacity at N=2^19.
+    pub blake3_lanes: Option<usize>,
+    /// Floor for the air's `nBits`. A recursive air that reuses another air's starkSetup must
+    /// compile to the SAME number of rows as that setup describes -- the starkinfo is what the
+    /// const file, the witness and the proof are all read against. Without a floor each air sizes
+    /// itself to its own gate count, and two airs of an airgroup that land in different
+    /// power-of-two buckets produce a const file the reused starkinfo cannot describe.
+    pub min_n_bits: Option<usize>,
 }
 
 impl Default for PlonkOptions {
@@ -80,6 +90,8 @@ impl Default for PlonkOptions {
             max_constraint_degree: None,
             hash_id: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
             merge_copies: true,
+            blake3_lanes: None,
+            min_n_bits: None,
         }
     }
 }
@@ -98,6 +110,12 @@ pub struct FixedPol {
 pub struct GateBand {
     pub row: u32,
     pub kind: GateBandKind,
+    /// A per-block constant the expander needs but cannot read off the witness trace.
+    ///
+    /// BLAKE3 puts `flags` here -- st[15], a compile-time constant of the circom gate that the AIR
+    /// carries as a FIXED column, so it is in neither the witness nor anything `expand_gate_bands`
+    /// is handed. The poseidon kinds need nothing and write 0.
+    pub payload: u64,
 }
 
 /// Gate shapes with recomputable interiors. Serialized into the exec file, so the discriminants
@@ -116,6 +134,10 @@ pub enum GateBandKind {
     Poseidon2CompressorCompression = 6,
     Poseidon2AggregationSponge = 7,
     Poseidon2AggregationCompression = 8,
+    /// 56-row block hosting LANES permutations; the 65 columns per lane are the expander's.
+    Blake3Node = 9,
+    Blake3CompressChunk = 10,
+    Blake3CompressParent = 11,
 }
 
 /// Result returned by every setup function.
@@ -124,6 +146,10 @@ pub struct SetupResult {
     pub fixed_pols: Vec<FixedPol>,
     pub pil_str: String,
     pub n_bits: usize,
+    /// The size the circuit would take on its own, before any `min_n_bits` floor. The floor states
+    /// the size the whole recursion runs at; whether a circuit is intrinsically too big for
+    /// recursive1 is a question about the circuit, so it has to be asked of this.
+    pub n_bits_natural: usize,
     /// Number of rows actually used (before power-of-2 padding). Mirrors JS `NUsed`.
     pub n_used: usize,
     pub s_map: Vec<Vec<u32>>,
@@ -134,6 +160,12 @@ pub struct SetupResult {
     pub plonk_additions: Vec<[u64; 4]>,
     pub airgroup_name: String,
     pub air_name: String,
+    /// A per-AIR parameter the band expander needs but cannot infer.
+    ///
+    /// BLAKE3 puts LANES here. It is a setup parameter, so deriving it from the column count would
+    /// be reading a decision back out of its own consequence -- and that arithmetic means nothing
+    /// for an air of another family. The poseidon setups write 0.
+    pub band_aux: u64,
 }
 
 // ─── Binary parser ───────────────────────────────────────────────────────────

@@ -1,0 +1,958 @@
+// BLAKE3 permutation, shared by the standalone precompile air and the recursion airs.
+//
+// Every constraint carries a leading SEL factor so a caller can confine the permutation to a
+// subrange of its trace; the standalone precompile passes SEL = 1, where it folds away -- the same
+// idiom circuits/cmul.pil and circuits/evpol.pil use.
+//
+// Names are blake3-prefixed because blake2b.pil declares its own add2_check, add3_check,
+// range_check_16, xor_rotr_check and SIGMA, and a file-scope name here would win against them.
+//
+// air.CLK / air.CLOCKS come from the caller: clock_set and clock_map in circuits/common.pil read
+// air.CLK directly rather than taking it as a parameter.
+//
+// Design: docs/superpowers/specs/2026-08-25-blake3-recursion-air-design.md
+// Reference, including the soundness argument for every constraint here:
+//         docs/superpowers/specs/2026-08-26-blake3-integration-reference.md
+
+require "std_constants.pil";
+require "std_lookup.pil";
+require "circuits/common.pil";
+
+// Message word permutation schedule
+const int BLAKE3_SIGMA[7][16];
+BLAKE3_SIGMA[0] = [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15];
+BLAKE3_SIGMA[1] = [ 2,  6,  3, 10,  7,  0,  4, 13,  1, 11, 12,  5,  9, 14, 15,  8];
+BLAKE3_SIGMA[2] = [ 3,  4, 10, 12, 13,  2,  7, 14,  6,  5,  9,  0, 11, 15,  8,  1];
+BLAKE3_SIGMA[3] = [10,  7, 12,  9, 14,  3, 13, 15,  4,  0, 11,  2,  5,  8,  1,  6];
+BLAKE3_SIGMA[4] = [12, 13,  9, 11, 15, 10, 14,  8,  7,  2,  5,  3,  0,  1,  6,  4];
+BLAKE3_SIGMA[5] = [ 9, 14, 11,  5,  8, 12, 15,  1, 13,  3,  0, 10,  2,  6,  4,  7];
+BLAKE3_SIGMA[6] = [11, 15,  5,  0,  1,  9,  8,  6, 14, 10,  2, 12,  3,  4,  7, 13];
+
+// Compression IV. st[0..8] = cv and st[8..12] = IV[0..4]; every kind whose chaining value is the
+// IV reuses the same eight words, so they live here rather than inside one function.
+const int BLAKE3_IV[8] = [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+                          0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19];
+
+// CHUNK_START | CHUNK_END | ROOT -- the flag word Blake3Node freezes.
+const int BLAKE3_FLAGS_NODE = 11;
+
+// Given a,b,c,active it checks c == (a + b) mod 2³² when active == 1
+// Assumes that a,b,c ∈ [0, 2³²), active ∈ {0,1} and that p > 2³²
+function blake3Add2Check(const expr a, const expr b, const expr c, const expr active = 1) {
+    // c == (a + b) mod 2³² iff c - a - b ∈ {0, -2³²} (over the integers)
+    // Since p > 2³², all values in the set {0, -2³²} are distinct mod p,
+    // so we can check that c - a - b = 0, -2³² (mod p)
+    const expr sum = c - a - b;
+    active * (sum * (sum + P2_32)) === 0;
+}
+
+// Given a,b,c,d,active, it checks d == (a + b + c) mod 2³² when active == 1
+// Assumes that a,b,c,d ∈ [0, 2³²), active ∈ {0,1} and that p > 2·2³²
+function blake3Add3Check(const expr a, const expr b, const expr c, const expr d, const expr active = 1) {
+    // d == (a + b + c) mod 2³² iff d - a - b - c ∈ {0, -2³², -2·2³²} (over the integers)
+    // Since p > 2·2³², all values in the set {0, -2³², -2·2³²} are distinct mod p,
+    // so we can check that d - a - b - c = 0, -2³², -2·2³² (mod p)
+    const expr sum = d - a - b - c;
+    active * (sum * (sum + P2_32) * (sum + 2*P2_32)) === 0;
+}
+
+/*
+    Every lane: 51 witness columns (53 where `VC_AT_IV` is 0 and `vc` is committed) plus the G,
+    transition, range-check and message-permutation constraints over them.
+
+    The columns are declared lane-major (va[LANES][2], not one va[2] per lane) and the lane loop
+    lives inside, because the trace layout -- and so the generated pil_helpers and the witness
+    library writing into them -- depends on that order.
+*/
+/*
+    The boundary constraints are bound HERE and the caller's columns arrive as parameters, because
+    PIL2 has no out-parameters: a callee's assignment to an initialised `const expr` array silently
+    keeps the caller's values (and an uninitialised one is rejected outright), so the packed state
+    words this function computes as locals cannot be handed back. Data only travels inward, so the
+    caller hands over its boundary columns and kind selectors and the binding happens here.
+
+    `BIND_BOUNDARY` is 0 for an air that ties nothing down; then no boundary argument is read.
+
+    `VC_AT_IV` says the caller's blocks are BLAKE3 COMPRESSIONS, so st[8..12] = IV[0..4] and vc needs
+    no column of its own -- see where it is built below. An air that runs the permutation over an
+    arbitrary initial state must pass 0, or vc is pinned to an IV its witness never had.
+*/
+function blake3Lanes(const int LANES, const expr BLOCK_ID, const expr SEL,
+                     const int TABLE_ID, const int RANGE_ID, const int MSG_ID,
+                     const int BIND_BOUNDARY, const int VC_AT_IV,
+                     const expr a[], const expr dinv[], const expr vbTopHi[][],
+                     const expr outBytes[][][], const expr cvBytes[][],
+                     const expr NODE_IN_CLK[], const expr NODE_OUT_CLK[], const int OUT_FIRST,
+                     const expr CHUNK_SEL, const expr CHUNK_ROUND0,
+                     const expr PARENT_SEL, const expr FLAGS,
+                     const expr OUT_CLK16[], const int CLOCKS_ALL) {
+    const int NUM_ROUNDS = 7;
+    const int CLOCKS_PER_ROUND = 8;
+    const int CLOCKS = air.CLOCKS;
+
+    // Every column carries a leading lane index: the row holds LANES independent G
+    // evaluations side by side. Only the lookup tables below are shared between lanes,
+    // which is the whole point of widening instead of lengthening the trace.
+    col witness bits(16) va[LANES][2];
+    col witness bits(8) vb[LANES][4];
+    // vc is a column only where the initial state is arbitrary; a compression's st[8..12] is the IV,
+    // and then the expression built per lane below replaces it.
+    if (VC_AT_IV == 0) {
+        // air-scoped: a column declared inside a block is not visible past it.
+        col witness bits(16) air.vc[LANES][2];
+    }
+    col witness bits(8) vd[LANES][4];
+    col witness bits(16) x[LANES][2];
+    col witness bits(16) y[LANES][2];
+
+    // va' === (va + vb + x) mod 2³²
+    col witness bits(8) va_prime[LANES][4];
+
+    // vd' === (vd ^ va') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
+    col witness bits(8) vd_prime[LANES][4];
+
+    // vc' === (vc + vd') mod 2³²
+    col witness bits(8) vc_prime[LANES][4];
+
+    // vb' === (vb ^ vc') >>> 12, as the two byte pieces the table returns
+    col witness bits(8) vb_prime_s[LANES][4][2];
+
+    // va'' === (va' + vb' + y) mod 2³²
+    col witness bits(8) va_prime_prime[LANES][4];
+
+    // vd'' === (vd' ^ va'') >>> 8 (Note that ROTR 8 is a byte-aligned rotation)
+    col witness bits(8) vd_prime_prime[LANES][4];
+
+    // vc'' === (vc' + vd'') mod 2³²
+    col witness bits(8) vc_prime_prime[LANES][4];
+
+    /*
+        vb'' === (vb' ^ vc'') >>> 7 = ((vb' ^ vc'') >>> 8) <<< 1
+
+        ROTR 8 is a byte-aligned rotation and ROTL 1 is 2·y mod 2³² plus the
+        top bit of y: z = vb' ^ vc'' is computed with plain XOR (rot 0) lookups and the
+        rotation costs one boolean witness.
+    */
+    col witness bits(8) vb_pp_xor[LANES][4]; // z = vb' ^ vc''
+    col witness bits(1) vb_pp_t[LANES];      // top bit of y = rotr8(z), i.e., bit 7 of z[0]
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TRANSITION / MESSAGE SELECTORS (shared by every lane)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Column-to-diagonal clock selectors
+    const expr ctd1_clocks = clock_set(start: 4, end: 11, step: 1, skip: 7);
+    const expr ctd2_clocks = clock_set(start: 5, end: 12, step: 1, skip: 7);
+    const expr ctd3_clocks = clock_set(start: 6, end: 13, step: 1, skip: 7);
+    const expr ctd4_clocks = clock_set(start: 7, end: 14, step: 1, skip: 7);
+    const expr ctd12_clocks = ctd1_clocks + ctd2_clocks;
+    const expr ctd34_clocks = ctd3_clocks + ctd4_clocks;
+    const expr ctd123_clocks = ctd12_clocks + ctd3_clocks;
+    const expr ctd234_clocks = ctd2_clocks + ctd34_clocks;
+    const expr ctd_clocks = ctd12_clocks + ctd34_clocks;
+
+    // Round-by-round clock selectors
+    const expr rbr1_clocks = clock_set(start: 8, end: 8 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr2_clocks = clock_set(start: 9, end: 9 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr3_clocks = clock_set(start: 10, end: 10 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr4_clocks = clock_set(start: 11, end: 11 + NUM_ROUNDS - 1, step: 1, skip: 7);
+    const expr rbr12_clocks = rbr1_clocks + rbr2_clocks;
+    const expr rbr34_clocks = rbr3_clocks + rbr4_clocks;
+    const expr rbr123_clocks = rbr12_clocks + rbr3_clocks;
+    const expr rbr234_clocks = rbr2_clocks + rbr3_clocks + rbr4_clocks;
+    const expr rbr_clocks = rbr12_clocks + rbr34_clocks;
+
+    expr msg_idx_x = 0;
+    expr msg_idx_y = 0;
+    for (int p = 0; p < CLOCKS; p++) {
+        const int r = (p / CLOCKS_PER_ROUND);
+        const int g = (p % CLOCKS_PER_ROUND);
+
+        msg_idx_x += air.CLK[p] * BLAKE3_SIGMA[r][2 * g];
+        msg_idx_y += air.CLK[p] * BLAKE3_SIGMA[r][2 * g + 1];
+    }
+
+    // Selectors for round 0 and rounds 1..6
+    const expr round0_sel   = clock_set(start: 0, end: CLOCKS_PER_ROUND);
+    const expr rounds16_sel = clock_set(start: CLOCKS_PER_ROUND, end: CLOCKS);
+
+    for (int l = 0; l < LANES; l++) {
+        // ───────────────────────────────────────────────────────────────────────
+        // G-FUNCTION CONSTRAINTS
+        // ───────────────────────────────────────────────────────────────────────
+
+        /*
+            Range checks: every 16-bit limb on every row. vb and vd need none -- the XOR table bounds
+            their bytes. `bits(16)` is only a hint, so these lookups are all that bounds these.
+
+            Per row rather than only where a column is fresh input (clocks 0..3 for va and vc), for
+            two reasons. The bound stays a LOCAL fact, which add2/add3 need -- they are sound only
+            because their operands are under 2^32. And it measured CHEAPER: nEvals 1180 -> 1176,
+            stage2 unchanged. Folding a limb onto its own clock group reads it at a new shift, and a
+            new shift is a new opening, where shift 0 is already opened by pack(va, 16); the bus
+            terms it saved bought nothing, since std_sum packs maxDeg-1 per im pol and this air has
+            ~130 of them.
+        */
+        for (int i = 0; i < 2; i++) {
+            blake3RangeCheck16(RANGE_ID, SEL, x[l][i], 1);
+            blake3RangeCheck16(RANGE_ID, SEL, y[l][i], 1);
+            blake3RangeCheck16(RANGE_ID, SEL, va[l][i], 1);
+            if (VC_AT_IV == 0) {
+                blake3RangeCheck16(RANGE_ID, SEL, air.vc[l][i], 1);
+            }
+        }
+
+        // Packed expressions
+        const expr va_packed = pack(va[l], 16);
+        const expr vb_packed = pack_bytes(vb[l]);
+        const expr vd_packed = pack_bytes(vd[l]);
+
+        /*
+            Under VC_AT_IV, vc is not committed: st[8..12] = IV[0..4] on every compression, so its
+            clocks 0..3 are a CONSTANT, and clocks 4..55 are the vc'' its transition constraint used
+            to equate it to -- at the two depths that constraint already opened, so this costs no new
+            evaluation and the constraint itself becomes an identity.
+
+            The three selectors cover 0..3 and 4..55 exactly, i.e. every clock of the block; off the
+            band every air.CLK is 0 and so is this. Degree 2, which puts the add2 it feeds at exactly
+            maxDeg 5 -- and is why this is not done to va, whose add3 is cubic and would reach 7.
+        */
+        const expr vc_pp_packed = pack_bytes(vc_prime_prime[l]);
+        expr vc_packed = 0;
+        if (VC_AT_IV == 0) {
+            vc_packed = pack(air.vc[l], 16);
+        } else {
+            for (int c = 0; c < 4; c++) {
+                vc_packed += air.CLK[c] * BLAKE3_IV[c];
+            }
+            vc_packed += (ctd12_clocks + rbr12_clocks) * (2)'vc_pp_packed;
+            vc_packed += (ctd34_clocks + rbr34_clocks) * (6)'vc_pp_packed;
+        }
+
+        const expr x_packed = pack(x[l], 16);
+        const expr y_packed = pack(y[l], 16);
+
+        // va' === (va + vb + x) mod 2³²
+        const expr va_prime_packed = pack_bytes(va_prime[l]);
+        blake3Add3Check(va_packed, vb_packed, x_packed, va_prime_packed, SEL);
+
+        // vd' === (vd ^ va') >>> 16 (Note that ROTR 16 is a byte-aligned rotation)
+        for (int i = 0; i < 4; i++) {
+            blake3XorRotr(TABLE_ID, SEL, a: vd[l][i], b: va_prime[l][i], rot: 0, c0: vd_prime[l][(i + 2) % 4], c1: 0, SEL_IS_BINARY: 1);
+        }
+
+        // vc' === (vc + vd') mod 2³²
+        const expr vc_prime_packed = pack_bytes(vc_prime[l]);
+        const expr vd_prime_packed = pack_bytes(vd_prime[l]);
+        blake3Add2Check(vc_packed, vd_prime_packed, vc_prime_packed, SEL);
+
+        // vb' === (vb ^ vc') >>> 12
+        for (int i = 0; i < 4; i++) {
+            blake3XorRotr(TABLE_ID, SEL, a: vb[l][i], b: vc_prime[l][i], rot: 12, c0: vb_prime_s[l][i][0], c1: vb_prime_s[l][i][1], SEL_IS_BINARY: 1);
+        }
+
+        /*
+            ROTR 12
+            x    in[x]         out[x]           out[x][0..3]
+            ----------------------------------------------------
+            0    0x11      0x01_10_00_00     0x01 0x10 XXXX XXXX
+            1    0x22      0x20_00_00_02     0x20 XXXX XXXX 0x02
+            2    0x33      0x00_00_03_30     XXXX XXXX 0x03 0x30
+            3    0x44      0x00_04_40_00     XXXX 0x04 0x40 XXXX
+            ----------------------------------------------------
+            Result:        0x21_14_43_32     0x21 0x14 0x43 0x32
+        */
+        const expr vb_prime[4];
+        vb_prime[0] = vb_prime_s[l][1][1] + vb_prime_s[l][2][0];
+        vb_prime[1] = vb_prime_s[l][2][1] + vb_prime_s[l][3][0];
+        vb_prime[2] = vb_prime_s[l][0][0] + vb_prime_s[l][3][1];
+        vb_prime[3] = vb_prime_s[l][0][1] + vb_prime_s[l][1][0];
+
+        // va'' === (va' + vb' + y) mod 2³²
+        const expr va_prime_prime_packed = pack_bytes(va_prime_prime[l]);
+        const expr vb_prime_packed = pack_bytes(vb_prime);
+        blake3Add3Check(va_prime_packed, vb_prime_packed, y_packed, va_prime_prime_packed, SEL);
+
+        // vd'' === (vd' ^ va'') >>> 8 (Note that ROTR 8 is a byte-aligned rotation)
+        for (int i = 0; i < 4; i++) {
+            blake3XorRotr(TABLE_ID, SEL, a: vd_prime[l][i], b: va_prime_prime[l][i], rot: 0, c0: vd_prime_prime[l][(i + 3) % 4], c1: 0, SEL_IS_BINARY: 1);
+        }
+
+        // vc'' === (vc' + vd'') mod 2³²
+        const expr vc_prime_prime_packed = pack_bytes(vc_prime_prime[l]);
+        const expr vd_prime_prime_packed = pack_bytes(vd_prime_prime[l]);
+        blake3Add2Check(vc_prime_packed, vd_prime_prime_packed, vc_prime_prime_packed, SEL);
+
+        for (int i = 0; i < 4; i++) {
+            blake3XorRotr(TABLE_ID, SEL, a: vb_prime[i], b: vc_prime_prime[l][i], rot: 0, c0: vb_pp_xor[l][i], c1: 0, SEL_IS_BINARY: 1);
+        }
+        SEL * (vb_pp_t[l] * (1 - vb_pp_t[l])) === 0;
+
+        // y = rotr8(z): byte i of y is z[(i + 1) % 4]
+        const expr vb_pp_rotr8 = pack_bytes([vb_pp_xor[l][1], vb_pp_xor[l][2], vb_pp_xor[l][3], vb_pp_xor[l][0]]);
+        // vb'' = rotl1(y) = 2·y mod 2³² + top(y)
+        const expr vb_pp_packed = 2*vb_pp_rotr8 - P2_32*vb_pp_t[l] + vb_pp_t[l];
+        // The carry bit is sound with just booleanity: z bytes are table-bound, so y < 2³², and
+        // the transition constraint equates vb_pp_packed to a future vb_packed which is also < 2³².
+        // If the prover lies about vb_pp_t, the expression lands outside [0, 2³²) as a field element
+        // (off by ±(2³² - 1)), so the equality can never hold.
+
+        // ───────────────────────────────────────────────────────────────────────
+        // TRANSITION CONSTRAINTS
+        // ───────────────────────────────────────────────────────────────────────
+
+        // We should prove that the input of the diagonal G mixing is equal to the output of the column G mixing
+        // Also, that the input of the next column G mixing is equal to the output of the previous diagonal G mixing
+        const expr va_pp_packed = pack_bytes(va_prime_prime[l]);
+        const expr vd_pp_packed = pack_bytes(vd_prime_prime[l]);
+
+        SEL * ((ctd_clocks + rbr_clocks) * (va_packed - (4)'va_pp_packed)) === 0;
+
+        SEL * (ctd123_clocks * (vb_packed - (3)'vb_pp_packed) + ctd4_clocks * (vb_packed - (7)'vb_pp_packed) +
+        rbr1_clocks * (vb_packed - (1)'vb_pp_packed) + rbr234_clocks * (vb_packed - (5)'vb_pp_packed)) === 0;
+
+        // Under VC_AT_IV this is an identity -- vc_packed IS its producer, by definition above.
+        if (VC_AT_IV == 0) {
+            SEL * ((ctd12_clocks + rbr12_clocks) * (vc_packed - (2)'vc_pp_packed) +
+            (ctd34_clocks + rbr34_clocks) * (vc_packed - (6)'vc_pp_packed)) === 0;
+        }
+
+        SEL * (ctd1_clocks * (vd_packed - (1)'vd_pp_packed) + ctd234_clocks * (vd_packed - (5)'vd_pp_packed) +
+        rbr123_clocks * (vd_packed - (3)'vd_pp_packed) + rbr4_clocks * (vd_packed - (7)'vd_pp_packed)) === 0;
+
+        // ───────────────────────────────────────────────────────────────────────
+        // MESSAGE PERMUTATION CONSTRAINTS
+        // ───────────────────────────────────────────────────────────────────────
+
+        // unique key per (invocation, lane, word): 16 indices per lane, LANES lanes
+        // per block, so no key is ever shared between two Blake3 permutations
+        const expr key_x = msg_idx_x + 16 * (LANES * BLOCK_ID + l);
+        const expr key_y = msg_idx_y + 16 * (LANES * BLOCK_ID + l);
+
+        /*
+            Round 0 writes the message; rounds 1..6 read it.
+
+            One bus term per word, not two. The proves and assumes sides carry the SAME tuple, and
+            their selectors are disjoint -- no row is both round 0 and a later round -- so a single
+            signed multiplicity expresses both: +6 at round 0, -1 at each of rounds 1..6. Splitting
+            them costs an extra bus term per word per lane, and stage2 is 3/(maxDeg-1) columns per
+            term.
+        */
+        lookup(MSG_ID, [key_x, x_packed], mul: SEL * ((NUM_ROUNDS - 1) * round0_sel - rounds16_sel));
+        lookup(MSG_ID, [key_y, y_packed], mul: SEL * ((NUM_ROUNDS - 1) * round0_sel - rounds16_sel));
+
+        // ───────────────────────────────────────────────────────────────────────
+        // OUT-PARAMETERS
+        // ───────────────────────────────────────────────────────────────────────
+        // Everything above is local, so a caller that has to bind trace cells against the lane --
+        // the recursion airs -- could not reach it. These are expression aliases, not new columns:
+        // the precompile passes throwaway arrays and the pilout is unchanged.
+        //
+        // vb'' is exported as its XOR bytes z plus the top bit, not as vb'' itself: it is the one
+        // state word with no byte columns, and a caller that needs its bytes reconstructs them from
+        // z linearly -- see blake3NodeBoundary, which needs three more top bits and no new bytes.
+        // The boundary bindings, with the packed values still in scope. vbTop[0] is the
+        // permutation's own bit 7 of z[0]; the other three are the caller's columns.
+        if (BIND_BOUNDARY != 0) {
+            const expr vbTop[4];
+            vbTop[0] = vb_pp_t[l];
+            for (int j = 1; j < 4; j++) {
+                vbTop[j] = vbTopHi[l][j - 1];
+            }
+
+            blake3NodeBoundary(LANES, l, a, NODE_IN_CLK, NODE_OUT_CLK, OUT_FIRST,
+                               x_packed, y_packed, dinv[l], vd_packed, outBytes[l], CLOCKS);
+
+            // The IV part of the initial state, once for the two kinds that share it: va/vb on Node
+            // and Parent. NODE_IN_CLK[c] is BLAKE3_NODE * CLK[c], so the selector is a sum of
+            // disjoint kind columns on one clock.
+            for (int c = 0; c < 4; c++) {
+                blake3StateInitAtIV(va_packed, vb_packed, c,
+                                    NODE_IN_CLK[c] + PARENT_SEL * air.CLK[c]);
+            }
+
+            // Per kind: where the message and cv come from. Everything else the two shapes state
+            // identically, so it is emitted once below under the sum of their selectors.
+            blake3CompressBoundaryKind(l, 0, a, CHUNK_SEL, CHUNK_ROUND0,
+                                       x_packed, y_packed, dinv[l],
+                                       va_packed, vb_packed, air.CLK);
+
+            blake3CompressBoundaryKind(l, 1, a, PARENT_SEL, 0,
+                                       x_packed, y_packed, dinv[l],
+                                       va_packed, vb_packed, air.CLK);
+
+            blake3CompressBoundaryShared(LANES, l,
+                                         a, CHUNK_SEL + PARENT_SEL, FLAGS,
+                                         va_packed, vd_packed,
+                                         vd[l], cvBytes[l], outBytes[l], air.CLK, CLOCKS);
+
+            blake3FeedforwardAll(CLOCKS_ALL, TABLE_ID, OUT_CLK16,
+                                 va_prime_prime[l], vb_pp_xor[l], vbTop,
+                                 vc_prime_prime[l], vd_prime_prime[l],
+                                 cvBytes[l], vb[l], outBytes[l][0]);
+        }
+    }
+}
+
+/// `SEL_IS_BINARY` declares that `SEL` is 0/1 by construction, which skips the library's
+/// `sel * (sel - 1) === 0`. Worth declaring wherever it holds: for a selector built only from FIXED
+/// columns that constraint reads no witness at all, and the library emits one per bus TERM rather
+/// than one per distinct selector, so the same identity is proved once for every lookup that shares
+/// the selector.
+///
+/// Only pass 1 where the selector is a sum of DISJOINT 0/1 fixed columns; it is a soundness claim,
+/// not a hint. blake3_kind_selectors_are_binary_and_disjoint in setups/blake3 pins the two shapes
+/// this air uses.
+function blake3XorRotr(const int TABLE_ID, const expr SEL, const expr a, const expr b,
+                       const int rot, const expr c0, const expr c1,
+                       const int SEL_IS_BINARY = 0) {
+    lookup_assumes(TABLE_ID, [a, b, rot, c0, c1], sel: SEL, sel_is_binary: SEL_IS_BINARY);
+}
+
+function blake3RangeCheck16(const int RANGE_ID, const expr SEL, const expr a,
+                           const int sel_is_binary = 0) {
+    lookup_assumes(RANGE_ID, [a], sel: SEL, sel_is_binary: sel_is_binary);
+}
+
+/*
+    The XOR/ROTR table and the 16-bit range checker. One set serves every lane, so this is called
+    once per air. Needs N >= 2^17 for the table. Call it AFTER blake3Lanes: mul_table and
+    mul_range are declared last in the trace, and the generated helpers encode that order.
+*/
+function blake3Tables(const int N, const int TABLE_ID, const int RANGE_ID) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 OPERATION TABLE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int TABLE_SIZE = P2_17;
+    if (N < TABLE_SIZE) {
+        error(`N must be at least ${TABLE_SIZE}, but N=${N} was provided`);
+    }
+
+    // Inputs A (8 bits)
+    col fixed A = [0..MASK_8]...;
+
+    // Input B (8 bits)
+    col fixed B = [0:P2_8..MASK_8:P2_8]...;
+
+    // Rotation (1 bit)
+    col fixed ROTATION = [0:P2_16, 12:P2_16]...;
+
+    // Output C2 (8 bits)
+    col fixed C_ROT[2];
+
+    #pragma transpile
+    for (int i = 0; i < N; i++) {
+        const int [rot, a, b] = [ROTATION[i], A[i], B[i]];
+
+        // ROTR the XOR byte
+        const int byte = a ^ b;
+        const int c = ((byte >> rot) | (byte << ((32 - rot) % 32))) & MASK_32;
+
+        const int s   = (32 - rot) % 32;  // normalized bit shift
+        const int l   = (s / 8) % 4;
+        const int lp1 = (l + 1) % 4;
+
+        C_ROT[0][i] = (c >> (8 * l))   & MASK_8;
+        C_ROT[1][i] = (c >> (8 * lp1)) & MASK_8;
+    }
+
+    col witness mul_table;
+    lookup_proves(TABLE_ID, [A, B, ROTATION, C_ROT[0], C_ROT[1]], mul_table);
+
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BLAKE3 RANGE CHECKER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const int RANGE_CHECKER_SIZE = P2_16;
+    if (N < RANGE_CHECKER_SIZE) {
+        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
+    }
+
+    // Range (16 bits)
+    const expr RANGE = A + P2_8 * B; // [0..MASK_16]...
+
+    col witness mul_range;
+    lookup_proves(RANGE_ID, [RANGE], mul_range);
+}
+
+/*
+    The canonical-split gadget: pins that (lo, hi) is THE canonical Goldilocks -> u32 split of the
+    field element they pack to, without saying which element that is.
+
+    `v === lo + 2^32*hi` alone would not determine (lo, hi): lo + 2^32*hi covers [0, 2^64)
+    bijectively, so both `v` and `v + p` are representable whenever v + p < 2^64, i.e. for every
+    v <= 2^32 - 2. A prover taking the alias would feed BLAKE3 a different byte string than the
+    verifier hashed, and the in-circuit digest would stop matching the commitment it verifies.
+
+    p - 1 = 2^32 * (2^32 - 1) exactly, so for hi <= 2^32 - 1 the pair is non-canonical iff
+        hi = 2^32 - 1  and  lo != 0,
+    since the only canonical word with hi = 2^32 - 1 is p - 1, whose lo is 0.
+
+    That is an implication, not a disjunction: (hi - (2^32-1)) * lo === 0 would also reject the
+    legal hi < 2^32-1 with lo != 0. Read it the other way round and one constraint suffices:
+
+        lo != 0  =>  d != 0,     where d = hi - (2^32 - 1)
+
+    which is exactly what `lo * (d*dinv - 1) === 0` says.
+
+      lo != 0: the factor lo cannot vanish, so d*dinv === 1 and therefore d != 0. The prover has no
+               way to satisfy it at hi = 2^32 - 1, whatever it puts in dinv. Alias blocked.
+      lo == 0: the constraint is vacuous, and it should be -- lo = 0 is canonical for every hi in
+               range, so there is nothing to forbid.
+
+    `dinv` is the only witness, and it is not a trustworthy inverse: at lo = 0 the prover may write
+    anything there. Nothing else reads it, so that is fine.
+
+    Degree 4 with the selector (sel * lo * d * dinv): one witness column and one constraint per
+    lane, which needs the air's maxDeg 5.
+
+    Assumes lo, hi in [0, 2^32) -- true because both are packed from limbs the permutation already
+    bounds (16-bit range checks on va/vc/x/y, the XOR table on vb/vd). The argument is only valid
+    where those checks fire.
+
+    `sel` must cover exactly the clocks that carry input words. Elsewhere in the block x/y hold two
+    unrelated message words rather than one element's halves, and the predicate is meaningless
+    there.
+*/
+function blake3SplitCanonicalGadget(const expr lo, const expr hi, const expr dinv,
+                                    const expr sel) {
+    const expr d = hi - (P2_32 - 1);
+    sel * (lo * (d * dinv - 1)) === 0;
+}
+
+function blake3SplitBind(const expr v, const expr lo, const expr hi, const expr sel) {
+    sel * (v - (lo + P2_32 * hi)) === 0;
+}
+
+
+/*
+    Binds the compression's initial state where every word of it is a constant -- Blake3Node, and
+    Compress raw=1 where the chaining value is the IV.
+
+    b3_compress lays the state out as
+        st[0..8] = cv,  st[8..12] = IV[0..4],
+        st[12] = counterLo,  st[13] = counterHi,  st[14] = blockLen,  st[15] = flags
+    and the trace enters it as va/vb/vc/vd across clocks 0..3, so at clock c
+        va = st[c],  vb = st[4+c],  vc = st[8+c] = IV[c],  vd = st[12+c].
+
+    counterHi is 0 across the whole design because no counter comes near 2^32: parents pass 0, a
+    chunk index would need 4 TiB into one linearHash, and the XOF block index is a counterLO. So it
+    is hardcoded rather than wired -- which bounds COMPLETENESS, not soundness.
+
+    `va`/`vb`/`vc`/`vd` are the packed 32-bit values, not limbs. Call once per clock 0..3.
+*/
+function blake3StateInitConst(const expr vd, const int clock, const int blockLen,
+                              const int counterLo, const int flags, const expr sel) {
+    const int vdConst[4] = [counterLo, 0, blockLen, flags];
+
+    // Only vd. `va`/`vb` are pinned to the IV by blake3StateInitAtIV, emitted once for every kind
+    // that shares them: a Node's cv IS the IV, so its va/vb say exactly what a parent's do. `vc` is
+    // the IV on all three, which is why blake3Lanes builds it as an expression instead of a column.
+    sel * (vd - vdConst[clock])       === 0;
+}
+
+/*
+    The chaining value where it is the IV -- on a Node (which compresses at the IV) and on a Parent,
+    but not on a chunk, where va/vb are cells. Emitted once for the two kinds that share it rather
+    than per kind. `SEL_CV` is a sum of disjoint block-wide kind columns times one clock, so it is
+    degree 2 and these land at 3 -- what the per-kind versions already cost.
+
+    st[8..12] is the IV on all three kinds, so vc is not here: blake3Lanes builds it as an expression
+    whose clocks 0..3 already ARE the IV constant.
+*/
+function blake3StateInitAtIV(const expr va, const expr vb, const int clock, const expr SEL_CV) {
+    SEL_CV * (va - BLAKE3_IV[clock])     === 0;
+    SEL_CV * (vb - BLAKE3_IV[4 + clock]) === 0;
+}
+
+/*
+    One 32-bit XOR of the output feedforward: out = stLo ^ stHi, byte-wise through the XOR/ROTR
+    table at rot 0. b3_compress finishes with
+        out[i] = st[i] ^ st[i+8],   out[8+i] = st[8+i] ^ cv[i].
+
+    The four result bytes are witness. They need no range check of their own: each is bound by the
+    table, so packing four of them gives a u32 by construction.
+*/
+function blake3Feedforward(const expr stLo[], const expr stHi[], const expr outBytes[],
+                           const int TABLE_ID, const expr sel) {
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(TABLE_ID, sel, stLo[i], stHi[i], 0, outBytes[i], 0, 1);
+    }
+}
+
+/*
+    Binds a state word that BLAKE3 defines as a single byte -- st[14] = blockLen, st[15] = flags --
+    when it arrives from a trace cell rather than a constant.
+
+    Why the bytes and not the packed word: `vdPacked === cell` would leave st[14] anywhere in
+    [0, 2^32), because that is all vd's four table-bound bytes confine it to. A prover can write
+    both the cell and vd, so it could run the permutation at st[14] = 300 -- a state real BLAKE3
+    never reaches, since block_len is a u8 there. That is not a witness-generation detail: whatever
+    the C++ gate does, the AIR is what decides which states are reachable, so the AIR has to say it.
+
+    Binding the low byte and zeroing the other three settles both halves at once: vdBytes[0] is
+    table-bound to 8 bits, so the cell is forced under 256, and st[14] = vdPacked = vdBytes[0] is
+    too. Four degree-2 constraints, no lookups, no new columns -- cheaper than a range check, which
+    would cost a bus term per control per lane.
+
+    Constants need none of this: `vdPacked === 64` already forces the bytes to [64,0,0,0], since
+    each is under 256 and the decomposition is unique.
+*/
+function blake3StateInitByteCell(const expr vdBytes[], const expr cell, const expr sel) {
+    sel * (vdBytes[0] - cell) === 0;
+    sel * vdBytes[1] === 0;
+    sel * vdBytes[2] === 0;
+    sel * vdBytes[3] === 0;
+}
+
+/*
+    Binds a state word that BLAKE3 defines as a full u32 -- st[12] = counterLo -- when it arrives
+    from a trace cell.
+
+    One constraint, because here the bound comes free: vdPacked is four table-bound bytes, so it is
+    already confined to [0, 2^32), which is exactly the u32 domain. No byte zeroing, no range check.
+*/
+function blake3StateInitWordCell(const expr vdPacked, const expr cell, const expr sel) {
+    sel * (vdPacked - cell) === 0;
+}
+
+/*
+    Shifts an expression by a signed row offset, in the sense `(k)'e` uses: positive k reads k rows
+    BACK, negative k reads forward. Boundary cells sit on one row of the block and the constraint
+    that binds them fires on another, and which side is earlier depends on LANES -- lane 0's output
+    row is clock 55 at LANES=1 but clock 52 at LANES=4, while the feedforward always fires at
+    clocks 54 and 55. Without this the caller would need an if/else per binding.
+*/
+function blake3Shift(const expr e, const int k): expr {
+    if (k > 0) {
+        return (k)'e;
+    }
+    if (k < 0) {
+        return e'(-k);
+    }
+    return e;
+}
+
+/*
+    The whole Blake3Node boundary for one lane: message in, initial state, final state out.
+
+    It lives here rather than in the aggregator because everything it knows is layout knowledge
+    about the permutation -- that SIGMA[0] is the identity so clock i carries block[2i], block[2i+1];
+    that the initial state enters as va/vb/vc/vd over clocks 0..3; that the final state is scattered
+    across clocks 52..55 by the diagonal mixing. The aggregator supplies columns and selectors.
+
+    Blake3Node freezes cv = IV, blockLen = 64, counter = 0, flags = 11, isParent = 0, and the digest
+    is out[j] = r[2j] + 2^32*r[2j+1] for j = 0..4 (see the gate contract in the design doc).
+
+    Boundary rows for lane `lane`: inputs on the row at clock `lane` (a[0..8] = in[0..8], a[8] = the
+    Merkle path bit), outputs on the row at clock `56 - LANES + lane` (a[0..4]).
+
+    Selector arrays are pre-folded with the kind selector by the caller:
+      IN_CLK[i]           = BLAKE3_NODE * CLK[i],            i = 0..8
+      OUT_CLK[c-OUT_FIRST] = BLAKE3_NODE * CLK[c],           c = OUT_FIRST..55
+    The fold is not cosmetic: the message binding is selector x clock x (degree-2 ordering term),
+    so without it every one of those eight constraints is degree 4.
+*/
+/// `va`/`vb` are not here: blake3StateInitAtIV pins them to the IV for every kind that shares them,
+/// and `vc` is the IV expression blake3Lanes builds, so a Node's initial state needs only its `vd`.
+/// The feedforward is likewise emitted once for every kind by blake3FeedforwardAll, which is why
+/// none of its operands appear either.
+function blake3NodeBoundary(const int LANES, const int lane,
+                           const expr a[], const expr IN_CLK[], const expr OUT_CLK[],
+                           const int OUT_FIRST,
+                           const expr xPacked, const expr yPacked, const expr dinv,
+                           const expr vdPacked, const expr outBytes[][],
+                           const int CLOCKS_P) {
+    const int CLOCKS = CLOCKS_P;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MESSAGE IN
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // x/y hold one input word's two halves only at clocks 0..7; from clock 8 on they hold two
+    // unrelated permuted message words, where the canonicity predicate would be meaningless.
+    // Emitted once for the eight clocks, not once per clock: the gadget touches only same-row lane
+    // columns, so repeating it per word would cost 40 constraints per lane instead of 12.
+    expr INPUT_CLK = 0;
+    for (int i = 0; i < 8; i++) {
+        INPUT_CLK += IN_CLK[i];
+    }
+    blake3SplitCanonicalGadget(xPacked, yPacked, dinv, INPUT_CLK);
+
+    // SIGMA[0] is the identity, so round 0 clock i carries block[2i], block[2i+1] -- exactly the
+    // low and high halves of ordered[i]. Rounds 1..6 need nothing: round 0 writes the message into
+    // the MSG bus and they read it back.
+    for (int i = 0; i < 8; i++) {
+        const expr A[8];
+        for (int j = 0; j < 8; j++) {
+            A[j] = blake3Shift(a[j], i - lane);
+        }
+        // Order the two 4-word halves by the key bit, matching the `ordered` branch of
+        // b3_compress_gate: key = 0 leaves them in place, key = 1 swaps them. Degree 2 in
+        // (key, in) -- one bump, the same shape poseidonInputOrder uses in poseidon2.pil.
+        // Booleanity of `key` is enforced below, on lane `lane`'s start row; the circom body is
+        // dead under extern_c, so a witness-time assert there never runs.
+        //
+        // Inlined, not a helper: PIL2 has no out-parameters, so a callee that built the ordered
+        // array could not hand it back -- it would assign into its own binding and leave the
+        // caller's untouched. Only one element of it is ever read anyway, so the swap is a single
+        // expression and needs no array.
+        const int partner = (i + 4) % 8;
+        const expr KEY = blake3Shift(a[8], i - lane);
+        blake3SplitBind((1 - KEY) * A[i] + KEY * A[partner], xPacked, yPacked, IN_CLK[i]);
+    }
+
+    // Booleanity of the path bit fires ONLY on lane `lane`'s start row. Gating it on the block-wide
+    // BLAKE3_NODE instead would constrain a[8] on all 56 rows and silently kill the plonk piggyback
+    // on that column for the middle rows.
+    IN_CLK[lane] * (a[8] * (1 - a[8])) === 0;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INITIAL STATE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Every word is a constant, so this is a binding to constants and not a range check -- and it
+    // is strictly stronger. vd is pinned to [counterLo, 0, blockLen, flags] as a packed word, which
+    // forces its four bytes uniquely (each is under 256 and the decomposition is unique), so
+    // Blake3Node needs no byte binding of its own.
+    for (int c = 0; c < 4; c++) {
+        blake3StateInitConst(vdPacked, c, 64, 0, BLAKE3_FLAGS_NODE, IN_CLK[c]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FINAL STATE OUT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /*
+        The final state is the G output of the last four clocks, scattered by the diagonal mixing:
+
+            v[0..4]  = va''@52,53,54,55        v[4..8]   = vb''@55,52,53,54
+            v[8..12] = vc''@54,55,52,53        v[12..16] = vd''@53,54,55,52
+
+        Blake3Node needs out[i] = v[i] ^ v[i+8] for i = 0..8. va'', vc'' and vd'' have byte columns;
+        vb'' does not, and does not need any -- blake3FeedforwardAll rebuilds its bytes from the
+        XOR operands and the three top bits.
+
+        Those eight words are NOT computed here. blake3FeedforwardAll computes all sixteen for every
+        kind, one word per clock over clocks 40..55, in ONE four-byte group -- see its doc block. The
+        four maps above are what its vaClk/vbClk/vcClk/vdClk tables encode, and the reason a group of
+        four columns can carry sixteen words: each family's operand clocks are a rotation of 52..55,
+        so against the group's linear run of hosts a family contributes at most two distinct shifts.
+
+        What is Node-specific is only the binding below.
+    */
+    // The output cell is a definition, not a claim: once the permutation has run the right-hand
+    // side has no degree of freedom left, so there is nothing here to bound.
+    //
+    // Blake3Node packs pairs into Goldilocks -- out_GL[j] = out[2j] + 2^32*out[2j+1] -- and both
+    // halves are read off the feedforward group at clocks 40+2j and 40+2j+1, the CLOCKS-16+i hosts
+    // of out[0..8]. Node needs only the chaining value; the XOF half at clocks 48..55 is unread.
+    const int R = CLOCKS - LANES + lane;
+    const expr OUT_ROW = OUT_CLK[R - OUT_FIRST];
+    for (int j = 0; j < 4; j++) {
+        const expr blo[4];
+        const expr bhi[4];
+        for (int b = 0; b < 4; b++) {
+            blo[b] = blake3Shift(outBytes[0][b], R - (CLOCKS - 16 + 2 * j));
+            bhi[b] = blake3Shift(outBytes[0][b], R - (CLOCKS - 16 + 2 * j + 1));
+        }
+        OUT_ROW * (a[j] - pack_bytes(blo) - P2_32 * pack_bytes(bhi)) === 0;
+    }
+}
+
+/*
+    The output feedforward for every kind, emitted once: all sixteen words in ONE four-column group
+    over sixteen rows, clocks 40..55. 64 byte results over 16 rows is 4 columns, against 8 over
+    eight rows.
+
+    out[0..8] = st[i] ^ st[i+8] and out[8..16] = st[8+i] ^ cv[i]; the four state families and the cv
+    take their turn on the group, one word per clock. Callers bind their own output cells against
+    this group and nothing else.
+*/
+function blake3FeedforwardAll(const int CLOCKS, const int TABLE_ID, const expr CLK16[],
+                              const expr vaPPBytes[], const expr vbXor[], const expr vbTop[],
+                              const expr vcPPBytes[], const expr vdPPBytes[],
+                              const expr cvLo[], const expr vbBytes[], const expr outBytes[]) {
+    // Sixteen shifts of CLK_0, one per output clock, so at most one fires on a row: the sum is
+    // 0/1 by construction, which is what lets the lookups below declare SEL_IS_BINARY.
+    expr ANY = 0;
+    for (int i = 0; i < 16; i++) {
+        ANY += CLK16[i];
+    }
+    for (int j = 1; j < 4; j++) {
+        ANY * (vbTop[j] * (1 - vbTop[j])) === 0;
+    }
+    const expr vbPP[4];
+    for (int j = 0; j < 4; j++) {
+        vbPP[j] = 2 * vbXor[(j + 1) % 4] - 256 * vbTop[(j + 1) % 4] + vbTop[j];
+    }
+
+    const int vaClk[4] = [52, 53, 54, 55];
+    const int vbClk[4] = [55, 52, 53, 54];
+    const int vcClk[4] = [54, 55, 52, 53];
+    const int vdClk[4] = [53, 54, 55, 52];
+
+    const expr lo[4];
+    const expr hi[4];
+    for (int b = 0; b < 4; b++) {
+        expr al = 0;
+        expr ah = 0;
+        for (int i = 0; i < 16; i++) {
+            const int host = CLOCKS - 16 + i;
+            if (i < 4) {
+                al += CLK16[i] * blake3Shift(vaPPBytes[b], host - vaClk[i]);
+                ah += CLK16[i] * blake3Shift(vcPPBytes[b], host - vcClk[i]);
+            } else if (i < 8) {
+                al += CLK16[i] * blake3Shift(vbPP[b], host - vbClk[i - 4]);
+                ah += CLK16[i] * blake3Shift(vdPPBytes[b], host - vdClk[i - 4]);
+            } else if (i < 12) {
+                al += CLK16[i] * blake3Shift(vcPPBytes[b], host - vcClk[i - 8]);
+                ah += CLK16[i] * blake3Shift(cvLo[b], host - (i - 8));
+            } else {
+                al += CLK16[i] * blake3Shift(vdPPBytes[b], host - vdClk[i - 12]);
+                ah += CLK16[i] * blake3Shift(vbBytes[b], host - (i - 12));
+            }
+        }
+        lo[b] = al;
+        hi[b] = ah;
+    }
+    blake3Feedforward(lo, hi, outBytes, TABLE_ID, ANY);
+}
+
+
+/*
+    The Blake3Compress boundary, both shapes.
+
+    `flags` and `isParent` are template parameters of the circom gate, so neither is a trace cell:
+    flags arrives here as a fixed-column expression and isParent is which kind selector fired. With
+    them off the signal list the input side is exactly 18 cells, the width of the band.
+
+                input row (clock lane)                                   output row
+      chunk  |  a[0..8] cv (u32), a[8..16] the Goldilocks block,      |  a[0..16] = out[0..16]
+             |  a[16] blockLen, a[17] counterLo                       |
+      parent |  a[0..16] the sixteen u32 block words,                 |  a[0..16] = out[0..16]
+             |  a[16] blockLen, a[17] counterLo                       |
+
+    Neither shape needs a folded selector x clock column. Only Blake3Node does, because its key
+    ordering makes the message binding's last factor degree 2; Blake3Compress carries no key -- every
+    caller drives the Merkle path bit through Blake3Node -- so `SEL * air.CLK[i] * (cell - ...)` is
+    degree 3 as it stands.
+
+    All sixteen output words are bound, not eight: Blake3AbsorbBlock and Blake3Parent discard
+    out[8..16] with `_ <==`, but the three finalizers pack all of them.
+*/
+/*
+    Both Compress shapes, the half that depends on which. `IS_PARENT` is a compile-time int, so the
+    branches resolve while the PIL is compiled and cost no constraint degree -- it is the caller's
+    choice of kind selector, not a witness value.
+
+    Only what actually reads `IS_PARENT` belongs here; everything the two shapes state identically is
+    in blake3CompressBoundaryShared, emitted once under the sum of their selectors.
+*/
+function blake3CompressBoundaryKind(const int lane, const int IS_PARENT,
+                                    const expr a[], const expr SEL, const expr ROUND0,
+                                    const expr xPacked, const expr yPacked, const expr dinv,
+                                    const expr vaPacked, const expr vbPacked,
+                                    const expr CLK_P[]) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MESSAGE IN -- round 0 only, SIGMA[0] being the identity
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (IS_PARENT == 0) {
+        // The block is eight Goldilocks words; x/y are the halves of a[8+i], so the split has to be
+        // pinned canonical exactly as Blake3Node's is.
+        // ROUND0 is SEL folded with clocks 0..7 as ONE fixed column, not `SEL * CLK_P[i]` summed.
+        // The gadget is degree 3, so a degree-2 selector would put it at 5 and force an im pol; the
+        // fold keeps it at 4. Node's NODE_IN_CLK sum is already folded the same way.
+        blake3SplitCanonicalGadget(xPacked, yPacked, dinv, ROUND0);
+        for (int i = 0; i < 8; i++) {
+            blake3SplitBind(blake3Shift(a[8 + i], i - lane), xPacked, yPacked, SEL * CLK_P[i]);
+        }
+    } else {
+        // Sixteen u32 words straight in: no split, so no canonicity witness at all. The bindings ARE
+        // the range check -- x_packed and y_packed are packed from limbs the permutation bounds.
+        for (int i = 0; i < 8; i++) {
+            SEL * CLK_P[i] * (blake3Shift(a[2 * i], i - lane) - xPacked) === 0;
+            SEL * CLK_P[i] * (blake3Shift(a[2 * i + 1], i - lane) - yPacked) === 0;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INITIAL STATE -- the half that depends on the kind: where cv comes from
+    // ═══════════════════════════════════════════════════════════════════════════
+    for (int c = 0; c < 4; c++) {
+        const expr clk = SEL * CLK_P[c];
+        if (IS_PARENT == 0) {
+            // cv from cells. Equality propagates the range: va_packed is limb-bounded, so the cell
+            // is confined to [0, 2^32) without a check of its own. A parent's cv is the IV, and
+            // blake3StateInitAtIV pins it there together with the Node's -- the two say the same
+            // thing, so only the chunk case is left here.
+            clk * (vaPacked - blake3Shift(a[c], c - lane)) === 0;
+            clk * (vbPacked - blake3Shift(a[4 + c], c - lane)) === 0;
+        }
+    }
+}
+
+/*
+    Both Compress shapes, the half that does not care which -- so it is emitted ONCE, under a
+    selector that is the sum of the two kinds. They are disjoint block-wide fixed columns, so the sum
+    is binary and the degree is what a single kind's selector would give.
+
+    `cvBytes` are the four bytes of cv[0..4], materialized at clocks 0..3 because that half of the
+    chaining value arrives as `va`, which is two 16-bit limbs rather than bytes. On a parent block
+    blake3CompressBoundaryKind has already pinned `va` to the IV, so the same constraint forces
+    cvBytes to the IV's bytes -- which is what makes this half kind-independent in the first place.
+*/
+function blake3CompressBoundaryShared(const int LANES, const int lane,
+                                      const expr a[], const expr SEL, const expr FLAGS,
+                                      const expr vaPacked, const expr vdPacked,
+                                      const expr vdBytes[], const expr cvBytes[],
+                                      const expr outBytes[][],
+                                      const expr CLK_P[], const int CLOCKS_P) {
+    const int CLOCKS = CLOCKS_P;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INITIAL STATE -- the half both kinds share
+    // ═══════════════════════════════════════════════════════════════════════════
+    for (int c = 0; c < 4; c++) {
+        const expr clk = SEL * CLK_P[c];
+        // cv[0..4]'s bytes, which `va` does not carry, for BOTH kinds. On a parent block vaPacked
+        // is already pinned to IV[c] above, so this forces cvBytes to the IV's bytes -- uniquely,
+        // each being under 256. That is what lets the feedforward's cv operand stop caring which
+        // kind it is on, and with it a whole 16-wide fixed clock set.
+        clk * (pack_bytes(cvBytes) - vaPacked) === 0;
+    }
+
+
+    // vd = [counterLo, counterHi, blockLen, flags]. counterHi is identically zero across the design.
+    // counterLo is a full u32, so the table-bound bytes already confine it; blockLen and flags are
+    // single bytes in BLAKE3, so they are bound through vd's low byte -- the air must not admit a
+    // state real BLAKE3 cannot reach.
+    blake3StateInitWordCell(vdPacked, blake3Shift(a[17], 0 - lane), SEL * CLK_P[0]);
+    SEL * CLK_P[1] * vdPacked === 0;
+    blake3StateInitByteCell(vdBytes, blake3Shift(a[16], 2 - lane), SEL * CLK_P[2]);
+    blake3StateInitByteCell(vdBytes, FLAGS, SEL * CLK_P[3]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FINAL STATE OUT -- all sixteen words
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Built from SEL * air.CLK rather than a folded per-kind array: the only place a fold was
+    // load-bearing is the canonicity gadget (ROUND0 above), and everything here stays inside
+    // maxDeg 5 at a degree-2 selector.
+    // blake3FeedforwardAll emits the whole feedforward, all sixteen words, once for every kind.
+    // Only the cell binding below is per-shape.
+    const int R = CLOCKS - LANES + lane;
+    const expr OUT_ROW = SEL * CLK_P[R];
+
+    // All sixteen words ride ONE four-column group over clocks 40..55, one word per clock and in
+    // order: out[0..8] is the chaining value, out[8..16] the XOF half. Compress binds both -- the
+    // three finalizers pack every word -- where Blake3Node reads only clocks 40..47.
+    for (int i = 0; i < 16; i++) {
+        const expr b0[4];
+        for (int j = 0; j < 4; j++) {
+            b0[j] = blake3Shift(outBytes[0][j], R - (CLOCKS - 16 + i));
+        }
+        OUT_ROW * (a[i] - pack_bytes(b0)) === 0;
+    }
+}

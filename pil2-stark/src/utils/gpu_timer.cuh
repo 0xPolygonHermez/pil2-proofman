@@ -259,11 +259,6 @@ public:
             oss.str("");
             oss.clear();
         }
-
-        // Deliberately no leftover/OTHER line. window-minus-categories is a coverage residual, not
-        // a measurement: other streams run in this stream's gaps, overlapping categories are summed
-        // rather than unioned, and a replayed capture region skips its body so its categories never
-        // fire at all. Naming it invited reading it as idle GPU, which it never was.
 #endif
     }
 

@@ -25,6 +25,11 @@ enum GateBandKind : uint64_t {
     GB_POSEIDON2_COMPRESSOR_COMPRESSION = 6,
     GB_POSEIDON2_AGGREGATION_SPONGE = 7,
     GB_POSEIDON2_AGGREGATION_COMPRESSION = 8,
+    // 56-row blocks hosting LANES permutations. LANES is not per band -- it is the air's, and
+    // arrives in the band section's aux word.
+    GB_BLAKE3_NODE = 9,
+    GB_BLAKE3_COMPRESS_CHUNK = 10,
+    GB_BLAKE3_COMPRESS_PARENT = 11,
 };
 
 // Band geometry: a property of the setup type, not the family. A compressor band is 10 rows
@@ -81,6 +86,10 @@ constexpr bool is_aggregation(uint64_t kind) {
         || kind == GB_POSEIDON2_AGGREGATION_SPONGE || kind == GB_POSEIDON2_AGGREGATION_COMPRESSION;
 }
 
+constexpr bool is_blake3(uint64_t kind) {
+    return kind >= GB_BLAKE3_NODE && kind <= GB_BLAKE3_COMPRESS_PARENT;
+}
+
 constexpr bool is_poseidon1(uint64_t kind) {
     return kind >= GB_POSEIDON1_COMPRESSOR_SPONGE && kind <= GB_POSEIDON1_AGGREGATION_COMPRESSION;
 }
@@ -88,11 +97,15 @@ constexpr bool is_poseidon1(uint64_t kind) {
 // Every kind this build can expand. The predicates above would read an unrecognised one as a
 // Poseidon2 compressor band and fill it with the wrong permutation, so callers reject instead.
 constexpr bool is_known_kind(uint64_t kind) {
-    return kind >= GB_POSEIDON1_COMPRESSOR_SPONGE && kind <= GB_POSEIDON2_AGGREGATION_COMPRESSION;
+    return kind >= GB_POSEIDON1_COMPRESSOR_SPONGE && kind <= GB_BLAKE3_COMPRESS_PARENT;
 }
 
 // Rows a band of this kind occupies.
-constexpr int band_rows(uint64_t kind) { return is_aggregation(kind) ? AGG_ROWS : POS_ROWS; }
+constexpr int BLAKE3_ROWS = 56;
+constexpr int band_rows(uint64_t kind) {
+    if (is_blake3(kind)) return BLAKE3_ROWS;
+    return is_aggregation(kind) ? AGG_ROWS : POS_ROWS;
+}
 
 // Layout version of the band section; `band_section` refuses one it does not know. Bump on any
 // layout change. Mirrored by GATE_BAND_FORMAT_VERSION in plonk2pil/mod.rs, which writes it.
@@ -100,7 +113,7 @@ constexpr int band_rows(uint64_t kind) { return is_aggregation(kind) ? AGG_ROWS 
 // This cannot reach a reader that predates the section entirely -- such a reader stops at the
 // map. That case is safe anyway: a key with bands has no interior placements, so a prover that
 // skips the expansion leaves them zero and the AIR rejects the proof.
-constexpr uint64_t GATE_BAND_FORMAT_VERSION = 1;
+constexpr uint64_t GATE_BAND_FORMAT_VERSION = 2;
 
 enum class BandSection {
     Absent,                 // no section past the map: nothing to expand
@@ -114,10 +127,15 @@ struct BandsView {
     const uint64_t *bands = nullptr;
     uint64_t n = 0;
     uint64_t version = 0;
+    /// A per-air parameter the expander cannot infer: BLAKE3's LANES. Poseidon writes 0.
+    uint64_t aux = 0;
     BandSection status = BandSection::Absent;
 };
 
-// The band section of an exec buffer: version, count, then (row, kind) per band. `execWords` is
+// The band section of an exec buffer: version, count, a per-air aux word, then
+// (row, kind, payload) per band.
+// The payload carries a per-block constant the expander cannot read off the witness trace --
+// BLAKE3's `flags`, which the AIR holds in a fixed column. Poseidon kinds write 0. `execWords` is
 // the buffer's true length, which is how absence is detected -- the prefix alone is a complete
 // exec file. Where the section starts comes from the exec header, so this needs no trace width.
 inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
@@ -132,7 +150,7 @@ inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
     }
     const uint64_t prefix = exec_layout::bands_at(h);
     if (execWords <= prefix) return v;                        // Absent
-    if (execWords < prefix + 2) {                             // version without a count
+    if (execWords < prefix + 3) {                             // version without a count and aux
         v.status = BandSection::Malformed;
         return v;
     }
@@ -142,13 +160,14 @@ inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
         return v;
     }
     const uint64_t count = exec[prefix + 1];
-    // Two words per band must actually be there, or reading them runs off the buffer.
-    if (count > (execWords - prefix - 2) / 2) {
+    // Three words per band must actually be there, or reading them runs off the buffer.
+    if (count > (execWords - prefix - 3) / 3) {
         v.status = BandSection::Malformed;
         return v;
     }
     v.n = count;
-    v.bands = &exec[prefix + 2];
+    v.aux = exec[prefix + 2];
+    v.bands = &exec[prefix + 3];
     v.status = BandSection::Ok;
     return v;
 }
@@ -157,9 +176,9 @@ inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
 // past row `nRows` -- or `nBands` if they are all good.
 inline uint64_t first_bad_band(const uint64_t *b, uint64_t nBands, uint64_t nRows) {
     for (uint64_t i = 0; i < nBands; i++) {
-        const uint64_t kind = b[i * 2 + 1];
+        const uint64_t kind = b[i * 3 + 1];
         if (!is_known_kind(kind)) return i;
-        if (b[i * 2] + (uint64_t)band_rows(kind) > nRows) return i;
+        if (b[i * 3] + (uint64_t)band_rows(kind) > nRows) return i;
     }
     return nBands;
 }

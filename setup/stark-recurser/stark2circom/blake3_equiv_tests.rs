@@ -367,12 +367,10 @@ fn lattice_chain_step_matches_prover() {
 /// circom emits the circuit, it links against setup/circom, and the two halves
 /// of the output must agree.
 ///
-/// This is a relative check by construction, and the two gates share
-/// `split_ordered`, so it cannot see a bug in shared code -- flipping the key
-/// ordering there flips both sides equally and this test still passes. The
-/// absolute oracle is the other three: `spec_and_witness_gate_agree` differences
-/// the C++ against the circom spec, and the two tests above difference the whole
-/// emitted circuit against the `blake3` crate. All three catch that flip.
+/// Since Blake3Compress carries no key, the two sides no longer share the ordering path: Node
+/// exercises `split_ordered`'s key branch while the general gate is driven with the halves
+/// already ordered by the caller. A flipped ordering inside `split_ordered` therefore shows up
+/// here, which it could not when both sides went through it.
 #[test]
 fn node_gate_matches_general_gate() {
     if let Some(why) = missing_prerequisite() {
@@ -383,19 +381,16 @@ fn node_gate_matches_general_gate() {
         pragma custom_templates;\n\
         include \"hash/blake3/blake3.circom\";\n\n\
         template Probe() {\n\
-        \x20   signal input args[9];   // in[0..8], then key\n\
+        \x20   signal input args[17];  // Node in[0..8], key at 8, pre-ordered block at 9..17\n\
         \x20   signal output o[8];     // Blake3Node, then the general gate\n\
         \x20   component n = Blake3Node();\n\
         \x20   for (var i = 0; i < 8; i++) { n.in[i] <== args[i]; }\n\
         \x20   n.key <== args[8];\n\
         \x20   for (var i = 0; i < 4; i++) { o[i] <== n.out[i]; }\n\
-        \x20   component c = Blake3Compress();\n\
-        \x20   for (var i = 0; i < 8; i++) { c.in[i] <== B3_IV(i); c.in[8 + i] <== args[i]; }\n\
+        \x20   component c = Blake3Compress(B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT(), 0);\n\
+        \x20   for (var i = 0; i < 8; i++) { c.in[i] <== B3_IV(i); c.in[8 + i] <== args[9 + i]; }\n\
         \x20   c.blockLen <== 64;\n\
         \x20   c.counterLo <== 0;\n\
-        \x20   c.flags <== B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT();\n\
-        \x20   c.key <== args[8];\n\
-        \x20   c.raw <== 0;\n\
         \x20   for (var i = 0; i < 4; i++) { o[4 + i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1]; }\n\
         \x20   for (var i = 8; i < 16; i++) { _ <== c.out[i]; }\n\
         }\n\
@@ -409,6 +404,13 @@ fn node_gate_matches_general_gate() {
     for key in [0u64, 1] {
         let mut inputs = words.clone();
         inputs.push(key);
+        // Blake3Compress has no key, so the ordering it would have applied is applied here.
+        if key == 1 {
+            inputs.extend_from_slice(&words[4..8]);
+            inputs.extend_from_slice(&words[0..4]);
+        } else {
+            inputs.extend_from_slice(&words);
+        }
         let got = run_circuit("node", src, &inputs, 8);
         assert_eq!(
             &got[0..4],
@@ -431,8 +433,10 @@ const SPEC_CMP_CPP: &str = r##"
 extern "C" uint64_t getSizeWitness();
 extern "C" void *initCircuit(char *);
 extern "C" int64_t getWitness(uint64_t *, void *, void *, uint64_t);
-extern void Blake3Compress(uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,
-                           uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*);
+// flags and isParent are TEMPLATE PARAMETERS of the gate, so the fork passes them by value as the
+// two leading arguments of the single generated function.
+extern void Blake3Compress(uint64_t,uint64_t,uint64_t*,uint*,uint64_t*,uint*,uint64_t*,uint*,
+                           uint64_t*,uint*);
 static const uint64_t GP = 18446744069414584321ull;
 int main(int argc, char **argv) {
     void *circuit = initCircuit(argv[1]);
@@ -440,36 +444,37 @@ int main(int argc, char **argv) {
     uint s16 = 16, sO = 16, s1 = 1;
     long bad = 0, cases = 0;
     for (int trial = 0; trial < 12; trial++)
-    for (uint64_t raw = 0; raw < 2; raw++)
-    for (uint64_t key = 0; key < 2; key++)
-    for (uint64_t bl : {8ull, 64ull}) {
-        uint64_t args[21];
+    for (uint64_t isParent = 0; isParent < 2; isParent++)
+    // 8 and 64 are what callers produce; 300 and 511 are out of the u8 domain, where the spec
+    // used not to mask and the C++ did -- they are here so that divergence cannot come back.
+    for (uint64_t bl : {8ull, 64ull, 300ull, 511ull}) {
+        uint64_t args[20];
         for (int i = 0; i < 16; i++) {
             uint64_t v = (uint64_t)(trial * 16 + i + 1) * 0x9E3779B97F4A7C15ull;
             // Force the packing boundary (hi = 2^32-1) into some block words:
             // p-1 = (2^32-1)*2^32, so that is where the split can disagree.
             if (i >= 8 && (trial % 5) == (i % 5)) v = 0xFFFFFFFF00000000ull + (trial % 3);
-            // cv words and raw blocks are u32; a Goldilocks block is full-range.
-            args[i] = (i < 8 || raw) ? (v >> 32) : (v >= GP ? v - GP : v);
+            // cv words and parent blocks are u32; a chunk's Goldilocks block is full-range.
+            args[i] = (i < 8 || isParent) ? (v >> 32) : (v >= GP ? v - GP : v);
         }
-        args[16] = bl; args[17] = trial; args[18] = (trial % 2) ? 3 : 11;
-        args[19] = key; args[20] = raw;
+        args[16] = bl; args[17] = trial; args[18] = (trial % 3 == 0) ? 300 : ((trial % 2) ? 3 : 11);
+        args[19] = isParent;
 
         std::vector<uint64_t> w(getSizeWitness());
         if (getWitness(args, circuit, w.data(), 8) != 0) { fprintf(stderr, "getWitness failed\n"); return 1; }
 
         uint64_t out[16] = {0}, in16[16];
         for (int i = 0; i < 16; i++) in16[i] = args[i];
-        uint64_t l = args[16], c = args[17], f = args[18], k = key, r = raw;
-        Blake3Compress(out,&sO,in16,&s16,&l,&s1,&c,&s1,&f,&s1,&k,&s1,&r,&s1);
+        uint64_t l = args[16], c = args[17], f = args[18], ip = isParent;
+        Blake3Compress(f,ip,out,&sO,in16,&s16,&l,&s1,&c,&s1);
 
         cases++;
         for (int i = 0; i < 16; i++) {
             const uint64_t want = out[i];
             if (w[1 + i] != want) {
-                if (bad < 6) printf("cell %d circom=%llu cpp=%llu raw=%llu key=%llu blockLen=%llu\n",
+                if (bad < 6) printf("cell %d circom=%llu cpp=%llu isParent=%llu blockLen=%llu\n",
                     i, (unsigned long long)w[1 + i], (unsigned long long)want,
-                    (unsigned long long)raw, (unsigned long long)key, (unsigned long long)bl);
+                    (unsigned long long)isParent, (unsigned long long)bl);
                 bad++;
             }
         }
@@ -499,15 +504,152 @@ fn spec_and_witness_gate_agree() {
     let src = "pragma circom 2.1.0;\n\
         include \"hash/blake3/blake3_core.circom\";\n\n\
         template Probe() {\n\
-        \x20   signal input args[21];   // in[0..16], then blockLen, counterLo, flags, key, raw\n\
+        \x20   signal input args[20];   // in[0..16], then blockLen, counterLo, flags, isParent\n\
         \x20   signal output r[16];\n\
         \x20   var iv[16];\n\
         \x20   for (var i = 0; i < 16; i++) { iv[i] = args[i]; }\n\
-        \x20   var res[16] = b3_compress_gate(iv, args[16], args[17], 0, args[18], args[19], args[20]);\n\
+        \x20   var res[16] = b3_compress_gate(iv, args[16], args[17], 0, args[18], 0, args[19]);\n\
         \x20   for (var i = 0; i < 16; i++) { r[i] <-- res[i]; }\n\
         }\n\
         component main = Probe();\n";
 
     let report = compile_and_run_cpp("spec", src, SPEC_CMP_CPP);
     assert!(report.contains(", 0 differing cells"), "spec and witness gate diverge:\n{report}");
+}
+
+/// The AIR splits a Goldilocks word into two u32s by constraining `v === lo + 2^32*hi`, but that
+/// alone does not pin `(lo, hi)`: `lo + 2^32*hi` covers `[0, 2^64)` bijectively, so `v` and `v + p`
+/// are both representable whenever `v + p < 2^64`, i.e. for every `v <= 2^32 - 2`. A prover taking
+/// the alias would feed BLAKE3 a different byte string than the verifier hashed.
+///
+/// `p - 1 = 2^32 * (2^32 - 1)` exactly, so every alias has `hi = 2^32 - 1` with `lo != 0`, and the
+/// only canonical word with `hi = 2^32 - 1` is `p - 1`, which has `lo = 0`. The AIR therefore
+/// enforces `hi != 2^32 - 1 || lo == 0`. This pins that predicate against `b3_split_word`.
+#[test]
+fn canonical_split_predicate_matches_b3_split_word() {
+    const P: u128 = (1u128 << 64) - (1u128 << 32) + 1;
+    const HI_MAX: u64 = 0xFFFF_FFFF;
+
+    // The predicate blake3SplitCanonical enforces.
+    fn air_accepts(lo: u64, hi: u64) -> bool {
+        lo <= HI_MAX && hi <= HI_MAX && (hi != HI_MAX || lo == 0)
+    }
+    // What b3_split_word computes, on the canonical representative.
+    fn canonical_split(v: u64) -> (u64, u64) {
+        (v & 0xFFFF_FFFF, v >> 32)
+    }
+
+    // Boundaries: 0, the last aliasable word, the first non-aliasable one, and p - 1 (the only
+    // canonical word with hi at its maximum).
+    for v in [0u64, 1, 0xFFFF_FFFE, HI_MAX, 1 << 32, (P - 1) as u64] {
+        let (lo, hi) = canonical_split(v);
+        assert!(air_accepts(lo, hi), "canonical split of {v:#x} rejected: lo={lo:#x} hi={hi:#x}");
+        assert_eq!(lo as u128 + ((hi as u128) << 32), v as u128, "split of {v:#x} does not repack");
+    }
+
+    // Every alias must be rejected, and an alias only exists for v <= 2^32 - 2.
+    for v in [0u64, 1, 2, 0xFFFF_FFFD, 0xFFFF_FFFE] {
+        let aliased = v as u128 + P;
+        assert!(aliased < 1u128 << 64, "alias of {v:#x} must still fit a u64");
+        let (lo, hi) = ((aliased & 0xFFFF_FFFF) as u64, (aliased >> 32) as u64);
+        assert!(!air_accepts(lo, hi), "alias of {v:#x} accepted: lo={lo:#x} hi={hi:#x}");
+        assert_eq!(hi, HI_MAX, "alias of {v:#x} should sit at hi = 2^32 - 1");
+    }
+
+    // The AIR does not spell the predicate out -- it enforces the single constraint
+    //     sel * (lo * (d*dinv - 1)) === 0,   d = hi - (2^32 - 1)
+    // and leaves `dinv` to the prover. So the claim that actually needs pinning is that a prover can
+    // satisfy that constraint for exactly the pairs the predicate accepts: freely when lo = 0, and
+    // otherwise only by exhibiting an inverse of d, which does not exist at hi = 2^32 - 1.
+    fn constraint_is_satisfiable(lo: u64, hi: u64) -> bool {
+        if lo == 0 {
+            return true; // the factor lo vanishes; any dinv works
+        }
+        let d = (hi as u128 + P - HI_MAX as u128) % P;
+        d != 0 // dinv = d^-1 exists iff d is nonzero
+    }
+    for (lo, hi) in [
+        (0u64, HI_MAX),        // p - 1, the one canonical word at hi max
+        (1, HI_MAX),           // the alias of 0
+        (0xFFFF_FFFE, HI_MAX), // the alias of 2^32 - 3
+        (0, 0),
+        (1, 0),
+        (HI_MAX, HI_MAX - 1), // legal: lo nonzero, hi one below max
+        (HI_MAX, 0),
+    ] {
+        assert_eq!(
+            constraint_is_satisfiable(lo, hi),
+            air_accepts(lo, hi),
+            "one-constraint gadget disagrees with the predicate at lo={lo:#x} hi={hi:#x}"
+        );
+    }
+
+    // And a sweep, so the two clauses above are not the only evidence.
+    let mut v: u64 = 0x9E37_79B9_7F4A_7C15;
+    for _ in 0..20_000 {
+        v = v.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) % (P as u64);
+        let (lo, hi) = canonical_split(v);
+        assert!(air_accepts(lo, hi), "canonical {v:#x} rejected");
+        let aliased = v as u128 + P;
+        if aliased < 1u128 << 64 {
+            let (alo, ahi) = ((aliased & 0xFFFF_FFFF) as u64, (aliased >> 32) as u64);
+            assert!(!air_accepts(alo, ahi), "alias of {v:#x} accepted");
+        }
+    }
+}
+
+/// The key bit acts as exactly a swap of the block's two 4-word halves.
+///
+/// `blake3OrderByKey` in circuits/blake3.pil encodes that as
+///     ordered[i] = (1-key)*input[i] + key*input[4+i]
+///     ordered[4+i] = (1-key)*input[4+i] + key*input[i]
+/// Blake3Node is the gate that carries a key -- Blake3Compress has none -- so this drives Node,
+/// which is also the only AIR kind that applies the ordering. The AIR is right only if key = 1
+/// gives the same digest as
+/// pre-swapping the halves and driving it with key = 0. That is what this checks, against the
+/// gate as built -- if `split_ordered` applied any other permutation (a rotation, say) the two
+/// sides would diverge.
+///
+/// Unlike `node_gate_matches_general_gate` this is not comparing two gates that share the
+/// ordering code: one side exercises the ordering, the other bypasses it.
+#[test]
+fn key_bit_is_exactly_a_half_swap() {
+    if let Some(why) = missing_prerequisite() {
+        eprintln!("SKIP key_bit_is_exactly_a_half_swap: {why}");
+        return;
+    }
+    let src = "pragma circom 2.1.0;\n\
+        pragma custom_templates;\n\
+        include \"hash/blake3/blake3.circom\";\n\n\
+        template Probe() {\n\
+        \x20   signal input args[9];   // block[0..8], then key\n\
+        \x20   signal output o[4];\n\
+        \x20   component c = Blake3Node();\n\
+        \x20   for (var i = 0; i < 8; i++) { c.in[i] <== args[i]; }\n\
+        \x20   c.key <== args[8];\n\
+        \x20   o <== c.out;\n\
+        }\n\
+        component main = Probe();\n";
+
+    // Include words at the packing boundary, where a split can disagree.
+    let mut words = sample_inputs(8);
+    words[2] = Goldilocks::ORDER_U64 - 1;
+    words[5] = 0xFFFFFFFF_00000000;
+
+    // key = 1 on the block as given
+    let mut keyed = words.clone();
+    keyed.push(1);
+    let with_key = run_circuit("keyswap_k1", src, &keyed, 4);
+
+    // key = 0 on the block with its halves already swapped
+    let mut swapped: Vec<u64> = words[4..8].to_vec();
+    swapped.extend_from_slice(&words[0..4]);
+    swapped.push(0);
+    let pre_swapped = run_circuit("keyswap_k0", src, &swapped, 4);
+
+    assert_eq!(
+        with_key, pre_swapped,
+        "key=1 is not a plain half-swap, so blake3OrderByKey's formula is wrong\n  \
+         key=1:      {with_key:?}\n  pre-swapped: {pre_swapped:?}"
+    );
 }

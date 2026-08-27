@@ -75,7 +75,7 @@ function b3_rotr32(x, n) {
 // ─── Compression ─────────────────────────────────────────────────────────────
 
 /*
-    One BLAKE3 compression over a raw sixteen-word u32 block, returning the 16
+    One BLAKE3 compression over a sixteen-word u32 block, returning the 16
     xof output words. `b3_compress_gate` below wraps this for both input shapes.
 
     `out[i]     = st[i] ^ st[i+8]`   for i < 8   (the compress_in_place result)
@@ -94,8 +94,14 @@ function b3_compress(cv, block, blockLen, counterLo, counterHi, flags) {
     st[11] = B3_IV(3);
     st[12] = counterLo;
     st[13] = counterHi;
-    st[14] = blockLen;
-    st[15] = flags;
+    // block_len and flags are u8 in BLAKE3. Masking keeps this reference spec identical to the
+    // witness gate on every input, not just the ones callers produce, so the equivalence test can
+    // cover the whole domain.
+    //
+    // This buys NO soundness: under extern_c this body is dead, so it constrains nothing. Keeping
+    // st[14]/st[15] inside a byte is the AIR's job -- see blake3StateInitByteCell.
+    st[14] = blockLen & 255;
+    st[15] = flags & 255;
 
     for (var round = 0; round < 7; round++) {
         for (var g = 0; g < 8; g++) {
@@ -156,23 +162,23 @@ function b3_split_word(x) {
     One compression, in either of the two shapes the design needs, returning the
     16 xof output words.
 
-    raw = 0 -- the Goldilocks shape. `in[0..8]` is the chaining value (u32 words)
+    isParent = 0 -- the chunk-block shape. `in[0..8]` is the chaining value (u32 words)
     and `in[8..16]` a block of eight full-range Goldilocks words, ordered by
     `key` and then split into the sixteen u32 block words.
 
-    raw = 1 -- the parent shape. The block is two chaining values side by side,
+    isParent = 1 -- the parent shape. The block is two chaining values side by side,
     already u32, so `in` IS the block. The compression's own chaining value is
     the IV. `key` has no effect here -- a parent has no ordering to choose -- so
     it is a don't-care on this path.
 
-    A cv plus a Goldilocks block is exactly 16 cells, the same as a raw block,
+    A cv plus a Goldilocks block is exactly 16 cells, the same as a parent block,
     which is why the parent shape needs no block input of its own.
 */
-function b3_compress_gate(in, blockLen, counterLo, counterHi, flags, key, raw) {
+function b3_compress_gate(in, blockLen, counterLo, counterHi, flags, key, isParent) {
     var cv[8];
     var block[16];
 
-    if (raw == 1) {
+    if (isParent == 1) {
         for (var i = 0; i < 8; i++) {
             cv[i] = B3_IV(i);
             block[i] = in[i];

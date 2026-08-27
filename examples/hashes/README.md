@@ -10,7 +10,7 @@ To begin, compile the PIL files:
 
 ```bash
 cargo run --bin proofman-setup -- compile-pil --pil ./examples/hashes/pil/main.pil \
-     -I ./pil2-components/lib/std/pil \
+     -I ./pil2-components/lib/std/pil -I ./setup/stark-recurser/plonk2pil/pil \
      -o ./examples/hashes/pil/main.pilout -u ./examples/hashes/build/fixed --fixed-to-file
 ```
 
@@ -89,7 +89,7 @@ up a different family, and `--air Blake3` for `Sha2` or `Blake2b`.
 
 ```bash
 cargo run --release --bin proofman-setup -- compile-pil --pil ./examples/hashes/pil/main.pil \
-     -I ./pil2-components/lib/std/pil \
+     -I ./pil2-components/lib/std/pil -I ./setup/stark-recurser/plonk2pil/pil \
      -o ./examples/hashes/pil/main.pilout -u ./examples/hashes/build/fixed --fixed-to-file \
 && cargo run --release --bin proofman-setup -- setup \
      -a ./examples/hashes/pil/main.pilout \

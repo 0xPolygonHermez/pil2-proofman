@@ -65,7 +65,11 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer
+    TimerGPU &timer,
+    // Off for a copy that runs outside the window the category report is divided by: counting it
+    // there puts its time in the numerator and not the denominator. Such a copy gets a timer of its
+    // own instead -- see STARK_GPU_WITNESS in gen_recursive_proof_gpu.
+    bool categorize
     ){
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
 
@@ -78,12 +82,12 @@ void copy_to_device_in_chunks(
     // the per-GPU mutex_pinned lock (avoids serializing behind large stagings):
     //  - direct: large + already host-pinned source
     //  - small:  sub-threshold copy, one shot
-    TimerStartCategoryGPU(timer, H2D_COPY);
+    if (categorize) { TimerStartCategoryGPU(timer, H2D_COPY); }
     if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
         // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
         // gates recycling the host trace buffer (see wait_trace_h2d_done).
         cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-        TimerStopCategoryGPU(timer, H2D_COPY);
+        if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
         return;
     }
 
@@ -136,7 +140,7 @@ void copy_to_device_in_chunks(
     // synced, so the host trace buffer is free here. Record anyway so the event always marks this
     // commit's release point rather than leaving a stale record from an earlier one.
     cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-    TimerStopCategoryGPU(timer, H2D_COPY);
+    if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
 }
 
 void copy_to_device_in_chunks(

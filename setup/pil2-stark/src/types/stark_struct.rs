@@ -145,6 +145,64 @@ pub fn default_last_level_verification(arity: usize, n_bits_ext: usize) -> usize
 /// Generate a StarkStruct from user settings, the air's power (nBits) and the
 /// hash family, which provides the tree/transcript arity defaults (and, for
 /// families whose kernels support a single geometry, fixes them).
+/// The FRI schedule that costs the in-circuit verifier the least, found exactly instead of by
+/// folding at a fixed rate.
+///
+/// A committed step at `b` bits costs one compression per Merkle level it keeps -- `depth(b) - llv`
+/// of them -- and a query opens a folding group of `2^d` extension elements, which is
+/// `ceil(2^d * 3 / block)` compressions. **Path cost is linear in the bits, leaf cost exponential in
+/// the fold**, so the cheapest schedule folds hard where the bits are high and gently near the end.
+/// A uniform folding factor cannot express that shape.
+///
+/// At nBitsExt 21, arity 2, llv 4 and a terminal of 7 the optimum is `21 > 17 > 13 > 10 > 7` -- folds
+/// of 4, 4, 3, 3 -- against the uniform fold-3 schedule's `21 > 18 > 15 > 12 > 9 > 6`. On the
+/// fibonacci recursion that is 49 compressions a query rather than 55, and one fewer FRI tree to
+/// reduce to a root.
+///
+/// Uniform folding is the right shape when paths are cheap: at arity 4 a fold of 3 and a fold of 4
+/// tie exactly. Arity 2 doubles every path, and that is what moves the optimum off the uniform
+/// schedule -- which is why this is scoped to the families that force a binary tree, and why
+/// poseidon keeps the fold it was tuned with and its committed verifiers encode.
+///
+/// Terminating high is free: the terminal is where the walk STOPS, so folding further only buys
+/// leaf cost for no path saving. The DP is free to end anywhere at or below `final_degree` and will
+/// always choose `final_degree` itself.
+fn optimal_fri_steps(
+    n_bits_ext: usize,
+    final_degree: usize,
+    llv: usize,
+    arity: usize,
+    hash: &str,
+) -> Vec<usize> {
+    const FE: usize = 3;
+    let block = proofman_common::hash_family::compression_block_elements(hash);
+    let log_arity = (arity as f64).log2().round() as usize;
+    let depth = |b: usize| b.div_ceil(log_arity.max(1));
+    let path = |b: usize| depth(b).saturating_sub(llv);
+    let leaf = |d: u32| ((1usize << d) * FE).div_ceil(block);
+
+    // best[b] = (cost, steps) for the walk from b down to a terminal. Cost is compared as
+    // (per-query compressions, number of trees): the tree count only breaks ties, since a tree's
+    // root reduction is a fixed handful of hashes against thousands per query.
+    let mut best: Vec<Option<((usize, usize), Vec<usize>)>> = vec![None; n_bits_ext + 1];
+    for b in 0..=n_bits_ext {
+        let mut cur: Option<((usize, usize), Vec<usize>)> =
+            if b <= final_degree { Some(((0, 0), vec![b])) } else { None };
+        for d in 1..=b {
+            let nb = b - d;
+            let Some((sub_cost, sub_steps)) = best[nb].clone() else { continue };
+            let cost = (sub_cost.0 + leaf(d as u32) + path(nb), sub_cost.1 + 1);
+            if cur.as_ref().is_none_or(|(c, _)| cost < *c) {
+                let mut steps = vec![b];
+                steps.extend(sub_steps);
+                cur = Some((cost, steps));
+            }
+        }
+        best[b] = cur;
+    }
+    best[n_bits_ext].clone().expect("a FRI schedule always exists: folding by 1 reaches any terminal").1
+}
+
 pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
     let verification_hash_type = settings.verification_hash_type.clone().unwrap_or_else(|| "GL".to_string());
 
@@ -188,13 +246,24 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
 
     let n_bits_ext = n_bits + blowup_factor;
 
-    let mut steps = vec![StarkStep { n_bits: n_bits_ext }];
-    let mut fri_step_bits = n_bits_ext;
-    while fri_step_bits > final_degree + 1 {
-        fri_step_bits =
-            if fri_step_bits > folding_factor + final_degree { fri_step_bits - folding_factor } else { final_degree };
-        steps.push(StarkStep { n_bits: fri_step_bits });
-    }
+    let steps: Vec<StarkStep> = if proofman_common::hash_family::uses_optimal_fri_schedule(hash) {
+        optimal_fri_steps(n_bits_ext, final_degree, last_level_verification, merkle_tree_arity, hash)
+            .into_iter()
+            .map(|n_bits| StarkStep { n_bits })
+            .collect()
+    } else {
+        let mut steps = vec![StarkStep { n_bits: n_bits_ext }];
+        let mut fri_step_bits = n_bits_ext;
+        while fri_step_bits > final_degree + 1 {
+            fri_step_bits = if fri_step_bits > folding_factor + final_degree {
+                fri_step_bits - folding_factor
+            } else {
+                final_degree
+            };
+            steps.push(StarkStep { n_bits: fri_step_bits });
+        }
+        steps
+    };
 
     StarkStruct {
         n_bits,
@@ -208,6 +277,67 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
         pow_bits,
         steps,
         n_queries: 0,
+    }
+}
+
+#[cfg(test)]
+mod optimal_fri_tests {
+    use super::optimal_fri_steps;
+
+    /// The schedule the cost model picks at the recursion's own size. Folds of 4, 4, 3, 3 -- hard
+    /// where the bits are high, gently near the end -- against the uniform fold-3 schedule's
+    /// 21 > 18 > 15 > 12 > 9 > 6. Pinned because it is a proof format: change it and every
+    /// generated verifier changes with it.
+    #[test]
+    fn blake3_recursion_schedule_is_the_measured_optimum() {
+        assert_eq!(optimal_fri_steps(21, 7, 4, 2, "blake3"), vec![21, 17, 13, 10, 7]);
+    }
+
+    /// Terminating high is free, so the solver always ends exactly at the ceiling rather than
+    /// folding past it for no path saving.
+    #[test]
+    fn the_walk_stops_at_the_terminal_it_is_given() {
+        for ext in 12..=24 {
+            for terminal in [5usize, 7] {
+                let s = optimal_fri_steps(ext, terminal, 4, 2, "blake3");
+                assert_eq!(s[0], ext, "the committed domain opens the schedule");
+                assert_eq!(*s.last().unwrap(), terminal, "ext {ext}, terminal {terminal}");
+                assert!(s.windows(2).all(|w| w[0] > w[1]), "steps must strictly decrease: {s:?}");
+            }
+        }
+    }
+
+    /// It has to actually beat the uniform fold it replaces, at every size the pipeline builds --
+    /// otherwise the family scoping is buying nothing.
+    #[test]
+    fn it_never_loses_to_a_uniform_fold() {
+        const FE: usize = 3;
+        let cost = |steps: &[usize]| -> usize {
+            steps
+                .windows(2)
+                .map(|w| ((1usize << (w[0] - w[1])) * FE).div_ceil(8) + w[1].saturating_sub(4))
+                .sum()
+        };
+        for ext in 12..=24 {
+            let solved = optimal_fri_steps(ext, 7, 4, 2, "blake3");
+            for fold in 2..=6usize {
+                let mut uniform = vec![ext];
+                let mut b = ext;
+                while b > 8 {
+                    b = if b > fold + 7 { b - fold } else { 7 };
+                    uniform.push(b);
+                }
+                if *uniform.last().unwrap() != 7 {
+                    continue;
+                }
+                assert!(
+                    cost(&solved) <= cost(&uniform),
+                    "ext {ext}: solved {solved:?} ({}) lost to uniform fold {fold} {uniform:?} ({})",
+                    cost(&solved),
+                    cost(&uniform)
+                );
+            }
+        }
     }
 }
 

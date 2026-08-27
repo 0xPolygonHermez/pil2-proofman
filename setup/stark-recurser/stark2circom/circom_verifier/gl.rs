@@ -899,12 +899,12 @@ mod tests {
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
         // blake3 emits a real BLAKE3 chunk chain, not a sponge: absorb blocks
         // plus a root-a-copy finalize at each squeeze point.
-        assert!(out.contains("Blake3AbsorbBlock()("), "got:\n{out}");
-        assert!(out.contains("Blake3FinalizeChunk()("), "got:\n{out}");
+        assert!(out.contains("Blake3AbsorbBlock("), "got:\n{out}");
+        assert!(out.contains("Blake3FinalizeChunk("), "got:\n{out}");
         // Absorption must dominate; a squeeze per absorb would mean the old
         // rate-4 sponge shape had crept back in.
-        let absorbs = out.matches("Blake3AbsorbBlock()(").count();
-        let finals = out.matches("Blake3FinalizeChunk()(").count() + out.matches("Blake3FinalizeParent()(").count();
+        let absorbs = out.matches("Blake3AbsorbBlock(").count();
+        let finals = out.matches("Blake3FinalizeChunk(").count() + out.matches("Blake3FinalizeParent(").count();
         assert!(absorbs > finals * 4, "absorbs={absorbs} finals={finals}");
         // The sponge forms must be gone entirely.
         assert!(!out.contains("Blake3Sponge"), "got:\n{out}");

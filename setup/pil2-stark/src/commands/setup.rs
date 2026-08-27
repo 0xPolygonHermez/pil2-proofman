@@ -41,6 +41,12 @@ pub struct SetupOptions {
     pub hash: String,
     /// Proofs each recursive2 circuit aggregates. 2 or 3.
     pub agg_arity: usize,
+    /// Build the `vadcop_final_compressed` stage. Defaults per family -- see
+    /// `hash_family::compressed_final_by_default` -- and can be added later with the
+    /// `setup-compressed-final` subcommand.
+    pub compressed_final: bool,
+    /// Pin every recursive air to 2^N rows (see the CLI flag).
+    pub recursive_n_bits: Option<usize>,
     /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
     /// end of setup. No-op (logged) if `nvcc` is not on PATH.
     pub gen_exps: bool,
@@ -112,7 +118,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // written once at the end after hasCompressor flags are known.
     write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
     if !opts.recursive {
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash, opts.agg_arity)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash, opts.agg_arity, opts.compressed_final)?;
     }
 
     // Thread pool for per-AIR processing.  setup_jobs > 1 enables parallel AIR
@@ -281,7 +287,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                         const_path.to_str().unwrap_or(""),
                         starkinfo_path.to_str().unwrap_or(""),
                         verkey_json_path.to_str().unwrap_or(""),
-                    );
+                    )?;
                     let verkey_bin: Vec<u8> = const_root.iter().flat_map(|v| v.to_le_bytes()).collect();
                     fs::write(files_dir.join(format!("{}.verkey.bin", item.air_name)), &verkey_bin)?;
                 }
@@ -347,7 +353,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash, opts.agg_arity);
+        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash, opts.agg_arity, opts.compressed_final);
         let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -357,7 +363,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for air_name in &airs_with_compressor {
             final_settings.set_has_compressor(air_name);
         }
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash, opts.agg_arity)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash, opts.agg_arity, opts.compressed_final)?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 
@@ -432,6 +438,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -485,6 +493,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -531,6 +541,8 @@ mod tests {
             stats_output_path: None,
             hash: "Poseidon2".to_string(),
             agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,

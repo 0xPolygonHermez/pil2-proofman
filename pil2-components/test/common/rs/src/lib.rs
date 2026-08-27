@@ -57,12 +57,21 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         setup_jobs: 1,
         stats_output_path: None,
         hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        // Inert for a non-recursive setup -- there are no recursive airs to size or a final to
+        // compress -- but derived from the family rather than hardcoded, so this cannot drift if
+        // the default hash ever changes.
+        compressed_final: proofman_common::hash_family::compressed_final_by_default(
+            proofman_common::hash_family::DEFAULT_HASH_ID,
+        ),
+        recursive_n_bits: None,
         gen_exps: false,
         exps_arch: "auto".to_string(),
         exps_cap: 60000,
         exps_chunk: None,
         exps_stark_src: None,
-        agg_arity: proofman_common::global_info::default_aggregation_arity(),
+        agg_arity: proofman_common::hash_family::default_aggregation_arity(
+            proofman_common::hash_family::DEFAULT_HASH_ID,
+        ),
     })
     .map_err(|e| format!("setup: {e}"))
 }

@@ -93,21 +93,73 @@ struct AirInstanceInfo {
 
     // Row bands the hash gates leave interior-blank, expanded on device after the trace copy
     // (see expandGateBandsGPU). A property of the circuit, so uploaded once with the setup.
-    uint64_t *d_gate_bands = nullptr;   // n_gate_bands * 2 words: {row, kind}
+    uint64_t *d_gate_bands = nullptr;   // n_gate_bands * 3 words: {row, kind, payload}
     uint64_t  n_gate_bands = 0;
+    // BLAKE3 only. LANES is a setup parameter -- it travels in the section header rather than
+    // being derived from the column count, which cannot distinguish the lane layouts.
+    uint64_t  gate_band_lanes = 0;
+    bool      gate_bands_have_blake3 = false;
+    // Dense BLAKE3 lookup counters, 2^17 + 2^16 words. The AIR holds these as two trace COLUMNS, so
+    // counting straight into the trace makes every atomicAdd take a cache line of its own, shared with
+    // witness cells other threads are writing. Accumulating here keeps the whole working set
+    // contiguous and L2-resident and free of that false sharing; a trivial kernel scatters it into the
+    // columns afterwards. One buffer per air instance, so concurrent instances on separate streams
+    // never share it.
+    uint64_t *d_blake3_mul = nullptr;
+
+    /// Row stride of the HOST trace buffer, i.e. the exec map's width.
+    ///
+    /// `getCommitedPols` can only place what the circom witness carries, so it fills these columns and
+    /// leaves the rest zero for the expander to rebuild -- which means copying the full width ships
+    /// zeros the expander overwrites two kernels later. When this is narrower than the air's cm1 the
+    /// host hands over a COMPACT buffer and the copy widens it on arrival. 0 means "not known", and
+    /// the full-width path is used.
+    uint64_t witness_map_cols = 0;
+
+    /// Landing buffer for the compact host trace, `N * witness_map_cols` words. The copy has to be one
+    /// contiguous run to get PCIe bandwidth: a 2D copy straight into the strided columns is slower than
+    /// shipping the full width, because the rows are only `mapCols * 8` bytes -- too small for the DMA
+    /// engine. So the transfer lands here and a kernel widens it on device, where the strided writes
+    /// are cheap.
+    uint64_t *d_witness_compact = nullptr;
+
+    /// Allocate the landing buffer. Idempotent; must not run while work using it is in flight.
+    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols) {
+        witness_map_cols = mapCols;
+        if (d_witness_compact != nullptr) {
+            CHECKCUDAERR(cudaFree(d_witness_compact));
+            d_witness_compact = nullptr;
+        }
+        if (mapCols > 0 && mapCols < nCols) {
+            CHECKCUDAERR(cudaMalloc(&d_witness_compact, nRows * mapCols * sizeof(uint64_t)));
+        }
+    }
 
     // Caller must have selected the target GPU. Replaces whatever was there.
-    void set_gate_bands(const uint64_t *bands, uint64_t nBands) {
+    void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t lanes, bool anyBlake3) {
         if (d_gate_bands != nullptr) {
             CHECKCUDAERR(cudaFree(d_gate_bands));
             d_gate_bands = nullptr;
         }
         n_gate_bands = nBands;
+        gate_band_lanes = lanes;
+        gate_bands_have_blake3 = anyBlake3;
         if (nBands > 0) {
-            CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 2 * sizeof(uint64_t)));
-            CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 3 * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+        if (d_blake3_mul != nullptr) {
+            CHECKCUDAERR(cudaFree(d_blake3_mul));
+            d_blake3_mul = nullptr;
+        }
+        if (nBands > 0 && anyBlake3) {
+            CHECKCUDAERR(cudaMalloc(&d_blake3_mul, blake3MulWords() * sizeof(uint64_t)));
         }
     }
+
+    // Words of `d_blake3_mul`: the table's 2^17 counters then the range checker's 2^16. Mirrors
+    // gate_bands::blake3::TABLE_SIZE and RANGE_SIZE, which the .cu asserts against.
+    static constexpr uint64_t blake3MulWords() { return (1ull << 17) + (1ull << 16); }
 
     // Upload (replacing any previous) the program-specific instruction table. Caller must
     // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
@@ -345,6 +397,14 @@ struct AirInstanceInfo {
 
         if (d_gate_bands != nullptr) {
             CHECKCUDAERR(cudaFree(d_gate_bands));
+        }
+
+        if (d_blake3_mul != nullptr) {
+            CHECKCUDAERR(cudaFree(d_blake3_mul));
+        }
+
+        if (d_witness_compact != nullptr) {
+            CHECKCUDAERR(cudaFree(d_witness_compact));
         }
     }
 };
@@ -714,7 +774,8 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer);
+    TimerGPU &timer,
+    bool categorize = true);
 
 void copy_to_device_in_chunks(
     const uint8_t* src,
