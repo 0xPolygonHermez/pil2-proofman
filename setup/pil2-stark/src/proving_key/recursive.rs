@@ -626,7 +626,7 @@ pub fn gen_recursive_setup(
             // recursive1 up to the shared domain (more compressor queries → bigger recursive1
             // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
             // strengthens. The solver otherwise discards the override entirely.
-            let override_q = stark_struct.n_queries as u64;
+            let override_q = stark_struct.low_degree_test.expect_fri("recursive setup").n_queries as u64;
             if config.stark_struct.is_some() {
                 let security_floor = fri.security_params().n_queries;
                 if fri.raise_n_queries(override_q) {
@@ -645,7 +645,7 @@ pub fn gen_recursive_setup(
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri,
+                &crate::types::security::pcs::LowDegreeTest::Fri(fri.clone()),
                 config.airgroup_id,
                 config.air_id,
                 &airgroup_pil_name,

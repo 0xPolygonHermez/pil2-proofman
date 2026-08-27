@@ -253,7 +253,7 @@ pub fn gen_snark_setup(
         &stark_struct_rf,
         &pil_result_rf.pil_code,
         &opening_points_rf,
-        &fri_rf,
+        &crate::types::security::pcs::LowDegreeTest::Fri(fri_rf.clone()),
         0,
         0,
         "Recursivef",

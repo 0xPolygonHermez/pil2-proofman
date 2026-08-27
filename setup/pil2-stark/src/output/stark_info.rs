@@ -8,10 +8,12 @@ use serde_json::json;
 use crate::pil::gen_code::{PilCodeResult, ProcessedHintField};
 use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
 use crate::types::security;
-use crate::types::stark_struct::StarkStruct;
+use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
+use crate::types::security::regimes::DecodingRegime;
+use crate::types::stark_struct::{FriStruct, LowDegreeTestKind, StarkStruct, StirStruct};
 use crate::types::output::{
     BoundaryOutput, ChallengeMapEntryOutput, CodeEntry, CodeRef, EvMapEntry, NameStageEntry, PolMapEntry,
-    PublicMapEntry, SecurityInfo, StarkInfoOutput, StarkStructOutput, StepOutput,
+    PublicMapEntry, SecurityInfo, StarkInfoOutput, StarkStructOutput,
 };
 
 /// Build the StarkInfoOutput for JSON serialization from internal types.
@@ -21,7 +23,7 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri: &security::pcs::Fri,
+    ldt: &LowDegreeTest,
     airgroup_id: usize,
     air_id: usize,
     air_name: &str,
@@ -29,21 +31,40 @@ pub fn build_starkinfo_output(
     fri_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
-    let steps: Vec<StepOutput> = stark_struct.steps.iter().map(|s| StepOutput { n_bits: s.n_bits }).collect();
-
-    let fri_security = fri.security_params();
+    // The query counts and grinding bits are the solved values, not the settings.
+    let (pow_bits, low_degree_test) = match (ldt, &stark_struct.low_degree_test) {
+        (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {
+            let sec = fri.security_params();
+            let solved = FriStruct { steps: schedule.steps.clone(), n_queries: sec.n_queries as usize };
+            (sec.grinding_bits_query as usize, crate::types::stark_struct::LowDegreeTest::Fri(solved))
+        }
+        (LowDegreeTest::Stir(stir), crate::types::stark_struct::LowDegreeTest::Stir(schedule)) => {
+            let sec = stir.security_params();
+            let solved = StirStruct {
+                num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
+                grinding_bits: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
+                ..schedule.clone()
+            };
+            let pow_bits = sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as usize;
+            (pow_bits, crate::types::stark_struct::LowDegreeTest::Stir(solved))
+        }
+        (ldt, schedule) => panic!(
+            "solved low-degree test {} does not match the stark struct's {:?}",
+            ldt.identifier(),
+            schedule.kind()
+        ),
+    };
     let stark_struct_out = StarkStructOutput {
         n_bits: stark_struct.n_bits,
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
         last_level_verification: stark_struct.last_level_verification,
-        pow_bits: fri_security.grinding_bits_query as usize,
+        pow_bits,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
-        steps,
-        n_queries: fri_security.n_queries as usize,
+        low_degree_test,
     };
 
     let boundaries: Vec<BoundaryOutput> = {
@@ -282,9 +303,9 @@ pub fn build_starkinfo_output(
         ev_map,
         fri_exp_id,
         security: Some(SecurityInfo {
-            proximity_gap: fri.proximity_gap(),
-            proximity_parameter: fri.proximity_parameter(),
-            regime: "JBR".to_string(),
+            proximity_gap: ldt.proximity_gap(),
+            proximity_parameter: ldt.proximity_parameter(),
+            regime: ldt.regime_identifier().to_string(),
         }),
     }
 }
@@ -294,12 +315,48 @@ pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
 }
 
 pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
-    let steps = &stark_struct.steps;
-    let mut factors = Vec::new();
-    for i in 0..steps.len() - 1 {
-        factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u32);
+    stark_struct.low_degree_test.log_folding_factors()
+}
+
+/// Solve the security parameters (query counts, grinding) of the low-degree
+/// test the stark struct selects, for a DEEP polynomial batching `batch_size`
+/// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
+/// bits) come from the stark struct, as the FRI-only callers always did.
+pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
+    let field_size = security::goldilocks_safe_extension_field_size();
+    let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
+    let log_folding_factors = compute_log_folding_factors(stark_struct);
+    match stark_struct.low_degree_test.kind() {
+        LowDegreeTestKind::Fri => LowDegreeTest::Fri(security::pcs::Fri::new(security::pcs::FriConfig {
+            field_size,
+            trace_length: 1u32 << stark_struct.n_bits,
+            rate,
+            batch_size,
+            batching: Batching::Powers,
+            log_folding_factors,
+            max_grinding_bits_query: stark_struct.pow_bits as u64,
+            use_max_grinding_bits_query: true,
+            tree_arity: stark_struct.merkle_tree_arity as u64,
+            hash_size_bits: 256,
+            target_security_bits: 128,
+            regime: DecodingRegime::Jbr,
+        })),
+        LowDegreeTestKind::Stir => LowDegreeTest::Stir(security::pcs::Stir::new(security::pcs::StirConfig {
+            field_size,
+            trace_length: 1u32 << stark_struct.n_bits,
+            rate,
+            batch_size,
+            batching: Batching::Powers,
+            log_folding_factors,
+            max_grinding_bits_query: stark_struct.pow_bits as u64,
+            use_max_grinding_bits_query: true,
+            tree_arity: stark_struct.merkle_tree_arity as u64,
+            hash_size_bits: 256,
+            base_field_bits: 64,
+            target_security_bits: 128,
+            regime: DecodingRegime::Jbr,
+        })),
     }
-    factors
 }
 
 /// Build the expressionsinfo JSON structure.

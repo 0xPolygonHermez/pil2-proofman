@@ -254,7 +254,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         &compressed_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &crate::types::security::pcs::LowDegreeTest::Fri(fri.clone()),
         0,
         0,
         "compressed_final",

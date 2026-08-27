@@ -422,17 +422,13 @@ fn get_prover_memory(
 
     prover_memory += (FIELD_EXTENSION as u64 + FIELD_EXTENSION as u64 + boundaries.len() as u64) * n_extended;
 
-    if stark_struct.steps.len() > 1 {
-        for i in 0..stark_struct.steps.len() - 1 {
-            let sb = stark_struct.steps[i + 1].n_bits;
-            let sa = stark_struct.steps[i].n_bits;
-            if sb >= 64 || sa >= 64 {
-                continue;
-            }
-            let height = 1u64 << sb;
-            let width = ((1u64 << sa) / height) * FIELD_EXTENSION as u64;
-            prover_memory += height * width + get_num_nodes_mt(height, stark_struct.merkle_tree_arity);
+    // One Merkle tree per folded oracle of the low-degree test: the leaves, plus the nodes.
+    for (log_height, width) in stark_struct.low_degree_test.commitment_trees() {
+        if log_height >= 64 {
+            continue;
         }
+        let height = 1u64 << log_height;
+        prover_memory += height * width as u64 + get_num_nodes_mt(height, stark_struct.merkle_tree_arity);
     }
 
     let gb = (prover_memory as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0);

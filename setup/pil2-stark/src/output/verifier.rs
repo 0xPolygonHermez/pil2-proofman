@@ -111,15 +111,13 @@ fn prepare_verifier_rust(
     lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
     lines.push(format!("        n_bits_ext: {},", stark_info.stark_struct.n_bits_ext));
     lines.push(format!("        arity: {},", merkle_arity));
-    lines.push(format!("        n_fri_queries: {},", stark_info.stark_struct.n_queries));
-    lines.push(format!("        n_fri_steps: {},", stark_info.stark_struct.steps.len()));
+    let fri = stark_info.stark_struct.low_degree_test.expect_fri("the generated Rust verifier");
+    lines.push(format!("        n_fri_queries: {},", fri.n_queries));
+    lines.push(format!("        n_fri_steps: {},", fri.steps.len()));
     lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
-    lines.push(format!(
-        "        n_challenges_total: {},",
-        stark_info.challenges_map.len() + stark_info.stark_struct.steps.len() + 1
-    ));
+    lines.push(format!("        n_challenges_total: {},", stark_info.challenges_map.len() + fri.steps.len() + 1));
 
-    let fri_steps_str: Vec<String> = stark_info.stark_struct.steps.iter().map(|s| s.n_bits.to_string()).collect();
+    let fri_steps_str: Vec<String> = fri.steps.iter().map(|s| s.n_bits.to_string()).collect();
     lines.push(format!("        fri_steps: vec![{}],", fri_steps_str.join(", ")));
 
     lines.push(format!("        hash_commits: {},", stark_info.stark_struct.hash_commits));

@@ -73,10 +73,11 @@ pub fn prepare_pil(
             );
         }
 
-        if stark_struct.n_bits_ext != stark_struct.steps[0].n_bits {
+        let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
+        if stark_struct.n_bits_ext != initial_domain {
             panic!(
-                "starkStruct.nBitsExt and first step of starkStruct have a mismatch (nBitsExt:{} step0:{})",
-                stark_struct.n_bits_ext, stark_struct.steps[0].n_bits
+                "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
+                stark_struct.n_bits_ext, initial_domain
             );
         }
     }

@@ -232,7 +232,7 @@ pub fn gen_recursive_test_setup(
         &stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &crate::types::security::pcs::LowDegreeTest::Fri(fri.clone()),
         0,
         0,
         NAME_FILE,

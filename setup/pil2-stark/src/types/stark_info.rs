@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::types::stark_struct::{StarkStep, StarkStruct};
+use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 
 /// Operand type enum mirroring the C++ opType.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -304,24 +304,19 @@ impl StarkInfo {
     /// Parse a StarkInfo from a serde_json::Value (the parsed starkinfo.json).
     pub fn from_json(j: &Value) -> Result<Self> {
         let ss = j.get("starkStruct").unwrap_or(&Value::Null);
-        let steps: Vec<StarkStep> = ss
-            .get("steps")
-            .and_then(|s| s.as_array())
-            .map(|arr| arr.iter().map(|step| StarkStep { n_bits: get_u64(step, "nBits") as usize }).collect())
-            .unwrap_or_default();
+        let low_degree_test: LowDegreeTest = serde_json::from_value(ss.clone()).unwrap_or_default();
 
         let stark_struct = StarkStruct {
             n_bits: get_u64(ss, "nBits") as usize,
             n_bits_ext: get_u64(ss, "nBitsExt") as usize,
-            n_queries: get_u64(ss, "nQueries") as usize,
             hash_commits: get_bool(ss, "hashCommits"),
             last_level_verification: get_u64(ss, "lastLevelVerification") as usize,
             merkle_tree_arity: get_u64(ss, "merkleTreeArity") as usize,
             transcript_arity: get_u64(ss, "transcriptArity") as usize,
             merkle_tree_custom: get_bool(ss, "merkleTreeCustom"),
             verification_hash_type: get_str(ss, "verificationHashType").to_string(),
-            steps,
             pow_bits: get_u64(ss, "powBits") as usize,
+            low_degree_test,
         };
 
         let custom_commits: Vec<CustomCommit> = j

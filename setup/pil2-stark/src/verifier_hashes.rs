@@ -217,6 +217,7 @@ pub fn geometry_for_family(
         regime: DecodingRegime::Jbr,
     });
     let security = fri.security_params();
+    let fri_struct = stark_struct.low_degree_test.expect_fri("verifier hash accounting");
 
     let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
 
@@ -232,7 +233,7 @@ pub fn geometry_for_family(
         stage_widths: (1..=setup.n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
         n_constants: setup.n_constants as u64,
         custom_commit_widths: setup.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
-        step_n_bits: stark_struct.steps.iter().map(|s| s.n_bits as u64).collect(),
+        step_n_bits: fri_struct.steps.iter().map(|s| s.n_bits as u64).collect(),
         n_publics: setup.n_publics as u64,
         n_evals: n_evals as u64,
         stage_challenges: (2..=setup.n_stages + 1)
@@ -241,7 +242,7 @@ pub fn geometry_for_family(
         stage_air_values: (2..=setup.n_stages + 1)
             .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
             .collect(),
-        final_pol_size: 1u64 << stark_struct.steps.last().map_or(0, |s| s.n_bits),
+        final_pol_size: 1u64 << fri_struct.steps.last().map_or(0, |s| s.n_bits),
     }
 }
 

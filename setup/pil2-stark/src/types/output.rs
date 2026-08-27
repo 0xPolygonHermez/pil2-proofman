@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::types::stark_struct::LowDegreeTest;
 
 /// Matches the starkinfo.json format read by proofman-common StarkInfo.
 /// Fields use camelCase to match JS JSON.stringify output.
@@ -53,14 +54,8 @@ pub struct StarkStructOutput {
     pub hash_commits: bool,
     pub n_bits_ext: usize,
     pub verification_hash_type: String,
-    pub steps: Vec<StepOutput>,
-    pub n_queries: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StepOutput {
-    pub n_bits: usize,
+    #[serde(flatten)]
+    pub low_degree_test: LowDegreeTest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
