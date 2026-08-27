@@ -91,6 +91,11 @@ pub fn fri_terminal_degree(family: &str) -> usize {
 /// trade is worth taking exactly where paths are expensive and the gates are not: with a binary tree
 /// the paths are twice as long, and since the BLAKE3 block interiors host the gates for free, a gate
 /// row costs nothing the air was not already paying for.
+///
+/// blake3 takes one level above the size-based default (which is 4 at arity 2, from
+/// `LAST_LEVEL_NODES = 16`); poseidon takes the default. The blake3 COMPRESSOR takes one more still,
+/// and that is a per-template call rather than a per-family one -- see
+/// `proving_key::recursive::recursive_last_level_verification`.
 pub fn recursive_last_level_verification(family: &str) -> Option<usize> {
     match family {
         "blake3" => Some(5),
