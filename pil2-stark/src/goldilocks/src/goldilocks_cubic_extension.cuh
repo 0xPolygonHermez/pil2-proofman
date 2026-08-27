@@ -198,9 +198,13 @@ public:
     }
     static __device__ __forceinline__ void mul(Element &result, Element &a, uint64_t b)
     {
-        result[0] = a[0] * b;
-        result[1] = a[1] * b;
-        result[2] = a[2] * b;
+        // Wrap b explicitly: a bare `gl64_t * uint64_t` overload-resolves to sppark's
+        // operator*(gl64_t, uint32_t), which truncates b and is miscompiled by
+        // ptxas -O3 (CUDA 13.0, sm_120).
+        gl64_t b_(b);
+        result[0] = a[0] * b_;
+        result[1] = a[1] * b_;
+        result[2] = a[2] * b_;
     }
 
     // ======== DIV ========
