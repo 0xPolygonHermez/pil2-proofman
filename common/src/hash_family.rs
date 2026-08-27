@@ -311,6 +311,28 @@ pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
     }
 }
 
+/// The Rust TRANSCRIPT type for a family, which is not always a sponge over a hash.
+///
+/// `rust_hash_type` answers "which hash", and for the Merkle and grinding slots that is the whole
+/// answer. The transcript slot is different: Poseidon's is a sponge over its permutation, but
+/// BLAKE3's absorbs eight words per compression with the state in the chaining value. Naming the
+/// hash and wrapping it in a sponge produced different challenges from the prover's -- every
+/// challenge, from the first squeeze -- which is why this returns the construction instead.
+pub fn rust_transcript_type(family: &str, arity: u64) -> String {
+    match family {
+        "blake3" => "Blake3Transcript<Goldilocks>".to_string(),
+        _ => format!("Transcript<Goldilocks, {}>", rust_hash_type(family, arity)),
+    }
+}
+
+/// Type names `rust_transcript_type` needs imported, so the generator does not have to parse it.
+pub fn rust_transcript_imports(family: &str, arity: u64) -> Vec<&'static str> {
+    match family {
+        "blake3" => vec!["Blake3Transcript"],
+        _ => vec!["Transcript", rust_hash_type(family, arity)],
+    }
+}
+
 pub fn rust_grinding_type(family: &str) -> &'static str {
     match family {
         "Poseidon1" => "Poseidon1_8",

@@ -335,9 +335,8 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
 
-            let agg_arity = args
-                .agg_arity
-                .unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(&args.hash));
+            let agg_arity =
+                args.agg_arity.unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(&args.hash));
             let compressed_final = args
                 .compressed_final
                 .unwrap_or_else(|| proofman_common::hash_family::compressed_final_by_default(&args.hash));

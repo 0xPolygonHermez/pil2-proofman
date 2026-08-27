@@ -211,7 +211,7 @@ mod tests {
             hash_id,
             merge_copies: true,
             blake3_lanes: None,
-        min_n_bits: None,
+            min_n_bits: None,
         };
         let res = plonk2pil(&bytes, "compressor", &opts).expect("compressor packing failed");
         let r1cs = read_r1cs_from_bytes(&bytes).unwrap();

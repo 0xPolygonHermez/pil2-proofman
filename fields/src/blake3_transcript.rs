@@ -172,6 +172,24 @@ impl<F: PrimeField64> Blake3Transcript<F> {
     }
 }
 
+impl<F: PrimeField64> crate::transcript::TranscriptLike<F> for Blake3Transcript<F> {
+    fn new_transcript() -> Self {
+        Self::new()
+    }
+    fn put(&mut self, inputs: &[F]) {
+        Blake3Transcript::put(self, inputs)
+    }
+    fn get_field(&mut self, value: &mut [F]) {
+        Blake3Transcript::get_field(self, value)
+    }
+    fn get_state(&mut self) -> Vec<F> {
+        Blake3Transcript::get_state(self)
+    }
+    fn get_permutations(&mut self, n: u64, n_bits: u64) -> Vec<u64> {
+        Blake3Transcript::get_permutations(self, n, n_bits)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

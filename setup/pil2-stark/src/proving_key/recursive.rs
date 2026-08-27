@@ -1107,7 +1107,6 @@ pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path:
     bootstrapped_node_path(&probe).unwrap_or_else(|| format!("node_modules/{probe}"))
 }
 
-
 #[cfg(test)]
 mod blowup_tests {
     use super::*;

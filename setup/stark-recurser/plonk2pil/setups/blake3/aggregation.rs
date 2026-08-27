@@ -290,15 +290,8 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     // costs rows the interiors already have free, and enough of them to push the air to the next
     // power of two.
     let n_plonk_rows = plan_plonk_rows(&plonk_constraints, 0, lanes, BLAKE3_CLOCKS).rows_needed;
-    let plan = plan_band_blocks(
-        n_cmul_rows,
-        n_ev_pol4,
-        n_fft4,
-        n_tree_selector4,
-        n_select_val_arity2,
-        n_plonk_rows,
-        lanes,
-    );
+    let plan =
+        plan_band_blocks(n_cmul_rows, n_ev_pol4, n_fft4, n_tree_selector4, n_select_val_arity2, n_plonk_rows, lanes);
     cgi.n_plonk_rows = n_plonk_rows;
 
     // Reported in one place, with the arithmetic visible: "N gate rows" says nothing about which
@@ -635,7 +628,6 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     let mut fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
     fixed_pols.push(FixedPol { name: format!("{airgroup_name}.FLAGS"), index: 0, values: flags_col });
 
-
     SetupResult {
         gate_bands,
         fixed_pols,
@@ -655,8 +647,8 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
 #[cfg(test)]
 mod tests {
     use super::super::{
-        blake3_capacity, blake3_max_blocks, stage1_cols, BLAKE3_CLOCKS, BOUNDARY_COLS_PER_LANE,
-        CLOCK_WRAP_ROWS, PERM_COLS_PER_LANE,
+        blake3_capacity, blake3_max_blocks, stage1_cols, BLAKE3_CLOCKS, BOUNDARY_COLS_PER_LANE, CLOCK_WRAP_ROWS,
+        PERM_COLS_PER_LANE,
     };
     use super::*;
 
@@ -668,8 +660,7 @@ mod tests {
     #[test]
     fn flags_never_share_a_block() {
         use crate::plonk2pil::r1cs::types::CustomGateUse;
-        let uses: Vec<CustomGateUse> =
-            (0..10).map(|i| CustomGateUse { id: i, signals: vec![i as u64] }).collect();
+        let uses: Vec<CustomGateUse> = (0..10).map(|i| CustomGateUse { id: i, signals: vec![i as u64] }).collect();
         // Interleaved on purpose: arrival order is what the r1cs hands over.
         let flags = [11u64, 0, 1, 0, 11, 1, 0, 10, 1, 0];
         let tagged: Vec<_> = uses.iter().zip(flags).map(|(u, f)| (u, f, 0u64)).collect();
@@ -726,8 +717,8 @@ mod tests {
                 } else {
                     2
                 };
-                for r in b * BLAKE3_CLOCKS..(b + 1) * BLAKE3_CLOCKS {
-                    kinds[r][k] = 1;
+                for row in kinds[b * BLAKE3_CLOCKS..(b + 1) * BLAKE3_CLOCKS].iter_mut() {
+                    row[k] = 1;
                 }
             }
             for (row, k) in kinds.iter().enumerate() {
@@ -745,7 +736,7 @@ mod tests {
         const OUT_CLOCKS: usize = 16;
         for blocks in 1..=4usize {
             let n = blocks * BLAKE3_CLOCKS;
-            let clk0 = |r: usize| usize::from(r % BLAKE3_CLOCKS == 0);
+            let clk0 = |r: usize| usize::from(r.is_multiple_of(BLAKE3_CLOCKS));
             for row in 0..n {
                 // ANY = sum over i of CLK_0 shifted by (CLOCKS - 16 + i), read at `row`.
                 let any: usize = (0..OUT_CLOCKS)
@@ -959,7 +950,8 @@ mod tests {
         // A fibonacci compressor.
         let p = plan_band_blocks(3404, 2532, 5088, 4642, 34815, 25023, 4);
         assert_eq!(p.blocks, 71 + 106 + 212 + 97 + 726 + 522);
-        assert_eq!(p.tail_waste, 4 + 24 + 0 + 14 + 33 + 33, "108 rows of 433k");
+        // fft4 wastes nothing; the other five leave a tail. 108 rows of 433k.
+        assert_eq!(p.tail_waste, 4 + 24 + 14 + 33 + 33);
         assert!(p.blocks < 9033, "the band fits well inside the blocks the hashing already needs");
     }
 

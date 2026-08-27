@@ -21,7 +21,6 @@ use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptio
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 
-
 use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;

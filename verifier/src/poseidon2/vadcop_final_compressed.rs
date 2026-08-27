@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::ToString;
-use proofman_fields::{Goldilocks, CubicExtensionField, Field, Poseidon2_8, Poseidon2_16};
+use proofman_fields::{Goldilocks, CubicExtensionField, Field, Poseidon2_8, Poseidon2_16, Transcript};
 use crate::{stark_verify, Boundary, VerifierInfo};
 use crate::VadcopFinalProof;
 
@@ -4447,7 +4447,7 @@ fn verifier_info() -> VerifierInfo {
 }
 
 pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {
-    stark_verify::<Poseidon2_8, Poseidon2_8, Poseidon2_16, Poseidon2_8>(
+    stark_verify::<Poseidon2_8, Poseidon2_8, Transcript<Goldilocks, Poseidon2_16>, Poseidon2_8>(
         &proof.proof_with_publics(),
         vk,
         &verifier_info(),
@@ -4457,7 +4457,7 @@ pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {
 }
 
 pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {
-    stark_verify::<Poseidon2_8, Poseidon2_8, Poseidon2_16, Poseidon2_8>(
+    stark_verify::<Poseidon2_8, Poseidon2_8, Transcript<Goldilocks, Poseidon2_16>, Poseidon2_8>(
         proof,
         vk,
         &verifier_info(),

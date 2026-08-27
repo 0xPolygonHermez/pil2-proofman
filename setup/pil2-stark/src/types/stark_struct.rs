@@ -167,13 +167,10 @@ pub fn default_last_level_verification(arity: usize, n_bits_ext: usize) -> usize
 /// Terminating high is free: the terminal is where the walk STOPS, so folding further only buys
 /// leaf cost for no path saving. The DP is free to end anywhere at or below `final_degree` and will
 /// always choose `final_degree` itself.
-fn optimal_fri_steps(
-    n_bits_ext: usize,
-    final_degree: usize,
-    llv: usize,
-    arity: usize,
-    hash: &str,
-) -> Vec<usize> {
+/// One FRI schedule and what it costs: `((per-query compressions, trees), steps)`.
+type Walk = ((usize, usize), Vec<usize>);
+
+fn optimal_fri_steps(n_bits_ext: usize, final_degree: usize, llv: usize, arity: usize, hash: &str) -> Vec<usize> {
     const FE: usize = 3;
     let block = proofman_common::hash_family::compression_block_elements(hash);
     let log_arity = (arity as f64).log2().round() as usize;
@@ -184,10 +181,9 @@ fn optimal_fri_steps(
     // best[b] = (cost, steps) for the walk from b down to a terminal. Cost is compared as
     // (per-query compressions, number of trees): the tree count only breaks ties, since a tree's
     // root reduction is a fixed handful of hashes against thousands per query.
-    let mut best: Vec<Option<((usize, usize), Vec<usize>)>> = vec![None; n_bits_ext + 1];
+    let mut best: Vec<Option<Walk>> = vec![None; n_bits_ext + 1];
     for b in 0..=n_bits_ext {
-        let mut cur: Option<((usize, usize), Vec<usize>)> =
-            if b <= final_degree { Some(((0, 0), vec![b])) } else { None };
+        let mut cur: Option<Walk> = if b <= final_degree { Some(((0, 0), vec![b])) } else { None };
         for d in 1..=b {
             let nb = b - d;
             let Some((sub_cost, sub_steps)) = best[nb].clone() else { continue };
@@ -313,10 +309,7 @@ mod optimal_fri_tests {
     fn it_never_loses_to_a_uniform_fold() {
         const FE: usize = 3;
         let cost = |steps: &[usize]| -> usize {
-            steps
-                .windows(2)
-                .map(|w| ((1usize << (w[0] - w[1])) * FE).div_ceil(8) + w[1].saturating_sub(4))
-                .sum()
+            steps.windows(2).map(|w| ((1usize << (w[0] - w[1])) * FE).div_ceil(8) + w[1].saturating_sub(4)).sum()
         };
         for ext in 12..=24 {
             let solved = optimal_fri_steps(ext, 7, 4, 2, "blake3");

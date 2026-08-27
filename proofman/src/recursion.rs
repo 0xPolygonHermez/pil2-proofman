@@ -1135,7 +1135,11 @@ pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
         return n_cols;
     }
     let map_cols = header[3];
-    if map_cols > 0 && map_cols < n_cols { map_cols } else { n_cols }
+    if map_cols > 0 && map_cols < n_cols {
+        map_cols
+    } else {
+        n_cols
+    }
 }
 
 fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {

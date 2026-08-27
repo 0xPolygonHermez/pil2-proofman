@@ -151,8 +151,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
 
             // Zero when the stage is absent: nothing will ever be written into a buffer for it.
             let vadcop_final_compressed_trace_size = setup_vadcop_final_compressed.as_ref().map_or(0, |s| {
-                s.stark_info.map_sections_n["cm1"] * (1 << s.stark_info.stark_struct.n_bits)
-                    + s.stark_info.n_publics
+                s.stark_info.map_sections_n["cm1"] * (1 << s.stark_info.stark_struct.n_bits) + s.stark_info.n_publics
             });
 
             let max_const_size = sctx_compressor
@@ -190,9 +189,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 // Its OWN trace size, not vadcop_final's. The two airs have had identical geometry
                 // so far, which is why pairing the compressed buffer with the uncompressed trace
                 // never showed; it would undersize the buffer the moment they diverged.
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| {
-                    c.prover_buffer_size as usize + vadcop_final_compressed_trace_size as usize
-                }));
+                .max(
+                    setup_vadcop_final_compressed
+                        .as_ref()
+                        .map_or(0, |c| c.prover_buffer_size as usize + vadcop_final_compressed_trace_size as usize),
+                );
 
             // This floors every non-recursive GPU stream class, so which term dominates decides
             // whether a regular class fits at all.

@@ -352,8 +352,7 @@ mod tests {
     /// must not consume a slot -- pushing a placeholder for it would shift every later column.
     #[test]
     fn an_inline_scalar_contributes_nothing() {
-        let symbols =
-            vec![fixed_sym("A.SEL", 0, &[]), fixed_sym("A.C", 1, &[2]), fixed_sym("A.CLK", 2, &[])];
+        let symbols = vec![fixed_sym("A.SEL", 0, &[]), fixed_sym("A.C", 1, &[2]), fixed_sym("A.CLK", 2, &[])];
         let pols = vec![pol("A.C", 0, 10), pol("A.C", 1, 11)];
 
         let out = reorder_plonk_pols_for_pilout(&pols, &symbols, 0, 0);

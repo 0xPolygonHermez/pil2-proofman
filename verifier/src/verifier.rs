@@ -7,7 +7,7 @@ use num_traits::Float;
 
 use proofman_fields::{
     intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
-    Transcript,
+    TranscriptLike,
 };
 
 #[cfg(feature = "parallel")]
@@ -104,7 +104,7 @@ pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
 }
 
 #[allow(clippy::type_complexity)]
-pub fn stark_verify<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
+pub fn stark_verify<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &VerifierInfo,
@@ -124,7 +124,7 @@ pub fn stark_verify<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
 where
     LeafHash: Hash<Goldilocks>,
     CompressionHash: Hash<Goldilocks>,
-    TranscriptHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
     if proof.is_empty() || vk.len() < 4 {
@@ -354,14 +354,13 @@ where
     let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
-    let mut transcript: Transcript<Goldilocks, TranscriptHash> = Transcript::<Goldilocks, TranscriptHash>::new();
+    let mut transcript: TranscriptT = TranscriptT::new_transcript();
     transcript.put(&root_c);
     if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics: Transcript<Goldilocks, TranscriptHash> =
-                Transcript::<Goldilocks, TranscriptHash>::new();
+            let mut transcript_publics: TranscriptT = TranscriptT::new_transcript();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash[0..4]);
@@ -382,8 +381,7 @@ where
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals: Transcript<Goldilocks, TranscriptHash> =
-            Transcript::<Goldilocks, TranscriptHash>::new();
+        let mut transcript_evals: TranscriptT = TranscriptT::new_transcript();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }
@@ -409,8 +407,7 @@ where
                     transcript.put(&final_pol[j as usize].value);
                 }
             } else {
-                let mut transcript_final_pol: Transcript<Goldilocks, TranscriptHash> =
-                    Transcript::<Goldilocks, TranscriptHash>::new();
+                let mut transcript_final_pol: TranscriptT = TranscriptT::new_transcript();
                 for j in 0..final_pol_size {
                     transcript_final_pol.put(&final_pol[j as usize].value);
                 }
@@ -439,8 +436,7 @@ where
         v_error!("Proof of work verification failed");
         return false;
     }
-    let mut transcript_permutation: Transcript<Goldilocks, TranscriptHash> =
-        Transcript::<Goldilocks, TranscriptHash>::new();
+    let mut transcript_permutation: TranscriptT = TranscriptT::new_transcript();
     transcript_permutation.put(&challenges[last_challenge_index].value);
     transcript_permutation.put(&[nonce]);
     let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);

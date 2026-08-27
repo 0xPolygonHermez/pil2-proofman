@@ -151,7 +151,6 @@ pub fn verifier(hash_id: &str) -> &'static dyn Verifier {
     }
 }
 
-
 #[cfg(test)]
 mod factory_tests {
     /// Every family the setup can produce a proving key for needs a verifier here, or proving

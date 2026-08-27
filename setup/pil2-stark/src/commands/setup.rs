@@ -118,7 +118,15 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // written once at the end after hasCompressor flags are known.
     write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
     if !opts.recursive {
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash, opts.agg_arity, opts.compressed_final)?;
+        write_global_info_json(
+            &pilout,
+            &pilout_name,
+            &opts.build_dir,
+            &settings_map,
+            &opts.hash,
+            opts.agg_arity,
+            opts.compressed_final,
+        )?;
     }
 
     // Thread pool for per-AIR processing.  setup_jobs > 1 enables parallel AIR
@@ -353,7 +361,14 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash, opts.agg_arity, opts.compressed_final);
+        let global_info_base = build_global_info_json(
+            &pilout,
+            &pilout_name,
+            &settings_map,
+            &opts.hash,
+            opts.agg_arity,
+            opts.compressed_final,
+        );
         let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -363,7 +378,15 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for air_name in &airs_with_compressor {
             final_settings.set_has_compressor(air_name);
         }
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash, opts.agg_arity, opts.compressed_final)?;
+        write_global_info_json(
+            &pilout,
+            &pilout_name,
+            &opts.build_dir,
+            &final_settings,
+            &opts.hash,
+            opts.agg_arity,
+            opts.compressed_final,
+        )?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 

@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-
 use tracing::info;
 
 use crate::expr::expression::{ExprChild, Expression};
@@ -214,11 +213,8 @@ fn describe_im_pols(expressions: &[Expression], chosen: &ImPolsResult, symbols: 
 /// source rather than as arena indices.
 fn symbol_name(symbols: &[SymbolInfo], sym_type: &str, e: &Expression) -> String {
     let by_pol = e.id.and_then(|id| symbols.iter().find(|s| s.pol_id == Some(id) && s.sym_type == sym_type));
-    let by_stage = || {
-        symbols
-            .iter()
-            .find(|s| s.sym_type == sym_type && s.stage == Some(e.stage) && s.stage_id == e.stage_id)
-    };
+    let by_stage =
+        || symbols.iter().find(|s| s.sym_type == sym_type && s.stage == Some(e.stage) && s.stage_id == e.stage_id);
     match by_pol.or_else(by_stage) {
         Some(sym) => match sym.idx {
             Some(i) if sym.lengths.as_ref().is_some_and(|l| !l.is_empty()) => format!("{}[{}]", sym.name, i),

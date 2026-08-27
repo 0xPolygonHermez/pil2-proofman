@@ -167,7 +167,8 @@ mod blake3_tests {
     /// elements, every Merkle path in a blake3 proof silently stops verifying.
     #[test]
     fn blake3_node_and_leaf_agree_at_width_8() {
-        let input: [Goldilocks; 8] = core::array::from_fn(|i| Goldilocks::from_u64(0x9E3779B97F4A7C15u64.wrapping_mul(i as u64 + 1)));
+        let input: [Goldilocks; 8] =
+            core::array::from_fn(|i| Goldilocks::from_u64(0x9E3779B97F4A7C15u64.wrapping_mul(i as u64 + 1)));
         let leaf = <Blake3_8 as Hash<Goldilocks>>::linear_hash(&input);
         let mut state = input;
         <Blake3_8 as Hash<Goldilocks>>::hash(&mut state);

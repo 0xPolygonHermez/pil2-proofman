@@ -40,7 +40,8 @@ fn prepare_verifier_rust(
     let merkle_arity = stark_info.stark_struct.merkle_tree_arity;
     let transcript_arity = stark_info.stark_struct.transcript_arity;
     let merkle_hash_type = hash_family::rust_hash_type(hash_id, merkle_arity as u64);
-    let transcript_hash_type = hash_family::rust_hash_type(hash_id, transcript_arity as u64);
+    // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
+    let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
     let mut numbers_q = Vec::new();
     let q_result =
@@ -67,7 +68,10 @@ fn prepare_verifier_rust(
     lines.push("use alloc::vec::Vec;".to_string());
     lines.push("use alloc::string::ToString;".to_string());
     let mut hash_imports: Vec<&str> = Vec::new();
-    for ht in [merkle_hash_type, transcript_hash_type, grinding_type] {
+    for ht in [merkle_hash_type, grinding_type]
+        .into_iter()
+        .chain(hash_family::rust_transcript_imports(hash_id, transcript_arity as u64))
+    {
         if !hash_imports.contains(&ht) {
             hash_imports.push(ht);
         }
@@ -178,7 +182,7 @@ fn prepare_verifier_rust(
     lines.push("}\n".to_string());
 
     // verify function. Generics: leaf, compression, transcript, grinding hashes.
-    let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_hash_type}, {grinding_type}");
+    let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_type}, {grinding_type}");
     if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(

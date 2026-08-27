@@ -4,9 +4,7 @@ use proofman_starks_lib_c::compute_const_tree_c;
 /// What the C++ side will require the const file to be, from the starkinfo it reads:
 /// one Goldilocks element per constant per row.
 fn expected_const_bytes(starkinfo: &serde_json::Value) -> Result<(u64, usize, u64)> {
-    let n_bits = starkinfo["starkStruct"]["nBits"]
-        .as_u64()
-        .context("starkinfo has no starkStruct.nBits")?;
+    let n_bits = starkinfo["starkStruct"]["nBits"].as_u64().context("starkinfo has no starkStruct.nBits")?;
     let n_constants = starkinfo["nConstants"].as_u64().context("starkinfo has no nConstants")? as usize;
     Ok((n_bits, n_constants, n_constants as u64 * 8 * (1u64 << n_bits)))
 }
@@ -30,9 +28,8 @@ pub fn compute_const_tree(const_path: &str, starkinfo_path: &str, verkey_path: &
     .with_context(|| format!("Failed to parse starkinfo {starkinfo_path}"))?;
     let (n_bits, n_constants, expected) = expected_const_bytes(&starkinfo)?;
 
-    let actual = std::fs::metadata(const_path)
-        .with_context(|| format!("Failed to stat const file {const_path}"))?
-        .len();
+    let actual =
+        std::fs::metadata(const_path).with_context(|| format!("Failed to stat const file {const_path}"))?.len();
     if actual != expected {
         let rows = if n_constants > 0 { actual / (n_constants as u64 * 8) } else { 0 };
         bail!(
