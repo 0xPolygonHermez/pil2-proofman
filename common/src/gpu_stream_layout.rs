@@ -65,6 +65,8 @@ impl StreamLayout {
 /// largest first — the running `work` is the total of every air at least as large as this one;
 /// [`plan_stream_layout`] sorts before calling.
 fn makespan_floor(basic: &[StreamClass], basic_sizes_desc: &[usize]) -> u128 {
+    debug_assert!(basic_sizes_desc.windows(2).all(|w| w[0] >= w[1]), "basic_sizes_desc must be descending");
+
     let (mut work, mut worst) = (0u128, 0u128);
     for &air in basic_sizes_desc {
         work += air as u128;
