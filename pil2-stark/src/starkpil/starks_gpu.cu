@@ -724,7 +724,7 @@ __global__ void computeEvals_v2(
         for (uint32_t offset = 16; offset > 0; offset >>= 1) {
             Goldilocks3GPU::Element other;
             for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-                other[i][0] = __shfl_down_sync(0xffffffffu, sum[i][0], offset);
+                other[i][0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)sum[i][0], offset);
             if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
         }
         if (lane == 0) Goldilocks3GPU::copy(warp_sum[warp], sum);
@@ -735,7 +735,7 @@ __global__ void computeEvals_v2(
             for (uint32_t offset = 16; offset > 0; offset >>= 1) {
                 Goldilocks3GPU::Element other;
                 for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-                    other[i][0] = __shfl_down_sync(0xffffffffu, sum[i][0], offset);
+                    other[i][0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)sum[i][0], offset);
                 if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
             }
             if (lane == 0) {
