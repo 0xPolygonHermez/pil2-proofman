@@ -210,23 +210,11 @@ fn emit_op(instr: &Instr, ir: &Ir, declared: &HashSet<u64>) -> (Vec<String>, boo
     } else {
         "g3 "
     };
-    if instr.op == "mul" && dst_dim == 1 {
-        let small_const = match (&instr.a, &instr.b) {
-            (Operand::Num(v), other) | (other, Operand::Num(v)) if *v <= u32::MAX as u64 => Some((*v, other)),
-            _ => None,
-        };
-        if let Some((constant, other)) = small_const {
-            let other_val = match other.as_tmp() {
-                Some((id, _)) => format!("t{id}"),
-                None => {
-                    lines.extend(load_lines(other, &format!("a{}", instr.idx), ir));
-                    format!("a{}", instr.idx)
-                }
-            };
-            lines.push(format!("  {decl}{dst} = {other_val} * uint32_t({constant}u);"));
-            return (lines, is_out);
-        }
-    }
+    // NOTE: do NOT emit `x * uint32_t(c)` for small constants. sppark's
+    // gl64_t::mul(uint32_t) PTX is miscompiled by ptxas -O3 (CUDA 13.0, sm_120):
+    // in large fused kernels its 32-bit carry-chain rewrite corrupts the result
+    // for some inputs (repro: scratchpad micro.cu, correct at -Xptxas -O0). The
+    // full 64-bit gl64_t multiply below is unaffected.
     let a_val = match instr.a.as_tmp() {
         Some((id, _)) => format!("t{id}"),
         None => {
