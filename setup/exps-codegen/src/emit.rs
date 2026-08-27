@@ -447,8 +447,13 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
   const uint64_t BLK = {GEN_BLK}ull;
 {guard}
 {prologue}
+  // Grid sets how many WAVES the domain is split into, and each wave waits for the previous one
+  // (shared scratch). Occupancy saturates well below the scratch limit, so take what the scratch
+  // allows but never more blocks than there is work for: extra waves only add serialization.
   uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
-  if (grid > 512ull) grid = 512ull;
+  const uint64_t need = (NExt + BLK - 1) / BLK;
+  if (grid > need) grid = need;
+  if (grid < 1ull) grid = 1ull;
   const uint64_t WAVE = grid * BLK;
   for (uint64_t base=0; base<NExt; base+=WAVE) {{
 {}
@@ -769,8 +774,10 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     unsigned long long mode, unsigned long long scalar,
     unsigned long long stagePos, unsigned long long stageCols,
     unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+  // Empirical cap, not a hardware bound: challenge powers are rebuilt per THREAD, so a bigger
+  // grid trades rows per thread against redundant prologue work. Per-air tuning: autotune.rs.
   uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
-  if (grid > 512ull) grid = 512ull;
+  if (grid > 2048ull) grid = 2048ull;
   if (grid < 1ull) grid = 1ull;
   switch (expId) {{
 {}
