@@ -6,9 +6,8 @@
 //! and *regular*, sized to whichever smaller air requirement carves best. A proof runs on any stream
 //! at least as large as it needs, so an air between the two sizes has only the large streams.
 //!
-//! The two sizes are fixed by the airs — the largest, and whichever smaller one hosts the most work
-//! per byte — so only the split of streams between them is chosen, by [`makespan_floor`], leaving no
-//! class short of streams for the work it must run. Whatever they leave becomes recursive streams.
+//! The large size is fixed by the airs; the regular size and the split of streams between the two are
+//! searched together by [`makespan_floor`]. Whatever they leave becomes recursive streams.
 //!
 //! Every class is floored at the largest compressor / vadcop_final / recursive launch, since those
 //! share the non-recursive streams with basics (see `RecursiveScheduler::next_nonrecursive`).
@@ -62,13 +61,14 @@ impl StreamLayout {
 ///
 /// Counting hosted work instead rates `1 x 14.5 + 4 x 6.23` best on a 40 GB card: half the work — the
 /// 14.5 and 12 GB airs — waits on the single large stream while the cheap airs get five.
-/// Scaled, not divided, so the compare stays in exact integers.
+/// Scaled, not divided, so the compare stays in exact integers. `basic_sizes_desc` must be sorted
+/// largest first — the running `work` is the total of every air at least as large as this one;
+/// [`plan_stream_layout`] sorts before calling.
 fn makespan_floor(basic: &[StreamClass], basic_sizes_desc: &[usize]) -> u128 {
-    let mut airs: Vec<usize> = basic_sizes_desc.to_vec();
-    airs.sort_unstable_by(|a, b| b.cmp(a));
+    debug_assert!(basic_sizes_desc.windows(2).all(|w| w[0] >= w[1]), "basic_sizes_desc must be descending");
 
     let (mut work, mut worst) = (0u128, 0u128);
-    for air in airs {
+    for &air in basic_sizes_desc {
         work += air as u128;
         // At least one: the large class covers every air.
         let streams: u128 = basic.iter().filter(|c| air <= c.size).map(|c| c.count as u128).sum();
@@ -77,15 +77,21 @@ fn makespan_floor(basic: &[StreamClass], basic_sizes_desc: &[usize]) -> u128 {
     worst
 }
 
+/// How many streams of `size` fit in `room`, at most `cap`. A size of 0 means no such class.
+fn n_fit(room: usize, size: usize, cap: usize) -> usize {
+    room.checked_div(size).map_or(0, |n| cap.min(n))
+}
+
 /// Cut `budget` (in field elements, per GPU) into a large and a regular stream class.
 ///
-/// `basic_sizes_desc` is the per-air basic requirement, largest first; duplicates weigh twice.
-/// `class_floor` is the smallest a basic class may be: it must hold anything besides a basic proof
-/// that can land on one of these streams — today the compressor/vadcop_final launches that share
-/// them. `recursive_size` sizes the recursive1/recursive2 class.
+/// `basic_sizes` is the per-air basic requirement in any order — sorted here, since the floor reads
+/// it largest first; duplicates weigh twice. `class_floor` is the smallest a basic class may be: it
+/// must hold anything besides a basic proof that can land on one of these streams — today the
+/// compressor/vadcop_final launches that share them. `recursive_size` sizes the recursive1/recursive2
+/// class.
 ///
-/// The large size is fixed by the biggest air, the regular size by the bulk below it. Only the split of streams between the two is searched, by [`makespan_floor`],
-/// and among the carves that come close enough to it the most large-heavy one wins (see
+/// The large size is fixed by the biggest air; the regular size and the split of streams between the
+/// two are searched by [`makespan_floor`], the most large-heavy carve winning ties (see
 /// [`LARGE_HEAVY_SLACK`]).
 ///
 /// Basic streams are funded first — they are the only home for basics *and* compressors — and
@@ -94,7 +100,7 @@ fn makespan_floor(basic: &[StreamClass], basic_sizes_desc: &[usize]) -> u128 {
 /// Returns `None` when the budget cannot even hold one stream for the largest air.
 pub fn plan_stream_layout(
     budget: usize,
-    basic_sizes_desc: &[usize],
+    basic_sizes: &[usize],
     class_floor: usize,
     recursive_size: usize,
     max_basic_streams: usize,
@@ -103,11 +109,13 @@ pub fn plan_stream_layout(
     if max_basic_streams == 0 {
         return None;
     }
+    // [`makespan_floor`] reads the airs largest first; normalize once rather than trust the caller.
+    let mut basic_sizes_desc: Vec<usize> = basic_sizes.to_vec();
+    basic_sizes_desc.sort_unstable_by(|a, b| b.cmp(a));
 
     // The candidate sizes are the distinct air requirements, each raised to the floor so either class
     // can also take a compressor and any contributions commit. Largest first.
     let mut sizes: Vec<usize> = basic_sizes_desc.iter().map(|&s| s.max(class_floor)).collect();
-    sizes.sort_unstable_by(|a, b| b.cmp(a));
     sizes.dedup();
 
     // The large class must hold anything that can land on a non-recursive stream.
@@ -119,57 +127,50 @@ pub fn plan_stream_layout(
     // The first large stream ignores the recursive floor — without it nothing can run at all.
     let for_extra_streams = budget.saturating_sub(recursive_size * RECURSIVE_STREAM_FLOOR.min(max_recursive_streams));
 
-    // The regular class: of the sizes a stream can actually be funded at, the one hosting the most
-    // work per byte it costs. Work rather than airs, so one tiny table air cannot win on cheapness;
-    // per byte, so a size just under the largest air cannot either — 12 GB beside a 14.5 GB air costs
-    // nearly a large stream and buys one more air. 0 means no candidate, so the carve is uniform.
-    let hosted_work = |size: usize| basic_sizes_desc.iter().filter(|&&air| air <= size).sum::<usize>() as u128;
-    let regular = sizes
-        .iter()
-        .skip(1)
-        .copied()
-        .filter(|&s| large + s <= for_extra_streams)
-        .max_by(|&a, &b| (hosted_work(a) * b as u128).cmp(&(hosted_work(b) * a as u128)).then(a.cmp(&b)))
-        .unwrap_or(0);
+    // Every air requirement a second class could be funded at, plus 0 for the uniform carve. Searched,
+    // not picked up front: streams afforded and airs stranded are exactly what the floor measures.
+    let regulars = sizes.iter().skip(1).copied().filter(|&s| large + s <= for_extra_streams).chain([0]);
 
-    // One carve per large-stream count; regulars take whatever that leaves.
-    let carves: Vec<(u128, StreamLayout)> = (1..=max_basic_streams)
-        .filter_map(|n_large| {
-            let spent = n_large * large;
-            if spent > budget || (n_large > 1 && spent > for_extra_streams) {
-                return None;
-            }
-            let n_regular = match regular {
-                0 => 0,
-                size => (max_basic_streams - n_large).min(for_extra_streams.saturating_sub(spent) / size),
-            };
+    // The slack compares splits of the same two classes, so it stays inside one candidate size.
+    let best_for = |regular: usize| -> Option<(u128, StreamLayout)> {
+        let carves: Vec<(u128, StreamLayout)> = (1..=max_basic_streams)
+            .filter_map(|n_large| {
+                let spent = n_large * large;
+                if spent > budget || (n_large > 1 && spent > for_extra_streams) {
+                    return None;
+                }
+                let n_regular = n_fit(for_extra_streams.saturating_sub(spent), regular, max_basic_streams - n_large);
 
-            let mut basic = vec![StreamClass { size: large, count: n_large }];
-            if n_regular > 0 {
-                basic.push(StreamClass { size: regular, count: n_regular });
-            }
-            let remaining = budget - spent - n_regular * regular;
-            let n_recursive = match recursive_size {
-                0 => 0,
-                size => max_recursive_streams.min(remaining / size),
-            };
-            Some((
-                makespan_floor(&basic, basic_sizes_desc),
-                StreamLayout {
-                    basic,
-                    recursive: StreamClass { size: recursive_size, count: n_recursive },
-                    unused: remaining - n_recursive * recursive_size,
-                },
-            ))
+                let mut basic = vec![StreamClass { size: large, count: n_large }];
+                if n_regular > 0 {
+                    basic.push(StreamClass { size: regular, count: n_regular });
+                }
+                let remaining = budget - spent - n_regular * regular;
+                let n_recursive = n_fit(remaining, recursive_size, max_recursive_streams);
+                Some((
+                    makespan_floor(&basic, &basic_sizes_desc),
+                    StreamLayout {
+                        basic,
+                        recursive: StreamClass { size: recursive_size, count: n_recursive },
+                        unused: remaining - n_recursive * recursive_size,
+                    },
+                ))
+            })
+            .collect();
+        let best = carves.iter().map(|(floor, _)| *floor).min()?;
+        carves
+            .into_iter()
+            .filter(|(floor, _)| *floor as f64 <= best as f64 * LARGE_HEAVY_SLACK)
+            .max_by_key(|(_, layout)| (layout.basic[0].count, layout.recursive.count))
+    };
+
+    // Ties go large-heavy, then to more streams, then (iteration order) to the larger size —
+    // shrinking a class the floor is indifferent to only exiles an air.
+    regulars
+        .filter_map(best_for)
+        .min_by_key(|(floor, layout)| {
+            (*floor, std::cmp::Reverse(layout.basic[0].count), std::cmp::Reverse(layout.n_basic_streams()))
         })
-        .collect();
-
-    // The most large-heavy carve that comes close enough to the floor to have earned it.
-    let best = carves.iter().map(|(floor, _)| *floor).min()?;
-    carves
-        .into_iter()
-        .filter(|(floor, _)| *floor as f64 <= best as f64 * LARGE_HEAVY_SLACK)
-        .max_by_key(|(_, layout)| (layout.basic[0].count, layout.recursive.count))
         .map(|(_, layout)| layout)
 }
 
@@ -198,6 +199,26 @@ mod tests {
             max_recursive,
         )
         .expect("zisk budget holds the largest air")
+    }
+
+    /// The air requirements arrive in whatever order the caller holds them; the carve must not
+    /// depend on it, since the floor reads them largest first.
+    #[test]
+    fn the_input_order_of_the_airs_does_not_matter() {
+        let sorted: Vec<usize> = ZISK_BASIC_GB.iter().copied().map(gb).collect();
+        // Ascending, and an arbitrary rotation of it: the outlier neither first nor last.
+        let ascending: Vec<usize> = sorted.iter().rev().copied().collect();
+        let mut shuffled = sorted.clone();
+        shuffled.rotate_left(5);
+
+        for budget in [20.0, 26.15, 33.0, 40.0, 60.0, 80.0, 200.0] {
+            let plan = |sizes: &[usize]| {
+                plan_stream_layout(gb(budget), sizes, gb(ZISK_COMPRESSOR_GB), gb(ZISK_RECURSIVE_GB), 16, 10)
+            };
+            let expected = plan(&sorted);
+            assert_eq!(plan(&ascending), expected, "budget {budget}: ascending input carved differently");
+            assert_eq!(plan(&shuffled), expected, "budget {budget}: shuffled input carved differently");
+        }
     }
 
     /// The carve is two sizes at most, whatever the budget or the air distribution.
@@ -477,19 +498,20 @@ mod tests {
 
     /// Same with aggregation: the compressor floor only bounds a class from below.
     #[test]
-    fn aggregation_also_sizes_the_regular_class_at_the_bulk() {
+    fn aggregation_sizes_the_regular_class_so_no_air_is_stranded() {
         let sizes = [gb(14.5), gb(12.0), gb(6.23), gb(5.9), gb(5.4), gb(3.8), gb(2.6), gb(1.5)];
         let layout = plan_stream_layout(gb(29.05), &sizes, gb(6.24), gb(1.33), 20, 10).unwrap();
+        // A 6.24 regular affords one more stream but strands the 12 GB air: 2.1% worse floor.
         assert_eq!(
             layout.basic,
-            vec![StreamClass { size: gb(14.5), count: 1 }, StreamClass { size: gb(6.24), count: 2 }]
+            vec![StreamClass { size: gb(14.5), count: 1 }, StreamClass { size: gb(12.0), count: 1 }]
         );
     }
 
-    /// No class may be so small it hosts less than half the airs — the old carve bought 7 x 1.50 GB
-    /// streams hosting 1 of 8, and every real proof serialized on the one large stream.
+    /// No *fleet* of streams may host less than half the airs — the old carve bought 7 x 1.50 GB ones
+    /// hosting 1 of 8. A single top-up stream is the opposite shape and can be optimal.
     #[test]
-    fn no_carve_buys_a_class_below_half_the_airs() {
+    fn no_carve_buys_a_fleet_below_half_the_airs() {
         let shapes: [&[f64]; 3] =
             [&[14.5, 12.0, 6.23, 5.9, 5.4, 3.8, 2.6, 1.5], ZISK_BASIC_GB, &[14.57, 5.9, 3.8, 2.6, 0.75]];
         for shape in shapes {
@@ -497,7 +519,7 @@ mod tests {
             for budget in [26.0, 26.15, 29.05, 33.0, 40.0, 60.0, 80.0] {
                 for (floor, rec, max_rec) in [(0.0, 0.0, 0), (ZISK_COMPRESSOR_GB, ZISK_RECURSIVE_GB, 10)] {
                     let layout = plan_stream_layout(gb(budget), &sizes, gb(floor), gb(rec), 20, max_rec).unwrap();
-                    for class in &layout.basic {
+                    for class in layout.basic.iter().filter(|c| c.count > 1) {
                         assert!(
                             hosted(class, &sizes) * 2 >= sizes.len(),
                             "budget {budget} floor {floor}: class {class:?} hosts {} of {}: {:?}",

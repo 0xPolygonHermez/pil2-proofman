@@ -2679,7 +2679,7 @@ where
                                 }
                             };
 
-                            if !first_contribution_logged.swap(true, Ordering::Relaxed) {
+                            if pctx_clone.gpu && !first_contribution_logged.swap(true, Ordering::Relaxed) {
                                 tracing::info!("First GPU contribution queued");
                             }
 
