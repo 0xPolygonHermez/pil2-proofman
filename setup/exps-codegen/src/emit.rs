@@ -11,6 +11,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
 pub const GEN_BLK: u64 = 256;
+/// Grid cap for the trace-domain expression launchers (singles AND pairs — same work class, same
+/// prologue-vs-rows tradeoff, one policy). Empirical, not a hardware bound: challenge powers are
+/// rebuilt per THREAD, so a bigger grid trades rows per thread against redundant prologue work.
+/// Per-air tuning belongs in autotune.rs.
+pub const EXPR_GRID_CAP: u64 = 2048;
 /// Chunk kernels bundled per .cu — amortizes the gen_common.cuh header parse across the batch.
 pub const CHUNKS_PER_TU: usize = 8;
 
@@ -774,10 +779,9 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     unsigned long long mode, unsigned long long scalar,
     unsigned long long stagePos, unsigned long long stageCols,
     unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
-  // Empirical cap, not a hardware bound: challenge powers are rebuilt per THREAD, so a bigger
-  // grid trades rows per thread against redundant prologue work. Per-air tuning: autotune.rs.
+  // Cap rationale: see EXPR_GRID_CAP in emit.rs (shared with the pair launcher below).
   uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
-  if (grid > 2048ull) grid = 2048ull;
+  if (grid > {EXPR_GRID_CAP}ull) grid = {EXPR_GRID_CAP}ull;
   if (grid < 1ull) grid = 1ull;
   switch (expId) {{
 {}
@@ -785,7 +789,7 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
   }}
 }}
 extern "C" int exps_launch_expr_pair(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
-  uint64_t grid=(N+{GEN_BLK}ull-1)/{GEN_BLK}ull; if(grid>512ull)grid=512ull; if(grid<1ull)grid=1ull;
+  uint64_t grid=(N+{GEN_BLK}ull-1)/{GEN_BLK}ull; if(grid>{EXPR_GRID_CAP}ull)grid={EXPR_GRID_CAP}ull; if(grid<1ull)grid=1ull;
 {}
   return 0;
 }}
