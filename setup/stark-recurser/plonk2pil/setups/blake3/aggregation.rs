@@ -27,21 +27,18 @@
 //! The rows the interior of a BLAKE3 block leaves free are plonk rows like any other -- `PLONK` is
 //! 1 there -- so they are spent before any dedicated row is added.
 
-use super::{blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, PilTemplateParams, BAND_COLS, BLAKE3_CLOCKS};
+use super::{
+    blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, BandLayout, PilTemplateParams, AGGREGATOR_LAYOUT,
+    BLAKE3_CLOCKS, CLOCK_WRAP_ROWS,
+};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use crate::plonk2pil::r1cs::to_plonk::{
     blake3_compress_gate_uses, ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, PlonkConstraint,
 };
 use crate::plonk2pil::r1cs::types::{FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, mulp};
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
-
-/// Coefficient columns: `C[5]`, one shared `q0`.
-const C_COLS: usize = 5;
-
-/// Complex multiplications per row: `a[0..9]` and `a[9..18]`.
-const CMUL_PER_ROW: usize = 2;
 
 fn rand_hex() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -82,12 +79,18 @@ pub fn plonk_rows_inside_blocks(blocks: usize, lanes: usize, clocks: usize) -> u
 /// five of their coefficients agree, which is exactly `ckey`. A key with 13 constraints takes three
 /// rows, the last one two-thirds empty -- that waste is the price of one `q` instead of two, and it
 /// is visible in `rows_needed` rather than hidden.
-pub fn plan_plonk_rows(constraints: &[PlonkConstraint], blocks: usize, lanes: usize, clocks: usize) -> PlonkPlan {
+pub fn plan_plonk_rows(
+    constraints: &[PlonkConstraint],
+    blocks: usize,
+    lanes: usize,
+    clocks: usize,
+    gates_per_row: usize,
+) -> PlonkPlan {
     let mut per_key: HashMap<String, usize> = HashMap::new();
     for c in constraints {
         *per_key.entry(ckey(c)).or_insert(0) += 1;
     }
-    let rows_needed: usize = per_key.values().map(|n| n.div_ceil(PLONK_GATES_PER_ROW)).sum();
+    let rows_needed: usize = per_key.values().map(|n| n.div_ceil(gates_per_row)).sum();
 
     let available = plonk_rows_inside_blocks(blocks, lanes, clocks);
     let rows_in_blocks = rows_needed.min(available);
@@ -100,11 +103,11 @@ pub fn plan_plonk_rows(constraints: &[PlonkConstraint], blocks: usize, lanes: us
 /// `[C0..C4]` on the gate row and `[C0'..C3']` on the next. Poseidon has `C[10]` and needs no
 /// straddle, which is why its packer writes `cv[i]` directly -- copying that indexing here silently
 /// put fft_type-2's three twiddles into `constFFT[0..3]` instead of `constFFT[6..9]`.
-fn fft4_const_slot(i: usize) -> (usize, usize) {
-    if i < C_COLS {
+fn fft4_const_slot(i: usize, c_cols: usize) -> (usize, usize) {
+    if i < c_cols {
         (i, 0)
     } else {
-        (i - C_COLS, 1)
+        (i - c_cols, 1)
     }
 }
 
@@ -123,23 +126,21 @@ pub struct BandPlan {
 /// number of blocks and fills their interiors. Block granularity is what keeps the AIR's selectors
 /// expressible as repetitions -- see the comment on them in `blake3/aggregator.pil` -- and its only
 /// cost is the tail of each circuit's last block.
-pub fn plan_band_blocks(
-    cmul_rows: usize,
-    ev_pol4: usize,
-    fft4: usize,
-    tree: usize,
-    sel_val: usize,
-    plonk_rows: usize,
-    lanes: usize,
-) -> BandPlan {
+/// `rows` is `[cmul, evPol4, fft4, treeSelector4, selectValArity2, plonk]` -- the order the PIL lays
+/// the bands out in, which is also `CompressorDemand::band_rows_by_circuit`. One array rather than
+/// six positional arguments: the order is load-bearing and six same-typed parameters hide a swap.
+pub fn plan_band_blocks(rows: [usize; 6], lanes: usize, layout: &BandLayout) -> BandPlan {
+    let [cmul_rows, ev_pol4, fft4, tree, sel_val, plonk_rows] = rows;
     let interior = BLAKE3_CLOCKS - 2 * lanes;
-    let pairs = interior / 2;
+    // A gate that spans two rows fits `interior / 2` per block, and each one it does not fill wastes
+    // both of its rows -- which is what `step` counts.
+    let per = |rows_per_gate: usize| interior / rows_per_gate;
     let mut blocks = 0;
     let mut tail_waste = 0;
     for (rows, per_block, step) in [
         (cmul_rows, interior, 1),
-        (ev_pol4, pairs, 2),
-        (fft4, pairs, 2),
+        (ev_pol4, per(layout.evpol4_rows), layout.evpol4_rows),
+        (fft4, per(layout.fft4_rows), layout.fft4_rows),
         (tree, interior, 1),
         (sel_val, interior, 1),
         (plonk_rows, interior, 1),
@@ -216,6 +217,22 @@ impl RowAlloc {
     }
 }
 
+/// Coefficients a plonk constraint carries: the array is 3 signals then the `q` values.
+pub const PLONK_COEFFS: usize = std::mem::size_of::<PlonkConstraint>() / std::mem::size_of::<u64>() - 3;
+
+/// Writes one plonk row's coefficients into the `C[..]` columns.
+///
+/// Bounded by the CONSTRAINT, never by `cv.len()`: the two are not the same number. `C[]` is sized
+/// for the widest circuit that uses it -- on the 27-column band that is fft4, with nine constants on
+/// one row -- while plonk always has five. Iterating over `cv` read four `u64` past the end of a
+/// `[u64; 8]` constraint, which is an out-of-bounds panic on the compressor's very first plonk row.
+/// The columns above `PLONK_COEFFS` stay zero, and the PIL's plonk gate reads only `C[0..5]`.
+fn write_plonk_coeffs(cv: &mut [Vec<u64>], row: usize, c: &PlonkConstraint) {
+    for j in 0..PLONK_COEFFS {
+        cv[j][row] = c[3 + j];
+    }
+}
+
 /// Groups `Blake3Compress` uses by their `flags` template parameter, lowest value first.
 ///
 /// `flags` reaches the air as a fixed column filled per whole 56-row block, so the uses that share a
@@ -232,6 +249,14 @@ pub(super) fn bucket_by_flags(
 }
 
 pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+    build_blake3_air(r1cs, options, &AGGREGATOR_LAYOUT)
+}
+
+/// The one placement routine both blake3 recursion airs share; `layout` is all they differ by.
+///
+/// The BLAKE3 block half -- boundary cells, flags, the gate-band list -- is identical between them,
+/// which is why this is one function and not two. The band half reads its packing off the layout.
+pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLayout) -> SetupResult {
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
 
     let mut cgi = get_custom_gates_info(r1cs);
@@ -275,44 +300,52 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     let n_blocks = n_node_blocks + n_chunk_blocks + n_parent_blocks;
     let n_blake3_rows = n_blocks * BLAKE3_CLOCKS;
 
-    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW);
+    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(layout.cmul_per_row);
     let n_ev_pol4 = cgi.n(GateRole::EvPol4);
     let n_fft4 = cgi.n(GateRole::Fft4);
     let n_tree_selector4 = cgi.n(GateRole::TreeSelector);
     let n_select_val_arity2 = cgi.n(GateRole::SelectValArity2);
+    // Packed like cmul: several gates share a row where the band is wide enough for them, so the
+    // ROW count is what the plan and the allocator want, not the gate count.
+    let n_sel_val_rows = n_select_val_arity2.div_ceil(layout.selval_per_row);
 
-    // EvPol4 (21 signals) and FFT4 (24) do not fit an 18-wide band, so they take two rows; the
-    // other two do. Mirrors the fixed-column offsets in blake3/aggregator.pil.
-    let n_gate_rows = n_cmul_rows + 2 * (n_ev_pol4 + n_fft4) + n_tree_selector4 + n_select_val_arity2;
+    // How many rows each gate takes is the layout's; on the 18-column band EvPol4 (27 signals) and
+    // FFT4 (24) need two, on the 27-column band everything fits one.
+    let n_gate_rows =
+        n_cmul_rows + layout.evpol4_rows * n_ev_pol4 + layout.fft4_rows * n_fft4 + n_tree_selector4 + n_sel_val_rows;
 
     // Every block's interior is offered to every one of the six band circuits, not just to plonk and
     // not just the Node blocks. Appending the gates in dedicated bands after the BLAKE3 rows instead
     // costs rows the interiors already have free, and enough of them to push the air to the next
     // power of two.
-    let n_plonk_rows = plan_plonk_rows(&plonk_constraints, 0, lanes, BLAKE3_CLOCKS).rows_needed;
-    let plan =
-        plan_band_blocks(n_cmul_rows, n_ev_pol4, n_fft4, n_tree_selector4, n_select_val_arity2, n_plonk_rows, lanes);
+    let n_plonk_rows =
+        plan_plonk_rows(&plonk_constraints, 0, lanes, BLAKE3_CLOCKS, layout.plonk_gates_per_row).rows_needed;
+    let plan = plan_band_blocks(
+        [n_cmul_rows, n_ev_pol4, n_fft4, n_tree_selector4, n_sel_val_rows, n_plonk_rows],
+        lanes,
+        layout,
+    );
     cgi.n_plonk_rows = n_plonk_rows;
 
     // Reported in one place, with the arithmetic visible: "N gate rows" says nothing about which
     // gate, and a constraint count says nothing about rows until the packing is spelled out.
-    let ideal_plonk_rows = plonk_constraints.len().div_ceil(PLONK_GATES_PER_ROW);
+    let ideal_plonk_rows = plonk_constraints.len().div_ceil(layout.plonk_gates_per_row);
     tracing::info!(
         "Plonk: {} constraints -> {} rows ({} per row, grouped by coefficient key; {} rows part-filled)",
         plonk_constraints.len(),
         n_plonk_rows,
-        PLONK_GATES_PER_ROW,
+        layout.plonk_gates_per_row,
         n_plonk_rows.saturating_sub(ideal_plonk_rows)
     );
     tracing::info!(
         "Gate rows: cmul {} ({} gates, {} per row) + fft4 {} + evPol4 {} + treeSelector4 {} + selectValArity2 {} = {}",
         n_cmul_rows,
         cgi.n(GateRole::CMul),
-        CMUL_PER_ROW,
-        2 * n_fft4,
-        2 * n_ev_pol4,
+        layout.cmul_per_row,
+        layout.fft4_rows * n_fft4,
+        layout.evpol4_rows * n_ev_pol4,
         n_tree_selector4,
-        n_select_val_arity2,
+        n_sel_val_rows,
         n_gate_rows
     );
     tracing::info!(
@@ -332,15 +365,30 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
         n_blake3_rows
     );
 
-    assert!(
-        plan.blocks <= n_blocks,
-        "the band needs {} blocks' interiors but the air has only {n_blocks}; the BLAKE3 gate count \
-         is what sizes the air, so a band this large means the circuit is not hash-dominated",
-        plan.blocks
-    );
-
-    let n_used = n_blake3_rows;
-    let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
+    // The air is as tall as the LARGER of the two, not as tall as the hashing. A band that wants
+    // more block interiors than the hashing pays for does not make the air unbuildable -- it makes
+    // it taller -- and reporting only the hashing understated `n_bits_natural`, which is what
+    // decides whether this air needs a compressor. Panicking here pre-empted that decision
+    // entirely: `recursive.rs` catches NeedsCompressorError and retries with a compressor, and a
+    // panic cannot be caught. Measured on ZisK's Keccakf recursive1, where the band needs 22024
+    // interiors against the hashing's 11283.
+    if plan.blocks > n_blocks {
+        tracing::warn!(
+            "plonk-dominated: the band needs {} block interiors against the hashing's {n_blocks}, so \
+             the band sizes this air. A compressor is what fixes this if the result is too tall.",
+            plan.blocks
+        );
+    }
+    let n_used = plan.blocks.max(n_blocks) * BLAKE3_CLOCKS;
+    // The wrap window is part of what the air must hold, not slack on top of it: the clock selectors
+    // read backwards, so the last CLOCKS-1 rows cannot carry a block. Sizing from `n_used` alone
+    // leaves the air one block short whenever `blocks * 56` lands just under a power of two -- 16
+    // block counts below 40,000 do, each missing by exactly one, and each of them tripped the
+    // capacity assert below.
+    let sized = n_used + CLOCK_WRAP_ROWS;
+    // ceil(log2(sized)) in usize. The u32 `log2` helper would truncate a demand past 2^32 rows into a
+    // small n_bits, and the compressor's planner is allowed to hand us n_bits above its preferred cap.
+    let n_bits = sized.next_power_of_two().trailing_zeros().max(1) as usize;
     // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
     // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
     let n_bits_natural = n_bits;
@@ -349,11 +397,16 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
 
     // The clock selectors read backwards and wrap, so the last CLOCKS-1 rows must stay padding.
     let capacity = blake3_max_blocks(n);
+    // Against what the air actually has to hold, not just the hashing: when the band is the dominant
+    // side, `n_blocks` alone fits while the band's interiors do not, and the placement would then run
+    // off the end of the trace with a far less legible index panic.
+    let needed = plan.blocks.max(n_blocks);
     assert!(
-        n_blocks <= capacity,
-        "{n_node} Blake3Node gates need {n_blocks} blocks of {BLAKE3_CLOCKS} rows, but an air of \
-         {n} rows holds only {capacity} (the last {} rows are the clock selectors' wrap window). \
-         Raise LANES or N.",
+        needed <= capacity,
+        "{n_node} Blake3Node gates need {n_blocks} blocks of {BLAKE3_CLOCKS} rows and the band needs \
+         {} interiors, so {needed} blocks in total, but an air of {n} rows holds only {capacity} (the \
+         last {} rows are the clock selectors' wrap window). Raise LANES or N.",
+        plan.blocks,
         BLAKE3_CLOCKS - 1
     );
 
@@ -362,8 +415,8 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Blake3Agg{}", rand_hex()));
 
     let pil_str = gen_pil_str(&PilTemplateParams {
-        template_file: "blake3/aggregator",
-        template_name: "Aggregator",
+        template_file: layout.template,
+        template_name: layout.template_name,
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
@@ -373,7 +426,7 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
         n_ev_pol4,
         n_fft4,
         n_tree_selector4,
-        n_select_val_arity2,
+        n_sel_val_rows,
         n_node_blocks,
         n_chunk_blocks,
         n_parent_blocks,
@@ -382,9 +435,9 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
 
     tracing::info!("NUsed: {n_used}, nBits: {n_bits}, N: {n}, blocks: {n_blocks}, LANES: {lanes}");
 
-    let committed = stage1_cols(lanes);
+    let committed = stage1_cols(lanes, layout.band);
     let mut s_map: Vec<Vec<u32>> = (0..committed).map(|_| vec![0u32; n]).collect();
-    let mut cv: Vec<Vec<u64>> = (0..C_COLS).map(|_| vec![0u64; n]).collect();
+    let mut cv: Vec<Vec<u64>> = (0..layout.c_cols).map(|_| vec![0u64; n]).collect();
     let mut gate_bands: Vec<GateBand> = Vec::new();
 
     let node_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::Blake3Node));
@@ -493,13 +546,13 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     // where each circuit lives; this only has to agree with it.
     let mut alloc = RowAlloc::new(lanes);
 
-    // ── CMul: two per row, a[0..9] and a[9..18] ───────────────────────────────
+    // ── CMul: 9 signals each, `cmul_per_row` to a row ─────────────────────────
     tracing::info!("Processing {} cmul gates...", cmul_uses.len());
     alloc.open(n_cmul_rows, 1);
     let mut r = 0usize;
     for (i, cgu) in cmul_uses.iter().enumerate() {
         assert_eq!(cgu.signals.len(), 9);
-        let half = i % CMUL_PER_ROW;
+        let half = i % layout.cmul_per_row;
         if half == 0 {
             r = alloc.take();
         }
@@ -508,30 +561,35 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
         }
     }
 
-    // ── EvPol4: 27 signals over two rows (a[0..18], then a[0..9]) ─────────────
+    // ── EvPol4: 27 signals, over `evpol4_rows` rows of the band ───────────────
     // The poseidon airs place only the first 21 and bind nothing to the rest.
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
-    alloc.open(n_ev_pol4, 2);
+    alloc.open(n_ev_pol4, layout.evpol4_rows);
     for cgu in &ev_pol4_uses {
         assert_eq!(cgu.signals.len(), EVPOL4_SIGNALS);
         let r = alloc.take();
-        for (j, sig) in cgu.signals[..BAND_COLS].iter().enumerate() {
-            s_map[j][r] = *sig as u32;
-        }
-        for (j, sig) in cgu.signals[BAND_COLS..EVPOL4_SIGNALS].iter().enumerate() {
-            s_map[j][r + 1] = *sig as u32;
+        // 27 signals: one row where the band is at least that wide, otherwise the first `band` on the
+        // gate row and the rest on the next -- which is what the PIL reads through primes.
+        for (j, sig) in cgu.signals.iter().enumerate() {
+            s_map[j % layout.band][r + j / layout.band] = *sig as u32;
         }
     }
 
-    // ── FFT4: 24 signals over two rows (a[0..12] in, a[0..12] out) ───────────
+    // ── FFT4: 24 signals, in at a[0..12] and out over `fft4_rows` rows ───────
     tracing::info!("Processing {} fft4 gates...", fft4_uses.len());
-    alloc.open(n_fft4, 2);
+    alloc.open(n_fft4, layout.fft4_rows);
     for cgu in &fft4_uses {
         assert_eq!(cgu.signals.len(), 24);
         let r = alloc.take();
+        // Two rows: in on the gate row, out on the next, both at a[0..12]. One row: in at a[0..12]
+        // and out at a[12..24], which needs a band of 24.
         for (j, pair) in cgu.signals[..12].iter().zip(&cgu.signals[12..24]).enumerate() {
             s_map[j][r] = *pair.0 as u32;
-            s_map[j][r + 1] = *pair.1 as u32;
+            if layout.fft4_rows == 2 {
+                s_map[j][r + 1] = *pair.1 as u32;
+            } else {
+                s_map[12 + j][r] = *pair.1 as u32;
+            }
         }
         // Build constFFT by ITS OWN index, exactly as poseidon does, then scatter through
         // fft4_const_slot. Writing cv[..] directly would silently misplace fft_type 2.
@@ -554,7 +612,7 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
             panic!("Invalid FFT4 type: {fft_type}");
         }
         for (i, v) in cfft.iter().enumerate() {
-            let (col, off) = fft4_const_slot(i);
+            let (col, off) = fft4_const_slot(i, layout.c_cols);
             cv[col][r + off] = *v;
         }
     }
@@ -570,14 +628,18 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
         }
     }
 
-    // ── SelectValueArity2: 13 signals in one row ─────────────────────────────
+    // ── SelectValueArity2: 13 signals each, `selval_per_row` to a row ────────
     tracing::info!("Processing {} selectValueArity2 gates...", sel_val_uses.len());
-    alloc.open(n_select_val_arity2, 1);
-    for cgu in &sel_val_uses {
+    alloc.open(n_sel_val_rows, 1);
+    let mut sv_row = 0usize;
+    for (i, cgu) in sel_val_uses.iter().enumerate() {
         assert_eq!(cgu.signals.len(), 13, "blake3 is an arity-2 family (13 signals), not arity 4 (22)");
-        let r = alloc.take();
+        let slot = i % layout.selval_per_row;
+        if slot == 0 {
+            sv_row = alloc.take();
+        }
         for (j, sig) in cgu.signals.iter().enumerate() {
-            s_map[j][r] = *sig as u32;
+            s_map[slot * 13 + j][sv_row] = *sig as u32;
         }
     }
 
@@ -598,14 +660,11 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
     alloc.open(n_plonk_rows, 1);
     let mut next_row = 0usize;
     for k in &keys {
-        for group in by_key[k].chunks(PLONK_GATES_PER_ROW) {
+        for group in by_key[k].chunks(layout.plonk_gates_per_row) {
             let row = alloc.take();
             next_row += 1;
-            let c = group[0];
-            for (j, item) in cv.iter_mut().enumerate() {
-                item[row] = c[3 + j];
-            }
-            for gate in 0..PLONK_GATES_PER_ROW {
+            write_plonk_coeffs(&mut cv, row, group[0]);
+            for gate in 0..layout.plonk_gates_per_row {
                 let c = group[gate.min(group.len() - 1)];
                 s_map[3 * gate][row] = c[0] as u32;
                 s_map[3 * gate + 1][row] = c[1] as u32;
@@ -623,8 +682,8 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
 
     // ── S polynomials ─────────────────────────────────────────────────────────
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, BAND_COLS);
-    let sv = build_s_polynomials(BAND_COLS, n, n_bits, n_used, &s_map);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, layout.band);
+    let sv = build_s_polynomials(layout.band, n, n_bits, n_used, &s_map);
     let mut fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
     fixed_pols.push(FixedPol { name: format!("{airgroup_name}.FLAGS"), index: 0, values: flags_col });
 
@@ -647,8 +706,8 @@ pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResul
 #[cfg(test)]
 mod tests {
     use super::super::{
-        blake3_capacity, blake3_max_blocks, stage1_cols, BLAKE3_CLOCKS, BOUNDARY_COLS_PER_LANE, CLOCK_WRAP_ROWS,
-        PERM_COLS_PER_LANE,
+        blake3_capacity, blake3_max_blocks, stage1_cols, BAND_COLS, BLAKE3_CLOCKS, BOUNDARY_COLS_PER_LANE,
+        CLOCK_WRAP_ROWS, COMPRESSOR_BAND_COLS, PERM_COLS_PER_LANE,
     };
     use super::*;
 
@@ -797,9 +856,12 @@ mod tests {
     /// from its parts. Asserting the formula against itself would pass with either wrong.
     #[test]
     fn stage1_cols_matches_the_compiled_air() {
-        assert_eq!(stage1_cols(4), 256, "the air reports Stage1: 256 at LANES 4");
-        assert_eq!(stage1_cols(1), 79);
-        assert_eq!(stage1_cols(8), 492);
+        assert_eq!(stage1_cols(4, BAND_COLS), 256, "the air reports Stage1: 256 at LANES 4");
+        assert_eq!(stage1_cols(1, BAND_COLS), 79);
+        assert_eq!(stage1_cols(8, BAND_COLS), 492);
+        // The compressor's wider band, for the same lanes: nine more columns.
+        assert_eq!(stage1_cols(4, COMPRESSOR_BAND_COLS), 265);
+        assert_eq!(stage1_cols(3, COMPRESSOR_BAND_COLS), 206);
         // The per-lane figure, stated once so a change to either constant has to face it.
         assert_eq!(PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE, 59);
     }
@@ -824,33 +886,36 @@ mod tests {
     #[test]
     fn only_same_coefficient_constraints_share_a_row() {
         let same: Vec<_> = (0..6).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
-        assert_eq!(plan_plonk_rows(&same, 0, 4, BLAKE3_CLOCKS).rows_needed, 1);
+        assert_eq!(plan_plonk_rows(&same, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 1);
 
         // one more of the same key spills to a second row
         let seven: Vec<_> = (0..7).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
-        assert_eq!(plan_plonk_rows(&seven, 0, 4, BLAKE3_CLOCKS).rows_needed, 2);
+        assert_eq!(plan_plonk_rows(&seven, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 2);
 
         // six DIFFERENT keys cannot share: one row each, because the air has a single q0
         let distinct: Vec<_> = (0..6).map(|i| constraint([i, 2, 3, 4, 5], [0, 1, 2])).collect();
-        assert_eq!(plan_plonk_rows(&distinct, 0, 4, BLAKE3_CLOCKS).rows_needed, 6);
+        assert_eq!(
+            plan_plonk_rows(&distinct, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed,
+            6
+        );
     }
 
     /// Interior rows are spent before any dedicated row is added.
     #[test]
     fn block_interiors_are_spent_before_dedicated_rows() {
         let many: Vec<_> = (0..300u64).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
-        assert_eq!(many.len().div_ceil(PLONK_GATES_PER_ROW), 50);
+        assert_eq!(many.len().div_ceil(AGGREGATOR_LAYOUT.plonk_gates_per_row), 50);
 
         // one block at LANES=4 offers 48 interior rows
-        let p = plan_plonk_rows(&many, 1, 4, BLAKE3_CLOCKS);
+        let p = plan_plonk_rows(&many, 1, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 48, rows_dedicated: 2 });
 
         // two blocks swallow all of it
-        let p = plan_plonk_rows(&many, 2, 4, BLAKE3_CLOCKS);
+        let p = plan_plonk_rows(&many, 2, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 50, rows_dedicated: 0 });
 
         // and with no blocks every row is dedicated
-        let p = plan_plonk_rows(&many, 0, 4, BLAKE3_CLOCKS);
+        let p = plan_plonk_rows(&many, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 0, rows_dedicated: 50 });
     }
 
@@ -861,12 +926,12 @@ mod tests {
     fn fft4_constants_straddle_the_two_rows_in_order() {
         let expected = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (0, 1), (1, 1), (2, 1), (3, 1)];
         for (i, want) in expected.iter().enumerate() {
-            assert_eq!(fft4_const_slot(i), *want, "constFFT[{i}]");
+            assert_eq!(fft4_const_slot(i, 5), *want, "constFFT[{i}]");
         }
         // fft_type 4 fills constFFT[0..6]: five on the gate row, one on the next
-        assert!((0..6).all(|i| fft4_const_slot(i).1 == 0 || fft4_const_slot(i) == (0, 1)));
+        assert!((0..6).all(|i| fft4_const_slot(i, 5).1 == 0 || fft4_const_slot(i, 5) == (0, 1)));
         // fft_type 2 fills constFFT[6..9], all on the SECOND row
-        assert!((6..9).all(|i| fft4_const_slot(i).1 == 1));
+        assert!((6..9).all(|i| fft4_const_slot(i, 5).1 == 1));
     }
 
     /// Signal counts read off the circom templates, not off `cells_per_gate` or poseidon's
@@ -948,7 +1013,7 @@ mod tests {
     #[test]
     fn plan_band_blocks_costs_only_the_last_block_tails() {
         // A fibonacci compressor.
-        let p = plan_band_blocks(3404, 2532, 5088, 4642, 34815, 25023, 4);
+        let p = plan_band_blocks([3404, 2532, 5088, 4642, 34815, 25023], 4, &AGGREGATOR_LAYOUT);
         assert_eq!(p.blocks, 71 + 106 + 212 + 97 + 726 + 522);
         // fft4 wastes nothing; the other five leave a tail. 108 rows of 433k.
         assert_eq!(p.tail_waste, 4 + 24 + 14 + 33 + 33);
@@ -958,7 +1023,7 @@ mod tests {
     #[test]
     fn no_constraints_needs_no_rows() {
         assert_eq!(
-            plan_plonk_rows(&[], 9361, 4, BLAKE3_CLOCKS),
+            plan_plonk_rows(&[], 9361, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row),
             PlonkPlan { rows_needed: 0, rows_in_blocks: 0, rows_dedicated: 0 }
         );
     }
@@ -1002,5 +1067,38 @@ mod measure {
         println!("  rows, ONE q  (6/row): {one_q}");
         println!("  rows, TWO q  (3+3)  : {two_q}");
         println!("  ideal (no key split): {}", cs.len().div_ceil(6));
+    }
+}
+
+#[cfg(test)]
+mod plonk_coeff_tests {
+    use super::super::{AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT};
+    use super::{write_plonk_coeffs, PlonkConstraint, PLONK_COEFFS};
+
+    /// `C[]` is sized for the widest circuit sharing it, which on the 27-column band is fft4's nine
+    /// constants -- NOT for plonk's five. A write bounded by the column count instead of by the
+    /// constraint read past the end of a `[u64; 8]`, panicking on the compressor's first plonk row.
+    /// The trap, as a compile-time fact: the compressor's `C[]` really is wider than plonk needs, so
+    /// a write bounded by the column count really would run off the end of the constraint.
+    const _: () = assert!(COMPRESSOR_LAYOUT.c_cols > PLONK_COEFFS);
+    const _: () = assert!(AGGREGATOR_LAYOUT.c_cols == PLONK_COEFFS);
+
+    #[test]
+    fn a_wider_c_band_does_not_make_plonk_read_past_its_constraint() {
+        assert_eq!(PLONK_COEFFS, 5, "3 signals + 5 q values");
+
+        let c: PlonkConstraint = [101, 102, 103, 11, 22, 33, 44, 55];
+        for layout in [AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT] {
+            let mut cv: Vec<Vec<u64>> = (0..layout.c_cols).map(|_| vec![0u64; 4]).collect();
+            write_plonk_coeffs(&mut cv, 2, &c);
+            for (j, col) in cv.iter().enumerate() {
+                // Plonk's five carry the coefficients; everything above them is fft4's and a plonk
+                // row must leave it alone. No row other than the target is touched either.
+                let want = if j < PLONK_COEFFS { c[3 + j] } else { 0 };
+                assert_eq!(col[2], want, "c_cols {}: column {j}", layout.c_cols);
+                assert_eq!(col[0], 0, "c_cols {}: column {j} bled into row 0", layout.c_cols);
+                assert_eq!(col[3], 0, "c_cols {}: column {j} bled into row 3", layout.c_cols);
+            }
+        }
     }
 }

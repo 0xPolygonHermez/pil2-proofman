@@ -103,28 +103,32 @@ mod tests {
         }
     }
 
+    /// Both blake3 recursion airs are emitted by ONE generator, so both templates have to keep its
+    /// parameter list -- a rename that lands in only one of them compiles fine and then fails at
+    /// whichever air the pipeline happens to reach second.
     #[test]
-    fn blake3_generated_call_matches_its_airtemplate() {
-        let file = "blake3/aggregator.pil";
-        let p = super::blake3::PilTemplateParams {
-            template_file: file.trim_end_matches(".pil"),
-            template_name: "Aggregator",
-            namespace_name: "Recursion",
-            n_bits: 19,
-            n_publics: 0,
-            max_constraint_degree: 5,
-            n_plonk_rows: 0,
-            n_cmul_rows: 0,
-            n_ev_pol4: 0,
-            n_fft4: 0,
-            n_tree_selector4: 0,
-            n_select_val_arity2: 0,
-            n_node_blocks: 0,
-            n_chunk_blocks: 0,
-            n_parent_blocks: 0,
-            lanes: 1,
-        };
-        assert_no_drift(file, "Aggregator", &super::blake3::gen_pil_str(&p));
+    fn blake3_generated_call_matches_both_its_airtemplates() {
+        for (file, template) in [("blake3/aggregator.pil", "Aggregator"), ("blake3/compressor.pil", "Compressor")] {
+            let p = super::blake3::PilTemplateParams {
+                template_file: file.trim_end_matches(".pil"),
+                template_name: template,
+                namespace_name: "Recursion",
+                n_bits: 19,
+                n_publics: 0,
+                max_constraint_degree: 5,
+                n_plonk_rows: 0,
+                n_cmul_rows: 0,
+                n_ev_pol4: 0,
+                n_fft4: 0,
+                n_tree_selector4: 0,
+                n_sel_val_rows: 0,
+                n_node_blocks: 0,
+                n_chunk_blocks: 0,
+                n_parent_blocks: 0,
+                lanes: 1,
+            };
+            assert_no_drift(file, template, &super::blake3::gen_pil_str(&p));
+        }
     }
 
     /// The gate a family places follows its Merkle arity, and blake3's is forced to 2. If this ever

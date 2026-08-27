@@ -36,7 +36,7 @@ require "circuits/plonk.pil";
 // distinct shift of a witness column is another opening. That is what caps
 // LANES at 8, not the row count.
 // ============================================================================
-airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectValArity2, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
+airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelValRows, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
     col witness a[18];
 
     #pragma fixed_external
@@ -143,7 +143,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     // They sit after the BLAKE3 band; plonk is the only one that piggybacks inside it.
     // SelectValueArity2 is 13 signals, so it fits ONE row of the 18-wide band; every other
     // two-row gate here needs a second row for its outputs.
-    const int nGateRows = nCMulRows + 2*(nEvPol4 + nFFT4) + nTreeSelector4 + nSelectValArity2;
+    const int nGateRows = nCMulRows + 2*(nEvPol4 + nFFT4) + nTreeSelector4 + nSelValRows;
 
     /*
         The six band circuits below all bind the same eighteen columns a[0..17] and are told apart
@@ -165,7 +165,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     const int nEvPol4Blocks = (nEvPol4 + INTERIOR/2 - 1) / (INTERIOR/2);
     const int nFFT4Blocks   = (nFFT4 + INTERIOR/2 - 1) / (INTERIOR/2);
     const int nTreeBlocks   = (nTreeSelector4 + INTERIOR - 1) / INTERIOR;
-    const int nSelValBlocks = (nSelectValArity2 + INTERIOR - 1) / INTERIOR;
+    const int nSelValBlocks = (nSelValRows + INTERIOR - 1) / INTERIOR;
     const int nPlonkBlocks  = (nPlonkRows + INTERIOR - 1) / INTERIOR;
 
     // Where each circuit's run of blocks starts.
@@ -175,8 +175,16 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     const int treeAt   = fft4At   + nFFT4Blocks;
     const int selValAt = treeAt   + nTreeBlocks;
     const int plonkAt  = selValAt + nSelValBlocks;
-    if (plonkAt + nPlonkBlocks > nNodeBlocks + nChunkBlocks + nParentBlocks) {
-        error(`The band needs ${plonkAt + nPlonkBlocks} blocks' interiors but the air has only ${nNodeBlocks + nChunkBlocks + nParentBlocks}`);
+    /*
+        The band may run PAST the hashing, into filler blocks: blocks with no BLAKE3 structure -- every
+        blake3 selector and CLK_0 is 0 there -- whose interiors are free rows like any other. So the
+        bound is what the AIR holds, not what the hashing pays for. A plonk-dominated air is sized by
+        its band (the packer takes N from max(band, hashing)), and bounding by the hashing's blocks
+        rejected exactly those airs after sizing them correctly.
+    */
+    const int nAirBlocks = (N - (air.CLOCKS - 1)) / air.CLOCKS;
+    if (plonkAt + nPlonkBlocks > nAirBlocks) {
+        error(`The band needs ${plonkAt + nPlonkBlocks} blocks' interiors but an air of ${N} rows holds only ${nAirBlocks} (the last ${air.CLOCKS - 1} rows are the clock selectors' wrap window)`);
     }
 
     col fixed CMUL             = [[0:air.CLOCKS]:cmulAt,   [0:LANES, 1:INTERIOR,          0:LANES]:nCMulBlocks,   0...];
