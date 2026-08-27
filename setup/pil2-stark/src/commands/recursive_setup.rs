@@ -173,6 +173,10 @@ pub(crate) fn run_recursive_setup(
             bool,
             usize,
         )> {
+            // Inside, not at the call sites: air[0] runs sequentially and the rest in a pool, and
+            // every line plonk2pil, circom and pil2com emit from here names no air of its own.
+            // With --recursive-jobs above 1 those interleave.
+            let _span = tracing::info_span!("air", name = %item.air_name).entered();
             let mut has_compressor = item.has_compressor;
             let mut compressor_result: Option<crate::proving_key::recursive::RecursiveSetupResult> = None;
 
@@ -425,8 +429,13 @@ pub(crate) fn run_recursive_setup(
         };
 
         // --- air[0]: run serially to produce existing_pil_info ---
+        // Logged, not just propagated: tracing goes to stdout and the returned anyhow error surfaces
+        // on stderr, so a run redirected with `> log` recorded 42 airs succeeding and simply no line
+        // at all for the one that failed -- the air looked skipped rather than broken.
         let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits) =
-            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone())?;
+            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone()).inspect_err(|e| {
+                tracing::error!("Recursive setup FAILED for air '{}': {e:#}", air_items[0].air_name)
+            })?;
         if first_hc {
             airs_with_compressor.insert(air_items[0].air_name.clone());
         }
@@ -456,7 +465,10 @@ pub(crate) fn run_recursive_setup(
                 air_items[1..]
                     .par_iter()
                     .map(|item| {
-                        let (air_idx, vk, _, hc, _) = run_one_air(item, existing_for_rest.clone())?;
+                        let (air_idx, vk, _, hc, _) =
+                            run_one_air(item, existing_for_rest.clone()).inspect_err(|e| {
+                                tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name)
+                            })?;
                         Ok((air_idx, item.air_name.clone(), vk, hc))
                     })
                     .collect()
@@ -526,6 +538,9 @@ pub(crate) fn run_recursive_setup(
                 circom_helpers_dir: &circom_helpers_dir,
             };
 
+            // recursive2 is per-airgroup, so it sits outside run_one_air's `air` span and needs its own
+            // identity: without it these lines are the only ones in a parallel run with no prefix.
+            let _span = tracing::info_span!("airgroup", name = %airgroup_name).entered();
             let r2_result = crate::proving_key::recursive::gen_recursive_setup(&r2_config, &witness_tracker)
                 .with_context(|| format!("Recursive2 setup failed for airgroup '{}'", airgroup_name))?;
 

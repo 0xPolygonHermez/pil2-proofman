@@ -268,6 +268,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         blake3_lanes: None,
         min_n_bits: None,
     };
+    let _span = tracing::info_span!("stage", t = "vadcop_final").entered();
     let plonk_result: PlonkResult =
         plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
 

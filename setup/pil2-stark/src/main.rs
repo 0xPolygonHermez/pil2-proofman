@@ -304,7 +304,18 @@ struct GenExpsArgs {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    // The shared formatter, not a plain `fmt()`: it is the one the proofman entry points install, it
+    // renders the span scope, and `initialize_logger` no-ops if a dispatcher is already set -- so
+    // installing a different one here silently gave this binary a different log format from every
+    // other, which is what hid the per-air spans.
+    // RUST_LOG still selects the level, as it did under `fmt::init()`: this binary has no verbosity
+    // flag, and the shared initializer takes a mode rather than reading the environment.
+    let verbose = match std::env::var("RUST_LOG").unwrap_or_default().to_ascii_lowercase() {
+        v if v.contains("trace") => proofman_common::VerboseMode::Trace,
+        v if v.contains("debug") => proofman_common::VerboseMode::Debug,
+        _ => proofman_common::VerboseMode::Info,
+    };
+    proofman_common::initialize_logger(verbose, None);
 
     let builder = rayon::ThreadPoolBuilder::new().stack_size(64 * 1024 * 1024); // 64 MB per thread
     builder.build_global().ok();

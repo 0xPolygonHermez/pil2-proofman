@@ -176,6 +176,7 @@ pub fn gen_snark_setup(
         blake3_lanes: None,
         min_n_bits: None,
     };
+    let _span = tracing::info_span!("stage", t = "recursivef").entered();
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
 

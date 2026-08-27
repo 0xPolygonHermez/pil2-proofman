@@ -141,6 +141,10 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         work_items
             .par_iter()
             .map(|item| {
+                // A span, not just a log line: with setup_jobs > 1 the pipelines interleave, and
+                // every line pil_info, the const-tree builder and the expression codegen emit from
+                // inside here would otherwise be unattributable. Entering it prefixes them all.
+                let _span = tracing::info_span!("air", name = %item.air_name).entered();
                 let n_bits = log2_usize(item.num_rows);
                 tracing::info!("Computing setup for air '{}'", item.air_name);
 
