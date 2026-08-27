@@ -26,7 +26,6 @@ void StarkInfo::load(json j)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
-    starkStruct.nQueries = j["starkStruct"]["nQueries"];
     starkStruct.verificationHashType = j["starkStruct"]["verificationHashType"];
     starkStruct.powBits = j["starkStruct"]["powBits"];
     if(starkStruct.verificationHashType == "BN128") {
@@ -59,11 +58,35 @@ void StarkInfo::load(json j)
         starkStruct.hashCommits = false;
     }
 
-    for (uint64_t i = 0; i < j["starkStruct"]["steps"].size(); i++)
-    {
-        StepStruct step;
-        step.nBits = j["starkStruct"]["steps"][i]["nBits"];
-        starkStruct.steps.push_back(step);
+    std::string lowDegreeTest = j["starkStruct"].contains("lowDegreeTest") ? j["starkStruct"]["lowDegreeTest"].get<std::string>() : "FRI";
+    if (lowDegreeTest == "STIR") {
+        starkStruct.lowDegreeTest = LowDegreeTestKind::STIR;
+        json stir = j["starkStruct"];
+        starkStruct.stir.foldingFactors = stir["foldingFactors"].get<vector<uint64_t>>();
+        starkStruct.stir.logDegrees = stir["logDegrees"].get<vector<uint64_t>>();
+        starkStruct.stir.logDomainSizes = stir["logDomainSizes"].get<vector<uint64_t>>();
+        starkStruct.stir.numOodSamples = stir["numOodSamples"];
+        starkStruct.stir.numQueries = stir.contains("numQueries") ? stir["numQueries"].get<vector<uint64_t>>() : vector<uint64_t>();
+        starkStruct.stir.grindingBits = stir.contains("grindingBits") ? stir["grindingBits"].get<vector<uint64_t>>() : vector<uint64_t>();
+        uint64_t M = starkStruct.stir.numIterations();
+        if (starkStruct.stir.logDegrees.size() != M + 1 || starkStruct.stir.logDomainSizes.size() != M + 1 ||
+            starkStruct.stir.numQueries.size() != M || starkStruct.stir.grindingBits.size() != M) {
+            zklog.error("StarkInfo::load() STIR schedule lengths are inconsistent (M=" + to_string(M) + ")");
+            exitProcess();
+        }
+        requireFri("StarkInfo::load()");
+    } else if (lowDegreeTest == "FRI") {
+        starkStruct.lowDegreeTest = LowDegreeTestKind::FRI;
+        starkStruct.nQueries = j["starkStruct"]["nQueries"];
+        for (uint64_t i = 0; i < j["starkStruct"]["steps"].size(); i++)
+        {
+            StepStruct step;
+            step.nBits = j["starkStruct"]["steps"][i]["nBits"];
+            starkStruct.steps.push_back(step);
+        }
+    } else {
+        zklog.error("StarkInfo::load() unknown lowDegreeTest: " + lowDegreeTest);
+        exitProcess();
     }
 
     nPublics = j["nPublics"];
@@ -342,7 +365,15 @@ void StarkInfo::load(json j)
     }
 }
 
+void StarkInfo::requireFri(const std::string &what) const {
+    if (starkStruct.lowDegreeTest != LowDegreeTestKind::FRI) {
+        zklog.error(what + ": the stark info selects the STIR low-degree test, which the C++ prover/verifier do not implement yet (FRI only)");
+        exitProcess();
+    }
+}
+
 void StarkInfo::getProofSize() {
+    requireFri("StarkInfo::getProofSize()");
     proofSize = 0;
     proofSize += airgroupValuesMap.size() * FIELD_EXTENSION;
     proofSize += airValuesMap.size() * FIELD_EXTENSION;
@@ -387,6 +418,7 @@ void StarkInfo::getProofSize() {
 }
 
 uint64_t StarkInfo::getPinnedProofSize() {
+    requireFri("StarkInfo::getPinnedProofSize()");
     uint64_t pinnedProofSize = 0;
 
     pinnedProofSize += (nStages + 1) * 4; // Roots
@@ -440,6 +472,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
 }
 
 void StarkInfo::setMapOffsets() {
+    requireFri("StarkInfo::setMapOffsets()");
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 

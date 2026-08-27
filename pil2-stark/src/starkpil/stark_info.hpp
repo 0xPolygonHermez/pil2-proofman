@@ -61,20 +61,47 @@ public:
     uint64_t nBits;
 };
 
+/// The low-degree test run on the batched DEEP polynomial f_0.
+enum class LowDegreeTestKind
+{
+    FRI,
+    STIR, // Arnon–Chiesa–Fenzi–Yogev, ePrint 2024/390
+};
+
+/// STIR schedule, in the notation of the paper (Construction 5.2). Iteration i folds f_i by
+/// 2^{k_i} and commits g_{i+1} on the next domain L_{i+1}, of half the size.
+class StirStruct
+{
+public:
+    vector<uint64_t> foldingFactors; // k_i, in bits (length M)
+    vector<uint64_t> logDegrees;     // log2 d_i, degree bound of f_i (length M+1)
+    vector<uint64_t> logDomainSizes; // log2 |L_i| (length M+1)
+    uint64_t numOodSamples;          // s, out-of-domain samples per iteration
+    vector<uint64_t> numQueries;     // t_i, shift queries into f_i (length M)
+    vector<uint64_t> grindingBits;   // grinding on iteration i's query message (length M)
+
+    uint64_t numIterations() const { return foldingFactors.size(); }
+};
+
 class StarkStruct
 {
 public:
     uint64_t nBits;
     uint64_t nBitsExt;
-    uint64_t nQueries;
     bool hashCommits;
     string verificationHashType;
     uint64_t lastLevelVerification;
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     uint64_t transcriptArity;
-    vector<StepStruct> steps;
     uint64_t powBits;
+
+    // Which low-degree test the stark info selects. FRI's schedule is `steps`/`nQueries`, STIR's
+    // is `stir`; the other one is left empty.
+    LowDegreeTestKind lowDegreeTest = LowDegreeTestKind::FRI;
+    uint64_t nQueries = 0;
+    vector<StepStruct> steps;
+    StirStruct stir;
 };
 
 /// Merkle path levels one query publishes: the tree's depth less the levels the published last
@@ -214,6 +241,10 @@ public:
     
     /* Loads data from a json object */
     void load (json j);
+
+    /// The prover, verifier and proof layout only implement FRI so far: stop with a clear message
+    /// rather than misread a STIR stark info as a FRI one.
+    void requireFri(const std::string &what) const;
 
     void setMapOffsets();
 
