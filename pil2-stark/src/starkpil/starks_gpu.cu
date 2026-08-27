@@ -532,6 +532,7 @@ __global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
         else Goldilocks3GPU::mul(prefix[b], prefix[b - 1], den);
         root *= rootInv;
     }
+    // 63 - __clzll(N) is log2(N)
     const Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
     auto store = [&](uint64_t row, const Goldilocks3GPU::Element &v) {
         for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
@@ -759,9 +760,12 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
     EvalInfo *d_evalsInfo = air_instance_info->evalsInfo[chunk];
     uint64_t nEvals = air_instance_info->evalsInfoSizes[chunk];
 
-    uint64_t n_eval_chunks = 16;
+    uint64_t n_eval_chunks = EVALS_HELPER_CHUNKS;
 
-    gl64_t *d_helper = (gl64_t *)h_params.aux_trace + offset_helper;
+    // The head of the lev_helper region holds the shifted points + factors written by
+    // computeLEv_inplace for this batch; the reduction partials live after them.
+    uint64_t maxOpenings = std::min(uint64_t(setupCtx.starkInfo.openingPoints.size()), EVALS_OPENING_BATCH);
+    gl64_t *d_helper = (gl64_t *)h_params.aux_trace + offset_helper + 2 * maxOpenings * FIELD_EXTENSION;
     
     dim3 nThreads(256);
     dim3 nBlocks(nEvals, n_eval_chunks);
