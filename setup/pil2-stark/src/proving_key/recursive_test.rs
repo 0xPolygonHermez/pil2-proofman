@@ -199,12 +199,17 @@ pub fn gen_recursive_test_setup(
     // reproduce the geometry being debugged: blake3's recursion runs at blowup 2, where maxDeg 5
     // fits exactly, and a fixture at 3 would carry a quotient the production air does not have.
     // `recursive_blowup` gives 2 for blake3 and keeps poseidon's 3, which its README documents.
+    // The TEMPLATE being built, so a compressor fixture gets the compressor's geometry. llv was
+    // pinned to 1 here, which is what let a production llv reach a real run untested: every value
+    // this harness can exercise has to be the one production uses, or it reproduces nothing.
+    let template = if setup_type == "compressor" {
+        crate::proving_key::recursive::RecursiveTemplate::Compressor
+    } else {
+        crate::proving_key::recursive::RecursiveTemplate::Recursive2
+    };
     let settings = StarkSettings {
-        blowup_factor: Some(crate::proving_key::recursive::recursive_blowup(
-            crate::proving_key::recursive::RecursiveTemplate::Recursive2,
-            hash,
-        )),
-        last_level_verification: Some(1),
+        blowup_factor: Some(crate::proving_key::recursive::recursive_blowup(template, hash)),
+        last_level_verification: crate::proving_key::recursive::recursive_last_level_verification(template, hash),
         // Same pin as the real recursion layers, so a test key matches their geometry.
         pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(hash)),
         ..Default::default()
