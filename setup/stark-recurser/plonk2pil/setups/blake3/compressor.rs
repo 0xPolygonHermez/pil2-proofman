@@ -48,7 +48,23 @@ use crate::plonk2pil::utils::log2;
 use proofman_common::hash_family::GateRole;
 
 /// Lanes the air accepts. Above 8 the boundary opening depth exceeds 7 -- see `aggregator.pil`.
+/// A structural bound, not a preference: it is what the AIR can express.
 const MAX_LANES: usize = 8;
+
+/// Lanes the compressor's SEARCH will consider, which is lower than what the air allows.
+///
+/// Every lane costs 59 stage1 columns, and those columns are openings the pinned `recursive1` above
+/// this compressor has to verify -- a cost the whole tree pays, where the compressor's own rows are
+/// its alone. At 3 lanes the air is 206 columns wide; at 8 it is 501. So the search spends N, not
+/// lanes, and only walks up to here.
+///
+/// The band is what N then has to hold: past 3 lanes the hashing keeps shrinking but the interior
+/// narrows, so the plonk and cmul rows need more block interiors, and it is those that set N. See
+/// `fits`, which measures both sides against the air.
+const SEARCH_MAX_LANES: usize = 3;
+
+/// The preference cannot exceed what the air can express.
+const _: () = assert!(SEARCH_MAX_LANES <= MAX_LANES);
 
 /// The table's floor, in bits. `blake3Tables` errors below it.
 const TABLE_N_BITS: usize = 17;
@@ -183,7 +199,7 @@ pub fn compressor_candidates(
     max_n_bits: usize,
 ) -> Vec<CompressorGeometry> {
     let start = demand.start_n_bits(min_n_bits);
-    (1..=MAX_LANES)
+    (1..=SEARCH_MAX_LANES)
         .filter_map(|lanes| {
             let n_bits = demand.smallest_n_bits_for(lanes, start, max_n_bits)?;
             Some(CompressorGeometry {
@@ -277,7 +293,7 @@ pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult
         demand.parent_buckets.iter().sum::<usize>(),
         demand.band_rows(),
     );
-    for lanes in 1..=MAX_LANES {
+    for lanes in 1..=SEARCH_MAX_LANES {
         match candidates.iter().find(|g| g.lanes == lanes) {
             // hashing vs band, and which of the two sizes the air -- that is the whole trade in
             // `lanes`, and reporting only the hashing hid why a lane count was rejected.
@@ -303,7 +319,7 @@ pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult
     // The cap is a preference, not a bound -- see DEFAULT_MAX_N_BITS -- so exceeding it is a warning
     // and not a failure. A compressor is the last resort: there is nothing above it to fall back to,
     // and refusing to build one because it came out taller than we would like just moves the failure
-    // somewhere less legible. `MAX_LANES` and the 32-bit walk ARE hard, so past those it is a real
+    // somewhere less legible. `SEARCH_MAX_LANES` and the 32-bit walk ARE hard, so past those it is a real
     // error and says so.
     let geom = plan_compressor_geometry(&demand, min_n_bits, DEFAULT_MAX_N_BITS, policy)
         .or_else(|| {
@@ -319,7 +335,7 @@ pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult
         })
         .unwrap_or_else(|| {
             panic!(
-                "no LANES <= {MAX_LANES} holds {} Blake3Node + {} chunk + {} parent uses and a band \
+                "no LANES <= {SEARCH_MAX_LANES} holds {} Blake3Node + {} chunk + {} parent uses and a band \
                  of {} rows at any N: the band wants more block interiors than the hashing pays for \
                  at every lane count, which needs filler blocks rather than a bigger air",
                 demand.node_uses,
@@ -420,15 +436,23 @@ mod tests {
         assert!(few.stage1_cols() <= plonk.stage1_cols(), "FewestLanes cannot pick more columns");
     }
 
-    /// The cap is what makes FewestLanes safe: squeeze it and the search degrades to more lanes
-    /// instead of failing.
+    /// N is the knob, not lanes. Lanes stop at `SEARCH_MAX_LANES` because each one costs 59 stage1
+    /// columns that the recursive1 above has to open, so a cap the lanes cannot meet is answered by a
+    /// taller air (`compressor_blake3` walks past it with a warning) and never by a wider one.
     #[test]
-    fn a_tight_cap_degrades_to_more_lanes_rather_than_failing() {
+    fn the_search_spends_n_rather_than_lanes() {
         let d = fibonacci();
-        let roomy = plan_compressor_geometry(&d, 0, CAP, SizingPolicy::FewestLanes).unwrap();
-        let tight = plan_compressor_geometry(&d, 0, 18, SizingPolicy::FewestLanes).unwrap();
-        assert!(tight.lanes > roomy.lanes, "a tighter cap must buy lanes, not fail");
-        assert!(tight.n_bits <= 18);
+        for policy in [SizingPolicy::BandFirst, SizingPolicy::FewestLanes] {
+            let g = plan_compressor_geometry(&d, 0, CAP, policy).unwrap();
+            assert!(g.lanes <= SEARCH_MAX_LANES, "{policy:?} picked {} lanes", g.lanes);
+        }
+        // Squeezed below what any allowed lane count can hold, the search declines rather than
+        // reaching for a lane count the recursion cannot afford.
+        let tight = plan_compressor_geometry(&d, 0, 18, SizingPolicy::FewestLanes);
+        assert!(
+            tight.is_none() || tight.unwrap().lanes <= SEARCH_MAX_LANES,
+            "a tight cap must never buy lanes past the search's own bound"
+        );
     }
 
     /// Past the cap the search still finds a geometry; `compressor_blake3` takes it with a warning
@@ -546,7 +570,7 @@ mod tests {
                         assert!(g.blocks <= capacity, "block floor: {g:?}");
                         assert!(g.band_blocks <= capacity, "band floor: {g:?}");
                         assert_eq!(d.blocks_needed(g.lanes), g.blocks.max(g.band_blocks), "{g:?}");
-                        assert!((1..=MAX_LANES).contains(&g.lanes), "lanes out of range: {g:?}");
+                        assert!((1..=SEARCH_MAX_LANES).contains(&g.lanes), "lanes out of range: {g:?}");
                         match policy {
                             // No fewer lanes fits anywhere within the cap.
                             SizingPolicy::FewestLanes => {
@@ -560,7 +584,10 @@ mod tests {
                             // No smaller N fits at any lanes.
                             SizingPolicy::BandFirst => {
                                 if g.n_bits > d.start_n_bits(0) {
-                                    for lanes in 1..=MAX_LANES {
+                                    // Only the lane counts the search will actually consider: a
+                                    // smaller N may well fit at 4+ lanes, and declining that is the
+                                    // point of the bound, not a minimality failure.
+                                    for lanes in 1..=SEARCH_MAX_LANES {
                                         assert!(
                                             !d.fits(g.n_bits - 1, lanes),
                                             "2^{} LANES={lanes} would have fitted: {g:?}",
