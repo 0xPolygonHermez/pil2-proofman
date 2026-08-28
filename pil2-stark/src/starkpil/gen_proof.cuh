@@ -334,9 +334,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     cudagraph::run(cudagraph::key(0x4556414cULL ^ graphCtxId), countId, stream, [&] {
-    TimerStartCategoryGPU(timer, EVALS);
     CHECKCUDAERR(cudaMemsetAsync(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
-    TimerStopCategoryGPU(timer, EVALS);
     uint64_t count = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
         std::vector<int64_t> openingPoints;
@@ -372,15 +370,17 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // 6. Compute FRI
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
-    cudagraph::run(cudagraph::key(0x46524950ULL ^ graphCtxId), countId, stream, [&] {
+    // Outside the region, not in it: a replay skips the body, so a category timed inside one
+    // stops being sampled. This category happens to cover the whole body, so it can just wrap it.
     TimerStartCategoryGPU(timer, FRI);
+    cudagraph::run(cudagraph::key(0x46524950ULL ^ graphCtxId), countId, stream, [&] {
     calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    TimerStopCategoryGPU(timer, FRI);
     });
+    TimerStopCategoryGPU(timer, FRI);
     // Own capture region, as CALCULATE_IM_POLS: inside the FRIP body these two lost every replay.
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);
@@ -419,18 +419,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             }
             else
             {
-                TimerStartCategoryGPU(timer, TRANSCRIPT);
                 if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                     d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
                 } else {
                     calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
                     d_transcript->put(d_challenge, HASH_SIZE, stream);
                 }
-                TimerStopCategoryGPU(timer, TRANSCRIPT);
             }
-            TimerStartCategoryGPU(timer, TRANSCRIPT);
             d_transcript->getField((uint64_t *)d_challenge, stream);
-            TimerStopCategoryGPU(timer, TRANSCRIPT);
         });
     }
 
