@@ -434,7 +434,7 @@ impl Stir {
 
     /// The code of iteration i as a `(rate, dimension)` pair:
     /// - `folded = false`: Cᵢ = RS[F, Lᵢ, 2^{mᵢ}], the code fᵢ is checked against;
-    /// - `folded = true`: RS[F, Lᵢ^{(2^{kᵢ})}, 2^{mᵢ−kᵢ}], the code of Fold(fᵢ, r).
+    /// - `folded = true`: RS[F, Lᵢ^{(2^{kᵢ})}, 2^{mᵢ−kᵢ}], the code of Fold(fᵢ, kᵢ, r).
     ///
     /// Both have rate 2^{−μᵢ}, since degree and domain shrink by the same factor.
     fn code_for(&self, iteration: usize, folded: bool) -> (f64, u32) {
