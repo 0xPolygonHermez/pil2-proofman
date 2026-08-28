@@ -249,8 +249,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
-            let max_witness_size = sctx_recursive1
+            // Every recursive proof kind draws its circom witness from ONE pool, so this has to hold
+            // the largest of them -- the compressor's above all, which is roughly twice a
+            // recursive1's. Leaving it out does not under-provision the pool, it hands `getWitness` a
+            // buffer half the size it writes: a silent heap overflow on every compressor proof, whose
+            // only symptom is some unrelated neighbour's proof coming out wrong.
+            let max_witness_size = sctx_compressor
                 .max_witness_size
+                .max(sctx_recursive1.max_witness_size)
                 .max(sctx_recursive2.max_witness_size)
                 .max(setup_vadcop_final.get_circom_witness_size())
                 .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.get_circom_witness_size()));

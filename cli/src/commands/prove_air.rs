@@ -36,7 +36,7 @@ type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mu
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct ProveAirCmd {
-    /// Recursion input: zkin file whose name encodes ag<N>_air<M>_t<ProofType>.
+    /// Recursion input: zkin file whose name encodes ag<N>_air<M>[_i<instance>]_t<ProofType>.
     #[clap(short = 'p', long, conflicts_with = "witness_lib", required_unless_present = "witness_lib")]
     pub proof: Option<PathBuf>,
 
@@ -71,6 +71,13 @@ pub struct ProveAirCmd {
     /// Never pack the trace, even on `--gpu`.
     #[clap(long, conflicts_with = "packed", requires = "witness_lib")]
     pub no_packed: bool,
+
+    /// Write the generated proof to this path, as the flat little-endian u64 array the recursion
+    /// passes between stages. That is the same shape `--proof` reads and the test-recursive fixtures
+    /// hold, so a proof produced here can be fed to the next stage's setup -- which is how a stage is
+    /// tested against a proof known to be good rather than against whatever the pipeline handed it.
+    #[clap(long)]
+    pub save_proof: Option<PathBuf>,
 
     /// Skip verifying the generated proof (witness-lib mode; useful for timing runs).
     #[clap(long, requires = "witness_lib")]
@@ -160,10 +167,13 @@ impl ProveAirCmd {
             ProofmanError::InvalidParameters(format!("Proof file name is not valid UTF-8: {proof_path:?}"))
         })?;
         let stem = name.strip_suffix(".bin").unwrap_or(name);
-        let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9_]+)$").unwrap();
+        // `_i<instance>` is optional: `dump_zkin_if_requested` puts it there so an air with several
+        // instances keeps every capture instead of racing over one name, and those dumps have to be
+        // replayable here.
+        let re = Regex::new(r"ag(\d+)_air(\d+)(?:_i\d+)?_t([A-Za-z0-9_]+)$").unwrap();
         let info = re.captures(stem).ok_or_else(|| {
             ProofmanError::InvalidParameters(format!(
-                "Proof file name {name:?} does not match [zkin_]ag<N>_air<M>_t<proof_type>.bin"
+                "Proof file name {name:?} does not match [zkin_]ag<N>_air<M>[_i<instance>]_t<proof_type>.bin"
             ))
         })?;
         let parse_id = |raw: &str, what: &str| -> Result<usize, ProofmanError> {
@@ -403,6 +413,13 @@ impl ProveAirCmd {
             return Err(Box::new(ProofmanError::InvalidProof("Recursive proof verification failed".into())));
         }
         tracing::info!("    {}", "\u{2713} Recursive proof verified".bright_green().bold());
+
+        // After verification, so what lands on disk is a proof this run vouched for.
+        if let Some(path) = &self.save_proof {
+            let bytes: Vec<u8> = proof_buffer.iter().flat_map(|w| w.to_le_bytes()).collect();
+            std::fs::write(path, &bytes)?;
+            tracing::info!("Saved proof ({} words) to {}", proof_buffer.len(), path.display());
+        }
 
         Ok(())
     }

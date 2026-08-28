@@ -1210,6 +1210,24 @@ fn generate_witness<F: PrimeField64>(
     let mut witness: Vec<F> = memory_handler_recursive_witness.take_buffer_witness();
     timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
 
+    // `getWitness` writes `size_witness` elements and `getCommitedPols` the `n_adds` after them, with
+    // no bound of their own: a buffer sized for a smaller circuit is overrun silently, and the damage
+    // lands on whatever the allocator put next -- another proof's buffer, most often, which then fails
+    // somewhere with nothing pointing back here. The pool is sized for the largest recursive circuit,
+    // so this only ever fires if that sizing and this call site have drifted apart.
+    let needed = setup.size_witness.unwrap_or(0) as usize + setup.n_adds.unwrap_or(0) as usize;
+    if witness.len() < needed {
+        let got = witness.len();
+        if let Err(e) = memory_handler_recursive_witness.release_buffer_witness(witness) {
+            tracing::warn!("Failed to return witness buffer to pool: {e}");
+        }
+        return Err(ProofmanError::ProofmanError(format!(
+            "{:?} [{}:{}] needs a {needed}-element circom witness but the pool hands out {} \
+             (see SetupsVadcop::max_witness_size)",
+            setup.setup_type, setup.airgroup_id, setup.air_id, got,
+        )));
+    }
+
     timer_start_debug!(CIRCOM_WITNESS, "CIRCOM_WITNESS_{:?}", setup.setup_type);
     let res: i64 = unsafe {
         get_witness_fn(

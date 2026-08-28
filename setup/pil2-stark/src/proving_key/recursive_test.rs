@@ -128,7 +128,22 @@ pub fn gen_recursive_test_setup(
     // Step 4: plonk2pil — convert R1CS to PIL.
     // Use airgroup_name = "Compressor" (deterministic, avoids random hex suffix).
     // -------------------------------------------------------------------------
-    let max_constraint_degree = if setup_type == "compressor" { Some(5) } else { None };
+    // The TEMPLATE being built, so a compressor fixture gets the compressor's geometry. llv was
+    // pinned to 1 here, which is what let a production llv reach a real run untested: every value
+    // this harness can exercise has to be the one production uses, or it reproduces nothing.
+    let template = if setup_type == "compressor" {
+        crate::proving_key::recursive::RecursiveTemplate::Compressor
+    } else {
+        crate::proving_key::recursive::RecursiveTemplate::Recursive2
+    };
+
+    // Derived from the blowup exactly as `gen_recursive_setup` does it, not pinned. Hardcoded to 5
+    // it built the compressor air at degree 5 where production builds it at 3 -- same template, same
+    // parameters, but 177 intermediate polynomials against far fewer, so stage 2 came out 501 columns
+    // wide against 255. A fixture that verifies THAT air says nothing about the one being shipped.
+    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
+        crate::proving_key::recursive::recursive_blowup(template, hash),
+    ));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
         max_constraint_degree,
@@ -199,18 +214,14 @@ pub fn gen_recursive_test_setup(
     // reproduce the geometry being debugged: blake3's recursion runs at blowup 2, where maxDeg 5
     // fits exactly, and a fixture at 3 would carry a quotient the production air does not have.
     // `recursive_blowup` gives 2 for blake3 and keeps poseidon's 3, which its README documents.
-    // The TEMPLATE being built, so a compressor fixture gets the compressor's geometry. llv was
-    // pinned to 1 here, which is what let a production llv reach a real run untested: every value
-    // this harness can exercise has to be the one production uses, or it reproduces nothing.
-    let template = if setup_type == "compressor" {
-        crate::proving_key::recursive::RecursiveTemplate::Compressor
-    } else {
-        crate::proving_key::recursive::RecursiveTemplate::Recursive2
-    };
     let settings = StarkSettings {
         blowup_factor: Some(crate::proving_key::recursive::recursive_blowup(template, hash)),
         last_level_verification: crate::proving_key::recursive::recursive_last_level_verification(template, hash),
-        // Same pin as the real recursion layers, so a test key matches their geometry.
+        // Same pins as the real recursion layers, so a test key matches their geometry. The terminal
+        // degree matters as much as the rest: left to the generic default of 5 it gave the fixture a
+        // six-step FRI schedule where production has five, so the fixture verified a shape the
+        // pipeline never builds.
+        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(hash)),
         pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(hash)),
         ..Default::default()
     };
