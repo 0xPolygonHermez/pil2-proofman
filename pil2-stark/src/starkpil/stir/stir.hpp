@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "stir_math.hpp"
@@ -101,11 +102,27 @@ public:
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     using Grinding = std::function<void(uint64_t &nonce, const uint64_t *challenge, uint32_t powBits)>;
 
+    // Verifier-side hooks, so this file stays independent of the hash family and of the STARK.
+    //
+    // `F0Check` is called once per round-1 query with a uniform index of L_0 and the value T_0's
+    // leaf claims for that point: f_0 is not the prover's to choose, it is the batched DEEP
+    // polynomial, so the STARK verifier recomputes it there from the stage openings and compares.
+    // Returning false rejects. May be empty in self-contained tests of the STIR argument alone.
+    using F0Check = std::function<bool(uint64_t idxL0, const stir::E3 &committed)>;
+    // Checks that `nonce` is a valid proof of work for `challenge` at `powBits` — the verifier's
+    // side of `Grinding`. May be empty when `grindingBits` is all zeros.
+    using GrindingCheck = std::function<bool(const uint64_t *challenge, uint64_t nonce, uint32_t powBits)>;
+
     // Run the prover on f_0, the evaluations of the batched DEEP polynomial on L_0 (extension
     // field, |L_0| = 2^{logDomainSizes[0]} elements). `transcript` is the STARK's transcript,
     // positioned right after the challenges that defined f_0. `stageTrees` are the committed
     // stage/constant/custom trees, opened at the representative point of each round-1 shift query.
     static void prove(StirProof<ElementType> &proof, const StirParams &params, const Goldilocks::Element *f0, TranscriptType &transcript, MerkleTreeType **stageTrees, uint64_t nStageTrees, const Grinding &grinding);
+
+    // Verify a proof produced by `prove`. `transcript` must be in the same state `prove` received,
+    // so that every challenge is re-derived rather than trusted. Returns false on the first failed
+    // check, with a description in `failure` when given.
+    static bool verify(const StirProof<ElementType> &proof, const StirParams &params, TranscriptType &transcript, const F0Check &checkF0, const GrindingCheck &checkGrinding, std::string *failure = nullptr);
 
     // The coset shift of every L_i: the same one the STARK's extended domain uses.
     static Goldilocks::Element shift() { return Goldilocks::shift(); }
@@ -169,11 +186,16 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
         trees[i] = new MerkleTreeType(params.merkleTreeArity, params.lastLevelVerification, params.merkleTreeCustom, Li.size() >> params.logFoldingFactors[i], math.k(i) * FIELD_EXTENSION, true, true);
     }
 
-    // Sample the t shift queries of iteration i into L_{i−1}^{k_{i−1}} (t = t_{i−1}).
-    // The round-1 indices are kept: they also fix where f_0 is cross-checked against the STARK's
-    // own commitments (see the end of `prove`).
-    std::vector<uint64_t> round1ShiftIndices;
-    auto sampleShiftQueries = [&](uint64_t i, std::vector<uint64_t> &indices) {
+    // Sample the t_{i−1} shift queries of iteration i. As in FRI, a query is a uniform index of
+    // L_{i−1}: its low bits give the coset — the leaf of T_{i−1}, equivalently the point of
+    // L_{i−1}^{k_{i−1}} the query names — and its high bits give the member within that coset.
+    //
+    // Only round 1 uses the member part, and it matters there: f_0 has to be cross-checked against
+    // the STARK's own commitments at a *uniform point of L_0*. Cross-checking the coset
+    // representative instead would only ever touch the 1/k_0 of L_0 with member 0, leaving a prover
+    // free to corrupt the other entries of every leaf.
+    std::vector<uint64_t> round1RawIndices;
+    auto sampleShiftQueries = [&](uint64_t i, std::vector<uint64_t> &cosetIndices) {
         E3 c;
         getChallenge(transcript, c);
         uint64_t nonce = 0;
@@ -183,10 +205,15 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
         TranscriptType transcriptQueries(params.transcriptArity, params.merkleTreeCustom);
         transcriptQueries.put(&c[0], FIELD_EXTENSION);
         transcriptQueries.put((Goldilocks::Element *)&nonce, 1);
-        indices.assign(params.numQueries[i - 1], 0);
-        Domain LprevK = math.L(i - 1).power(params.logFoldingFactors[i - 1]);
-        transcriptQueries.getPermutations(indices.data(), indices.size(), LprevK.logSize);
-        if (i == 1) round1ShiftIndices = indices;
+
+        Domain Lprev = math.L(i - 1);
+        uint64_t nLeaves = Lprev.size() >> params.logFoldingFactors[i - 1];   // = |L_{i−1}^{k_{i−1}}|
+        std::vector<uint64_t> raw(params.numQueries[i - 1], 0);
+        transcriptQueries.getPermutations(raw.data(), raw.size(), Lprev.logSize);
+
+        cosetIndices.resize(raw.size());
+        for (uint64_t j = 0; j < raw.size(); j++) cosetIndices[j] = raw[j] % nLeaves;
+        if (i == 1) round1RawIndices = raw;
     };
 
     // Open T_{i−1} at every r_shift^{i,j}: the k_{i−1} preimages of r_shift are exactly leaf
@@ -276,10 +303,9 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
     sampleShiftQueries(M, finalShiftIndices);
     openShiftQueries(M, finalShiftIndices);
 
-    // The round-1 shift queries also fix where f_0 is cross-checked against the STARK's own
-    // commitments: as in the FRI prover, open the stage/constant/custom trees at one representative
-    // point of each queried coset of L_0 — the coset member with j = 0, whose index in L_0 is the
-    // leaf index in T_0 — so the verifier can recompute f_0 there and compare it with T_0's leaf.
+    // The round-1 queries also fix where f_0 is cross-checked against the STARK's own commitments:
+    // as in the FRI prover, open the stage/constant/custom trees at each queried index of L_0, so
+    // the verifier can recompute f_0 there and compare it against the matching member of T_0's leaf.
     {
         uint64_t maxBuffSize = 0;
         for (uint64_t t = 0; t < nStageTrees; t++)
@@ -287,19 +313,220 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
             maxBuffSize = std::max(maxBuffSize, stageTrees[t]->getMerkleTreeWidth() + stageTrees[t]->getMerkleProofSize());
         }
         std::vector<ElementType> buff(maxBuffSize);
-        for (uint64_t j = 0; j < round1ShiftIndices.size(); j++)
+        for (uint64_t j = 0; j < round1RawIndices.size(); j++)
         {
             std::vector<MerkleProof<ElementType>> openings;
             openings.reserve(nStageTrees);
             for (uint64_t t = 0; t < nStageTrees; t++)
             {
-                openings.push_back(open(*stageTrees[t], round1ShiftIndices[j], buff.data())[0]);
+                openings.push_back(open(*stageTrees[t], round1RawIndices[j], buff.data())[0]);
             }
             proof.stageQueries[j] = openings;
         }
     }
 
     for (uint64_t i = 0; i < M; i++) delete trees[i];
+}
+
+template <typename ElementType>
+bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirParams &params, TranscriptType &transcript, const F0Check &checkF0, const GrindingCheck &checkGrinding, std::string *failure)
+{
+    using namespace stir;
+
+    auto fail = [&](const std::string &why) {
+        if (failure != nullptr) *failure = why;
+        return false;
+    };
+
+    const uint64_t M = params.M();
+    if (M < 1 || params.numQueries.size() != M || params.grindingBits.size() != M) return fail("inconsistent parameters");
+    if (proof.trees.size() != M || proof.nonces.size() != M) return fail("proof does not match the parameters");
+    if (proof.betas.size() != M - 1) return fail("wrong number of out-of-domain answers");
+
+    Parameters math{shift(), params.logFoldingFactors, params.logDegrees, params.logDomainSizes};
+    math.validate();
+
+    const uint64_t nFieldElements = std::is_same<ElementType, Goldilocks::Element>::value ? HASH_SIZE : 1;
+    const uint64_t dFinal = uint64_t(1) << params.logDegrees[M];
+
+    // ctx[i] is iteration i's (G_i, Ans_i, r_comb^i): what turns an opened value of the committed
+    // g_i into the corresponding value of the virtual f_i. ctx[0] is unused — f_0 is committed
+    // directly, not as a quotient.
+    std::vector<QuotientContext> ctx(M);
+
+    // Absorb into the transcript from a const proof.
+    auto put = [&](const auto &v) {
+        std::vector<typename std::decay_t<decltype(v)>::value_type> copy(v.begin(), v.end());
+        transcript.put(copy.data(), copy.size());
+    };
+
+    // With a published bottom level, the root must be the reduction of that level: check it once
+    // per tree, before anything is read out of it.
+    if (params.lastLevelVerification > 0)
+    {
+        for (uint64_t i = 0; i < M; i++)
+        {
+            uint64_t nLeaves = math.L(i).size() >> params.logFoldingFactors[i];
+            std::vector<ElementType> root = proof.trees[i].root, level = proof.trees[i].last_levels;
+            if (!MerkleTreeType::verifyMerkleRoot(root.data(), level.data(), nLeaves, params.lastLevelVerification, params.merkleTreeArity, nFieldElements))
+            {
+                return fail("root of T_" + std::to_string(i) + " does not match its published last level");
+            }
+        }
+    }
+
+    // Re-derive iteration i's shift queries as uniform indices of L_{i−1} — the prover's
+    // `sampleShiftQueries`, with the grinding *checked* instead of searched.
+    auto deriveShiftQueries = [&](uint64_t i, std::vector<uint64_t> &raw) -> bool {
+        E3 c;
+        getChallenge(transcript, c);
+        uint64_t nonce = proof.nonces[i - 1];
+        if (checkGrinding && !checkGrinding((const uint64_t *)&c[0], nonce, params.grindingBits[i - 1])) return false;
+
+        TranscriptType transcriptQueries(params.transcriptArity, params.merkleTreeCustom);
+        transcriptQueries.put(&c[0], FIELD_EXTENSION);
+        transcriptQueries.put((Goldilocks::Element *)&nonce, 1);
+        raw.assign(params.numQueries[i - 1], 0);
+        transcriptQueries.getPermutations(raw.data(), raw.size(), math.L(i - 1).logSize);
+        return true;
+    };
+
+    // Read query q of iteration i out of T_{i−1} and recompute
+    //   Ans_i(r_shift) = Fold(f_{i−1}, k_{i−1}, r^fold_{i−1})(r_shift).
+    //
+    // The leaf holds the k_{i−1} preimages of r_shift. For i = 1 those are values of f_0 directly;
+    // for i ≥ 2 they are values of the *committed* g_{i−1}, and the virtual f_{i−1} is obtained
+    // from them pointwise with ctx[i−1] — this is where a prover that committed a g_{i−1}
+    // disagreeing with Ans_{i−1} produces a non-low-degree f_{i−1} and is caught downstream.
+    auto foldAtQuery = [&](uint64_t i, uint64_t q, uint64_t raw, const E3 &rFold, E3 &out) -> bool {
+        const ProofTree<ElementType> &tree = proof.trees[i - 1];
+        const uint64_t logK = params.logFoldingFactors[i - 1];
+        const uint64_t k = uint64_t(1) << logK;
+        const Domain Lprev = math.L(i - 1);
+        const uint64_t nLeaves = Lprev.size() >> logK;
+        const uint64_t leaf = raw % nLeaves;
+
+        if (q >= tree.polQueries.size() || tree.polQueries[q].size() != 1) return false;
+        const MerkleProof<ElementType> &mkp = tree.polQueries[q][0];
+        if (mkp.v.size() != k * FIELD_EXTENSION) return false;
+
+        std::vector<Goldilocks::Element> values(k * FIELD_EXTENSION);
+        for (uint64_t e = 0; e < values.size(); e++) values[e] = mkp.v[e][0];
+
+        MerkleTreeType mt(params.merkleTreeArity, params.lastLevelVerification, params.merkleTreeCustom, nLeaves, k * FIELD_EXTENSION);
+        std::vector<std::vector<ElementType>> siblings = mkp.mp;
+        std::vector<ElementType> root = tree.root, level = tree.last_levels;
+        if (level.empty()) level.resize(nFieldElements);   // unused when lastLevelVerification == 0
+        if (!mt.verifyGroupProof(root.data(), level.data(), siblings, leaf, values)) return false;
+
+        if (i == 1)
+        {
+            uint64_t member = raw / nLeaves;
+            if (checkF0 && !checkF0(raw, (const E3 &)values[member * FIELD_EXTENSION])) return false;
+        }
+        else
+        {
+            for (uint64_t j = 0; j < k; j++)
+            {
+                E3 x, fx;
+                embed(x, Lprev.point(leaf + j * nLeaves));
+                ctx[i - 1].apply(fx, (const E3 &)values[j * FIELD_EXTENSION], x);
+                Goldilocks3::copy((E3 &)values[j * FIELD_EXTENSION], fx);
+            }
+        }
+
+        NTT_Goldilocks ntt(k, 1);
+        std::vector<FE> scratch;
+        foldCoset(out, values.data(), Lprev, logK, leaf, rFold, ntt, scratch);
+        return true;
+    };
+
+    // ---- Initial commitment and the first folding challenge ------------------------------------
+    put(proof.trees[0].root);
+    E3 rFold;
+    getChallenge(transcript, rFold);   // r^fold_0
+
+    // ---- Main loop: iterations i = 1, …, M−1 --------------------------------------------------
+    for (uint64_t i = 1; i < M; i++)
+    {
+        put(proof.trees[i].root);
+
+        // 2(b)  r_out^{i,1..s} ← F \ L_i, drawn exactly as the prover drew them.
+        std::vector<E3> rOut(params.numOodSamples);
+        for (uint64_t j = 0; j < params.numOodSamples; j++)
+        {
+            do
+            {
+                getChallenge(transcript, rOut[j]);
+            } while (math.L(i).contains(rOut[j]));
+        }
+
+        // 2(c)  the prover's β_{i,·}.
+        if (proof.betas[i - 1].size() != params.numOodSamples * FIELD_EXTENSION) return fail("wrong β count in iteration " + std::to_string(i));
+        put(proof.betas[i - 1]);
+
+        // 2(d)  r^fold_i, r_comb^i, r_shift^{i,·}.
+        E3 rFoldNext, rComb;
+        getChallenge(transcript, rFoldNext);
+        getChallenge(transcript, rComb);
+        std::vector<uint64_t> raw;
+        if (!deriveShiftQueries(i, raw)) return fail("invalid grinding in iteration " + std::to_string(i));
+
+        // 2(e)  build (G_i, Ans_i): the out-of-domain claims, plus the fold values the verifier
+        //       recomputes itself from T_{i−1}. No equality is checked here — the binding is what
+        //       the quotient does to the next iteration's opened values.
+        ctx[i].reset(rComb);
+        for (uint64_t j = 0; j < params.numOodSamples; j++)
+        {
+            ctx[i].add(rOut[j], (const E3 &)proof.betas[i - 1][j * FIELD_EXTENSION]);
+        }
+        const Domain LprevK = math.L(i - 1).power(params.logFoldingFactors[i - 1]);
+        for (uint64_t q = 0; q < raw.size(); q++)
+        {
+            E3 v;
+            if (!foldAtQuery(i, q, raw[q], rFold, v)) return fail("query " + std::to_string(q) + " of iteration " + std::to_string(i) + " failed");
+            E3 pt;
+            embed(pt, LprevK.point(raw[q] % LprevK.size()));
+            ctx[i].add(pt, v);
+        }
+        if (ctx[i].size() >= math.d(i)) return fail("|G| is not below d_i in iteration " + std::to_string(i));
+        ctx[i].build();
+
+        Goldilocks3::copy(rFold, rFoldNext);
+    }
+
+    // ---- Final step ---------------------------------------------------------------------------
+    // p in the clear, then the only explicit equality check of the whole protocol:
+    //   Fold(f_{M−1}, k_{M−1}, r^fold_{M−1})(r_shift) = p(r_shift).
+    if (proof.finalPol.size() != dFinal * FIELD_EXTENSION) return fail("wrong size for the final polynomial");
+    if (!params.hashCommits)
+    {
+        put(proof.finalPol);
+    }
+    else
+    {
+        TranscriptType transcriptHash(params.transcriptArity, params.merkleTreeCustom);
+        std::vector<Goldilocks::Element> copy(proof.finalPol.begin(), proof.finalPol.end());
+        transcriptHash.put(copy.data(), copy.size());
+        ElementType hash[HASH_SIZE];
+        transcriptHash.getState(hash);
+        transcript.put(hash, HASH_SIZE);
+    }
+
+    std::vector<uint64_t> raw;
+    if (!deriveShiftQueries(M, raw)) return fail("invalid grinding in the final round");
+    const Domain LprevK = math.L(M - 1).power(params.logFoldingFactors[M - 1]);
+    for (uint64_t q = 0; q < raw.size(); q++)
+    {
+        E3 v;
+        if (!foldAtQuery(M, q, raw[q], rFold, v)) return fail("final query " + std::to_string(q) + " failed");
+        E3 x, px;
+        embed(x, LprevK.point(raw[q] % LprevK.size()));
+        evalPoly(px, proof.finalPol.data(), dFinal, x);
+        if (!equal(px, v)) return fail("final consistency check failed at query " + std::to_string(q));
+    }
+
+    return true;
 }
 
 #endif

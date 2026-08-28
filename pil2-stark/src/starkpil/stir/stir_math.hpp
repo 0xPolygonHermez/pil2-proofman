@@ -206,35 +206,47 @@ inline uint64_t numTrailingZeroCoefficients(const FE *coeffs, uint64_t N)
 // Horner evaluation at r.
 //
 // `out` receives 2^{n−logK} extension elements, indexed like L^k.
+//
+// `foldCoset` is the single-point version — the verifier's case, since it only ever holds one
+// coset at a time (the k values of one Merkle leaf). `coset` lists them in leaf order j = 0..k−1,
+// i.e. `coset[j]` is f at the L-index `m + j·|L^k|`, which is exactly how `commit` lays out a leaf.
+// `ntt` must have been built for size k; `scratch` is grown as needed and may be reused.
+inline void foldCoset(E3 &out, const FE *coset, const Domain &L, uint64_t logK, uint64_t m, const E3 &r, NTT_Goldilocks &ntt, std::vector<FE> &scratch)
+{
+    uint64_t k = uint64_t(1) << logK;
+    if (scratch.size() < k * FIELD_EXTENSION) scratch.resize(k * FIELD_EXTENSION);
+    std::memcpy(scratch.data(), coset, k * FIELD_EXTENSION * sizeof(FE));
+    ntt.INTT(scratch.data(), scratch.data(), k, FIELD_EXTENSION);
+
+    // p̂_x(X) = q(X / c) with c = shift·ω_n^m: coefficient j gets c^{−j}.
+    FE cInv = Goldilocks::inv(Goldilocks::mul(L.shift, Goldilocks::exp(Goldilocks::w(L.logSize), m)));
+    FE s = Goldilocks::one();
+    for (uint64_t j = 0; j < k; j++)
+    {
+        Goldilocks3::mul((E3 &)scratch[j * FIELD_EXTENSION], (const E3 &)scratch[j * FIELD_EXTENSION], s);
+        s = Goldilocks::mul(s, cInv);
+    }
+    evalPoly(out, scratch.data(), k, r);
+}
+
 inline void fold(FE *out, const FE *f, const Domain &L, uint64_t logK, const E3 &r)
 {
     assert(logK >= 1 && logK <= L.logSize);
     uint64_t k = uint64_t(1) << logK;
     uint64_t M = L.size() >> logK;   // |L^k|
-    FE omegaN = Goldilocks::w(L.logSize);
 
 #pragma omp parallel
     {
         NTT_Goldilocks ntt(k, 1);
-        std::vector<FE> coset(k * FIELD_EXTENSION), q(k * FIELD_EXTENSION);
+        std::vector<FE> coset(k * FIELD_EXTENSION), scratch(k * FIELD_EXTENSION);
 #pragma omp for
-        for (uint64_t g = 0; g < M; g++)
+        for (uint64_t m = 0; m < M; m++)
         {
             for (uint64_t j = 0; j < k; j++)
             {
-                std::memcpy(&coset[j * FIELD_EXTENSION], &f[(g + j * M) * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(FE));
+                std::memcpy(&coset[j * FIELD_EXTENSION], &f[(m + j * M) * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(FE));
             }
-            ntt.INTT(q.data(), coset.data(), k, FIELD_EXTENSION);
-
-            // p̂_x(X) = q(X / c): coefficient j gets c^{−j}.
-            FE cInv = Goldilocks::inv(Goldilocks::mul(L.shift, Goldilocks::exp(omegaN, g)));
-            FE s = Goldilocks::one();
-            for (uint64_t j = 0; j < k; j++)
-            {
-                Goldilocks3::mul((E3 &)q[j * FIELD_EXTENSION], (const E3 &)q[j * FIELD_EXTENSION], s);
-                s = Goldilocks::mul(s, cInv);
-            }
-            evalPoly((E3 &)out[g * FIELD_EXTENSION], q.data(), k, r);
+            foldCoset((E3 &)out[m * FIELD_EXTENSION], coset.data(), L, logK, m, r, ntt, scratch);
         }
     }
 }
@@ -289,54 +301,105 @@ inline void interpolate(std::vector<FE> &coeffs, const FE *points, const FE *val
     }
 }
 
-// f_i := DegCor(d, r_comb, Quotient(g, S, Ans, Fill), d − |S|), evaluated on L (Construction 5.2,
-// step 2(e)). `g` holds the evaluations of g on L; `points`/`values` describe S and Ans, |S| = n.
+// (G, Ans, r_comb) of one iteration: everything step 2(e) of Construction 5.2 needs in order to
+// turn a value of the committed g_i into the corresponding value of the virtual
 //
-// For every x ∈ L:
-//   Quotient(g, S, Ans, ·)(x) = (g(x) − Âns(x)) / ∏_{a∈S}(x − a)
-//   f_i(x) = Quotient(x) · Σ_{j=0}^{|S|} (r_comb·x)^j
-// The exponent range is d − d' = |S| because Quotient has degree < d − |S| when g has degree < d.
-inline void quotientAndDegreeCorrect(FE *fOut, const FE *g, const Domain &L, const FE *points, const FE *values, uint64_t n, const E3 &rComb)
+//   f_i = DegCor(d_i, r_comb, Quotient(g_i, G_i, Ans_i, Fill_i), d_i − |G_i|)
+//
+// `apply` does it at one point — the verifier's case, one opened value at a time — and
+// `quotientAndDegreeCorrect` over a whole domain, the prover's case. Both go through
+// `applyWithInverseDenominator`, so there is exactly one implementation of the formula.
+struct QuotientContext
 {
-    uint64_t N = L.size();
+    std::vector<FE> points;      // G, as |G| extension elements
+    std::vector<FE> values;      // Ans on G
+    std::vector<FE> ansCoeffs;   // Âns, degree < |G|
+    E3 rComb;
 
-    std::vector<FE> ansCoeffs;
-    interpolate(ansCoeffs, points, values, n);
+    uint64_t size() const { return points.size() / FIELD_EXTENSION; }
 
-    // Denominators ∏_{a∈S}(x − a) for every x ∈ L, inverted in one batch.
-    std::vector<FE> denom(N * FIELD_EXTENSION);
-#pragma omp parallel for
-    for (uint64_t g_ = 0; g_ < N; g_++)
+    void reset(const E3 &rComb_)
     {
-        E3 x, acc;
-        embed(x, L.point(g_));
-        Goldilocks3::one(acc);
-        for (uint64_t a = 0; a < n; a++)
+        points.clear();
+        values.clear();
+        ansCoeffs.clear();
+        Goldilocks3::copy(rComb, rComb_);
+    }
+
+    // G is a set: the shift queries are sampled with replacement, so a repeated point is dropped.
+    // Returns whether the point was new. Prover and verifier must apply the same rule.
+    bool add(const E3 &pt, const E3 &val)
+    {
+        for (uint64_t m = 0; m < size(); m++)
+        {
+            if (equal((const E3 &)points[m * FIELD_EXTENSION], pt)) return false;
+        }
+        points.insert(points.end(), pt, pt + FIELD_EXTENSION);
+        values.insert(values.end(), val, val + FIELD_EXTENSION);
+        return true;
+    }
+
+    void build() { interpolate(ansCoeffs, points.data(), values.data(), size()); }
+
+    //   f_i(x) = ( (g_i(x) − Âns(x)) · denomInv ) · Σ_{j=0}^{|G|} (r_comb·x)^j,
+    // where denomInv = 1 / ∏_{a∈G}(x − a). The exponent range is d_i − (d_i − |G|) = |G|.
+    void applyWithInverseDenominator(E3 &out, const E3 &gx, const E3 &x, const E3 &denomInv) const
+    {
+        E3 ans, q, geo, rx;
+        evalPoly(ans, ansCoeffs.data(), size(), x);
+        Goldilocks3::sub(q, gx, ans);
+        Goldilocks3::mul(q, q, denomInv);
+        Goldilocks3::mul(rx, rComb, x);
+        geometricSum(geo, rx, size());
+        Goldilocks3::mul(out, q, geo);
+    }
+
+    // ∏_{a∈G}(x − a). Non-zero because G ∩ L = ∅ for every domain L this is used on — the
+    // out-of-domain samples are drawn from F \ L_i and the shift queries live in L_{i−1}^{k_{i−1}},
+    // which `Parameters::validate` checks to be disjoint from L_i (Remark 5.3).
+    void denominator(E3 &out, const E3 &x) const
+    {
+        Goldilocks3::one(out);
+        for (uint64_t a = 0; a < size(); a++)
         {
             E3 diff;
             Goldilocks3::sub(diff, x, (const E3 &)points[a * FIELD_EXTENSION]);
-            assert(!isZero(diff) && "S ∩ L must be empty (Fill is never used)");
-            Goldilocks3::mul(acc, acc, diff);
+            assert(!isZero(diff) && "G ∩ L must be empty (Remark 5.3: Fill is never used)");
+            Goldilocks3::mul(out, out, diff);
         }
-        Goldilocks3::copy((E3 &)denom[g_ * FIELD_EXTENSION], acc);
+    }
+
+    void apply(E3 &out, const E3 &gx, const E3 &x) const
+    {
+        E3 denomInv;
+        denominator(denomInv, x);
+        Goldilocks3::inv(denomInv, denomInv);
+        applyWithInverseDenominator(out, gx, x, denomInv);
+    }
+};
+
+// f_i on the whole of L, from the evaluations `g` of g_i on L. Same formula as `apply`, with the
+// denominators inverted in one batch.
+inline void quotientAndDegreeCorrect(FE *fOut, const FE *g, const Domain &L, const QuotientContext &ctx)
+{
+    uint64_t N = L.size();
+
+    std::vector<FE> denom(N * FIELD_EXTENSION);
+#pragma omp parallel for
+    for (uint64_t m = 0; m < N; m++)
+    {
+        E3 x;
+        embed(x, L.point(m));
+        ctx.denominator((E3 &)denom[m * FIELD_EXTENSION], x);
     }
     batchInverse(denom.data(), N);
 
 #pragma omp parallel for
-    for (uint64_t g_ = 0; g_ < N; g_++)
+    for (uint64_t m = 0; m < N; m++)
     {
-        E3 x, ans, q, geo, rx;
-        embed(x, L.point(g_));
-
-        // Quotient
-        evalPoly(ans, ansCoeffs.data(), n, x);
-        Goldilocks3::sub(q, (const E3 &)g[g_ * FIELD_EXTENSION], ans);
-        Goldilocks3::mul(q, q, (const E3 &)denom[g_ * FIELD_EXTENSION]);
-
-        // DegCor
-        Goldilocks3::mul(rx, rComb, x);
-        geometricSum(geo, rx, n);
-        Goldilocks3::mul((E3 &)fOut[g_ * FIELD_EXTENSION], q, geo);
+        E3 x;
+        embed(x, L.point(m));
+        ctx.applyWithInverseDenominator((E3 &)fOut[m * FIELD_EXTENSION], (const E3 &)g[m * FIELD_EXTENSION], x, (const E3 &)denom[m * FIELD_EXTENSION]);
     }
 }
 
@@ -457,29 +520,22 @@ public:
         assert(rOut.size() == beta.size());
         Domain LiK = p.L(i).power(p.logFoldingFactors[i]);
 
-        std::vector<FE> points, values;
-        auto push = [&](const E3 &pt, const E3 &val) {
-            for (uint64_t m = 0; m < points.size() / FIELD_EXTENSION; m++)
-            {
-                if (equal((const E3 &)points[m * FIELD_EXTENSION], pt)) return;   // G is a set
-            }
-            points.insert(points.end(), pt, pt + FIELD_EXTENSION);
-            values.insert(values.end(), val, val + FIELD_EXTENSION);
-        };
-        for (uint64_t m = 0; m < rOut.size(); m++) push(rOut[m], beta[m]);
+        QuotientContext ctx;
+        ctx.reset(rComb);
+        for (uint64_t m = 0; m < rOut.size(); m++) ctx.add(rOut[m], beta[m]);
         for (uint64_t idx : shiftIndices)
         {
             assert(idx < LiK.size());
             E3 pt;
             embed(pt, LiK.point(idx));
-            push(pt, (const E3 &)foldOnLiK[idx * FIELD_EXTENSION]);
+            ctx.add(pt, (const E3 &)foldOnLiK[idx * FIELD_EXTENSION]);
         }
-        uint64_t nG = points.size() / FIELD_EXTENSION;
-        assert(nG < p.d(i + 1) && "|G| must be below d_{i+1} for the quotient to have positive degree bound");
+        assert(ctx.size() < p.d(i + 1) && "|G| must be below d_{i+1} for the quotient to have positive degree bound");
+        ctx.build();
 
         Domain Lnext = p.L(i + 1);
         f.assign(Lnext.size() * FIELD_EXTENSION, Goldilocks::zero());
-        quotientAndDegreeCorrect(f.data(), g.data(), Lnext, points.data(), values.data(), nG, rComb);
+        quotientAndDegreeCorrect(f.data(), g.data(), Lnext, ctx);
         i++;
     }
 
