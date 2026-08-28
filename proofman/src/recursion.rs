@@ -335,13 +335,21 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     // Adopt the witness buffer into a release-on-drop lease so it returns to its pool on every exit
     // path (`?`, downstream error, panic) instead of leaking when the proof is dropped on cancel.
-    let circom_witness = memory_handler_recursive_witness
-        .adopt_witness(std::mem::take(&mut witness.circom_witness), witness.proof_type == ProofType::Compressor);
+    let circom_witness = memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness));
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
-    // Release-on-drop lease: returns to its pool on every exit, so a failed proof can't shrink the pool.
-    let mut trace = memory_handler_recursive_witness.take_trace_lease(setup.setup_type == ProofType::Compressor);
+    // Where stage 1 is built. On CPU that is the prover's own non-extended cm1 slot, which it
+    // reserves anyway and `extendAndMerkelize` reads step 1 from; a pooled buffer was a second copy
+    // of it. On GPU the fill is compact and lands in a staging buffer the device expands.
+    let mut trace_lease = pctx.gpu.then(|| memory_handler_recursive_witness.take_trace_lease());
+    let trace_ptr = match trace_lease.as_mut() {
+        Some(lease) => lease.as_mut_ptr() as *mut u8,
+        None => {
+            let cm1_at = setup.stark_info.map_offsets[&("cm1".to_string(), false)] as usize;
+            unsafe { (prover_buffer.as_ptr() as *mut F).add(cm1_at) as *mut u8 }
+        }
+    };
 
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
@@ -354,7 +362,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
         exec_data_ptr,
-        trace.as_mut_ptr() as *mut u8,
+        trace_ptr,
         publics.as_mut_ptr() as *mut u8,
         setup.size_witness.unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
@@ -365,7 +373,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     // device-side inside gen_recursive_proof_c, right after the trace copy.
     if !pctx.gpu {
         expand_gate_bands_c(
-            trace.as_mut_ptr() as *mut u8,
+            trace_ptr,
             exec_data_ptr,
             witness.n_cols as u64,
             exec_words,
@@ -410,7 +418,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     // (one-off launches — outer aggregation, vadcop_final, recursers).
     let stream_id = gen_recursive_proof_c(
         p_setup,
-        trace.as_ptr() as *mut u8,
+        trace_ptr,
         prover_buffer.as_ptr() as *mut u8,
         const_pols_ptr,
         const_tree_ptr,
@@ -549,7 +557,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                                 // return it here instead of leaking.
                                 drop(
                                     memory_handler_recursive_witness
-                                        .adopt_witness(std::mem::take(&mut circom_witness.circom_witness), false),
+                                        .adopt_witness(std::mem::take(&mut circom_witness.circom_witness)),
                                 );
                                 return Err(e);
                             }
@@ -693,8 +701,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
             drop(
-                memory_handler_recursive_witness
-                    .adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness), false),
+                memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness)),
             );
             return Err(e);
         }
@@ -771,8 +778,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
             drop(
-                memory_handler_recursive_witness
-                    .adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness), false),
+                memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness_final_proof.circom_witness)),
             );
             return Err(e);
         }
@@ -833,7 +839,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     }));
 
     // Release-on-drop lease: returns to the pool on every exit path (see generate_recursive_proof).
-    let mut trace = memory_handler_recursive_witness.take_trace_lease(false);
+    let mut trace = memory_handler_recursive_witness.take_trace_lease();
 
     let proof = &vadcop_proof[1..];
     let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
@@ -1201,10 +1207,7 @@ fn generate_witness<F: PrimeField64>(
     // stage but it is not witness generation, and on CPU it dominates -- so the two are timed apart:
     // the enclosing GENERATING_*_WITNESS stays end-to-end, CIRCOM_WITNESS is the circuit's own cost.
     timer_start_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
-    let mut witness: Vec<F> = match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
-        _ => memory_handler_recursive_witness.take_buffer_witness(),
-    };
+    let mut witness: Vec<F> = memory_handler_recursive_witness.take_buffer_witness();
     timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
 
     timer_start_debug!(CIRCOM_WITNESS, "CIRCOM_WITNESS_{:?}", setup.setup_type);
@@ -1220,10 +1223,7 @@ fn generate_witness<F: PrimeField64>(
     drop(state);
 
     if res != 0 {
-        let released = match setup.setup_type {
-            ProofType::Compressor => memory_handler_recursive_witness.release_buffer_witness_compressor(witness),
-            _ => memory_handler_recursive_witness.release_buffer_witness(witness),
-        };
+        let released = memory_handler_recursive_witness.release_buffer_witness(witness);
         if let Err(e) = released {
             tracing::warn!("Failed to return witness buffer to pool: {e}");
         }

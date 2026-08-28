@@ -342,9 +342,8 @@ pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
 ) -> usize {
     let recovered = witnesses.len();
     for mut w in witnesses {
-        let compressor = w.proof_type == ProofType::Compressor;
         // Adopt-then-drop returns the buffer to its pool.
-        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness), compressor));
+        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
         if let Some(idx) = w.global_idx {
             ledger.settle(idx as u64, w.proof_type.as_usize());
         }
@@ -462,22 +461,21 @@ mod drain_tests {
     type F = Goldilocks;
 
     const W_SIZE: usize = 8;
-    const W_SIZE_COMPRESSOR: usize = 4;
 
     fn scheduler() -> RecursiveScheduler<F> {
         RecursiveScheduler::<F>::new(std::ptr::null_mut())
     }
 
-    /// Two witness buffers per pool so a drained-and-returned buffer is distinguishable from a
-    /// refilled one: `reset()` only passes if the originals come back.
+    /// Four buffers per pool (2 recursive + 2 compressor) so a drained-and-returned buffer is
+    /// distinguishable from a refilled one: `reset()` only passes if the originals come back.
     fn handler() -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE_COMPRESSOR, W_SIZE, W_SIZE_COMPRESSOR)
+        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE)
     }
 
     /// A witness as the hand-off builds it: `global_idx` set (the ledger keys off it) and holding a
     /// buffer drawn from the pool its `proof_type` selects.
     fn witness(h: &MemoryHandlerRecursive<F>, t: ProofType, global_idx: usize) -> Proof<F> {
-        let buf = if t == ProofType::Compressor { h.take_buffer_witness_compressor() } else { h.take_buffer_witness() };
+        let buf = h.take_buffer_witness();
         Proof::new_witness(t, 0, 0, Some(global_idx), buf, 1)
     }
 
