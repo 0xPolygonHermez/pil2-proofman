@@ -498,6 +498,8 @@ pub struct ProofMan<F: PrimeField64> {
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
+    /// Device streams per node — what the C side indexes. Not `n_streams`, which counts workers.
+    n_device_streams: usize,
     memory_handler: Arc<MemoryHandler<F>>,
     memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -2323,8 +2325,16 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, recurser_const_offset) =
-            Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
+        let (
+            pctx,
+            sctx,
+            setups_vadcop,
+            n_streams_per_gpu,
+            n_recursive_streams_per_gpu,
+            n_aggregation_workers_per_gpu,
+            n_gpus,
+            recurser_const_offset,
+        ) = Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
 
@@ -2355,8 +2365,11 @@ where
             false => 1,
         };
 
-        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
+        // Workers are not device streams: without a pool they share the basic ones. Anything the C
+        // side indexes by stream needs `n_device_streams`.
+        let n_streams = ((n_streams_per_gpu + n_aggregation_workers_per_gpu) * n_proof_threads) as usize;
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
+        let n_device_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
@@ -2455,6 +2468,7 @@ where
             recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
+            n_device_streams,
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
@@ -3176,7 +3190,7 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
-        let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_streams];
+        let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_device_streams];
         get_instances_ready_c(self.pctx.get_device_buffers_ptr(), instance_ids_in_streams.as_ptr() as *mut i64);
 
         instance_ids_in_streams.par_iter().enumerate().for_each(|(stream_id, instance_id)| {
@@ -5159,7 +5173,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -5241,15 +5255,16 @@ where
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
 
-        let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) = pctx.set_device_buffers(
-            &sctx,
-            &setups_vadcop,
-            options.aggregation,
-            options.gpu,
-            options.max_number_streams,
-            options.max_number_recursive_streams,
-            options.final_snark,
-        )?;
+        let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx
+            .set_device_buffers(
+                &sctx,
+                &setups_vadcop,
+                options.aggregation,
+                options.gpu,
+                options.max_number_streams,
+                options.max_number_recursive_streams,
+                options.final_snark,
+            )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
@@ -5347,7 +5362,16 @@ where
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, aggregation_const_end))
+        Ok((
+            pctx,
+            sctx,
+            setups_vadcop,
+            n_streams_per_gpu,
+            n_recursive_streams_per_gpu,
+            n_aggregation_workers_per_gpu,
+            n_gpus,
+            aggregation_const_end,
+        ))
     }
 
     #[allow(dead_code)]

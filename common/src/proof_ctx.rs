@@ -993,7 +993,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
-    ) -> ProofmanResult<(u64, u64, u64)> {
+        // -> (basic streams/GPU, recursive streams/GPU, aggregation workers/GPU, GPUs)
+    ) -> ProofmanResult<(u64, u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
             self.mpi_ctx.node_n_processes as u32,
@@ -1086,6 +1087,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             false => StreamLayout {
                 basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
                 recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                aggregation_workers: 0,
                 unused: 0,
             },
         };
@@ -1103,12 +1105,16 @@ impl<F: PrimeField64> ProofCtx<F> {
                 .map(|c| format!("{} x {}", c.count, format_bytes(c.size as f64 * 8.0)))
                 .collect::<Vec<_>>()
                 .join(" + ");
+            let aggregation_desc = match n_recursive_streams_per_gpu {
+                0 => format!("{} aggregation workers sharing the basic streams", layout.aggregation_workers),
+                n => format!("{n} dedicated streams per GPU for recursive proofs"),
+            };
             tracing::info!(
-                "Using {} streams per GPU for basic proofs ({}) and {} streams per GPU for recursive proofs. \
+                "Using {} streams per GPU for basic proofs ({}) and {}. \
                  Using {} for fixed pols, {} unused",
                 n_streams_per_gpu,
                 classes,
-                n_recursive_streams_per_gpu,
+                aggregation_desc,
                 format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
                 format_bytes(layout.unused as f64 * 8.0),
             );
@@ -1166,7 +1172,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         self.d_buffers = d_buffers;
 
-        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
+        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, layout.aggregation_workers as u64, n_gpus))
     }
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {
