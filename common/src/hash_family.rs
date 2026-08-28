@@ -127,10 +127,17 @@ pub fn final_grinding_bits(family: &str) -> usize {
 /// for a fraction more proof is the right side of that trade for a
 /// family whose final air already sits at 99% of its BLAKE3 block capacity.
 ///
+/// blake3 takes 2, but NOT on the trade the paragraph above describes -- measured, it does not halve
+/// the memory. This air's constraints are naturally degree 8, so it needs no intermediate polynomials
+/// at all; at 2 the cap falls to 5 and the packer adds 125 of them, 387 base-field columns against
+/// 21. The extra columns cancel the halved domain almost exactly: 2^22 x 346 cells against
+/// 2^21 x 712. What 2 does buy is a smaller extended domain to hold at once, and it costs queries --
+/// 70 to 106 -- and the proof with them. Deliberate, not an oversight.
+///
 /// Poseidon keeps 4, which its committed verifiers and circom fixtures encode.
 pub fn final_blowup_factor(family: &str) -> usize {
     match family {
-        "blake3" => 3,
+        "blake3" => 2,
         "Poseidon1" | "Poseidon2" => 4,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -376,11 +383,11 @@ mod tests {
         }
     }
 
-    /// blake3's final air is built at blowup 3, poseidon's at 4, and both carry degree 8 -- so the
-    /// degree cap does not become the thing that forces the blowup.
+    /// The blowup is per family, and whatever it is must still carry degree 5 -- the floor the final
+    /// air's own constraints need -- so the degree cap never becomes the thing that forces it.
     #[test]
     fn final_blowup_is_per_family_and_carries_the_degree() {
-        assert_eq!(super::final_blowup_factor("blake3"), 3);
+        assert_eq!(super::final_blowup_factor("blake3"), 2);
         assert_eq!(super::final_blowup_factor("Poseidon2"), 4);
         for f in super::FAMILIES {
             let b = super::final_blowup_factor(f);
