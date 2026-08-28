@@ -2438,6 +2438,12 @@ static const AirInstanceInfo *requestedAirInstance(DeviceCommitBuffers* d_buffer
     return byType->second[0];
 }
 
+// A forced request may only be held to a pool that exists: the Rust carve drops it when an
+// aggregation-only stream costs what a basic one does.
+static bool hasRecursivePool(DeviceCommitBuffers* d_buffers){
+    return d_buffers->n_recursive_streams > 0;
+}
+
 static uint64_t largestBasicCapacity(DeviceCommitBuffers* d_buffers){
     uint64_t largest = 0;
     for (uint32_t j = 0; j < d_buffers->n_streams; ++j) {
@@ -2494,30 +2500,19 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
         return wantSlot != UINT64_MAX && sd.constPolsOffset == wantSlot && sd.constAuxOffset == wantAux
                && sd.constAggBuffer == wantAgg && sd.constRecurserId.empty();
     };
-    uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
-    uint32_t countUnusedStreams[d_buffers->n_gpus];
-    int streamIdxGPU[d_buffers->n_gpus];
-    bool warmFoundGPU[d_buffers->n_gpus];
-    bool unusedFoundGPU[d_buffers->n_gpus];
-
-    for( uint32_t i = 0; i < d_buffers->n_gpus; i++){
-        countUnusedStreams[i] = 0;
-        countFreeStreamsGPU[i] = 0;
-        streamIdxGPU[i] = -1;
-        warmFoundGPU[i] = false;
-        unusedFoundGPU[i] = false;
-    }
+    // The best free stream on one GPU, and how much it has free (which picks between GPUs).
+    struct GpuPick { int stream = -1; uint32_t free = 0, unused = 0; bool warm = false, wasUnused = false; };
+    std::vector<GpuPick> picks(d_buffers->n_gpus);
 
     // Tightest fit first, so larger classes stay free for the airs with nowhere else to go. Only free
     // streams are compared, so a busy tight class never idles the big one. Within a class: warm, then unused.
-    auto betterCandidate = [&](uint32_t cand, int best, bool candWarm, bool candUnused,
-                               bool bestWarm, bool bestUnused) {
-        if (best < 0) return true;
+    auto betterCandidate = [&](uint32_t cand, const GpuPick &best, bool candWarm, bool candUnused) {
+        if (best.stream < 0) return true;
         const uint64_t candCap = d_buffers->streamsData[cand].auxTraceCapacity;
-        const uint64_t bestCap = d_buffers->streamsData[best].auxTraceCapacity;
+        const uint64_t bestCap = d_buffers->streamsData[best.stream].auxTraceCapacity;
         if (candCap != bestCap) return candCap < bestCap;
-        if (candWarm != bestWarm) return candWarm;
-        return candUnused && !bestUnused;
+        if (candWarm != best.warm) return candWarm;
+        return candUnused && !best.wasUnused;
     };
 
     bool someFree = false;
@@ -2534,87 +2529,51 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
         // try_lock, so this never blocks on harvest/reserve.
         std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
         const bool firstGpuBorrowed = d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
-        if (recursive) {
+        // One pool pass; the best candidate per GPU is left locked.
+        auto scanPool = [&](auto pool) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
-                if (firstGpuBorrowed && d_buffers->streamsData[i].gpuId == firstGpuId) continue;
-                if (d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
-                    // Re-check the borrow flag under the lock.
-                    if (d_buffers->streamsData[i].gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
-                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
-                        continue;
-                    }
-                    // Ran to completion but not yet harvested: free to take, and its
-                    // const-tree is still loaded. Queried once and reused by the warm test.
-                    const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
-                    if ((d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained)
-                        && fitsCapacity(d_buffers->streamsData[i])) {
-                        uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
-
-                        countFreeStreamsGPU[gpuLocalId]++;
-                        if(d_buffers->streamsData[i].status==0){
-                            countUnusedStreams[gpuLocalId]++;
-                        }
-                        // status==0 is deliberately absent from isWarm: the only path to it
-                        // (reset_device_streams_gpu) calls invalidateContext() first, so the
-                        // key comparison there can never match an unused stream anyway.
-                        bool warm = isWarm(d_buffers->streamsData[i], drained);
-                        bool unused = d_buffers->streamsData[i].status==0;
-                        if (betterCandidate(i, streamIdxGPU[gpuLocalId], warm, unused,
-                                            warmFoundGPU[gpuLocalId], unusedFoundGPU[gpuLocalId])) {
-                            streamIdxGPU[gpuLocalId] = i;
-                            warmFoundGPU[gpuLocalId] = warm;
-                            unusedFoundGPU[gpuLocalId] = unused;
-                        }
-                        someFree = true;
-                        streams_locked[i] = true;
-                    } else {
-                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
-                    }
+                StreamData &sd = d_buffers->streamsData[i];
+                if (firstGpuBorrowed && sd.gpuId == firstGpuId) continue;
+                if (!pool(sd) || !sd.mutex_stream_selection.try_lock()) continue;
+                // Re-check the borrow flag under the lock.
+                if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+                    sd.mutex_stream_selection.unlock();
+                    continue;
                 }
+                // Ran to completion but not yet harvested: free to take, and its const-tree is still
+                // loaded. Queried once and reused by the warm test.
+                const bool drained = sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess;
+                if (!(sd.status==0 || sd.status==3 || drained) || !fitsCapacity(sd)) {
+                    sd.mutex_stream_selection.unlock();
+                    continue;
+                }
+                GpuPick &pick = picks[d_buffers->gpus_g2l[sd.gpuId]];
+                const bool unused = sd.status==0;
+                pick.free++;
+                pick.unused += unused;
+                // status==0 is deliberately absent from isWarm: the only path to it
+                // (reset_device_streams_gpu) calls invalidateContext() first, so the key comparison
+                // there can never match an unused stream anyway.
+                const bool warm = isWarm(sd, drained);
+                if (betterCandidate(i, pick, warm, unused)) {
+                    pick.stream = i;
+                    pick.warm = warm;
+                    pick.wasUnused = unused;
+                }
+                someFree = true;
+                streams_locked[i] = true;
             }
+        };
+
+        if (recursive) {
+            scanPool([](const StreamData &sd) { return sd.recursive; });
         }
 
-        // Recursive requests that found a recursive stream skip this (someFree set);
-        // a non-forced recursive request with no free recursive stream falls back to
-        // non-recursive streams, exactly as the old while-loop did.
-        if (!someFree && (!recursive || !force_recursive)) {
-            for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
-                if (firstGpuBorrowed && d_buffers->streamsData[i].gpuId == firstGpuId) continue;
-                if (!d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
-                    // Re-check the borrow flag under the lock (see the recursive loop above).
-                    if (d_buffers->streamsData[i].gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
-                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
-                        continue;
-                    }
-                    // Ran to completion but not yet harvested: free to take, and its
-                    // const-tree is still loaded. Queried once and reused by the warm test.
-                    const bool drained = d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess;
-                    if ((d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || drained)
-                        && fitsCapacity(d_buffers->streamsData[i])) {
-                        uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
-
-                        countFreeStreamsGPU[gpuLocalId]++;
-                        if(d_buffers->streamsData[i].status==0){
-                            countUnusedStreams[gpuLocalId]++;
-                        }
-                        // status==0 is deliberately absent from isWarm: the only path to it
-                        // (reset_device_streams_gpu) calls invalidateContext() first, so the
-                        // key comparison there can never match an unused stream anyway.
-                        bool warm = isWarm(d_buffers->streamsData[i], drained);
-                        bool unused = d_buffers->streamsData[i].status==0;
-                        if (betterCandidate(i, streamIdxGPU[gpuLocalId], warm, unused,
-                                            warmFoundGPU[gpuLocalId], unusedFoundGPU[gpuLocalId])) {
-                            streamIdxGPU[gpuLocalId] = i;
-                            warmFoundGPU[gpuLocalId] = warm;
-                            unusedFoundGPU[gpuLocalId] = unused;
-                        }
-                        someFree = true;
-                        streams_locked[i] = true;
-                    } else {
-                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
-                    }
-                }
-            }
+        // A recursive request with no free recursive stream falls back here. The reverse is NOT
+        // allowed: only gen_recursive_proof_gpu resolves its aux trace by `sd.recursive`, so a basic
+        // launch on a recursive stream would index the basic pool with a recursive localStreamId.
+        if (!someFree && (!recursive || !(force_recursive && hasRecursivePool(d_buffers)))) {
+            scanPool([](const StreamData &sd) { return !sd.recursive; });
         }
     }
 
@@ -2623,13 +2582,13 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     // Most free streams wins; ties break on unused count. someFree guarantees a candidate.
     int bestGpu = -1;
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-        if (streamIdxGPU[i] == -1) continue;
-        if (bestGpu == -1 || countFreeStreamsGPU[i] > countFreeStreamsGPU[bestGpu] ||
-            (countFreeStreamsGPU[i] == countFreeStreamsGPU[bestGpu] && countUnusedStreams[i] > countUnusedStreams[bestGpu])) {
+        if (picks[i].stream < 0) continue;
+        if (bestGpu == -1 || picks[i].free > picks[bestGpu].free ||
+            (picks[i].free == picks[bestGpu].free && picks[i].unused > picks[bestGpu].unused)) {
             bestGpu = i;
         }
     }
-    uint32_t selectedStreamId = streamIdxGPU[bestGpu];
+    uint32_t selectedStreamId = picks[bestGpu].stream;
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (streams_locked[i] && i != selectedStreamId) {
             d_buffers->streamsData[i].mutex_stream_selection.unlock();
@@ -2657,7 +2616,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
             uint64_t largest = 0;
             for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
                 const StreamData &sd = d_buffers->streamsData[i];
-                if (force_recursive && !sd.recursive) continue;
+                if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) continue;
                 largest = std::max(largest, sd.auxTraceCapacity);
                 if (sd.auxTraceCapacity >= requirementFor(d_buffers, sd, need)) eligible++;
             }
@@ -2704,9 +2663,9 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
     if (streamId >= d_buffers->n_total_streams) return 0;
     StreamData& sd = d_buffers->streamsData[streamId];
-    // A forced recursive launch must stay on a recursive stream; refuse otherwise so
-    // the caller falls back to the cold scan.
-    if (force_recursive && !sd.recursive) return 0;
+    // A forced recursive launch must stay on a recursive stream while a pool exists; refuse
+    // otherwise so the caller falls back to the cold scan.
+    if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) return 0;
     // Warm is worthless if the launch does not fit; the cold scan will find a class that does.
     const uint64_t known = requiredAuxTrace(d_buffers, airgroupId, airId, std::string(proofType));
     const uint64_t need = requirementFor(d_buffers, sd, known);
@@ -2714,21 +2673,25 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
     if (d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire) && sd.gpuId == firstGpuId) return 0;
 
-    std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
-    if (!sd.mutex_stream_selection.try_lock()) return 0;
-    if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
-        sd.mutex_stream_selection.unlock();
-        return 0;
-    }
-    bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess);
-    if (!free) { sd.mutex_stream_selection.unlock(); return 0; }
-    // Warm but too roomy: taking it would park this launch on a stream some larger air may be the
-    // only user of. Refuse, and let the scan apply its tightest-fit rule. Sized pool only -- the
-    // recursive streams are one class, and comparing them against basic ones just loses affinity.
-    if (!sd.recursive && sd.auxTraceCapacity > need
-        && tighterFreeStreamExists(d_buffers, need, sd.auxTraceCapacity, streamId, sd.gpuId)) {
-        sd.mutex_stream_selection.unlock();
-        return 0;
+    {
+        // Scoped like the cold scan's: reserving harvests a proof, and the global lock must never be
+        // held across that. The per-stream lock, which guards the state, stays held.
+        std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
+        if (!sd.mutex_stream_selection.try_lock()) return 0;
+        if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+            sd.mutex_stream_selection.unlock();
+            return 0;
+        }
+        bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess);
+        if (!free) { sd.mutex_stream_selection.unlock(); return 0; }
+        // Warm but too roomy: taking it would park this launch on a stream some larger air may be the
+        // only user of. Refuse, and let the scan apply its tightest-fit rule. Sized pool only -- the
+        // recursive streams are one class, and comparing them against basic ones just loses affinity.
+        if (!sd.recursive && sd.auxTraceCapacity > need
+            && tighterFreeStreamExists(d_buffers, need, sd.auxTraceCapacity, streamId, sd.gpuId)) {
+            sd.mutex_stream_selection.unlock();
+            return 0;
+        }
     }
     reserveStreamLocked(d_buffers, streamId);
     sd.mutex_stream_selection.unlock();

@@ -1067,15 +1067,18 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     uint64_t height = pol2N / width;
     dim3 nThreads(32, 32);
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
-    transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
-    
+    // The transpose lays the polynomial out for the tree, so it belongs to the same category.
     TimerStartCategoryGPU(timer, MERKLE_TREE);
+    transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
+
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, Layout::RowMajor, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     uint64_t tree_size = treeFRI->numNodes;
     if(d_transcript != nullptr) {
+        TimerStartCategoryGPU(timer, TRANSCRIPT);
         d_transcript->put(&treeFRI->nodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+        TimerStopCategoryGPU(timer, TRANSCRIPT);
     }
 }
 
