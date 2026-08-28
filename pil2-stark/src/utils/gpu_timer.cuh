@@ -239,18 +239,15 @@ public:
         if (timers.find(total_name) == timers.end()) return;
 
         // clearCategories() at the proof window's start means everything left belongs to
-        // total_name; mixing in the load phase used to push the total over 100%.
+        // total_name, so the percentages below are against the right denominator: categories
+        // recorded during the load phase used to be divided by the proof's own span.
         double time_total = getTimeSec(total_name);
         if (multiTimers.empty()) return;
         zklog.trace("     KERNELS CONTRIBUTIONS:");
 
         std::vector<std::pair<std::string, double>> category_times;
-        double accounted_time = 0.0;
-
         for (const auto& [category, entries] : multiTimers) {
-            double total_sec = getCategoryTotalTimeSec(category);
-            accounted_time += total_sec;
-            category_times.emplace_back(category, total_sec);
+            category_times.emplace_back(category, getCategoryTotalTimeSec(category));
         }
 
         std::sort(category_times.begin(), category_times.end(),
@@ -263,11 +260,10 @@ public:
             oss.clear();
         }
 
-        // Every kernel the proof launches is inside a category, so what is left is the stream idle
-        // between them: launch latency, and no category can cover it -- a gap is inside none.
-        double other_time = std::max(0.0, time_total - accounted_time);
-        oss << std::fixed << std::setprecision(4) << other_time << "s (" << std::setprecision(2)<< (other_time / time_total) * 100.0 << "%)";
-        zklog.trace("        STREAM_GAPS" + std::string(15 - 11, ' ') + ":  " + oss.str());
+        // Deliberately no leftover/OTHER line. window-minus-categories is a coverage residual, not
+        // a measurement: other streams run in this stream's gaps, overlapping categories are summed
+        // rather than unioned, and a replayed capture region skips its body so its categories never
+        // fire at all. Naming it invited reading it as idle GPU, which it never was.
 #endif
     }
 

@@ -1067,8 +1067,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     uint64_t height = pol2N / width;
     dim3 nThreads(32, 32);
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
-    // The transpose lays the polynomial out for the tree, so it belongs to the same category --
-    // outside it, it was the largest single contributor to the report's OTHER line.
+    // The transpose lays the polynomial out for the tree, so it belongs to the same category.
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
 

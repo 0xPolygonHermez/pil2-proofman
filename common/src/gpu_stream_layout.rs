@@ -181,6 +181,12 @@ pub fn plan_stream_layout(
     // Dedicated streams get one worker each. Without any — the pool was dropped, or the budget could
     // not fund one — aggregation shares the basic streams, which costs a thread and not memory; but
     // never every stream at once, or the basic queue stalls behind them.
+    //
+    // The `max(1)` is the deliberate exception at a single basic stream, where that rule would leave
+    // aggregation with no worker at all. Holding it back there buys nothing: one stream serialises
+    // basic and recursive work regardless, so there is no overlap to protect, and the tail of the
+    // aggregation tree is on the critical path. Better to interleave than to make it wait for the
+    // whole basic queue to drain. From two streams up the rule applies and one is always left free.
     let shared_workers = max_recursive_streams.min((n_large + n_regular).saturating_sub(1).max(1));
     Some(StreamLayout {
         basic,
