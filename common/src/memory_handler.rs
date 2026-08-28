@@ -585,9 +585,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// Same as [`MemoryHandler::log_wait_summary`], across all four recursive pools.
     pub fn log_wait_summary(&self) {
         self.witness.log_wait();
-        self.witness_compressor.log_wait();
         self.trace.log_wait();
-        self.trace_compressor.log_wait();
     }
 
     pub fn take_buffer_witness(&self) -> Vec<F> {
