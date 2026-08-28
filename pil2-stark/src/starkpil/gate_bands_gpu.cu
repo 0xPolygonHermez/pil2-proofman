@@ -285,8 +285,8 @@ static_assert(gate_bands::blake3::RANGE_SIZE == (1ull << 16), "blake3MulWords as
 // be lost; the host checks that nRows covers the table, and the guards here keep a short air from
 // writing out of bounds.
 __global__ void scatterBlake3MultiplicitiesKernel(uint64_t *trace, uint64_t nCols, uint64_t nRows,
-                                                  uint64_t lanes, const uint64_t *mul) {
-    const gate_bands::blake3::Layout L = gate_bands::blake3::layout(lanes);
+                                                  uint64_t lanes, uint64_t band, const uint64_t *mul) {
+    const gate_bands::blake3::Layout L = gate_bands::blake3::layout(lanes, band);
     const uint64_t i = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
     if (i < gate_bands::blake3::TABLE_SIZE && i < nRows) {
         trace[i * nCols + L.mul_table] = mul[i];
@@ -297,14 +297,14 @@ __global__ void scatterBlake3MultiplicitiesKernel(uint64_t *trace, uint64_t nCol
 }
 
 __device__ inline void expandBlake3Lane(uint64_t *trace, uint64_t nCols, uint64_t row,
-                                        uint64_t lanes, uint64_t lane, uint64_t kind,
+                                        uint64_t lanes, uint64_t band, uint64_t lane, uint64_t kind,
                                         uint64_t flags, uint64_t *mul) {
     namespace b3 = gate_bands::blake3;
     const b3::Kind k = kind == GB_BLAKE3_NODE           ? b3::Kind::Node
                      : kind == GB_BLAKE3_COMPRESS_CHUNK ? b3::Kind::Chunk
                                                         : b3::Kind::Parent;
     AtomicSink sink{mul};
-    b3::expand_one_lane(trace, nCols, row, lanes, lane, k, flags, sink);
+    b3::expand_one_lane(trace, nCols, row, lanes, band, lane, k, flags, sink);
 }
 
 // A kernel per family rather than one kernel with a branch: ptxas allocates registers for the union
@@ -320,7 +320,7 @@ __device__ inline void expandBlake3Lane(uint64_t *trace, uint64_t nCols, uint64_
 // consecutive threads a whole block of rows apart, one memory transaction per thread per store.
 __global__ void expandBlake3BandsKernel(uint64_t *trace, uint64_t nCols,
                                         const uint64_t *bands, uint64_t nBands, uint64_t lanes,
-                                        uint64_t *mul) {
+                                        uint64_t band, uint64_t *mul) {
     const uint64_t t = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
     if (t >= nBands * lanes) return;
     const uint64_t b = t / lanes, lane = t % lanes;
@@ -329,7 +329,7 @@ __global__ void expandBlake3BandsKernel(uint64_t *trace, uint64_t nCols,
     // with a guessed permutation. A non-BLAKE3 kind here would mean the host launched the wrong
     // kernel for this setup, so skip it rather than reconstruct it with the wrong permutation.
     if (!is_known_kind(kind) || !is_blake3(kind)) return;
-    expandBlake3Lane(trace, nCols, row, lanes, lane, kind, bands[b * 3 + 2], mul);
+    expandBlake3Lane(trace, nCols, row, lanes, band, lane, kind, bands[b * 3 + 2], mul);
 }
 
 __global__ void expandPoseidonBandsKernel(uint64_t *trace, uint64_t nCols, uint64_t nRows,
@@ -401,11 +401,15 @@ extern "C" void widenCompactWitnessGPU(uint64_t *d_trace, uint64_t nCols, uint64
 }
 
 extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
-                                   const uint64_t *d_bands, uint64_t nBands, uint64_t lanes,
+                                   const uint64_t *d_bands, uint64_t nBands, uint64_t aux,
                                    bool anyBlake3, uint64_t *d_blake3Mul, void *stream_) {
     if (nBands == 0) return;
     const cudaStream_t stream = (cudaStream_t)stream_;
     const int tpb = 128;
+    // The band section's aux word, unpacked exactly as the CPU driver does it: LANES low, the
+    // a[]/S[] band width high. Poseidon leaves it 0 and reads neither.
+    const uint64_t lanes = aux & 0xFFFFFFFFull;
+    const uint64_t band = aux >> 32;
     if (!anyBlake3) {
         expandPoseidonBandsKernel<<<(unsigned)((nBands + tpb - 1) / tpb), tpb, 0, stream>>>(
             d_trace, nCols, nRows, d_bands, nBands, lanes);
@@ -441,11 +445,11 @@ extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t n
     // One thread per (band, lane); see the kernel.
     const uint64_t nThreads = nBands * lanes;
     expandBlake3BandsKernel<<<(unsigned)((nThreads + tpb - 1) / tpb), tpb, 0, stream>>>(
-        d_trace, nCols, d_bands, nBands, lanes, d_blake3Mul);
+        d_trace, nCols, d_bands, nBands, lanes, band, d_blake3Mul);
     CHECKCUDAERR(cudaGetLastError());
 
     const uint64_t nScatter = gate_bands::blake3::TABLE_SIZE;
     scatterBlake3MultiplicitiesKernel<<<(unsigned)((nScatter + tpb - 1) / tpb), tpb, 0, stream>>>(
-        d_trace, nCols, nRows, lanes, d_blake3Mul);
+        d_trace, nCols, nRows, lanes, band, d_blake3Mul);
     CHECKCUDAERR(cudaGetLastError());
 }

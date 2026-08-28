@@ -148,8 +148,8 @@ TEST(GateBandsGPU, MatchesTheHostExpander)
 TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
 {
     namespace b3 = gate_bands::blake3;
-    constexpr uint64_t LANES = 2, BLOCKS = 3;
-    const uint64_t nCols = b3::stage1_cols(LANES);
+    constexpr uint64_t LANES = 2, BLOCKS = 3, BAND = 18;
+    const uint64_t nCols = b3::stage1_cols(LANES, BAND);
     const uint64_t nRows = b3::TABLE_SIZE;   // exactly the rows the table multiplicities need
 
     const uint64_t V = gate_bands::GATE_BAND_FORMAT_VERSION;
@@ -180,7 +180,7 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     // copies the whole stage-1 trace up, and nothing has cleared these. The host expander
     // overwrites them by assignment; the device adds into them, so its zeroing pass is
     // load-bearing and this is what makes the test say so.
-    const auto Lseed = b3::layout(LANES);
+    const auto Lseed = b3::layout(LANES, BAND);
     for (uint64_t i = 0; i < nRows; i++) {
         seed[i * nCols + Lseed.mul_table] = Goldilocks::fromU64(0xDEAD0000ull + i);
         seed[i * nCols + Lseed.mul_range] = Goldilocks::fromU64(0xBEEF0000ull + i);
@@ -207,7 +207,7 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     uint64_t *d_mul = nullptr;
     ASSERT_EQ(cudaMalloc(&d_mul, mulWords * sizeof(uint64_t)), cudaSuccess);
 
-    expandGateBandsGPU(d_trace, nCols, nRows, d_bands, BLOCKS, LANES, true, d_mul, nullptr);
+    expandGateBandsGPU(d_trace, nCols, nRows, d_bands, BLOCKS, LANES | (BAND << 32), true, d_mul, nullptr);
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
     std::vector<uint64_t> device(seed.size());

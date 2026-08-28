@@ -790,13 +790,14 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         }
     }
 
-    // LANES has to have travelled for a BLAKE3 air: the kernel cannot recover it, and a wrong
-    // value silently writes the whole band into the wrong columns. Checked once, at setup.
+    // LANES and the band width both have to have travelled for a BLAKE3 air: the kernel can recover
+    // neither, and a wrong value silently writes the whole band into the wrong columns. Checked once,
+    // at setup.
     bool anyBlake3 = false;
     for (uint64_t i = 0; i < nBands && !anyBlake3; i++) anyBlake3 = gate_bands::is_blake3(hostBands[i * 3 + 1]);
-    if (anyBlake3 && bandView.aux == 0) {
+    if (anyBlake3 && ((bandView.aux & 0xFFFFFFFFull) == 0 || (bandView.aux >> 32) == 0)) {
         zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
-                    ") has BLAKE3 gate bands but its exec file carries no LANES");
+                    ") has BLAKE3 gate bands but its exec file carries no LANES or no band width");
         exitProcess();
     }
 

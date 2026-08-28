@@ -158,9 +158,13 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
     // are 1.5 MB apiece, so they are not allocated for an air that has none.
     bool anyBlake3 = false;
     for (uint64_t i = 0; i < nBands && !anyBlake3; i++) anyBlake3 = is_blake3(b[i * 3 + 1]);
-    const uint64_t lanes = view.aux;
-    if (anyBlake3 && lanes == 0) {
-        res.status = ExpandStatus::MalformedSection;  // LANES must travel with a BLAKE3 air
+    // LANES low, band width high. Both are required: a zero band would silently fall back to some
+    // constant and put every lane column at the wrong offset, which is a corrupt trace rather than
+    // a failure, so it is rejected here like a missing LANES.
+    const uint64_t lanes = view.aux & 0xFFFFFFFFull;
+    const uint64_t band = view.aux >> 32;
+    if (anyBlake3 && (lanes == 0 || band == 0)) {
+        res.status = ExpandStatus::MalformedSection;  // LANES and the band must travel with a BLAKE3 air
         return res;
     }
     blake3::Multiplicities total;
@@ -183,7 +187,7 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
                                      : kind == GB_BLAKE3_COMPRESS_CHUNK  ? blake3::Kind::Chunk
                                                                          : blake3::Kind::Parent;
                 blake3::HostSink sink{local};
-                blake3::expand_block(trace, nCols, row, lanes, k, payload, sink);
+                blake3::expand_block(trace, nCols, row, lanes, band, k, payload, sink);
                 touched = true;
             } else if (!expand_poseidon_band(trace, nCols, row, kind)) {
 #pragma omp critical
@@ -198,7 +202,7 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
             }
         }
     }
-    if (anyBlake3) blake3::write_multiplicities(trace, nCols, nRows, lanes, total);
+    if (anyBlake3) blake3::write_multiplicities(trace, nCols, nRows, lanes, band, total);
     if (firstMismatch != nBands) {
         res.status = ExpandStatus::OutputMismatch;
         res.badBand = firstMismatch;

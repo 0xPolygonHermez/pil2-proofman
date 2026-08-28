@@ -85,9 +85,13 @@ struct Layout {
     uint64_t dinv, vbTopHi, outBytes, mul_table, mul_range;
 };
 
-B3_HD inline Layout layout(uint64_t lanes) {
+// `band` is the width of the shared a[]/S[] band, which is NOT a constant: the aggregator air is 18
+// columns wide and the compressor 27. It arrives in the aux word beside LANES, because taking it
+// from BAND_COLS here put every lane column 9 too low on the compressor -- the air then read its
+// `outBytes` bytes as `vbTopHi` bits and failed booleanity.
+B3_HD inline Layout layout(uint64_t lanes, uint64_t band) {
     Layout l{};
-    uint64_t o = BAND_COLS;
+    uint64_t o = band;
     auto take = [&](uint64_t per_lane) { const uint64_t at = o; o += per_lane * lanes; return at; };
     // Declaration order in blake3/aggregator.pil, which is what fixes the trace layout. The
     // BOUNDARY columns come first: the air has to declare them before it calls blake3Lanes, because
@@ -102,7 +106,7 @@ B3_HD inline Layout layout(uint64_t lanes) {
     return l;
 }
 
-B3_HD inline uint64_t stage1_cols(uint64_t lanes) { return BAND_COLS + COLS_PER_LANE * lanes + 2; }
+B3_HD inline uint64_t stage1_cols(uint64_t lanes, uint64_t band) { return band + COLS_PER_LANE * lanes + 2; }
 
 // Row of the XOR/ROTR table for (a, b, rot), matching blake3Tables in circuits/blake3.pil:
 // A cycles fastest, then B, then ROTATION.
@@ -385,8 +389,8 @@ B3_HD inline void expand_boundary_columns(T *trace, uint64_t nCols, uint64_t bas
 // 56 clocks: the permutation state carries from one to the next.
 template <class T, class Sink>
 B3_HD inline void expand_one_lane(T *trace, uint64_t nCols, uint64_t row, uint64_t lanes,
-                            uint64_t lane, Kind kind, uint64_t flags, Sink &mul) {
-    const Layout L = layout(lanes);
+                            uint64_t band, uint64_t lane, Kind kind, uint64_t flags, Sink &mul) {
+    const Layout L = layout(lanes, band);
     const BlockInputs in = read_boundary(trace, nCols, row + lane, kind, flags);
     uint32_t fs[16];
     expand_lane(trace, nCols, row, lane, L, in, mul, fs);
@@ -395,18 +399,18 @@ B3_HD inline void expand_one_lane(T *trace, uint64_t nCols, uint64_t row, uint64
 
 // Expand one BLAKE3 block: every lane's interior, its boundary columns, and the lookups they make.
 template <class T, class Sink>
-B3_HD inline void expand_block(T *trace, uint64_t nCols, uint64_t row, uint64_t lanes,
+B3_HD inline void expand_block(T *trace, uint64_t nCols, uint64_t row, uint64_t lanes, uint64_t band,
                          Kind kind, uint64_t flags, Sink &mul) {
     for (uint64_t lane = 0; lane < lanes; lane++) {
-        expand_one_lane(trace, nCols, row, lanes, lane, kind, flags, mul);
+        expand_one_lane(trace, nCols, row, lanes, band, lane, kind, flags, mul);
     }
 }
 
 // Write the accumulated counts into the trace's last two stage-1 columns, which is where
 // blake3Tables puts mul_table and mul_range -- it is called after blake3Lanes, so they are last.
 inline void write_multiplicities(Goldilocks::Element *trace, uint64_t nCols, uint64_t nRows,
-                                 uint64_t lanes, const Multiplicities &mul) {
-    const Layout L = layout(lanes);
+                                 uint64_t lanes, uint64_t band, const Multiplicities &mul) {
+    const Layout L = layout(lanes, band);
     for (uint64_t i = 0; i < TABLE_SIZE && i < nRows; i++) {
         trace[i * nCols + L.mul_table] = Goldilocks::fromU64(mul.table[i]);
     }

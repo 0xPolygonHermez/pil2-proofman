@@ -239,7 +239,7 @@ TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
 /// neither shows up as a compile error, so pinning the offsets is the point.
 TEST(GateBandsBlake3, LayoutMatchesTheGeneratedTrace)
 {
-    const auto L = gate_bands::blake3::layout(4);
+    const auto L = gate_bands::blake3::layout(4, 18);
     // The boundary columns come FIRST, right after the band: the air declares them before it calls
     // blake3Lanes, because that call binds them and PIL2 wants an argument declared before it is
     // passed. Reading them from the tail instead put every interior cell one group off.
@@ -254,11 +254,40 @@ TEST(GateBandsBlake3, LayoutMatchesTheGeneratedTrace)
     EXPECT_EQ(L.vc_pp, 218u);    EXPECT_EQ(L.vb_pp_xor, 234u);
     EXPECT_EQ(L.vb_pp_t, 250u);
     EXPECT_EQ(L.mul_table, 254u); EXPECT_EQ(L.mul_range, 255u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(4), 256u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(4, 18), 256u);
 
     // and it must scale, since LANES is an air parameter
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(1), 79u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(8), 492u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(1, 18), 79u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 18), 492u);
+}
+
+/// The BAND is an air parameter too, not a constant: `blake3/compressor.pil` is 27 columns wide
+/// where `blake3/aggregator.pil` is 18, and everything after the band moves with it.
+///
+/// Pinned against a real compressor's starkinfo (LANES 8, band 27), where cmPolsMap places a[0..27],
+/// then dinv at 27 and vbTopHi at 35. Reading the band from a constant put every lane column 9 too
+/// low, so the air read its outBytes bytes as vbTopHi bits and failed booleanity -- the whole proof
+/// was rejected at VerifyEvaluations with nothing pointing at the cause.
+TEST(GateBandsBlake3, LayoutFollowsTheBandWidth)
+{
+    const auto L = gate_bands::blake3::layout(8, 27);
+    EXPECT_EQ(L.dinv, 27u);      EXPECT_EQ(L.vbTopHi, 35u);
+    EXPECT_EQ(L.outBytes, 59u);
+    EXPECT_EQ(L.va, 91u);        EXPECT_EQ(L.vb, 107u);
+    EXPECT_EQ(L.vd, 139u);
+    EXPECT_EQ(L.x, 171u);        EXPECT_EQ(L.y, 187u);
+    EXPECT_EQ(L.va_p, 203u);     EXPECT_EQ(L.vd_p, 235u);
+    EXPECT_EQ(L.vc_p, 267u);     EXPECT_EQ(L.vb_p_s, 299u);
+    EXPECT_EQ(L.va_pp, 363u);    EXPECT_EQ(L.vd_pp, 395u);
+    EXPECT_EQ(L.vc_pp, 427u);    EXPECT_EQ(L.vb_pp_xor, 459u);
+    EXPECT_EQ(L.vb_pp_t, 491u);
+    EXPECT_EQ(L.mul_table, 499u); EXPECT_EQ(L.mul_range, 500u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 27), 501u);
+
+    // The two bands must NOT agree anywhere after the band, or the bug this guards is invisible.
+    const auto A = gate_bands::blake3::layout(8, 18);
+    EXPECT_EQ(L.dinv - A.dinv, 9u);
+    EXPECT_EQ(L.mul_range - A.mul_range, 9u);
 }
 
 /// The reference permutation is written independently of setup/circom/blake3_gate.cpp so the two
@@ -332,8 +361,8 @@ TEST(GateBandsBlake3, TableRowAndOutputAgreeWithTheAirsTable)
 TEST(GateBandsBlake3, ExpandedBlockReproducesTheDigest)
 {
     namespace b3 = gate_bands::blake3;
-    constexpr uint64_t LANES = 2;
-    const uint64_t nCols = b3::stage1_cols(LANES);
+    constexpr uint64_t LANES = 2, BAND = 18;
+    const uint64_t nCols = b3::stage1_cols(LANES, BAND);
     std::vector<Goldilocks::Element> trace(b3::CLOCKS * nCols, Goldilocks::zero());
 
     // Two lanes with different inputs, so a lane-indexing slip cannot pass.
@@ -348,7 +377,7 @@ TEST(GateBandsBlake3, ExpandedBlockReproducesTheDigest)
 
     b3::Multiplicities mul;
     b3::HostSink sink{mul};
-    b3::expand_block(trace.data(), nCols, 0, LANES, b3::Kind::Node, 11, sink);
+    b3::expand_block(trace.data(), nCols, 0, LANES, BAND, b3::Kind::Node, 11, sink);
 
     for (uint64_t l = 0; l < LANES; l++) {
         // what BLAKE3 says, from the same eight words
@@ -376,7 +405,7 @@ TEST(GateBandsBlake3, ExpandedBlockReproducesTheDigest)
         }
 
         // and what the expanded trace holds: out[i] at clock 40+i, four bytes wide
-        const auto L = b3::layout(LANES);
+        const auto L = b3::layout(LANES, BAND);
         for (int i = 0; i < 8; i++) {
             uint32_t got = 0;
             for (int b = 0; b < 4; b++) {
@@ -425,8 +454,8 @@ TEST(GateBands, UnexpandableBandReportsBothRowAndKind)
 TEST(GateBandsBlake3, ExpandGateBandsFillsInteriorsAndMultiplicities)
 {
     namespace b3 = gate_bands::blake3;
-    constexpr uint64_t LANES = 2, BLOCKS = 3;
-    const uint64_t nCols = b3::stage1_cols(LANES);
+    constexpr uint64_t LANES = 2, BLOCKS = 3, BAND = 18;
+    const uint64_t nCols = b3::stage1_cols(LANES, BAND);
     const uint64_t nRows = 1u << 18;  // must hold the 2^17 table rows the multiplicities land on
 
     const uint64_t H = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION;
@@ -459,7 +488,7 @@ TEST(GateBandsBlake3, ExpandGateBandsFillsInteriorsAndMultiplicities)
 
     // Interiors are filled: the permutation columns of the last row of each block cannot all be
     // zero unless nothing ran there.
-    const auto L = b3::layout(LANES);
+    const auto L = b3::layout(LANES, BAND);
     for (uint64_t k = 0; k < BLOCKS; k++) {
         const uint64_t last = k * b3::CLOCKS + b3::CLOCKS - 1;
         bool any = false;

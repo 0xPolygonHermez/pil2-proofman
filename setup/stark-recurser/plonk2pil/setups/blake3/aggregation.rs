@@ -698,8 +698,11 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         plonk_additions,
         airgroup_name: airgroup_name.clone(),
         air_name: airgroup_name,
-        // LANES: a setup parameter, so it travels rather than being derived from the column count.
-        band_aux: lanes as u64,
+        // LANES and the band width, packed: LANES low, band high. Both are setup parameters the
+        // expander cannot derive -- the column count alone cannot tell (band 18, LANES 8) from
+        // (band 27, LANES 8) apart -- and the band decides where every lane column starts. Taking
+        // it from a constant put the compressor's lanes 9 columns too low.
+        band_aux: (lanes as u64) | ((layout.band as u64) << 32),
     }
 }
 
