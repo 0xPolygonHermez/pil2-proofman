@@ -1323,12 +1323,12 @@ struct NttRun {
     const gl64_t *cosetSrc = nullptr;
     const gl64_t (*cosetPows)[NTT_WIN_SIZE] = nullptr;
     uint32_t lgBlowup = 0;
+    // with lgBlowup repurposed as nBits | qDim << 8 | firstCol << 16.
     size_t cosetStride = 0;
-    // Fused computeQ load (see nttQRevLoadVal_): the FIRST DIT launch reads shifted,
-    // zero-padded, bit-reversed q coefficients. cosetSrc = q column 0, cosetStride = NExt,
-    // lgBlowup = nBits | (qDim << 8) | (first column << 16), shiftQ = shiftIn.
+    // Fused computeQ load (see nttQRevLoadVal_): the FIRST DIT launch reads the shifted,
+    // zero-padded, bit-reversed q coefficients straight from cosetSrc/cosetStride above,
     bool qrev = false;
-    uint64_t shiftQ = 0;
+    uint64_t shiftQ = 0; // per-piece coset scale: shift^-N (piece pq is scaled by shiftQ^pq)
 
     void step(int iterations)
     {
@@ -1341,12 +1341,14 @@ struct NttRun {
         uint32_t num_blocks = (num_threads + block_size - 1) / block_size;
 
         // Z (z-count): independent butterfly pairs each thread carries in registers
-        // (r[2][Z] = 8 field elements). Chosen so 4 consecutive 8-byte elements = 32 B
-        // = exactly one memory sector: the coalesced load moves full sectors with no
-        // waste, and the positioning roots are derived once per thread then extended
-        // to the other Z-1 slots with one multiply each (the zStepRoots tables).
-        // Grid and shared memory scale with it: num_blocks/Z blocks, (Z+1)*shared_sz bytes.
-        // Per-thread exchange row: z_count elements, padded (NttXchg) for the Z>1 variants.
+        // (r[2][Z] = 16 field elements). Z consecutive 8-byte elements = 64 B = whole
+        // memory sectors per coalesced load, and Z independent butterflies give the ILP
+        // that hides the multiply-chain latency (these kernels are latency-bound).
+        // Positioning roots are derived once per thread, then extended to the other
+        // Z-1 slots with one multiply each (the zStepRoots tables). Grid and shared
+        // memory scale with it: num_blocks/Z blocks, (Z+1)*shared_sz bytes -- each
+        // thread's exchange row is padded by one element (NttXchg) to break the
+        // shared-memory bank conflicts a power-of-two row stride would cause.
         const int Z = 8;
         size_t shared_sz = sizeof(gl64_t) << (radix - 1);
 
@@ -1583,6 +1585,13 @@ void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, 
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;   // flat, nCols cols, NExt rows
     uint32_t N = 1u << nBits;
     uint32_t Next = 1u << nBitsExt;
+
+    // The qrev stage-0 load packs nBits | qDim << 8 | firstCol << 16 into one word and
+    // derives its q reads from col / qDim (see nttDitColMajorKernel<..., qrev_load>).
+    assert(nBitsExt >= nBits);
+    assert(qDim > 0 && qDim <= 0xff);
+    assert(nCols == qDeg * qDim && nCols <= 0xffff);
+    assert(qDeg <= (1ull << (nBitsExt - nBits)));
 
     // q iNTT as DIF (natural -> bit-reversed coefficients, 1/N folded into the last step):
     // the intermediate order is internal, so the NN flow's bit-reversal pass is unnecessary.
