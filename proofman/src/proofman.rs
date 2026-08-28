@@ -93,7 +93,8 @@ use crate::aggregate_worker_proofs;
 use std::ffi::c_void;
 
 use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
+    timer_stop_and_log_debug_net, create_buffer_fast,
 };
 
 use serde::Serialize;
@@ -3680,6 +3681,9 @@ where
         self.check_cancel(true)?;
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
+        // The per-instance witness timers include any wait for a buffer; report it separately.
+        self.memory_handler.log_wait_summary();
+        self.memory_handler_recursive_witness.log_wait_summary();
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
@@ -4836,8 +4840,13 @@ where
                         Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
                         // Free the slot before the counter so admission can refill immediately.
                         drop(slot);
-                        timer_stop_and_log_debug!(
+                        // The buffer this instance ended up with carries however long its
+                        // acquisition blocked, whichever worker did the blocking.
+                        let waited =
+                            proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                        timer_stop_and_log_debug_net!(
                             GENERATING_WC,
+                            waited,
                             "GENERATING_WC_{} [{}:{}]",
                             instance_id,
                             airgroup_id,
@@ -4942,8 +4951,13 @@ where
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
-                    timer_stop_and_log_debug!(
+                    // Whichever span took the buffer owns its wait; the lookup clears it, so the
+                    // second span below sees zero rather than double-counting.
+                    let preparing_waited =
+                        proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    timer_stop_and_log_debug_net!(
                         PREPARING_WC,
+                        preparing_waited,
                         "PREPARING_WC_{} [{}:{}]",
                         instance_id,
                         airgroup_id,
@@ -4961,16 +4975,20 @@ where
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
-                    timer_stop_and_log_debug!(
+                    let computing_waited =
+                        proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    timer_stop_and_log_debug_net!(
                         COMPUTING_WC,
+                        computing_waited,
                         "COMPUTING_WC_{} [{}:{}]",
                         instance_id,
                         airgroup_id,
                         air_id
                     );
                     Self::try_send_threads(&tx_threads_clone, threads_to_use_witness, &cancellation_info_clone);
-                    timer_stop_and_log_debug!(
+                    timer_stop_and_log_debug_net!(
                         GENERATING_WC,
+                        preparing_waited + computing_waited,
                         "GENERATING_WC_{} [{}:{}]",
                         instance_id,
                         airgroup_id,
