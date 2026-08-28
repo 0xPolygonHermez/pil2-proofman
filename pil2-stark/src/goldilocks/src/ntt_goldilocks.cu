@@ -664,18 +664,27 @@ __device__ __forceinline__ void nttIntermediateRoots(gl64_t &root0, gl64_t &root
     }
 }
 
+// Read-once load: caching the LDE's source would only evict the scratch the next pass
+// re-reads. operator[] is raw access -- the gl64_t(uint64_t) ctor would convert.
+__device__ __forceinline__ gl64_t nttLoadStream(const gl64_t *p)
+{
+    gl64_t v;
+    v[0] = __ldcs(reinterpret_cast<const unsigned long long *>(p));
+    return v;
+}
+
 // Coalesced z_count-element load/store: consecutive lanes read consecutive
 // addresses, then a warp-level shared transpose hands each lane its strided set.
 template<int z_count>
 __device__ __forceinline__ void nttCoalescedLoad(gl64_t r[z_count], const gl64_t *inout,
-                                                 uint32_t idx, uint32_t stage)
+                                                 uint32_t idx, uint32_t stage, bool stream = false)
 {
     const uint32_t x = threadIdx.x & (z_count - 1);
     idx &= ~((uint32_t)(z_count - 1) << stage);
     idx += x;
     #pragma unroll
     for (int z = 0; z < z_count; z++, idx += (uint32_t)1 << stage)
-        r[z] = inout[idx];
+        r[z] = stream ? nttLoadStream(&inout[idx]) : inout[idx];
 }
 
 // Shared-exchange row stride: z_count 8-byte elements padded to z_count+1. With the
@@ -731,7 +740,7 @@ __device__ __forceinline__ gl64_t nttCosetLoadVal_(const gl64_t *src,
     if (p & bmask)
         return gl64_t(uint64_t(0));
     uint32_t idx = p >> lg_blowup;
-    gl64_t r = src[idx];
+    gl64_t r = nttLoadStream(&src[idx]);
     uint32_t pow = nttBitRev(idx, lg_domain_size - lg_blowup);
     gl64_t root = cosetPows[0][pow % NTT_WIN_SIZE];
     #pragma unroll
@@ -967,6 +976,9 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
 
 // DIF (decimation-in-frequency) step: natural input order, bit-reversed output --
 // the iNTT of the LDE. gridDim.y selects the column.
+// d_srcbase non-null (first launch only) makes the launch out-of-place: it reads d_srcbase
+// instead of d_base, same column stride, so ldeColMajor can honour preserve_src without a
+// staging copy.
 template<int z_count, bool coalesced = false>
 __launch_bounds__(768, 1) __global__
 void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
@@ -975,9 +987,12 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
                           const gl64_t (*d_partialRoots)[NTT_WIN_SIZE],
                           const gl64_t (*d_zStepRoots)[1024],
                           const gl64_t *d_radix6, const gl64_t *d_radixX,
-                          bool is_intt, const uint64_t domain_inv)
+                          bool is_intt, const uint64_t domain_inv,
+                          const gl64_t *d_srcbase)
 {
     gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
+    const bool oop = d_srcbase != nullptr;
+    const gl64_t *d_in = oop ? d_srcbase + (size_t)blockIdx.y * col_stride : d_inout;
     extern __shared__ int nttShm[];
     gl64_t *shared_exchange = reinterpret_cast<gl64_t *>(nttShm);
 
@@ -997,8 +1012,8 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     gl64_t r[2][z_count];
 
     if (coalesced) {
-        nttCoalescedLoad<z_count>(r[0], d_inout, idx0, stage - iterations);
-        nttCoalescedLoad<z_count>(r[1], d_inout, idx1, stage - iterations);
+        nttCoalescedLoad<z_count>(r[0], d_in, idx0, stage - iterations, oop);
+        nttCoalescedLoad<z_count>(r[1], d_in, idx1, stage - iterations, oop);
         nttTranspose<z_count>(r[0]);
         __syncwarp();
         nttTranspose<z_count>(r[1]);
@@ -1006,8 +1021,8 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         uint32_t z_shift = out_mask == 0 ? iterations : 0;
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
-            r[0][z] = d_inout[idx0 + (z << z_shift)];
-            r[1][z] = d_inout[idx1 + (z << z_shift)];
+            r[0][z] = oop ? nttLoadStream(&d_in[idx0 + (z << z_shift)]) : d_in[idx0 + (z << z_shift)];
+            r[1][z] = oop ? nttLoadStream(&d_in[idx1 + (z << z_shift)]) : d_in[idx1 + (z << z_shift)];
         }
     }
 
@@ -1329,6 +1344,9 @@ struct NttRun {
     // zero-padded, bit-reversed q coefficients straight from cosetSrc/cosetStride above,
     bool qrev = false;
     uint64_t shiftQ = 0; // per-piece coset scale: shift^-N (piece pq is scaled by shiftQ^pq)
+    // When set, the FIRST DIF launch reads srcBase instead of base (same col_stride),
+    // leaving srcBase intact. Must be disjoint from base.
+    const gl64_t *srcBase = nullptr;
 
     void step(int iterations)
     {
@@ -1383,12 +1401,14 @@ struct NttRun {
             }
             stage += iterations;
         } else {
+            // Only the first launch (stage == lg) still reads the caller's source.
+            const gl64_t *src = (stage == lg) ? srcBase : nullptr;
             if (num_blocks < (uint32_t)Z)
-                nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, src);
             else if (stage == iterations || lg < 12)
-                nttDifColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, src);
             else
-                nttDifColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, src);
             stage -= iterations;
         }
         #undef NTT_ARGS
@@ -1533,14 +1553,17 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         gl64_t *dchunk = d_dst_ + (size_t)c0 * Next;
         gl64_t *csrc = d_src_ + (size_t)c0 * N;
 
-        // Stage when src must survive, or when a chunk's output covers its own input.
+        // Stage when src must survive, or when a chunk's output covers its own input: the
+        // iNTT's first pass reads csrc and writes scratch itself, so no copy is needed.
+        const gl64_t *oop_src = nullptr;
         if (preserve_src || (overlaps && (uint64_t)c0 * (blowup - 1) < nc)) {
-            CHECKCUDAERR(cudaMemcpyAsync(scratch, csrc, (size_t)nc * N * sizeof(gl64_t),
-                                         cudaMemcpyDeviceToDevice, stream));
+            oop_src = csrc;
             csrc = scratch;
         }
 
-        NttRun{csrc, N, nc, (int)nBits, true, ti, stream, false}.run();
+        NttRun intt{csrc, N, nc, (int)nBits, true, ti, stream, false};
+        intt.srcBase = oop_src;
+        intt.run();
 
         NttRun fwd{dchunk, Next, nc, (int)nBitsExt, false, tf, stream, true};
         fwd.cosetSrc = csrc;
