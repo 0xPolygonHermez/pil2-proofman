@@ -39,7 +39,7 @@
 //! columns, and those are openings the pinned `recursive1` verifies -- a cost the whole tree shares,
 //! where rows are this air's alone. Not the default because a compressor exists to be small.
 
-use super::aggregation::{aggregation_blake3, build_blake3_air, bucket_by_flags, plan_band_blocks, plan_plonk_rows};
+use super::aggregation::{build_blake3_air, bucket_by_flags, plan_band_blocks, plan_plonk_rows};
 use super::{blake3_max_blocks, stage1_cols, BLAKE3_CLOCKS, COMPRESSOR_BAND_COLS, COMPRESSOR_LAYOUT};
 use crate::plonk2pil::merge_copies::r1cs2plonk_merged;
 use crate::plonk2pil::r1cs::to_plonk::{blake3_compress_gate_uses, get_custom_gates_info};
@@ -266,18 +266,19 @@ pub fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorD
     }
 }
 
-/// Compressor setup: plan the geometry, then build the aggregator air at it.
+/// Compressor setup: plan the geometry, then build the air at it.
 ///
-/// The air itself is `blake3/aggregator.pil` unchanged. The compressor and the aggregator differ in
-/// what their CIRCOM circuit proves -- verifying a basic proof versus aggregating two recursive ones
-/// -- but a recursion air is only a carrier for plonk rows plus the custom gates, and the two draw on
-/// the same gate set. What differs is the SIZING: the aggregator is pinned to the shared recursion
-/// shape, the compressor picks its own.
+/// The air is `blake3/compressor.pil` -- the 27-column band, where every gate fits one row. It runs
+/// the same permutation and the same six band circuits as the aggregator and shares its placement
+/// routine; `COMPRESSOR_LAYOUT` is the whole difference. What also differs is the SIZING: the
+/// aggregator is pinned to the shared recursion shape, the compressor picks its own.
 pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     // An explicit --blake3-lanes outranks the search: the caller is stating the geometry.
     if options.blake3_lanes.is_some() {
         tracing::info!("Compressor: LANES pinned by the caller, skipping the geometry search");
-        return aggregation_blake3(r1cs, options);
+        // Still COMPRESSOR_LAYOUT: pinning LANES states one knob, and routing through
+        // aggregation_blake3 silently changed the band width, C, and every gate's packing too.
+        return build_blake3_air(r1cs, options, &COMPRESSOR_LAYOUT);
     }
 
     let demand = compressor_demand(r1cs, options);
@@ -361,13 +362,27 @@ mod tests {
     const CAP: usize = DEFAULT_MAX_N_BITS;
 
     /// The measured fibonacci compressor: `Compressor.pil` reports nNodeBlocks 7054, nChunkBlocks
-    /// 1607, nParentBlocks 0 at LANES=4, with the band's six counts as generated.
+    /// 1607, nParentBlocks 0 at LANES=4.
+    ///
+    /// Band counts are GATE counts, converted through `COMPRESSOR_LAYOUT` -- the layout
+    /// `compressor_demand` plans at. Spelled as aggregator rows they described a band 1.5x the real
+    /// one, so every geometry assertion below tested a demand the pipeline cannot produce.
     fn fibonacci() -> CompressorDemand {
+        let l = &COMPRESSOR_LAYOUT;
         CompressorDemand {
             node_uses: 7054 * 4,
             chunk_buckets: vec![1607 * 4],
             parent_buckets: vec![],
-            band_rows_by_circuit: [3404, 2 * 3376, 2 * 6776, 6119, 31650, 22927],
+            band_rows_by_circuit: [
+                6808usize.div_ceil(l.cmul_per_row), // cmul gates
+                l.evpol4_rows * 3376,               // evPol4 gates
+                l.fft4_rows * 6776,                 // fft4 gates
+                6119,                               // treeSelector4, one a row at both widths
+                31650usize.div_ceil(l.selval_per_row),
+                // Plonk ROWS at six a row, as measured. Nine needs the key histogram, not a
+                // division, so this is an upper bound and the conclusions below are conservative.
+                22927,
+            ],
         }
     }
 
@@ -391,7 +406,7 @@ mod tests {
     #[test]
     fn the_band_floor_alone_is_not_a_geometry() {
         let d = fibonacci();
-        assert_eq!(d.band_rows(), 84_404);
+        assert_eq!(d.band_rows(), 57_293);
         assert_eq!(d.start_n_bits(0), TABLE_N_BITS, "the band's own floor lands on the table's");
         let cap17 = blake3_max_blocks(1 << 17);
         for lanes in 1..=MAX_LANES {
@@ -552,7 +567,7 @@ mod tests {
     fn every_returned_geometry_satisfies_all_three_floors_and_is_minimal() {
         for node in [0usize, 100, 5_000, 28_216, 120_000] {
             for chunk in [0usize, 1, 6_428, 40_000] {
-                for band in [0usize, 84_404, 300_000] {
+                for band in [0usize, 57_293, 300_000] {
                     let d = CompressorDemand {
                         node_uses: node,
                         chunk_buckets: if chunk == 0 { vec![] } else { vec![chunk] },
@@ -618,8 +633,10 @@ mod tests {
 
     /// Plonk rows come from gate slots, not constraints: six gates a row.
     #[test]
-    fn the_band_floor_uses_six_plonk_gates_a_row() {
-        assert_eq!(PLONK_GATES_PER_ROW, 6);
+    fn the_band_floor_uses_the_compressor_bands_plonk_packing() {
+        // The number that decides the floor; the aggregator's constant is not read here.
+        assert_eq!(COMPRESSOR_LAYOUT.plonk_gates_per_row, 9);
+        assert_eq!(PLONK_GATES_PER_ROW, 6, "the aggregator's packing, for contrast");
     }
 
     /// The band floor is ALL SIX circuits of the connection band, not plonk alone. Every one of them
@@ -634,8 +651,8 @@ mod tests {
         };
         let all_six = fibonacci();
         assert_eq!(plonk_only.band_rows(), 22_927);
-        assert_eq!(all_six.band_rows(), 84_404, "the other five circuits are 61k of the 84k");
-        assert!(all_six.band_rows() > 3 * plonk_only.band_rows(), "plonk alone would understate N");
+        assert_eq!(all_six.band_rows(), 57_293, "the other five circuits are 34k of the 57k");
+        assert!(all_six.band_rows() > 2 * plonk_only.band_rows(), "plonk alone would understate N");
         // And each of the six moves the floor on its own.
         for i in 0..6 {
             let mut one = [0usize; 6];

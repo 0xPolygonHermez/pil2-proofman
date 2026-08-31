@@ -341,8 +341,13 @@ pub fn gen_recursive_setup(
     // An explicit pin outranks the reuse-derived floor: the caller is stating the size the whole
     // recursion runs at, which is the only thing the fixpoint between recursive1 and recursive2
     // can be built on.
+    //
+    // Not a compressor: it is not part of that fixpoint, and pinning it made the floor check below
+    // reject any compressor whose own search lands above the pin.
     if let Some(pinned) = config.recursive_n_bits {
-        plonk_opts.min_n_bits = Some(pinned);
+        if template != RecursiveTemplate::Compressor {
+            plonk_opts.min_n_bits = Some(pinned);
+        }
     }
     let type_compressor = match template {
         RecursiveTemplate::Compressor => "compressor",

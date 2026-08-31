@@ -1105,3 +1105,230 @@ mod plonk_coeff_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod audit_geometry {
+    use super::super::{BLAKE3_CLOCKS as CLOCKS, AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT};
+    use super::*;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Owner {
+        InLane(usize),
+        OutLane(usize),
+        Band,
+        Free,
+    }
+
+    /// What the AIR says a clock inside a block is for, read straight off the selector shapes.
+    fn owner(clk: usize, lanes: usize, band_on: bool) -> Owner {
+        if clk < lanes {
+            return Owner::InLane(clk);
+        }
+        if clk >= CLOCKS - lanes {
+            return Owner::OutLane(clk - (CLOCKS - lanes));
+        }
+        if band_on {
+            Owner::Band
+        } else {
+            Owner::Free
+        }
+    }
+
+    /// The PIL's fixed selector column for one circuit:
+    /// `[[0:CLOCKS]:at, [0:LANES, <p>:INTERIOR, 0:LANES]:nblocks, 0...]`
+    /// where <p> is `1` at step 1 and `[1,0]` at step 2.
+    fn pil_selector(at: usize, nblocks: usize, step: usize, lanes: usize, air_blocks: usize) -> Vec<bool> {
+        let interior = CLOCKS - 2 * lanes;
+        let mut s = vec![false; air_blocks * CLOCKS];
+        for b in at..at + nblocks {
+            for k in 0..interior {
+                if k % step == 0 {
+                    s[b * CLOCKS + lanes + k] = true;
+                }
+            }
+        }
+        s
+    }
+
+    /// Every row of every block has exactly one owner, and a band row is never a boundary row.
+    #[test]
+    fn boundary_rows_and_band_rows_partition_the_block_at_every_lane_count() {
+        for lanes in 1..=8usize {
+            let interior = CLOCKS - 2 * lanes;
+            assert_eq!(interior % 2, 0, "LANES={lanes}: odd interior would straddle a pair");
+            let mut seen_in = vec![0usize; lanes];
+            let mut seen_out = vec![0usize; lanes];
+            let mut band = 0usize;
+            for clk in 0..CLOCKS {
+                match owner(clk, lanes, true) {
+                    Owner::InLane(l) => seen_in[l] += 1,
+                    Owner::OutLane(l) => seen_out[l] += 1,
+                    Owner::Band => band += 1,
+                    Owner::Free => unreachable!(),
+                }
+            }
+            assert!(seen_in.iter().all(|&n| n == 1), "LANES={lanes}: an input row is shared or missing");
+            assert!(seen_out.iter().all(|&n| n == 1), "LANES={lanes}: an output row is shared or missing");
+            assert_eq!(band, interior, "LANES={lanes}: band rows != interior");
+            assert_eq!(band + 2 * lanes, CLOCKS);
+        }
+    }
+
+    /// Every `a[]` read the BLAKE3 half performs lands on that lane's own boundary row, never a
+    /// band row. Shifts transcribed from circuits/blake3.pil.
+    #[test]
+    fn every_blake3_boundary_read_lands_on_a_boundary_row() {
+        for lanes in 1..=8usize {
+            for lane in 0..lanes {
+                // blake3NodeBoundary / blake3CompressBoundaryKind: fires at clock i (0..8),
+                // reads through blake3Shift(a[j], i - lane).
+                for i in 0..8usize {
+                    let fire = i as isize;
+                    let read = fire - (i as isize - lane as isize);
+                    assert_eq!(read, lane as isize, "LANES={lanes} lane={lane} i={i}: message read drifted");
+                    assert!(matches!(owner(read as usize, lanes, true), Owner::InLane(l) if l == lane));
+                }
+                // blake3CompressBoundaryShared: vd cells at clocks 0..3, blake3Shift(a[..], c - lane).
+                for (c, _cell) in [(0usize, 17usize), (2, 16)] {
+                    let read = c as isize - (c as isize - lane as isize);
+                    assert!(matches!(owner(read as usize, lanes, true), Owner::InLane(l) if l == lane));
+                }
+                // Output rows: R = CLOCKS - LANES + lane, read in place.
+                let r = CLOCKS - lanes + lane;
+                assert!(
+                    matches!(owner(r, lanes, true), Owner::OutLane(l) if l == lane),
+                    "LANES={lanes} lane={lane}: output row {r} is not this lane's"
+                );
+                // OUT_CLK[R - OUT_FIRST] must index inside the 16-wide clock set.
+                let idx = r as isize - (CLOCKS as isize - 16);
+                assert!((0..16).contains(&idx), "LANES={lanes} lane={lane}: OUT_CLK index {idx} out of range");
+            }
+        }
+    }
+
+    /// The packer's rows are exactly the rows the AIR's selectors switch on. A gate placed where
+    /// its selector is 0 is a gate the AIR never evaluates.
+    #[test]
+    fn every_placed_gate_row_has_its_selector_on_and_no_row_carries_two() {
+        for layout in [&AGGREGATOR_LAYOUT, &COMPRESSOR_LAYOUT] {
+            for lanes in 1..=8usize {
+                // (rows-or-gates, step) in the order both the PIL and the packer lay them out.
+                let runs = [
+                    (137usize, 1usize),       // cmul rows
+                    (61, layout.evpol4_rows), // evpol4 gates
+                    (49, layout.fft4_rows),   // fft4 gates
+                    (23, 1),                  // treeselector rows
+                    (91, 1),                  // selval rows
+                    (211, 1),                 // plonk rows
+                ];
+                let interior = CLOCKS - 2 * lanes;
+                let total_blocks: usize = runs.iter().map(|(n, s)| n.div_ceil(interior / s)).sum();
+                let air_blocks = total_blocks + 3; // a few filler blocks past the band
+
+                // Build the six PIL selector columns exactly as the air declares them.
+                let mut at = 0usize;
+                let mut sels: Vec<Vec<bool>> = Vec::new();
+                for (n, step) in runs {
+                    let nb = n.div_ceil(interior / step);
+                    sels.push(pil_selector(at, nb, step, lanes, air_blocks));
+                    at += nb;
+                }
+
+                // Run the real allocator over the same runs.
+                let mut alloc = RowAlloc::new(lanes);
+                let mut placed: Vec<Vec<usize>> = Vec::new();
+                for (n, step) in runs {
+                    alloc.open(n, step);
+                    placed.push((0..n).map(|_| alloc.take()).collect());
+                }
+                assert_eq!(alloc.blocks_used(), at, "layout={} LANES={lanes}: block runs disagree", layout.template);
+
+                // 1. Every placed row has its own selector on.
+                for (c, rows) in placed.iter().enumerate() {
+                    for &r in rows {
+                        assert!(
+                            r < sels[c].len(),
+                            "layout={} LANES={lanes} circuit {c}: row {r} past the air",
+                            layout.template
+                        );
+                        assert!(
+                            sels[c][r],
+                            "layout={} LANES={lanes} circuit {c}: row {r} placed where the \
+                                selector is OFF -- that gate would be unconstrained",
+                            layout.template
+                        );
+                    }
+                }
+                // 2. No row carries two selectors, and no selector touches a boundary row.
+                for r in 0..air_blocks * CLOCKS {
+                    let on: Vec<usize> = (0..6).filter(|&c| sels[c][r]).collect();
+                    assert!(
+                        on.len() <= 1,
+                        "layout={} LANES={lanes}: row {r} carries selectors {on:?}",
+                        layout.template
+                    );
+                    if let Some(&c) = on.first() {
+                        let clk = r % CLOCKS;
+                        assert!(
+                            matches!(owner(clk, lanes, true), Owner::Band),
+                            "layout={} LANES={lanes}: circuit {c} selector is on at clock {clk}, a \
+                                 BLAKE3 boundary row",
+                            layout.template
+                        );
+                    }
+                }
+                // 3. A two-row gate's second row is inside the same block and carries no selector.
+                for (c, rows) in placed.iter().enumerate() {
+                    let step = runs[c].1;
+                    if step == 2 {
+                        for &r in rows {
+                            assert_eq!(
+                                r / CLOCKS,
+                                (r + 1) / CLOCKS,
+                                "layout={} LANES={lanes}: pair crosses a block",
+                                layout.template
+                            );
+                            assert!(
+                                !sels[c][r + 1],
+                                "layout={} LANES={lanes}: pair's second row is also a gate row",
+                                layout.template
+                            );
+                            assert!(
+                                matches!(owner((r + 1) % CLOCKS, lanes, true), Owner::Band),
+                                "layout={} LANES={lanes}: pair's second row is a boundary row",
+                                layout.template
+                            );
+                        }
+                    }
+                }
+                // 4. Selector-on rows a gate does not fill (each circuit's last-block tail) are
+                //    safe: an all-zero row satisfies every band circuit, plonk's q being 0 there.
+                for (c, rows) in placed.iter().enumerate() {
+                    let on: usize = sels[c].iter().filter(|&&b| b).count();
+                    assert!(
+                        on >= rows.len(),
+                        "layout={} LANES={lanes} circuit {c}: fewer selector rows than gates",
+                        layout.template
+                    );
+                }
+            }
+        }
+    }
+
+    /// The band's a[] cells a gate claims must fit the band, at both widths.
+    #[test]
+    fn no_gate_reaches_past_the_band_it_is_placed_in() {
+        for layout in [&AGGREGATOR_LAYOUT, &COMPRESSOR_LAYOUT] {
+            let b = layout.band;
+            assert!(layout.cmul_per_row * 9 <= b, "cmul overruns {}", layout.template);
+            assert!(layout.plonk_gates_per_row * 3 <= b, "plonk overruns {}", layout.template);
+            assert!(layout.selval_per_row * 13 <= b, "selval overruns {}", layout.template);
+            assert!(17 <= b, "treeselector overruns {}", layout.template);
+            assert!(24usize.div_ceil(layout.fft4_rows) <= b, "fft4 overruns {}", layout.template);
+            assert!(EVPOL4_SIGNALS.div_ceil(layout.evpol4_rows) <= b, "evpol4 overruns {}", layout.template);
+            // Blake3Compress input row is exactly 18 cells; the band must hold them.
+            assert!(compress_signal::IN_CELLS <= b, "compress input overruns {}", layout.template);
+            assert!(compress_signal::OUT_CELLS <= b, "compress output overruns {}", layout.template);
+        }
+    }
+}

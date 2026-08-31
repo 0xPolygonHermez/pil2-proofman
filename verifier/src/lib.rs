@@ -23,6 +23,10 @@ pub mod poseidon2 {
 /// No `vadcop_final_compressed`: the stage is off for blake3, where it measured a 2% smaller proof
 /// for a whole extra recursion layer (see `hash_family::compressed_final_by_default`). Turning it
 /// back on means generating that verifier too and replacing the three stubs in `Blake3Verifier`.
+///
+/// `recursive2_verifier` and `vadcop_final` are byte-identical only because both airs are
+/// `blake3/aggregator.pil` at the pinned N = 2^19 / LANES = 4. Do not collapse them into a
+/// re-export: unpin the size or change the aggregation arity and they diverge.
 pub mod blake3 {
     pub mod recursive2_verifier;
     pub mod vadcop_final;
