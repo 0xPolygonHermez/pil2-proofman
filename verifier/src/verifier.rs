@@ -417,8 +417,20 @@ where
         }
     }
 
-    transcript.get_field(&mut challenges[c].value);
+    // The grinding hash and the query indices below are read from the LAST challenge slot, and the
+    // loop above wrote slot `c`. Those must be the same slot: were they to diverge, the queries
+    // would come from an all-zero challenge the prover can predict. It holds iff
+    // n_challenges_total == 7 + n_fri_steps, which nothing else states.
     let last_challenge_index = challenges.len() - 1;
+    if c != last_challenge_index {
+        v_error!(
+            "verifier_info is inconsistent: the transcript writes {} challenges but {} are declared",
+            c + 1,
+            challenges.len()
+        );
+        return false;
+    }
+    transcript.get_field(&mut challenges[c].value);
     // Proof-of-work grinding hash. Uses its own fixed-width hash (Poseidon2_8 for
     // Poseidon2, Poseidon1_8 for Poseidon1), independent of the transcript/Merkle
     // widths. The input `[c0, c1, c2, nonce]` is written into a zero-padded state
@@ -660,12 +672,25 @@ where
     v_debug!("Quotient polynomial verification passed");
 
     v_debug!("Verifying final polynomial");
-    let final_pol_size = 1 << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
-    intt_tiny(&mut final_pol_vals, verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize] as usize, 3);
-    let init = 1
-        << (verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize]
-            .wrapping_sub(verifier_info.n_bits_ext - verifier_info.n_bits));
-    for i in init..final_pol_size as usize {
+    let terminal_bits = verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
+    let final_pol_size = 1usize << terminal_bits;
+    intt_tiny(&mut final_pol_vals, terminal_bits as usize, 3);
+    // The terminal layer carries 2^terminal_bits evaluations at the committed rate, so the degree
+    // bound is 2^(terminal_bits - blowup). A wrapping_sub here put `init` past the end whenever the
+    // terminal layer was smaller than the blowup, which skipped this check -- and it IS the check
+    // that gives FRI its degree bound. Every shipped schedule clears it, poseidon vadcop_final by
+    // one bit, so refuse rather than wrap.
+    let Some(shift) = terminal_bits.checked_sub(verifier_info.n_bits_ext - verifier_info.n_bits) else {
+        v_error!(
+            "FRI terminal layer 2^{} is smaller than the blowup 2^{}; the final polynomial has no \
+             degree bound left to check",
+            terminal_bits,
+            verifier_info.n_bits_ext - verifier_info.n_bits
+        );
+        return false;
+    };
+    let init = 1usize << shift;
+    for i in init..final_pol_size {
         for j in 0..3usize {
             if final_pol_vals[i * 3 + j] != Goldilocks::ZERO {
                 v_error!("Final polynomial has non-zero value at index {}: {:?}", i, final_pol_vals[i * 3 + j]);
