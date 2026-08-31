@@ -191,8 +191,8 @@ mod tests {
     use super::*;
 
     /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
-    /// assert + verify_merge_soundness). ESTIMATE_HASH selects Poseidon1 (default) or
-    /// Poseidon2.
+    /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
+    /// `hash_family::DEFAULT_HASH_ID`.
     ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
     ///     cargo test -p stark-recurser run_compressor --release -- --ignored --nocapture
     #[test]
@@ -204,7 +204,8 @@ mod tests {
             return;
         };
         let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let hash_id = std::env::var("ESTIMATE_HASH").unwrap_or_else(|_| "Poseidon1".into());
+        let hash_id =
+            std::env::var("ESTIMATE_HASH").unwrap_or_else(|_| proofman_common::hash_family::DEFAULT_HASH_ID.into());
         let opts = PlonkOptions {
             airgroup_name: Some("Compressor".into()),
             max_constraint_degree: Some(5),

@@ -66,8 +66,13 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed \
+     --hash Poseidon2
 ```
+
+`--hash Poseidon2` is required for the snark steps below and only for those: the BN128 wrap is
+built for the poseidon families only, and `setup-snark` refuses a key built with the default
+family. Drop the flag if you are not going on to a snark proof.
 
 Additionally, to run the snark setup:
 

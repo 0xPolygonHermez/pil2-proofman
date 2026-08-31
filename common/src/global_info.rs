@@ -176,6 +176,24 @@ impl GlobalInfo {
             )));
         }
 
+        // `hash` has a serde default, `transcriptArity` does not, and the setup writes the latter as
+        // exactly `hash_family::transcript_arity(hash)`. So the two disagreeing means the family is
+        // wrong -- in practice a key written before `hash` existed, which is Poseidon at arity 4 but
+        // takes the default. Catch it here rather than let `set_hash_family_c` below point blake3's
+        // binary-tree kernels at arity-4 trees and fail somewhere unrecognisable.
+        let expected_arity = hash_family::transcript_arity(&global_info.hash) as usize;
+        if global_info.transcript_arity != expected_arity {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "proving key has transcriptArity {} but hash family {:?} uses {}; if the key predates \
+                 the `hash` field it is not {:?} -- add the right \"hash\" to {} or rebuild the key",
+                global_info.transcript_arity,
+                global_info.hash,
+                expected_arity,
+                global_info.hash,
+                file_path.display()
+            )));
+        }
+
         proofman_starks_lib_c::set_hash_family_c(&global_info.hash);
 
         Ok(global_info)
@@ -321,6 +339,35 @@ mod aggregation_arity_tests {
         let result = GlobalInfo::from_file(&dir.display().to_string());
         let Err(err) = result else { panic!("arity 4 must be rejected at load") };
         assert!(err.to_string().contains("aggregationArity 4"), "unexpected error: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A key written before the `hash` field existed is Poseidon at arity 4, but `hash` has a
+    /// serde default and would take blake3. The transcriptArity it DID write contradicts that, and
+    /// loading must say so instead of pointing blake3's binary-tree kernels at arity-4 trees.
+    #[test]
+    fn from_file_rejects_a_hash_that_contradicts_the_transcript_arity() {
+        let dir = std::env::temp_dir().join(format!("gi_hash_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = serde_json::json!({
+            "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 4, "aggregationArity": 3
+        });
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+
+        let Err(err) = GlobalInfo::from_file(&dir.display().to_string()) else {
+            panic!("a key with no `hash` and Poseidon's arity must not load as the default family")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("transcriptArity 4"), "unexpected error: {msg}");
+
+        // The same key, with the hash it was actually built with, loads.
+        let mut json = json;
+        json["hash"] = serde_json::json!("Poseidon1");
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        assert!(GlobalInfo::from_file(&dir.display().to_string()).is_ok());
+
         std::fs::remove_dir_all(&dir).ok();
     }
 

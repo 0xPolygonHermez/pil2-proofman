@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_generate_stark_struct_defaults() {
         let settings = StarkSettings::default();
-        let ss = generate_stark_struct(&settings, 20, proofman_common::hash_family::DEFAULT_HASH_ID);
+        let ss = generate_stark_struct(&settings, 20, "Poseidon1");
 
         assert_eq!(ss.n_bits, 20);
         assert_eq!(ss.n_bits_ext, 21); // 20 + 1 (default blowup)
@@ -424,7 +424,7 @@ mod tests {
             final_degree: Some(3),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 16, proofman_common::hash_family::DEFAULT_HASH_ID);
+        let ss = generate_stark_struct(&settings, 16, "Poseidon1");
 
         assert_eq!(ss.n_bits, 16);
         assert_eq!(ss.n_bits_ext, 18);
@@ -447,7 +447,7 @@ mod tests {
             final_degree: Some(5),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 20, proofman_common::hash_family::DEFAULT_HASH_ID);
+        let ss = generate_stark_struct(&settings, 20, "Poseidon1");
 
         // nBitsExt = 22, folding by 3 each step: 22, 19, 16, 13, 10, 7, 5
         assert_eq!(ss.steps[0].n_bits, 22);
@@ -464,7 +464,7 @@ mod tests {
     #[should_panic(expected = "Invalid verificationHashType")]
     fn test_invalid_hash_type() {
         let settings = StarkSettings { verification_hash_type: Some("INVALID".to_string()), ..Default::default() };
-        generate_stark_struct(&settings, 10, proofman_common::hash_family::DEFAULT_HASH_ID);
+        generate_stark_struct(&settings, 10, "Poseidon1");
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod tests {
         // Resolves only under the matching airgroup.
         let pos = cfg.resolve("Zisk", "Poseidon2");
         assert_eq!(pos.blowup_factor, Some(2));
-        assert_eq!(generate_stark_struct(&pos, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 22); // 20 + 2
+        assert_eq!(generate_stark_struct(&pos, 20, "Poseidon1").n_bits_ext, 22); // 20 + 2
 
         let kec = cfg.resolve("Zisk", "Keccakf");
         assert_eq!(kec.pow_bits, Some(23));
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(miss.pow_bits, None);
         assert_eq!(generate_stark_struct(&miss, 20, "Poseidon2").pow_bits, 16);
         assert_eq!(generate_stark_struct(&miss, 20, "blake3").pow_bits, 24);
-        assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);
+        assert_eq!(generate_stark_struct(&miss, 20, "Poseidon1").n_bits_ext, 21);
         // 20 + 1
     }
 

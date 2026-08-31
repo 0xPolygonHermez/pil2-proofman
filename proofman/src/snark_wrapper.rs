@@ -286,6 +286,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
+        if !proofman_common::hash_family::supports_snark(&vadcop_proof.hash) {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "{} proofs have no SNARK stage: the BN128 wrap is only built for the poseidon \
+                 families",
+                vadcop_proof.hash
+            )));
+        }
         if vadcop_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
@@ -461,6 +468,12 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     ensure_gpu_available(gpu)?;
 
+    if !proofman_common::hash_family::supports_snark(&vadcop_proof.hash) {
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "{} proofs have no SNARK stage: the BN128 wrap is only built for the poseidon families",
+            vadcop_proof.hash
+        )));
+    }
     if vadcop_proof.compressed {
         return Err(ProofmanError::InvalidConfiguration(
             "Compressed vadcop proofs are not supported for snark proof generation".to_string(),

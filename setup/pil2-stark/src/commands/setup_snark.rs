@@ -50,6 +50,16 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
             proofman_common::hash_family::FAMILIES
         );
     }
+    // Refuse before building anything: the recursivef verifier and its circom templates are
+    // poseidon-only, so a blake3 key would produce a snark stage that cannot verify.
+    if !proofman_common::hash_family::supports_snark(&hash) {
+        bail!(
+            "the {hash} proving key at {:?} has no SNARK stage: the BN128 wrap is only built for \
+             the poseidon families. Re-run the regular setup with --hash Poseidon1 or Poseidon2 \
+             if you need a snark proof.",
+            global_info_path
+        );
+    }
 
     proofman_starks_lib_c::set_hash_family_c(&hash);
 

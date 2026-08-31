@@ -18,7 +18,10 @@ pub enum GateRole {
 }
 
 pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
-pub const DEFAULT_HASH_ID: &str = "Poseidon1";
+
+/// The family a caller gets when it does not choose one: every `--hash` default, every `Default`
+/// impl that carries a family, and the read-back value for a `globalInfo.json` with no `hash`.
+pub const DEFAULT_HASH_ID: &str = "blake3";
 
 /// Merkle-tree arity of `family`'s commitment trees over Goldilocks digests
 pub fn merkle_tree_arity(family: &str) -> u64 {
@@ -227,6 +230,18 @@ pub fn recursive_grinding_bits(family: &str) -> usize {
         "blake3" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }
+}
+
+/// Whether the family's `vadcop_final` proof can be wrapped in a BN128 SNARK.
+///
+/// The snark stage recurses the final Goldilocks proof into a circom circuit over BN128, and only
+/// the poseidon families have that path built: the `recursivef` verifier and its circom templates
+/// are poseidon-only. A blake3 proving key therefore has no snark stage, and `setup-snark` /
+/// `prove-snark` refuse it up front rather than emit artifacts that cannot verify.
+pub fn supports_snark(family: &str) -> bool {
+    // Listed rather than `!= "blake3"`: this is a guard, so an unrecognised family has to fail
+    // closed. The `!=` form its neighbours use is fine for a preference, not for a refusal.
+    matches!(family, "Poseidon1" | "Poseidon2")
 }
 
 /// Fiat-Shamir transcript arity: the transcript squeezes through the same
@@ -574,6 +589,16 @@ mod tests {
     fn transcript_sizes_match_the_native_transcript() {
         assert_eq!((transcript_pending_size(4), transcript_out_size(4)), (12, 16));
         assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
+    }
+
+    /// The BN128 wrap is poseidon-only; blake3 has no recursivef circom verifier.
+    #[test]
+    fn only_the_poseidon_families_can_be_wrapped_in_a_snark() {
+        assert!(!super::supports_snark("blake3"));
+        assert!(super::supports_snark("Poseidon1"));
+        assert!(super::supports_snark("Poseidon2"));
+        // A guard fails closed: a family this build does not know cannot be wrapped either.
+        assert!(!super::supports_snark("Keccak"));
     }
 
     #[test]
