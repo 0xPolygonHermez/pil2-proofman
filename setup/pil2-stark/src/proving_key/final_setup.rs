@@ -317,8 +317,9 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         // The terminal the FRI walk stops at. For a family whose steps are solved rather than folded
         // uniformly this is the ceiling the solver works under, not the degree it lands on.
         final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
-        // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
-        last_level_verification: None,
+        // Paid by the recursivef that verifies this proof, not here, so it takes the family value
+        // every recursion layer takes: 5 for blake3, the size-based default for poseidon.
+        last_level_verification: proofman_common::hash_family::recursive_last_level_verification(config.hash),
         ..Default::default()
     };
     let final_stark_struct =
