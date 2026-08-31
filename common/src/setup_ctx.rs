@@ -417,7 +417,13 @@ impl<F: PrimeField64> SetupRepository<F> {
 
         for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const);
+                // Default: no basic air keeps a resident const TREE (the preload air's stored
+                // tree dominates the const buffer); its starkinfo carves the aux tree slot and
+                // the on-device rebuild covers it, like every other air. Frees ~1.3 GB and lets
+                // every exps module warm at setup. PROOFMAN_CONST_TREE_RESIDENT=1 restores the
+                // resident tree (worth ~0.3-0.5 s/block on the largest blocks).
+                let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const)
+                    && std::env::var("PROOFMAN_CONST_TREE_RESIDENT").map(|v| v == "1").unwrap_or(false);
                 let single_use = table_airs.contains(&(airgroup_id, air_id));
                 let setup_path = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
                 let setup = Setup::new(
