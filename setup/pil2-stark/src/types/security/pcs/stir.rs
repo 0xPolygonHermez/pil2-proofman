@@ -20,8 +20,10 @@ pub struct StirConfig {
     pub batch_size: u64,
     /// Per-iteration folding factors `kᵢ`, in bits: iteration `i` folds by `2^kᵢ`.
     pub log_folding_factors: Vec<u32>,
-    /// The maximum number of grinding bits allowed.
-    pub max_grinding_bits_query: u64,
+    /// The grinding budget for each iteration's query message (length `M`).
+    /// Grinding and queries buy the same bits, so a per-round budget shifts
+    /// prover proof-of-work to the rounds where queries are expensive.
+    pub max_grinding_bits_queries: Vec<u64>,
     /// Whether to use the maximum number of grinding bits.
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle trees used in STIR.
@@ -122,6 +124,15 @@ impl Stir {
     /// Structural validation shared by both constructors.
     fn validate(cfg: StirConfig) -> Self {
         let num_rounds = cfg.log_folding_factors.len();
+
+        assert_eq!(
+            cfg.max_grinding_bits_queries.len(),
+            num_rounds,
+            "Expected one query grinding budget per iteration"
+        );
+        for &g in &cfg.max_grinding_bits_queries {
+            assert!(g < 64, "A grinding budget of {g} bits does not fit the 64-bit proof-of-work check");
+        }
 
         // ρ = 2^-k.
         let k = -cfg.rate.log2();
@@ -235,9 +246,9 @@ impl Stir {
             let hash_per_query = self.query_num_hashes(i);
             let max_efficient_grinding = hash_per_query.log2().floor() as u64;
             let g = if self.cfg.use_max_grinding_bits_query {
-                self.cfg.max_grinding_bits_query
+                self.cfg.max_grinding_bits_queries[i]
             } else {
-                max_efficient_grinding.min(self.cfg.max_grinding_bits_query)
+                max_efficient_grinding.min(self.cfg.max_grinding_bits_queries[i])
             } as u32;
 
             // Queries needed for the (1 − δᵢ)^{tᵢ} term alone.
@@ -602,6 +613,7 @@ mod tests {
         folding_factors: Vec<u32>,
         max_grinding_bits_query: u64,
     ) -> StirConfig {
+        let max_grinding_bits_queries = vec![max_grinding_bits_query; folding_factors.len()];
         StirConfig {
             field_size: goldilocks_safe_extension_field_size(),
             trace_length,
@@ -609,7 +621,7 @@ mod tests {
             batching: Batching::Powers,
             batch_size,
             log_folding_factors: folding_factors,
-            max_grinding_bits_query,
+            max_grinding_bits_queries,
             use_max_grinding_bits_query: true,
             tree_arity: 4,
             hash_size_bits: 256,
@@ -772,5 +784,35 @@ mod tests {
     #[should_panic(expected = "too small for STIR")]
     fn schedules_that_fold_below_the_query_count_are_rejected() {
         Stir::new(test_config(1 << 8, 0.5, 10, vec![3, 3], 16));
+    }
+
+    /// Per-round grinding budgets: each round's query count comes from its own
+    /// budget, since grinding and queries buy the same bits. Zeroing one round's
+    /// budget must raise that round's query count and leave the others alone.
+    #[test]
+    fn per_round_grinding_budgets_trade_against_that_rounds_queries() {
+        let uniform = Stir::new(test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16));
+
+        let mut cfg = test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16);
+        cfg.max_grinding_bits_queries[2] = 0;
+        let skewed = Stir::new(cfg);
+
+        let t_uniform = &uniform.security_params().num_queries;
+        let t_skewed = &skewed.security_params().num_queries;
+        assert!(t_skewed[2] > t_uniform[2], "round 2 lost its grinding, so it must query more: {t_skewed:?} vs {t_uniform:?}");
+        for i in [0, 1, 3, 4] {
+            assert_eq!(t_skewed[i], t_uniform[i], "round {i} kept its budget, so its query count must not move");
+        }
+        assert_eq!(skewed.security_params().grinding_bits_queries[2], 0);
+        assert_all_components_reach_target(&skewed);
+    }
+
+    /// The budgets are per round, so their count must match the schedule.
+    #[test]
+    #[should_panic(expected = "one query grinding budget per iteration")]
+    fn budget_count_must_match_the_schedule() {
+        let mut cfg = test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16);
+        cfg.max_grinding_bits_queries.pop();
+        Stir::new(cfg);
     }
 }

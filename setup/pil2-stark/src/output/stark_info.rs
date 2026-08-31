@@ -353,7 +353,7 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
                 batch_size,
                 batching: Batching::Powers,
                 log_folding_factors,
-                max_grinding_bits_query: stir.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
+                max_grinding_bits_queries: stir.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
                 use_max_grinding_bits_query: true,
                 tree_arity: stark_struct.merkle_tree_arity as u64,
                 hash_size_bits: 256,

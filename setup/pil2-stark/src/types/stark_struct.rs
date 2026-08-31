@@ -25,6 +25,11 @@ pub struct StarkSettings {
     pub initial_folding_factor: Option<usize>,
     #[serde(default)]
     pub grinding_bits: Option<usize>,
+    /// STIR only: a grinding budget per iteration (length `M`), overriding the
+    /// uniform `grinding_bits` seed. Queries into `f₀` are the expensive ones,
+    /// so a decaying schedule shifts proof-of-work to where queries hurt most.
+    #[serde(default)]
+    pub grinding_bits_queries: Option<Vec<usize>>,
     #[serde(default)]
     pub has_compressor: Option<bool>,
 }
@@ -417,20 +422,42 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
     let n_bits_ext = n_bits + initial_blowup_factor;
 
     let low_degree_test = match settings.low_degree_test.unwrap_or_default() {
-        LowDegreeTestKind::Fri => LowDegreeTest::Fri(generate_fri_schedule(
-            n_bits,
-            n_bits_ext,
-            initial_folding_factor,
-            final_degree.min(n_bits),
-            pow_bits,
-        )),
-        LowDegreeTestKind::Stir => LowDegreeTest::Stir(generate_stir_schedule(
-            n_bits,
-            n_bits_ext,
-            initial_folding_factor,
-            final_degree.min(n_bits.saturating_sub(1)),
-            pow_bits,
-        )),
+        LowDegreeTestKind::Fri => {
+            assert!(
+                settings.grinding_bits_queries.is_none(),
+                "grindingBitsQueries is per-iteration and STIR-only; FRI has a single query phase, use grindingBits"
+            );
+            LowDegreeTest::Fri(generate_fri_schedule(
+                n_bits,
+                n_bits_ext,
+                initial_folding_factor,
+                final_degree.min(n_bits),
+                pow_bits,
+            ))
+        }
+        LowDegreeTestKind::Stir => {
+            let mut schedule = generate_stir_schedule(
+                n_bits,
+                n_bits_ext,
+                initial_folding_factor,
+                final_degree.min(n_bits.saturating_sub(1)),
+                pow_bits,
+            );
+            // Per-round override of the uniform grinding seed; the security solver
+            // turns each budget into that round's query count.
+            if let Some(budgets) = &settings.grinding_bits_queries {
+                assert_eq!(
+                    budgets.len(),
+                    schedule.num_iterations(),
+                    "grindingBitsQueries has {} entries but the STIR schedule folds {} times (degrees {:?})",
+                    budgets.len(),
+                    schedule.num_iterations(),
+                    schedule.log_degrees,
+                );
+                schedule.grinding_bits_queries = budgets.clone();
+            }
+            LowDegreeTest::Stir(schedule)
+        }
     };
 
     StarkStruct {
@@ -710,6 +737,38 @@ mod tests {
 
         cfg.set_has_compressor("Bar"); // new air not previously in config
         assert!(cfg.has_compressor("G", "Bar"));
+    }
+
+    /// The config may spend a different grinding budget on each STIR round.
+    #[test]
+    fn grinding_bits_queries_overrides_the_uniform_seed() {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            grinding_bits_queries: Some(vec![26, 24, 20, 16]),
+            ..Default::default()
+        };
+        let ss = generate_stark_struct(&settings, 17, "Poseidon2");
+        let sched = ss.low_degree_test.stir().unwrap();
+        assert_eq!(sched.num_iterations(), 4, "degrees {:?}", sched.log_degrees);
+        assert_eq!(sched.grinding_bits_queries, vec![26, 24, 20, 16]);
+    }
+
+    #[test]
+    #[should_panic(expected = "grindingBitsQueries has 2 entries")]
+    fn grinding_bits_queries_must_match_the_schedule_length() {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            grinding_bits_queries: Some(vec![24, 24]),
+            ..Default::default()
+        };
+        generate_stark_struct(&settings, 17, "Poseidon2");
+    }
+
+    #[test]
+    #[should_panic(expected = "STIR-only")]
+    fn grinding_bits_queries_is_rejected_for_fri() {
+        let settings = StarkSettings { grinding_bits_queries: Some(vec![24]), ..Default::default() };
+        generate_stark_struct(&settings, 17, "Poseidon2");
     }
 
     /// The STIR schedule: degree drops by kᵢ bits, domain by one bit, rate by kᵢ−1 bits,
