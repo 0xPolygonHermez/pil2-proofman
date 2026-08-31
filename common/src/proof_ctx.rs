@@ -993,6 +993,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
+        // Witness prefetch-region area (elements); plumbed ahead of the feature, ignored (0 = none).
+        _prefetch_region_area: u64,
         // -> (basic streams/GPU, recursive streams/GPU, aggregation workers/GPU, GPUs)
     ) -> ProofmanResult<(u64, u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
