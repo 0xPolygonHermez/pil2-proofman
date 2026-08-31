@@ -1498,6 +1498,7 @@ pub fn alloc_device_large_buffers_c(
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
     unified_buffer_pad_area: u64,
+    prefetch_region_area: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1506,8 +1507,34 @@ pub fn alloc_device_large_buffers_c(
             const_pols_area,
             const_pols_aggregation_area,
             unified_buffer_pad_area,
+            prefetch_region_area,
         );
     }
+}
+
+pub fn configure_prefetch_zone_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    witness_bytes: u64,
+    fixed_tree_bytes: u64,
+    packed_const_bytes: u64,
+    rec_witness_bytes: u64,
+) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes) }
+}
+
+pub fn get_prefetch_witness_slots_c() -> u32 {
+    unsafe { get_prefetch_witness_slots() }
+}
+
+pub fn prefetch_witness_c(
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    trace: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
 }
 
 #[allow(clippy::too_many_arguments)]

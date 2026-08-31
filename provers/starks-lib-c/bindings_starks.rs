@@ -688,7 +688,19 @@ extern "C" {
         totalConstPols: u64,
         totalConstPolsAggregation: u64,
         unifiedBufferPadArea: u64,
+        prefetchRegionArea: u64,
     );
+
+    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
+    pub fn get_prefetch_witness_slots() -> u32;
+    pub fn prefetch_witness(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instanceId: u64,
+        airgroupId: u64,
+        airId: u64,
+        trace: *mut ::std::os::raw::c_void,
+    ) -> i64;
     
     pub fn get_instances_ready(
         d_buffers_: *mut ::std::os::raw::c_void,

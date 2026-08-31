@@ -9,7 +9,9 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c};
+use proofman_starks_lib_c::{
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, set_gpu_mode_c, load_device_const_pols_c,
+};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
@@ -5274,6 +5276,36 @@ where
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
 
+        // Prefetch-zone sizing, needed BEFORE the unified-buffer allocation: the zone is
+        // carved from a region INSIDE the unified buffer (below the consts), so it shares
+        // one planned budget. Witness bytes = the largest basic trace (packed width when
+        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables.
+        let prefetch_witness_bytes: u64 = if options.gpu
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true)
+        {
+            let mut witness_bytes: u64 = 0;
+            for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                    let packed_words = options
+                        .packed_info
+                        .get(&(airgroup_id, air_id))
+                        .filter(|pi| pi.is_packed && options.packed)
+                        .map(|pi| pi.num_packed_words);
+                    witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+                }
+            }
+            witness_bytes
+        } else {
+            0
+        };
+        // Slot count comes from the C++ side (DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS),
+        // the single source of truth configure_prefetch_zone sizes against.
+        let prefetch_region_area: u64 =
+            (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
+
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx
             .set_device_buffers(
                 &sctx,
@@ -5283,10 +5315,16 @@ where
                 options.max_number_streams,
                 options.max_number_recursive_streams,
                 options.final_snark,
-                0,
+                prefetch_region_area,
             )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
+
+        // Arm the prefetch zone with the size computed above (glued into the unified
+        // buffer's region when it fits; separate allocation otherwise).
+        if prefetch_witness_bytes > 0 {
+            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes, 0, 0, 0);
+        }
 
         // Streaming-commit slots: DEFAULT 2. The slot COUNT is a memory-budget knob
         // (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is
