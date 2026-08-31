@@ -233,7 +233,7 @@ fn reference_linear_hash(words: &[u64]) -> Vec<u64> {
 /// Sizes worth covering: below/at/above one 128-word chunk, and the +-1 chunk
 /// boundaries where the tree shape changes and the root moves between
 /// Blake3FinalizeChunk and Blake3FinalizeParent.
-const LEAF_SIZES: &[usize] = &[1, 8, 9, 128, 129, 257];
+const LEAF_SIZES: &[usize] = &[1, 8, 9, 128, 129, 256, 257, 512];
 
 #[test]
 fn linear_hash_matches_reference_blake3() {
