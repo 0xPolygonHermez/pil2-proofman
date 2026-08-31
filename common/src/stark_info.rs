@@ -84,10 +84,24 @@ impl LowDegreeTest {
         }
     }
 
-    /// For the FRI-only code paths (today: the whole prover and verifier): the FRI
-    /// schedule, or a panic naming the path that still has to learn about STIR.
+    /// For the FRI-only code paths: the FRI schedule, or a panic naming the path that still has to
+    /// learn about STIR.
     pub fn expect_fri(&self, context: &str) -> &FriStruct {
         self.fri().unwrap_or_else(|| panic!("{context} supports FRI only, but the stark info selects STIR"))
+    }
+
+    /// Upper bound on the challenges the low-degree test draws after the shared part of the
+    /// protocol, used to size the challenge buffer. FRI draws one folding challenge per step;
+    /// STIR draws r_fold^0, then per iteration s out-of-domain points plus r_fold and r_comb, plus
+    /// one query challenge per round.
+    pub fn num_ldt_challenges(&self) -> usize {
+        match self {
+            LowDegreeTest::Fri(fri) => fri.steps.len(),
+            LowDegreeTest::Stir(stir) => {
+                let m = stir.num_iterations();
+                1 + m.saturating_sub(1) * (stir.num_ood_samples as usize + 2) + m
+            }
+        }
     }
 }
 

@@ -31,6 +31,7 @@ public:
 
     MerkleTreeType **treesGL;
     MerkleTreeType **treesFRI;
+    uint64_t nTreesFRI;
 
 public:
     Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree, bool allocateTrees, bool allocateNodes) : setupCtx(setupCtx_)                    
@@ -62,8 +63,12 @@ public:
             }
         }
 
-        treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
-        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+        // FRI's folded-oracle trees. STIR's prover owns its oracles, so it needs none here.
+        nTreesFRI = setupCtx.starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::FRI
+                        ? setupCtx.starkInfo.numLowDegreeTestTrees()
+                        : 0;
+        treesFRI = new MerkleTreeType*[nTreesFRI];
+        for(uint64_t step = 0; step < nTreesFRI; ++step) {
             uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
             uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
 
@@ -78,7 +83,7 @@ public:
         }
         delete[] treesGL;
 
-        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.steps.size() - 1; i++)
+        for (uint64_t i = 0; i < nTreesFRI; i++)
         {
             delete treesFRI[i];
         }
@@ -443,7 +448,7 @@ uint64_t xiChallengeIndex = 0;
 
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
 
-    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
+    for(uint64_t step = 0; step < nTreesFRI; ++step) { 
         Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];
         treesFRI[step]->setSource(src);
 

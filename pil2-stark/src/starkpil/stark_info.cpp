@@ -74,7 +74,9 @@ void StarkInfo::load(json j)
             zklog.error("StarkInfo::load() STIR schedule lengths are inconsistent (M=" + to_string(M) + ")");
             exitProcess();
         }
-        requireFri("StarkInfo::load()");
+        // The stage/constant/custom trees are opened at the round-1 shift queries, t_0 of them —
+        // the STIR counterpart of FRI's nQueries, and what every stage-level consumer keys on.
+        starkStruct.nQueries = starkStruct.stir.numQueries.empty() ? 0 : starkStruct.stir.numQueries[0];
     } else if (lowDegreeTest == "FRI") {
         starkStruct.lowDegreeTest = LowDegreeTestKind::FRI;
         starkStruct.nQueries = j["starkStruct"]["nQueries"];
@@ -372,8 +374,48 @@ void StarkInfo::requireFri(const std::string &what) const {
     }
 }
 
+// The trees the low-degree test commits: FRI's folded oracles (one per step after the first),
+// STIR's T_0..T_{M−1}. Leaf `i` holds one folding coset, so its width is 2^{k_i} cubic elements.
+uint64_t StarkInfo::numLowDegreeTestTrees() const {
+    if (starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) return starkStruct.stir.numIterations();
+    return starkStruct.steps.empty() ? 0 : starkStruct.steps.size() - 1;
+}
+
+uint64_t StarkInfo::lowDegreeTestTreeWidth(uint64_t i) const {
+    if (starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+        return (uint64_t(1) << starkStruct.stir.foldingFactors[i]) * FIELD_EXTENSION;
+    }
+    uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
+    uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+    return groupSize * FIELD_EXTENSION;
+}
+
+// The u64 the flat proof buffer spends on the STIR section — exactly what `Proofs::proof2pointer`
+// writes for it. Kept here so the proof-size accounting and the writer share one formula.
+uint64_t StarkInfo::stirProofSectionSize() const {
+    uint64_t M = starkStruct.stir.numIterations();
+    bool bn128 = starkStruct.verificationHashType == std::string("BN128");
+    uint64_t nFieldElements = bn128 ? 1 : HASH_SIZE;
+    uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * nFieldElements;
+    uint64_t numNodesLevel = starkStruct.lastLevelVerification == 0 ? 0 : (uint64_t)std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
+
+    uint64_t size = 0;
+    size += M * nFieldElements;                                       // roots of T_0..T_{M−1}
+    for (uint64_t i = 0; i < M; ++i) {
+        uint64_t k = uint64_t(1) << starkStruct.stir.foldingFactors[i];
+        uint64_t logLeaves = starkStruct.stir.logDomainSizes[i] - starkStruct.stir.foldingFactors[i];
+        uint64_t nSiblings = merkleProofLevels(logLeaves, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, bn128);
+        size += starkStruct.stir.numQueries[i] * k * FIELD_EXTENSION;           // opened cosets
+        size += starkStruct.stir.numQueries[i] * nSiblings * nSiblingsPerLevel; // their Merkle paths
+        size += numNodesLevel * nFieldElements;                                 // published last level
+    }
+    size += (M - 1) * starkStruct.stir.numOodSamples * FIELD_EXTENSION;         // β
+    size += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION;  // p, in coefficients
+    size += M;                                                                  // one nonce per query message
+    return size;
+}
+
 void StarkInfo::getProofSize() {
-    requireFri("StarkInfo::getProofSize()");
     proofSize = 0;
     proofSize += airgroupValuesMap.size() * FIELD_EXTENSION;
     proofSize += airValuesMap.size() * FIELD_EXTENSION;
@@ -382,7 +424,7 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
-    uint64_t nSiblings = merkleProofLevels(starkStruct.steps[0].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
+    uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
 
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
@@ -396,6 +438,15 @@ void StarkInfo::getProofSize() {
     for(uint64_t i = 0; i < nStages + 1; ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN["cm" + to_string(i+1)];
         proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
+    }
+
+    if(starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+        if(starkStruct.lastLevelVerification > 0) {
+            uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
+            proofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+        }
+        proofSize += stirProofSectionSize();
+        return;
     }
 
     proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
@@ -418,17 +469,23 @@ void StarkInfo::getProofSize() {
 }
 
 uint64_t StarkInfo::getPinnedProofSize() {
-    requireFri("StarkInfo::getPinnedProofSize()");
+    // The pinned (GPU) layout is untested for STIR but sized generously below.
+    // An upper bound on the proof buffer, not an exact layout — expressed through the
+    // low-degree-test helpers, so FRI's value is unchanged and STIR gets a valid bound.
+    const bool stirTest = starkStruct.lowDegreeTest == LowDegreeTestKind::STIR;
+    const uint64_t M = stirTest ? starkStruct.stir.numIterations() : 0;
+    const uint64_t nLdtTrees = numLowDegreeTestTrees();
+
     uint64_t pinnedProofSize = 0;
 
     pinnedProofSize += (nStages + 1) * 4; // Roots
     pinnedProofSize += customCommits.size() * 4; // Custom commits roots
-    pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
+    pinnedProofSize += nLdtTrees * 4; // Low-degree-test roots
 
     if(starkStruct.lastLevelVerification > 0) {
         uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
         pinnedProofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
-        pinnedProofSize += (starkStruct.steps.size() - 1) * numNodesLevel * 4;
+        pinnedProofSize += nLdtTrees * numNodesLevel * 4;
     }
     
     uint64_t maxTreeWidth = 0;
@@ -439,10 +496,8 @@ uint64_t StarkInfo::getPinnedProofSize() {
             maxTreeWidth = treeWidth;
         }
     }
-    for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
-        uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
-        uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
-        uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+    for(uint64_t i = 0; i < nLdtTrees; ++i) {
+        uint64_t treeWidth = lowDegreeTestTreeWidth(i);
         if(treeWidth > maxTreeWidth) {
             maxTreeWidth = treeWidth;
         }
@@ -454,9 +509,10 @@ uint64_t StarkInfo::getPinnedProofSize() {
 
     uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
 
+    // FRI opens every tree at the same number of queries; STIR's counts shrink per iteration, so
+    // the first (t_0 = nQueries) is already the largest.
     uint64_t nTrees = nStages + customCommits.size() + 2;
-    uint64_t nTreesFRI = starkStruct.steps.size() - 1;
-    uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
+    uint64_t queriesProofSize = (nTrees + nLdtTrees) * maxProofBuffSize * starkStruct.nQueries;
 
     pinnedProofSize += queriesProofSize;
 
@@ -465,14 +521,19 @@ uint64_t StarkInfo::getPinnedProofSize() {
     pinnedProofSize += airgroupValuesSize;
     pinnedProofSize += airValuesSize;
 
-    uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
-    pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
-    pinnedProofSize += 1; // Nonce
+    if(stirTest) {
+        pinnedProofSize += (M - 1) * starkStruct.stir.numOodSamples * FIELD_EXTENSION; // out-of-domain answers
+        pinnedProofSize += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION; // p, in coefficients
+        pinnedProofSize += M; // one nonce per query message
+    } else {
+        uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
+        pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
+        pinnedProofSize += 1; // Nonce
+    }
     return pinnedProofSize;
 }
 
 void StarkInfo::setMapOffsets() {
-    requireFri("StarkInfo::setMapOffsets()");
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 
@@ -576,7 +637,7 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
 
-        uint64_t permBits = starkStruct.steps.empty() ? 0 : starkStruct.steps[0].nBits;
+        uint64_t permBits = starkStruct.nBitsExt;
         uint64_t permNFields = (starkStruct.nQueries * permBits + 62) / 63;
         mapOffsets[std::make_pair("fri_queries_perm", false)] = mapTotalN;
         mapTotalN += permNFields;        
@@ -589,10 +650,8 @@ void StarkInfo::setMapOffsets() {
                 maxTreeWidth = treeWidth;
             }
         }
-        for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
-            uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
-            uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
-            uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+        for(uint64_t i = 0; i < numLowDegreeTestTrees(); ++i) {
+            uint64_t treeWidth = lowDegreeTestTreeWidth(i);
             if(treeWidth > maxTreeWidth) {
                 maxTreeWidth = treeWidth;
             }
@@ -610,7 +669,7 @@ void StarkInfo::setMapOffsets() {
 
         maxProofBuffSize = maxTreeWidth + maxProofSize;
         uint64_t nTrees = 1 + (nStages + 1) + customCommits.size();
-        uint64_t nTreesFRI = starkStruct.steps.size() - 1;
+        uint64_t nTreesFRI = numLowDegreeTestTrees();
     
         uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
 
@@ -706,7 +765,9 @@ void StarkInfo::setMapOffsets() {
         maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
     }
  
-    for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
+    // FRI's per-step folded-oracle buffers (fri_i / mt_fri_i). STIR's prover owns its own oracles,
+    // so it needs none of these.
+    for(uint64_t step = 0; starkStruct.lowDegreeTest == LowDegreeTestKind::FRI && step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
         uint64_t width = ((1 << starkStruct.steps[step].nBits) / height) * FIELD_EXTENSION;
         mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)] = mapTotalN;

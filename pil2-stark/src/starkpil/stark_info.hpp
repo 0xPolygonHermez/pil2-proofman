@@ -246,6 +246,13 @@ public:
     /// rather than misread a STIR stark info as a FRI one.
     void requireFri(const std::string &what) const;
 
+    /// Number of Merkle trees the low-degree test commits, and the leaf width of each.
+    uint64_t numLowDegreeTestTrees() const;
+    uint64_t lowDegreeTestTreeWidth(uint64_t i) const;
+
+    /// u64 the flat proof buffer spends on the STIR section.
+    uint64_t stirProofSectionSize() const;
+
     void setMapOffsets();
 
     void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);

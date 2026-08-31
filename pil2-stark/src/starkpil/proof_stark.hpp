@@ -105,9 +105,16 @@ public:
     std::vector<std::vector<Goldilocks::Element>> pol;
    
 
+    // `trees` holds the openings of the stage, constant and custom trees at the queried rows of the
+    // extended domain. Those are the same for every low-degree test so this member is shared; only 
+    // `treesFRI` and `pol` are FRI's own.
     Fri(StarkInfo &starkInfo) :  trees((starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification),
                                  treesFRI(),
-                                 pol(1 << starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits, std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())) {
+                                 pol() {
+        if (starkInfo.starkStruct.lowDegreeTest != LowDegreeTestKind::FRI) return;
+
+        pol.assign(1 << starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits, std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero()));
+
         uint64_t nQueries = starkInfo.starkStruct.nQueries;
         uint64_t nFieldElements = (starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1;
        
@@ -126,6 +133,48 @@ public:
     }
 };
 
+// The STIR section of a proof (Arnon–Chiesa–Fenzi–Yogev, Construction 5.2), the counterpart of
+// `Fri` above. The stage/constant/custom openings live in `Fri::trees`, shared by both tests.
+//
+//   trees[i]   commitment to the oracle of f_i, i = 0..M−1: T_0 commits f_0 and T_i commits g_i,
+//              each in k_i-cosets. Its polQueries are the t_i openings made by iteration i+1.
+//   betas[i−1] β_{i,1..s}, the out-of-domain answers of iteration i = 1..M−1.
+//   nonces[i−1] grinding nonce of iteration i's query message, i = 1..M.
+//   finalPol   p, the final polynomial in the clear, as its d_M coefficients (FRI sends its final
+//              polynomial as evaluations instead, so this is a shorter and degree-bounded form).
+template <typename ElementType>
+class StirProof
+{
+public:
+    std::vector<ProofTree<ElementType>> trees;
+    std::vector<std::vector<Goldilocks::Element>> betas;
+    std::vector<uint64_t> nonces;
+    std::vector<Goldilocks::Element> finalPol;
+
+    StirProof() {}
+
+    StirProof(StarkInfo &starkInfo) {
+        if (starkInfo.starkStruct.lowDegreeTest != LowDegreeTestKind::STIR) return;
+        const StirStruct &stir = starkInfo.starkStruct.stir;
+        init(stir.numQueries, stir.numOodSamples, stir.logDegrees[stir.numIterations()],
+             starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification,
+             (starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1);
+    }
+
+    // Sized from the schedule alone, for callers that have no StarkInfo (tests).
+    void init(const std::vector<uint64_t> &numQueries, uint64_t numOodSamples, uint64_t logFinalDegree, uint64_t arity, uint64_t lastLevelVerification, uint64_t nFieldElements) {
+        uint64_t M = numQueries.size();
+        trees.clear();
+        for (uint64_t i = 0; i < M; i++)
+        {
+            trees.emplace_back(nFieldElements, numQueries[i], arity, lastLevelVerification);
+        }
+        betas.assign(M - 1, std::vector<Goldilocks::Element>(numOodSamples * FIELD_EXTENSION, Goldilocks::zero()));
+        nonces.assign(M, 0);
+        finalPol.assign((uint64_t(1) << logFinalDegree) * FIELD_EXTENSION, Goldilocks::zero());
+    }
+};
+
 template <typename ElementType>
 class Proofs
 {
@@ -138,6 +187,7 @@ public:
     ElementType **roots;
     ElementType **last_levels;
     Fri<ElementType> fri;
+    StirProof<ElementType> stir;
     std::vector<std::vector<Goldilocks::Element>> evals;
     std::vector<std::vector<Goldilocks::Element>> airgroupValues;
     std::vector<std::vector<Goldilocks::Element>> airValues;
@@ -146,6 +196,7 @@ public:
     Proofs(StarkInfo &starkInfo_) :
         starkInfo(starkInfo_),
         fri(starkInfo_),
+        stir(starkInfo_),
         evals(starkInfo_.evMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
         airgroupValues(starkInfo_.airgroupValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
         airValues(starkInfo_.airValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
@@ -266,7 +317,7 @@ public:
             }
         }
 
-        uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+        uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
@@ -336,6 +387,62 @@ public:
             }
         }
         
+
+        if (starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+            const StirStruct &stirStruct = starkInfo.starkStruct.stir;
+            uint64_t M = stirStruct.numIterations();
+            uint64_t numNodesLevel = starkInfo.starkStruct.lastLevelVerification == 0 ? 0 : std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification);
+
+            // Roots of T_0..T_{M−1}: unlike FRI, the first one is a commitment of its own (to f_0)
+            // rather than a re-commitment of an already rooted oracle.
+            for(uint64_t i = 0; i < M; ++i) {
+                for(uint64_t k = 0; k < nFieldElements; k++) {
+                    pointer[p++] = toU64(stir.trees[i].root[k]);
+                }
+            }
+
+            // Per iteration: the opened cosets, their Merkle paths, and the published last level.
+            for(uint64_t i = 0; i < M; ++i) {
+                uint64_t k = uint64_t(1) << stirStruct.foldingFactors[i];
+                uint64_t logLeaves = stirStruct.logDomainSizes[i] - stirStruct.foldingFactors[i];
+                uint64_t nSiblingsStir = merkleProofLevels(logLeaves, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+
+                for (uint64_t q = 0; q < stirStruct.numQueries[i]; q++) {
+                    for(uint64_t l = 0; l < k * FIELD_EXTENSION; l++) {
+                        pointer[p++] = Goldilocks::toU64(stir.trees[i].polQueries[q][0].v[l][0]);
+                    }
+                }
+                for (uint64_t q = 0; q < stirStruct.numQueries[i]; q++) {
+                    for(uint64_t l = 0; l < nSiblingsStir; ++l) {
+                        for(uint64_t c = 0; c < nSiblingsPerLevel; ++c) {
+                            pointer[p++] = toU64(stir.trees[i].polQueries[q][0].mp[l][c]);
+                        }
+                    }
+                }
+                for(uint64_t l = 0; l < numNodesLevel * nFieldElements; l++) {
+                    pointer[p++] = toU64(stir.trees[i].last_levels[l]);
+                }
+            }
+
+            // Out-of-domain answers β_{i,·}, i = 1..M−1.
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                for(uint64_t l = 0; l < stir.betas[i].size(); l++) {
+                    pointer[p++] = Goldilocks::toU64(stir.betas[i][l]);
+                }
+            }
+
+            // p in the clear, as d_M coefficients.
+            for(uint64_t l = 0; l < stir.finalPol.size(); l++) {
+                pointer[p++] = Goldilocks::toU64(stir.finalPol[l]);
+            }
+
+            // One grinding nonce per query message.
+            for(uint64_t i = 0; i < M; ++i) {
+                pointer[p++] = stir.nonces[i];
+            }
+
+            return pointer;
+        }
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
              for(uint64_t i = 0; i < nFieldElements; i++) {
@@ -445,7 +552,7 @@ public:
         }
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
             j["s0_valsC"][i] = json::array();
@@ -514,6 +621,73 @@ public:
             for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
                 emitLastLevels("s" + std::to_string(step) + "_last_levels", fri.treesFRI[step - 1].last_levels.data());
             }
+        }
+
+        if (starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+            const StirStruct &stirStruct = starkInfo.starkStruct.stir;
+            uint64_t M = stirStruct.numIterations();
+
+            // One object per iteration: "i{i}_root" / "_vals" / "_siblings" / "_last_levels",
+            // named apart from FRI's "s{step}_*" so a reader cannot confuse the two layouts.
+            for(uint64_t i = 0; i < M; ++i) {
+                std::string prefix = "i" + std::to_string(i);
+                if(nFieldElements == 1) {
+                    j[prefix + "_root"] = toString(stir.trees[i].root[0]);
+                } else {
+                    j[prefix + "_root"] = json::array();
+                    for(uint64_t l = 0; l < nFieldElements; l++) {
+                        j[prefix + "_root"][l] = toString(stir.trees[i].root[l]);
+                    }
+                }
+
+                uint64_t k = uint64_t(1) << stirStruct.foldingFactors[i];
+                uint64_t logLeaves = stirStruct.logDomainSizes[i] - stirStruct.foldingFactors[i];
+                uint64_t nSiblingsStir = merkleProofLevels(logLeaves, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+                uint64_t nSiblingsPerLevelStir = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+
+                j[prefix + "_vals"] = json::array();
+                j[prefix + "_siblings"] = json::array();
+                for(uint64_t q = 0; q < stirStruct.numQueries[i]; q++) {
+                    j[prefix + "_vals"][q] = json::array();
+                    j[prefix + "_siblings"][q] = json::array();
+                    for(uint64_t l = 0; l < k * FIELD_EXTENSION; l++) {
+                        j[prefix + "_vals"][q][l] = Goldilocks::toString(stir.trees[i].polQueries[q][0].v[l][0]);
+                    }
+                    for(uint64_t l = 0; l < nSiblingsStir; ++l) {
+                        for(uint64_t c = 0; c < nSiblingsPerLevelStir; ++c) {
+                            j[prefix + "_siblings"][q][l][c] = toString(stir.trees[i].polQueries[q][0].mp[l][c]);
+                        }
+                    }
+                }
+
+                if(starkInfo.starkStruct.lastLevelVerification != 0) {
+                    j[prefix + "_last_levels"] = json::array();
+                    for(uint64_t l = 0; l < stir.trees[i].last_levels.size(); l++) {
+                        j[prefix + "_last_levels"][l] = toString(stir.trees[i].last_levels[l]);
+                    }
+                }
+            }
+
+            j["betas"] = json::array();
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                j["betas"][i] = json::array();
+                for(uint64_t l = 0; l < stir.betas[i].size(); l++) {
+                    j["betas"][i][l] = Goldilocks::toString(stir.betas[i][l]);
+                }
+            }
+
+            // p as coefficients, so its degree bound is structural rather than checked.
+            j["finalPol"] = json::array();
+            for(uint64_t l = 0; l < stir.finalPol.size(); l++) {
+                j["finalPol"][l] = Goldilocks::toString(stir.finalPol[l]);
+            }
+
+            j["nonces"] = json::array();
+            for(uint64_t i = 0; i < M; ++i) {
+                j["nonces"][i] = std::to_string(stir.nonces[i]);
+            }
+
+            return j;
         }
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {

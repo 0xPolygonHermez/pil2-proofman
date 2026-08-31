@@ -5428,7 +5428,7 @@ where
         air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
         air_instance.init_challenges(
             (setup.stark_info.challenges_map.as_ref().unwrap().len()
-                + setup.stark_info.stark_struct.low_degree_test.expect_fri("the prover").steps.len()
+                + setup.stark_info.stark_struct.low_degree_test.num_ldt_challenges()
                 + 1)
                 * 3,
         );

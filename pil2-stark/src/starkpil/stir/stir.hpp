@@ -62,37 +62,24 @@ struct StirParams
     uint64_t M() const { return logFoldingFactors.size(); }
 };
 
-// The proof of one STIR execution.
-template <typename ElementType>
-struct StirProof
+// The prover's parameters, read off a stark info whose low-degree test is STIR.
+inline StirParams stirParamsFromStarkInfo(const StarkInfo &starkInfo)
 {
-    // trees[i] is the commitment to the oracle of f_i, for i = 0..M−1: T_0 commits f_0 and T_i
-    // commits g_i (i ≥ 1), each in k_i-cosets. trees[i].polQueries are its t_i openings at the
-    // shift queries r_shift^{i+1,·} of the next iteration.
-    std::vector<ProofTree<ElementType>> trees;
-    // betas[i−1] = β_{i,1..s}, the out-of-domain answers of iteration i = 1..M−1.
-    std::vector<std::vector<Goldilocks::Element>> betas;
-    // nonces[i−1]: grinding nonce of iteration i's query message, i = 1..M.
-    std::vector<uint64_t> nonces;
-    // Openings of the STARK's stage/constant/custom trees at the representative point of every
-    // r_shift^{1,j}, from which the verifier recomputes f_0 there (as the FRI prover's `trees`).
-    std::vector<std::vector<MerkleProof<ElementType>>> stageQueries;
-    // p: the d_M coefficients of the final polynomial ĝ_M, in the clear.
-    std::vector<Goldilocks::Element> finalPol;
-
-    StirProof(const StirParams &params)
-        : betas(params.M() >= 1 ? params.M() - 1 : 0, std::vector<Goldilocks::Element>(params.numOodSamples * FIELD_EXTENSION)),
-          nonces(params.M(), 0),
-          stageQueries(params.numQueries.empty() ? 0 : params.numQueries[0]),
-          finalPol((uint64_t(1) << params.logDegrees[params.M()]) * FIELD_EXTENSION)
-    {
-        uint64_t nFieldElements = std::is_same<ElementType, Goldilocks::Element>::value ? HASH_SIZE : 1;
-        for (uint64_t i = 0; i < params.M(); i++)
-        {
-            trees.emplace_back(nFieldElements, params.numQueries[i], params.merkleTreeArity, params.lastLevelVerification);
-        }
-    }
-};
+    const StirStruct &stir = starkInfo.starkStruct.stir;
+    StirParams params;
+    params.logFoldingFactors = stir.foldingFactors;
+    params.logDegrees = stir.logDegrees;
+    params.logDomainSizes = stir.logDomainSizes;
+    params.numOodSamples = stir.numOodSamples;
+    params.numQueries = stir.numQueries;
+    params.grindingBits = stir.grindingBits;
+    params.merkleTreeArity = starkInfo.starkStruct.merkleTreeArity;
+    params.lastLevelVerification = starkInfo.starkStruct.lastLevelVerification;
+    params.merkleTreeCustom = starkInfo.starkStruct.merkleTreeCustom;
+    params.transcriptArity = starkInfo.starkStruct.transcriptArity;
+    params.hashCommits = starkInfo.starkStruct.hashCommits;
+    return params;
+}
 
 template <typename ElementType>
 class STIR
@@ -117,7 +104,17 @@ public:
     // field, |L_0| = 2^{logDomainSizes[0]} elements). `transcript` is the STARK's transcript,
     // positioned right after the challenges that defined f_0. `stageTrees` are the committed
     // stage/constant/custom trees, opened at the representative point of each round-1 shift query.
-    static void prove(StirProof<ElementType> &proof, const StirParams &params, const Goldilocks::Element *f0, TranscriptType &transcript, MerkleTreeType **stageTrees, uint64_t nStageTrees, const Grinding &grinding);
+    static void prove(StirProof<ElementType> &proof, const StirParams &params, const Goldilocks::Element *f0, TranscriptType &transcript, ProofTree<ElementType> &stageQueries, MerkleTreeType **stageTrees, uint64_t nStageTrees, const Grinding &grinding);
+
+    // A proof sized for `params`, for callers with no StarkInfo at hand (`Proofs` owns one built
+    // from the stark info instead).
+    static StirProof<ElementType> makeProof(const StirParams &params)
+    {
+        StirProof<ElementType> proof;
+        proof.init(params.numQueries, params.numOodSamples, params.logDegrees[params.M()], params.merkleTreeArity,
+                   params.lastLevelVerification, std::is_same<ElementType, Goldilocks::Element>::value ? HASH_SIZE : 1);
+        return proof;
+    }
 
     // Verify a proof produced by `prove`. `transcript` must be in the same state `prove` received,
     // so that every challenge is re-derived rather than trusted. Returns false on the first failed
@@ -167,7 +164,7 @@ std::vector<MerkleProof<ElementType>> STIR<ElementType>::open(MerkleTreeType &tr
 }
 
 template <typename ElementType>
-void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &params, const Goldilocks::Element *f0, TranscriptType &transcript, MerkleTreeType **stageTrees, uint64_t nStageTrees, const Grinding &grinding)
+void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &params, const Goldilocks::Element *f0, TranscriptType &transcript, ProofTree<ElementType> &stageQueries, MerkleTreeType **stageTrees, uint64_t nStageTrees, const Grinding &grinding)
 {
     using namespace stir;
 
@@ -321,7 +318,7 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
             {
                 openings.push_back(open(*stageTrees[t], round1RawIndices[j], buff.data())[0]);
             }
-            proof.stageQueries[j] = openings;
+            stageQueries.polQueries[j] = openings;
         }
     }
 

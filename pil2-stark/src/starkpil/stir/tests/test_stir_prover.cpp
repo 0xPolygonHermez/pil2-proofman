@@ -23,6 +23,8 @@ using Proof = StirProof<Goldilocks::Element>;
 // [c_0, c_1, c_2, nonce, 0, 0, 0, 0] and require the first output limb below 2^{64−powBits}.
 bool powOk(const uint64_t *challenge, uint64_t nonce, uint32_t powBits)
 {
+    if (powBits == 0) return true;   // 1 << 64 is UB below, and zero bits means no work to check
+
     Goldilocks::Element in[8], out[8];
     std::memset(in, 0, sizeof(in));
     std::memcpy(&in[0], challenge, FIELD_EXTENSION * sizeof(uint64_t));
@@ -84,7 +86,8 @@ TranscriptGL freshTranscript(const StirParams &params)
 bool roundTrip(const StirParams &params, std::vector<FE> &f0, Proof &proof, std::string &why)
 {
     TranscriptGL tProve = freshTranscript(params);
-    Stir::prove(proof, params, f0.data(), tProve, nullptr, 0, grind);
+    ProofTree<Goldilocks::Element> stageQueries(HASH_SIZE, params.numQueries[0], params.merkleTreeArity, params.lastLevelVerification);
+    Stir::prove(proof, params, f0.data(), tProve, stageQueries, nullptr, 0, grind);
 
     TranscriptGL tVerify = freshTranscript(params);
     auto checkF0 = [&](uint64_t idx, const E3 &committed) {
@@ -104,7 +107,7 @@ TEST_F(StirProverTest, honest_proof_verifies)
     StirParams params = testParams();
     std::vector<FE> f0;
     honestF0(f0, params, 0xA11CE);
-    Proof proof(params);
+    Proof proof = Stir::makeProof(params);
     std::string why;
     ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
 
@@ -123,7 +126,7 @@ TEST_F(StirProverTest, honest_proof_verifies_with_hashed_final_pol_and_last_leve
     StirParams params = testParams(/*hashCommits=*/true, /*lastLevelVerification=*/2);
     std::vector<FE> f0;
     honestF0(f0, params, 0xB0B);
-    Proof proof(params);
+    Proof proof = Stir::makeProof(params);
     std::string why;
     ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
 }
@@ -134,7 +137,7 @@ class StirTamperTest : public StirProverTest
 protected:
     StirParams params = testParams();
     std::vector<FE> f0;
-    Proof honest{params};
+    Proof honest = Stir::makeProof(params);
 
     void SetUp() override
     {
@@ -218,5 +221,30 @@ TEST_F(StirTamperTest, invalid_grinding_nonce_is_rejected)
 // Note: there is no "malicious prover" test here — `Prover::fold` asserts that an honest f_0 was
 // given, so a dishonest one aborts rather than producing a proof. That the *arithmetic* rejects a
 // high-degree f_0 is covered by STIR_TEST.dishonest_f0_is_not_low_degree_at_the_end.
+
+// The shape a real air produces: fibonacci-square's Module air with lowDegreeTest = STIR and
+// blake3 geometry — six iterations, a final folding factor of 1 (fold by two), arity 2, a
+// published last level, and a hashed final polynomial. Grinding kept tiny so the test terminates.
+TEST_F(StirProverTest, production_shaped_schedule)
+{
+    StirParams params;
+    params.logFoldingFactors = {3, 3, 3, 3, 3, 1};
+    params.logDegrees = {20, 17, 14, 11, 8, 5, 4};
+    params.logDomainSizes = {21, 20, 19, 18, 17, 16, 15};
+    params.numOodSamples = 1;
+    params.numQueries = {211, 70, 43, 31, 24, 20};
+    params.grindingBits = {2, 2, 2, 2, 2, 2};
+    params.merkleTreeArity = 2;
+    params.lastLevelVerification = 4;
+    params.merkleTreeCustom = true;
+    params.transcriptArity = 2;
+    params.hashCommits = true;
+
+    std::vector<FE> f0;
+    honestF0(f0, params, 0xF1B0);
+    Proof proof = Stir::makeProof(params);
+    std::string why;
+    ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
+}
 
 } // namespace
