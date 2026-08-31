@@ -315,7 +315,6 @@ impl StarkInfo {
             transcript_arity: get_u64(ss, "transcriptArity") as usize,
             merkle_tree_custom: get_bool(ss, "merkleTreeCustom"),
             verification_hash_type: get_str(ss, "verificationHashType").to_string(),
-            pow_bits: get_u64(ss, "powBits") as usize,
             low_degree_test,
         };
 

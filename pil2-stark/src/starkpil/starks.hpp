@@ -69,8 +69,8 @@ public:
                         : 0;
         treesFRI = new MerkleTreeType*[nTreesFRI];
         for(uint64_t step = 0; step < nTreesFRI; ++step) {
-            uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
-            uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
+            uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1];
+            uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) / nGroups;
 
             treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, allocateTrees, allocateNodes);
         }

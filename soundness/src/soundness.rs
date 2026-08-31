@@ -245,10 +245,10 @@ fn low_degree_test_soundness(stark_struct: &proofman_common::StarkStruct) -> Low
     use proofman_common::LowDegreeTest;
     match &stark_struct.low_degree_test {
         LowDegreeTest::Fri(fri) => LowDegreeTestSoundness::Fri {
-            num_queries: fri.n_queries,
-            fri_folding_factors: fri.steps.windows(2).map(|pair| 1 << (pair[0].n_bits - pair[1].n_bits)).collect(),
-            fri_early_stop_degree: 1 << fri.steps.last().unwrap().n_bits,
-            grinding_query_phase: stark_struct.pow_bits,
+            num_queries: fri.num_queries,
+            fri_folding_factors: fri.folding_factors.iter().map(|&k| 1 << k).collect(),
+            fri_early_stop_degree: 1 << fri.log_domain_sizes.last().unwrap(),
+            grinding_query_phase: fri.grinding_bits_queries,
         },
         LowDegreeTest::Stir(stir) => {
             let m = stir.num_iterations();
@@ -258,10 +258,10 @@ fn low_degree_test_soundness(stark_struct: &proofman_common::StarkStruct) -> Low
                 folding_factors: stir.folding_factors.clone(),
                 log_degree: stark_struct.n_bits,
                 num_queries: stir.num_queries.clone(),
-                num_ood_samples: vec![stir.num_ood_samples; m.saturating_sub(1)],
+                num_ood_samples: vec![1; m.saturating_sub(1)],
                 grinding_batching_phase: 0,
                 grinding_bits_folding: 0,
-                grinding_bits_queries: stir.grinding_bits.clone(),
+                grinding_bits_queries: stir.grinding_bits_queries.clone(),
                 grinding_bits_ood: vec![0; m.saturating_sub(1)],
             }
         }

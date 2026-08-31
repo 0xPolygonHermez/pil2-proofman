@@ -20,22 +20,22 @@ using Stir = STIR<Goldilocks::Element>;
 using Proof = StirProof<Goldilocks::Element>;
 
 // The proof of work of the query messages, in the shape the STARK uses: permute
-// [c_0, c_1, c_2, nonce, 0, 0, 0, 0] and require the first output limb below 2^{64−powBits}.
-bool powOk(const uint64_t *challenge, uint64_t nonce, uint32_t powBits)
+// [c_0, c_1, c_2, nonce, 0, 0, 0, 0] and require the first output limb below 2^{64−grindingBits}.
+bool powOk(const uint64_t *challenge, uint64_t nonce, uint32_t grindingBits)
 {
-    if (powBits == 0) return true;   // 1 << 64 is UB below, and zero bits means no work to check
+    if (grindingBits == 0) return true;   // 1 << 64 is UB below, and zero bits means no work to check
 
     Goldilocks::Element in[8], out[8];
     std::memset(in, 0, sizeof(in));
     std::memcpy(&in[0], challenge, FIELD_EXTENSION * sizeof(uint64_t));
     std::memcpy(&in[FIELD_EXTENSION], &nonce, sizeof(uint64_t));
     Poseidon2Goldilocks<8>::permute(out, in, Poseidon2Mode::Scalar);
-    return Goldilocks::toU64(out[0]) < (uint64_t(1) << (64 - powBits));
+    return Goldilocks::toU64(out[0]) < (uint64_t(1) << (64 - grindingBits));
 }
 
-void grind(uint64_t &nonce, const uint64_t *challenge, uint32_t powBits)
+void grind(uint64_t &nonce, const uint64_t *challenge, uint32_t grindingBits)
 {
-    for (nonce = 0; !powOk(challenge, nonce, powBits); nonce++)
+    for (nonce = 0; !powOk(challenge, nonce, grindingBits); nonce++)
     {
     }
 }
@@ -48,7 +48,7 @@ StirParams testParams(bool hashCommits = false, uint64_t lastLevelVerification =
     p.logDomainSizes = {14, 13, 12, 11};    // |L_{i+1}| = |L_i| / 2, initial rate 1/4
     p.numOodSamples = 1;                    // s
     p.numQueries = {12, 8, 6};              // t_i
-    p.grindingBits = {2, 2, 2};
+    p.grindingBitsQueries = {2, 2, 2};
     p.merkleTreeArity = 4;
     p.lastLevelVerification = lastLevelVerification;
     p.merkleTreeCustom = true;
@@ -90,7 +90,7 @@ bool roundTrip(const StirParams &params, std::vector<FE> &f0, Proof &proof, std:
     Stir::prove(proof, params, f0.data(), tProve, stageQueries, nullptr, 0, grind);
 
     TranscriptGL tVerify = freshTranscript(params);
-    auto checkF0 = [&](uint64_t idx, const E3 &committed) {
+    auto checkF0 = [&](uint64_t, uint64_t idx, const E3 &committed) {
         return stir::equal(committed, (const E3 &)f0[idx * FIELD_EXTENSION]);
     };
     return Stir::verify(proof, params, tVerify, checkF0, powOk, &why);
@@ -150,7 +150,7 @@ protected:
     bool verifies(const Proof &proof, std::string &why)
     {
         TranscriptGL t = freshTranscript(params);
-        auto checkF0 = [&](uint64_t idx, const E3 &committed) {
+        auto checkF0 = [&](uint64_t, uint64_t idx, const E3 &committed) {
             return stir::equal(committed, (const E3 &)f0[idx * FIELD_EXTENSION]);
         };
         return Stir::verify(proof, params, t, checkF0, powOk, &why);
@@ -233,7 +233,7 @@ TEST_F(StirProverTest, production_shaped_schedule)
     params.logDomainSizes = {21, 20, 19, 18, 17, 16, 15};
     params.numOodSamples = 1;
     params.numQueries = {211, 70, 43, 31, 24, 20};
-    params.grindingBits = {2, 2, 2, 2, 2, 2};
+    params.grindingBitsQueries = {2, 2, 2, 2, 2, 2};
     params.merkleTreeArity = 2;
     params.lastLevelVerification = 4;
     params.merkleTreeCustom = true;

@@ -130,7 +130,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1;
 
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     
@@ -269,26 +269,26 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);    
     Goldilocks::Element *d_friPol = (Goldilocks::Element *)(h_params.aux_trace + offsetFRI);    
-    uint64_t nBits =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
+    uint64_t nBits =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
 
-    uint64_t nStepsFRI = setupCtx.starkInfo.starkStruct.steps.size();
+    uint64_t nStepsFRI = setupCtx.starkInfo.starkStruct.logDomainSizes.size();
     for (uint64_t step = 0; step < nStepsFRI; step++)
     {
-        uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
+        uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
         if (step > 0) {
-            uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+            uint64_t prevBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
             fold_inplace(step, offsetFRI, offsetHelper, h_params.challenges, nBits, prevBits, currentBits, (gl64_t *)d_aux_trace, timer, stream);
         }
         if (step < nStepsFRI - 1)
         {
-            merkelizeFRI_bn128_gpu(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, timer, stream);
+            merkelizeFRI_bn128_gpu(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], &d_transcript, timer, stream);
         }
         else
         {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream, &timer);
+                d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream, &timer);
             } else {
-                calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                 d_transcript.put(d_hash_gpu, nFieldElements, stream, &timer);
             }
         }
@@ -300,7 +300,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     convertGLToBN128ScalarField(d_grinding_state, (const uint64_t *)h_params.challenges, FIELD_EXTENSION, stream);
     CHECKCUDAERR(cudaGetLastError());
     
-    PoseidonBN128GPU::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, d_grinding_state, setupCtx.starkInfo.starkStruct.powBits, stream);
+    PoseidonBN128GPU::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, d_grinding_state, setupCtx.starkInfo.starkStruct.grindingBitsQueries, stream);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
     TimerStartCategoryGPU(timer, FRI);
@@ -308,12 +308,12 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     d_transcript_helper.reset(stream);
     d_transcript_helper.put(h_params.challenges, FIELD_EXTENSION, stream);
     d_transcript_helper.put(d_nonce, 1, stream);
-    d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
+    d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0], stream);
 
     proveQueries_bn128_gpu(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, (gl64_t*)d_aux_trace, setupCtx.starkInfo.nStages, stream);
 
-    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
-        proveFRIQueries_bn128_gpu(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; ++step) {
+        proveFRIQueries_bn128_gpu(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
     }
     TimerStopCategoryGPU(timer, FRI);
 

@@ -291,9 +291,9 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
-        folding_factor: Some(4),
-        pow_bits: Some(22),
+        initial_blowup_factor: Some(4),
+        initial_folding_factor: Some(4),
+        grinding_bits: Some(22),
         // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
         last_level_verification: None,
         ..Default::default()
@@ -330,7 +330,8 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         batch_size: ev_map_len.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors,
-        max_grinding_bits_query: final_stark_struct.pow_bits as u64,
+        max_grinding_bits_query: final_stark_struct.low_degree_test.expect_fri("final setup").grinding_bits_queries
+            as u64,
         use_max_grinding_bits_query: true,
         tree_arity: final_stark_struct.merkle_tree_arity as u64,
         hash_size_bits: 256,

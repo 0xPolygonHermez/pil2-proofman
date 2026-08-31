@@ -86,10 +86,10 @@ fn build_tera_context(
     let n_stages = si["nStages"].as_u64().unwrap_or(0) as usize;
     let q_stage = n_stages + 1;
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
-    let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
+    let n_queries = ss["numQueries"].as_u64().unwrap_or(0) as usize;
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     let q_deg = si["qDeg"].as_u64().unwrap_or(1) as usize;
     let split_linear_hash = ss["splitLinearHash"].as_bool().unwrap_or(false);
     if split_linear_hash && opts.hash == "Poseidon1" {
@@ -101,10 +101,11 @@ fn build_tera_context(
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0);
     let multi_fri = opts.multi_fri;
-    let steps: Vec<Value> = ss["steps"].as_array().map_or(vec![], |a| a.clone());
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let n_steps = steps.len();
-    let step0_bits = steps.first().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
-    let last_step_bits = steps.last().and_then(|s| s["nBits"].as_u64()).unwrap_or(0);
+    let step0_bits = steps.first().copied().unwrap_or(0) as usize;
+    let last_step_bits = steps.last().copied().unwrap_or(0);
     let final_pol_size: u64 = 1 << last_step_bits;
     let n_last_bits = last_step_bits;
     let max_deg_bits = n_last_bits.saturating_sub((n_bits_ext - n_bits) as u64);
@@ -255,9 +256,9 @@ fn build_tera_context(
     // ── FRI steps info ────────────────────────────────────────────────────────
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
-            let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0);
-            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) };
-            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
+            let n_bits_s = steps[s];
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1] };
+            let next_bits = if s < n_steps - 1 { steps[s + 1] } else { 0 };
             let exponent = if s == 0 { 1u64 } else { 1u64 << (prev_bits - n_bits_s) };
             let full_ml = (n_bits_s as f64 / log2_arity).ceil() as u64;
             let ml = full_ml.saturating_sub(last_level_verification);
@@ -672,7 +673,7 @@ fn build_tera_context(
     let verify_evals_inputs_joined = verify_evals_inputs.join(", ");
 
     // ── next step bits (VerifyQuery call) ─────────────────────────────────────
-    let next_step0_bits = if n_steps > 1 { steps[1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
+    let next_step0_bits = if n_steps > 1 { steps[1] } else { 0 };
     let next_vals_pol_0 = if n_steps > 1 { "s1_vals_p" } else { "finalPol" };
 
     // ── Insert all context values ─────────────────────────────────────────────
@@ -779,15 +780,15 @@ mod tests {
         json!({
             "starkStruct": {
                 "verificationHashType": "GL",
-                "nQueries": n_queries,
+                "numQueries": n_queries,
                 "nBits": 16,
                 "nBitsExt": 17,
-                "powBits": 0,
+                "grindingBitsQueries": 0,
                 "merkleTreeArity": 4,
                 "lastLevelVerification": 0,
                 "splitLinearHash": false,
                 "hashCommits": false,
-                "steps": [{"nBits": step0_bits}]
+                "logDomainSizes": [step0_bits]
             },
             "nStages": n_stages,
             "nPublics": 0,

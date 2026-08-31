@@ -27,7 +27,6 @@ void StarkInfo::load(json j)
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
     starkStruct.verificationHashType = j["starkStruct"]["verificationHashType"];
-    starkStruct.powBits = j["starkStruct"]["powBits"];
     if(starkStruct.verificationHashType == "BN128") {
         if(j["starkStruct"].contains("merkleTreeArity")) {
             starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
@@ -65,27 +64,35 @@ void StarkInfo::load(json j)
         starkStruct.stir.foldingFactors = stir["foldingFactors"].get<vector<uint64_t>>();
         starkStruct.stir.logDegrees = stir["logDegrees"].get<vector<uint64_t>>();
         starkStruct.stir.logDomainSizes = stir["logDomainSizes"].get<vector<uint64_t>>();
-        starkStruct.stir.numOodSamples = stir["numOodSamples"];
         starkStruct.stir.numQueries = stir.contains("numQueries") ? stir["numQueries"].get<vector<uint64_t>>() : vector<uint64_t>();
-        starkStruct.stir.grindingBits = stir.contains("grindingBits") ? stir["grindingBits"].get<vector<uint64_t>>() : vector<uint64_t>();
+        starkStruct.stir.grindingBitsQueries = stir.contains("grindingBitsQueries") ? stir["grindingBitsQueries"].get<vector<uint64_t>>() : vector<uint64_t>();
         uint64_t M = starkStruct.stir.numIterations();
         if (starkStruct.stir.logDegrees.size() != M + 1 || starkStruct.stir.logDomainSizes.size() != M + 1 ||
-            starkStruct.stir.numQueries.size() != M || starkStruct.stir.grindingBits.size() != M) {
+            starkStruct.stir.numQueries.size() != M || starkStruct.stir.grindingBitsQueries.size() != M) {
             zklog.error("StarkInfo::load() STIR schedule lengths are inconsistent (M=" + to_string(M) + ")");
             exitProcess();
+        }
+        // Every quotient round i = 1..M-1 divides by |G_i| = t_{i-1} + s points, so it needs
+        // |G_i| < d_i — the setup enforces this, but a stark info is untrusted input here.
+        for (uint64_t i = 1; i < M; i++) {
+            uint64_t nG = starkStruct.stir.numQueries[i - 1] + starkStruct.stir.numOodSamples;
+            if (nG >= (uint64_t(1) << starkStruct.stir.logDegrees[i])) {
+                zklog.error("StarkInfo::load() invalid STIR schedule: |G_" + to_string(i) + "| = " + to_string(nG) +
+                            " is not below d_" + to_string(i) + " = 2^" + to_string(starkStruct.stir.logDegrees[i]));
+                exitProcess();
+            }
         }
         // The stage/constant/custom trees are opened at the round-1 shift queries, t_0 of them —
         // the STIR counterpart of FRI's nQueries, and what every stage-level consumer keys on.
         starkStruct.nQueries = starkStruct.stir.numQueries.empty() ? 0 : starkStruct.stir.numQueries[0];
     } else if (lowDegreeTest == "FRI") {
         starkStruct.lowDegreeTest = LowDegreeTestKind::FRI;
-        starkStruct.nQueries = j["starkStruct"]["nQueries"];
-        for (uint64_t i = 0; i < j["starkStruct"]["steps"].size(); i++)
-        {
-            StepStruct step;
-            step.nBits = j["starkStruct"]["steps"][i]["nBits"];
-            starkStruct.steps.push_back(step);
-        }
+        starkStruct.nQueries = j["starkStruct"]["numQueries"];
+        starkStruct.logDomainSizes = j["starkStruct"]["logDomainSizes"].get<vector<uint64_t>>();
+        // The same key holds FRI's scalar grinding budget and STIR's per-round vector,
+        // so it can only be read after the lowDegreeTest dispatch.
+        starkStruct.grindingBitsQueries =
+            j["starkStruct"].contains("grindingBitsQueries") ? j["starkStruct"]["grindingBitsQueries"].get<uint64_t>() : 0;
     } else {
         zklog.error("StarkInfo::load() unknown lowDegreeTest: " + lowDegreeTest);
         exitProcess();
@@ -378,15 +385,15 @@ void StarkInfo::requireFri(const std::string &what) const {
 // STIR's T_0..T_{M−1}. Leaf `i` holds one folding coset, so its width is 2^{k_i} cubic elements.
 uint64_t StarkInfo::numLowDegreeTestTrees() const {
     if (starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) return starkStruct.stir.numIterations();
-    return starkStruct.steps.empty() ? 0 : starkStruct.steps.size() - 1;
+    return starkStruct.logDomainSizes.empty() ? 0 : starkStruct.logDomainSizes.size() - 1;
 }
 
 uint64_t StarkInfo::lowDegreeTestTreeWidth(uint64_t i) const {
     if (starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
         return (uint64_t(1) << starkStruct.stir.foldingFactors[i]) * FIELD_EXTENSION;
     }
-    uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
-    uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+    uint64_t nGroups = 1 << starkStruct.logDomainSizes[i + 1];
+    uint64_t groupSize = (1 << starkStruct.logDomainSizes[i]) / nGroups;
     return groupSize * FIELD_EXTENSION;
 }
 
@@ -449,22 +456,22 @@ void StarkInfo::getProofSize() {
         return;
     }
 
-    proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
+    proofSize += (starkStruct.logDomainSizes.size() - 1) * 4; // Roots
 
     if(starkStruct.lastLevelVerification > 0) {
         uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
-        proofSize += (starkStruct.steps.size() - 1) * numNodesLevel * 4;
+        proofSize += (starkStruct.logDomainSizes.size() - 1) * numNodesLevel * 4;
         proofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
     }
 
-    for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
-        uint64_t nSiblings = merkleProofLevels(starkStruct.steps[i].nBits, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
+    for(uint64_t i = 1; i < starkStruct.logDomainSizes.size(); ++i) {
+        uint64_t nSiblings = merkleProofLevels(starkStruct.logDomainSizes[i], starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
-        proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
+        proofSize += starkStruct.nQueries * (1 << (starkStruct.logDomainSizes[i-1] - starkStruct.logDomainSizes[i]))*FIELD_EXTENSION;
         proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
     }
 
-    proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
+    proofSize += (1 << starkStruct.logDomainSizes[starkStruct.logDomainSizes.size()-1]) * FIELD_EXTENSION;
     proofSize += 1; // Nonce
 }
 
@@ -526,7 +533,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
         pinnedProofSize += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION; // p, in coefficients
         pinnedProofSize += M; // one nonce per query message
     } else {
-        uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
+        uint64_t finalPolDegree = 1 << starkStruct.logDomainSizes[starkStruct.logDomainSizes.size() - 1];
         pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
         pinnedProofSize += 1; // Nonce
     }
@@ -767,9 +774,9 @@ void StarkInfo::setMapOffsets() {
  
     // FRI's per-step folded-oracle buffers (fri_i / mt_fri_i). STIR's prover owns its own oracles,
     // so it needs none of these.
-    for(uint64_t step = 0; starkStruct.lowDegreeTest == LowDegreeTestKind::FRI && step < starkStruct.steps.size() - 1; ++step) {
-        uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
-        uint64_t width = ((1 << starkStruct.steps[step].nBits) / height) * FIELD_EXTENSION;
+    for(uint64_t step = 0; starkStruct.lowDegreeTest == LowDegreeTestKind::FRI && step < starkStruct.logDomainSizes.size() - 1; ++step) {
+        uint64_t height = 1 << starkStruct.logDomainSizes[step + 1];
+        uint64_t width = ((1 << starkStruct.logDomainSizes[step]) / height) * FIELD_EXTENSION;
         mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)] = mapTotalN;
         mapTotalN += height * width;
         if(starkStruct.verificationHashType == "GL") {

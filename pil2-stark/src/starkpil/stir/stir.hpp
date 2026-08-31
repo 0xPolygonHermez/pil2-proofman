@@ -50,7 +50,7 @@ struct StirParams
     std::vector<uint64_t> logDomainSizes;      // log2 |L_i|, length M+1
     uint64_t numOodSamples;                    // s
     std::vector<uint64_t> numQueries;          // t_i, length M
-    std::vector<uint64_t> grindingBits;        // grinding on iteration i+1's query message, length M
+    std::vector<uint64_t> grindingBitsQueries; // grinding on iteration i+1's query message, length M
 
     // Commitment geometry, shared with the rest of the STARK.
     uint64_t merkleTreeArity;
@@ -72,7 +72,7 @@ inline StirParams stirParamsFromStarkInfo(const StarkInfo &starkInfo)
     params.logDomainSizes = stir.logDomainSizes;
     params.numOodSamples = stir.numOodSamples;
     params.numQueries = stir.numQueries;
-    params.grindingBits = stir.grindingBits;
+    params.grindingBitsQueries = stir.grindingBitsQueries;
     params.merkleTreeArity = starkInfo.starkStruct.merkleTreeArity;
     params.lastLevelVerification = starkInfo.starkStruct.lastLevelVerification;
     params.merkleTreeCustom = starkInfo.starkStruct.merkleTreeCustom;
@@ -87,18 +87,19 @@ class STIR
 public:
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
-    using Grinding = std::function<void(uint64_t &nonce, const uint64_t *challenge, uint32_t powBits)>;
+    using Grinding = std::function<void(uint64_t &nonce, const uint64_t *challenge, uint32_t grindingBits)>;
 
     // Verifier-side hooks, so this file stays independent of the hash family and of the STARK.
     //
-    // `F0Check` is called once per round-1 query with a uniform index of L_0 and the value T_0's
-    // leaf claims for that point: f_0 is not the prover's to choose, it is the batched DEEP
-    // polynomial, so the STARK verifier recomputes it there from the stage openings and compares.
+    // `F0Check` is called once per round-1 query (in query order) with a uniform index of L_0 and
+    // the value T_0's leaf claims for that point: f_0 is not the prover's to choose, it is the
+    // batched DEEP polynomial, so the STARK verifier recomputes it there from the stage openings
+    // and compares — immediately, or by recording the claims and checking them in a batch later.
     // Returning false rejects. May be empty in self-contained tests of the STIR argument alone.
-    using F0Check = std::function<bool(uint64_t idxL0, const stir::E3 &committed)>;
-    // Checks that `nonce` is a valid proof of work for `challenge` at `powBits` — the verifier's
-    // side of `Grinding`. May be empty when `grindingBits` is all zeros.
-    using GrindingCheck = std::function<bool(const uint64_t *challenge, uint64_t nonce, uint32_t powBits)>;
+    using F0Check = std::function<bool(uint64_t queryIdx, uint64_t idxL0, const stir::E3 &committed)>;
+    // Checks that `nonce` is a valid proof of work for `challenge` at `grindingBits` — the verifier's
+    // side of `Grinding`. May be empty when `grindingBitsQueries` is all zeros.
+    using GrindingCheck = std::function<bool(const uint64_t *challenge, uint64_t nonce, uint32_t grindingBits)>;
 
     // Run the prover on f_0, the evaluations of the batched DEEP polynomial on L_0 (extension
     // field, |L_0| = 2^{logDomainSizes[0]} elements). `transcript` is the STARK's transcript,
@@ -170,7 +171,7 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
 
     const uint64_t M = params.M();
     assert(M >= 1);
-    assert(params.numQueries.size() == M && params.grindingBits.size() == M);
+    assert(params.numQueries.size() == M && params.grindingBitsQueries.size() == M);
 
     Parameters math{shift(), params.logFoldingFactors, params.logDegrees, params.logDomainSizes};
     Prover prover(math, f0);
@@ -196,7 +197,7 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
         E3 c;
         getChallenge(transcript, c);
         uint64_t nonce = 0;
-        grinding(nonce, (const uint64_t *)&c[0], params.grindingBits[i - 1]);
+        grinding(nonce, (const uint64_t *)&c[0], params.grindingBitsQueries[i - 1]);
         proof.nonces[i - 1] = nonce;
 
         TranscriptType transcriptQueries(params.transcriptArity, params.merkleTreeCustom);
@@ -336,7 +337,7 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
     };
 
     const uint64_t M = params.M();
-    if (M < 1 || params.numQueries.size() != M || params.grindingBits.size() != M) return fail("inconsistent parameters");
+    if (M < 1 || params.numQueries.size() != M || params.grindingBitsQueries.size() != M) return fail("inconsistent parameters");
     if (proof.trees.size() != M || proof.nonces.size() != M) return fail("proof does not match the parameters");
     if (proof.betas.size() != M - 1) return fail("wrong number of out-of-domain answers");
 
@@ -378,7 +379,7 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
         E3 c;
         getChallenge(transcript, c);
         uint64_t nonce = proof.nonces[i - 1];
-        if (checkGrinding && !checkGrinding((const uint64_t *)&c[0], nonce, params.grindingBits[i - 1])) return false;
+        if (checkGrinding && !checkGrinding((const uint64_t *)&c[0], nonce, params.grindingBitsQueries[i - 1])) return false;
 
         TranscriptType transcriptQueries(params.transcriptArity, params.merkleTreeCustom);
         transcriptQueries.put(&c[0], FIELD_EXTENSION);
@@ -419,7 +420,7 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
         if (i == 1)
         {
             uint64_t member = raw / nLeaves;
-            if (checkF0 && !checkF0(raw, (const E3 &)values[member * FIELD_EXTENSION])) return false;
+            if (checkF0 && !checkF0(q, raw, (const E3 &)values[member * FIELD_EXTENSION])) return false;
         }
         else
         {

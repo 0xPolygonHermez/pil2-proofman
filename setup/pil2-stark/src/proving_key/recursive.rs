@@ -574,12 +574,12 @@ pub fn gen_recursive_setup(
             let make_recursive_settings = || {
                 let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
                 crate::types::stark_struct::StarkSettings {
-                    blowup_factor: Some(blowup),
-                    folding_factor: Some(3),
+                    initial_blowup_factor: Some(blowup),
+                    initial_folding_factor: Some(3),
                     final_degree: Some(5),
                     // Pinned: the committed native verifiers and circom fixtures encode the query
                     // count this buys (73 at blowup 3), so it cannot follow the family default.
-                    pow_bits: Some(RECURSIVE_POW_BITS),
+                    grinding_bits: Some(RECURSIVE_POW_BITS),
                     last_level_verification: None,
                     ..Default::default()
                 }
@@ -612,7 +612,10 @@ pub fn gen_recursive_setup(
                 batch_size: ev_map_len.max(1) as u64,
                 batching: crate::types::security::pcs::Batching::Powers,
                 log_folding_factors,
-                max_grinding_bits_query: stark_struct.pow_bits as u64,
+                max_grinding_bits_query: stark_struct
+                    .low_degree_test
+                    .expect_fri("recursive setup")
+                    .grinding_bits_queries as u64,
                 use_max_grinding_bits_query: true,
                 tree_arity: stark_struct.merkle_tree_arity as u64,
                 hash_size_bits: 256,
@@ -626,7 +629,7 @@ pub fn gen_recursive_setup(
             // recursive1 up to the shared domain (more compressor queries → bigger recursive1
             // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
             // strengthens. The solver otherwise discards the override entirely.
-            let override_q = stark_struct.low_degree_test.expect_fri("recursive setup").n_queries as u64;
+            let override_q = stark_struct.low_degree_test.expect_fri("recursive setup").num_queries as u64;
             if config.stark_struct.is_some() {
                 let security_floor = fri.security_params().n_queries;
                 if fri.raise_n_queries(override_q) {

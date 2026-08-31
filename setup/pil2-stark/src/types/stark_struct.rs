@@ -8,12 +8,6 @@ pub struct StarkSettings {
     #[serde(default)]
     pub verification_hash_type: Option<String>,
     #[serde(default)]
-    pub hash_commits: Option<bool>,
-    #[serde(default)]
-    pub blowup_factor: Option<usize>,
-    #[serde(default)]
-    pub folding_factor: Option<usize>,
-    #[serde(default)]
     pub final_degree: Option<usize>,
     #[serde(default)]
     pub merkle_tree_arity: Option<usize>,
@@ -22,15 +16,17 @@ pub struct StarkSettings {
     #[serde(default)]
     pub last_level_verification: Option<usize>,
     #[serde(default)]
-    pub pow_bits: Option<usize>,
-    #[serde(default)]
-    pub has_compressor: Option<bool>,
-    /// Which low-degree test the proof runs: `"FRI"` (default) or `"STIR"`.
+    pub hash_commits: Option<bool>,
     #[serde(default)]
     pub low_degree_test: Option<LowDegreeTestKind>,
-    /// STIR only: out-of-domain samples `s` per iteration (default 1).
     #[serde(default)]
-    pub num_ood_samples: Option<usize>,
+    pub initial_blowup_factor: Option<usize>,
+    #[serde(default)]
+    pub initial_folding_factor: Option<usize>,
+    #[serde(default)]
+    pub grinding_bits: Option<usize>,
+    #[serde(default)]
+    pub has_compressor: Option<bool>,
 }
 
 /// The low-degree test used to check the batched DEEP polynomial `f₀`.
@@ -132,9 +128,6 @@ pub struct StarkStruct {
     pub hash_commits: bool,
     pub verification_hash_type: String,
     pub last_level_verification: usize,
-    /// Grinding bits the prover may spend on a query message.
-    pub pow_bits: usize,
-    /// The low-degree test and its schedule.
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTest,
 }
@@ -191,7 +184,7 @@ impl LowDegreeTest {
     /// `f₀`'s (`nBitsExt`).
     pub fn log_domain_sizes(&self) -> Vec<usize> {
         match self {
-            LowDegreeTest::Fri(fri) => fri.steps.iter().map(|s| s.n_bits).collect(),
+            LowDegreeTest::Fri(fri) => fri.log_domain_sizes.clone(),
             LowDegreeTest::Stir(stir) => stir.log_domain_sizes.clone(),
         }
     }
@@ -199,7 +192,7 @@ impl LowDegreeTest {
     /// `kᵢ` in bits: how much each round folds by.
     pub fn log_folding_factors(&self) -> Vec<u32> {
         match self {
-            LowDegreeTest::Fri(fri) => fri.steps.windows(2).map(|w| (w[0].n_bits - w[1].n_bits) as u32).collect(),
+            LowDegreeTest::Fri(fri) => fri.folding_factors.iter().map(|&k| k as u32).collect(),
             LowDegreeTest::Stir(stir) => stir.folding_factors.iter().map(|&k| k as u32).collect(),
         }
     }
@@ -212,7 +205,7 @@ impl LowDegreeTest {
         const EXT: usize = 3;
         match self {
             LowDegreeTest::Fri(fri) => {
-                fri.steps.windows(2).map(|w| (w[1].n_bits, (1usize << (w[0].n_bits - w[1].n_bits)) * EXT)).collect()
+                fri.log_domain_sizes.windows(2).map(|w| (w[1], (1usize << (w[0] - w[1])) * EXT)).collect()
             }
             LowDegreeTest::Stir(stir) => stir
                 .folding_factors
@@ -224,24 +217,25 @@ impl LowDegreeTest {
     }
 }
 
-/// FRI schedule: `steps[i].nBits` is the log-size of round `i`'s evaluation
-/// domain; round `i` folds by `2^{steps[i].nBits − steps[i+1].nBits}` and the
-/// rate is constant. The last step is the domain of the final polynomial,
-/// sent in clear.
+/// FRI schedule, in the same notation as [`StirStruct`]. FRI keeps the rate
+/// constant: iteration `i` folds both the degree bound and the domain by
+/// `2^{kᵢ}`, and every oracle lives on a subdomain of the previous one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FriStruct {
-    pub steps: Vec<StarkStep>,
-    /// Number of FRI queries. Zero when produced by `generate_stark_struct`
-    /// (the security solver sets it); populated when loading a starkinfo.json.
+    /// `kᵢ`, in bits: iteration `i` folds by `2^{kᵢ}` (length `M`).
+    pub folding_factors: Vec<usize>,
+    /// `log₂ dᵢ`, the degree bound of `fᵢ` (length `M+1`; the last entry is
+    /// the degree bound of the final polynomial `p`, sent in clear).
+    pub log_degrees: Vec<usize>,
+    /// `log₂|Lᵢ|`, the evaluation domain of `fᵢ` (length `M+1`).
+    pub log_domain_sizes: Vec<usize>,
+    /// `t`: queries into `f₀`, checked pointwise through every fold.
     #[serde(default)]
-    pub n_queries: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StarkStep {
-    pub n_bits: usize,
+    pub num_queries: usize,
+    /// Grinding bits on the query message.
+    #[serde(default)]
+    pub grinding_bits_queries: usize,
 }
 
 /// Marker that makes a STIR stark struct self-describing in JSON
@@ -253,11 +247,7 @@ pub enum StirKind {
     Stir,
 }
 
-/// STIR schedule, in the notation of the paper (Construction 5.2).
-///
-/// Iteration `i ∈ {0,…,M−1}` folds `fᵢ` by `2^{kᵢ}` and commits the result
-/// `g_{i+1}` on the next domain `L_{i+1}`, of half the size. The degree bound
-/// and rate evolve as `d_{i+1} = dᵢ / 2^{kᵢ}` and `ρ_{i+1} = ρᵢ · 2^{1−kᵢ}`.
+/// STIR schedule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StirStruct {
@@ -270,14 +260,12 @@ pub struct StirStruct {
     pub log_degrees: Vec<usize>,
     /// `log₂|Lᵢ|`, the evaluation domain of `fᵢ` (length `M+1`).
     pub log_domain_sizes: Vec<usize>,
-    /// `s`: out-of-domain samples `r_out` per iteration.
-    pub num_ood_samples: usize,
     /// `tᵢ`: shift queries into `fᵢ` (length `M`).
     #[serde(default)]
     pub num_queries: Vec<usize>,
     /// Grinding bits on iteration `i`'s query message (length `M`).
     #[serde(default)]
-    pub grinding_bits: Vec<usize>,
+    pub grinding_bits_queries: Vec<usize>,
 }
 
 impl StirStruct {
@@ -292,6 +280,36 @@ impl StirStruct {
     }
 }
 
+/// The FRI folding schedule for a polynomial of degree bound `2^{log_degree}`
+/// on a domain of size `2^{log_domain_size}`: fold by `2^{folding_factor}`
+/// until the degree bound reaches `2^{final_degree}`. Unlike STIR, the domain
+/// shrinks with the degree, so the rate is constant. The last fold is
+/// shortened so the final degree is hit exactly; a `final_degree` at or above
+/// `log_degree` yields a schedule with no folds (the final polynomial is `f₀`).
+pub fn generate_fri_schedule(
+    log_degree: usize,
+    log_domain_size: usize,
+    folding_factor: usize,
+    final_degree: usize,
+    grinding_bits: usize,
+) -> FriStruct {
+    assert!(folding_factor >= 1, "FRI folding factor must be >= 1");
+    assert!(log_degree < log_domain_size, "degree bound must be strictly less than the domain size");
+
+    let log_inv_rate = log_domain_size - log_degree;
+    let mut folding_factors = Vec::new();
+    let mut log_degrees = vec![log_degree];
+    while *log_degrees.last().unwrap() > final_degree {
+        let d = *log_degrees.last().unwrap();
+        let k = folding_factor.min(d - final_degree);
+        folding_factors.push(k);
+        log_degrees.push(d - k);
+    }
+    let log_domain_sizes = log_degrees.iter().map(|d| d + log_inv_rate).collect();
+
+    FriStruct { folding_factors, log_degrees, log_domain_sizes, num_queries: 0, grinding_bits_queries: grinding_bits }
+}
+
 /// The STIR folding schedule for a polynomial of degree bound `2^{log_degree}`
 /// on a domain of size `2^{log_domain_size}`: fold by `2^{folding_factor}`
 /// until the degree bound reaches `2^{final_degree}`, halving the domain each
@@ -301,11 +319,11 @@ pub fn generate_stir_schedule(
     log_domain_size: usize,
     folding_factor: usize,
     final_degree: usize,
-    num_ood_samples: usize,
+    grinding_bits: usize,
 ) -> StirStruct {
-    assert!(folding_factor >= 1, "STIR folding factor must be >= 1");
-    assert!(log_degree <= log_domain_size, "degree bound exceeds the domain");
-    assert!(final_degree <= log_degree, "final degree exceeds the initial degree");
+    assert!(folding_factor >= 2, "STIR folding factor must be >= 2");
+    assert!(log_degree < log_domain_size, "degree bound must be strictly less than the domain size");
+    assert!(final_degree < log_degree, "final degree must be strictly less than the initial degree");
 
     let mut folding_factors = Vec::new();
     let mut log_degrees = vec![log_degree];
@@ -321,14 +339,14 @@ pub fn generate_stir_schedule(
     // while dividing the degree by at least 2 keeps the initial rate as the
     // worst case, which the `log_degree <= log_domain_size` assert covers.
 
+    let folding_factors_len = folding_factors.len();
     StirStruct {
         kind: StirKind::Stir,
         folding_factors,
         log_degrees,
         log_domain_sizes,
-        num_ood_samples,
         num_queries: vec![],
-        grinding_bits: vec![],
+        grinding_bits_queries: vec![grinding_bits; folding_factors_len],
     }
 }
 
@@ -361,15 +379,15 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
         panic!("Invalid verificationHashType: {}", verification_hash_type);
     }
 
-    let blowup_factor = settings.blowup_factor.unwrap_or(1);
-    let folding_factor = settings.folding_factor.unwrap_or(3);
+    let initial_blowup_factor = settings.initial_blowup_factor.unwrap_or(1);
+    let initial_folding_factor = settings.initial_folding_factor.unwrap_or(3);
     let final_degree = settings.final_degree.unwrap_or(5);
 
     let (merkle_tree_arity, transcript_arity, merkle_tree_custom, hash_commits, last_level_verification, pow_bits) =
         if verification_hash_type == "BN128" {
             let mta = settings.merkle_tree_arity.unwrap_or(16);
             let mtc = settings.merkle_tree_custom.unwrap_or(false);
-            let pb = settings.pow_bits.unwrap_or(BN128_DEFAULT_POW_BITS);
+            let pb = settings.grinding_bits.unwrap_or(BN128_DEFAULT_POW_BITS);
             let llv = settings.last_level_verification.unwrap_or(0);
             (mta, mta, mtc, false, llv, pb)
         } else {
@@ -386,41 +404,33 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             };
             // Grinding bits are what a family can afford to search for, not a constant: see
             // hash_family::default_grinding_bits. They come straight off the query count.
-            let pb = settings.pow_bits.unwrap_or_else(|| proofman_common::hash_family::default_grinding_bits(hash));
+            let pb =
+                settings.grinding_bits.unwrap_or_else(|| proofman_common::hash_family::default_grinding_bits(hash));
             // Same 16-node bottom level whatever the arity, so switching hash family does not
             // silently change how deep every Merkle path is walked.
             let llv = settings
                 .last_level_verification
-                .unwrap_or_else(|| default_last_level_verification(mta, n_bits + blowup_factor));
+                .unwrap_or_else(|| default_last_level_verification(mta, n_bits + initial_blowup_factor));
             (mta, proofman_common::hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
         };
 
-    let n_bits_ext = n_bits + blowup_factor;
+    let n_bits_ext = n_bits + initial_blowup_factor;
 
     let low_degree_test = match settings.low_degree_test.unwrap_or_default() {
-        LowDegreeTestKind::Fri => {
-            let mut steps = vec![StarkStep { n_bits: n_bits_ext }];
-            let mut fri_step_bits = n_bits_ext;
-            while fri_step_bits > final_degree + 1 {
-                fri_step_bits = if fri_step_bits > folding_factor + final_degree {
-                    fri_step_bits - folding_factor
-                } else {
-                    final_degree
-                };
-                steps.push(StarkStep { n_bits: fri_step_bits });
-            }
-            LowDegreeTest::Fri(FriStruct { steps, n_queries: 0 })
-        }
-        LowDegreeTestKind::Stir => {
-            let final_log_degree = final_degree.saturating_sub(blowup_factor).min(n_bits);
-            LowDegreeTest::Stir(generate_stir_schedule(
-                n_bits,
-                n_bits_ext,
-                folding_factor,
-                final_log_degree,
-                settings.num_ood_samples.unwrap_or(1),
-            ))
-        }
+        LowDegreeTestKind::Fri => LowDegreeTest::Fri(generate_fri_schedule(
+            n_bits,
+            n_bits_ext,
+            initial_folding_factor,
+            final_degree.min(n_bits),
+            pow_bits,
+        )),
+        LowDegreeTestKind::Stir => LowDegreeTest::Stir(generate_stir_schedule(
+            n_bits,
+            n_bits_ext,
+            initial_folding_factor,
+            final_degree.min(n_bits.saturating_sub(1)),
+            pow_bits,
+        )),
     };
 
     StarkStruct {
@@ -432,7 +442,6 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
         hash_commits,
         verification_hash_type,
         last_level_verification,
-        pow_bits,
         low_degree_test,
     }
 }
@@ -474,8 +483,14 @@ mod tests {
     #[test]
     fn blake3_defaults_to_more_grinding_than_poseidon() {
         let settings = StarkSettings::default();
-        assert_eq!(generate_stark_struct(&settings, 20, "blake3").pow_bits, 24);
-        assert_eq!(generate_stark_struct(&settings, 20, "Poseidon2").pow_bits, 16);
+        assert_eq!(
+            generate_stark_struct(&settings, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            24
+        );
+        assert_eq!(
+            generate_stark_struct(&settings, 20, "Poseidon2").low_degree_test.expect_fri("test").grinding_bits_queries,
+            16
+        );
     }
 
     /// A binary tree gets 4 levels rather than the 2 a quaternary one gets, which is the whole
@@ -508,22 +523,22 @@ mod tests {
         assert!(ss.merkle_tree_custom);
         assert!(ss.hash_commits);
         // Grinding is per family: Poseidon spends 16 bits, blake3 24 (see hash_family).
-        assert_eq!(ss.pow_bits, 16);
+        assert_eq!(ss.low_degree_test.expect_fri("test").grinding_bits_queries, 16);
         // Poseidon is arity 4, so a 16-node bottom level is 2 levels.
         assert_eq!(ss.last_level_verification, 2);
 
         // First step should be nBitsExt
-        assert_eq!(ss.low_degree_test.expect_fri("test").steps[0].n_bits, 21);
+        assert_eq!(ss.low_degree_test.expect_fri("test").log_domain_sizes[0], 21);
         // Last step should reach finalDegree (6): nBitsExt=21 -> 18 -> 15 -> 12 -> 9 -> 6
-        assert_eq!(ss.low_degree_test.expect_fri("test").steps.last().unwrap().n_bits, 6);
+        assert_eq!(*ss.low_degree_test.expect_fri("test").log_domain_sizes.last().unwrap(), 6);
     }
 
     #[test]
     fn test_generate_stark_struct_bn128() {
         let settings = StarkSettings {
             verification_hash_type: Some("BN128".to_string()),
-            blowup_factor: Some(2),
-            folding_factor: Some(4),
+            initial_blowup_factor: Some(2),
+            initial_folding_factor: Some(4),
             final_degree: Some(3),
             ..Default::default()
         };
@@ -537,27 +552,30 @@ mod tests {
         assert!(!ss.merkle_tree_custom);
         assert!(!ss.hash_commits);
         // BN128 has no hash_family entry, so it keeps the grinding `resolve` used to fill in.
-        assert_eq!(ss.pow_bits, BN128_DEFAULT_POW_BITS);
+        assert_eq!(ss.low_degree_test.expect_fri("test").grinding_bits_queries, BN128_DEFAULT_POW_BITS);
         assert_eq!(ss.last_level_verification, 0);
-        assert_eq!(ss.low_degree_test.expect_fri("test").steps[0].n_bits, 18);
+        assert_eq!(ss.low_degree_test.expect_fri("test").log_domain_sizes[0], 18);
     }
 
     #[test]
     fn test_steps_converge_to_final_degree() {
         let settings = StarkSettings {
-            blowup_factor: Some(2),
-            folding_factor: Some(3),
+            initial_blowup_factor: Some(2),
+            initial_folding_factor: Some(3),
             final_degree: Some(5),
             ..Default::default()
         };
         let ss = generate_stark_struct(&settings, 20, proofman_common::hash_family::DEFAULT_HASH_ID);
 
-        // nBitsExt = 22, folding by 3 each step: 22, 19, 16, 13, 10, 7, 5
-        assert_eq!(ss.low_degree_test.expect_fri("test").steps[0].n_bits, 22);
-        let last_step = ss.low_degree_test.expect_fri("test").steps.last().unwrap().n_bits;
+        // Degrees fold by 3 down to finalDegree: 20, 17, 14, 11, 8, 5; the domain
+        // follows at constant rate 1/4 (blowup 2).
+        let fri = ss.low_degree_test.expect_fri("test");
+        assert_eq!(fri.log_domain_sizes[0], 22);
+        assert_eq!(fri.log_degrees, vec![20, 17, 14, 11, 8, 5]);
+        let last_step = *fri.log_degrees.last().unwrap();
         assert!(
-            last_step <= settings.final_degree.unwrap() + 1,
-            "Last step {} should be <= finalDegree + 1 = {}",
+            last_step == settings.final_degree.unwrap(),
+            "Last degree {} should be finalDegree = {}",
             last_step,
             settings.final_degree.unwrap() + 1
         );
@@ -589,20 +607,20 @@ mod tests {
     fn test_flat_config_resolution() {
         // Flat schema: top-level keys are air names.
         let json_str = r#"{
-            "Keccakf": { "powBits": 23, "lastLevelVerification": 1, "hasCompressor": true },
+            "Keccakf": { "grindingBits": 23, "lastLevelVerification": 1, "hasCompressor": true },
             "Sha256f": { "hasCompressor": true },
-            "SomeAir": { "blowupFactor": 2 }
+            "SomeAir": { "initialBlowupFactor": 2 }
         }"#;
         let cfg = StarkStructsConfig::from_json_str(json_str).unwrap();
 
         // Flat lookup honors all settings regardless of the airgroup name.
         let keccak = cfg.resolve("AnyGroup", "Keccakf");
-        assert_eq!(keccak.pow_bits, Some(23));
+        assert_eq!(keccak.grinding_bits, Some(23));
         assert_eq!(keccak.last_level_verification, Some(1));
         assert_eq!(keccak.has_compressor, Some(true));
 
         let some = cfg.resolve("AnyGroup", "SomeAir");
-        assert_eq!(some.blowup_factor, Some(2));
+        assert_eq!(some.initial_blowup_factor, Some(2));
 
         assert!(cfg.has_compressor("AnyGroup", "Keccakf"));
         assert!(cfg.has_compressor("AnyGroup", "Sha256f"));
@@ -614,37 +632,43 @@ mod tests {
         // Nested schema: top-level keys are airgroup names, second level are air names.
         let json_str = r#"{
             "Zisk": {
-                "Poseidon2": { "blowupFactor": 2 },
-                "Keccakf": { "powBits": 23, "hasCompressor": true }
+                "Poseidon2": { "initialBlowupFactor": 2 },
+                "Keccakf": { "grindingBits": 23, "hasCompressor": true }
             }
         }"#;
         let cfg = StarkStructsConfig::from_json_str(json_str).unwrap();
 
         // Resolves only under the matching airgroup.
         let pos = cfg.resolve("Zisk", "Poseidon2");
-        assert_eq!(pos.blowup_factor, Some(2));
+        assert_eq!(pos.initial_blowup_factor, Some(2));
         assert_eq!(generate_stark_struct(&pos, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 22); // 20 + 2
 
         let kec = cfg.resolve("Zisk", "Keccakf");
-        assert_eq!(kec.pow_bits, Some(23));
+        assert_eq!(kec.grinding_bits, Some(23));
         assert!(cfg.has_compressor("Zisk", "Keccakf"));
 
         // Wrong airgroup -> no match -> nothing configured; generate_stark_struct supplies the
         // defaults, including the family's grinding bits.
         let miss = cfg.resolve("OtherGroup", "Poseidon2");
-        assert_eq!(miss.blowup_factor, None);
-        assert_eq!(miss.pow_bits, None);
-        assert_eq!(generate_stark_struct(&miss, 20, "Poseidon2").pow_bits, 16);
-        assert_eq!(generate_stark_struct(&miss, 20, "blake3").pow_bits, 24);
+        assert_eq!(miss.initial_blowup_factor, None);
+        assert_eq!(miss.grinding_bits, None);
+        assert_eq!(
+            generate_stark_struct(&miss, 20, "Poseidon2").low_degree_test.expect_fri("test").grinding_bits_queries,
+            16
+        );
+        assert_eq!(
+            generate_stark_struct(&miss, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            24
+        );
         assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);
         // 20 + 1
     }
 
     #[test]
     fn test_default_key_fallback() {
-        let cfg = StarkStructsConfig::from_json_str(r#"{ "default": { "blowupFactor": 3 } }"#).unwrap();
+        let cfg = StarkStructsConfig::from_json_str(r#"{ "default": { "initialBlowupFactor": 3 } }"#).unwrap();
         // Any unlisted air falls back to "default".
-        assert_eq!(cfg.resolve("G", "Anything").blowup_factor, Some(3));
+        assert_eq!(cfg.resolve("G", "Anything").initial_blowup_factor, Some(3));
     }
 
     #[test]
@@ -659,10 +683,10 @@ mod tests {
             let data = std::fs::read_to_string(prods).unwrap();
             let cfg = StarkStructsConfig::from_json_str(&data).unwrap();
             // airgroup "Intermediates", air "ImDummyAP_24_5" -> blowupFactor 2
-            assert_eq!(cfg.resolve("Intermediates", "ImDummyAP_24_5").blowup_factor, Some(2));
-            assert_eq!(cfg.resolve("Intermediates", "ImDummyAP_24_9").blowup_factor, Some(3));
+            assert_eq!(cfg.resolve("Intermediates", "ImDummyAP_24_5").initial_blowup_factor, Some(2));
+            assert_eq!(cfg.resolve("Intermediates", "ImDummyAP_24_9").initial_blowup_factor, Some(3));
             // Looked up without the airgroup -> no flat entry by that name -> default.
-            assert_eq!(cfg.resolve("WrongGroup", "ImDummyAP_24_5").blowup_factor, None);
+            assert_eq!(cfg.resolve("WrongGroup", "ImDummyAP_24_5").initial_blowup_factor, None);
         }
     }
 
@@ -671,18 +695,18 @@ mod tests {
         // An air whose settings object is empty must not panic and must resolve to defaults.
         let cfg = StarkStructsConfig::from_json_str(r#"{ "EmptyAir": {} }"#).unwrap();
         let s = cfg.resolve("G", "EmptyAir");
-        assert_eq!(s.blowup_factor, None);
-        assert_eq!(s.pow_bits, None, "resolve reports config, not defaults");
+        assert_eq!(s.initial_blowup_factor, None);
+        assert_eq!(s.grinding_bits, None, "resolve reports config, not defaults");
         assert!(!cfg.has_compressor("G", "EmptyAir"));
     }
 
     #[test]
     fn test_set_has_compressor_runtime() {
-        let mut cfg = StarkStructsConfig::from_json_str(r#"{ "Foo": { "blowupFactor": 2 } }"#).unwrap();
+        let mut cfg = StarkStructsConfig::from_json_str(r#"{ "Foo": { "initialBlowupFactor": 2 } }"#).unwrap();
         cfg.set_has_compressor("Foo");
         assert!(cfg.has_compressor("G", "Foo"));
         // Existing settings on the flat entry are preserved.
-        assert_eq!(cfg.resolve("G", "Foo").blowup_factor, Some(2));
+        assert_eq!(cfg.resolve("G", "Foo").initial_blowup_factor, Some(2));
 
         cfg.set_has_compressor("Bar"); // new air not previously in config
         assert!(cfg.has_compressor("G", "Bar"));
@@ -692,14 +716,15 @@ mod tests {
     /// and the last fold is shortened to land exactly on the final degree.
     #[test]
     fn stir_schedule_follows_the_paper_recurrence() {
-        let s = generate_stir_schedule(17, 18, 3, 4, 1);
+        let s = generate_stir_schedule(17, 18, 3, 4, 24);
         assert_eq!(s.folding_factors, vec![3, 3, 3, 3, 1]);
         assert_eq!(s.log_degrees, vec![17, 14, 11, 8, 5, 4]);
         assert_eq!(s.log_domain_sizes, vec![18, 17, 16, 15, 14, 13]);
         assert_eq!(s.log_inv_rates(), vec![1, 3, 5, 7, 9, 9]);
         assert_eq!(s.num_iterations(), 5);
-        assert_eq!(s.num_ood_samples, 1);
-        assert!(s.num_queries.is_empty() && s.grinding_bits.is_empty());
+        assert!(s.num_queries.is_empty());
+        // The grinding budget seeds every round uniformly until the solver overwrites it.
+        assert_eq!(s.grinding_bits_queries, vec![24; 5]);
     }
 
     /// Selecting STIR must not disturb the FRI output, and vice versa: the default
@@ -708,15 +733,16 @@ mod tests {
     fn low_degree_test_selection() {
         let fri = generate_stark_struct(&StarkSettings::default(), 17, "Poseidon2");
         assert_eq!(fri.low_degree_test.kind(), LowDegreeTestKind::Fri);
-        let steps: Vec<usize> = fri.low_degree_test.expect_fri("test").steps.iter().map(|s| s.n_bits).collect();
+        let steps: Vec<usize> = fri.low_degree_test.expect_fri("test").log_domain_sizes.clone();
         assert_eq!(steps, vec![18, 15, 12, 9, 6]);
         assert_eq!(fri.low_degree_test.log_domain_sizes(), steps);
         assert_eq!(fri.low_degree_test.log_folding_factors(), vec![3, 3, 3, 3]);
         assert_eq!(fri.low_degree_test.commitment_trees(), vec![(15, 24), (12, 24), (9, 24), (6, 24)]);
-        // The FRI JSON is what it always was: flat `steps` + `nQueries`, no marker.
+        // The FRI JSON now speaks STIR notation: logDomainSizes, numQueries,
+        // grindingBitsQueries — but still no marker.
         let json = serde_json::to_string(&fri).unwrap();
         assert!(
-            json.ends_with(r#""steps":[{"nBits":18},{"nBits":15},{"nBits":12},{"nBits":9},{"nBits":6}],"nQueries":0}"#),
+            json.ends_with(r#""logDomainSizes":[18,15,12,9,6],"numQueries":0,"grindingBitsQueries":16}"#),
             "{json}"
         );
         assert!(!json.contains("lowDegreeTest"), "{json}");
@@ -726,15 +752,14 @@ mod tests {
         let settings = StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() };
         let stir = generate_stark_struct(&settings, 17, "Poseidon2");
         let sched = stir.low_degree_test.stir().unwrap();
-        // final_degree 5 is FRI's final *domain*; minus the blowup it is the final degree 2^4
-        // (FRI's last step, domain 2^6 at rate 1/2, holds a polynomial of degree < 2^5 before
-        // its last fold; both tests send a final polynomial of the same size).
-        assert_eq!(sched.log_degrees, vec![17, 14, 11, 8, 5, 4]);
+        // finalDegree means the same thing in both tests: the final polynomial's
+        // log-degree bound, 5 by default — so both schedules end at d_M = 2^5.
+        assert_eq!(sched.log_degrees, vec![17, 14, 11, 8, 5]);
         assert_eq!(stir.low_degree_test.log_domain_sizes(), sched.log_domain_sizes);
-        assert_eq!(stir.low_degree_test.log_folding_factors(), vec![3, 3, 3, 3, 1]);
-        assert_eq!(stir.low_degree_test.commitment_trees(), vec![(15, 24), (14, 24), (13, 24), (12, 24), (13, 6)]);
+        assert_eq!(stir.low_degree_test.log_folding_factors(), vec![3, 3, 3, 3]);
+        assert_eq!(stir.low_degree_test.commitment_trees(), vec![(15, 24), (14, 24), (13, 24), (12, 24)]);
         let json = serde_json::to_string(&stir).unwrap();
-        assert!(json.contains(r#""lowDegreeTest":"STIR""#) && !json.contains("steps"), "{json}");
+        assert!(json.contains(r#""lowDegreeTest":"STIR""#), "{json}");
         let back: StarkStruct = serde_json::from_str(&json).unwrap();
         assert_eq!(back.low_degree_test, stir.low_degree_test);
     }

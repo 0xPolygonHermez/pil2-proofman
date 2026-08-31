@@ -63,15 +63,13 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
     let is_bn128 = hash_type == "BN128";
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let llv = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
-    let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
+    let n_queries = ss["numQueries"].as_u64().unwrap_or(0) as usize;
     let n_constants = stark_info["nConstants"].as_u64().unwrap_or(0) as usize;
     let n_stages = stark_info["nStages"].as_u64().unwrap_or(0) as usize;
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
 
-    let steps: Vec<u64> = ss["steps"]
-        .as_array()
-        .map(|a| a.iter().map(|s| s["nBits"].as_u64().unwrap_or(0)).collect())
-        .unwrap_or_default();
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
 
     let ev_map_len = stark_info["evMap"].as_array().map(|a| a.len()).unwrap_or(0);
 
@@ -207,7 +205,7 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
     out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
 
     // Proof-of-work nonce (optional)
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     if pow_bits > 0 {
         out.push_str(&format!("    signal input {prefix_}nonce;\n"));
     }
@@ -255,10 +253,8 @@ pub fn assign_stark_inputs(
     let n_stages = stark_info["nStages"].as_u64().unwrap_or(0) as usize;
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let airgroup_id = stark_info["airgroupId"].as_u64();
-    let steps: Vec<u64> = ss["steps"]
-        .as_array()
-        .map(|a| a.iter().map(|s| s["nBits"].as_u64().unwrap_or(0)).collect())
-        .unwrap_or_default();
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let custom_commits = stark_info["customCommits"].as_array().cloned().unwrap_or_default();
     let map_sections = &stark_info["mapSectionsN"];
 
@@ -382,7 +378,7 @@ pub fn assign_stark_inputs(
     out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
 
     // Proof-of-work nonce
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     if pow_bits > 0 {
         out.push_str(&format!("    {component_name}.nonce <== {prefix_}nonce;\n"));
     }
@@ -408,9 +404,9 @@ mod tests {
                 "verificationHashType": "BN128",
                 "merkleTreeArity": 4,
                 "lastLevelVerification": llv,
-                "nQueries": 4,
-                "powBits": 0,
-                "steps": [{"nBits": 10}, {"nBits": 6}]
+                "numQueries": 4,
+                "grindingBitsQueries": 0,
+                "logDomainSizes": [10, 6]
             },
             "nStages": 2,
             "nPublics": 0,

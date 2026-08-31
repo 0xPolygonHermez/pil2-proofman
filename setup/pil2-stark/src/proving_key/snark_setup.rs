@@ -212,14 +212,14 @@ pub fn gen_snark_setup(
     // BN128 stark struct settings (matches JS: blowupFactor=6, powBits=17, arity=4).
     let bn128_settings = StarkSettings {
         verification_hash_type: Some("BN128".to_string()),
-        blowup_factor: Some(6),
+        initial_blowup_factor: Some(6),
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
         // Diverges from JS (which never implemented lastLevelVerification for
         // BN128): drop 2 Poseidon-BN128 levels per query per tree in the final
         // circuit, checked against a 16-node (arity^2) published last level.
         last_level_verification: Some(2),
-        pow_bits: Some(19),
+        grinding_bits: Some(19),
         ..Default::default()
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
@@ -239,7 +239,7 @@ pub fn gen_snark_setup(
         batch_size: ev_map_len_rf.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors: log_folding_factors_rf,
-        max_grinding_bits_query: stark_struct_rf.pow_bits as u64,
+        max_grinding_bits_query: stark_struct_rf.low_degree_test.expect_fri("snark setup").grinding_bits_queries as u64,
         use_max_grinding_bits_query: true,
         tree_arity: stark_struct_rf.merkle_tree_arity as u64,
         hash_size_bits: 256,

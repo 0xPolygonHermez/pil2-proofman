@@ -63,7 +63,7 @@ fn build_tera_context_bn128(
     let custom = ss["merkleTreeCustom"].as_bool().unwrap_or(false);
     let transcript_arity = if custom { arity } else { 16usize };
     let n_bits_arity = (arity as f64).log2().ceil() as usize;
-    let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
+    let n_queries = ss["numQueries"].as_u64().unwrap_or(0) as usize;
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
     if last_level_verification > 0 && custom {
         bail!(
@@ -74,13 +74,14 @@ fn build_tera_context_bn128(
     let s0_last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let q_deg = si["qDeg"].as_u64().unwrap_or(1) as usize;
-    let steps: Vec<Value> = ss["steps"].as_array().map_or(vec![], |a| a.clone());
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let n_steps = steps.len();
-    let step0_bits = steps.first().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
-    let last_step_bits = steps.last().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
+    let step0_bits = steps.first().copied().unwrap_or(0) as usize;
+    let last_step_bits = steps.last().copied().unwrap_or(0) as usize;
     let final_pol_size: usize = 1 << last_step_bits;
     let n_last_bits = last_step_bits;
     let max_deg_bits = (n_last_bits as isize - (n_bits_ext - n_bits) as isize).max(0) as usize;
@@ -251,9 +252,9 @@ fn build_tera_context_bn128(
     // ── FRI step info ───────────────────────────────────────────────────────
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
-            let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0) as usize;
-            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) as usize };
-            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
+            let n_bits_s = steps[s] as usize;
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1] as usize };
+            let next_bits = if s < n_steps - 1 { steps[s + 1] as usize } else { 0 };
             let exponent = if s == 0 { 1usize } else { 1 << (prev_bits - n_bits_s) };
             let full_ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
             let ml = full_ml.saturating_sub(last_level_verification);
@@ -439,7 +440,7 @@ fn build_tera_context_bn128(
         query_vals_list_gl.push(format!("s0_vals_{name}_0GL"));
     }
     let query_vals_gl_joined = query_vals_list_gl.join(", ");
-    let next_step0_bits = if n_steps > 1 { steps[1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
+    let next_step0_bits = if n_steps > 1 { steps[1] as usize } else { 0 };
     let next_vals_pol_0 = if n_steps > 1 { "s1_vals_p" } else { "finalPol" };
 
     // ── challengeNames (Transcript output signals) ───────────────────────────
@@ -570,15 +571,15 @@ mod tests {
         json!({
             "starkStruct": {
                 "verificationHashType": "BN128",
-                "nQueries": n_queries,
+                "numQueries": n_queries,
                 "nBits": 16,
                 "nBitsExt": 17,
-                "powBits": 0,
+                "grindingBitsQueries": 0,
                 "merkleTreeArity": 16,
                 "merkleTreeCustom": false,
                 "lastLevelVerification": 0,
                 "hashCommits": false,
-                "steps": [{"nBits": step0_bits}]
+                "logDomainSizes": [step0_bits]
             },
             "nStages": n_stages,
             "nPublics": 0,
@@ -661,7 +662,7 @@ mod tests {
         let mut si = minimal_stark_info(2, 4, 10);
         si["starkStruct"]["merkleTreeArity"] = json!(4);
         si["starkStruct"]["lastLevelVerification"] = json!(2);
-        si["starkStruct"]["steps"] = json!([{"nBits": 10}, {"nBits": 6}]);
+        si["starkStruct"]["logDomainSizes"] = json!([10, 6]);
         si["mapSectionsN"] = json!({"cm1": 2, "cm2": 2, "cm3": 2});
         si
     }

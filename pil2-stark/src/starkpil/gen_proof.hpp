@@ -244,30 +244,30 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
         STIR<Goldilocks::Element>::prove(
             proof.proof.stir, stirParams, friPol, transcript, proof.proof.fri.trees, starks.treesGL, nTrees,
-            [](uint64_t &nonce_, const uint64_t *c, uint32_t powBits) { runGrinding(nonce_, c, powBits); });
+            [](uint64_t &nonce_, const uint64_t *c, uint32_t grindingBits) { runGrinding(nonce_, c, grindingBits); });
         TimerStopAndLog(STARK_STIR);
     }
     else
     {
     TimerStart(STARK_FRI_FOLDING);
-        uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
-        for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
+        uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
+        for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); step++)
         {   
-            uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
-            uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+            uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
+            uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
             FRI<Goldilocks::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
-            if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
+            if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
             {
-                FRI<Goldilocks::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+                FRI<Goldilocks::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1]);
                 starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
             }
             else
             {
                 if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                    starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
+                    starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
                 } else {
                     Goldilocks::Element hash[HASH_SIZE];
-                    starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
+                    starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
                     starks.addTranscript(transcript, hash, HASH_SIZE);
                 } 
                 
@@ -279,22 +279,22 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
         uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
-        runGrinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
+        runGrinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.grindingBitsQueries);
 
         TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
         starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
         starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
-        transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
+        transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0]);
 
         uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
         FRI<Goldilocks::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
 
-        for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
+        for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); ++step) {
 
-            FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
+            FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.logDomainSizes[step], proof, starks.treesFRI[step - 1]);
         }
 
-        FRI<Goldilocks::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
+        FRI<Goldilocks::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.logDomainSizes[setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1]);
         TimerStopAndLog(STARK_FRI_QUERIES);
     }
 

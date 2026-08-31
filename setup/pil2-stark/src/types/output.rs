@@ -50,7 +50,6 @@ pub struct StarkStructOutput {
     pub merkle_tree_custom: bool,
     #[serde(default)]
     pub last_level_verification: usize,
-    pub pow_bits: usize,
     pub hash_commits: bool,
     pub n_bits_ext: usize,
     pub verification_hash_type: String,

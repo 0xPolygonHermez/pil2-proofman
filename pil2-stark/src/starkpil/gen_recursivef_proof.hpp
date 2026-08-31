@@ -215,24 +215,24 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
     
     TimerStart(STARK_FRI_FOLDING);
-    uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
+    uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); step++)
     {   
-        uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
-        uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+        uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
+        uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
         FRI<RawFr::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
-        if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
+        if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
         {
-            FRI<RawFr::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            FRI<RawFr::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1]);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], nFieldElements);
         }
         else
         {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
+                starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
             } else {
                 RawFr::Element hash[nFieldElements];
-                starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
+                starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
                 starks.addTranscript(transcript, hash, nFieldElements);
             } 
             
@@ -255,21 +255,21 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 	}
     
     PoseidonBN128 p;
-    p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
+    p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.grindingBitsQueries);
     TimerStopAndLog(STARK_NONCE_GRINDING);
     TimerStart(STARK_FRI_QUERIES);
     TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
-    transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
+    transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0]);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     FRI<RawFr::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
-    for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-        FRI<RawFr::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
+    for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); ++step) {
+        FRI<RawFr::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.logDomainSizes[step], proof, starks.treesFRI[step - 1]);
     }
 
-    FRI<RawFr::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
+    FRI<RawFr::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.logDomainSizes[setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1]);
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);

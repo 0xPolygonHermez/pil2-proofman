@@ -112,7 +112,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //   0x4556414c "EVAL"  evals memset + LEv/evmap + evals transcript + FRI challenges
     //   0x46524950 "FRIP"  calculateXis + computeX + FRI expression
     //   0x465249   "FRI"   FRI fold+merkelize step (+ step in key)
-    //   0x4752494e "GRIN"  grinding (+ powBits in key)
+    //   0x4752494e "GRIN"  grinding (+ grindingBits in key)
     //   0x515559   "QUY"   query proofs (+ d_const_tree in key: preloaded trees repoint it)
     //   0x57455843 "WEXC"  contributions witness expressions   (commit_witness_gpu, starks_api.cu)
     //   0x574c4445 "WLDE"  contributions LDE + Merkle + root   (commit_witness_gpu, starks_api.cu)
@@ -198,7 +198,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1;
 
     TimerStartCategoryGPU(timer, TRANSCRIPT);
     d_transcript->reset(stream);
@@ -371,7 +371,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopCategoryGPU(timer, EXPRESSIONS);
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);
     });
-    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
 
@@ -384,27 +384,27 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
-    uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
+    uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
 
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); step++)
     {
-        uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
+        uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
 
         cudagraph::run(cudagraph::key(0x465249ULL ^ graphCtxId, step, nBitsExt, currentBits), countId, stream, [&] {
             if (step > 0) {
-                uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+                uint64_t prevBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
                 fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
             }
-            if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
+            if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
             {
-                merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, d_transcript, timer, stream);
+                merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], d_transcript, timer, stream);
             }
             else
             {
                 if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                    d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                    d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                 } else {
-                    calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                    calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                     d_transcript->put(d_challenge, HASH_SIZE, stream);
                 }
             }
@@ -415,8 +415,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartCategoryGPU(timer, GRINDING);
     Goldilocks::Element *d_input_hash_nonce = (Goldilocks::Element *)d_aux_trace + offsetInputHashNonce;
     CHECKCUDAERR(cudaMemcpyAsync(d_input_hash_nonce, d_challenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
-    cudagraph::run(cudagraph::key(0x4752494EULL ^ graphCtxId, setupCtx.starkInfo.starkStruct.powBits), countId, stream, [&] {
-        runGrindingGPU((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+    cudagraph::run(cudagraph::key(0x4752494EULL ^ graphCtxId, setupCtx.starkInfo.starkStruct.grindingBitsQueries), countId, stream, [&] {
+        runGrindingGPU((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.grindingBitsQueries, stream);
     });
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
@@ -425,14 +425,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     d_transcript_helper->reset(stream);
     d_transcript_helper->put2(d_challenge, FIELD_EXTENSION, d_nonce, 1, stream);
     Goldilocks::Element *permScratch = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries_perm", false)];
-    d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, permScratch, stream);
+    d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0], permScratch, stream);
 
     // d_const_tree joins the key: preloaded const trees give the same air a different
     // (but per-stream-stable) tree pointer, and the query kernels read through it.
-    cudagraph::run(cudagraph::key(0x515559ULL ^ graphCtxId ^ (uint64_t)(uintptr_t)d_const_tree, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps.size()), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x515559ULL ^ graphCtxId ^ (uint64_t)(uintptr_t)d_const_tree, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes.size()), countId, stream, [&] {
         proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
-        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
-            proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
+        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; ++step) {
+            proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
         }
     });
     TimerStopCategoryGPU(timer, FRI);

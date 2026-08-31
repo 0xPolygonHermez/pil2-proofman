@@ -200,9 +200,9 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Compressed final stark struct settings
     let compressed_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
-        folding_factor: Some(3),
-        pow_bits: Some(22),
+        initial_blowup_factor: Some(4),
+        initial_folding_factor: Some(3),
+        grinding_bits: Some(22),
         merkle_tree_arity: Some(2),
         last_level_verification: Some(6),
         final_degree: Some(10),
@@ -240,7 +240,10 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         batch_size: ev_map_len.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors,
-        max_grinding_bits_query: compressed_stark_struct.pow_bits as u64,
+        max_grinding_bits_query: compressed_stark_struct
+            .low_degree_test
+            .expect_fri("compressor setup")
+            .grinding_bits_queries as u64,
         use_max_grinding_bits_query: true,
         tree_arity: compressed_stark_struct.merkle_tree_arity as u64,
         hash_size_bits: 256,

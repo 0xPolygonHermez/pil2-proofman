@@ -193,10 +193,10 @@ pub fn gen_recursive_test_setup(
     // JS genRecursiveSetupTest always uses {blowupFactor: 3, lastLevelVerification: 1}
     // regardless of the setup type (unlike gen_recursive_setup which varies by template).
     let settings = StarkSettings {
-        blowup_factor: Some(3),
+        initial_blowup_factor: Some(3),
         last_level_verification: Some(1),
         // Same pin as the real recursion layers, so a test key matches their geometry.
-        pow_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
+        grinding_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
         ..Default::default()
     };
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
@@ -218,7 +218,7 @@ pub fn gen_recursive_test_setup(
         batch_size: ev_map_len.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors,
-        max_grinding_bits_query: stark_struct.pow_bits as u64,
+        max_grinding_bits_query: stark_struct.low_degree_test.expect_fri("test").grinding_bits_queries as u64,
         use_max_grinding_bits_query: true,
         tree_arity: stark_struct.merkle_tree_arity as u64,
         hash_size_bits: 256,

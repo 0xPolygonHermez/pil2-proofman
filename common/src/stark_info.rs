@@ -14,13 +14,6 @@ pub struct Boundary {
 }
 
 #[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone, Copy)]
-pub struct StepStruct {
-    #[serde(rename = "nBits")]
-    pub n_bits: u64,
-}
-
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct SecurityInfo {
     #[serde(default, rename = "proximityParameter")]
@@ -47,8 +40,6 @@ pub struct StarkStruct {
     pub transcript_arity: u64,
     #[serde(rename = "merkleTreeCustom")]
     pub merkle_tree_custom: bool,
-    #[serde(rename = "powBits")]
-    pub pow_bits: u64,
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTest,
 }
@@ -96,22 +87,36 @@ impl LowDegreeTest {
     /// one query challenge per round.
     pub fn num_ldt_challenges(&self) -> usize {
         match self {
-            LowDegreeTest::Fri(fri) => fri.steps.len(),
+            LowDegreeTest::Fri(fri) => fri.log_domain_sizes.len(),
             LowDegreeTest::Stir(stir) => {
                 let m = stir.num_iterations();
-                1 + m.saturating_sub(1) * (stir.num_ood_samples as usize + 2) + m
+                1 + m.saturating_sub(1) * (1 + 2) + m
             }
         }
     }
 }
 
-/// FRI schedule: `steps[i].nBits` is the log-size of round `i`'s evaluation domain.
+/// FRI schedule. FRI keeps the rate
+/// constant: iteration `i` folds both the degree bound and the domain by
+/// `2^{kᵢ}`; the last entries are the final polynomial's, sent in clear.
 #[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct FriStruct {
-    pub steps: Vec<StepStruct>,
-    #[serde(default, rename = "nQueries")]
-    pub n_queries: u64,
+    /// `kᵢ`, in bits (length `M`).
+    #[serde(rename = "foldingFactors")]
+    pub folding_factors: Vec<u64>,
+    /// `log₂ dᵢ` (length `M+1`).
+    #[serde(rename = "logDegrees")]
+    pub log_degrees: Vec<u64>,
+    /// `log₂|Lᵢ|` (length `M+1`).
+    #[serde(rename = "logDomainSizes")]
+    pub log_domain_sizes: Vec<u64>,
+    /// `t`: queries into `f₀`, checked pointwise through every fold.
+    #[serde(default, rename = "numQueries")]
+    pub num_queries: u64,
+    /// Grinding (proof-of-work) budget in bits on the query-phase challenge.
+    #[serde(default, rename = "grindingBitsQueries")]
+    pub grinding_bits_queries: u64,
 }
 
 /// Marker that identifies a STIR stark struct (`"lowDegreeTest": "STIR"`).
@@ -138,15 +143,12 @@ pub struct StirStruct {
     /// `log₂|Lᵢ|` (length `M+1`).
     #[serde(rename = "logDomainSizes")]
     pub log_domain_sizes: Vec<u64>,
-    /// `s`, out-of-domain samples per iteration.
-    #[serde(rename = "numOodSamples")]
-    pub num_ood_samples: u64,
     /// `tᵢ`, shift queries into `fᵢ` (length `M`).
     #[serde(default, rename = "numQueries")]
     pub num_queries: Vec<u64>,
     /// Grinding bits on iteration `i`'s query message (length `M`).
-    #[serde(default, rename = "grindingBits")]
-    pub grinding_bits: Vec<u64>,
+    #[serde(default, rename = "grindingBitsQueries")]
+    pub grinding_bits_queries: Vec<u64>,
 }
 
 impl StirStruct {
@@ -334,19 +336,20 @@ mod tests {
     use super::*;
 
     const COMMON: &str = r#""nBits": 17, "merkleTreeArity": 2, "transcriptArity": 2, "merkleTreeCustom": true,
-        "lastLevelVerification": 4, "powBits": 24, "hashCommits": true, "nBitsExt": 19, "verificationHashType": "GL""#;
+        "lastLevelVerification": 4, "hashCommits": true, "nBitsExt": 19, "verificationHashType": "GL""#;
 
     /// A FRI stark struct is what it always was: flat `steps` + `nQueries`, no marker.
     #[test]
     fn fri_stark_struct_deserializes_into_the_fri_variant() {
-        let json =
-            format!(r#"{{{COMMON}, "steps": [{{"nBits": 19}}, {{"nBits": 16}}, {{"nBits": 13}}], "nQueries": 106}}"#);
+        let json = format!(
+            r#"{{{COMMON}, "foldingFactors": [3, 3], "logDegrees": [17, 14, 11], "logDomainSizes": [19, 16, 13], "numQueries": 106, "grindingBitsQueries": 24}}"#
+        );
         let ss: StarkStruct = serde_json::from_str(&json).unwrap();
         let fri = ss.low_degree_test.expect_fri("test");
-        assert_eq!(fri.n_queries, 106);
-        assert_eq!(fri.steps.iter().map(|s| s.n_bits).collect::<Vec<_>>(), vec![19, 16, 13]);
+        assert_eq!(fri.num_queries, 106);
+        assert_eq!(fri.log_domain_sizes, vec![19, 16, 13]);
         assert!(ss.low_degree_test.stir().is_none());
-        assert_eq!(ss.pow_bits, 24);
+        assert_eq!(fri.grinding_bits_queries, 24);
     }
 
     /// A STIR stark struct is recognised by its marker and carries the paper's schedule.
@@ -355,7 +358,7 @@ mod tests {
         let json = format!(
             r#"{{{COMMON}, "lowDegreeTest": "STIR", "foldingFactors": [3, 3, 3, 3, 2], "logDegrees": [17, 14, 11, 8, 5, 3],
             "logDomainSizes": [19, 18, 17, 16, 15, 14], "numOodSamples": 1, "numQueries": [106, 53, 36, 27, 22],
-            "grindingBits": [24, 24, 24, 24, 24]}}"#
+            "grindingBitsQueries": [24, 24, 24, 24, 24]}}"#
         );
         let ss: StarkStruct = serde_json::from_str(&json).unwrap();
         let stir = ss.low_degree_test.stir().expect("STIR variant");

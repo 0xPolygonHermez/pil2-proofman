@@ -113,12 +113,12 @@ public:
                                  pol() {
         if (starkInfo.starkStruct.lowDegreeTest != LowDegreeTestKind::FRI) return;
 
-        pol.assign(1 << starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits, std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero()));
+        pol.assign(1 << starkInfo.starkStruct.logDomainSizes[starkInfo.starkStruct.logDomainSizes.size() - 1], std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero()));
 
         uint64_t nQueries = starkInfo.starkStruct.nQueries;
         uint64_t nFieldElements = (starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1;
        
-        for (size_t i = 0; i < starkInfo.starkStruct.steps.size() - 1; i++)
+        for (size_t i = 0; i < starkInfo.starkStruct.logDomainSizes.size() - 1; i++)
         {
             treesFRI.emplace_back(nFieldElements, nQueries, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification);
         }
@@ -444,21 +444,21 @@ public:
             return pointer;
         }
 
-        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
              for(uint64_t i = 0; i < nFieldElements; i++) {
                 pointer[p++] = toU64(fri.treesFRI[step - 1].root[i]);
             }
         }
         
-        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
+                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.logDomainSizes[step - 1] - starkInfo.starkStruct.logDomainSizes[step])) * FIELD_EXTENSION; l++) {
                     pointer[p++] = Goldilocks::toU64(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
                 }
             }
 
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.logDomainSizes[step], starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
                 uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
                 for(uint64_t l = 0; l < nSiblings; ++l) {
                     for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
@@ -474,7 +474,7 @@ public:
             }
         }
 
-        for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits)); i++)
+        for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.logDomainSizes[starkInfo.starkStruct.logDomainSizes.size() - 1])); i++)
         {
             for(uint64_t l = 0; l < FIELD_EXTENSION; l++) {
                 pointer[p++] = Goldilocks::toU64(fri.pol[i][l]);
@@ -618,7 +618,7 @@ public:
             for (uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
                 emitLastLevels("s0_last_levels_" + starkInfo.customCommits[c].name + "_0", last_levels[starkInfo.nStages + 2 + c]);
             }
-            for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+            for (uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
                 emitLastLevels("s" + std::to_string(step) + "_last_levels", fri.treesFRI[step - 1].last_levels.data());
             }
         }
@@ -662,8 +662,12 @@ public:
 
                 if(starkInfo.starkStruct.lastLevelVerification != 0) {
                     j[prefix + "_last_levels"] = json::array();
-                    for(uint64_t l = 0; l < stir.trees[i].last_levels.size(); l++) {
-                        j[prefix + "_last_levels"][l] = toString(stir.trees[i].last_levels[l]);
+                    uint64_t numNodesLevel = stir.trees[i].last_levels.size() / nFieldElements;
+                    for(uint64_t l = 0; l < numNodesLevel; ++l) {
+                        j[prefix + "_last_levels"][l] = json::array();
+                        for(uint64_t c = 0; c < nFieldElements; ++c) {
+                            j[prefix + "_last_levels"][l][c] = toString(stir.trees[i].last_levels[l * nFieldElements + c]);
+                        }
                     }
                 }
             }
@@ -690,7 +694,7 @@ public:
             return j;
         }
 
-        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
             if(nFieldElements == 1) {
                 j["s" + std::to_string(step) + "_root"] = toString(fri.treesFRI[step - 1].root[0]);
             } else {
@@ -704,15 +708,15 @@ public:
         }
 
         for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+            for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
                 j["s" + std::to_string(step) + "_vals"][i] = json::array();
                 j["s" + std::to_string(step) + "_siblings"][i] = json::array();
 
-                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
+                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.logDomainSizes[step - 1] - starkInfo.starkStruct.logDomainSizes[step])) * FIELD_EXTENSION; l++) {
                     j["s" + std::to_string(step) + "_vals"][i][l] = Goldilocks::toString(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
                 }
 
-                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+                uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.logDomainSizes[step], starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
                 uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
                 for(uint64_t l = 0; l < nSiblings; ++l) {
@@ -725,7 +729,7 @@ public:
         
 
         j["finalPol"] = json::array();
-        for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits)); i++)
+        for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.logDomainSizes[starkInfo.starkStruct.logDomainSizes.size() - 1])); i++)
         {
             j["finalPol"][i] = json::array();
             for(uint64_t l = 0; l < FIELD_EXTENSION; l++) {

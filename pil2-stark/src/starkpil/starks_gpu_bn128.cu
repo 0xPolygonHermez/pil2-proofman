@@ -401,7 +401,7 @@ void setProof_bn128_gpu(
     
     uint64_t nQueries = setupCtx.starkInfo.starkStruct.nQueries;
     uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
-    uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1;
     uint64_t maxProofBuffSize = setupCtx.starkInfo.maxProofBuffSize;
     
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
@@ -509,10 +509,10 @@ void setProof_bn128_gpu(
     }
 
     // ============ Copy FRI final polynomial ============
-    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits;
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[nFRISteps];
     Goldilocks::Element *h_friPol = new Goldilocks::Element[finalPolDegree * FIELD_EXTENSION];
     cudaMemcpy(h_friPol, d_friPol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    FRI<RawFr::Element>::setFinalPol(proof, h_friPol, setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits);
+    FRI<RawFr::Element>::setFinalPol(proof, h_friPol, setupCtx.starkInfo.starkStruct.logDomainSizes[nFRISteps]);
     delete[] h_friPol;
 
     // ============ Copy nonce ============

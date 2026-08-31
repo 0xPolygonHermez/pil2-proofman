@@ -55,12 +55,6 @@ public:
     uint64_t offsetMax;
 };
 
-class StepStruct
-{
-public:
-    uint64_t nBits;
-};
-
 /// The low-degree test run on the batched DEEP polynomial f_0.
 enum class LowDegreeTestKind
 {
@@ -76,9 +70,9 @@ public:
     vector<uint64_t> foldingFactors; // k_i, in bits (length M)
     vector<uint64_t> logDegrees;     // log2 d_i, degree bound of f_i (length M+1)
     vector<uint64_t> logDomainSizes; // log2 |L_i| (length M+1)
-    uint64_t numOodSamples;          // s, out-of-domain samples per iteration
+    uint64_t numOodSamples = 1;      // s, out-of-domain samples per iteration — always 1, no longer on the wire
     vector<uint64_t> numQueries;     // t_i, shift queries into f_i (length M)
-    vector<uint64_t> grindingBits;   // grinding on iteration i's query message (length M)
+    vector<uint64_t> grindingBitsQueries; // grinding on iteration i's query message (length M)
 
     uint64_t numIterations() const { return foldingFactors.size(); }
 };
@@ -94,13 +88,13 @@ public:
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     uint64_t transcriptArity;
-    uint64_t powBits;
+    uint64_t grindingBitsQueries; // FRI-only grinding (proof-of-work) budget on the query phase; 0 for STIR (see stir.grindingBitsQueries)
 
-    // Which low-degree test the stark info selects. FRI's schedule is `steps`/`nQueries`, STIR's
-    // is `stir`; the other one is left empty.
+    // Which low-degree test the stark info selects. FRI's schedule is `logDomainSizes` (log2|L_i|
+    // per round, STIR notation) + `numQueries`, STIR's is `stir`; the other one is left empty.
     LowDegreeTestKind lowDegreeTest = LowDegreeTestKind::FRI;
     uint64_t nQueries = 0;
-    vector<StepStruct> steps;
+    vector<uint64_t> logDomainSizes;
     StirStruct stir;
 };
 

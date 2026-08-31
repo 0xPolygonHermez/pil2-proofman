@@ -78,6 +78,7 @@ impl Stir {
     pub fn new(cfg: StirConfig) -> Self {
         let mut stir = Self::validate(cfg);
         let (sec_params, alpha) = stir.solve();
+        stir.validate_query_counts(&sec_params);
         stir.sec_params = sec_params;
         stir.alpha = alpha;
         stir
@@ -93,8 +94,29 @@ impl Stir {
         assert_eq!(sec_params.grinding_bits_queries.len(), m, "Expected one query grinding entry per iteration");
         assert_eq!(sec_params.grinding_bits_ood.len(), m - 1, "Expected M-1 OOD grinding entries");
 
+        stir.validate_query_counts(&sec_params);
         stir.sec_params = sec_params;
         stir
+    }
+
+    /// STIR is only meaningful while the quotient keeps a positive degree bound: every quotient
+    /// round i = 1..M-1 divides by ∏_{a∈G_i}(X − a) with |G_i| = t_{i-1} + s_i, so it needs
+    /// |G_i| < d_i.
+    fn validate_query_counts(&self, sec_params: &StirSecurityParams) {
+        for i in 1..self.num_rounds {
+            let d_i = 1u64 << self.log_round_dimensions[i];
+            let n_g = sec_params.num_queries[i - 1] + sec_params.num_ood_samples[i - 1];
+            assert!(
+                n_g < d_i,
+                "STIR schedule is invalid for this air: iteration {i} quotients over |G| = {n_g} \
+                 points (t_{} = {} queries + {} out-of-domain samples) but the degree folds down \
+                 to d_{i} = {d_i}. The trace is too small for STIR at this security target — \
+                 raise finalDegree, lower foldingFactor, or keep FRI for this air.",
+                i - 1,
+                sec_params.num_queries[i - 1],
+                sec_params.num_ood_samples[i - 1],
+            );
+        }
     }
 
     /// Structural validation shared by both constructors.
@@ -685,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_final_params() {
-        let stir = Stir::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
+        let stir = Stir::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4], 22));
         assert_eq!(stir.alpha(), 0.0);
         assert_all_components_reach_target(&stir);
         assert_eq!(stir.security_params().num_queries[0], 43);
@@ -741,5 +763,14 @@ mod tests {
         let pinned = Stir::with_security_params(cfg, solved.security_params().clone());
         assert_eq!(pinned.security_levels(), solved.security_levels());
         assert_eq!(pinned.proof_size_bits(), solved.proof_size_bits());
+    }
+
+    /// An air too small for its query schedule must be rejected at setup time, not left for the
+    /// prover to trip over: with d_0 = 2^8 at 128 bits the solver wants hundreds of queries, and
+    /// one fold drops the degree below them.
+    #[test]
+    #[should_panic(expected = "too small for STIR")]
+    fn schedules_that_fold_below_the_query_count_are_rejected() {
+        Stir::new(test_config(1 << 8, 0.5, 10, vec![3, 3], 16));
     }
 }

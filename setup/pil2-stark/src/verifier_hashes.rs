@@ -209,7 +209,10 @@ pub fn geometry_for_family(
         batch_size: n_evals.max(1) as u64,
         batching: Batching::Powers,
         log_folding_factors: crate::output::stark_info::compute_log_folding_factors(stark_struct),
-        max_grinding_bits_query: stark_struct.pow_bits as u64,
+        max_grinding_bits_query: stark_struct
+            .low_degree_test
+            .expect_fri("verifier hash accounting")
+            .grinding_bits_queries as u64,
         use_max_grinding_bits_query: true,
         tree_arity: arity,
         hash_size_bits: 256,
@@ -233,7 +236,7 @@ pub fn geometry_for_family(
         stage_widths: (1..=setup.n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
         n_constants: setup.n_constants as u64,
         custom_commit_widths: setup.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
-        step_n_bits: fri_struct.steps.iter().map(|s| s.n_bits as u64).collect(),
+        step_n_bits: fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect(),
         n_publics: setup.n_publics as u64,
         n_evals: n_evals as u64,
         stage_challenges: (2..=setup.n_stages + 1)
@@ -242,7 +245,7 @@ pub fn geometry_for_family(
         stage_air_values: (2..=setup.n_stages + 1)
             .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
             .collect(),
-        final_pol_size: 1u64 << fri_struct.steps.last().map_or(0, |s| s.n_bits),
+        final_pol_size: 1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
     }
 }
 

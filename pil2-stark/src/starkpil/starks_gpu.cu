@@ -1233,9 +1233,9 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
         }
     }
 
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; step++)
     {
-        uint64_t height = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
+        uint64_t height = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1];
         uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(height);
         Goldilocks::Element *nodes = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
         CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + numNodes - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
@@ -1258,10 +1258,10 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
     }
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1;
     uint64_t queriesProofSize = (nTrees + nTreesFRI) * setupCtx.starkInfo.maxProofBuffSize * setupCtx.starkInfo.starkStruct.nQueries;
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
-    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits;
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1];
 
     Goldilocks::Element *d_queries_buff = h_aux_trace + offsetProofQueries;
     Goldilocks::Element *d_evals = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
@@ -1291,7 +1291,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     StarkInfo &starkInfo = setupCtx.starkInfo;
 
     uint64_t nStages = starkInfo.nStages + 1;
-    uint64_t nFriSteps = starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nFriSteps = starkInfo.starkStruct.logDomainSizes.size() - 1;
     uint64_t nQueries = starkInfo.starkStruct.nQueries;
     uint64_t arity = starkInfo.starkStruct.merkleTreeArity;
     uint64_t lastLevelVerification = starkInfo.starkStruct.lastLevelVerification;
@@ -1325,11 +1325,11 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     Goldilocks::Element *evals = queries + queriesProofSize;
     Goldilocks::Element *airgroupValues = evals + starkInfo.evMap.size() * FIELD_EXTENSION;
     Goldilocks::Element *airValues = airgroupValues + starkInfo.airgroupValuesSize;
-    uint64_t finalPolDegree = 1 << starkInfo.starkStruct.steps.back().nBits;
+    uint64_t finalPolDegree = 1 << starkInfo.starkStruct.logDomainSizes.back();
     Goldilocks::Element *finalPol = airValues + starkInfo.airValuesSize;
     Goldilocks::Element *nonce = finalPol + finalPolDegree * FIELD_EXTENSION;
 
-    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, arity, lastLevelVerification, false);
+    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.logDomainSizes[0], arity, lastLevelVerification, false);
     uint64_t siblingWords = nSiblings * (arity - 1) * HASH_SIZE;
 
     // Address of query `q` in tree `tree` within the query openings block.
@@ -1391,10 +1391,10 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     // FRI step roots, then per-step openings + siblings (+ last level).
     for (uint64_t step = 0; step < nFriSteps; ++step) emit(friHeadersBase + step * treeHeaderStride, HASH_SIZE);
 
-    for (uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+    for (uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
         uint64_t stepIndex = step - 1;
-        uint64_t width = (1ULL << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION;
-        uint64_t stepSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, arity, lastLevelVerification, false);
+        uint64_t width = (1ULL << (starkInfo.starkStruct.logDomainSizes[step - 1] - starkInfo.starkStruct.logDomainSizes[step])) * FIELD_EXTENSION;
+        uint64_t stepSiblings = merkleProofLevels(starkInfo.starkStruct.logDomainSizes[step], arity, lastLevelVerification, false);
         uint64_t stepSiblingWords = stepSiblings * (arity - 1) * HASH_SIZE;
         uint64_t buffSize = width + stepSiblingWords;
         Goldilocks::Element *queriesFRI = queries + (nTrees + stepIndex) * nQueries * starkInfo.maxProofBuffSize;

@@ -16,11 +16,11 @@
 #include "exit_process.hpp"
 
 inline void runGrinding(uint64_t &nonce,
-                        const uint64_t *challenge, uint32_t powBits) {
+                        const uint64_t *challenge, uint32_t grindingBits) {
     switch (get_hash_family()) {
-        case HashFamily::Poseidon1: PoseidonGoldilocks<8>::grinding(nonce, challenge, powBits); break;
-        case HashFamily::Poseidon2: Poseidon2GoldilocksGrinding::grinding(nonce, challenge, powBits); break;
-        case HashFamily::Blake3:    Blake3Goldilocks::grinding(nonce, challenge, powBits); break;
+        case HashFamily::Poseidon1: PoseidonGoldilocks<8>::grinding(nonce, challenge, grindingBits); break;
+        case HashFamily::Poseidon2: Poseidon2GoldilocksGrinding::grinding(nonce, challenge, grindingBits); break;
+        case HashFamily::Blake3:    Blake3Goldilocks::grinding(nonce, challenge, grindingBits); break;
         default: break;
     }
 }
