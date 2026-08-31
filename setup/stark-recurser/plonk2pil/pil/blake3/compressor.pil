@@ -66,8 +66,11 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
     // air.CLOCKS directly rather than taking them as parameters.
     const int air.CLOCKS = 56;
 
+    // Structural: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
+    // schedule. Not an opening-depth bound -- the deepest boundary prime is 15 at every LANES.
     if (LANES < 1 || LANES > 8) {
-        error(`LANES must be in 1..8 (above 8 the boundary opening depth exceeds 7), got ${LANES}`);
+        error(`LANES must be in 1..8 (lane l's input row is clock l, and only clocks 0..7 carry ` +
+              `round 0's identity message schedule), got ${LANES}`);
     }
 
     const int nBlocks = nNodeBlocks + nChunkBlocks + nParentBlocks;
@@ -145,8 +148,6 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
         what lets each selector stay a repeating pattern instead of a transported column, and it
         wastes only the tail of each circuit's last block.
     */
-    const int nGateRows = nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelValRows;
-
     const int INTERIOR = air.CLOCKS - 2*LANES;
     const int nCMulBlocks   = (nCMulRows + INTERIOR - 1) / INTERIOR;
     const int nEvPol4Blocks = (nEvPol4 + INTERIOR - 1) / INTERIOR;
@@ -190,23 +191,25 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
     // The boundary columns are declared BEFORE the call and handed in: blake3Lanes binds them
     // itself, because PIL2 gives a function no way to hand its own values back. See the comment on
     // blake3Lanes in circuits/blake3.pil.
-    col witness dinv[LANES];
-    col witness bits(1) vbTopHi[LANES][3];
-    col witness bits(8) outBytes[LANES][1][4];
+    // d_inv witnesses 1/d for the canonical-split check, d = hi - (2^32 - 1); see
+    // blake3SplitCanonicalGadget. Junk at lo = 0, where the constraint is vacuous.
+    col witness d_inv[LANES];
+    col witness bits(1) vb_pp_t_hi[LANES][3];
+    col witness bits(8) out_bytes[LANES][4];
 
-    // cv[0..4]'s bytes ALIAS the outBytes group: live at clocks 40..55 while cv is written at 0..3,
-    // so disjoint rows, and both bits(8). Four columns per lane saved.
-    const expr cvBytes[LANES][4];
+    // cv[0..4]'s bytes ALIAS the out_bytes group: live at clocks 40..55 while cv is written at 0..3,
+    // so disjoint rows at every lane count, and both bits(8). Four columns per lane saved.
+    const expr cv_bytes[LANES][4];
     for (int l = 0; l < LANES; l++) {
         for (int i = 0; i < 4; i++) {
-            cvBytes[l][i] = outBytes[l][0][i];
+            cv_bytes[l][i] = out_bytes[l][i];
         }
     }
 
     // BIND_BOUNDARY 1, VC_AT_IV 1: every block here is a BLAKE3 compression, so st[8..12] is the
     // IV and blake3Lanes builds vc as an expression rather than a column.
     blake3Lanes(LANES, BLOCK_ID, BLAKE3_ANY, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
-                1, 1, a, dinv, vbTopHi, outBytes, cvBytes,
+                1, 1, a, d_inv, vb_pp_t_hi, out_bytes, cv_bytes,
                 NODE_IN_CLK, NODE_OUT_CLK, OUT_FIRST,
                 BLAKE3_CHUNK, CHUNK_ROUND0, BLAKE3_PARENT, FLAGS,
                 OUT_CLK16, air.CLOCKS);

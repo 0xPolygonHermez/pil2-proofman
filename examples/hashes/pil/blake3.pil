@@ -63,18 +63,18 @@ airtemplate Blake3(const int N = 2**20, const int LANES = 1) {
     // uninitialised `const expr` array argument -- but unlike the out-parameters this replaced,
     // nothing reads them, so a zero here cannot become a constraint.
     const expr noA[18];
-    const expr noDinv[LANES];
-    const expr noTopHi[LANES][3];
-    const expr noOutBytes[LANES][1][4];
+    const expr noDInv[LANES];
+    const expr noVbPpTHi[LANES][3];
+    const expr noOutBytes[LANES][4];
     const expr noCvBytes[LANES][4];
     const expr noClk[CLOCKS];
     for (int i = 0; i < 18; i++) { noA[i] = 0; }
     for (int i = 0; i < CLOCKS; i++) { noClk[i] = 0; }
     for (int l = 0; l < LANES; l++) {
-        noDinv[l] = 0;
-        for (int j = 0; j < 3; j++) { noTopHi[l][j] = 0; }
+        noDInv[l] = 0;
+        for (int j = 0; j < 3; j++) { noVbPpTHi[l][j] = 0; }
         for (int i = 0; i < 4; i++) {
-            noOutBytes[l][0][i] = 0;
+            noOutBytes[l][i] = 0;
             noCvBytes[l][i] = 0;
         }
     }
@@ -82,7 +82,7 @@ airtemplate Blake3(const int N = 2**20, const int LANES = 1) {
     // VC_AT_IV = 0: this air runs the permutation over an ARBITRARY initial state, so st[8..12] is
     // not the IV and vc has to be a committed column.
     blake3Lanes(LANES, BLOCK_ID, 1, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
-                0, 0, noA, noDinv, noTopHi, noOutBytes, noCvBytes,
+                0, 0, noA, noDInv, noVbPpTHi, noOutBytes, noCvBytes,
                 noClk, noClk, 0, 0, 0, 0, 0, noClk, CLOCKS);
 
     // After the lanes: mul_table and mul_range are the trace's last two columns.

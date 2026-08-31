@@ -24,17 +24,14 @@ require "circuits/plonk.pil";
 //   clock          | a[0..17]                        | lane columns
 //   ---------------+---------------------------------+---------------------
 //   l              | lane l's input: a[0..8], a[8]=k | round 0 G l
-//   LANES..55-LANES| free -> plonk piggyback         | rounds 0..6
+//   LANES..55-LANES| the band: any one of the six    | rounds 0..6
 //   56-LANES+l     | lane l's output: a[0..4]        | round 6 G
 //
-// The middle rows are the point: at LANES=4 that is 48 rows x 6 plonk gates per
-// block, so the plonk work rides inside the BLAKE3 blocks instead of needing
-// rows of its own.
+// The middle rows are the point: at LANES=4 that is 48 free rows a block, and all
+// six band circuits ride them instead of needing rows of their own.
 //
-// Boundary cells sit within a few rows of the clock that binds them -- message
-// binding at clocks 0..7, output binding at clocks 54..55 -- because each
-// distinct shift of a witness column is another opening. That is what caps
-// LANES at 8, not the row count.
+// LANES caps at 8 because lane l's input row IS clock l, and only clocks 0..7
+// carry round 0's identity message schedule.
 // ============================================================================
 airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelValRows, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
     col witness a[18];
@@ -50,8 +47,11 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     // air.CLOCKS directly rather than taking them as parameters.
     const int air.CLOCKS = 56;
 
+    // Structural: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
+    // schedule. Not an opening-depth bound -- the deepest boundary prime is 15 at every LANES.
     if (LANES < 1 || LANES > 8) {
-        error(`LANES must be in 1..8 (above 8 the boundary opening depth exceeds 7), got ${LANES}`);
+        error(`LANES must be in 1..8 (lane l's input row is clock l, and only clocks 0..7 carry ` +
+              `round 0's identity message schedule), got ${LANES}`);
     }
 
     const int nBlocks = nNodeBlocks + nChunkBlocks + nParentBlocks;
@@ -84,7 +84,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
         BLOCK_ID[i] = i / air.CLOCKS;
     }
 
-    // ── Kind selector, and the folded selector x clock columns ──────────────────
+    // ── Kind selectors ──────────────────────────────────────────────────────────
     // BLAKE3_NODE is 1 on all 56 rows of a block, not just its first: a start-row
     // selector would have to be reached with primes of depth up to 55.
     /*
@@ -108,16 +108,8 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
         CHUNK_ROUND0 += BLAKE3_CHUNK * air.CLK[k];
     }
 
-    // NODE_IN_CLK[i] = BLAKE3_NODE * CLK[i] and NODE_OUT_CLK[k] = BLAKE3_NODE * CLK[OUT_FIRST+k],
-    // precomputed as single fixed columns. The fold is load-bearing, not cosmetic: the message
-    // binding is selector x clock x (degree-2 key ordering), so unfolded every one of those eight
-    // constraints is degree 4 and the setup pays im pols to pull it back down.
-    //
-    // Only the clocks that actually carry a boundary are declared -- inputs at 0..7, outputs from
-    // min(52, 56-LANES) on -- because a fixed column costs N field elements times the blowup.
-    // One set of eight, clocks 48..55: the feedforward already needs all eight, and the output row
-    // (clock 56-LANES+lane, so 48..55 for LANES <= 8) is always inside it. A separate four-wide
-    // NODE_OUT_CLK was exactly its last four columns.
+    // Sixteen output-host clocks, 40..55: the feedforward needs all sixteen, and the output row
+    // (clock 56-LANES+lane) is always inside them at LANES <= 8.
     const int OUT_FIRST = air.CLOCKS - 16;
 
     // Plain products, not folded fixed columns: every constraint that reads these stays within
@@ -139,12 +131,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     }
 
     // ── Custom-gate selectors ───────────────────────────────────────────────────
-    // The gates that need two rows (their outputs land on the next row) get the [1,0] pattern.
-    // They sit after the BLAKE3 band; plonk is the only one that piggybacks inside it.
-    // SelectValueArity2 is 13 signals, so it fits ONE row of the 18-wide band; every other
-    // two-row gate here needs a second row for its outputs.
-    const int nGateRows = nCMulRows + 2*(nEvPol4 + nFFT4) + nTreeSelector4 + nSelValRows;
-
+    // EvPol4 and FFT4 are the only two-row circuits, and get the [1,0] pattern.
     /*
         The six band circuits below all bind the same eighteen columns a[0..17] and are told apart
         only by which selector is 1 on the row, so ANY row can host ANY one of them. Every BLAKE3
@@ -212,27 +199,29 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     //
     // The canonicity witness, the three extra vb'' top bits and the feedforward result bytes are not
     // part of the permutation, so they belong here.
-    col witness dinv[LANES];
-    col witness bits(1) vbTopHi[LANES][3];
+    // d_inv witnesses 1/d for the canonical-split check, d = hi - (2^32 - 1); see
+    // blake3SplitCanonicalGadget. Junk at lo = 0, where the constraint is vacuous.
+    col witness d_inv[LANES];
+    col witness bits(1) vb_pp_t_hi[LANES][3];
     // Blake3Node binds out[0..8]; Compress binds all sixteen words, because the three finalizers
     // pack every one of them.
-    col witness bits(8) outBytes[LANES][1][4];
+    col witness bits(8) out_bytes[LANES][4];
 
-    // cv[0..4]'s bytes, for the chunk shape's out[8..16]: that half of the chaining value arrives as
-    // va, two 16-bit limbs, while cv[4..8] arrives as vb which already is bytes. They ALIAS the
-    // outBytes group, live at clocks 40..55 while cv is written at 0..3 -- disjoint rows, and both
-    // are bits(8), so unlike the dinv aliasing this one is type-sound. Four columns per lane saved.
-    const expr cvBytes[LANES][4];
+    // cv[0..4]'s bytes, for out[8..16]: that half of the chaining value arrives as va, two 16-bit
+    // limbs, while cv[4..8] arrives as vb which already is bytes. They ALIAS the out_bytes group,
+    // live at clocks 40..55 while cv is written at 0..3 -- disjoint at every LANES, since both
+    // ranges are fixed clocks -- and both roles are bits(8), which is what makes the alias sound.
+    const expr cv_bytes[LANES][4];
     for (int l = 0; l < LANES; l++) {
         for (int i = 0; i < 4; i++) {
-            cvBytes[l][i] = outBytes[l][0][i];
+            cv_bytes[l][i] = out_bytes[l][i];
         }
     }
 
     // BIND_BOUNDARY 1, VC_AT_IV 1: every block here is a BLAKE3 compression, so st[8..12] is the
     // IV and blake3Lanes builds vc as an expression rather than a column.
     blake3Lanes(LANES, BLOCK_ID, BLAKE3_ANY, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
-                1, 1, a, dinv, vbTopHi, outBytes, cvBytes,
+                1, 1, a, d_inv, vb_pp_t_hi, out_bytes, cv_bytes,
                 NODE_IN_CLK, NODE_OUT_CLK, OUT_FIRST,
                 BLAKE3_CHUNK, CHUNK_ROUND0, BLAKE3_PARENT, FLAGS,
                 OUT_CLK16, air.CLOCKS);
