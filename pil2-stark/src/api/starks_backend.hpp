@@ -58,7 +58,7 @@ struct StarksBackend {
     void (*load_device_const_pols)(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void (*load_device_setup)(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
     uint64_t (*gen_device_streams)(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
+    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea);
     void (*get_instances_ready)(void *d_buffers, int64_t* instances_ready);
     void (*reset_device_streams)(void *d_buffers_);
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
@@ -75,6 +75,10 @@ struct StarksBackend {
     uint64_t (*get_stream_commit_floor)(void *d_buffers_);
     uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
     void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+    uint32_t (*get_prefetch_witness_slots)();
+    int64_t (*prefetch_witness)(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
+                                uint64_t airgroupId, uint64_t airId, void *trace);
     int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);

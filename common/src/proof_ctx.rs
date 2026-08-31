@@ -993,8 +993,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
-        // Witness prefetch-region area (elements); plumbed ahead of the feature, ignored (0 = none).
-        _prefetch_region_area: u64,
+        // Witness prefetch-region area (elements), carved inside the unified buffer (0 = none).
+        prefetch_region_area: u64,
         // -> (basic streams/GPU, recursive streams/GPU, aggregation workers/GPU, GPUs)
     ) -> ProofmanResult<(u64, u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
@@ -1074,6 +1074,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         );
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
+
+        // The prefetch region is carved INSIDE the unified buffer after planning;
+        // hide it from the planner's budget or its streams overrun VRAM.
+        let max_size_buffer = max_size_buffer.saturating_sub(prefetch_region_area);
 
         let layout = match gpu {
             true => plan_stream_layout(
@@ -1170,6 +1174,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             total_const_area,
             total_const_area_aggregation,
             unified_buffer_pad_area,
+            prefetch_region_area,
         );
 
         self.d_buffers = d_buffers;

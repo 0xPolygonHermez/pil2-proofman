@@ -711,6 +711,30 @@ struct DeviceCommitBuffers
 
     bool packedTrace = false;
 
+    // Prefetch region
+    gl64_t *prefetchRegionBase = nullptr;   // first GPU only
+    uint64_t prefetchRegionBytes = 0;
+
+    // Witness prefetch zone (PROOFMAN_PREFETCH): the next basic instance's trace is
+    // uploaded on a dedicated copy stream while the current proof computes; gen_proof
+    // consumes it with one D2D and records prefetchDrained so the next upload never
+    // overwrites live data. FIRST GPU only. prefetchInstanceId == -1 means free.
+    // The zone IS the prefetch region (slot s at prefetchRegionBase + s*prefetchSlotStride);
+    // prefetchArmed means configure ran: the stream and events below exist.
+    // PREFETCH_WITNESS_SLOTS is the single source for the slot count (the Rust region
+    // sizing reads it through get_prefetch_witness_slots).
+    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 2;
+    bool prefetchArmed = false;
+    uint32_t prefetchStageSlot = 0;
+    uint64_t prefetchSlotStride = 0; // elements between slot bases
+    cudaStream_t prefetchStream = nullptr;
+    cudaEvent_t prefetchReady[PREFETCH_WITNESS_SLOTS] = {};
+    cudaEvent_t prefetchDrained[PREFETCH_WITNESS_SLOTS] = {};
+    std::mutex prefetchMutex;
+    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1};
+    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0};
+
+
     // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
     // GPU only -- the only one gpu-mops can borrow. Carved from the top of the unified buffer,
     // immediately below the const-pols aggregation region. They overlap the
