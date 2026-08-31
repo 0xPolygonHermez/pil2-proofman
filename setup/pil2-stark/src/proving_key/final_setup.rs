@@ -266,11 +266,25 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         merge_copies: true,
         // blake3 chooses LANES in its own setup; None takes the air's default of 4.
         blake3_lanes: None,
-        min_n_bits: None,
+        // A floor: a smaller pilout pads up to the pinned size the committed verifier encodes.
+        min_n_bits: proofman_common::hash_family::final_n_bits(config.hash),
     };
     let _span = tracing::info_span!("stage", t = "vadcop_final").entered();
     let plonk_result: PlonkResult =
         plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
+
+    // A floor pads up, never down; overshooting the pin has to be loud.
+    if let Some(pinned) = plonk_opts.min_n_bits {
+        if plonk_result.n_bits_natural > pinned {
+            bail!(
+                "vadcop_final compiles to 2^{} rows but is pinned to 2^{}: this pilout aggregates \
+                 more airgroups than the pinned size holds. Raise `hash_family::final_n_bits` and \
+                 regenerate the committed verifier, which encodes the size.",
+                plonk_result.n_bits_natural,
+                pinned
+            );
+        }
+    }
 
     // Write fixed pols binary
     let fixed_bin_path = build_path.join("vadcop_final.fixed.bin");

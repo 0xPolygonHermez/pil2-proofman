@@ -118,6 +118,18 @@ pub fn final_grinding_bits(family: &str) -> usize {
     }
 }
 
+/// Rows the `vadcop_final` air is pinned to, as log2, or `None` to let it size itself.
+///
+/// Pinned so one committed verifier per family serves every pilout: the verifier encodes nBits, so
+/// airgroup count must not move it. Poseidon has no committed final verifier, so it sizes itself.
+pub fn final_n_bits(family: &str) -> Option<usize> {
+    match family {
+        "blake3" => Some(19),
+        "Poseidon1" | "Poseidon2" => None,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
 /// Blowup the final air is built at.
 ///
 /// Blowup buys queries and costs memory, and the exchange rate is brutal: each step doubles the
@@ -368,6 +380,15 @@ mod tests {
                 super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
                 "{f} would grind less in recursion than in its basic airs"
             );
+        }
+    }
+
+    /// Changing the pin means regenerating every verifier in `verifier/src/<family>/`.
+    #[test]
+    fn the_final_air_is_pinned_only_where_a_committed_verifier_encodes_it() {
+        assert_eq!(super::final_n_bits("blake3"), Some(19));
+        for f in ["Poseidon1", "Poseidon2"] {
+            assert_eq!(super::final_n_bits(f), None, "{f}");
         }
     }
 
