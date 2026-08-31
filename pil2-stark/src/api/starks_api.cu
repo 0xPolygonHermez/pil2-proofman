@@ -1350,6 +1350,13 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer, false);
     }
 
+    // Stream-owned scratch; see StreamData::d_blake3_mul. Once per stream, never for poseidon.
+    if (air_instance_info->gate_bands_have_blake3 && sd.d_blake3_mul == nullptr) {
+        cudaSetDevice(gpuId);
+        CHECKCUDAERR(cudaMalloc(&sd.d_blake3_mul,
+                                AirInstanceInfo::blake3MulWords() * sizeof(uint64_t)));
+    }
+
     // The host copied up the boundary cells; the interiors get rebuilt here. Stream-ordered
     // behind the copy. Airs whose setup registered no bands skip it.
     //
@@ -1359,7 +1366,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
                        air_instance_info->d_gate_bands, air_instance_info->n_gate_bands,
                        air_instance_info->gate_band_lanes,
                        air_instance_info->gate_bands_have_blake3,
-                       air_instance_info->d_blake3_mul, stream);
+                       sd.d_blake3_mul, stream);
     TimerStopGPU(timer, STARK_GPU_WITNESS);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];

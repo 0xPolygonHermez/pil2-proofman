@@ -103,9 +103,8 @@ struct AirInstanceInfo {
     // counting straight into the trace makes every atomicAdd take a cache line of its own, shared with
     // witness cells other threads are writing. Accumulating here keeps the whole working set
     // contiguous and L2-resident and free of that false sharing; a trivial kernel scatters it into the
-    // columns afterwards. One buffer per air instance, so concurrent instances on separate streams
-    // never share it.
-    uint64_t *d_blake3_mul = nullptr;
+    // columns afterwards. The buffer itself lives on StreamData: this struct is per (air,
+    // proofType, GPU), so one hung off it would be shared by every stream proving that air.
 
     /// Row stride of the HOST trace buffer, i.e. the exec map's width.
     ///
@@ -148,17 +147,10 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 3 * sizeof(uint64_t)));
             CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice));
         }
-        if (d_blake3_mul != nullptr) {
-            CHECKCUDAERR(cudaFree(d_blake3_mul));
-            d_blake3_mul = nullptr;
-        }
-        if (nBands > 0 && anyBlake3) {
-            CHECKCUDAERR(cudaMalloc(&d_blake3_mul, blake3MulWords() * sizeof(uint64_t)));
-        }
     }
 
-    // Words of `d_blake3_mul`: the table's 2^17 counters then the range checker's 2^16. Mirrors
-    // gate_bands::blake3::TABLE_SIZE and RANGE_SIZE, which the .cu asserts against.
+    // Words of a stream's `d_blake3_mul`: the table's 2^17 counters then the range checker's 2^16.
+    // Mirrors gate_bands::blake3::TABLE_SIZE and RANGE_SIZE, which the .cu asserts against.
     static constexpr uint64_t blake3MulWords() { return (1ull << 17) + (1ull << 16); }
 
     // Upload (replacing any previous) the program-specific instruction table. Caller must
@@ -399,10 +391,6 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaFree(d_gate_bands));
         }
 
-        if (d_blake3_mul != nullptr) {
-            CHECKCUDAERR(cudaFree(d_blake3_mul));
-        }
-
         if (d_witness_compact != nullptr) {
             CHECKCUDAERR(cudaFree(d_witness_compact));
         }
@@ -432,6 +420,9 @@ struct StreamData{
     // async copy (no per-copy stream sync); reused only on event-gated stream
     // reselect. Used by commit_witness_gpu only.
     Goldilocks::Element *pinned_aux_values;
+    // Dense BLAKE3 lookup-count scratch, blake3MulWords() words. Per STREAM: the expander's
+    // memset/fill/scatter are ordered only within one. Allocated on its first BLAKE3 commit.
+    uint64_t *d_blake3_mul = nullptr;
 
     //runtime data
     // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
@@ -618,6 +609,10 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_aux_values);
+        if (d_blake3_mul != nullptr) {
+            cudaFree(d_blake3_mul);
+            d_blake3_mul = nullptr;
+        }
     }
 };
 

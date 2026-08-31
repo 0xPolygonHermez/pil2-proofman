@@ -8,6 +8,7 @@
 // the snapshots into the interior.
 
 #include <cstdint>
+#include <memory>
 #include "gate_bands.hpp"
 #include "gate_bands_blake3.hpp"
 #include "goldilocks_base_field.hpp"
@@ -115,6 +116,7 @@ enum class ExpandStatus {
     UnsupportedExecFormat,  // the enclosing exec file's layout is not the one this build reads
     UnexpandableBand,       // unknown kind, or a band that would run off the end of the trace
     OutputMismatch,         // the band's own input does not hash to the output already in place
+    TableTooLargeForTrace,  // a BLAKE3 air whose trace cannot hold the 2^17-row lookup table
 };
 
 struct ExpandResult {
@@ -167,7 +169,17 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
         res.status = ExpandStatus::MalformedSection;  // LANES and the band must travel with a BLAKE3 air
         return res;
     }
-    blake3::Multiplicities total;
+    // 1.5 MB of zeroed vectors here plus one per OpenMP thread below, so built only for an air
+    // that has BLAKE3 bands.
+    std::unique_ptr<blake3::Multiplicities> total;
+    if (anyBlake3) {
+        // Counters past the trace would be dropped by write_multiplicities; refuse, as the GPU does.
+        if (nRows < blake3::TABLE_SIZE) {
+            res.status = ExpandStatus::TableTooLargeForTrace;
+            return res;
+        }
+        total = std::make_unique<blake3::Multiplicities>();
+    }
 
     // Bands never overlap -- the setup lays them out end to end -- so they fill independently.
     //
@@ -177,7 +189,8 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
     uint64_t firstMismatch = nBands;
 #pragma omp parallel
     {
-        blake3::Multiplicities local;
+        std::unique_ptr<blake3::Multiplicities> local;
+        if (anyBlake3) local = std::make_unique<blake3::Multiplicities>();
         bool touched = false;
 #pragma omp for nowait
         for (uint64_t i = 0; i < nBands; i++) {
@@ -186,7 +199,7 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
                 const blake3::Kind k = kind == GB_BLAKE3_NODE            ? blake3::Kind::Node
                                      : kind == GB_BLAKE3_COMPRESS_CHUNK  ? blake3::Kind::Chunk
                                                                          : blake3::Kind::Parent;
-                blake3::HostSink sink{local};
+                blake3::HostSink sink{*local};
                 blake3::expand_block(trace, nCols, row, lanes, band, k, payload, sink);
                 touched = true;
             } else if (!expand_poseidon_band(trace, nCols, row, kind)) {
@@ -197,12 +210,12 @@ inline ExpandResult expand_gate_bands(Goldilocks::Element *trace, const uint64_t
         if (touched) {
 #pragma omp critical
             {
-                for (uint64_t j = 0; j < blake3::TABLE_SIZE; j++) total.table[j] += local.table[j];
-                for (uint64_t j = 0; j < blake3::RANGE_SIZE; j++) total.range[j] += local.range[j];
+                for (uint64_t j = 0; j < blake3::TABLE_SIZE; j++) total->table[j] += local->table[j];
+                for (uint64_t j = 0; j < blake3::RANGE_SIZE; j++) total->range[j] += local->range[j];
             }
         }
     }
-    if (anyBlake3) blake3::write_multiplicities(trace, nCols, nRows, lanes, band, total);
+    if (anyBlake3) blake3::write_multiplicities(trace, nCols, nRows, lanes, band, *total);
     if (firstMismatch != nBands) {
         res.status = ExpandStatus::OutputMismatch;
         res.badBand = firstMismatch;

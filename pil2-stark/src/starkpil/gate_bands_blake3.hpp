@@ -9,9 +9,9 @@
 //
 // Unlike the poseidon expanders this one also owes MULTIPLICITIES: BLAKE3 is the first recursion
 // family whose air uses lookup tables, and `mul_table` / `mul_range` are witness columns nobody
-// else fills. A wrong count does not fail per-air verification -- every air's constraints,
-// including the grand-sum recursion, are satisfied by whatever values result. Only the GLOBAL
-// constraint catches it. See spec 5.6.
+// else fills. A wrong count fails this air's OWN grand-sum constraint: under
+// STD_MODE_ONE_INSTANCE std_sum.pil pins result = 0 and closes the bus in-air, so there is no
+// gsum_result and no global constraint involved.
 //
 // See docs/superpowers/specs/2026-08-25-blake3-recursion-air-design.md and, for the column order
 // this must agree with, the generated pil_helpers for the aggregator air.

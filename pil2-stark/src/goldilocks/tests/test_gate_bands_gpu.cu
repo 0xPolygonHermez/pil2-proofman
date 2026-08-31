@@ -153,8 +153,9 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     const uint64_t nRows = b3::TABLE_SIZE;   // exactly the rows the table multiplicities need
 
     const uint64_t V = gate_bands::GATE_BAND_FORMAT_VERSION;
+    // aux: LANES low, band width high -- expand_gate_bands rejects a BLAKE3 air with band 0.
     std::vector<uint64_t> exec{exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION, 0, 0, 0,
-                               V, BLOCKS, LANES};
+                               V, BLOCKS, LANES | (BAND << 32)};
     const uint64_t kinds[BLOCKS] = {GB_BLAKE3_NODE, GB_BLAKE3_COMPRESS_CHUNK, GB_BLAKE3_COMPRESS_PARENT};
     std::vector<uint64_t> bands;
     for (uint64_t k = 0; k < BLOCKS; k++) {

@@ -205,7 +205,7 @@ TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
     v = gate_bands::band_section(good.data(), good.size());
     ASSERT_EQ((int)v.status, (int)gate_bands::BandSection::Ok);
     ASSERT_EQ(v.n, 2u);
-    ASSERT_EQ(v.aux, 4u) << "the per-air aux word -- BLAKE3's LANES";
+    ASSERT_EQ(v.aux, 4u) << "the per-air aux word -- BLAKE3's LANES low, band width high";
     ASSERT_EQ(v.bands[0], 0u);
     ASSERT_EQ(v.bands[2], 0u) << "payload of the first band";
     // The second band's KIND, not just its row: reading kind at the wrong stride is a real slip
@@ -460,8 +460,9 @@ TEST(GateBandsBlake3, ExpandGateBandsFillsInteriorsAndMultiplicities)
 
     const uint64_t H = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION;
     const uint64_t V = gate_bands::GATE_BAND_FORMAT_VERSION;
-    // one 1x2 map word, then version, count, aux=LANES, then three bands of the three kinds
-    std::vector<uint64_t> exec{H, 0, 1, 2, 0x00000002'00000001ull, V, BLOCKS, LANES};
+    // one 1x2 map word, then version, count, aux (LANES low, band width high -- a BLAKE3 air with
+    // band 0 is rejected), then three bands of the three kinds
+    std::vector<uint64_t> exec{H, 0, 1, 2, 0x00000002'00000001ull, V, BLOCKS, LANES | (BAND << 32)};
     const uint64_t kinds[BLOCKS] = {GB_BLAKE3_NODE, GB_BLAKE3_COMPRESS_CHUNK, GB_BLAKE3_COMPRESS_PARENT};
     for (uint64_t k = 0; k < BLOCKS; k++) {
         exec.push_back(k * b3::CLOCKS);

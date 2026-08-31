@@ -254,8 +254,8 @@ __global__ void widenCompactWitnessKernel(uint64_t *trace, uint64_t nCols, uint6
 // into the trace's own mul columns. The counts ARE the field elements -- Goldilocks::fromU64 is
 // the identity -- so no conversion pass follows, and at 2^17 table entries contention stays low.
 //
-// The columns must start at zero, which zeroBlake3MultiplicitiesKernel guarantees; the host path
-// gets the same by assignment.
+// The counters must start at zero, which the cudaMemsetAsync in expandGateBandsGPU guarantees; the
+// host path gets the same from a freshly constructed Multiplicities.
 // Counters go into a dense scratch buffer, NOT straight into the trace's two multiplicity columns.
 // In the trace those columns are strided by nCols, so every atomic would take a cache line of its
 // own and share it with witness cells other threads are storing to. Dense, the counters are a
@@ -332,7 +332,8 @@ __global__ void expandBlake3BandsKernel(uint64_t *trace, uint64_t nCols,
     expandBlake3Lane(trace, nCols, row, lanes, band, lane, kind, bands[b * 3 + 2], mul);
 }
 
-__global__ void expandPoseidonBandsKernel(uint64_t *trace, uint64_t nCols, uint64_t nRows,
+// No nRows: first_bad_band enforces the row bound host-side, once.
+__global__ void expandPoseidonBandsKernel(uint64_t *trace, uint64_t nCols,
                                           const uint64_t *bands, uint64_t nBands, uint64_t lanes) {
     const uint64_t t = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
     if (t >= nBands) return;
@@ -385,6 +386,9 @@ extern "C" void uploadGateBandConstantsGPU() {
 // Expands every band in place on the device trace. The band list is already device-resident,
 // uploaded with the air's setup, so this is launch-only -- no allocation, no sync -- and sits
 // stream-ordered behind the trace copy.
+//
+// `d_blake3Mul` MUST belong to this stream alone: the three launches below are ordered only within
+// `stream_`, so a shared buffer lets another stream's memset land inside this one's fill.
 // `lanes` is the band section's aux word: a setup parameter, so it travels rather than being
 // derived from nCols, which cannot tell the lane layouts apart. `anyBlake3` is decided host-side
 // at setup and gates the one extra pass this needs.
@@ -412,7 +416,7 @@ extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t n
     const uint64_t band = aux >> 32;
     if (!anyBlake3) {
         expandPoseidonBandsKernel<<<(unsigned)((nBands + tpb - 1) / tpb), tpb, 0, stream>>>(
-            d_trace, nCols, nRows, d_bands, nBands, lanes);
+            d_trace, nCols, d_bands, nBands, lanes);
         CHECKCUDAERR(cudaGetLastError());
         return;
     }
@@ -424,8 +428,8 @@ extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t n
     // these two conditions are setup bugs whose whole value is being readable.
     if (d_blake3Mul == nullptr) {
         fprintf(stderr, "expandGateBandsGPU: a BLAKE3 air reached the expander with no multiplicity "
-                        "scratch; set_gate_bands allocates it whenever anyBlake3 is set, so the two "
-                        "disagree and every lookup count would be dropped\n");
+                        "scratch; the caller allocates it per STREAM on that stream's first BLAKE3 "
+                        "commit, so the two disagree and every lookup count would be dropped\n");
         fflush(stderr);
         exit(-1);
     }

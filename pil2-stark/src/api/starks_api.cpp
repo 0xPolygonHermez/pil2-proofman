@@ -978,6 +978,12 @@ uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommited
             zklog.error("expand_gate_bands: " + where + " does not hash its own input to the output "
                         "already in the trace; the witness gate and the trace expander disagree");
             break;
+        case gate_bands::ExpandStatus::TableTooLargeForTrace:
+            zklog.error("expand_gate_bands: a BLAKE3 air of " + std::to_string(N) + " rows cannot "
+                        "hold the 2^17-row XOR/ROTR table, so its lookup counts have nowhere to go; "
+                        "circuits/blake3.pil rejects this at setup, so the proving key and this "
+                        "build disagree");
+            break;
         case gate_bands::ExpandStatus::Ok: break;
     }
     exitProcess();
