@@ -5283,6 +5283,7 @@ where
                 options.max_number_streams,
                 options.max_number_recursive_streams,
                 options.final_snark,
+                0,
             )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
