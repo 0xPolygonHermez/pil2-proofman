@@ -874,8 +874,7 @@ fn q_verify_chunk_8(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = tmp_3[0] * tmp_3[11];
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[11] = tmp_3[0] * evals[607];
+    tmp_3[11] = tmp_3[28] * evals[607];
     tmp_3[0] = evals[661] * Goldilocks::new(256);
     tmp_3[0] = evals[660] + tmp_3[0];
     tmp_3[7] = evals[662] * Goldilocks::new(65536);
@@ -886,8 +885,7 @@ fn q_verify_chunk_8(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[7] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[11] = tmp_3[0] * evals[515];
+    tmp_3[11] = tmp_3[28] * evals[515];
     tmp_3[0] = evals[661] * Goldilocks::new(256);
     tmp_3[0] = evals[660] + tmp_3[0];
     tmp_3[9] = evals[662] * Goldilocks::new(65536);
@@ -898,8 +896,7 @@ fn q_verify_chunk_8(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[11] = tmp_3[0] * evals[467];
+    tmp_3[11] = tmp_3[28] * evals[467];
     tmp_3[0] = evals[661] * Goldilocks::new(256);
     tmp_3[0] = evals[660] + tmp_3[0];
     tmp_3[7] = evals[662] * Goldilocks::new(65536);
@@ -910,8 +907,7 @@ fn q_verify_chunk_8(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[7] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[11] = tmp_3[0] * evals[399];
+    tmp_3[11] = tmp_3[28] * evals[399];
     tmp_3[0] = evals[661] * Goldilocks::new(256);
     tmp_3[0] = evals[660] + tmp_3[0];
     tmp_3[9] = evals[662] * Goldilocks::new(65536);
@@ -957,16 +953,16 @@ fn q_verify_chunk_8(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = evals[610] + evals[611];
     tmp_3[0] = tmp_3[0] * evals[399];
     tmp_3[8] = evals[700] - evals[612];
+    tmp_3[0] = tmp_3[0] * tmp_3[8];
+    tmp_3[0] = tmp_3[11] + tmp_3[0];
+    tmp_3[11] = challenges[2] * tmp_3[0];
+    tmp_3[0] = evals[610] + evals[611];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_9(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = tmp_3[0] * tmp_3[8];
-    tmp_3[0] = tmp_3[11] + tmp_3[0];
-    tmp_3[11] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
     tmp_3[0] = tmp_3[0] * evals[399];
     tmp_3[0] = tmp_3[0] * evals[701];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
@@ -1063,16 +1059,16 @@ fn q_verify_chunk_9(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &
     tmp_3[0] = tmp_3[7] * tmp_3[0];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[8] = challenges[2] * tmp_3[0];
+    tmp_3[0] = evals[368] * Goldilocks::new(256);
+    tmp_3[0] = evals[367] + tmp_3[0];
+    tmp_3[11] = evals[369] * Goldilocks::new(65536);
+    tmp_3[0] = tmp_3[0] + tmp_3[11];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_10(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = evals[368] * Goldilocks::new(256);
-    tmp_3[0] = evals[367] + tmp_3[0];
-    tmp_3[11] = evals[369] * Goldilocks::new(65536);
-    tmp_3[0] = tmp_3[0] + tmp_3[11];
     tmp_3[11] = evals[370] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[11];
     tmp_3[0] = evals[634] - tmp_3[0];
@@ -1169,16 +1165,16 @@ fn q_verify_chunk_10(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
+    tmp_3[0] = evals[47] + evals[46];
+    tmp_3[0] = tmp_3[0] + evals[45];
+    tmp_3[0] = tmp_3[0] + evals[44];
+    tmp_3[0] = tmp_3[0] + evals[43];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_11(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = evals[47] + evals[46];
-    tmp_3[0] = tmp_3[0] + evals[45];
-    tmp_3[0] = tmp_3[0] + evals[44];
-    tmp_3[0] = tmp_3[0] + evals[43];
     tmp_3[0] = tmp_3[0] + evals[42];
     tmp_3[0] = tmp_3[0] + evals[41];
     tmp_3[0] = tmp_3[0] + evals[40];
@@ -1275,16 +1271,16 @@ fn q_verify_chunk_11(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = tmp_3[10] - tmp_3[0];
     tmp_3[0] = evals[753] * Goldilocks::new(256);
     tmp_3[0] = evals[752] + tmp_3[0];
+    tmp_3[8] = evals[754] * Goldilocks::new(65536);
+    tmp_3[0] = tmp_3[0] + tmp_3[8];
+    tmp_3[8] = evals[755] * Goldilocks::new(16777216);
+    tmp_3[0] = tmp_3[0] + tmp_3[8];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_12(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[8] = evals[754] * Goldilocks::new(65536);
-    tmp_3[0] = tmp_3[0] + tmp_3[8];
-    tmp_3[8] = evals[755] * Goldilocks::new(16777216);
-    tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[0] = tmp_3[11] - tmp_3[0];
     tmp_3[11] = tmp_3[0] + Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[0] * tmp_3[11];
@@ -1381,16 +1377,16 @@ fn q_verify_chunk_12(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[17] * tmp_3[0];
     tmp_3[10] = tmp_3[11] + tmp_3[0];
     tmp_3[0] = evals[568] * Goldilocks::new(256);
+    tmp_3[0] = evals[567] + tmp_3[0];
+    tmp_3[11] = evals[569] * Goldilocks::new(65536);
+    tmp_3[0] = tmp_3[0] + tmp_3[11];
+    tmp_3[11] = evals[566] * Goldilocks::new(16777216);
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_13(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = evals[567] + tmp_3[0];
-    tmp_3[11] = evals[569] * Goldilocks::new(65536);
-    tmp_3[0] = tmp_3[0] + tmp_3[11];
-    tmp_3[11] = evals[566] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[11];
     tmp_3[0] = tmp_3[0] * Goldilocks::new(2);
     tmp_3[11] = evals[579] * Goldilocks::new(4294967296);
@@ -1487,16 +1483,16 @@ fn q_verify_chunk_13(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = evals[937] * evals[933];
     tmp_3[11] = tmp_3[0] + tmp_3[11];
     tmp_3[0] = tmp_3[26] * Goldilocks::new(4294967296);
+    tmp_3[0] = tmp_3[25] + tmp_3[0];
+    tmp_3[0] = tmp_3[11] - tmp_3[0];
+    tmp_3[0] = tmp_3[10] * tmp_3[0];
+    tmp_3[0] = tmp_3[12] + tmp_3[0];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_14(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = tmp_3[25] + tmp_3[0];
-    tmp_3[0] = tmp_3[11] - tmp_3[0];
-    tmp_3[0] = tmp_3[10] * tmp_3[0];
-    tmp_3[0] = tmp_3[12] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
     tmp_3[10] = evals[609] * evals[515];
     tmp_3[0] = evals[634].sub_from_scalar(Goldilocks::new(1));
@@ -1593,16 +1589,16 @@ fn q_verify_chunk_14(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[10] = tmp_3[8] - Goldilocks::new(64);
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
+    tmp_3[10] = challenges[2] * tmp_3[0];
+    tmp_3[0] = evals[609] * evals[399];
+    tmp_3[11] = tmp_3[8] - Goldilocks::new(11);
+    tmp_3[0] = tmp_3[0] * tmp_3[11];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_15(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[10] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[609] * evals[399];
-    tmp_3[11] = tmp_3[8] - Goldilocks::new(11);
-    tmp_3[0] = tmp_3[0] * tmp_3[11];
     tmp_3[0] = tmp_3[10] + tmp_3[0];
     tmp_3[12] = challenges[2] * tmp_3[0];
     tmp_3[9] = evals[609] * evals[2];
@@ -1699,16 +1695,16 @@ fn q_verify_chunk_15(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[10] = challenges[2] * tmp_3[0];
+    tmp_3[0] = evals[609] * evals[515];
+    tmp_3[9] = evals[611] * evals[515];
+    tmp_3[0] = tmp_3[0] + tmp_3[9];
+    tmp_3[9] = tmp_3[1] - Goldilocks::new(2600822924);
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_16(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = evals[609] * evals[515];
-    tmp_3[9] = evals[611] * evals[515];
-    tmp_3[0] = tmp_3[0] + tmp_3[9];
-    tmp_3[9] = tmp_3[1] - Goldilocks::new(2600822924);
     tmp_3[0] = tmp_3[0] * tmp_3[9];
     tmp_3[0] = tmp_3[10] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
@@ -1805,16 +1801,16 @@ fn q_verify_chunk_16(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[10] = challenges[2] * tmp_3[0];
     tmp_3[9] = evals[610] * evals[242];
+    tmp_3[0] = tmp_3[26] * Goldilocks::new(4294967296);
+    tmp_3[0] = tmp_3[25] + tmp_3[0];
+    tmp_3[0] = evals[296] - tmp_3[0];
+    tmp_3[0] = tmp_3[9] * tmp_3[0];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_17(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[0] = tmp_3[26] * Goldilocks::new(4294967296);
-    tmp_3[0] = tmp_3[25] + tmp_3[0];
-    tmp_3[0] = evals[296] - tmp_3[0];
-    tmp_3[0] = tmp_3[9] * tmp_3[0];
     tmp_3[0] = tmp_3[10] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
     tmp_3[10] = evals[610] * evals[184];
@@ -1911,16 +1907,16 @@ fn q_verify_chunk_17(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[1] + tmp_3[0];
     tmp_3[10] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[284];
+    tmp_3[1] = evals[361] - tmp_3[25];
+    tmp_3[0] = tmp_3[0] * tmp_3[1];
+    tmp_3[0] = tmp_3[10] + tmp_3[0];
+    tmp_3[1] = challenges[2] * tmp_3[0];
 }
 
 #[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
-    tmp_3[1] = evals[361] - tmp_3[25];
-    tmp_3[0] = tmp_3[0] * tmp_3[1];
-    tmp_3[0] = tmp_3[10] + tmp_3[0];
-    tmp_3[1] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[284];
     tmp_3[10] = evals[362] - tmp_3[26];
     tmp_3[0] = tmp_3[0] * tmp_3[10];
@@ -1946,8 +1942,7 @@ fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[0] = tmp_3[1] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[10] = tmp_3[0] * evals[607];
+    tmp_3[10] = tmp_3[28] * evals[607];
     tmp_3[0] = evals[665] * Goldilocks::new(256);
     tmp_3[0] = evals[664] + tmp_3[0];
     tmp_3[1] = evals[666] * Goldilocks::new(65536);
@@ -1958,8 +1953,7 @@ fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[1] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[10] = tmp_3[0] * evals[515];
+    tmp_3[10] = tmp_3[28] * evals[515];
     tmp_3[0] = evals[665] * Goldilocks::new(256);
     tmp_3[0] = evals[664] + tmp_3[0];
     tmp_3[9] = evals[666] * Goldilocks::new(65536);
@@ -1970,8 +1964,7 @@ fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[0] = tmp_3[1] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[10] = tmp_3[0] * evals[467];
+    tmp_3[10] = tmp_3[28] * evals[467];
     tmp_3[0] = evals[665] * Goldilocks::new(256);
     tmp_3[0] = evals[664] + tmp_3[0];
     tmp_3[1] = evals[666] * Goldilocks::new(65536);
@@ -1982,8 +1975,7 @@ fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[1] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[10] = tmp_3[0] * evals[399];
+    tmp_3[10] = tmp_3[28] * evals[399];
     tmp_3[0] = evals[665] * Goldilocks::new(256);
     tmp_3[0] = evals[664] + tmp_3[0];
     tmp_3[9] = evals[666] * Goldilocks::new(65536);
@@ -2017,12 +2009,6 @@ fn q_verify_chunk_18(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[8] + tmp_3[0];
     tmp_3[8] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[610] + evals[611];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_19(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * evals[467];
     tmp_3[0] = tmp_3[0] * evals[706];
     tmp_3[0] = tmp_3[8] + tmp_3[0];
@@ -2031,6 +2017,12 @@ fn q_verify_chunk_19(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * evals[467];
     tmp_3[0] = tmp_3[0] * evals[707];
     tmp_3[0] = tmp_3[8] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_19(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[10] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[610] + evals[611];
     tmp_3[0] = tmp_3[0] * evals[399];
@@ -2123,12 +2115,6 @@ fn q_verify_chunk_19(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[10];
     tmp_3[0] = evals[632] - tmp_3[0];
     tmp_3[0] = tmp_3[1] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_20(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[8] + tmp_3[0];
     tmp_3[10] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[257] * Goldilocks::new(256);
@@ -2137,6 +2123,12 @@ fn q_verify_chunk_20(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[8] = evals[259] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[8];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_20(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[633] - tmp_3[0];
     tmp_3[0] = tmp_3[1] * tmp_3[0];
     tmp_3[0] = tmp_3[10] + tmp_3[0];
@@ -2229,12 +2221,6 @@ fn q_verify_chunk_20(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[41];
     tmp_3[0] = tmp_3[0] + evals[40];
     tmp_3[0] = tmp_3[0] + evals[23];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_21(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[22];
     tmp_3[0] = tmp_3[0] + evals[21];
     tmp_3[0] = tmp_3[0] + evals[20];
@@ -2243,6 +2229,12 @@ fn q_verify_chunk_21(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[1];
     tmp_3[10] = tmp_3[0] + evals[0];
     tmp_3[0] = evals[651].sub_from_scalar(Goldilocks::new(1));
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_21(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[651] * tmp_3[0];
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[0] = tmp_3[1] + tmp_3[0];
@@ -2335,12 +2327,6 @@ fn q_verify_chunk_21(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[8] = tmp_3[1] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_22(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[10] = tmp_3[15] + tmp_3[16];
     tmp_3[0] = evals[277] * Goldilocks::new(256);
     tmp_3[0] = evals[276] + tmp_3[0];
@@ -2349,6 +2335,12 @@ fn q_verify_chunk_22(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[1] = evals[279] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[0] = tmp_3[10] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_22(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[8] + tmp_3[0];
     tmp_3[10] = tmp_3[11] - tmp_3[0];
     tmp_3[0] = evals[757] * Goldilocks::new(256);
@@ -2441,12 +2433,6 @@ fn q_verify_chunk_22(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[10] = tmp_3[4] * tmp_3[0];
     tmp_3[0] = evals[232] * Goldilocks::new(256);
     tmp_3[0] = evals[231] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_23(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[11] = evals[233] * Goldilocks::new(65536);
     tmp_3[0] = tmp_3[0] + tmp_3[11];
     tmp_3[11] = evals[230] * Goldilocks::new(16777216);
@@ -2455,6 +2441,12 @@ fn q_verify_chunk_23(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = evals[240] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[0] - tmp_3[11];
     tmp_3[0] = tmp_3[0] + evals[240];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_23(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[12] - tmp_3[0];
     tmp_3[0] = tmp_3[17] * tmp_3[0];
     tmp_3[11] = tmp_3[10] + tmp_3[0];
@@ -2547,12 +2539,6 @@ fn q_verify_chunk_23(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = evals[609] * evals[184];
     tmp_3[11] = tmp_3[0] + tmp_3[11];
     tmp_3[0] = tmp_3[1] - Goldilocks::new(4294967295);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_24(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * evals[646];
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[0] = tmp_3[27] * tmp_3[0];
@@ -2561,6 +2547,12 @@ fn q_verify_chunk_24(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[6] = challenges[2] * tmp_3[0];
     tmp_3[11] = evals[609] * evals[607];
     tmp_3[0] = evals[977].sub_from_scalar(Goldilocks::new(1));
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_24(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * evals[971];
     tmp_3[10] = evals[977] * evals[975];
     tmp_3[10] = tmp_3[0] + tmp_3[10];
@@ -2653,12 +2645,6 @@ fn q_verify_chunk_24(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[10] * tmp_3[0];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_25(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[609] * evals[607];
     tmp_3[0] = tmp_3[0] * tmp_3[8];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
@@ -2667,6 +2653,12 @@ fn q_verify_chunk_25(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[8];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[10] = challenges[2] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_25(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[609] * evals[467];
     tmp_3[11] = tmp_3[8] - Goldilocks::new(64);
     tmp_3[0] = tmp_3[0] * tmp_3[11];
@@ -2759,12 +2751,6 @@ fn q_verify_chunk_25(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[609] * evals[607];
     tmp_3[9] = evals[611] * evals[607];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_26(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = tmp_3[12] - Goldilocks::new(1359893119);
     tmp_3[0] = tmp_3[0] * tmp_3[9];
@@ -2773,6 +2759,12 @@ fn q_verify_chunk_26(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[609] * evals[515];
     tmp_3[11] = evals[611] * evals[515];
     tmp_3[0] = tmp_3[0] + tmp_3[11];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_26(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[11] = tmp_3[7] - Goldilocks::new(3144134277);
     tmp_3[0] = tmp_3[0] * tmp_3[11];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
@@ -2865,12 +2857,6 @@ fn q_verify_chunk_26(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[610] * evals[350];
     tmp_3[0] = tmp_3[1] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[27] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_27(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[480] - tmp_3[0];
     tmp_3[0] = tmp_3[9] * tmp_3[0];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
@@ -2879,6 +2865,12 @@ fn q_verify_chunk_27(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[1] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[27] + tmp_3[0];
     tmp_3[0] = evals[413] - tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_27(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
@@ -2971,12 +2963,6 @@ fn q_verify_chunk_27(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[12] = evals[523] - tmp_3[1];
     tmp_3[0] = tmp_3[0] * tmp_3[12];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[12] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[350];
     tmp_3[11] = evals[476] - tmp_3[27];
@@ -2985,6 +2971,12 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[11] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[350];
     tmp_3[12] = evals[477] - tmp_3[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[12];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[12] = challenges[2] * tmp_3[0];
@@ -3018,8 +3010,7 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[12];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[12] = tmp_3[0] * evals[607];
+    tmp_3[12] = tmp_3[28] * evals[607];
     tmp_3[0] = evals[669] * Goldilocks::new(256);
     tmp_3[0] = evals[668] + tmp_3[0];
     tmp_3[11] = evals[670] * Goldilocks::new(65536);
@@ -3030,8 +3021,7 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[12] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[12] = tmp_3[0] * evals[515];
+    tmp_3[12] = tmp_3[28] * evals[515];
     tmp_3[0] = evals[669] * Goldilocks::new(256);
     tmp_3[0] = evals[668] + tmp_3[0];
     tmp_3[9] = evals[670] * Goldilocks::new(65536);
@@ -3042,8 +3032,7 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[12] * tmp_3[0];
     tmp_3[0] = tmp_3[11] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[12] = tmp_3[0] * evals[467];
+    tmp_3[12] = tmp_3[28] * evals[467];
     tmp_3[0] = evals[669] * Goldilocks::new(256);
     tmp_3[0] = evals[668] + tmp_3[0];
     tmp_3[11] = evals[670] * Goldilocks::new(65536);
@@ -3054,8 +3043,7 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[12] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[11] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[12] = tmp_3[0] * evals[399];
+    tmp_3[12] = tmp_3[28] * evals[399];
     tmp_3[0] = evals[669] * Goldilocks::new(256);
     tmp_3[0] = evals[668] + tmp_3[0];
     tmp_3[9] = evals[670] * Goldilocks::new(65536);
@@ -3077,12 +3065,6 @@ fn q_verify_chunk_28(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[8];
     tmp_3[0] = tmp_3[12] + tmp_3[0];
     tmp_3[8] = challenges[2] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_29(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[610] + evals[611];
     tmp_3[0] = tmp_3[0] * evals[467];
     tmp_3[12] = evals[708] - evals[642];
@@ -3095,6 +3077,12 @@ fn q_verify_chunk_29(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[8] + tmp_3[0];
     tmp_3[8] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[610] + evals[611];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_29(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * evals[467];
     tmp_3[0] = tmp_3[0] * evals[710];
     tmp_3[0] = tmp_3[8] + tmp_3[0];
@@ -3183,12 +3171,6 @@ fn q_verify_chunk_29(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[8] = evals[162] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[8];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_30(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[631] - tmp_3[0];
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[12] + tmp_3[0];
@@ -3201,6 +3183,12 @@ fn q_verify_chunk_30(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[12];
     tmp_3[0] = evals[632] - tmp_3[0];
     tmp_3[0] = tmp_3[11] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_30(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[8] + tmp_3[0];
     tmp_3[12] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[199] * Goldilocks::new(256);
@@ -3289,12 +3277,6 @@ fn q_verify_chunk_30(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[8] = evals[954] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[8];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_31(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[641] - tmp_3[0];
     tmp_3[0] = tmp_3[11] * tmp_3[0];
     tmp_3[0] = tmp_3[12] + tmp_3[0];
@@ -3307,6 +3289,12 @@ fn q_verify_chunk_31(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[41];
     tmp_3[0] = tmp_3[0] + evals[40];
     tmp_3[0] = tmp_3[0] + evals[23];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_31(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[22];
     tmp_3[0] = tmp_3[0] + evals[21];
     tmp_3[0] = tmp_3[0] + evals[20];
@@ -3395,12 +3383,6 @@ fn q_verify_chunk_31(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[8] = evals[515] * Goldilocks::new(3144134277);
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[8] = evals[467] * Goldilocks::new(1013904242);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_32(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[8];
     tmp_3[8] = evals[399] * Goldilocks::new(2773480762);
     tmp_3[8] = tmp_3[0] + tmp_3[8];
@@ -3413,6 +3395,12 @@ fn q_verify_chunk_32(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[13] = tmp_3[13] + tmp_3[14];
     tmp_3[0] = tmp_3[0] * tmp_3[13];
     tmp_3[8] = tmp_3[8] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_32(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[15] + tmp_3[16];
     tmp_3[15] = evals[281] * Goldilocks::new(256);
     tmp_3[15] = evals[280] + tmp_3[15];
@@ -3501,12 +3489,6 @@ fn q_verify_chunk_32(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[461] * Goldilocks::new(256);
     tmp_3[0] = evals[460] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_33(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[12] = evals[462] * Goldilocks::new(65536);
     tmp_3[0] = tmp_3[0] + tmp_3[12];
     tmp_3[12] = evals[459] * Goldilocks::new(16777216);
@@ -3519,6 +3501,12 @@ fn q_verify_chunk_33(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[12] = tmp_3[4] * tmp_3[0];
     tmp_3[0] = evals[236] * Goldilocks::new(256);
     tmp_3[0] = evals[235] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_33(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[4] = evals[237] * Goldilocks::new(65536);
     tmp_3[0] = tmp_3[0] + tmp_3[4];
     tmp_3[4] = evals[234] * Goldilocks::new(16777216);
@@ -3607,12 +3595,6 @@ fn q_verify_chunk_33(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[18] = evals[609] * evals[515];
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[18] = evals[609] * evals[467];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_34(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[18] = evals[609] * evals[399];
     tmp_3[0] = tmp_3[0] + tmp_3[18];
@@ -3625,6 +3607,12 @@ fn q_verify_chunk_34(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[18] = evals[609] * evals[184];
     tmp_3[18] = tmp_3[0] + tmp_3[18];
     tmp_3[0] = tmp_3[7] - Goldilocks::new(4294967295);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_34(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * evals[647];
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[0] = tmp_3[6] * tmp_3[0];
@@ -3713,12 +3701,6 @@ fn q_verify_chunk_34(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * evals[358];
     tmp_3[22] = evals[359] * evals[354];
     tmp_3[22] = tmp_3[0] + tmp_3[22];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_35(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[7] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[6] + tmp_3[0];
     tmp_3[0] = tmp_3[22] - tmp_3[0];
@@ -3731,6 +3713,12 @@ fn q_verify_chunk_35(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[21] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[18] = challenges[2] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_35(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[609] * evals[607];
     tmp_3[0] = tmp_3[0] * tmp_3[2];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
@@ -3819,12 +3807,6 @@ fn q_verify_chunk_35(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[0] = tmp_3[0] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[21] - tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_36(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[20] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[20] = challenges[2] * tmp_3[0];
@@ -3837,6 +3819,12 @@ fn q_verify_chunk_36(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[609] * evals[607];
     tmp_3[20] = evals[611] * evals[607];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_36(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[20];
     tmp_3[20] = tmp_3[9] - Goldilocks::new(1359893119);
     tmp_3[0] = tmp_3[0] * tmp_3[20];
@@ -3925,12 +3913,6 @@ fn q_verify_chunk_36(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[6] + tmp_3[0];
     tmp_3[0] = evals[939] - tmp_3[0];
     tmp_3[0] = tmp_3[20] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_37(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[20] = challenges[2] * tmp_3[0];
     tmp_3[18] = evals[610] * evals[399];
@@ -3943,6 +3925,12 @@ fn q_verify_chunk_37(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[20] = evals[610] * evals[350];
     tmp_3[0] = tmp_3[7] * Goldilocks::new(4294967296);
     tmp_3[0] = tmp_3[6] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_37(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[528] - tmp_3[0];
     tmp_3[0] = tmp_3[20] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
@@ -4031,12 +4019,6 @@ fn q_verify_chunk_37(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[467];
     tmp_3[18] = evals[934] - tmp_3[7];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[18];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[18] = challenges[2] * tmp_3[0];
@@ -4049,6 +4031,12 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[18] = evals[633] - tmp_3[7];
     tmp_3[0] = tmp_3[0] * tmp_3[18];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[611] * evals[350];
     tmp_3[9] = evals[524] - tmp_3[6];
@@ -4090,8 +4078,7 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[18];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[20] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[18] = tmp_3[0] * evals[607];
+    tmp_3[18] = tmp_3[28] * evals[607];
     tmp_3[0] = evals[673] * Goldilocks::new(256);
     tmp_3[0] = evals[672] + tmp_3[0];
     tmp_3[9] = evals[674] * Goldilocks::new(65536);
@@ -4102,8 +4089,7 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[18] * tmp_3[0];
     tmp_3[0] = tmp_3[20] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[18] = tmp_3[0] * evals[515];
+    tmp_3[18] = tmp_3[28] * evals[515];
     tmp_3[0] = evals[673] * Goldilocks::new(256);
     tmp_3[0] = evals[672] + tmp_3[0];
     tmp_3[20] = evals[674] * Goldilocks::new(65536);
@@ -4114,8 +4100,7 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[18] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[20] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[18] = tmp_3[0] * evals[467];
+    tmp_3[18] = tmp_3[28] * evals[467];
     tmp_3[0] = evals[673] * Goldilocks::new(256);
     tmp_3[0] = evals[672] + tmp_3[0];
     tmp_3[9] = evals[674] * Goldilocks::new(65536);
@@ -4126,8 +4111,7 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[18] * tmp_3[0];
     tmp_3[0] = tmp_3[20] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
-    tmp_3[0] = evals[610] + evals[611];
-    tmp_3[18] = tmp_3[0] * evals[399];
+    tmp_3[18] = tmp_3[28] * evals[399];
     tmp_3[0] = evals[673] * Goldilocks::new(256);
     tmp_3[0] = evals[672] + tmp_3[0];
     tmp_3[20] = evals[674] * Goldilocks::new(65536);
@@ -4137,12 +4121,6 @@ fn q_verify_chunk_38(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] - tmp_3[10];
     tmp_3[0] = tmp_3[18] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_39(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[610] + evals[611];
     tmp_3[0] = tmp_3[0] * evals[607];
@@ -4159,6 +4137,12 @@ fn q_verify_chunk_39(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * evals[467];
     tmp_3[18] = evals[712] - evals[941];
     tmp_3[0] = tmp_3[0] * tmp_3[18];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_39(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[2] + tmp_3[0];
     tmp_3[2] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[610] + evals[611];
@@ -4243,12 +4227,6 @@ fn q_verify_chunk_39(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[129] + tmp_3[0];
     tmp_3[18] = evals[131] * Goldilocks::new(65536);
     tmp_3[0] = tmp_3[0] + tmp_3[18];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_40(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = evals[132] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[0] = evals[630] - tmp_3[0];
@@ -4265,6 +4243,12 @@ fn q_verify_chunk_40(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[9] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[2] = challenges[2] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_40(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[164] * Goldilocks::new(256);
     tmp_3[0] = evals[163] + tmp_3[0];
     tmp_3[18] = evals[165] * Goldilocks::new(65536);
@@ -4349,12 +4333,6 @@ fn q_verify_chunk_40(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[542] + tmp_3[0];
     tmp_3[18] = evals[544] * Goldilocks::new(65536);
     tmp_3[0] = tmp_3[0] + tmp_3[18];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_41(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = evals[545] * Goldilocks::new(16777216);
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[0] = evals[640] - tmp_3[0];
@@ -4371,6 +4349,12 @@ fn q_verify_chunk_41(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[9] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[9] = challenges[2] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_41(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[47] + evals[46];
     tmp_3[0] = tmp_3[0] + evals[45];
     tmp_3[0] = tmp_3[0] + evals[44];
@@ -4455,12 +4439,6 @@ fn q_verify_chunk_41(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[626] * evals[631];
     tmp_3[9] = evals[628] * evals[631];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_42(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[628] * evals[629];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
@@ -4477,6 +4455,12 @@ fn q_verify_chunk_42(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[0] = evals[641] - tmp_3[0];
     tmp_3[0] = evals[613] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_42(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[635] * evals[639];
@@ -4561,12 +4545,6 @@ fn q_verify_chunk_42(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] - tmp_3[18];
     tmp_3[0] = evals[932] - tmp_3[0];
     tmp_3[0] = evals[615] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_43(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[602] * evals[627];
@@ -4583,6 +4561,12 @@ fn q_verify_chunk_43(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[933] - tmp_3[0];
     tmp_3[0] = evals[615] * tmp_3[0];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_43(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[9] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[602] * evals[628];
     tmp_3[18] = evals[603] * evals[631];
@@ -4667,12 +4651,6 @@ fn q_verify_chunk_43(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[924] * evals[636];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[925] * evals[633];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_44(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[927] * evals[636];
     tmp_3[0] = tmp_3[0] - tmp_3[9];
@@ -4689,6 +4667,12 @@ fn q_verify_chunk_44(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[18];
     tmp_3[18] = evals[925] * evals[634];
     tmp_3[0] = tmp_3[0] + tmp_3[18];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_44(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = evals[927] * evals[637];
     tmp_3[0] = tmp_3[0] - tmp_3[18];
     tmp_3[0] = evals[940] - tmp_3[0];
@@ -4773,12 +4757,6 @@ fn q_verify_chunk_44(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[614] * tmp_3[0];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[2] = challenges[2] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_45(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[935] * evals[933];
     tmp_3[9] = evals[936] * evals[932];
     tmp_3[18] = tmp_3[0] + tmp_3[9];
@@ -4795,6 +4773,12 @@ fn q_verify_chunk_45(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[630] * evals[643];
     tmp_3[18] = evals[631] * evals[642];
     tmp_3[0] = tmp_3[0] + tmp_3[18];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_45(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[9] = evals[631] * evals[643];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
@@ -4879,12 +4863,6 @@ fn q_verify_chunk_45(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[10] + tmp_3[0];
     tmp_3[18] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[616] * tmp_3[9];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_46(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[10] = evals[630] - evals[641];
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[0] = tmp_3[18] + tmp_3[0];
@@ -4901,6 +4879,12 @@ fn q_verify_chunk_46(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[18] + tmp_3[0];
     tmp_3[20] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[616] * tmp_3[9];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_46(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = evals[633] - evals[641];
     tmp_3[0] = tmp_3[0] * tmp_3[18];
     tmp_3[0] = tmp_3[20] + tmp_3[0];
@@ -4985,12 +4969,6 @@ fn q_verify_chunk_46(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[732];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[700];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_47(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[9] = tmp_3[0] + Goldilocks::new(1000);
     tmp_3[0] = tmp_3[9] + challenges[1];
@@ -5007,6 +4985,12 @@ fn q_verify_chunk_47(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[20] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
     tmp_3[20] = tmp_3[21] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_47(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[20];
     tmp_3[20] = tmp_3[9] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
@@ -5091,12 +5075,6 @@ fn q_verify_chunk_47(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[22];
     tmp_3[20] = tmp_3[20] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_48(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[3] = tmp_3[3] + tmp_3[0];
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[21] = tmp_3[21] + challenges[1];
@@ -5113,6 +5091,12 @@ fn q_verify_chunk_48(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[782];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(12);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_48(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[765];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -5197,12 +5181,6 @@ fn q_verify_chunk_48(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[21] = tmp_3[0] + Goldilocks::new(1000);
     tmp_3[22] = tmp_3[21] + challenges[1];
     tmp_3[0] = evals[829] * challenges[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_49(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[814];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -5219,6 +5197,12 @@ fn q_verify_chunk_49(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[10] = tmp_3[0] + Goldilocks::new(1000);
     tmp_3[0] = tmp_3[10] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_49(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[20] = tmp_3[22] * tmp_3[0];
     tmp_3[0] = evals[860] * challenges[0];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -5303,12 +5287,6 @@ fn q_verify_chunk_49(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[23] = evals[350] * Goldilocks::new(8);
     tmp_3[0] = tmp_3[0] + tmp_3[23];
     tmp_3[23] = evals[284] * Goldilocks::new(10);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_50(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[23];
     tmp_3[23] = evals[242] * Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] + tmp_3[23];
@@ -5325,6 +5303,12 @@ fn q_verify_chunk_50(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[99];
     tmp_3[23] = evals[86] * Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] + tmp_3[23];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_50(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[23] = evals[77] * Goldilocks::new(9);
     tmp_3[0] = tmp_3[0] + tmp_3[23];
     tmp_3[23] = evals[72] * Goldilocks::new(15);
@@ -5409,12 +5393,6 @@ fn q_verify_chunk_50(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[9] + tmp_3[0];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[23] = tmp_3[0] + Goldilocks::new(500);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_51(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[23] + challenges[1];
     tmp_3[0] = tmp_3[3] * tmp_3[0];
     tmp_3[21] = evals[887] * tmp_3[0];
@@ -5431,6 +5409,12 @@ fn q_verify_chunk_51(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = tmp_3[2] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[3];
     tmp_3[3] = tmp_3[23] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_51(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[3];
     tmp_3[3] = tmp_3[9] + tmp_3[0];
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
@@ -5515,12 +5499,6 @@ fn q_verify_chunk_51(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[2] = tmp_3[24] + tmp_3[2];
     tmp_3[24] = evals[399] * Goldilocks::new(7);
     tmp_3[2] = tmp_3[2] + tmp_3[24];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_52(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[24] = evals[350] * Goldilocks::new(9);
     tmp_3[2] = tmp_3[2] + tmp_3[24];
     tmp_3[24] = evals[284] * Goldilocks::new(11);
@@ -5537,6 +5515,12 @@ fn q_verify_chunk_52(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[2] = tmp_3[2] + tmp_3[24];
     tmp_3[24] = evals[99] * Goldilocks::new(11);
     tmp_3[2] = tmp_3[2] + tmp_3[24];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_52(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[24] = evals[86] * Goldilocks::new(5);
     tmp_3[2] = tmp_3[2] + tmp_3[24];
     tmp_3[24] = evals[77] * Goldilocks::new(14);
@@ -5621,12 +5605,6 @@ fn q_verify_chunk_52(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[2] = tmp_3[2] * challenges[0];
     tmp_3[23] = tmp_3[2] + Goldilocks::new(500);
     tmp_3[18] = tmp_3[23] + challenges[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_53(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[2] = evals[718] * challenges[0];
     tmp_3[3] = tmp_3[2] + Goldilocks::new(250);
     tmp_3[2] = tmp_3[3] + challenges[1];
@@ -5643,6 +5621,12 @@ fn q_verify_chunk_53(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[2] = tmp_3[9] * Goldilocks::new(6);
     tmp_3[2] = tmp_3[2] - tmp_3[22];
     tmp_3[2] = tmp_3[28] * tmp_3[2];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_53(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[18] = tmp_3[3] + challenges[1];
     tmp_3[2] = tmp_3[2] * tmp_3[18];
     tmp_3[18] = tmp_3[10] + challenges[1];
@@ -5727,12 +5711,6 @@ fn q_verify_chunk_53(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[3];
     tmp_3[23] = tmp_3[23] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[23];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_54(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[2] + tmp_3[0];
     tmp_3[0] = tmp_3[21] - tmp_3[0];
     tmp_3[0] = tmp_3[24] + tmp_3[0];
@@ -5749,6 +5727,12 @@ fn q_verify_chunk_54(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[738];
     tmp_3[0] = tmp_3[0] * challenges[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_54(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[706];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[3] = tmp_3[0] + Goldilocks::new(1000);
@@ -5833,12 +5817,6 @@ fn q_verify_chunk_54(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = tmp_3[0] + Goldilocks::new(1000);
     tmp_3[0] = tmp_3[3] + challenges[1];
     tmp_3[20] = tmp_3[20] * tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_55(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[795] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[794];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -5855,6 +5833,12 @@ fn q_verify_chunk_55(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[816];
     tmp_3[0] = tmp_3[0] * challenges[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_55(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[752];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[24] = tmp_3[0] + Goldilocks::new(1000);
@@ -5939,12 +5923,6 @@ fn q_verify_chunk_55(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[2];
     tmp_3[2] = tmp_3[20] + challenges[1];
     tmp_3[21] = tmp_3[0] * tmp_3[2];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_56(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[2] = tmp_3[23] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[2];
@@ -5961,6 +5939,12 @@ fn q_verify_chunk_56(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[20] = tmp_3[20] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
     tmp_3[2] = tmp_3[2] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_56(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[23] = tmp_3[23] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[23];
@@ -6045,12 +6029,6 @@ fn q_verify_chunk_56(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[25] = evals[65] * Goldilocks::new(11);
     tmp_3[0] = tmp_3[0] + tmp_3[25];
     tmp_3[25] = evals[64] * Goldilocks::new(8);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_57(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[25];
     tmp_3[25] = evals[63] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[25];
@@ -6067,6 +6045,12 @@ fn q_verify_chunk_57(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[25] = evals[57] * Goldilocks::new(5);
     tmp_3[0] = tmp_3[0] + tmp_3[25];
     tmp_3[0] = tmp_3[0] + evals[56];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_57(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[25] = evals[55] * Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] + tmp_3[25];
     tmp_3[25] = evals[54] * Goldilocks::new(9);
@@ -6151,12 +6135,6 @@ fn q_verify_chunk_57(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[10] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[3] = tmp_3[3] + challenges[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_58(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[3];
     tmp_3[0] = tmp_3[24] + tmp_3[0];
     tmp_3[0] = tmp_3[23] - tmp_3[0];
@@ -6173,6 +6151,12 @@ fn q_verify_chunk_58(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[284] * Goldilocks::new(11);
     tmp_3[0] = tmp_3[0] + tmp_3[26];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_58(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = evals[242] * Goldilocks::new(13);
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[184] * Goldilocks::new(15);
@@ -6257,12 +6241,6 @@ fn q_verify_chunk_58(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[26] = evals[3] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[2] * Goldilocks::new(12);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_59(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[1] * Goldilocks::new(4);
     tmp_3[0] = tmp_3[0] + tmp_3[26];
@@ -6279,6 +6257,12 @@ fn q_verify_chunk_59(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[720] * challenges[0];
     tmp_3[3] = tmp_3[0] + Goldilocks::new(250);
     tmp_3[0] = tmp_3[3] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_59(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[20] = tmp_3[20] * tmp_3[0];
     tmp_3[0] = evals[728] * challenges[0];
     tmp_3[10] = tmp_3[0] + Goldilocks::new(250);
@@ -6363,12 +6347,6 @@ fn q_verify_chunk_59(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[25] = tmp_3[2] + tmp_3[0];
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[2] = tmp_3[10] + challenges[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_60(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[2];
     tmp_3[2] = tmp_3[3] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[2];
@@ -6385,6 +6363,12 @@ fn q_verify_chunk_60(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[25] + tmp_3[0];
     tmp_3[0] = tmp_3[23] - tmp_3[0];
     tmp_3[0] = tmp_3[26] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_60(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[2] = challenges[2] * tmp_3[0];
     tmp_3[0] = evals[759] * challenges[0];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -6469,12 +6453,6 @@ fn q_verify_chunk_60(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[693];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[10] = tmp_3[0] + Goldilocks::new(1000);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_61(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[2] = tmp_3[10] + challenges[1];
     tmp_3[0] = evals[801] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[800];
@@ -6491,6 +6469,12 @@ fn q_verify_chunk_61(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[803] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[802];
     tmp_3[0] = tmp_3[0] * challenges[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_61(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[775];
@@ -6575,12 +6559,6 @@ fn q_verify_chunk_61(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[852];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[23] = evals[799] + evals[800];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_62(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[23];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[2] = tmp_3[0] + Goldilocks::new(1000);
@@ -6597,6 +6575,12 @@ fn q_verify_chunk_62(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[25] = tmp_3[24] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[25];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_62(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[25] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[25];
     tmp_3[25] = tmp_3[2] + challenges[1];
@@ -6681,12 +6665,6 @@ fn q_verify_chunk_62(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[27];
     tmp_3[27] = evals[71] * Goldilocks::new(3);
     tmp_3[0] = tmp_3[0] + tmp_3[27];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_63(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[27] = evals[70] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[27];
     tmp_3[27] = evals[69] * Goldilocks::new(13);
@@ -6703,6 +6681,12 @@ fn q_verify_chunk_63(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[27];
     tmp_3[27] = evals[63] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[27];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_63(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[27] = evals[62] * Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] + tmp_3[27];
     tmp_3[27] = evals[61] * Goldilocks::new(14);
@@ -6787,12 +6771,6 @@ fn q_verify_chunk_63(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[20] = tmp_3[25] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_64(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[20] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[20];
     tmp_3[27] = tmp_3[27] + challenges[1];
@@ -6809,6 +6787,12 @@ fn q_verify_chunk_64(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[3];
     tmp_3[0] = tmp_3[26] + tmp_3[0];
     tmp_3[0] = tmp_3[24] - tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_64(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[2] + tmp_3[0];
     tmp_3[27] = challenges[2] * tmp_3[0];
     tmp_3[2] = tmp_3[1] * challenges[0];
@@ -6893,12 +6877,6 @@ fn q_verify_chunk_64(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[42] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_65(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = evals[41] * Goldilocks::new(6);
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[40] * Goldilocks::new(7);
@@ -6915,6 +6893,12 @@ fn q_verify_chunk_65(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[1] * Goldilocks::new(4);
     tmp_3[0] = tmp_3[0] + tmp_3[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_65(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = evals[0] * Goldilocks::new(13);
     tmp_3[1] = tmp_3[0] + tmp_3[1];
     tmp_3[0] = evals[608] * Goldilocks::new(4);
@@ -6999,12 +6983,6 @@ fn q_verify_chunk_65(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[27] = tmp_3[3] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[27];
     tmp_3[27] = tmp_3[26] + challenges[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_66(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[27];
     tmp_3[27] = tmp_3[2] + challenges[1];
     tmp_3[25] = tmp_3[0] * tmp_3[27];
@@ -7021,6 +6999,12 @@ fn q_verify_chunk_66(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[25];
     tmp_3[25] = tmp_3[3] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[25];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_66(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[2] = tmp_3[2] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[2];
     tmp_3[27] = tmp_3[27] + tmp_3[0];
@@ -7105,12 +7089,6 @@ fn q_verify_chunk_66(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[10] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[10];
     tmp_3[0] = tmp_3[1] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_67(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[2] - tmp_3[0];
     tmp_3[0] = tmp_3[25] + tmp_3[0];
     tmp_3[24] = challenges[2] * tmp_3[0];
@@ -7127,6 +7105,12 @@ fn q_verify_chunk_67(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[25] = tmp_3[10] + challenges[1];
     tmp_3[0] = evals[809] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[808];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_67(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(12);
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -7211,12 +7195,6 @@ fn q_verify_chunk_67(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[3] + challenges[1];
     tmp_3[24] = tmp_3[24] * tmp_3[0];
     tmp_3[0] = evals[842] * challenges[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_68(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[827];
     tmp_3[0] = tmp_3[0] * challenges[0];
@@ -7233,6 +7211,12 @@ fn q_verify_chunk_68(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[24];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[25] = tmp_3[0] + Goldilocks::new(1000);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_68(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[25] + challenges[1];
     tmp_3[0] = tmp_3[27] * tmp_3[0];
     tmp_3[1] = evals[904] * tmp_3[0];
@@ -7317,12 +7301,6 @@ fn q_verify_chunk_68(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[6];
     tmp_3[6] = evals[150] * Goldilocks::new(3);
     tmp_3[0] = tmp_3[0] + tmp_3[6];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_69(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[6] = evals[133] * Goldilocks::new(7);
     tmp_3[0] = tmp_3[0] + tmp_3[6];
     tmp_3[6] = evals[116] * Goldilocks::new(4);
@@ -7339,6 +7317,12 @@ fn q_verify_chunk_69(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[6] = evals[70] * Goldilocks::new(10);
     tmp_3[0] = tmp_3[0] + tmp_3[6];
     tmp_3[6] = evals[69] * Goldilocks::new(13);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_69(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[6];
     tmp_3[6] = evals[68] * Goldilocks::new(7);
     tmp_3[0] = tmp_3[0] + tmp_3[6];
@@ -7423,12 +7407,6 @@ fn q_verify_chunk_69(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * tmp_3[1];
     tmp_3[1] = tmp_3[3] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_70(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = tmp_3[6] + challenges[1];
     tmp_3[2] = tmp_3[0] * tmp_3[1];
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
@@ -7445,6 +7423,12 @@ fn q_verify_chunk_70(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[2] = tmp_3[10] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[2];
     tmp_3[6] = tmp_3[6] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_70(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[6];
     tmp_3[1] = tmp_3[1] + tmp_3[0];
     tmp_3[0] = tmp_3[9] * Goldilocks::new(6);
@@ -7529,12 +7513,6 @@ fn q_verify_chunk_70(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[7] = evals[50] * Goldilocks::new(3);
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[0] = tmp_3[0] + evals[49];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_71(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[7] = evals[48] * Goldilocks::new(4);
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[47] * Goldilocks::new(14);
@@ -7551,6 +7529,12 @@ fn q_verify_chunk_71(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[7] = evals[41] * Goldilocks::new(6);
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[40] * Goldilocks::new(7);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_71(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[23] * Goldilocks::new(15);
     tmp_3[0] = tmp_3[0] + tmp_3[7];
@@ -7635,12 +7619,6 @@ fn q_verify_chunk_71(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = evals[22] * evals[24];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[21] * evals[24];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_72(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[20] * evals[24];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
@@ -7657,6 +7635,12 @@ fn q_verify_chunk_72(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[47] * evals[1141];
     tmp_3[1] = evals[46] * evals[1141];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_72(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = evals[45] * evals[1141];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[44] * evals[1141];
@@ -7741,12 +7725,6 @@ fn q_verify_chunk_72(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[7] = tmp_3[0] + tmp_3[3];
     tmp_3[0] = evals[1123] * Goldilocks::new(2);
     tmp_3[3] = evals[1110] * Goldilocks::new(256);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_73(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] - tmp_3[3];
     tmp_3[0] = tmp_3[0] + evals[1109];
     tmp_3[0] = evals[43] * tmp_3[0];
@@ -7763,6 +7741,12 @@ fn q_verify_chunk_73(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[23] * evals[1030];
     tmp_3[0] = tmp_3[0] + tmp_3[7];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_73(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[7] = evals[22] * evals[1030];
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[21] * evals[989];
@@ -7847,12 +7831,6 @@ fn q_verify_chunk_73(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[21] * evals[26];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[20] * evals[26];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_74(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[3] * evals[6];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
@@ -7869,6 +7847,12 @@ fn q_verify_chunk_74(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[45] * evals[1143];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_74(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = evals[44] * evals[1143];
     tmp_3[9] = tmp_3[0] + tmp_3[26];
     tmp_3[0] = evals[1124] * Goldilocks::new(2);
@@ -7953,12 +7937,6 @@ fn q_verify_chunk_74(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[1137] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[9];
     tmp_3[0] = tmp_3[0] + evals[1111];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_75(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[43] * tmp_3[0];
     tmp_3[9] = tmp_3[1] + tmp_3[0];
     tmp_3[0] = evals[1057] * Goldilocks::new(2);
@@ -7975,6 +7953,12 @@ fn q_verify_chunk_75(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[22] * evals[1032];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_75(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = evals[21] * evals[991];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[20] * evals[991];
@@ -8059,12 +8043,6 @@ fn q_verify_chunk_75(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = evals[20] * evals[28];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[3] * evals[8];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_76(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[2] * evals[8];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
@@ -8081,6 +8059,12 @@ fn q_verify_chunk_76(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[22] = evals[44] * evals[1145];
     tmp_3[3] = tmp_3[0] + tmp_3[22];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_76(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[1126] * Goldilocks::new(2);
     tmp_3[22] = evals[1112] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[22];
@@ -8165,12 +8149,6 @@ fn q_verify_chunk_76(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[1112];
     tmp_3[0] = evals[43] * tmp_3[0];
     tmp_3[3] = tmp_3[26] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_77(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[1063] * Goldilocks::new(2);
     tmp_3[26] = evals[1049] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[26];
@@ -8187,6 +8165,12 @@ fn q_verify_chunk_77(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[21] * evals[993];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_77(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = evals[20] * evals[993];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[3] * evals[960];
@@ -8271,12 +8255,6 @@ fn q_verify_chunk_77(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[3] * evals[10];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[2] * evals[10];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_78(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[1] * evals[10];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
@@ -8293,6 +8271,12 @@ fn q_verify_chunk_78(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = tmp_3[0] + tmp_3[7];
     tmp_3[0] = evals[1128] * Goldilocks::new(2);
     tmp_3[7] = evals[1114] * Goldilocks::new(256);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_78(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] - tmp_3[7];
     tmp_3[0] = tmp_3[0] + evals[1113];
     tmp_3[0] = evals[43] * tmp_3[0];
@@ -8377,12 +8361,6 @@ fn q_verify_chunk_78(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = tmp_3[22] + tmp_3[0];
     tmp_3[0] = evals[1061] * Goldilocks::new(2);
     tmp_3[22] = evals[1074] * Goldilocks::new(256);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_79(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] - tmp_3[22];
     tmp_3[22] = tmp_3[0] + evals[1050];
     tmp_3[0] = evals[42] * tmp_3[22];
@@ -8399,6 +8377,12 @@ fn q_verify_chunk_79(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[22] = evals[20] * evals[995];
     tmp_3[0] = tmp_3[0] + tmp_3[22];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_79(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[22] = evals[3] * evals[962];
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[22] = evals[2] * evals[962];
@@ -8483,12 +8467,6 @@ fn q_verify_chunk_79(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = evals[2] * evals[12];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[1] * evals[12];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_80(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[3] = evals[0] * evals[12];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
@@ -8505,6 +8483,12 @@ fn q_verify_chunk_80(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[1] = evals[1115] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[1];
     tmp_3[0] = tmp_3[0] + evals[1139];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_80(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[43] * tmp_3[0];
     tmp_3[1] = tmp_3[3] + tmp_3[0];
     tmp_3[0] = evals[1066] * Goldilocks::new(2);
@@ -8589,12 +8573,6 @@ fn q_verify_chunk_80(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[7] = evals[1052] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[7];
     tmp_3[7] = tmp_3[0] + evals[1051];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_81(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[42] * tmp_3[7];
     tmp_3[0] = tmp_3[3] + tmp_3[0];
     tmp_3[3] = evals[41] * tmp_3[7];
@@ -8611,6 +8589,12 @@ fn q_verify_chunk_81(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[3] * evals[964];
     tmp_3[0] = tmp_3[0] + tmp_3[7];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_81(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[7] = evals[2] * evals[964];
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[1] * evals[964];
@@ -8695,12 +8679,6 @@ fn q_verify_chunk_81(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[1] * evals[14];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[9] = evals[0] * evals[14];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_82(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[0] = tmp_3[26] + tmp_3[0];
     tmp_3[1] = tmp_3[0] * challenges[0];
@@ -8717,6 +8695,12 @@ fn q_verify_chunk_82(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[1116];
     tmp_3[0] = evals[43] * tmp_3[0];
     tmp_3[26] = tmp_3[9] + tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_82(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[1068] * Goldilocks::new(2);
     tmp_3[9] = evals[1053] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[9];
@@ -8801,12 +8785,6 @@ fn q_verify_chunk_82(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[1] = tmp_3[0] + evals[1053];
     tmp_3[0] = evals[42] * tmp_3[1];
     tmp_3[0] = tmp_3[9] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_83(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[9] = evals[41] * tmp_3[1];
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[1] = evals[40] * tmp_3[1];
@@ -8823,6 +8801,12 @@ fn q_verify_chunk_83(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[2] * evals[966];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_83(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[1] = evals[1] * evals[966];
     tmp_3[0] = tmp_3[0] + tmp_3[1];
     tmp_3[1] = evals[0] * evals[442];
@@ -8907,12 +8891,6 @@ fn q_verify_chunk_83(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = evals[0] * evals[16];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
     tmp_3[0] = tmp_3[22] + tmp_3[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_84(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = tmp_3[0] * challenges[0];
     tmp_3[0] = evals[47] * evals[1153];
     tmp_3[22] = evals[46] * evals[1153];
@@ -8929,6 +8907,12 @@ fn q_verify_chunk_84(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[22] = tmp_3[3] + tmp_3[0];
     tmp_3[0] = evals[1070] * Goldilocks::new(2);
     tmp_3[3] = evals[1054] * Goldilocks::new(256);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_84(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] - tmp_3[3];
     tmp_3[3] = tmp_3[0] + evals[1076];
     tmp_3[0] = evals[42] * tmp_3[3];
@@ -9013,12 +8997,6 @@ fn q_verify_chunk_84(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[3] + tmp_3[0];
     tmp_3[3] = evals[41] * tmp_3[26];
     tmp_3[0] = tmp_3[0] + tmp_3[3];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_85(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = evals[40] * tmp_3[26];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[23] * evals[1042];
@@ -9035,6 +9013,12 @@ fn q_verify_chunk_85(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[26] = evals[1] * evals[968];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_85(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[26] = evals[0] * evals[444];
     tmp_3[0] = tmp_3[0] + tmp_3[26];
     tmp_3[0] = tmp_3[22] + tmp_3[0];
@@ -9119,12 +9103,6 @@ fn q_verify_chunk_85(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[22] = tmp_3[0] * challenges[0];
     tmp_3[0] = evals[47] * evals[1155];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_86(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[7] = evals[46] * evals[1155];
     tmp_3[0] = tmp_3[0] + tmp_3[7];
     tmp_3[7] = evals[45] * evals[1155];
@@ -9141,6 +9119,12 @@ fn q_verify_chunk_86(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[9] = evals[1056] * Goldilocks::new(256);
     tmp_3[0] = tmp_3[0] - tmp_3[9];
     tmp_3[9] = tmp_3[0] + evals[1055];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_86(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[42] * tmp_3[9];
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[7] = evals[41] * tmp_3[9];
@@ -9225,12 +9209,6 @@ fn q_verify_chunk_86(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[9];
     tmp_3[22] = evals[40] * tmp_3[22];
     tmp_3[0] = tmp_3[0] + tmp_3[22];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_87(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[22] = evals[23] * evals[1044];
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[22] = evals[22] * evals[1044];
@@ -9247,6 +9225,12 @@ fn q_verify_chunk_87(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + tmp_3[22];
     tmp_3[22] = evals[0] * evals[446];
     tmp_3[0] = tmp_3[0] + tmp_3[22];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_87(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[7] + tmp_3[0];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[7] = tmp_3[0] + Goldilocks::new(1000);
@@ -9331,12 +9315,6 @@ fn q_verify_chunk_87(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = evals[716] * challenges[0];
     tmp_3[26] = tmp_3[0] + Goldilocks::new(250);
     tmp_3[3] = tmp_3[26] + challenges[1];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_88(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = evals[724] * challenges[0];
     tmp_3[22] = tmp_3[0] + Goldilocks::new(250);
     tmp_3[0] = tmp_3[22] + challenges[1];
@@ -9353,6 +9331,12 @@ fn q_verify_chunk_88(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[3] = tmp_3[0] * tmp_3[1];
     tmp_3[0] = tmp_3[28].sub_from_scalar(Goldilocks::new(0));
     tmp_3[1] = tmp_3[26] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_88(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] * tmp_3[1];
     tmp_3[7] = tmp_3[7] + challenges[1];
     tmp_3[0] = tmp_3[0] * tmp_3[7];
@@ -9437,12 +9421,6 @@ fn q_verify_chunk_88(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
     tmp_3[25] = tmp_3[25] * tmp_3[0];
     tmp_3[0] = evals[588] * challenges[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_89(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[630];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
@@ -9459,6 +9437,12 @@ fn q_verify_chunk_89(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
     tmp_3[0] = tmp_3[0] + challenges[1];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_89(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[22] = tmp_3[0] + Goldilocks::new(1);
     tmp_3[0] = evals[624] * Goldilocks::new(7781028390488215464);
@@ -9543,12 +9527,6 @@ fn q_verify_chunk_89(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[25] = tmp_3[25] * tmp_3[0];
     tmp_3[0] = evals[624] * Goldilocks::new(16538725463549498621);
     tmp_3[0] = tmp_3[0] * challenges[0];
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_90(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + evals[636];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
@@ -9565,6 +9543,12 @@ fn q_verify_chunk_90(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
     tmp_3[0] = tmp_3[25] * tmp_3[0];
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_90(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[9] = evals[918] * tmp_3[0];
     tmp_3[0] = evals[593] * challenges[0];
     tmp_3[0] = tmp_3[0] + evals[635];
@@ -9649,12 +9633,6 @@ fn q_verify_chunk_90(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[640];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
-}
-
-#[inline(never)]
-#[rustfmt::skip]
-#[allow(clippy::all)]
-fn q_verify_chunk_91(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], zi: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + challenges[1];
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
@@ -9671,6 +9649,12 @@ fn q_verify_chunk_91(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: 
     tmp_3[0] = tmp_3[0] + evals[642];
     tmp_3[0] = tmp_3[0] * challenges[0];
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
+}
+
+#[inline(never)]
+#[rustfmt::skip]
+#[allow(clippy::all)]
+fn q_verify_chunk_91(tmp_3: &mut [CubicExtensionField<Goldilocks>], challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], zi: &[CubicExtensionField<Goldilocks>]) {
     tmp_3[0] = tmp_3[0] + challenges[1];
     tmp_3[0] = tmp_3[0] - Goldilocks::new(1);
     tmp_3[0] = tmp_3[0] + Goldilocks::new(1);
