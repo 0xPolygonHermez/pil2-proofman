@@ -85,10 +85,62 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
 
 inline void expsClose(void* lib) { if (lib) dlclose(lib); }
 
+// Warm an AIR's generated kernels at load: a no-op Q launch (NExt=0) plus one 1-row expr
+// launch force the lazy module load + local-mem pool allocations NOW, while VRAM is free.
+// Done lazily mid-proof they can fail SILENTLY (the .so has its own static CUDA runtime)
+// and the proof is invalid. Returns false when skipped (VRAM guard).
+inline bool expsWarmup(SetupCtx& sc, const ExpsKernel& ek) {
+    if (ek.qLaunch == nullptr) return true;  // no generated kernels at all
+    // Leave room for the per-air setup allocations that follow (witness_compact ~1GB).
+    size_t freeB = 0, totalB = 0;
+    if (cudaMemGetInfo(&freeB, &totalB) != cudaSuccess || freeB < (1ull << 30)) return false;
+    uint64_t words = (ek.qMinScratch < 1024 ? 1024 : ek.qMinScratch) + 4096;
+    gl64_t *dummy = nullptr;
+    if (cudaMalloc(&dummy, words * sizeof(uint64_t)) != cudaSuccess) return false;
+    CHECKCUDAERR(cudaMemset(dummy, 0, words * sizeof(uint64_t)));
+    // Every params pointer targets the zeroed dummy; results are garbage and discarded.
+    StepsParams warm = {};
+    warm.trace = (Goldilocks::Element *)dummy;
+    warm.aux_trace = (Goldilocks::Element *)dummy;
+    warm.publicInputs = (Goldilocks::Element *)dummy;
+    warm.proofValues = (Goldilocks::Element *)dummy;
+    warm.challenges = (Goldilocks::Element *)dummy;
+    warm.airgroupValues = (Goldilocks::Element *)dummy;
+    warm.airValues = (Goldilocks::Element *)dummy;
+    warm.evals = (Goldilocks::Element *)dummy;
+    warm.xDivXSub = (Goldilocks::Element *)dummy;
+    warm.pConstPolsAddress = (Goldilocks::Element *)dummy;
+    warm.pConstPolsExtendedTreeAddress = (Goldilocks::Element *)dummy;
+    warm.pCustomCommitsFixed = (Goldilocks::Element *)dummy;
+    StepsParams *d_warm = nullptr;
+    bool warmed = false;
+    if (cudaMalloc(&d_warm, sizeof(StepsParams)) == cudaSuccess) {
+        CHECKCUDAERR(cudaMemcpy(d_warm, &warm, sizeof(StepsParams), cudaMemcpyHostToDevice));
+        ek.qLaunch(d_warm, dummy, dummy, words, /*NExt=*/0, 0, 0, 0, 0, (cudaStream_t)0);
+        // One 1-row expr launch claims the expr kernels' pool too (destExpr=1 -> dummy[0]).
+        if (ek.exprCovered != nullptr && ek.exprLaunch != nullptr) {
+            for (const auto& kv : sc.expressionsBin.expressionsInfo) {
+                if (ek.exprCovered(kv.first)) {
+                    ek.exprLaunch(kv.first, d_warm, dummy, /*N=*/1, /*destDomain=*/1,
+                                  0, 0, 0, EXPR_MODE_WRITE, 0, /*stagePos=*/0, /*stageCols=*/1,
+                                  /*destDim=*/1, /*destExpr=*/1, (cudaStream_t)0);
+                    break;
+                }
+            }
+        }
+        cudaStreamSynchronize((cudaStream_t)0);
+        cudaFree(d_warm);
+        warmed = true;
+    }
+    cudaFree(dummy);
+    return warmed;
+}
+
 // Launch the AIR's pre-resolved Q kernel. Returns false (caller falls back to the interpreter) if
 // the kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
 inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
-                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream) {
+                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream,
+                          bool* launchVerified = nullptr) {
     uint64_t scratchAvail = expsScratchAvail(sc);
     if (minScratch > scratchAvail) return false;
     uint64_t NExt = 1ull << sc.starkInfo.starkStruct.nBitsExt;
@@ -99,6 +151,29 @@ inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
     uint64_t o2 = sc.starkInfo.mapOffsets[std::make_pair("cm2", true)];
     uint64_t o3 = sc.starkInfo.mapOffsets[std::make_pair("cm3", true)];
     uint64_t oz = sc.starkInfo.mapOffsets[std::make_pair("zi",  true)];
+    // First-call sentinel: pre-zero pw[0]; a successful launch always writes it nonzero
+    // (v^0 or a tab value), a silently failed one leaves our 0. Checked once per air.
+    const bool verify = launchVerified != nullptr && !*launchVerified && minScratch > 0;
+    if (verify) {
+        CHECKCUDAERR(cudaMemsetAsync(os, 0, sizeof(uint64_t), stream));
+    }
     fn(d_params, d_q, os, scratchAvail, NExt, o1, o2, o3, oz, stream);
+    cudaError_t launchErr = cudaGetLastError();
+    if (launchErr != cudaSuccess) {
+        fprintf(stderr, "[exps] Q kernel launch failed (%s); falling back to the interpreter\n",
+                cudaGetErrorString(launchErr));
+        return false;
+    }
+    if (verify) {
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        uint64_t pw0 = 0;
+        CHECKCUDAERR(cudaMemcpy(&pw0, os, sizeof(pw0), cudaMemcpyDeviceToHost));
+        if (pw0 == 0) {
+            fprintf(stderr, "[exps] Q kernel launch did not execute (pw[0] still 0, likely lazy "
+                            "module-load OOM); falling back to the interpreter\n");
+            return false;
+        }
+        *launchVerified = true;
+    }
     return true;
 }

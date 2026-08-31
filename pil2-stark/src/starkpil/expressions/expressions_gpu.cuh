@@ -53,6 +53,8 @@ public:
     void *expsLib = nullptr;
     void *qLaunchFn = nullptr;
     uint64_t qMinScratch = 0;
+    // Set once tryLaunchExpsQ's first-call sentinel has proven this air's Q kernel runs.
+    bool qLaunchVerified = false;
     void *exprCoveredFn = nullptr;
     void *exprLaunchFn = nullptr;
     void *exprPairLaunchFn = nullptr;

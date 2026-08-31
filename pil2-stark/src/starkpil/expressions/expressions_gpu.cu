@@ -79,6 +79,10 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
     exprPairLaunchFn = (void *)ek.exprPairLaunch;
+    // Claim module code + kernel pools while VRAM is free (see expsWarmup); skip = warn only.
+    if (!expsWarmup(setupCtx, ek)) {
+        zklog.warning("ExpressionsGPU: exps module warmup skipped (low VRAM); first generated-kernel launches stay lazy for this air");
+    }
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -293,7 +297,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
     if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());
