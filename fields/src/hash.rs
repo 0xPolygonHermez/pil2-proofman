@@ -162,6 +162,94 @@ mod blake3_tests {
     use crate::{Field, Goldilocks};
     use alloc::vec::Vec;
 
+    /// `Blake3_8` forced through [`crate::blake3_core`]. The backend is a target `cfg`, so this is
+    /// the only way a native run reaches the guest's -- and at the level callers use, not bytes.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct Blake3Core8;
+
+    /// The transcript's `put` + `get_state` over the core, duplicated rather than shared so the
+    /// two are compared; the test below ties it back to the real `Blake3_8::linear_hash`.
+    fn core_hash_le64<F: PrimeField64>(input: &[F]) -> [F; 4] {
+        let mut h = crate::blake3_core::Hasher::new();
+        for x in input {
+            h.update(&x.as_canonical_u64().to_le_bytes());
+        }
+        let mut buf = [0u8; 32];
+        h.finalize_xof().fill(&mut buf);
+        core::array::from_fn(|i| {
+            F::from_u64(crate::blake3_transcript::canon(u64::from_le_bytes(buf[8 * i..8 * i + 8].try_into().unwrap())))
+        })
+    }
+
+    impl<F: PrimeField64> Hash<F> for Blake3Core8 {
+        const WIDTH: usize = 8;
+        const RATE: usize = 4;
+        const CAPACITY: usize = 4;
+        type State = [F; 8];
+
+        fn hash(state: &mut [F; 8]) {
+            let dig = core_hash_le64::<F>(&state[..]);
+            state[..4].copy_from_slice(&dig);
+            state[4..].fill(F::ZERO);
+        }
+
+        fn linear_hash(input: &[F]) -> [F; 4] {
+            core_hash_le64::<F>(input)
+        }
+    }
+
+    fn elems(n: usize) -> Vec<Goldilocks> {
+        // Above p on purpose: BLAKE3, unlike Poseidon, is not invariant under +p.
+        (0..n as u64).map(|i| Goldilocks::from_u64(0x9E3779B97F4A7C15u64.wrapping_mul(i + 1))).collect()
+    }
+
+    /// Both Merkle jobs -- a trace row's leaf digest and a node's compression -- must match across
+    /// backends at every width that changes branch, including past the 128-word chunk.
+    #[test]
+    fn the_two_backends_agree_on_leaf_and_node_hashes() {
+        for n in [1usize, 4, 8, 9, 16, 127, 128, 129, 256, 300, 1000] {
+            let input = elems(n);
+            let core = <Blake3Core8 as Hash<Goldilocks>>::linear_hash(&input);
+            let krate = <Blake3_8 as Hash<Goldilocks>>::linear_hash(&input);
+            assert_eq!(core, krate, "leaf hash of {n} elements differs between the backends");
+        }
+
+        let input: [Goldilocks; 8] = core::array::from_fn(|i| elems(8)[i]);
+        let mut a = input;
+        let mut b = input;
+        <Blake3_8 as Hash<Goldilocks>>::hash(&mut a);
+        <Blake3Core8 as Hash<Goldilocks>>::hash(&mut b);
+        assert_eq!(a, b, "node compression differs between the backends");
+    }
+
+    /// `calculate_root_from_proof` feeds each level's output in as the next level's input, so a
+    /// divergence compounds rather than showing up once.
+    #[test]
+    fn the_two_backends_agree_on_a_merkle_root_and_path() {
+        use crate::merkle::{calculate_root_from_proof, partial_merkle_tree};
+
+        // 16 leaves of 4 cells: depth 4, so the path runs four compressions.
+        let leaves = elems(16 * 4);
+        let root_krate = partial_merkle_tree::<Goldilocks, Blake3_8>(&leaves, 16, 2);
+        let root_core = partial_merkle_tree::<Goldilocks, Blake3Core8>(&leaves, 16, 2);
+        assert_eq!(root_krate, root_core, "merkle roots differ between the backends");
+
+        // Same starting digest and siblings through each backend.
+        let mp: Vec<Vec<Goldilocks>> =
+            (0..4).map(|lvl| elems(4).iter().map(|x| *x + Goldilocks::from_u64(lvl)).collect()).collect();
+        let start: [Goldilocks; 8] = core::array::from_fn(|i| if i < 4 { leaves[i] } else { Goldilocks::ZERO });
+
+        let mut v_krate = start;
+        let mut i_krate = 5u64;
+        calculate_root_from_proof::<Goldilocks, Blake3_8>(&mut v_krate, &mp, &mut i_krate, 0, 2);
+
+        let mut v_core = start;
+        let mut i_core = 5u64;
+        calculate_root_from_proof::<Goldilocks, Blake3Core8>(&mut v_core, &mp, &mut i_core, 0, 2);
+
+        assert_eq!(v_krate, v_core, "recomputed root from a merkle path differs between the backends");
+    }
+
     /// The C++ identity this whole impl rests on: `permuteTrunc(in[8])` and `linearHash(in, 8)` are
     /// the same `hash_le64` call. If the node hash ever stops being the leaf hash of eight
     /// elements, every Merkle path in a blake3 proof silently stops verifying.

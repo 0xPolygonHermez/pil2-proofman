@@ -9,6 +9,10 @@ mod field;
 mod poseidon2;
 mod poseidon1;
 mod hash;
+// Guest-only in production; `test` keeps its equivalence tests against the `blake3` crate running
+// on the host, which is the only thing holding the two implementations identical.
+#[cfg(any(all(target_os = "zkvm", target_vendor = "zisk"), test))]
+mod blake3_core;
 mod blake3_transcript;
 mod merkle;
 mod transcript;

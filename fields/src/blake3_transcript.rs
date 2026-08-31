@@ -5,6 +5,10 @@
 //! construction, so the verifier side is correct by definition and can serve as
 //! the oracle for the C++ prover (`TranscriptGL` + `blake3core::Hasher`).
 //!
+//! Inside the ZisK guest it wraps [`crate::blake3_core`] instead, which is the same construction
+//! over the `blake3f` precompile. Only the `use` differs; `blake3_core`'s tests keep the two
+//! identical.
+//!
 //! Why this is not a `Transcript<F, H: Hash<F>>`: that type is a sponge, with
 //! `WIDTH`/`RATE`/`CAPACITY` and a state carried *as block content*. BLAKE3
 //! carries its state in the chaining value, which no sponge signature can
@@ -15,12 +19,17 @@ use alloc::vec::Vec;
 
 use crate::PrimeField64;
 
+#[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
+use crate::blake3_core::Hasher as Blake3Hasher;
+#[cfg(not(all(target_os = "zkvm", target_vendor = "zisk")))]
+use ::blake3::Hasher as Blake3Hasher;
+
 const GL_P: u64 = 0xFFFFFFFF00000001;
 
 /// One conditional subtract, matching `blake3core::to_canonical`. A u64 is
 /// always below 2p, so this is a full reduction.
 #[inline]
-fn canon(x: u64) -> u64 {
+pub(crate) fn canon(x: u64) -> u64 {
     if x >= GL_P {
         x - GL_P
     } else {
@@ -40,7 +49,7 @@ pub const BLAKE3_TRANSCRIPT_STATE_WORDS: usize = 4;
 pub const BLAKE3_TRANSCRIPT_XOF_WORDS: usize = XOF_BLOCK_WORDS;
 
 pub struct Blake3Transcript<F: PrimeField64> {
-    hasher: ::blake3::Hasher,
+    hasher: Blake3Hasher,
     /// The XOF output block currently loaded.
     xof: [u64; XOF_BLOCK_WORDS],
     /// Words already consumed from `xof`.
@@ -61,7 +70,7 @@ impl<F: PrimeField64> Default for Blake3Transcript<F> {
 impl<F: PrimeField64> Blake3Transcript<F> {
     pub fn new() -> Self {
         Blake3Transcript {
-            hasher: ::blake3::Hasher::new(),
+            hasher: Blake3Hasher::new(),
             xof: [0u64; XOF_BLOCK_WORDS],
             offset: 0,
             block: 0,
