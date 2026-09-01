@@ -769,7 +769,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // trips (or silently under-fills) the pool-integrity check in `reset()` below.
         for rx in [&self.compressor_witness_rx, &self.rec1_witness_rx, &self.rec2_witness_rx] {
             while let Ok(mut w) = rx.try_recv() {
-                drop(self.memory_handler_recursive_witness.adopt_proof_trace(&mut w));
+                drop(self.memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut w.trace)));
             }
         }
 
@@ -2456,7 +2456,6 @@ where
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
             setups_vadcop.max_trace_size,
-            setups_vadcop.max_trace_size_compressor,
             signal_pool,
             recursive_witness_threads,
         ));
@@ -3243,7 +3242,7 @@ where
                                     // Witness channels live on `self`, so a failed send means the
                                     // pipeline is torn down mid-run. Return the witness buffer to its
                                     // pool (else it leaks in the SendError), and surface it.
-                                    drop(memory_handler_recursive_witness.adopt_proof_trace(&mut returned));
+                                    drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut returned.trace)));
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
@@ -3562,7 +3561,7 @@ where
                             // pool) is not reached on this error path, so return it here — adopt-then-drop.
                             drop(
                                 memory_handler_recursive_witness
-                                    .adopt_proof_trace(&mut witness),
+                                    .adopt_trace(std::mem::take(&mut witness.trace)),
                             );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
@@ -4373,7 +4372,7 @@ where
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
                         // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
                         drop(
-                            memory_handler_recursive_witness.adopt_proof_trace(&mut witness),
+                            memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)),
                         );
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
@@ -4570,7 +4569,7 @@ where
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Return the received witness buffer to its pool before bailing.
                         drop(
-                            memory_handler_recursive_witness.adopt_proof_trace(&mut witness),
+                            memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)),
                         );
                         break;
                     }
@@ -4590,7 +4589,7 @@ where
                             // reached here; return it so the recursive-witness pool doesn't shrink.
                             drop(
                                 memory_handler_recursive_witness
-                                    .adopt_proof_trace(&mut witness),
+                                    .adopt_trace(std::mem::take(&mut witness.trace)),
                             );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
@@ -4675,7 +4674,7 @@ where
                             // Every rec2 worker has exited, so the pipeline is torn down mid-run.
                             // Return the witness buffer to its pool (else it leaks inside the
                             // SendError and the pool comes back short) before surfacing the failure.
-                            drop(memory_handler_recursive_witness.adopt_proof_trace(&mut returned));
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut returned.trace)));
                             cancellation_info_clone.write_recover().cancel(None);
                             break;
                         }

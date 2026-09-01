@@ -515,7 +515,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for MemoryHandler<F>
 /// at `n` buffers the merge costs `n` times the difference, not one buffer's worth.
 pub struct MemoryHandlerRecursive<F: PrimeField64 + Send + Sync + 'static> {
     trace: Pool<F>,
-    trace_compressor: Pool<F>,
     signal_values: Option<SignalValuesPool>,
     witness_threads: usize,
     cancelled: Arc<AtomicBool>,
@@ -525,43 +524,27 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// Sizes are the largest any proof kind needs. Counts are the SUM of the two kinds, not the max:
     /// a compressor and a recursive proof can be in flight together, and a pool one buffer short
     /// parks whichever asks second until the other finishes.
-    pub fn new(
-        n_buffers: usize,
-        n_buffers_compressor: usize,
-        buffer_size_trace: usize,
-        buffer_size_trace_compressor: usize,
-    ) -> Self {
-        Self::new_with_signal_pool(
-            n_buffers,
-            n_buffers_compressor,
-            buffer_size_trace,
-            buffer_size_trace_compressor,
-            None,
-            8,
-        )
+    pub fn new(n_buffers: usize, n_buffers_compressor: usize, buffer_size_trace: usize) -> Self {
+        Self::new_with_signal_pool(n_buffers, n_buffers_compressor, buffer_size_trace, None, 8)
     }
 
     pub fn new_with_signal_pool(
         n_buffers: usize,
         n_buffers_compressor: usize,
         buffer_size_trace: usize,
-        buffer_size_trace_compressor: usize,
         signal_pool: Option<(usize, usize, usize)>,
         witness_threads: usize,
     ) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
-        // Trace pools are H2D sources so they are pinned; signalValues is CPU-only scratch.
-        let trace = Pool::new("recursive-trace", n_buffers, buffer_size_trace, true, cancelled.clone());
-        let trace_compressor =
-            Pool::new("compressor-trace", n_buffers_compressor, buffer_size_trace_compressor, true, cancelled.clone());
+        // One pool for every recursive kind, the compressor included. Traces are H2D sources so it
+        // is pinned; signalValues is CPU-only scratch.
+        let n = n_buffers + n_buffers_compressor;
+        let trace = Pool::new("recursive-trace", n, buffer_size_trace, true, cancelled.clone());
 
-        let total = trace.total_bytes() + trace_compressor.total_bytes();
         tracing::info!(
-            "MemoryHandlerRecursive::Total memory for recursive traces: {} = {n_buffers} x trace {} + \
-             {n_buffers_compressor} x compressor trace {}",
-            crate::format_bytes(total as f64),
+            "MemoryHandlerRecursive::Total memory for recursive traces: {} = {n} x trace {}",
+            crate::format_bytes(trace.total_bytes() as f64),
             crate::format_bytes((buffer_size_trace * std::mem::size_of::<F>()) as f64),
-            crate::format_bytes((buffer_size_trace_compressor * std::mem::size_of::<F>()) as f64),
         );
 
         let signal_values = signal_pool.map(|(large_cap, small_cap, n_small)| {
@@ -571,7 +554,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         let witness_threads = witness_threads.max(1);
         tracing::info!("MemoryHandlerRecursive::circom solve threads per recursive witness: {}", witness_threads);
 
-        Self { trace, trace_compressor, signal_values, witness_threads, cancelled }
+        Self { trace, signal_values, witness_threads, cancelled }
     }
 
     /// Unblock any thread parked in a pooled `take()`. Called on the abort path so a failed proof
@@ -604,7 +587,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// handing out unpinned buffers. Each pool's own reset is non-destructive, so continuing past a
     /// failure cannot lose anything.
     pub fn reset(&self) -> ProofmanResult<()> {
-        let results = [("trace", self.trace.reset()), ("trace_compressor", self.trace_compressor.reset())];
+        let results = [("trace", self.trace.reset())];
         // Re-arm AFTER both pool resets: the pools share this flag and each Pool::reset reads it
         // (cancelled-aware outcome), so clearing earlier would re-enable the hard checks mid-teardown.
         self.cancelled.store(false, Ordering::SeqCst);
@@ -625,7 +608,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// Same as [`MemoryHandler::log_wait_summary`], across the recursive pools.
     pub fn log_wait_summary(&self) {
         self.trace.log_wait();
-        self.trace_compressor.log_wait();
         if let Some(pool) = &self.signal_values {
             pool.log_wait();
         }
@@ -638,36 +620,18 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         self.trace.release(buffer)
     }
 
-    /// The compressor's trace is large enough to get its own pool; see `max_trace_size_compressor`.
-    pub fn take_buffer_trace_compressor(&self) -> Vec<F> {
-        self.trace_compressor.take()
-    }
-    pub fn release_buffer_trace_compressor(&self, buffer: Vec<F>) -> ProofmanResult<()> {
-        self.trace_compressor.release(buffer)
-    }
-
     /// Take a recursive-proof trace buffer as a release-on-drop lease (see [`BufferLease`]).
     /// One pool serves every proof kind; see the field.
     pub fn take_trace_lease(&self) -> BufferLease<'_, F> {
         BufferLease { handler: self, buffer: Some(self.trace.take()), pool: RecursivePool::Trace }
     }
 
-    /// [`adopt_trace`] for a witness proof, routing it to the pool its kind was taken from. The
-    /// teardown paths all need this and getting the flag wrong silently shrinks one of the pools.
-    ///
-    /// [`adopt_trace`]: Self::adopt_trace
-    pub fn adopt_proof_trace(&self, proof: &mut crate::Proof<F>) -> BufferLease<'_, F> {
-        let compressor = proof.proof_type == crate::ProofType::Compressor;
-        self.adopt_trace(std::mem::take(&mut proof.trace), compressor)
-    }
-
     /// Adopt an already-taken trace buffer (a `Proof`'s `trace`, taken from the pool when its witness
     /// was generated) into a release-on-drop lease so it returns to its pool on every exit path
     /// instead of leaking on cancel/error. `adopt`, not `take`: the buffer already left the pool.
     /// `compressor` selects the compressor trace pool.
-    pub fn adopt_trace(&self, buffer: Vec<F>, compressor: bool) -> BufferLease<'_, F> {
-        let pool = if compressor { RecursivePool::TraceCompressor } else { RecursivePool::Trace };
-        BufferLease { handler: self, buffer: Some(buffer), pool }
+    pub fn adopt_trace(&self, buffer: Vec<F>) -> BufferLease<'_, F> {
+        BufferLease { handler: self, buffer: Some(buffer), pool: RecursivePool::Trace }
     }
 }
 
@@ -675,7 +639,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
 #[derive(Clone, Copy)]
 enum RecursivePool {
     Trace,
-    TraceCompressor,
 }
 
 /// A recursive-proof buffer that returns itself to its pool when dropped (success, early `?`, or
@@ -708,7 +671,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for BufferLease<'_, F> {
             // fail here (size matches, and the send never blocks — see Pool::release), so it's fine.
             let _ = match self.pool {
                 RecursivePool::Trace => self.handler.release_buffer_trace(buffer),
-                RecursivePool::TraceCompressor => self.handler.release_buffer_trace_compressor(buffer),
             };
         }
     }
@@ -886,20 +848,20 @@ mod tests {
     // so they pass on both backends (CPU register is a no-op; GPU pinning is transparent to accounting).
     type F = Goldilocks;
 
-    fn handler(n: usize, n_comp: usize, size: usize, size_comp: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(n, n_comp, size, size_comp)
+    fn handler(n: usize, n_comp: usize, size: usize) -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new(n, n_comp, size)
     }
 
     #[test]
     fn clean_round_trip_then_reset_succeeds() {
-        let h = handler(2, 1, 8, 4);
-        // Take every buffer out of each pool, then release them all back.
+        let h = handler(2, 1, 8);
+        // One pool holding n + n_comp: take all three out, then release them all back.
         let t0 = h.take_buffer_trace();
         let t1 = h.take_buffer_trace();
-        let tc = h.take_buffer_trace_compressor();
+        let t2 = h.take_buffer_trace();
         h.release_buffer_trace(t0).unwrap();
         h.release_buffer_trace(t1).unwrap();
-        h.release_buffer_trace_compressor(tc).unwrap();
+        h.release_buffer_trace(t2).unwrap();
         // This is the gap-2 invariant: a clean round trip leaves full pools, so the
         // reset wired into ProofMan::reset() passes.
         h.reset().unwrap();
@@ -909,7 +871,7 @@ mod tests {
 
     #[test]
     fn reset_detects_a_leaked_buffer() {
-        let h = handler(2, 0, 8, 0);
+        let h = handler(2, 0, 8);
         // Simulate a leak: a worker took a buffer and never released it (e.g. an early `?` on a
         // non-cancelled path). reset() must surface the short pool rather than paper over it.
         let _leaked = h.take_buffer_trace();
@@ -918,7 +880,7 @@ mod tests {
 
     #[test]
     fn a_short_pool_hands_out_unpooled_buffers_instead_of_parking() {
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 0, 8);
         std::mem::forget(h.take_buffer_trace()); // stranded: never released, address never reused
         assert!(h.reset().is_err(), "the loss is reported");
         // Nothing is left to release, so without the recorded deficit this would park forever.
@@ -931,7 +893,7 @@ mod tests {
 
     #[test]
     fn release_rejects_wrong_size_buffer() {
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 0, 8);
         let _good = h.take_buffer_trace();
         // Release a buffer of the wrong length; the size check rejects it.
         assert!(h.release_buffer_trace(vec![F::ZERO; 7]).is_err());
@@ -942,7 +904,7 @@ mod tests {
         // reset() reports a short pool, but must not DESTROY what came back: dropping the drained
         // buffers would turn "short by one" into "empty", and would free pages that
         // `registered_buffers` still points at, so Pool::drop would unregister freed memory.
-        let h = handler(3, 0, 8, 0);
+        let h = handler(3, 0, 8);
         let leaked = h.take_buffer_trace(); // never released
         assert!(h.reset().is_err(), "a missing buffer must still be reported");
 
@@ -958,28 +920,23 @@ mod tests {
     }
 
     #[test]
-    fn reset_covers_every_pool_even_when_an_earlier_one_fails() {
-        // The compressor pool must be recovered (and `cancelled` cleared) even when the plain trace
-        // pool is short — an early `?` used to skip both.
-        let h = handler(1, 1, 8, 4);
-        let leaked = h.take_buffer_trace();
-        let comp = h.take_buffer_trace_compressor();
-        h.release_buffer_trace_compressor(comp).unwrap();
-
-        assert!(h.reset().is_err(), "the short trace pool is reported");
-        // Compressor pool was still visited and is whole: taking from it must not block.
-        let comp = h.take_buffer_trace_compressor();
-        assert_eq!(comp.len(), 4);
-        h.release_buffer_trace_compressor(comp).unwrap();
-        h.release_buffer_trace(leaked).unwrap();
-        h.reset().expect("all pools whole");
+    fn the_pool_holds_both_kinds_counts_summed() {
+        // Counts are the SUM, not the max: a compressor and a recursive proof can be in flight
+        // together, and a pool one buffer short parks whichever asks second until the other finishes.
+        let h = handler(1, 1, 8);
+        let a = h.take_buffer_trace();
+        let b = h.take_buffer_trace();
+        assert_eq!((a.len(), b.len()), (8, 8));
+        h.release_buffer_trace(a).unwrap();
+        h.release_buffer_trace(b).unwrap();
+        h.reset().expect("pool whole");
     }
 
     #[test]
     fn a_failed_reset_still_clears_the_cancelled_flag() {
         // Left set, `cancelled` makes take() an unbounded fresh allocator handing out unpinned
         // buffers. That must not survive a reset that reported an error.
-        let h = handler(1, 1, 8, 4);
+        let h = handler(1, 1, 8);
         h.cancel();
         let escapee = h.take_buffer_trace(); // the pool's only buffer
         let _ = h.reset(); // cancelled path: warns rather than errors
@@ -996,7 +953,7 @@ mod tests {
         // cancelled `take()` is unregistered, so pooling it would put an unpinned buffer in a pinned
         // pool — and would also push the channel past capacity. It must be dropped instead, while
         // the originals still come back.
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 0, 8);
         let original = h.take_buffer_trace();
         h.cancel();
         let fresh = h.take_buffer_trace();
@@ -1009,20 +966,20 @@ mod tests {
     }
 
     #[test]
-    fn adopt_trace_returns_the_buffer_to_the_right_pool() {
-        // Teardown recovery relies on this: a compressor trace must go back to the compressor pool
-        // (the smallest one), keyed off the proof type, or that pool silently shrinks.
-        let h = handler(1, 1, 8, 4);
-        let plain = h.take_buffer_trace();
-        let comp = h.take_buffer_trace_compressor();
-        drop(h.adopt_trace(plain, false));
-        drop(h.adopt_trace(comp, true));
-        h.reset().expect("both trace pools whole after adopt-then-drop");
+    fn adopt_trace_returns_the_buffer_on_drop() {
+        // Teardown recovery relies on this: an adopted buffer must come back when the lease drops,
+        // or the pool silently shrinks on every cancelled proof.
+        let h = handler(1, 1, 8);
+        let a = h.take_buffer_trace();
+        let b = h.take_buffer_trace();
+        drop(h.adopt_trace(a));
+        drop(h.adopt_trace(b));
+        h.reset().expect("pool whole after adopt-then-drop");
     }
 
     #[test]
     fn cancel_unblocks_take_and_skips_reset_checks() {
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 0, 8);
         // Empty the pool, then cancel. A subsequent take must return a fresh buffer
         // instead of blocking forever, and reset must not flag the (now short) pool.
         let _taken = h.take_buffer_trace();
@@ -1035,7 +992,7 @@ mod tests {
     // ---- signalValues pool ----
 
     fn signal_handler(large: usize, small: usize, n_small: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new_with_signal_pool(1, 0, 8, 0, Some((large, small, n_small)), 4)
+        MemoryHandlerRecursive::new_with_signal_pool(1, 0, 8, Some((large, small, n_small)), 4)
     }
 
     #[test]
@@ -1066,7 +1023,7 @@ mod tests {
     #[test]
     fn signal_pool_absent_yields_empty_buffer() {
         // No pool configured => empty Vec (the null sentinel); releasing it is a no-op.
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 0, 8);
         let buf = h.take_buffer_signal_values(1024);
         assert!(buf.is_empty());
         h.release_buffer_signal_values(buf);

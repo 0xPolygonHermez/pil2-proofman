@@ -48,18 +48,19 @@ pub fn is_preload_fixed(
 
 /// Columns the recursion's HOST trace buffer needs for one air.
 ///
-/// On GPU it only stages the exec map's width for `widenCompactWitnessGPU` to widen device-side; on
-/// CPU nothing leases it, because the fill goes straight into the prover's own cm1 slot. Must agree
-/// with `recursion_trace_stride`, which decides the fill from the same exec header -- sizing narrow
-/// while the fill goes wide overruns the buffer.
+/// On GPU it only stages the exec map's width for `widenCompactWitnessGPU` to widen device-side. On
+/// CPU it is the air's full width: since the solve and the scatter are fused, `generate_witness`
+/// takes a pooled buffer before the prover buffer is in scope, so the fill can no longer go straight
+/// into the prover's own cm1 slot. Must agree with `recursion_trace_stride`, which decides the fill
+/// from the same exec header -- sizing narrow while the fill goes wide overruns the buffer.
 ///
 /// One function because three call sites decide this, and the one that did it inline sized the whole
 /// pool at the air's full width while the other two were compact.
 pub fn recursion_staging_cols<F: PrimeField64>(setup: &Setup<F>, gpu: bool) -> u64 {
-    if !gpu {
-        return 0;
-    }
     let cm1 = setup.stark_info.map_sections_n["cm1"];
+    if !gpu {
+        return cm1;
+    }
     setup.exec_data.as_deref().map(|e| exec_header(e).map_cols).filter(|&m| m > 0 && m < cm1).unwrap_or(cm1)
 }
 
@@ -70,9 +71,6 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
     pub max_trace_size: usize,
-    /// The compressor keeps its own pool: its trace is large enough that sizing every recursive
-    /// buffer from it multiplies the pool several times over.
-    pub max_trace_size_compressor: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
@@ -251,14 +249,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
-            // One figure for every recursive kind EXCEPT the compressor, which keeps its own pool
-            // below: since the solve and the scatter are fused, a trace buffer is now held from
-            // witness generation all the way to the H2D copy, so queued and proving work draw from
-            // the same pool -- and the compressor's buffer is large enough that sizing every buffer
-            // from it is what made the pool several times what it holds.
+            // One figure for every recursive proof kind, compressor included: they share one pool
+            // (see MemoryHandlerRecursive::trace), so the largest is what it has to hold.
             let max_trace_size = sctx_recursive1
                 .max_trace_size
                 .max(sctx_recursive2.max_trace_size)
+                .max(sctx_compressor.max_trace_size)
                 // Their STAGING width, not `vadcop_final_trace_size` -- that one is the prover
                 // buffer's and stays full.
                 .max(
@@ -268,8 +264,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| {
                     (recursion_staging_cols(s, gpu) * (1 << s.stark_info.stark_struct.n_bits)) as usize
                 }));
-
-            let max_trace_size_compressor = sctx_compressor.max_trace_size;
 
             Ok(SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
@@ -286,7 +280,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_pinned_proof_size,
                 max_n_bits_ext,
                 max_trace_size,
-                max_trace_size_compressor,
                 total_const_pols_size,
                 total_const_tree_size,
                 recurser_const_slot_size,
@@ -310,7 +303,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
                 max_trace_size: 0,
-                max_trace_size_compressor: 0,
             })
         }
     }

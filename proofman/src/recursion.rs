@@ -340,8 +340,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     // The trace already left the pool at witness-gen time (solve+scatter is fused), so adopt it into
     // a release-on-drop lease: it returns to its pool on every exit path (`?`, downstream error,
     // panic) instead of leaking when the proof is dropped on cancel.
-    let mut trace = memory_handler_recursive_witness
-        .adopt_trace(std::mem::take(&mut witness.trace), setup.setup_type == ProofType::Compressor);
+    let mut trace = memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace));
     let publics = std::mem::take(&mut witness.publics);
 
     // The hash gates map only their boundary; the rest is rebuilt from it. On GPU that happens
@@ -533,7 +532,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                                 // return it here instead of leaking.
                                 drop(
                                     memory_handler_recursive_witness
-                                        .adopt_trace(std::mem::take(&mut witness_proof.trace), false),
+                                        .adopt_trace(std::mem::take(&mut witness_proof.trace)),
                                 );
                                 return Err(e);
                             }
@@ -684,7 +683,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
             drop(
-                memory_handler_recursive_witness.adopt_proof_trace(&mut witness_final_proof),
+                memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)),
             );
             return Err(e);
         }
@@ -762,7 +761,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
             drop(
-                memory_handler_recursive_witness.adopt_proof_trace(&mut witness_final_proof),
+                memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)),
             );
             return Err(e);
         }
@@ -834,7 +833,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let (trace, publics) = generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &updated_proof)?;
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_WITNESS);
     // Release-on-drop lease: returns to the pool on every exit path (see generate_recursive_proof).
-    let mut trace = memory_handler_recursive_witness.adopt_trace(trace, false);
+    let mut trace = memory_handler_recursive_witness.adopt_trace(trace);
 
     // Host-side unconditionally: gen_recursive_proof_final_c has no device expander, and
     // RecursiveF is a bn128 circuit whose exec carries no bands, so this is a no-op there.
@@ -1187,10 +1186,7 @@ fn generate_witness<F: PrimeField64>(
     // trace, held until `generate_recursive_proof` finishes its H2D copy — so queued and
     // proving work now share this one pool (pre-fusion they had one each).
     timer_start_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
-    let mut trace: Vec<F> = match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_trace_compressor(),
-        _ => memory_handler_recursive_witness.take_buffer_trace(),
-    };
+    let mut trace: Vec<F> = memory_handler_recursive_witness.take_buffer_trace();
     timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
     proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
@@ -1203,10 +1199,7 @@ fn generate_witness<F: PrimeField64>(
     let needed = (n_committed_pols * n_rows) as usize;
     if trace.len() < needed {
         let got = trace.len();
-        let released = match setup.setup_type {
-            ProofType::Compressor => memory_handler_recursive_witness.release_buffer_trace_compressor(trace),
-            _ => memory_handler_recursive_witness.release_buffer_trace(trace),
-        };
+        let released = memory_handler_recursive_witness.release_buffer_trace(trace);
         if let Err(e) = released {
             tracing::warn!("Failed to return trace buffer to pool: {e}");
         }
@@ -1236,10 +1229,7 @@ fn generate_witness<F: PrimeField64>(
     drop(state);
 
     if res != 0 {
-        let released = match setup.setup_type {
-            ProofType::Compressor => memory_handler_recursive_witness.release_buffer_trace_compressor(trace),
-            _ => memory_handler_recursive_witness.release_buffer_trace(trace),
-        };
+        let released = memory_handler_recursive_witness.release_buffer_trace(trace);
         if let Err(e) = released {
             tracing::warn!("Failed to return trace buffer to pool: {e}");
         }
