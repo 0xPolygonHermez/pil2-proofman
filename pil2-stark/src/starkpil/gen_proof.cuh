@@ -36,38 +36,45 @@ void calculateWitnessExpr_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPa
     }
 }
 
+// The im_col/im_airval hints do not depend on `prod`: they read cm1 + stage-2 challenges and write
+// the same "reference" destinations either way, so evaluating them inside calculateWitnessSTD_gpu ran
+// the whole set twice whenever an AIR has both a gprod and a gsum column.
+void calculateImHints_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+    if(setupCtx.expressionsBin.getNumberHintIdsByName("gprod_col") == 0 && setupCtx.expressionsBin.getNumberHintIdsByName("gsum_col") == 0) return;
+
+    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
+    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
+    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
+    if(nImTotalHints == 0) return;
+
+    uint64_t imHints[nImTotalHints];
+    setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
+    setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
+    std::string hintFieldDest[nImTotalHints];
+    std::string hintField1[nImTotalHints];
+    std::string hintField2[nImTotalHints];
+    HintFieldOptions hintOptions1[nImTotalHints];
+    HintFieldOptions hintOptions2[nImTotalHints];
+    for(uint64_t i = 0; i < nImTotalHints; i++) {
+        hintFieldDest[i] = "reference";
+        hintField1[i] = "numerator";
+        hintField2[i] = "denominator";
+        HintFieldOptions options1;
+        HintFieldOptions options2;
+        options2.inverse = true;
+        hintOptions1[i] = options1;
+        hintOptions2[i] = options2;
+    }
+
+    multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+}
+
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
     setupCtx.expressionsBin.getHintIdsByName(hint, name);
-
-    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
-    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
-    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
-    if(nImTotalHints > 0) {
-        uint64_t imHints[nImHints + nImHintsAirVals];
-        setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
-        setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
-        std::string hintFieldDest[nImTotalHints];
-        std::string hintField1[nImTotalHints];
-        std::string hintField2[nImTotalHints];
-        HintFieldOptions hintOptions1[nImTotalHints];
-        HintFieldOptions hintOptions2[nImTotalHints];
-        for(uint64_t i = 0; i < nImTotalHints; i++) {
-            hintFieldDest[i] = "reference";
-            hintField1[i] = "numerator";
-            hintField2[i] = "denominator";
-            HintFieldOptions options1;
-            HintFieldOptions options2;
-            options2.inverse = true;
-            hintOptions1[i] = options1;
-            hintOptions2[i] = options2;
-        }
-
-        multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
@@ -256,6 +263,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         }
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
+    calculateImHints_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
