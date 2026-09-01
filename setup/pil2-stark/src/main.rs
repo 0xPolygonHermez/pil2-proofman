@@ -60,7 +60,7 @@ struct SetupArgs {
     #[arg(short = 'r', long)]
     recursive: bool,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     stark_structs: Option<String>,
 
@@ -120,7 +120,7 @@ struct StatsArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     starkstructs: Option<String>,
 

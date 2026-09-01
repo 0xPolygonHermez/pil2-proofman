@@ -511,7 +511,7 @@ mod tests {
     fn blake3_defaults_to_more_grinding_than_poseidon() {
         let settings = StarkSettings::default();
         assert_eq!(
-            generate_stark_struct(&settings, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&settings, 20, "Blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
             24
         );
         assert_eq!(
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn a_binary_tree_defaults_to_four_levels() {
         let settings = StarkSettings::default();
-        let ss = generate_stark_struct(&settings, 20, "blake3");
+        let ss = generate_stark_struct(&settings, 20, "Blake3");
         assert_eq!(ss.merkle_tree_arity, 2);
         assert_eq!(ss.last_level_verification, 4);
     }
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn an_explicit_llv_overrides_the_default() {
         let settings = StarkSettings { last_level_verification: Some(1), ..Default::default() };
-        assert_eq!(generate_stark_struct(&settings, 20, "blake3").last_level_verification, 1);
+        assert_eq!(generate_stark_struct(&settings, 20, "Blake3").last_level_verification, 1);
     }
 
     #[test]
@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_blake3_forces_binary_geometry() {
-        let ss = generate_stark_struct(&StarkSettings::default(), 20, "blake3");
+        let ss = generate_stark_struct(&StarkSettings::default(), 20, "Blake3");
         assert_eq!(ss.merkle_tree_arity, 2);
         assert_eq!(ss.transcript_arity, 2);
         assert!(ss.merkle_tree_custom); // GL value; stored by GL trees/transcripts but only consumed on the BN128 path
@@ -627,7 +627,7 @@ mod tests {
     #[should_panic(expected = "only support merkle tree arity")]
     fn test_blake3_rejects_conflicting_arity_setting() {
         let settings = StarkSettings { merkle_tree_arity: Some(4), ..Default::default() };
-        generate_stark_struct(&settings, 20, "blake3");
+        generate_stark_struct(&settings, 20, "Blake3");
     }
 
     #[test]
@@ -684,7 +684,7 @@ mod tests {
             16
         );
         assert_eq!(
-            generate_stark_struct(&miss, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&miss, 20, "Blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
             24
         );
         assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);

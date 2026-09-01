@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn every_generated_geometry_reaches_the_security_target() {
         use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
-        for hash in ["Poseidon1", "Poseidon2", "blake3"] {
+        for hash in ["Poseidon1", "Poseidon2", "Blake3"] {
             for n_bits in [10usize, 17, 20, 24] {
                 for blowup in 1usize..=4 {
                     let settings = StarkSettings {
