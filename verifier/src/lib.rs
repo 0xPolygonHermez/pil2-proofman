@@ -151,6 +151,9 @@ pub fn verifier(hash_id: &str) -> &'static dyn Verifier {
         "Poseidon1" => &Poseidon1Verifier,
         "Poseidon2" => &Poseidon2Verifier,
         "blake3" => &Blake3Verifier,
+        // The hash impls exist; verifier/src/sha256/ does not, because only a recursive setup
+        // emits it and sha256 has no PIL gates yet.
+        "sha256" => panic!("sha256 has no generated native verifier yet"),
         other => panic!("Unknown hash family: {other:?}"),
     }
 }

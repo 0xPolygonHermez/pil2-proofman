@@ -199,6 +199,9 @@ bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, Goldilocks::Eleme
     case HashFamily::Blake3:
         Blake3Goldilocks::linearHash(value, v.data(), v.size());
         break;
+    case HashFamily::Sha256:
+        Sha256Goldilocks::linearHash(value, v.data(), v.size());
+        break;
     }
     
 
@@ -325,6 +328,27 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
         Blake3Goldilocks::linearHash(value, inputs, arity * nFieldElements);
         break;
     }
+    case HashFamily::Sha256: {
+        // nodeHash, NOT linearHash: sha256's leaf and node hashes are different maps.
+        // `inputs` is sized for the forced arity-2 geometry; anything wider would smash the stack
+        // before nodeHash could reject it. (The blake3 branch above has the same exposure.)
+        if (arity * nFieldElements > 8) {
+            zklog.error("MerkleTreeGL::calculateRootFromProof: sha256 is arity 2 only, got arity "
+                        + std::to_string(arity));
+            exitProcess();
+            exit(-1);
+        }
+        Goldilocks::Element inputs[8];
+        for (uint64_t i = 0; i < arity * nFieldElements; ++i) inputs[i] = Goldilocks::zero();
+        uint64_t p = 0;
+        for (uint64_t i = 0; i < arity; ++i) {
+            if (i == currIdx) continue;
+            std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
+        }
+        std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
+        Sha256Goldilocks::nodeHash(value, inputs, arity * nFieldElements);
+        break;
+    }
     }
 
     calculateRootFromProof(value, mp, idx, offset + 1);
@@ -352,6 +376,9 @@ void MerkleTreeGL::merkelize()
         break;
     case HashFamily::Blake3:
         Blake3Goldilocks::merkletree(nodes, source, width, height, arity);
+        break;
+    case HashFamily::Sha256:
+        Sha256Goldilocks::merkletree(nodes, source, width, height, arity);
         break;
     }
 }

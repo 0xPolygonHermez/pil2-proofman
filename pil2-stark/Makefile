@@ -112,6 +112,11 @@ endif
 TARGET_BCT := bctree
 TARGET_BIN_FILE := binfile
 TARGET_STARKS_LIB := libstarks.a
+# starkpil-level CPU tests: link against the built library rather than recompiling it.
+TARGET_TEST_STARKPIL := teststarkpil
+TEST_STARKPIL_SRCS := $(wildcard ./src/starkpil/tests/*_cpu.cpp)
+TARGET_TEST_STARKPIL_GPU := teststarkpilgpu
+TEST_STARKPIL_GPU_SRCS := $(wildcard ./src/starkpil/tests/*_gpu.cu)
 TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
@@ -230,8 +235,12 @@ else
     # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
+# ./src/starkpil is globbed whole, which would sweep the test sources into the library and drag
+# gtest symbols into every consumer.
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/tests/%,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/tests/%,$(SRCS_STARKS_LIB_GPU))
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -291,6 +300,14 @@ starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 
 starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+
+teststarkpilgpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(NVCC) $(NVCCFLAGS) $(INC_FLAGS) $(TEST_STARKPIL_GPU_SRCS) -o $(BUILD_DIR)/$(TARGET_TEST_STARKPIL_GPU) \
+	    $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU) $(LDFLAGS_GPU) -Xcompiler -fopenmp -lgmpxx -lgtest
+
+teststarkpil: $(LIB_DIR)/$(TARGET_STARKS_LIB)
+	$(CXX) $(CXXFLAGS) $(INC_FLAGS) $(TEST_STARKPIL_SRCS) -o $(BUILD_DIR)/$(TARGET_TEST_STARKPIL) \
+	    $(LIB_DIR)/$(TARGET_STARKS_LIB) $(LDFLAGS) -lgmpxx -lgtest -lgtest_main
 
 binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
 
@@ -378,7 +395,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu
+.PHONY: teststarkpil teststarkpilgpu clean clean_cpu clean_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)

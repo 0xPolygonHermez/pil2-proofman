@@ -6,6 +6,7 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "blake3_goldilocks.hpp"
+#include "sha256_goldilocks.hpp"
 #include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
 #include <math.h>
@@ -105,6 +106,9 @@ public:
             break;
         case HashFamily::Blake3:
             Blake3Goldilocks::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+            break;
+        case HashFamily::Sha256:
+            Sha256Goldilocks::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
             break;
         }
 

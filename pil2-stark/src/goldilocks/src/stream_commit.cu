@@ -7,6 +7,7 @@
 #include "cuda_utils.cuh"
 #include "poseidon_goldilocks_constants.hpp"
 #include "blake3_goldilocks.cuh"
+#include "sha256_goldilocks.cuh"
 
 // ===========================================================================
 // Configuration and family contracts
@@ -28,6 +29,8 @@ static_assert(Blake3GoldilocksGPU::CAPACITY == SC_DIGEST,
 // (see blake3core::hash_le64).
 static_assert(SC_MAX_COLS <= blake3core::CHUNK_U64,
               "blake3 slot absorb assumes a single chunk per row");
+static_assert(Sha256GoldilocksGPU::CAPACITY == SC_DIGEST,
+              "sha256 digest must match the slot digest width");
 
 // ===========================================================================
 // Shared kernels: packed-witness unpack (family-agnostic)
@@ -317,6 +320,104 @@ __global__ static void scBlake3NodeKernel(uint64_t nextN, uint64_t nextIndex, ui
 }
 
 // ===========================================================================
+// sha256 kernels (64-byte blocks, arity-2 trees)
+// ===========================================================================
+
+// sha256 counterpart of scBlake3AbsorbChunkKernel. Same carry discipline: the
+// running state is 8 u32 = 4 u64, held RAW in the state columns (pack4 both
+// byte-swaps and reduces mod p, which is lossy on an intermediate state), and
+// packed to the digest only on the final block.
+//
+// The one structural difference from blake3 is FIPS padding, which has no
+// counterpart in blake3's flag-based framing: the final chunk emits the 0x80
+// terminator and the 64-bit length, and pays a SECOND compression when they do
+// not fit alongside the data (cc == 7 leaves no room for the length, cc == 8
+// leaves no room for either). Mirrors sha256core::hash_le64 exactly, so the slot
+// root is bit-identical to sha_linearHashKernel's.
+__global__ static void scSha256AbsorbChunkKernel(const gl64_t *__restrict__ rate,
+                                                 gl64_t *__restrict__ cap,
+                                                 uint32_t cc, bool first, bool last,
+                                                 uint64_t nRows, uint64_t totalCols)
+{
+    const uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nRows) return;
+
+    uint32_t h[8];
+    if (first) {
+#pragma unroll
+        for (int i = 0; i < 8; ++i) h[i] = sha256core::sha_iv(i);
+    } else {
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            uint64_t w = ((const uint64_t *)cap)[(uint64_t)i * nRows + tid];
+            h[2 * i]     = (uint32_t)w;
+            h[2 * i + 1] = (uint32_t)(w >> 32);
+        }
+    }
+
+    const uint64_t total_bits = totalCols * 64ull;
+    // The terminator and the 8-byte length need 9 spare bytes after the data.
+    const bool padHere = last && (cc <= 6u);
+
+    uint32_t W[16];
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+        uint32_t lo = 0, hi = 0;
+        if ((uint32_t)k < cc) {
+            // Canonicalize: the verifier re-hashes the mod-p value from the proof.
+            const uint64_t v = sha256core::to_canonical(((const uint64_t *)rate)[(uint64_t)k * nRows + tid]);
+            lo = sha256core::bswap32((uint32_t)v);
+            hi = sha256core::bswap32((uint32_t)(v >> 32));
+        } else if ((uint32_t)k == cc && last) {
+            lo = 0x80000000u;   // fits only when cc < 8
+        }
+        W[2 * k]     = lo;
+        W[2 * k + 1] = hi;
+    }
+    if (padHere) {
+        W[14] = (uint32_t)(total_bits >> 32);
+        W[15] = (uint32_t)total_bits;
+    }
+    sha256core::compress_in_place(h, W);
+
+    if (last && !padHere) {
+        // cc == 7: the 0x80 went in above, only the length is left.
+        // cc == 8: the data block was full, so both go here.
+        sha256core::fill_block_le64(W, nullptr, 0u, /*pad_start=*/(cc == 8u), /*with_len=*/true, total_bits);
+        sha256core::compress_in_place(h, W);
+    }
+
+    if (last) {
+        uint64_t dig[4];
+        sha256core::pack4(h, dig);
+#pragma unroll
+        for (int i = 0; i < 4; ++i)
+            ((uint64_t *)cap)[(uint64_t)i * nRows + tid] = dig[i];
+    } else {
+#pragma unroll
+        for (int i = 0; i < 4; ++i)
+            ((uint64_t *)cap)[(uint64_t)i * nRows + tid] =
+                (uint64_t)h[2 * i] | ((uint64_t)h[2 * i + 1] << 32);
+    }
+}
+
+// sha256 node: node_hash, NOT hash_le64 -- internal nodes are the
+// domain-separated fixed-length compression. Identical to sha_merkleNodeKernel
+// so the slot tree matches Sha256GoldilocksGPU::merkletree bit-for-bit.
+__global__ static void scSha256NodeKernel(uint64_t nextN, uint64_t nextIndex, uint64_t pending,
+                                          uint32_t arity, uint64_t *cursor)
+{
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nextN) return;
+    uint64_t base = nextIndex + tid * (uint64_t)arity * 4ull;
+    uint64_t dig[4];
+    sha256core::node_hash(&cursor[base], arity * 4u, dig);
+    uint64_t *o = &cursor[nextIndex + (pending + tid) * 4ull];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) o[i] = dig[i];
+}
+
+// ===========================================================================
 // Shared tree helpers and the slot driver
 // ===========================================================================
 
@@ -347,7 +448,10 @@ static void scReduceTree(uint64_t *d_tree, uint64_t nLeaves, uint32_t arity,
                                          extraZeros * SC_DIGEST * 8, s));
         uint32_t tpb = (nextN < SC_TPB) ? (uint32_t)nextN : SC_TPB;
         uint32_t blks = (uint32_t)((nextN + SC_TPB - 1) / SC_TPB);
-        if (hash == StreamCommitHash::Blake3)
+        if (hash == StreamCommitHash::Sha256)
+            scSha256NodeKernel<<<blks, tpb, 0, s>>>(nextN, nextIndex,
+                                                    pending + extraZeros, arity, d_tree);
+        else if (hash == StreamCommitHash::Blake3)
             scBlake3NodeKernel<<<blks, tpb, 0, s>>>(nextN, nextIndex,
                                                     pending + extraZeros, arity, d_tree);
         else
@@ -374,9 +478,10 @@ static uint64_t scTreeNumElements(uint64_t nLeaves, uint32_t arity)
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash hash)
 {
     uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
-    const uint32_t wsCols = (hash == StreamCommitHash::Blake3)
-                                ? blake3core::BLOCK_U64 + SC_DIGEST
-                                : P16::SPONGE_WIDTH;
+    // blake3 and sha256 share the 64-byte-block working set: 8 data + 4 state.
+    const uint32_t wsCols = (hash == StreamCommitHash::Poseidon1)
+                                ? P16::SPONGE_WIDTH
+                                : blake3core::BLOCK_U64 + SC_DIGEST;
     return SC_MAX_COLS + N * dims.wordsPerRow + (uint64_t)wsCols * NExt + N;
 }
 
@@ -394,9 +499,11 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                     dims.indexBits == 0 || dims.indexBits > 64))
         return -4;
 
-    const bool b3 = (hash == StreamCommitHash::Blake3);
-    const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
-    const uint32_t chunkCols = b3 ? blake3core::BLOCK_U64 : P16::RATE;
+    const bool b3  = (hash == StreamCommitHash::Blake3);
+    const bool sha = (hash == StreamCommitHash::Sha256);
+    const bool blk = b3 || sha;   // 64-byte-block families: arity 2, 8-column chunks
+    const uint32_t arity = blk ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
+    const uint32_t chunkCols = blk ? blake3core::BLOCK_U64 : P16::RATE;
     const uint32_t dataCols = chunkCols;  // data region = one chunk, per family
 
     const uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
@@ -405,7 +512,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // arity 4 needs 16/3*NExt < 12*NExt, arity 2 needs 8*NExt - 4 <= 8*NExt.
     if (treeElems > (uint64_t)dataCols * NExt) return -3;
 
-    if (!b3) scPoseidon1EnsureConstants();
+    if (!blk) scPoseidon1EnsureConstants();
 
     // Slot layout (see streamCommitSlotElems).
     uint64_t *d_widths = (uint64_t *)slotBase;
@@ -451,7 +558,10 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
         ntt.ldeColMajor(d_rate, d_rate, dims.nBits, dims.nBitsExt, cc, stream, false, d_scratch, N);
-        if (b3)
+        if (sha)
+            scSha256AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
+                d_rate, d_cap, cc, k == 0, k == nChunks - 1, NExt, dims.nCols);
+        else if (b3)
             scBlake3AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
                 d_rate, d_cap, cc, k == 0, k == nChunks - 1, NExt);
         else

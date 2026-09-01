@@ -12,6 +12,7 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "blake3_goldilocks.hpp"
+#include "sha256_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
@@ -21,6 +22,7 @@ inline void runGrinding(uint64_t &nonce,
         case HashFamily::Poseidon1: PoseidonGoldilocks<8>::grinding(nonce, challenge, powBits); break;
         case HashFamily::Poseidon2: Poseidon2GoldilocksGrinding::grinding(nonce, challenge, powBits); break;
         case HashFamily::Blake3:    Blake3Goldilocks::grinding(nonce, challenge, powBits); break;
+        case HashFamily::Sha256:    Sha256Goldilocks::grinding(nonce, challenge, powBits); break;
         default: break;
     }
 }
@@ -31,6 +33,7 @@ inline void runGrindingPermute(Goldilocks::Element (&out)[8],
         case HashFamily::Poseidon1: PoseidonGoldilocks<8>::permute(out, in, PoseidonMode::Scalar);   break;
         case HashFamily::Poseidon2: Poseidon2Goldilocks<8>::permute(out, in, Poseidon2Mode::Scalar); break;
         case HashFamily::Blake3:    Blake3Goldilocks::permute(out, in); break;
+        case HashFamily::Sha256:    Sha256Goldilocks::permute(out, in); break;
         default: break;
     }
 }

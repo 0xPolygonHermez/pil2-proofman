@@ -6,9 +6,9 @@
 
 use proofman_common::hash_family::{sponge_rate, transcript_out_size, transcript_pending_size, DIGEST_SIZE};
 
-/// Goldilocks words in one BLAKE3 block: 64 bytes at 8 bytes each. The transcript's absorb
-/// rate, since a streaming BLAKE3 compresses once per filled block.
-const BLAKE3_ABSORB_WORDS: u64 = 8;
+/// Goldilocks words in one 64-byte compression block, for BLAKE3 and SHA-256 alike: the
+/// transcript's absorb rate, since a streaming hash compresses once per filled block.
+const COMPRESSION_ABSORB_WORDS: u64 = 8;
 
 /// Hash invocations, split by what the verifier is doing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -71,11 +71,25 @@ pub fn blake3_compressions(bytes: u64) -> u64 {
     blocks + (chunks - 1)
 }
 
+/// SHA-256 compressions over `bytes` of LEAF data: literal FIPS 180-4, so the 0x80 and the 8-byte
+/// length must fit -- `ceil((bytes + 9) / 64)`.
+///
+/// Costs one more than BLAKE3 only for `w % 8` in {0, 7}; at the other six residues the padding
+/// rides in the tail block for free, and for wide leaves SHA-256 is CHEAPER (BLAKE3 pays a
+/// chunk-tree parent per extra 1024 bytes: 268 against 284 at 2137 words).
+///
+/// Merkle NODES do not come through here -- fixed-length and domain-separated, one compression
+/// each, which is why `merkle_path_permutations` needs no family.
+pub fn sha256_leaf_compressions(bytes: u64) -> u64 {
+    (bytes + 9).div_ceil(64).max(1)
+}
+
 /// Permutations to hash `width` field elements into one digest. Poseidon absorbs `sponge_rate`
-/// per permutation (`linear_hash_seq`); Blake3 hashes the bytes in one call.
+/// per permutation (`linear_hash_seq`); Blake3 and SHA-256 hash the bytes in one call.
 pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
     match family {
         "blake3" => blake3_compressions(width * 8),
+        "sha256" => sha256_leaf_compressions(width * 8),
         // sponge_rate is 0 at arity 1 and underflows at 0; the trees support 2..=4.
         _ if arity < 2 => 0,
         _ => width.div_ceil(sponge_rate(arity)),
@@ -128,6 +142,9 @@ pub struct TranscriptSim {
     out: u64,
     pending_size: u64,
     out_size: u64,
+    /// Hashes one SQUEEZE costs: one for a sponge permutation and for BLAKE3's XOF, two for
+    /// SHA-256, which has none and pays `SHA256(digest || counter)`.
+    squeeze_cost: u64,
     pub hashes: u64,
 }
 
@@ -138,17 +155,26 @@ impl TranscriptSim {
     /// which is eight Goldilocks words. Squeezing needs no adjustment:
     /// `transcript_out_size(2)` is already 8, the XOF block width.
     pub fn new(family: &str, arity: u64) -> Self {
+        let streaming = matches!(family, "blake3" | "sha256");
         Self {
             pending: 0,
             out: 0,
-            pending_size: if family == "blake3" { BLAKE3_ABSORB_WORDS } else { transcript_pending_size(arity) },
-            out_size: transcript_out_size(arity),
+            pending_size: if streaming { COMPRESSION_ABSORB_WORDS } else { transcript_pending_size(arity) },
+            // BLAKE3's XOF block is 8 words, already `transcript_out_size(2)`; SHA-256's squeeze
+            // yields a 4-word digest, half as much.
+            out_size: if family == "sha256" { DIGEST_SIZE } else { transcript_out_size(arity) },
+            squeeze_cost: if family == "sha256" { 2 } else { 1 },
             hashes: 0,
         }
     }
 
-    fn update_state(&mut self) {
-        self.hashes += 1;
+    /// A filled absorb buffer: one compression, whatever the family.
+    fn absorb_flush(&mut self) {
+        self.update_state(1);
+    }
+
+    fn update_state(&mut self, cost: u64) {
+        self.hashes += cost;
         self.pending = 0;
         self.out = self.out_size;
     }
@@ -159,14 +185,14 @@ impl TranscriptSim {
             // `_add1` resets the output cursor: anything absorbed invalidates what was squeezable.
             self.out = 0;
             if self.pending == self.pending_size {
-                self.update_state();
+                self.absorb_flush();
             }
         }
     }
 
     fn get_fields1(&mut self) {
         if self.out == 0 {
-            self.update_state();
+            self.update_state(self.squeeze_cost);
         }
         self.out -= 1;
     }
@@ -180,7 +206,7 @@ impl TranscriptSim {
 
     pub fn get_state(&mut self) {
         if self.pending > 0 {
-            self.update_state();
+            self.update_state(self.squeeze_cost);
         }
     }
 
@@ -362,6 +388,72 @@ fn transcript_hashes(geom: &VerifierGeometry, family: &str) -> u64 {
 mod tests {
     use super::*;
     use proofman_common::hash_family::merkle_tree_arity;
+
+    /// The padding rule: FIPS needs 9 spare bytes, so a leaf costs one more block only when
+    /// `bytes % 64 >= 56` -- i.e. widths whose `w % 8` is 0 or 7.
+    #[test]
+    fn sha256_leaf_pays_the_padding_only_at_two_residues() {
+        // Bounded to one BLAKE3 chunk: past 1024 bytes the comparison flips (see below).
+        for w in 1u64..=128 {
+            let extra = sha256_leaf_compressions(w * 8) as i64 - blake3_compressions(w * 8) as i64;
+            let pays = matches!(w % 8, 0 | 7);
+            assert_eq!(extra == 1, pays, "w = {w} (w % 8 = {}) extra = {extra}", w % 8);
+        }
+        assert_eq!(sha256_leaf_compressions(0), 1);
+        assert_eq!(sha256_leaf_compressions(6 * 8), 1); // padding rides the tail block
+        assert_eq!(sha256_leaf_compressions(7 * 8), 2); // length does not fit
+        assert_eq!(sha256_leaf_compressions(8 * 8), 2); // 64-byte aligned
+    }
+
+    /// For wide leaves SHA-256 is CHEAPER: BLAKE3 pays one chunk-tree parent per extra 1024
+    /// bytes and SHA-256 just keeps streaming. The Keccakf airs are the real cases.
+    #[test]
+    fn sha256_leaf_is_cheaper_than_blake3_on_wide_airs() {
+        for w in [879u64, 2137] {
+            let sha = leaf_hashes("sha256", 2, w);
+            let b3 = leaf_hashes("blake3", 2, w);
+            assert!(sha < b3, "w = {w}: sha256 {sha} should be under blake3 {b3}");
+        }
+        assert_eq!(leaf_hashes("sha256", 2, 879), 111);
+        assert_eq!(leaf_hashes("blake3", 2, 879), 116);
+        assert_eq!(leaf_hashes("sha256", 2, 2137), 268);
+        assert_eq!(leaf_hashes("blake3", 2, 2137), 284);
+    }
+
+    /// The whole point of the domain-separated node hash: an internal node stays ONE compression,
+    /// so the Merkle-path count needs no family at all. `merkle_path_permutations` taking no
+    /// `family` argument is that invariant, and it is the dominant component of the total -- with
+    /// FIPS on nodes it would double, and the verifier's total would go from 1.03x to 1.76x.
+    #[test]
+    fn a_merkle_node_is_one_compression_for_both_streaming_families() {
+        // 8 words at arity 2 is exactly one block, and node_hash adds no padding.
+        assert_eq!(blake3_compressions(8 * DIGEST_SIZE * 2), 1);
+        assert_eq!(64u64 / 64, 1); // node_hash: bytes / 64, no +9
+        // The path count is family-free, which only holds while the line above does.
+        assert_eq!(merkle_path_permutations(24, 2, 4), 20);
+    }
+
+    /// SHA-256 has no XOF, so a squeeze costs two hashes and yields half as many words. Both show
+    /// up as more transcript hashes for the same absorb/squeeze sequence.
+    #[test]
+    fn the_sha256_transcript_costs_more_than_blake3_for_the_same_sequence() {
+        let mut b3 = TranscriptSim::new("blake3", 2);
+        let mut sha = TranscriptSim::new("sha256", 2);
+        for t in [&mut b3, &mut sha].into_iter() {
+            t.put(4);
+            for _ in 0..4 {
+                t.get_field();
+            }
+            t.put(12);
+            t.get_field();
+        }
+        assert!(
+            sha.hashes > b3.hashes,
+            "sha256 transcript {} should exceed blake3's {}",
+            sha.hashes,
+            b3.hashes
+        );
+    }
 
     /// One Merkle node is 64 bytes, which is exactly one Blake3 block.
     #[test]

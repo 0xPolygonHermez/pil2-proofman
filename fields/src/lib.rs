@@ -14,6 +14,7 @@ mod hash;
 #[cfg(any(all(target_os = "zkvm", target_vendor = "zisk"), test))]
 mod blake3_core;
 mod blake3_transcript;
+mod sha256_transcript;
 mod merkle;
 mod transcript;
 mod transcript_api;
@@ -31,6 +32,7 @@ pub use poseidon2::*;
 pub use poseidon1::*;
 pub use hash::*;
 pub use blake3_transcript::*;
+pub use sha256_transcript::*;
 pub use merkle::*;
 pub use transcript::*;
 pub use transcript_api::*;

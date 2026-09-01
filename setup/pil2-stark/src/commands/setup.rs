@@ -71,6 +71,20 @@ pub(crate) fn nvcc_present() -> bool {
 
 /// Run the non-recursive setup pipeline.
 pub fn run_setup(opts: &SetupOptions) -> Result<()> {
+    // Refuse before any artifact is written: otherwise the run gets most of the way through and
+    // panics inside `lookup_gate` on a gate name that does not exist.
+    if opts.recursive && !proofman_common::hash_family::supports_recursion(&opts.hash) {
+        anyhow::bail!(
+            "--hash {:?} has no in-circuit verifier, so -r/--recursive cannot build a recursive \
+             setup for it. Drop -r to build the basic airs (proving and C++ verification work), \
+             or use one of {:?}.",
+            opts.hash,
+            proofman_common::hash_family::FAMILIES
+                .iter()
+                .filter(|f| proofman_common::hash_family::supports_recursion(f))
+                .collect::<Vec<_>>()
+        );
+    }
     proofman_starks_lib_c::set_hash_family_c(&opts.hash);
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;

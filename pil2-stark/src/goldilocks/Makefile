@@ -94,6 +94,8 @@ GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
                 $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/stream_commit.cu.o \
                 $(BUILD_DIR_GPU)/src/blake3_goldilocks.cu.o \
+                $(BUILD_DIR_GPU)/src/sha256_goldilocks.cu.o \
+                $(BUILD_DIR_GPU)/src/sha256_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/goldilocks_tooling.cu.o
 
 GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)

@@ -1,81 +1,43 @@
 #ifndef TRANSCRIPT_CLASS
 #define TRANSCRIPT_CLASS
 
+#include <memory>
+
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include "starks_api_internal.hpp"
-#include "poseidon_goldilocks.hpp"
-#include "poseidon2_goldilocks.hpp"
-#include "blake3_core.hpp"
 #include "zklog.hpp"
 
+/// One transcript construction. The families share nothing -- a sponge carries its state as block
+/// content, blake3 and sha256 carry theirs in a chaining value -- so each gets its own state rather
+/// than every instance carrying all three.
+class TranscriptImplGL
+{
+public:
+    virtual ~TranscriptImplGL() = default;
+    virtual void add1(Goldilocks::Element input) = 0;
+    virtual Goldilocks::Element getFields1() = 0;
+    /// `nOutputs` words of the state so far. Does not consume.
+    virtual void getState(Goldilocks::Element *output, uint64_t nOutputs) = 0;
+};
 
-
+/// Fiat-Shamir transcript, family-agnostic.
+///
+/// The family is resolved ONCE, in the constructor: `define_hash_family` refuses to change it at
+/// runtime, so there is nothing to re-dispatch per call.
 class TranscriptGL
 {
 private:
-    void _add1(Goldilocks::Element input);
-    void _updateState();
-    Goldilocks::Element getFields1();
-    uint32_t arity;
-
+    std::unique_ptr<TranscriptImplGL> impl;
     uint32_t transcriptStateSize;
-    uint32_t transcriptPendingSize;
-    uint32_t transcriptOutSize;
-
-    Goldilocks::Element *inputs;
-
-    // blake3 state: the transcript is blake3(canonical-LE stream) and challenges
-    // come from its XOF. The sponge members above are unused on this path.
-    blake3core::Hasher b3;
-    uint64_t b3_xof[8];
-    uint32_t b3_offset = 0;  // words consumed from b3_xof
-    uint32_t b3_ob = 0;      // which XOF output block b3_xof holds
-    bool b3_xof_valid = false;
 
 public:
+    TranscriptGL(uint64_t arity, bool custom);
 
-
-    Goldilocks::Element *state;
-    Goldilocks::Element *pending;
-    Goldilocks::Element *out;
-
-    uint pending_cursor = 0;
-    uint out_cursor = 0;
-    uint state_cursor = 0;
-
-    TranscriptGL(uint64_t arity, bool custom)
-    {
-        this->arity = arity;
-        transcriptStateSize = HASH_SIZE;
-        transcriptPendingSize = 4 * (arity - 1);
-        transcriptOutSize     = 4 * arity;
-
-        state = new Goldilocks::Element[transcriptOutSize];
-        pending = new Goldilocks::Element[transcriptPendingSize];
-        out = new Goldilocks::Element[transcriptOutSize];
-        inputs = new Goldilocks::Element[transcriptOutSize];
-
-        std::memset(state, 0, transcriptOutSize * sizeof(Goldilocks::Element));
-        std::memset(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element));
-        std::memset(out, 0, transcriptOutSize * sizeof(Goldilocks::Element));
-
-        b3.init();
-        b3_offset = 0;
-        b3_ob = 0;
-        b3_xof_valid = false;
-    }
-    ~TranscriptGL()
-    {
-        delete[] state;
-        delete[] pending;
-        delete[] out;
-        delete[] inputs;
-    }
     void put(Goldilocks::Element *input, uint64_t size);
     void getField(uint64_t *output);
-    void getState(Goldilocks::Element* output);
-    void getState(Goldilocks::Element* output, uint64_t nOutputs);
+    void getState(Goldilocks::Element *output);
+    void getState(Goldilocks::Element *output, uint64_t nOutputs);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits);
 };
 

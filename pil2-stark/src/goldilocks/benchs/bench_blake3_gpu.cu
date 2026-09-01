@@ -186,6 +186,9 @@ static __global__ void initTraceKernel_blake3(uint64_t *d_trace, uint64_t nRows,
 // linearHash -- one thread per row, RowMajor input (matches the Poseidon
 // LINEAR_HASH_*_ROWMAJOR benches).
 // ---------------------------------------------------------------------------
+// (nCols, log2(nRows)); defined at the bottom of this file.
+static void ZiskShapesB3(benchmark::internal::Benchmark *b);
+
 static void LINEAR_HASH_ROWMAJOR_GPU_BLAKE3_BENCH(benchmark::State &state)
 {
     static const bool checked = (blake3_self_check(), true);
@@ -195,21 +198,22 @@ static void LINEAR_HASH_ROWMAJOR_GPU_BLAKE3_BENCH(benchmark::State &state)
     CUDA_OK(cudaStreamCreate(&stream));
 
     uint64_t nCols = state.range(0);
+    uint64_t nRows = 1ULL << state.range(1);
     uint64_t *d_trace, *d_hash;
-    CUDA_OK(cudaMalloc((void **)&d_trace, BENCH_NROWS * nCols * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc((void **)&d_hash,  BENCH_NROWS * 4 * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_trace, nRows * nCols * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_hash,  nRows * 4 * sizeof(uint64_t)));
 
-    dim3 thr(128), blk((BENCH_NROWS + 127) / 128);
-    initTraceKernel_blake3<<<blk, thr, 0, stream>>>(d_trace, BENCH_NROWS, nCols);
+    dim3 thr(128), blk((nRows + 127) / 128);
+    initTraceKernel_blake3<<<blk, thr, 0, stream>>>(d_trace, nRows, nCols);
     CUDA_OK(cudaStreamSynchronize(stream));
 
     // Warm up
-    blake3gpu::blake3_linear_hash(d_hash, d_trace, nCols, BENCH_NROWS, stream);
+    blake3gpu::blake3_linear_hash(d_hash, d_trace, nCols, nRows, stream);
     CUDA_OK(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        blake3gpu::blake3_linear_hash(d_hash, d_trace, nCols, BENCH_NROWS, stream);
+        blake3gpu::blake3_linear_hash(d_hash, d_trace, nCols, nRows, stream);
         CUDA_OK(cudaStreamSynchronize(stream));
     }
 
@@ -221,12 +225,7 @@ static void LINEAR_HASH_ROWMAJOR_GPU_BLAKE3_BENCH(benchmark::State &state)
 BENCHMARK(LINEAR_HASH_ROWMAJOR_GPU_BLAKE3_BENCH)
     ->Name("LINEAR_HASH_ROWMAJOR_GPU_BLAKE3_BENCH")
     ->Unit(benchmark::kMillisecond)
-    // Distinct per-stage column counts (cm1/cm2/cm3) from the ZisK Air table,
-    // all <= 128 (single BLAKE3 chunk).
-    ->Arg(1)->Arg(3)->Arg(6)->Arg(8)->Arg(9)->Arg(10)->Arg(12)->Arg(13)
-    ->Arg(14)->Arg(15)->Arg(16)->Arg(18)->Arg(21)->Arg(24)->Arg(29)->Arg(32)
-    ->Arg(34)->Arg(35)->Arg(36)->Arg(38)->Arg(39)->Arg(40)->Arg(43)->Arg(44)
-    ->Arg(45)->Arg(66)
+    ->Apply(ZiskShapesB3)
     ->UseRealTime();
 
 // ---------------------------------------------------------------------------
@@ -456,3 +455,178 @@ BENCHMARK(GRINDING_GPU_BLAKE3_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->Arg(16)->Arg(20)->Arg(23)->Arg(24)->Arg(25)->Arg(26)->Arg(27)->Arg(28)
     ->UseRealTime();
+
+// Pure tree reduction at arity 2, the geometry that ships.
+static void MERKLE_REDUCE_AR2_GPU_BLAKE3_BENCH(benchmark::State &state)
+{
+    cudaStream_t stream;
+    CUDA_OK(cudaStreamCreate(&stream));
+
+    uint64_t N = state.range(0);
+    uint64_t tree_size = getTreeNumElements(N, 2);
+    uint64_t *d_tree;
+    CUDA_OK(cudaMalloc((void **)&d_tree, tree_size * sizeof(uint64_t)));
+
+    dim3 thr(128), blk((N + 127) / 128);
+    initTraceKernel_blake3<<<blk, thr, 0, stream>>>(d_tree, N, 4);  // fill N leaf digests
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    blake3gpu::blake3_merkletree_reduce(2, d_tree, N, stream);
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    for (auto _ : state)
+    {
+        blake3gpu::blake3_merkletree_reduce(2, d_tree, N, stream);
+        CUDA_OK(cudaStreamSynchronize(stream));
+    }
+
+    CUDA_OK(cudaFree(d_tree));
+    CUDA_OK(cudaStreamDestroy(stream));
+}
+
+BENCHMARK(MERKLE_REDUCE_AR2_GPU_BLAKE3_BENCH)
+    ->Name("MERKLE_REDUCE_AR2_GPU_BLAKE3_BENCH")
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(1ULL << 23)
+    ->UseRealTime();
+
+// Full merklization at arity 2, the geometry ZisK proves with. Counterpart of
+// MERKLETREE_AR2_ROWMAJOR_GPU_SHA256_BENCH.
+// Real ZisK shapes: full per-stage width list at 2^23 rows plus a subset at 2^24.
+// range(1) is log2(nRows).
+static void ZiskShapesB3(benchmark::internal::Benchmark *b)
+{
+    static const int widths23[] = {1,3,6,8,9,10,12,13,14,15,16,18,21,24,29,32,
+                                   34,35,36,38,39,40,43,44,45,66};
+    for (int w : widths23) b->Args({w, 23});
+    static const int widths24[] = {12, 24, 38, 66};
+    for (int w : widths24) b->Args({w, 24});
+}
+
+static void MERKLETREE_AR2_ROWMAJOR_GPU_BLAKE3_BENCH(benchmark::State &state)
+{
+    static const bool checked = (blake3_self_check(), true);
+    (void)checked;
+
+    cudaStream_t stream;
+    CUDA_OK(cudaStreamCreate(&stream));
+
+    uint64_t nCols = state.range(0);
+    uint64_t nRows = 1ULL << state.range(1);
+    uint64_t tree_size = getTreeNumElements(nRows, 2);
+    uint64_t *d_trace, *d_tree;
+    CUDA_OK(cudaMalloc((void **)&d_trace, nRows * nCols * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_tree,  tree_size * sizeof(uint64_t)));
+
+    dim3 thr(128), blk((nRows + 127) / 128);
+    initTraceKernel_blake3<<<blk, thr, 0, stream>>>(d_trace, nRows, nCols);
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    blake3gpu::blake3_merkletree(2, d_tree, d_trace, nCols, nRows, stream);  // warm
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    for (auto _ : state)
+    {
+        blake3gpu::blake3_merkletree(2, d_tree, d_trace, nCols, nRows, stream);
+        CUDA_OK(cudaStreamSynchronize(stream));
+    }
+
+    CUDA_OK(cudaFree(d_trace));
+    CUDA_OK(cudaFree(d_tree));
+    CUDA_OK(cudaStreamDestroy(stream));
+}
+
+BENCHMARK(MERKLETREE_AR2_ROWMAJOR_GPU_BLAKE3_BENCH)
+    ->Name("MERKLETREE_AR2_ROWMAJOR_GPU_BLAKE3_BENCH")
+    ->Unit(benchmark::kMillisecond)
+    ->Apply(ZiskShapesB3)
+    ->UseRealTime();
+
+static void MERKLETREE_AR2_WIDE_GPU_BLAKE3_BENCH(benchmark::State &state)
+{
+    static const bool checked = (blake3_self_check(), true);
+    (void)checked;
+
+    cudaStream_t stream;
+    CUDA_OK(cudaStreamCreate(&stream));
+
+    uint64_t nCols = state.range(0);
+    uint64_t tree_size = getTreeNumElements(BENCH_NROWS_WIDE, 2);
+    uint64_t *d_trace, *d_tree;
+    CUDA_OK(cudaMalloc((void **)&d_trace, BENCH_NROWS_WIDE * nCols * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_tree,  tree_size * sizeof(uint64_t)));
+
+    dim3 thr(128), blk((BENCH_NROWS_WIDE + 127) / 128);
+    initTraceKernel_blake3<<<blk, thr, 0, stream>>>(d_trace, BENCH_NROWS_WIDE, nCols);
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    blake3gpu::blake3_merkletree(2, d_tree, d_trace, nCols, BENCH_NROWS_WIDE, stream);
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    for (auto _ : state)
+    {
+        blake3gpu::blake3_merkletree(2, d_tree, d_trace, nCols, BENCH_NROWS_WIDE, stream);
+        CUDA_OK(cudaStreamSynchronize(stream));
+    }
+
+    CUDA_OK(cudaFree(d_trace));
+    CUDA_OK(cudaFree(d_tree));
+    CUDA_OK(cudaStreamDestroy(stream));
+}
+
+BENCHMARK(MERKLETREE_AR2_WIDE_GPU_BLAKE3_BENCH)
+    ->Name("MERKLETREE_AR2_WIDE_GPU_BLAKE3_BENCH")
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(879)->Arg(2137)
+    ->UseRealTime();
+
+// Pure compression throughput, counterpart of COMPRESS_CHAIN_GPU_SHA256_BENCH:
+// same grid, chain length and anti-CSE feedback, so the ratio is the cost ratio.
+static constexpr uint64_t CT_THREADS_B3 = 1ULL << 20;
+static constexpr uint32_t CT_ITERS_B3   = 64;
+
+__global__ void blake3CompressChainKernel(uint64_t *__restrict__ out, uint32_t iters)
+{
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t cv[8], block[16];
+#pragma unroll
+    for (int i = 0; i < 8; ++i) cv[i] = blake3gpu::IV[i] ^ (uint32_t)tid;
+#pragma unroll
+    for (int i = 0; i < 16; ++i) block[i] = (uint32_t)(tid * 2654435761u) + i;
+
+    for (uint32_t k = 0; k < iters; ++k)
+    {
+        blake3gpu::compress_in_place(cv, block, (uint8_t)blake3gpu::BLOCK_LEN, 0ull, 0);
+        block[0] ^= cv[0];   // serialize the chain so nothing is hoisted or elided
+    }
+    if (tid < CT_THREADS_B3) out[tid] = (uint64_t)cv[0] | ((uint64_t)cv[7] << 32);
+}
+
+static void COMPRESS_CHAIN_BLAKE3(benchmark::State &state)
+{
+    cudaStream_t stream;
+    CUDA_OK(cudaStreamCreate(&stream));
+
+    uint64_t *d_out;
+    CUDA_OK(cudaMalloc((void **)&d_out, CT_THREADS_B3 * sizeof(uint64_t)));
+
+    const uint32_t tpb  = 128;
+    const uint32_t blks = (uint32_t)(CT_THREADS_B3 / tpb);
+
+    blake3CompressChainKernel<<<blks, tpb, 0, stream>>>(d_out, CT_ITERS_B3);  // warm up
+    CUDA_OK(cudaStreamSynchronize(stream));
+
+    for (auto _ : state)
+    {
+        blake3CompressChainKernel<<<blks, tpb, 0, stream>>>(d_out, CT_ITERS_B3);
+        CUDA_OK(cudaStreamSynchronize(stream));
+    }
+    state.counters["Gcompress/s"] = benchmark::Counter(
+        (double)CT_THREADS_B3 * CT_ITERS_B3 / 1e9, benchmark::Counter::kIsIterationInvariantRate);
+
+    CUDA_OK(cudaFree(d_out));
+    CUDA_OK(cudaStreamDestroy(stream));
+}
+
+BENCHMARK(COMPRESS_CHAIN_BLAKE3)
+    ->Name("COMPRESS_CHAIN_GPU_BLAKE3_BENCH")->Unit(benchmark::kMillisecond)->UseRealTime();

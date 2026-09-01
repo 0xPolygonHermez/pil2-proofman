@@ -17,7 +17,7 @@ pub enum GateRole {
     Blake3Compress,
 }
 
-pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
+pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3", "sha256"];
 
 /// The family a caller gets when it does not choose one: every `--hash` default, every `Default`
 /// impl that carries a family, and the read-back value for a `globalInfo.json` with no `hash`.
@@ -27,7 +27,8 @@ pub const DEFAULT_HASH_ID: &str = "blake3";
 pub fn merkle_tree_arity(family: &str) -> u64 {
     match family {
         "Poseidon1" | "Poseidon2" => GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY,
-        "blake3" => 2,
+        // 256-bit digests: two of them are exactly one 64-byte compression block.
+        "blake3" | "sha256" => 2,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
@@ -45,7 +46,7 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
 /// target.
 pub fn recursive_bits_threshold(family: &str) -> usize {
     match family {
-        "blake3" => 19,
+        "blake3" | "sha256" => 19,
         "Poseidon1" | "Poseidon2" => 17,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -67,7 +68,7 @@ pub fn uses_optimal_fri_schedule(family: &str) -> bool {
 /// carry the chaining value in the state, so a leaf of `w` elements costs `ceil(w / this)`.
 pub fn compression_block_elements(family: &str) -> usize {
     match family {
-        "blake3" => 8,
+        "blake3" | "sha256" => 8,
         "Poseidon1" | "Poseidon2" => 8,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -80,7 +81,7 @@ pub fn compression_block_elements(family: &str) -> usize {
 /// 7 that arithmetic outgrows the room the BLAKE3 block interiors leave for it.
 pub fn fri_terminal_degree(family: &str) -> usize {
     match family {
-        "blake3" => 7,
+        "blake3" | "sha256" => 7,
         "Poseidon1" | "Poseidon2" => 5,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -101,7 +102,7 @@ pub fn fri_terminal_degree(family: &str) -> usize {
 /// `proving_key::recursive::recursive_last_level_verification`.
 pub fn recursive_last_level_verification(family: &str) -> Option<usize> {
     match family {
-        "blake3" => Some(5),
+        "blake3" | "sha256" => Some(5),
         "Poseidon1" | "Poseidon2" => None,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -115,7 +116,7 @@ pub fn recursive_last_level_verification(family: &str) -> Option<usize> {
 /// straight off the query count, which is what a verifier pays for per tree per query.
 pub fn final_grinding_bits(family: &str) -> usize {
     match family {
-        "blake3" => 24,
+        "blake3" | "sha256" => 24,
         "Poseidon1" | "Poseidon2" => 22,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -128,6 +129,7 @@ pub fn final_grinding_bits(family: &str) -> usize {
 pub fn final_n_bits(family: &str) -> Option<usize> {
     match family {
         "blake3" => Some(19),
+        "sha256" => Some(19),
         "Poseidon1" | "Poseidon2" => None,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -152,7 +154,7 @@ pub fn final_n_bits(family: &str) -> Option<usize> {
 /// Poseidon keeps 4, which its committed verifiers and circom fixtures encode.
 pub fn final_blowup_factor(family: &str) -> usize {
     match family {
-        "blake3" => 2,
+        "blake3" | "sha256" => 2,
         "Poseidon1" | "Poseidon2" => 4,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -185,7 +187,7 @@ pub fn max_constraint_degree_for_blowup(blowup: usize) -> usize {
 /// Off is not the same as unavailable: `proofman-setup setup-compressed-final` adds the stage to an
 /// existing proving key, so a key built without it can gain it later.
 pub fn compressed_final_by_default(family: &str) -> bool {
-    family != "blake3"
+    !matches!(family, "blake3" | "sha256")
 }
 
 /// Proofs one recursive2 circuit aggregates, by family.
@@ -197,7 +199,7 @@ pub fn compressed_final_by_default(family: &str) -> bool {
 /// so it keeps 3. Callers may override; both values stay valid for both families.
 pub fn default_aggregation_arity(family: &str) -> usize {
     match family {
-        "blake3" => 2,
+        "blake3" | "sha256" => 2,
         "Poseidon1" | "Poseidon2" => 3,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -208,7 +210,7 @@ pub fn default_aggregation_arity(family: &str) -> usize {
 pub fn default_grinding_bits(family: &str) -> usize {
     match family {
         "Poseidon1" | "Poseidon2" => 16,
-        "blake3" => 24,
+        "blake3" | "sha256" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
@@ -227,7 +229,7 @@ pub fn default_grinding_bits(family: &str) -> usize {
 pub fn recursive_grinding_bits(family: &str) -> usize {
     match family {
         "Poseidon1" | "Poseidon2" => 20,
-        "blake3" => 24,
+        "blake3" | "sha256" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
@@ -284,12 +286,12 @@ pub fn transcript_out_size(arity: u64) -> u64 {
 /// re-checks via get_hash_family() and returns -15 on mismatch, so this list
 /// must stay in sync with commit_witness_streaming_gpu's family gate.
 pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "blake3")
+    matches!(family, "Poseidon1" | "blake3" | "sha256")
 }
 
 /// True when the family's kernels support exactly one tree geometry
 pub fn has_forced_tree_geometry(family: &str) -> bool {
-    family == "blake3"
+    matches!(family, "blake3" | "sha256")
 }
 
 // (gate template name, role, owning family). `None` for family-agnostic gates.
@@ -335,7 +337,13 @@ pub fn is_known_family(id: &str) -> bool {
 /// generalising that trait and the verifier template, not adding an impl, so until then a blake3
 /// proving key is written without this artifact.
 pub fn supports_native_rust_verifier(family: &str) -> bool {
-    is_known_family(family)
+    // NOT `is_known_family`: that opted a new family in silently, and the generator then panicked
+    // in `rust_hash_type` instead of taking the skip path.
+    matches!(family, "Poseidon1" | "Poseidon2" | "blake3" | "sha256")
+}
+
+pub fn supports_recursion(family: &str) -> bool {
+    matches!(family, "Poseidon1" | "Poseidon2" | "blake3")
 }
 
 pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
@@ -351,6 +359,9 @@ pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
         // 64-byte block, and at arity 2 a node is exactly two four-element digests. The arity is
         // still checked, because any other would mean a node the block cannot hold.
         ("blake3", 8) => "Blake3_8",
+        // Unlike Blake3_8, its `hash` (node) and `linear_hash` (leaf) are different maps;
+        // `verify_mt` takes the two as separate generics.
+        ("sha256", 8) => "Sha256_8",
         (fam, width) => panic!("Unsupported hash type: {fam}_{width} (arity {arity})"),
     }
 }
@@ -365,6 +376,7 @@ pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
 pub fn rust_transcript_type(family: &str, arity: u64) -> String {
     match family {
         "blake3" => "Blake3Transcript<Goldilocks>".to_string(),
+        "sha256" => "Sha256Transcript<Goldilocks>".to_string(),
         _ => format!("Transcript<Goldilocks, {}>", rust_hash_type(family, arity)),
     }
 }
@@ -373,6 +385,7 @@ pub fn rust_transcript_type(family: &str, arity: u64) -> String {
 pub fn rust_transcript_imports(family: &str, arity: u64) -> Vec<&'static str> {
     match family {
         "blake3" => vec!["Blake3Transcript"],
+        "sha256" => vec!["Sha256Transcript"],
         _ => vec!["Transcript", rust_hash_type(family, arity)],
     }
 }
@@ -382,6 +395,9 @@ pub fn rust_grinding_type(family: &str) -> &'static str {
         "Poseidon1" => "Poseidon1_8",
         "Poseidon2" => "Poseidon2_8",
         "blake3" => "Blake3_8",
+        // A THIRD type, not Sha256_8: grinding has its own IV. blake3 needs only one because its
+        // node hash and grinding permutation agree on cell 0, all the PoW check reads.
+        "sha256" => "Sha256Grind_8",
         fam => panic!("Unsupported grinding hash family: {fam}"),
     }
 }
@@ -531,12 +547,28 @@ mod tests {
     }
 
     #[test]
-    fn every_family_has_at_least_one_gate() {
+    fn gates_exist_exactly_for_the_families_that_claim_recursion() {
+        // Not "every family has gates" but "every family that claims recursion has gates",
+        // and the converse.
         for fam in FAMILIES {
-            assert!(
-                GATES.iter().any(|(_, _, f)| *f == Some(*fam)),
-                "family {fam} is in FAMILIES but has no gate in GATES"
+            let has_gates = GATES.iter().any(|(_, _, f)| *f == Some(*fam));
+            assert_eq!(
+                has_gates,
+                supports_recursion(fam),
+                "family {fam}: supports_recursion() = {} but has_gates = {has_gates}",
+                supports_recursion(fam)
             );
+        }
+    }
+
+    /// A family with no recursion must still be able to prove basic airs.
+    #[test]
+    fn a_family_without_recursion_still_has_a_basic_geometry() {
+        for fam in FAMILIES.iter().filter(|f| !supports_recursion(f)) {
+            assert!(merkle_tree_arity(fam) >= 2, "{fam} has no usable tree arity");
+            assert!(default_grinding_bits(fam) > 0, "{fam} has no grinding default");
+            // A native verifier needs a `Hash` impl, which is independent of gates.
+            assert!(!rust_hash_type(fam, merkle_tree_arity(fam)).is_empty());
         }
     }
 
@@ -555,6 +587,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Everything `prepare_verifier_rust` asks a family for. Each panics on an unknown family, so
+    /// this is the difference between emitting a verifier and aborting a long setup at the end.
+    #[test]
+    fn the_generator_can_resolve_every_type_it_needs_for_sha256() {
+        assert!(supports_native_rust_verifier("sha256"));
+        let arity = merkle_tree_arity("sha256");
+        assert_eq!(rust_hash_type("sha256", arity), "Sha256_8");
+        assert_eq!(rust_transcript_type("sha256", transcript_arity("sha256")), "Sha256Transcript<Goldilocks>");
+        assert_eq!(rust_transcript_imports("sha256", transcript_arity("sha256")), vec!["Sha256Transcript"]);
+        // The grinding type is deliberately NOT the merkle one: three constructions, three IVs.
+        assert_eq!(rust_grinding_type("sha256"), "Sha256Grind_8");
+        assert_ne!(rust_grinding_type("sha256"), rust_hash_type("sha256", arity));
     }
 
     #[test]

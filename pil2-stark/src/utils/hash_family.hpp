@@ -10,12 +10,14 @@ enum class HashFamily : uint8_t {
     Poseidon1 = 1,
     Poseidon2 = 2,
     Blake3    = 3,
+    Sha256    = 4,
 };
 
 inline HashFamily parseHashFamily(const std::string &id) {
     if (id == "Poseidon1") return HashFamily::Poseidon1;
     if (id == "Poseidon2") return HashFamily::Poseidon2;
     if (id == "blake3") return HashFamily::Blake3;
+    if (id == "sha256") return HashFamily::Sha256;
     throw std::runtime_error("unknown hash family: " + id);
 }
 
@@ -24,6 +26,7 @@ inline const char *toString(HashFamily h) {
         case HashFamily::Poseidon1: return "Poseidon1";
         case HashFamily::Poseidon2: return "Poseidon2";
         case HashFamily::Blake3:    return "blake3";
+        case HashFamily::Sha256:    return "sha256";
         case HashFamily::Undefined: return "Undefined";
     }
     return "Unknown";
@@ -35,6 +38,7 @@ inline HashFamily hashFamilyFromU8(uint8_t v) {
         case static_cast<uint8_t>(HashFamily::Poseidon1): return HashFamily::Poseidon1;
         case static_cast<uint8_t>(HashFamily::Poseidon2): return HashFamily::Poseidon2;
         case static_cast<uint8_t>(HashFamily::Blake3):    return HashFamily::Blake3;
+        case static_cast<uint8_t>(HashFamily::Sha256):    return HashFamily::Sha256;
         default: throw std::runtime_error("invalid HashFamily ABI value: " + std::to_string(v));
     }
 }

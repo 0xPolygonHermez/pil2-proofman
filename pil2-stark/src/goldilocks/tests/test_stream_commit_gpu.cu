@@ -18,6 +18,7 @@
 #include "ntt_goldilocks.cuh"
 #include "poseidon_goldilocks.cuh"
 #include "blake3_goldilocks.cuh"
+#include "sha256_goldilocks.cuh"
 #include "cuda_utils.cuh"
 
 // Main cm1 bit widths (zisk pil_helpers PACKED_INFO for airgroup 0 / air 0):
@@ -102,15 +103,17 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
                                    StreamCommitHash hash = StreamCommitHash::Poseidon1)
 {
     using P16 = PoseidonGoldilocksGPU<16>;
-    const bool b3 = (hash == StreamCommitHash::Blake3);
+    const bool b3  = (hash == StreamCommitHash::Blake3);
+    const bool sha = (hash == StreamCommitHash::Sha256);
+    const bool blk = b3 || sha;   // the arity-2, 64-byte-block families
     const uint64_t nBitsExt = nBits + 1;
-    const uint32_t arity    = b3 ? 2 : 4;
+    const uint32_t arity    = blk ? 2 : 4;
     const uint32_t CAP      = 4;
     const uint32_t TPB      = 128;
     const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
 
     uint32_t gpu = 0; cudaGetDevice((int*)&gpu);
-    if (!b3) P16::initConstants(&gpu, 1);
+    if (!blk) P16::initConstants(&gpu, 1);
     cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
     NTTGoldilocksGPU ntt;
 
@@ -144,8 +147,9 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
         const uint32_t ublk = (uint32_t)((N + TPB - 1) / TPB);
         refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, MAIN_WORDS);
         ntt.ldeColMajor(d_ext, d_src, nBits, nBitsExt, nCols, s, true, nullptr);
-        if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
-        else    P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        if (sha)     Sha256GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else         P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
         CHECKCUDAERR(cudaStreamSynchronize(s));
         CHECKCUDAERR(cudaMemcpy(rootRef.data(), d_tref + treeElems - CAP, CAP*8, cudaMemcpyDeviceToHost));
         CHECKCUDAERR(cudaFree(d_packed)); CHECKCUDAERR(cudaFree(d_src));
@@ -170,7 +174,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     if (reps > 1) total_ms /= (reps - 1);
 
     printf("[stream-commit] %s nBits=%lu nCols=%lu lib entry (H2D + commit): %.2f ms, slot %.0f MiB\n",
-           b3 ? "blake3" : "poseidon1", nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
+           sha ? "sha256" : b3 ? "blake3" : "poseidon1", nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
 
     for (uint32_t i = 0; i < CAP; i++)
         ASSERT_EQ(rootRef[i], rootCmp[i]) << "root element " << i << " differs";
@@ -323,4 +327,36 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_shape)
 TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_small)
 {
     runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Blake3);
+}
+
+// sha256: same shapes as blake3, root compared against Sha256GoldilocksGPU::merkletree.
+// The widths matter here in a way they do not for blake3 -- FIPS padding costs an extra
+// compression when nCols % 8 is 0 or 7, so the last chunk takes a different path.
+TEST(GOLDILOCKS_TEST, stream_commit_sha256_small)
+{
+    runStreamCommitReduced(16, 38, 2, StreamCommitHash::Sha256);   // 38 % 8 = 6, padding rides along
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_sha256_main_shape)
+{
+    runStreamCommitReduced(22, 38, 4, StreamCommitHash::Sha256);
+}
+
+/// nCols % 8 == 0: the final data block is full, so the padding needs a whole extra
+/// compression in the last chunk. The path blake3 never takes.
+TEST(GOLDILOCKS_TEST, stream_commit_sha256_block_aligned_width)
+{
+    runStreamCommitReduced(16, 32, 2, StreamCommitHash::Sha256);
+}
+
+/// nCols % 8 == 7: the 0x80 fits in the data block but the length does not.
+TEST(GOLDILOCKS_TEST, stream_commit_sha256_width_needing_a_length_block)
+{
+    runStreamCommitReduced(16, 31, 2, StreamCommitHash::Sha256);
+}
+
+// sha256 indexed: compact-vs-full slot parity under the sha256 absorb.
+TEST(GOLDILOCKS_TEST, stream_commit_sha256_indexed_small)
+{
+    runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Sha256);
 }

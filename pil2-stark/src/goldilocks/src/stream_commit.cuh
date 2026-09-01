@@ -28,6 +28,11 @@ class gl64_t;
 //     keeps every row inside a single blake3 chunk, so the chunk counter is
 //     always 0). The 12-column working set makes a blake3 slot smaller than
 //     a Poseidon1 one for the same shape.
+//   * sha256 (arity 2): identical shape to blake3 -- 64-byte blocks, arity-2
+//     tree, 12-column working set -- with one difference: FIPS padding. The
+//     final chunk also emits the 0x80 terminator and the 64-bit length, which
+//     needs a SECOND compression whenever they do not fit (nCols % 8 in
+//     {0, 7}). Matches sha256core::hash_le64 block-for-block.
 //
 // All working memory lives inside one caller-provided slot (see layout in
 // streamCommitSlotElems); concurrent calls on different slots/streams are
@@ -41,7 +46,7 @@ static constexpr uint64_t SC_MAX_COLS = 64;
 
 // Hash family the slot commits with. Must match the proving key's family --
 // the caller (commit_witness_streaming_gpu) derives it from get_hash_family().
-enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1 };
+enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1, Sha256 = 2 };
 
 struct StreamCommitDims {
     uint64_t nBits;        // log2 trace rows
@@ -64,7 +69,7 @@ struct StreamCommitDims {
 //   [0, SC_MAX_COLS)              column bit widths (nCols used)
 //   [SC_MAX_COLS, +N*wordsPerRow) packed witness
 //   [.., +W*NExt)              hash working set (data | 4 state), ColMajor;
-//                              W = 16 (Poseidon1) or 12 (blake3)
+//                              W = 16 (Poseidon1) or 12 (blake3 / sha256)
 //   [.., +N)                   LDE scratch
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
                                StreamCommitHash hash = StreamCommitHash::Poseidon1);

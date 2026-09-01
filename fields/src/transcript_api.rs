@@ -4,14 +4,15 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::{
-    Blake3Transcript, Hash, Poseidon1_16, Poseidon2_16, PrimeField64, Transcript, BLAKE3_TRANSCRIPT_STATE_WORDS,
-    BLAKE3_TRANSCRIPT_XOF_WORDS,
+    Blake3Transcript, Hash, Poseidon1_16, Poseidon2_16, PrimeField64, Sha256Transcript, Transcript,
+    BLAKE3_TRANSCRIPT_STATE_WORDS, BLAKE3_TRANSCRIPT_XOF_WORDS, SHA256_TRANSCRIPT_STATE_WORDS,
 };
 
 pub enum TranscriptDyn<F: PrimeField64> {
     Poseidon1(Transcript<F, Poseidon1_16>),
     Poseidon2(Transcript<F, Poseidon2_16>),
     Blake3(Box<Blake3Transcript<F>>),
+    Sha256(Box<Sha256Transcript<F>>),
 }
 
 impl<F: PrimeField64> TranscriptDyn<F> {
@@ -20,6 +21,7 @@ impl<F: PrimeField64> TranscriptDyn<F> {
             TranscriptDyn::Poseidon1(t) => t.put(inputs),
             TranscriptDyn::Poseidon2(t) => t.put(inputs),
             TranscriptDyn::Blake3(t) => t.put(inputs),
+            TranscriptDyn::Sha256(t) => t.put(inputs),
         }
     }
     pub fn get_state(&mut self) -> Vec<F> {
@@ -27,6 +29,7 @@ impl<F: PrimeField64> TranscriptDyn<F> {
             TranscriptDyn::Poseidon1(t) => t.get_state(),
             TranscriptDyn::Poseidon2(t) => t.get_state(),
             TranscriptDyn::Blake3(t) => t.get_state(),
+            TranscriptDyn::Sha256(t) => t.get_state(),
         }
     }
     /// The state the lattice chain is seeded and stepped with, which is not always the
@@ -42,6 +45,8 @@ impl<F: PrimeField64> TranscriptDyn<F> {
             TranscriptDyn::Poseidon1(t) => t.get_state(),
             TranscriptDyn::Poseidon2(t) => t.get_state(),
             TranscriptDyn::Blake3(t) => t.get_xof_block(),
+            // No wider block: a squeeze IS the digest, so the chain runs 4 words wide.
+            TranscriptDyn::Sha256(t) => t.get_state(),
         }
     }
 
@@ -50,6 +55,7 @@ impl<F: PrimeField64> TranscriptDyn<F> {
             TranscriptDyn::Poseidon1(t) => t.get_field(value),
             TranscriptDyn::Poseidon2(t) => t.get_field(value),
             TranscriptDyn::Blake3(t) => t.get_field(value),
+            TranscriptDyn::Sha256(t) => t.get_field(value),
         }
     }
 }
@@ -59,6 +65,7 @@ pub fn new_transcript<F: PrimeField64>(hash_id: &str) -> TranscriptDyn<F> {
         "Poseidon1" => TranscriptDyn::Poseidon1(Transcript::<F, Poseidon1_16>::new()),
         "Poseidon2" => TranscriptDyn::Poseidon2(Transcript::<F, Poseidon2_16>::new()),
         "blake3" => TranscriptDyn::Blake3(Box::default()),
+        "sha256" => TranscriptDyn::Sha256(Box::default()),
         other => panic!("Unknown hash family: {other:?}"),
     }
 }
@@ -79,6 +86,11 @@ pub fn hash_state<F: PrimeField64>(hash_id: &str, state: &mut [F]) {
             let mut transcript = Blake3Transcript::<F>::new();
             transcript.put(state);
             state.copy_from_slice(&transcript.get_xof_block());
+        }
+        ("sha256", SHA256_TRANSCRIPT_STATE_WORDS) => {
+            let mut transcript = Sha256Transcript::<F>::new();
+            transcript.put(state);
+            state.copy_from_slice(&transcript.get_state());
         }
         (other, n) => panic!("Unknown hash family/width: {other:?}/{n}"),
     }
