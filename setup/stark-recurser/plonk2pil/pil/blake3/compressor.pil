@@ -112,26 +112,11 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
     #pragma fixed_external
     col fixed FLAGS;
 
-    // The chunk shape's canonicity gadget, on clocks 0..7 as a whole.
-    expr CHUNK_ROUND0 = 0;
-    for (int k = 0; k < 8; k++) {
-        CHUNK_ROUND0 += BLAKE3_CHUNK * air.CLK[k];
-    }
-
     const int OUT_FIRST = air.CLOCKS - 16;
-
-    const expr NODE_IN_CLK[8];
-    for (int k = 0; k < 8; k++) {
-        NODE_IN_CLK[k] = BLAKE3_NODE * air.CLK[k];
-    }
 
     const expr OUT_CLK16[16];
     for (int k = 0; k < 16; k++) {
         OUT_CLK16[k] = air.CLK[air.CLOCKS - 16 + k];
-    }
-    const expr NODE_OUT_CLK[16];
-    for (int k = 0; k < 16; k++) {
-        NODE_OUT_CLK[k] = BLAKE3_NODE * OUT_CLK16[k];
     }
 
     // ── Custom-gate selectors ───────────────────────────────────────────────────
@@ -210,8 +195,8 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
     // IV and blake3Lanes builds vc as an expression rather than a column.
     blake3Lanes(LANES, BLOCK_ID, BLAKE3_ANY, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
                 1, 1, a, d_inv, vb_pp_t_hi, out_bytes, cv_bytes,
-                NODE_IN_CLK, NODE_OUT_CLK, OUT_FIRST,
-                BLAKE3_CHUNK, CHUNK_ROUND0, BLAKE3_PARENT, FLAGS,
+                BLAKE3_NODE, OUT_FIRST,
+                BLAKE3_CHUNK, BLAKE3_PARENT, FLAGS,
                 OUT_CLK16, air.CLOCKS);
 
     // After the lanes: mul_table and mul_range are the trace's last two columns.
