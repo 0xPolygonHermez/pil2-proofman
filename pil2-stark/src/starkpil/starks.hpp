@@ -98,7 +98,7 @@ public:
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
-    void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateDeepPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints, NTT_Goldilocks &ntt);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof, std::vector<int64_t> &openingPoints);
@@ -422,7 +422,7 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, Expre
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
+void Starks<ElementType>::calculateDeepPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
 uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -446,7 +446,7 @@ uint64_t xiChallengeIndex = 0;
 
     expressionsCtx.setXi(xis);
 
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
+    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.deepExpId);
 
     for(uint64_t step = 0; step < nTreesFRI; ++step) { 
         Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];

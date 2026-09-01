@@ -345,7 +345,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         d_transcript->put(d_challenge, HASH_SIZE, stream);
     }
 
-    // Challenges for FRI polynomial
+    // Challenges for the DEEP polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 3) {
@@ -380,9 +380,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             starks.treesFRI[step]->setNodes(pBuffNodesGL);
         }
     }
-    uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    uint64_t deepPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
-    gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
+    gl64_t *d_deepPol = (gl64_t *)(h_params.aux_trace + deepPol_offset);
     
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
 
@@ -393,18 +393,18 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         cudagraph::run(cudagraph::key(0x465249ULL ^ graphCtxId, step, nBitsExt, currentBits), countId, stream, [&] {
             if (step > 0) {
                 uint64_t prevBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
-                fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+                fold_inplace(step, deepPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
             }
             if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
             {
-                merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], d_transcript, timer, stream);
+                merkelizeFRI_inplace(setupCtx, h_params, step, d_deepPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], d_transcript, timer, stream);
             }
             else
             {
                 if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                    d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
+                    d_transcript->put((Goldilocks::Element *)d_deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                 } else {
-                    calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
+                    calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                     d_transcript->put(d_challenge, HASH_SIZE, stream);
                 }
             }

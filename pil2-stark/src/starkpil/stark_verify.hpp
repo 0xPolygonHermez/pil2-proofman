@@ -20,7 +20,7 @@ inline RawFr::Element fromString(const std::string& element) {
 }
 
 // Read the STIR section of a proof out of its JSON form (the keys pointer2json / proof2json
-// write: "i{i}_root/_vals/_siblings/_last_levels", "betas", "finalPol", "nonces").
+// write: "s{i+1}_root/_vals/_siblings/_last_levels", "betas", "finalPol", "nonces").
 template <typename ElementType>
 StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params, uint64_t nFieldElements)
 {
@@ -32,7 +32,7 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
 
     for (uint64_t i = 0; i < M; ++i)
     {
-        std::string prefix = "i" + std::to_string(i);
+        std::string prefix = "s" + std::to_string(i + 1);
         if (nFieldElements == 1) {
             proof.trees[i].root[0] = fromString<ElementType>(jproof[prefix + "_root"]);
         } else {
@@ -80,6 +80,13 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
     for (uint64_t i = 0; i < M; ++i) {
         proof.nonces[i] = std::stoull(jproof["nonces"][i].get<std::string>());
     }
+    if (jproof.contains("ansCoeffs")) {
+        for (uint64_t i = 0; i + 1 < M; ++i) {
+            for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++) {
+                proof.ansCoeffs[i][l] = Goldilocks::fromString(jproof["ansCoeffs"][i][l]);
+            }
+        }
+    }
     return proof;
 }
 
@@ -104,7 +111,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         verkey[0] = fromString<ElementType>(verkeyJson);
     }
 
-    uint64_t friQueries[starkInfo.starkStruct.nQueries];
+    uint64_t queriesL0[starkInfo.starkStruct.nQueries];
 
     Goldilocks::Element evals[starkInfo.evMap.size()  * FIELD_EXTENSION];
     for(uint64_t i = 0; i < starkInfo.evMap.size(); ++i) {
@@ -225,7 +232,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         // Everything from here down to the query indices is STIR's own round structure: hand the
         // transcript to STIR::verify, which replays it message by message (roots, out-of-domain
         // samples, β's, per-round grinding) and re-derives every query index. The f_0 claims are
-        // recorded rather than checked here, and the indices come back in `friQueries`, so the
+        // recorded rather than checked here, and the indices come back in `queriesL0`, so the
         // shared machinery below (trace loading, evals check, DEEP recomputation, stage Merkle
         // trees) runs unchanged.
         StirParams stirParams = stirParamsFromStarkInfo(starkInfo);
@@ -233,7 +240,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
         stirF0Claims.resize(starkInfo.starkStruct.nQueries * FIELD_EXTENSION);
         auto checkF0 = [&](uint64_t q, uint64_t idxL0, const stir::E3 &committed) {
-            friQueries[q] = idxL0;
+            queriesL0[q] = idxL0;
             std::memcpy(&stirF0Claims[q * FIELD_EXTENSION], &committed[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
             return true;
         };
@@ -323,7 +330,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     TranscriptType transcriptPermutation(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
     transcriptPermutation.put(challenge, FIELD_EXTENSION);    
     transcriptPermutation.put(&nonce, 1);
-    transcriptPermutation.getPermutations(friQueries, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.logDomainSizes[0]);
+    transcriptPermutation.getPermutations(queriesL0, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.logDomainSizes[0]);
 
     }
 
@@ -352,7 +359,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     Goldilocks::Element *xDivXSub = new Goldilocks::Element[starkInfo.openingPoints.size() * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
     for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
-        uint64_t query = friQueries[i];
+        uint64_t query = queriesL0[i];
         Goldilocks::Element x = Goldilocks::shift() * Goldilocks::exp(Goldilocks::w(starkInfo.starkStruct.nBitsExt), query);
         for(uint64_t o = 0; o < starkInfo.openingPoints.size(); ++o) {
             Goldilocks::Element w = Goldilocks::one();
@@ -464,7 +471,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
     Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries, 0);
-    destQueries.addParams(starkInfo.friExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId].destDim);
+    destQueries.addParams(starkInfo.deepExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.deepExpId].destDim);
     expressionsPack.calculateExpressions(params, destQueries, starkInfo.starkStruct.nQueries, false, false);
     bool isValidFRIConsistency = true;
 #pragma omp parallel for
@@ -479,7 +486,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             }
             continue;
         }
-        uint64_t idx = friQueries[q] % (1 << starkInfo.starkStruct.logDomainSizes[0]);
+        uint64_t idx = queriesL0[q] % (1 << starkInfo.starkStruct.logDomainSizes[0]);
         if(starkInfo.starkStruct.logDomainSizes.size() > 1) {
             uint64_t nextNGroups = 1 << starkInfo.starkStruct.logDomainSizes[1];
             uint64_t groupIdx = idx / nextNGroups;
@@ -556,7 +563,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 }
             }
 
-            bool res = tree.verifyGroupProof(root, level, siblings, friQueries[q], values);
+            bool res = tree.verifyGroupProof(root, level, siblings, queriesL0[q], values);
             if(!res) {
                 isValidStageMT = false;
             }
@@ -614,7 +621,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             }
         }
 
-        bool res = treeC.verifyGroupProof(verkey, levelC, siblings, friQueries[q], values);
+        bool res = treeC.verifyGroupProof(verkey, levelC, siblings, queriesL0[q], values);
         if(!res) {
             isValidConstantMT = false;
         }
@@ -676,7 +683,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                     siblings[i][j] = fromString<ElementType>(jproof["s0_siblings_" + starkInfo.customCommits[c].name + "_0"][q][i][j]);
                 }
             }
-            bool res = tree.verifyGroupProof(root, level, siblings, friQueries[q], values);
+            bool res = tree.verifyGroupProof(root, level, siblings, queriesL0[q], values);
             if(!res) {
                 isValidCustomCommitsMT = false;
             }
@@ -743,7 +750,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                         siblings[i][j] = fromString<ElementType>(jproof["s" + std::to_string(step) + "_siblings"][q][i][j]);
                     }
                 }
-                bool res = treeFRI.verifyGroupProof(root, level, siblings, friQueries[q] % (1 << starkInfo.starkStruct.logDomainSizes[step]), values);
+                bool res = treeFRI.verifyGroupProof(root, level, siblings, queriesL0[q] % (1 << starkInfo.starkStruct.logDomainSizes[step]), values);
                 if(!res) {
                     isValidFoldingMT = false;
                 }
@@ -759,7 +766,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             bool isValidFolding = true;
         #pragma omp parallel for
             for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-                uint64_t idx = friQueries[q] % (1 << starkInfo.starkStruct.logDomainSizes[step]);     
+                uint64_t idx = queriesL0[q] % (1 << starkInfo.starkStruct.logDomainSizes[step]);     
                 Goldilocks::Element value[3];
                 uint64_t n_values = (1 << (starkInfo.starkStruct.logDomainSizes[step-1] - starkInfo.starkStruct.logDomainSizes[step]))*FIELD_EXTENSION;
                 std::vector<Goldilocks::Element> values(n_values);

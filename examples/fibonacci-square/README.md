@@ -56,7 +56,8 @@ To begin, compile the PIL files:
 ```bash
 cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed --fixed-to-file
+     -u ./examples/fibonacci-square/build/fixed --fixed-to-file \
+     -o ./examples/fibonacci-square/pil/build.pilout
 ```
 
 ### 2.2 Generate Setup
@@ -97,8 +98,19 @@ cargo run --bin proofman-cli pil-helpers \
      --path ./examples/fibonacci-square/src -o
 ```
 
+### 2.4 Generate Custom Commits
 
-### 2.4 Build the Project
+To generate the custom commits, run the following command:
+
+```bash
+cargo run --bin proofman-cli gen-custom-commits-fixed \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/fibonacci-square/build/provingKey/ \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin
+```
+
+
+### 2.5 Build the Project
 
 Build the project with the following command:
 
@@ -106,7 +118,7 @@ Build the project with the following command:
 cargo build --workspace
 ```
 
-### 2.5 Verify Constraints
+### 2.6 Verify Constraints
 
 Verify the constraints by executing this command:
 
@@ -118,9 +130,9 @@ cargo run --bin proofman-cli verify-constraints \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin
 ```
 
-### 2.6 Generate Proof
+### 2.7 Generate Basic Proofs
 
-Finally, generate the proof using the following command:
+Finally, generate the basic proofs using the following command:
 
 ```bash
 cargo run --bin proofman-cli prove \
@@ -128,11 +140,12 @@ cargo run --bin proofman-cli prove \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
-     --output-dir examples/fibonacci-square/build/proofs -y
+     --output-dir examples/fibonacci-square/build/proofs \
+     --verify-proofs
 ```
 
 
-### 2.7 Generate VadcopFinal Proof
+### 2.8 Generate Full Aggregated Proof
 
 This will only work if setup is generated with `-r` flag.
 Generate the final proof using the following command:
@@ -142,11 +155,12 @@ cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
      --output-dir examples/fibonacci-square/build/proofs \
-     -a
+     --aggregation --verify-proofs
 ```
 
-### 2.8 Generating GPU proof
+### 2.9 Generating GPU proof
 
 In order to generate a proof in the GPU, the following commands needs to be executed after generating the setup and pil-helpers.
 
@@ -166,7 +180,7 @@ cargo build --workspace \
      --output-dir examples/fibonacci-square/build/proofs \
      --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -f --gpu -vv
 ```
-### 2.9 All at once
+### 2.10 All at once
 
 **Without recursion:**
 

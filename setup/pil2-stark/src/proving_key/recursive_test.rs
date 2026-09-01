@@ -194,6 +194,8 @@ pub fn gen_recursive_test_setup(
     // regardless of the setup type (unlike gen_recursive_setup which varies by template).
     let settings = StarkSettings {
         initial_blowup_factor: Some(3),
+        // Same schedule pin as the real recursion layers (final domain 5 minus the blowup).
+        final_degree: Some(2),
         last_level_verification: Some(1),
         // Same pin as the real recursion layers, so a test key matches their geometry.
         grinding_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
@@ -237,7 +239,7 @@ pub fn gen_recursive_test_setup(
         0,
         NAME_FILE,
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
 

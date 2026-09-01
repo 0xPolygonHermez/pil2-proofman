@@ -23,8 +23,8 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// FRI polynomial expression ID (distinct from c_exp_id).
-    pub fri_exp_id: usize,
+    /// DEEP polynomial expression ID (distinct from c_exp_id).
+    pub deep_exp_id: usize,
     /// Polynomial Q degree.
     pub q_deg: i64,
 }
@@ -101,7 +101,7 @@ pub fn pil_info(
     // Compute opening points from ALL expressions that will be code-generated:
     // constraints, kept expressions (from hints), and imPol expressions.
     // This mirrors the filter in generate_expressions_code which processes
-    // expressions with keep=true, im_pol=true, or matching c_exp_id/fri_exp_id.
+    // expressions with keep=true, im_pol=true, or matching c_exp_id/deep_exp_id.
     let mut opening_points: Vec<i64> = vec![0];
     for c in &setup.constraints {
         let offsets = &setup.expressions[c.e].rows_offsets;
@@ -124,13 +124,13 @@ pub fn pil_info(
 
     // Build code-gen params
     let n_stages = setup.n_stages;
-    // fri_exp_id will be updated by generate_pil_code after FRI polynomial generation
+    // deep_exp_id will be updated by generate_pil_code after DEEP polynomial generation
     let mut params = CodeGenParams {
         air_id,
         airgroup_id,
         n_stages,
         c_exp_id,
-        fri_exp_id: c_exp_id, // placeholder; will be overwritten
+        deep_exp_id: c_exp_id, // placeholder; will be overwritten
         q_deg: q_deg as usize,
         q_dim: q_dim_final,
         opening_points: opening_points.clone(),
@@ -339,7 +339,7 @@ pub fn pil_info(
     setup.opening_points = opening_points;
 
     let im_pols_info = setup.im_pols_info.clone();
-    let fri_exp_id = pil_code.fri_exp_id;
+    let deep_exp_id = pil_code.deep_exp_id;
 
     PilInfoResult {
         setup,
@@ -348,7 +348,7 @@ pub fn pil_info(
         prover_memory: prover_memory_str,
         im_pols_info,
         c_exp_id,
-        fri_exp_id,
+        deep_exp_id,
         q_deg,
     }
 }

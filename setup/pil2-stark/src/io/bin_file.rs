@@ -91,7 +91,7 @@ fn prepare_expressions_bin(
 
         // Check if dest should be redirected to tmp
         let is_special = exp_code.exp_id == stark_info.c_exp_id
-            || exp_code.exp_id == stark_info.fri_exp_id
+            || exp_code.exp_id == stark_info.deep_exp_id
             || stark_info.cm_pols_map.iter().any(|c| c.exp_id == exp_code.exp_id);
 
         if is_special {
@@ -171,7 +171,7 @@ fn prepare_verifier_expressions_bin(
     let query_result =
         get_parser_args(stark_info, &verifier_info.query_verifier.code, &mut numbers_exps, false, true, None, "")?;
     let mut query_code = query_result.exps_info;
-    query_code.exp_id = stark_info.fri_exp_id;
+    query_code.exp_id = stark_info.deep_exp_id;
     query_code.stage = stark_info.n_stages + 2;
     query_code.line = String::new();
 

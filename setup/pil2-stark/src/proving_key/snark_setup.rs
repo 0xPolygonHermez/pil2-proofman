@@ -258,7 +258,7 @@ pub fn gen_snark_setup(
         0,
         "Recursivef",
         pil_result_rf.c_exp_id,
-        pil_result_rf.fri_exp_id,
+        pil_result_rf.deep_exp_id,
         pil_result_rf.q_deg,
     );
     let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;

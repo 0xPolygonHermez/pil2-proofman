@@ -150,6 +150,11 @@ public:
     std::vector<std::vector<Goldilocks::Element>> betas;
     std::vector<uint64_t> nonces;
     std::vector<Goldilocks::Element> finalPol;
+    // Coefficients of Âns_i for the quotient rounds i = 1..M−1, zero-padded to s + t_{i−1}
+    // (duplicate shift queries shrink |G_i|, so the true degree can be lower). Pure hints for
+    // the recursion circuit, which constrains them itself; the native verifier recomputes Âns
+    // and ignores these.
+    std::vector<std::vector<Goldilocks::Element>> ansCoeffs;
 
     StirProof() {}
 
@@ -170,6 +175,11 @@ public:
             trees.emplace_back(nFieldElements, numQueries[i], arity, lastLevelVerification);
         }
         betas.assign(M - 1, std::vector<Goldilocks::Element>(numOodSamples * FIELD_EXTENSION, Goldilocks::zero()));
+        ansCoeffs.clear();
+        for (uint64_t i = 1; i < M; i++)
+        {
+            ansCoeffs.emplace_back((numOodSamples + numQueries[i - 1]) * FIELD_EXTENSION, Goldilocks::zero());
+        }
         nonces.assign(M, 0);
         finalPol.assign((uint64_t(1) << logFinalDegree) * FIELD_EXTENSION, Goldilocks::zero());
     }
@@ -441,6 +451,13 @@ public:
                 pointer[p++] = stir.nonces[i];
             }
 
+            // Âns coefficient hints for the recursion circuit (zero-padded, see StirProof).
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                for(uint64_t l = 0; l < stir.ansCoeffs[i].size(); l++) {
+                    pointer[p++] = Goldilocks::toU64(stir.ansCoeffs[i][l]);
+                }
+            }
+
             return pointer;
         }
 
@@ -627,10 +644,12 @@ public:
             const StirStruct &stirStruct = starkInfo.starkStruct.stir;
             uint64_t M = stirStruct.numIterations();
 
-            // One object per iteration: "i{i}_root" / "_vals" / "_siblings" / "_last_levels",
+            // One object per committed oracle: "s{i+1}_root" / "_vals" / "_siblings" /
+            // "_last_levels" — the same 1-based naming as FRI's trees (s1 commits the
+            // DEEP polynomial in both tests),
             // named apart from FRI's "s{step}_*" so a reader cannot confuse the two layouts.
             for(uint64_t i = 0; i < M; ++i) {
-                std::string prefix = "i" + std::to_string(i);
+                std::string prefix = "s" + std::to_string(i + 1);
                 if(nFieldElements == 1) {
                     j[prefix + "_root"] = toString(stir.trees[i].root[0]);
                 } else {
@@ -689,6 +708,14 @@ public:
             j["nonces"] = json::array();
             for(uint64_t i = 0; i < M; ++i) {
                 j["nonces"][i] = std::to_string(stir.nonces[i]);
+            }
+
+            j["ansCoeffs"] = json::array();
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                j["ansCoeffs"][i] = json::array();
+                for(uint64_t l = 0; l < stir.ansCoeffs[i].size(); l++) {
+                    j["ansCoeffs"][i][l] = Goldilocks::toString(stir.ansCoeffs[i][l]);
+                }
             }
 
             return j;

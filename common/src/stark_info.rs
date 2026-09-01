@@ -306,8 +306,8 @@ pub struct StarkInfo {
     #[serde(rename = "qDim")]
     pub q_dim: u64,
 
-    #[serde(rename = "friExpId")]
-    pub fri_exp_id: u64,
+    #[serde(rename = "deepExpId")]
+    pub deep_exp_id: u64,
     #[serde(rename = "cExpId")]
     pub c_exp_id: u64,
 

@@ -514,7 +514,9 @@ public:
     // `shiftIndices` index L_i^{k_i}; duplicates (sampling with replacement) are removed, G being a
     // set. Points of G are returned in `pointsOut`/`valuesOut` in the order used, so the caller
     // can record them.
-    void degreeCorrect(const std::vector<E3> &rOut, const std::vector<E3> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb)
+    // `ansCoeffsOut`, when given, receives the monomial coefficients of Âns (|G| of them, the
+    // deduped size) — the recursion circuit takes them as hints it then constrains.
+    void degreeCorrect(const std::vector<E3> &rOut, const std::vector<E3> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb, std::vector<FE> *ansCoeffsOut = nullptr)
     {
         assert(i + 1 < p.M());
         assert(rOut.size() == beta.size());
@@ -532,6 +534,7 @@ public:
         }
         assert(ctx.size() < p.d(i + 1) && "|G| must be below d_{i+1} for the quotient to have positive degree bound");
         ctx.build();
+        if (ansCoeffsOut != nullptr) *ansCoeffsOut = ctx.ansCoeffs;
 
         Domain Lnext = p.L(i + 1);
         f.assign(Lnext.size() * FIELD_EXTENSION, Goldilocks::zero());

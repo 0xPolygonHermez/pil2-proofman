@@ -155,7 +155,7 @@ pub struct StarkInfo {
 
     pub q_deg: u64,
     pub q_dim: u64,
-    pub fri_exp_id: u64,
+    pub deep_exp_id: u64,
     pub c_exp_id: u64,
 
     pub map_sections_n: HashMap<String, u64>,
@@ -386,7 +386,7 @@ impl StarkInfo {
             boundaries,
             q_deg: get_u64(j, "qDeg"),
             q_dim: get_u64(j, "qDim"),
-            fri_exp_id: get_u64(j, "friExpId"),
+            deep_exp_id: get_u64(j, "deepExpId"),
             c_exp_id: get_u64(j, "cExpId"),
             map_sections_n,
         })

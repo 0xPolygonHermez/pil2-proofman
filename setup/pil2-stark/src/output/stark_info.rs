@@ -28,7 +28,7 @@ pub fn build_starkinfo_output(
     air_id: usize,
     air_name: &str,
     c_exp_id: usize,
-    fri_exp_id: usize,
+    deep_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
     // The query counts and grinding bits are the solved values, not the settings.
@@ -303,7 +303,7 @@ pub fn build_starkinfo_output(
         n_constraints: setup.constraints.len(),
         n_commitments_stage1,
         ev_map,
-        fri_exp_id,
+        deep_exp_id,
         security: Some(SecurityInfo {
             proximity_gap: ldt.proximity_gap(),
             proximity_parameter: ldt.proximity_parameter(),

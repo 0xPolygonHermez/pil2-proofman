@@ -14,21 +14,40 @@ include "tree/treeselector8.circom";
 include "tree/treeselector4.circom";
 {% if split_linear_hash %}include "hash/poseidon2/merklehash_gpu.circom";
 {% else %}include "hash/poseidon2/merklehash.circom";
-{% endif %}{% endif %}
-/* 
-    Calculate FRI Queries
+{% endif %}{% endif %}{% if is_stir %}include "stir.circom";
+{% endif %}
+{% if not is_stir %}/*
+    FRI query derivation: {{ n_queries }} indices into L_0 ({{ step0_bits }} bits each) from a
+    fresh transcript over the challenge drawn after the final polynomial{% if pow_bits > 0 %} and the
+    grinding nonce, with the proof of work checked first{% endif %}.
 */
 template {{ calculate_fri_queries_name }}() {
     
     signal input challengeFRIQueries[3];
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}    signal input {binary} enable;
-    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+    signal output {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
 
 {% if pow_bits > 0 %}    VerifyPoW({{ pow_bits }})(challengeFRIQueries, nonce, enable);
 {% endif %}
 {{ calculate_fri_queries_code }}
+}{% else %}{% for r in stir_rounds %}/*
+    STIR round {{ r.i + 1 }} query derivation: t_{{ r.i }} = {{ r.t }} indices into L_{{ r.i }}
+    ({{ r.log_l }} bits each) from a fresh transcript over the round's challenge and its
+    grinding nonce, with the proof of work checked first.
+*/
+template {{ calculate_stir_queries_name }}_{{ r.i }}() {
+    signal input challengeStirQueries[3];
+    signal input nonce;
+    signal input {binary} enable;
+    signal output {binary} queries[{{ r.t }}][{{ r.log_l }}];
+
+{% if r.grinding_bits > 0 %}    VerifyPoW({{ r.grinding_bits }})(challengeStirQueries, nonce, enable);
+{% endif %}
+{{ r.calc_queries_code }}
 }
+
+{% endfor %}{% endif %}
 
 /* 
     Calculate the transcript
@@ -45,18 +64,34 @@ template {{ transcript_name }}() {
 {% for stage in stages_info %}{% if stage.stage > 1 and stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4];
 {% endif %}{% endfor %}    signal input root{{ q_stage }}[4];
     signal input evals[{{ ev_map_len }}][3]; 
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4];
+{% if is_stir %}{% for r in stir_rounds %}    signal input s{{ r.tree }}_root[4];
+{% endfor %}{% if stir_m > 1 %}    signal input betas[{{ stir_m - 1 }}][3];
+{% endif %}    signal input finalPol[{{ final_pol_size }}][3];
+    signal input nonces[{{ stir_m }}];
+{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4];
 {% endif %}{% endfor %}    signal input finalPol[{{ final_pol_size }}][3];
 {% if pow_bits > 0 %}    signal input nonce;
-{% endif %}    signal input {binary} enable;
+{% endif %}{% endif %}    signal input {binary} enable;
 
 {% for cp in challenges_per_stage %}    signal output challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}    signal output challengeQ[3];
     signal output challengeXi[3];
-    signal output challengesFRI[2][3];
-    signal output challengesFRISteps[{{ n_steps + 1 }}][3];
-    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
-
+    signal output challengesDeep[2][3];
+{% if is_stir %}    // The STIR challenge schedule: r^fold_i, and per quotient round the
+    // out-of-domain point r_out and the degree-correction combiner r_comb.
+    signal output rFold[{{ stir_m }}][3];
+{% if stir_m > 1 %}    signal output rOut[{{ stir_m - 1 }}][3];
+    signal output rComb[{{ stir_m - 1 }}][3];
+{% endif %}    signal output {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
+{% for r in stir_rounds %}{% if not r.is_first %}    signal output {binary} queriesL{{ r.i }}[{{ r.t }}][{{ r.log_l }}];
+{% endif %}{% endfor %}    // Per-round query challenges, each seeding its own query transcript.
+    signal challengesQueries[{{ stir_m }}][3];
+{% else %}    // r^fold: one folding challenge per step. The query-phase seed is drawn after the
+    // final polynomial and consumed here by {{ calculate_fri_queries_name }}.
+    signal output rFold[{{ n_steps }}][3];
+    signal challengeQueries[3];
+    signal output {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
+{% endif %}
 {% if hash_commits %}{% if n_publics > 0 %}    signal publicsHash[4];
 {% endif %}    signal evalsHash[4];
     signal lastPolFRIHash[4];
@@ -68,18 +103,20 @@ template {{ transcript_name }}() {
 {{ transcript_code_fri_mid }}
 {{ transcript_last_pol_fri_code }}
 {{ transcript_code }}{% else %}{{ transcript_code }}{% endif %}
-{% if pow_bits > 0 %}    queriesFRI <== {{ calculate_fri_queries_name }}()(challengesFRISteps[{{ n_steps }}], nonce, enable);
-{% else %}    queriesFRI <== {{ calculate_fri_queries_name }}()(challengesFRISteps[{{ n_steps }}], enable);
-{% endif %}}
+{% if is_stir %}{% for r in stir_rounds %}{% if r.is_first %}    queriesL0 <== {{ calculate_stir_queries_name }}_{{ r.i }}()(challengesQueries[{{ r.i }}], nonces[{{ r.i }}], enable);
+{% else %}    queriesL{{ r.i }} <== {{ calculate_stir_queries_name }}_{{ r.i }}()(challengesQueries[{{ r.i }}], nonces[{{ r.i }}], enable);
+{% endif %}{% endfor %}{% else %}{% if pow_bits > 0 %}    queriesL0 <== {{ calculate_fri_queries_name }}()(challengeQueries, nonce, enable);
+{% else %}    queriesL0 <== {{ calculate_fri_queries_name }}()(challengeQueries, enable);
+{% endif %}{% endif %}}
 
-/*
+{% if not is_stir %}/*
     Verify that FRI polynomials are built properly
 */
 template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBits, e0) {
     var nextStep = currStepBits - nextStepBits; 
     var step = prevStepBits - currStepBits;
 
-    signal input {binary} queriesFRI[currStepBits];
+    signal input {binary} queriesL0[currStepBits];
     signal input friChallenge[3];
     signal input s_vals_curr[1<< step][3];
     signal input s_vals_next[1<< nextStep][3];
@@ -87,9 +124,9 @@ template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBit
 
     signal sx[currStepBits];
     
-    sx[0] <==  e0 *( queriesFRI[0] * (invroots(prevStepBits) -1) + 1);
+    sx[0] <==  e0 *( queriesL0[0] * (invroots(prevStepBits) -1) + 1);
     for (var i=1; i< currStepBits; i++) {
-        sx[i] <== sx[i-1] *  ( queriesFRI[i] * (invroots(prevStepBits -i) -1) +1);
+        sx[i] <== sx[i-1] *  ( queriesL0[i] * (invroots(prevStepBits -i) -1) +1);
     }
         
     // Perform an IFFT to obtain the coefficients of the polynomial given s_vals and evaluate it 
@@ -98,13 +135,14 @@ template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBit
     signal evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
 
     signal {binary} keys_lowValues[nextStep];
-    for(var i = 0; i < nextStep; i++) { keys_lowValues[i] <== queriesFRI[i + nextStepBits]; } 
+    for(var i = 0; i < nextStep; i++) { keys_lowValues[i] <== queriesL0[i + nextStepBits]; } 
     signal lowValues[3] <== TreeSelector(nextStep, 3)(s_vals_next, keys_lowValues);
 
     enable * (lowValues[0] - evalPol[0]) === 0;
     enable * (lowValues[1] - evalPol[1]) === 0;
     enable * (lowValues[2] - evalPol[2]) === 0;
 }
+{% endif %}
 
 /* 
     Verify that all committed polynomials are calculated correctly
@@ -198,8 +236,8 @@ template parallel {{ verify_evaluations_name }}() {
     enable * (tmp_{{ last_dest_id_p }}[2] - qAcc[{{ q_deg - 1 }}][2]) === 0;
 }
 
-{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}() {
-    signal input challengesFRI[2][3];
+{% for chunk in eval_q_chunks %}template CalculateDeepPolChunks{{ chunk.idx }}() {
+    signal input challengesDeep[2][3];
     signal input evals[{{ ev_map_len }}][3];
 
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
@@ -227,14 +265,14 @@ template parallel {{ verify_evaluations_name }}() {
 {% endfor %}
 
 /* 
-    Verify that the initial FRI polynomial, which is the lineal combination of the committed polynomials
+    Verify that the DEEP polynomial — the linear combination of the committed polynomials
     during the STARK phases, is built properly
 */
 template {{ verify_query_name }}(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits; 
-    signal input {binary} queriesFRI[{{ step0_bits }}];
+    signal input {binary} queriesL0[{{ step0_bits }}];
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
+    signal input challengesDeep[2][3];
     signal input evals[{{ ev_map_len }}][3];
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
@@ -245,9 +283,9 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
     signal input {binary} enable;
 
     signal xacc[{{ step0_bits }}];
-    xacc[0] <== queriesFRI[0]*({{ gl_shift }} * roots({{ step0_bits }})-{{ gl_shift }}) + {{ gl_shift }};
+    xacc[0] <== queriesL0[0]*({{ gl_shift }} * roots({{ step0_bits }})-{{ gl_shift }}) + {{ gl_shift }};
     for (var i=1; i<{{ step0_bits }}; i++) {
-        xacc[i] <== xacc[i-1] * ( queriesFRI[i]*(roots({{ step0_bits }} - i) - 1) +1);
+        xacc[i] <== xacc[i-1] * ( queriesL0[i]*(roots({{ step0_bits }} - i) - 1) +1);
     }
 
     signal xDivXSubXi[{{ opening_points | length }}][3];
@@ -256,7 +294,7 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 {% endfor %}
 {% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateDeepPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal queryVals[3];
     queryVals[0] <== tmp_{{ last_dest_id_q }}[0];
@@ -265,11 +303,11 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 
     signal {binary} s0_keys_lowValues[nextStep];
     for(var i = 0; i < nextStep; i++) {
-        s0_keys_lowValues[i] <== queriesFRI[i + nextStepBits];
+        s0_keys_lowValues[i] <== queriesL0[i + nextStepBits];
     }
 
     for(var i = 0; i < nextStepBits; i++) {
-        _ <== queriesFRI[i];
+        _ <== queriesL0[i];
     }
    
     signal lowValues[3] <== TreeSelector(nextStep, 3)(s1_vals, s0_keys_lowValues);
@@ -302,7 +340,7 @@ template {{ map_values_name }}() {
 {% else %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== [vals{{ stage_pols.stage }}[{{ pol.stage_pos }}],vals{{ stage_pols.stage }}[{{ pol.stage_pos + 1 }}] , vals{{ stage_pols.stage }}[{{ pol.stage_pos + 2 }}]];
 {% endif %}{% endfor %}{% endfor %}}
 
-template {{ verify_final_pol_name }}() {
+{% if not is_stir %}template {{ verify_final_pol_name }}() {
     ///////
     // Check Degree last pol
     ///////
@@ -324,14 +362,16 @@ template {{ verify_final_pol_name }}() {
         _ <== lastIFFT[k];
     }
 }
+{% endif %}
 
 template {{ verify_single_query_name }}() {
-    signal input {binary} queriesFRI[{{ step0_bits }}];
+    signal input {binary} queriesL0[{{ step0_bits }}];
 
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
-    signal input challengesFRISteps[{{ n_steps + 1 }}][3];
-    signal input evals[{{ ev_map_len }}][3];
+    signal input challengesDeep[2][3];
+{% if is_stir %}    signal input rFold0[3];
+{% else %}    signal input rFold[{{ n_steps }}][3];
+{% endif %}    signal input evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
 
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ stage.cm_section_len }}];
@@ -359,42 +399,72 @@ template {{ verify_single_query_name }}() {
     signal input s0_siblings_{{ cc.name }}_0[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
 {% endif %}{% endfor %}
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[{{ step.exponent }}][3];
+{% if is_stir %}{% set r0 = stir_rounds | first %}    signal input s1_vals_p[{{ r0.coset_size }}][3];
+    signal input s1_siblings[{{ r0.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s1_last_mt_levels[{{ r0.last_mt_size }}][4];
+{% else %}    signal input s1_root[4];
+{% endif %}    // Fold(f₀, 2^{k₀}, r^fold_0) at this query's point of L₀^{2^{k₀}} — collected by the
+    // caller as the shift-query answers of G₁.
+    signal output foldVal[3];
+{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[{{ step.exponent }}][3];
     signal input s{{ step.s }}_siblings[{{ step.merkle_levels }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
 {% else %}    signal input s{{ step.s }}_root[4];
 {% endif %}{% endif %}{% endfor %}
     signal input finalPol[{{ final_pol_size }}][3];
-
-    signal {binary} queriesFRIBits[{{ merkle_levels_s0 }}][{{ n_bits_arity }}];
+{% endif %}
+    signal {binary} queriesL0Bits[{{ merkle_levels_s0 }}][{{ n_bits_arity }}];
     for(var j = 0; j < {{ merkle_levels_s0 }}; j++) {
         for(var k = 0; k < {{ n_bits_arity }}; k++) {
             if (k + j * {{ n_bits_arity }} >= {{ step0_bits }}) {
-                queriesFRIBits[j][k] <== 0;
+                queriesL0Bits[j][k] <== 0;
             } else {
-                queriesFRIBits[j][k] <== queriesFRI[j*{{ n_bits_arity }} + k];
+                queriesL0Bits[j][k] <== queriesL0[j*{{ n_bits_arity }} + k];
             }
         }
     }
 
-{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesFRIBits, s0_last_mt_levels{{ stage.stage }}, enable);
-{% else %}    VerifyMerkleHash(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesFRIBits, root{{ stage.stage }}, enable);
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesL0Bits, s0_last_mt_levels{{ stage.stage }}, enable);
+{% else %}    VerifyMerkleHash(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesL0Bits, root{{ stage.stage }}, enable);
 {% endif %}{% endif %}{% endfor %}
-{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRIBits, s0_last_mt_levels{{ q_stage }}, enable);
-    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_valsC_p, s0_siblingsC, queriesFRIBits, s0_last_mt_levelsC, enable);
-{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRIBits, root{{ q_stage }}, enable);
-    VerifyMerkleHash(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_valsC_p, s0_siblingsC, queriesFRIBits, rootC, enable);
+{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesL0Bits, s0_last_mt_levels{{ q_stage }}, enable);
+    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, s0_last_mt_levelsC, enable);
+{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesL0Bits, root{{ q_stage }}, enable);
+    VerifyMerkleHash(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, rootC, enable);
 {% endif %}
-{% for cc in custom_commits %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRIBits, s0_last_mt_levels_{{ cc.name }}_0, enable);
-{% else %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRIBits, root_{{ cc.name }}_0, enable);
+{% for cc in custom_commits %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesL0Bits, s0_last_mt_levels_{{ cc.name }}_0, enable);
+{% else %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesL0Bits, root_{{ cc.name }}_0, enable);
 {% endif %}{% endfor %}
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_keys_merkle_bits[{{ step.merkle_levels + last_level_verification }}][{{ n_bits_arity }}];
+{% if is_stir %}{% set r0 = stir_rounds | first %}    // T₀ holds f₀ grouped in cosets of 2^{k₀}: the leaf is raw % nLeaves, the low bits of the
+    // round-1 query index.
+    signal {binary} s1_keys_merkle_bits[{{ r0.merkle_levels + last_level_verification }}][{{ n_bits_arity }}];
+    for(var j = 0; j < {{ r0.merkle_levels + last_level_verification }}; j++) {
+        for(var k = 0; k < {{ n_bits_arity }}; k++) {
+            if (k + j * {{ n_bits_arity }} >= {{ r0.log_leaves }}) {
+                s1_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s1_keys_merkle_bits[j][k] <== queriesL0[j*{{ n_bits_arity }} + k];
+            }
+        }
+    }
+
+{% if last_level_verification_gt0 %}{% if r0.merkle_levels == 0 %}    VerifyMerkleHashUntilLevelEmpty(3, {{ r0.coset_size }}, {{ arity }}, {{ last_level_verification }}, {{ r0.mt_size }})(s1_vals_p, s1_keys_merkle_bits, s1_last_mt_levels, enable);
+{% else %}    VerifyMerkleHashUntilLevel(3, {{ r0.coset_size }}, {{ arity }}, {{ r0.merkle_levels }}, {{ last_level_verification }}, {{ r0.mt_size }})(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_last_mt_levels, enable);
+{% endif %}{% else %}    VerifyMerkleHash(3, {{ r0.coset_size }}, {{ arity }}, {{ r0.merkle_levels + last_level_verification }})(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_root, enable);
+{% endif %}    // The DEEP cross-check: the recomputed f₀ value must equal member raw / nLeaves of the
+    // opened coset (the high bits select the member, exactly VerifyQuery's hand-off).
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeXi, challengesDeep, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+
+    signal {binary} s1_leaf_bits[{{ r0.log_leaves }}];
+    for(var i = 0; i < {{ r0.log_leaves }}; i++) { s1_leaf_bits[i] <== queriesL0[i]; }
+    foldVal <== StirFoldCoset({{ r0.log_k }}, {{ r0.log_l }}, {{ stir_shift_inv }})(s1_vals_p, s1_leaf_bits, rFold0);
+}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_keys_merkle_bits[{{ step.merkle_levels + last_level_verification }}][{{ n_bits_arity }}];
     for(var j = 0; j < {{ step.merkle_levels + last_level_verification }}; j++) {
         for(var k = 0; k < {{ n_bits_arity }}; k++) {
             if (k + j * {{ n_bits_arity }} >= {{ step.n_bits }}) {
                 s{{ step.s }}_keys_merkle_bits[j][k] <== 0;
             } else {
-                s{{ step.s }}_keys_merkle_bits[j][k] <== queriesFRI[j*{{ n_bits_arity }} + k];
+                s{{ step.s }}_keys_merkle_bits[j][k] <== queriesL0[j*{{ n_bits_arity }} + k];
             }
         }
     }
@@ -403,20 +473,21 @@ template {{ verify_single_query_name }}() {
 {% else %}    VerifyMerkleHashUntilLevel(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels }}, {{ last_level_verification }}, {{ step.mt_size }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_last_mt_levels, enable);
 {% endif %}{% else %}    VerifyMerkleHash(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels + last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_root, enable);
 {% endif %}{% endif %}{% endfor %}
-    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, challengesFRI, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeXi, challengesDeep, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
 
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesFRI[{{ step.n_bits }}];
-    for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesFRI[i] <== queriesFRI[i]; }
-    {{ verify_fri_name }}({{ n_bits_ext }}, {{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }})(s{{ step.s }}_queriesFRI, challengesFRISteps[{{ step.s }}], s{{ step.s }}_vals_p, {% if step.is_last %}finalPol{% else %}s{{ step.s + 1 }}_vals_p{% endif %}, enable);
-{% endif %}{% endfor %}}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesL0[{{ step.n_bits }}];
+    for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesL0[i] <== queriesL0[i]; }
+    {{ verify_fri_name }}({{ n_bits_ext }}, {{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }})(s{{ step.s }}_queriesL0, rFold[{{ step.s }}], s{{ step.s }}_vals_p, {% if step.is_last %}finalPol{% else %}s{{ step.s + 1 }}_vals_p{% endif %}, enable);
+{% endif %}{% endfor %}}{% endif %}
 
 template parallel {{ verify_queries_batch_name }}(nQueries) {
-    signal input {binary} queriesFRI[nQueries][{{ step0_bits }}];
+    signal input {binary} queriesL0[nQueries][{{ step0_bits }}];
 
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
-    signal input challengesFRISteps[{{ n_steps + 1 }}][3];
-    signal input evals[{{ ev_map_len }}][3];
+    signal input challengesDeep[2][3];
+{% if is_stir %}    signal input rFold0[3];
+{% else %}    signal input rFold[{{ n_steps }}][3];
+{% endif %}    signal input evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
 
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[nQueries][{{ stage.cm_section_len }}];
@@ -444,20 +515,26 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
     signal input s0_siblings_{{ cc.name }}_0[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
 {% endif %}{% endfor %}
-{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[nQueries][{{ step.exponent }}][3];
+{% if is_stir %}{% set r0 = stir_rounds | first %}    signal input s1_vals_p[nQueries][{{ r0.coset_size }}][3];
+    signal input s1_siblings[nQueries][{{ r0.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s1_last_mt_levels[{{ r0.last_mt_size }}][4];
+{% else %}    signal input s1_root[4];
+{% endif %}    signal output foldVals[nQueries][3];
+{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals_p[nQueries][{{ step.exponent }}][3];
     signal input s{{ step.s }}_siblings[nQueries][{{ step.merkle_levels }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
 {% else %}    signal input s{{ step.s }}_root[4];
 {% endif %}{% endif %}{% endfor %}
     signal input finalPol[{{ final_pol_size }}][3];
-
+{% endif %}
     for (var q = 0; q < nQueries; q++) {
-        {{ verify_single_query_name }}()(
-            queriesFRI[q],
+        {% if is_stir %}foldVals[q] <== {% endif %}{{ verify_single_query_name }}()(
+            queriesL0[q],
             challengeXi,
-            challengesFRI,
-            challengesFRISteps,
-            evals,
+            challengesDeep,
+{% if is_stir %}            rFold0,
+{% else %}            rFold,
+{% endif %}            evals,
             enable,
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}            s0_vals{{ stage.stage }}[q],
             s0_vals{{ stage.stage }}_p[q],
@@ -479,12 +556,16 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
             root_{{ cc.name }}_0,
             s0_siblings_{{ cc.name }}_0[q],
 {% if last_level_verification_gt0 %}            s0_last_mt_levels_{{ cc.name }}_0,
-{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals_p[q],
+{% endif %}{% endfor %}{% if is_stir %}            s1_vals_p[q],
+            s1_siblings[q],
+{% if last_level_verification_gt0 %}            s1_last_mt_levels
+{% else %}            s1_root
+{% endif %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals_p[q],
             s{{ step.s }}_siblings[q],
 {% if last_level_verification_gt0 %}            s{{ step.s }}_last_mt_levels,
 {% else %}            s{{ step.s }}_root,
 {% endif %}{% endif %}{% endfor %}            finalPol
-        );
+{% endif %}        );
     }
 }
 
@@ -519,21 +600,42 @@ template {{ verifier_name }}() {
 {% endif %}{% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
 {% endif %}{% endfor %}
-    // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
+{% if is_stir %}    // Contains the root of the DEEP polynomial (s1, committed grouped in cosets of 2^{k_0})
+    // and of every folded oracle g_n (s{n+1}, each on a fresh half-size domain); the final
+    // polynomial has no root — it is sent in clear.
+{% for r in stir_rounds %}    signal input s{{ r.tree }}_root[4];
+{% endfor %}    // For each committed oracle, the values needed to check its round's queries: a query
+    // into L_i opens one leaf of 2^{k_i} values — the coset its point of L_i^{2^{k_i}} folds
+    // through — plus the sibling path.
+{% for r in stir_rounds %}    signal input s{{ r.tree }}_vals[{{ r.t }}][{{ r.coset_size * 3 }}];
+    signal input s{{ r.tree }}_siblings[{{ r.t }}][{{ r.merkle_levels }}][{{ siblings_width }}];
+{% if last_level_verification_gt0 %}    signal input s{{ r.tree }}_last_levels[{{ r.last_mt_size }}][4];
+{% endif %}{% endfor %}{% if stir_m > 1 %}    // Out-of-domain answers β_i = ĝ_i(r_out), one per quotient round.
+    signal input betas[{{ stir_m - 1 }}][3];
+{% endif %}    // The final polynomial p, sent in clear as its d_M coefficients: the degree bound is
+    // structural, so no low-degree check is needed on it.
+    signal input finalPol[{{ final_pol_size }}][3];
+    // One grinding nonce per query message.
+    signal input nonces[{{ stir_m }}];
+    // Coefficients of Âns_i, zero-padded to s + t_i: untrusted hints, pinned below by the
+    // interpolation and tail-zero checks.
+{% for r in stir_rounds %}{% if r.has_quotient %}    signal input ansCoeffs{{ r.i }}[{{ r.n_g_max }}][3];
+{% endif %}{% endfor %}{% else %}    // Contains the root of the DEEP polynomial (s1, committed grouped in first-fold cosets)
+    // and of every intermediate folding; the final polynomial has no root — it is sent in clear.
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4];
 {% endif %}{% endfor %}
-    // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
-    // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
-    // and the sibling paths for each query.
+    // For each committed oracle, the values needed to check the queries: a query opens one
+    // leaf of b = 2^u values (u = the folding factor, the difference between two consecutive
+    // logDomainSizes) — the coset its point folds through — plus the sibling path.
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
     signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s{{ step.s }}_last_mt_levels[{{ step.last_mt_size }}][4];
 {% endif %}{% endif %}{% endfor %}
-    // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
+    // Evaluations of the final polynomial over a set of points of size bounded by its degree
     signal input finalPol[{{ final_pol_size }}][3];
 
 {% if pow_bits > 0 %}    signal input nonce;
-{% endif %}
+{% endif %}{% endif %}
     signal {binary} enabled;
 {% if enable_input %}    signal input enable;
     enable * (enable -1) === 0;
@@ -552,25 +654,33 @@ template {{ verifier_name }}() {
 {% endfor %}
     signal challengeQ[3];
     signal challengeXi[3];
-    signal challengesFRI[2][3];
+    signal challengesDeep[2][3];
 
-    // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
-    // the prover can commit the polynomial.
-    // Remember that, when folding, the prover does as follows: f0 = g_0 + X*g_1 + ... + (X^b)*g_b and then the 
-    // verifier provides a random X so that the prover can commit it. This value is stored here.
-    signal challengesFRISteps[{{ n_steps + 1 }}][3];
+{% if is_stir %}    // The STIR challenge schedule: one folding challenge per iteration, and per quotient
+    // round the out-of-domain point r_out and the degree-correction combiner r_comb.
+    signal rFold[{{ stir_m }}][3];
+{% if stir_m > 1 %}    signal rOut[{{ stir_m - 1 }}][3];
+    signal rComb[{{ stir_m - 1 }}][3];
+{% endif %}
+    // Round-1 queries into L₀ — where the stage trees and T₀ are opened.
+    signal {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
+{% for r in stir_rounds %}{% if not r.is_first %}    signal {binary} queriesL{{ r.i }}[{{ r.t }}][{{ r.log_l }}];
+{% endif %}{% endfor %}{% else %}    // r^fold: the random value the verifier provides at each folding step, under which the
+    // prover folds f_s into f_{s+1} and commits it.
+    signal rFold[{{ n_steps }}][3];
 
     // Challenges from which we derive all the queries
-    signal {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
-
-
-    ///////////
-    // Calculate challenges, challengesFRISteps and queriesFRI
-    ///////////
-
-{% if pow_bits > 0 %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
-{% else %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
+    signal {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
 {% endif %}
+
+    ///////////
+    // Calculate challenges, rFold and queriesL0
+    ///////////
+
+{% if is_stir %}    ({{ challenge_names_joined }},rFold{% if stir_m > 1 %},rOut,rComb{% endif %},queriesL0{% for r in stir_rounds %}{% if not r.is_first %},queriesL{{ r.i }}{% endif %}{% endfor %}) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals,{{ si_roots_joined }}{% if stir_m > 1 %},betas{% endif %},finalPol, nonces, enabled);
+{% else %}{% if pow_bits > 0 %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
+{% else %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
+{% endif %}{% endif %}
     ///////////
     // Preprocess s_i vals
     ///////////
@@ -583,10 +693,11 @@ template {{ verifier_name }}() {
 {% endif %}{% endfor %}    var s0_vals{{ q_stage }}_p[{{ n_queries }}][{{ q_stage_cm_section_len }}][1];
     var s0_valsC_p[{{ n_queries }}][{{ n_constants }}][1];
 {% for cc in custom_commits %}    var s0_vals_{{ cc.name }}_0_p[{{ n_queries }}][{{ cc.section_len_0 }}][1];
-{% endfor %}{% for step in fri_steps_info %}    var s{{ step.s }}_vals_p[{{ n_queries }}][{{ step.exponent }}][3]; 
-{% endfor %}
+{% endfor %}{% if is_stir %}{% for r in stir_rounds %}    var s{{ r.tree }}_vals_p[{{ r.t }}][{{ r.coset_size }}][3];
+{% endfor %}{% else %}{% for step in fri_steps_info %}    var s{{ step.s }}_vals_p[{{ n_queries }}][{{ step.exponent }}][3]; 
+{% endfor %}{% endif %}
     for (var q=0; q<{{ n_queries }}; q++) {
-        // Preprocess vals for the initial FRI polynomial
+        // Preprocess vals for the DEEP polynomial
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}        for (var i = 0; i < {{ stage.cm_section_len }}; i++) {
             s0_vals{{ stage.stage }}_p[q][i][0] = s0_vals{{ stage.stage }}[q][i];
         }
@@ -600,14 +711,23 @@ template {{ verifier_name }}() {
         s0_vals_{{ cc.name }}_0_p[q][i][0] = s0_vals_{{ cc.name }}_0[q][i];
     }
 {% endfor %}
-        // Preprocess vals for each folded polynomial
+{% if not is_stir %}        // Preprocess vals for each folded polynomial
         for(var e=0; e < 3; e++) {
 {% for step in fri_steps_info %}{% if step.s > 0 %}            for(var c=0; c < {{ step.exponent }}; c++) {
                 s{{ step.s }}_vals_p[q][c][e] = s{{ step.s }}_vals[q][c*3+e];
             }
 {% endif %}{% endfor %}        }
+{% endif %}    }
+{% if is_stir %}
+    // Unflatten every opened coset: tree i's query q holds the 2^{k_i} preimages of its point.
+{% for r in stir_rounds %}    for (var q=0; q<{{ r.t }}; q++) {
+        for(var c=0; c < {{ r.coset_size }}; c++) {
+            for(var e=0; e < 3; e++) {
+                s{{ r.tree }}_vals_p[q][c][e] = s{{ r.tree }}_vals[q][c*3+e];
+            }
+        }
     }
-
+{% endfor %}{% endif %}
 {% for cc in custom_commits %}    signal root_{{ cc.name }}_0[4] <== [publics[{{ cc.public_values[0] }}], publics[{{ cc.public_values[1] }}], publics[{{ cc.public_values[2] }}], publics[{{ cc.public_values[3] }}]];
 {% endfor %}
     ///////////
@@ -624,7 +744,7 @@ template {{ verifier_name }}() {
     var LAST_BATCH_SIZE_SAFE = LAST_BATCH_SIZE > 0 ? LAST_BATCH_SIZE : 1;
 
 // Work buffers for full batches
-    signal {binary} batch_work_queriesFRI[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step0_bits }}];
+    signal {binary} batch_work_queriesL0[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step0_bits }}];
 
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal batch_work_s0_vals{{ stage.stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ stage.cm_section_len }}];
     signal batch_work_s0_vals{{ stage.stage }}_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ stage.cm_section_len }}][1];
@@ -643,7 +763,11 @@ template {{ verifier_name }}() {
 {% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal batch_work_s{{ step.s }}_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step.exponent }}][3];
     signal batch_work_s{{ step.s }}_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ step.merkle_levels }}][{{ siblings_width }}];
-{% endif %}{% endfor %}
+{% endif %}{% endfor %}{% if is_stir %}{% set r0 = stir_rounds | first %}    signal batch_work_s1_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ r0.coset_size }}][3];
+    signal batch_work_s1_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ r0.merkle_levels }}][{{ siblings_width }}];
+    // Fold(f₀, 2^{k₀}, r^fold_0) at every round-1 query — the shift-query answers of G₁.
+    signal batchFoldVals[N_FULL_BATCHES][QUERIES_BATCH_SIZE][3];
+{% endif %}
     // Process full batches with Circom loop
     for (var b = 0; b < N_FULL_BATCHES; b++) {
         var batchStart = b * QUERIES_BATCH_SIZE;
@@ -651,7 +775,7 @@ template {{ verifier_name }}() {
         // Fill work buffers for batch b
         for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
             for (var i = 0; i < {{ step0_bits }}; i++) {
-                batch_work_queriesFRI[b][q][i] <== queriesFRI[batchStart + q][i];
+                batch_work_queriesL0[b][q][i] <== queriesL0[batchStart + q][i];
             }
         }
 
@@ -708,14 +832,27 @@ template {{ verifier_name }}() {
                 }
             }
         }
-{% endif %}{% endfor %}
+{% endif %}{% endfor %}{% if is_stir %}{% set r0 = stir_rounds | first %}        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < {{ r0.coset_size }}; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s1_vals_p[b][q][c][e] <== s1_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < {{ r0.merkle_levels }}; j++) {
+                for (var k = 0; k < {{ siblings_width }}; k++) {
+                    batch_work_s1_siblings[b][q][j][k] <== s1_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+{% endif %}
         // Call batch verifier with slice [b] of work buffers
-        {{ verify_queries_batch_name }}(QUERIES_BATCH_SIZE)(
-            batch_work_queriesFRI[b],
+        {% if is_stir %}batchFoldVals[b] <== {% endif %}{{ verify_queries_batch_name }}(QUERIES_BATCH_SIZE)(
+            batch_work_queriesL0[b],
             challengeXi,
-            challengesFRI,
-            challengesFRISteps,
-            evals,
+            challengesDeep,
+{% if is_stir %}            rFold[0],
+{% else %}            rFold,
+{% endif %}            evals,
             enabled,
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}            batch_work_s0_vals{{ stage.stage }}[b],
             batch_work_s0_vals{{ stage.stage }}_p[b],
@@ -737,19 +874,23 @@ template {{ verifier_name }}() {
             root_{{ cc.name }}_0,
             batch_work_s0_siblings_{{ cc.name }}_0[b],
 {% if last_level_verification_gt0 %}            s0_last_mt_levels_{{ cc.name }}_0,
-{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            batch_work_s{{ step.s }}_vals_p[b],
+{% endif %}{% endfor %}{% if is_stir %}            batch_work_s1_vals_p[b],
+            batch_work_s1_siblings[b],
+{% if last_level_verification_gt0 %}            s1_last_levels
+{% else %}            s1_root
+{% endif %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}            batch_work_s{{ step.s }}_vals_p[b],
             batch_work_s{{ step.s }}_siblings[b],
 {% if last_level_verification_gt0 %}            s{{ step.s }}_last_mt_levels,
 {% else %}            s{{ step.s }}_root,
 {% endif %}{% endif %}{% endfor %}            finalPol
-        );
+{% endif %}        );
     }
 
 // Remainder batch — signal declarations always emitted; call guarded by Circom if (LAST_BATCH_SIZE > 0)
-    signal {binary} remainder_queriesFRI[LAST_BATCH_SIZE_SAFE][{{ step0_bits }}];
+    signal {binary} remainder_queriesL0[LAST_BATCH_SIZE_SAFE][{{ step0_bits }}];
     for (var q = 0; q < LAST_BATCH_SIZE; q++) {
         for (var i = 0; i < {{ step0_bits }}; i++) {
-            remainder_queriesFRI[q][i] <== queriesFRI[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_queriesL0[q][i] <== queriesL0[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
         }
     }
 
@@ -821,14 +962,30 @@ template {{ verifier_name }}() {
             }
         }
     }
-{% endif %}{% endfor %}
+{% endif %}{% endfor %}{% if is_stir %}{% set r0 = stir_rounds | first %}    signal remainder_s1_vals_p[LAST_BATCH_SIZE_SAFE][{{ r0.coset_size }}][3];
+    signal remainder_s1_siblings[LAST_BATCH_SIZE_SAFE][{{ r0.merkle_levels }}][{{ siblings_width }}];
+    signal remainderFoldVals[LAST_BATCH_SIZE_SAFE][3];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < {{ r0.coset_size }}; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s1_vals_p[q][c][e] <== s1_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < {{ r0.merkle_levels }}; j++) {
+            for (var k = 0; k < {{ siblings_width }}; k++) {
+                remainder_s1_siblings[q][j][k] <== s1_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+{% endif %}
     if (LAST_BATCH_SIZE > 0) {
-    {{ verify_queries_batch_name }}(LAST_BATCH_SIZE)(
-        remainder_queriesFRI,
+    {% if is_stir %}remainderFoldVals <== {% endif %}{{ verify_queries_batch_name }}(LAST_BATCH_SIZE)(
+        remainder_queriesL0,
         challengeXi,
-        challengesFRI,
-        challengesFRISteps,
-        evals,
+        challengesDeep,
+{% if is_stir %}        rFold[0],
+{% else %}        rFold,
+{% endif %}        evals,
         enabled,
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}        remainder_s0_vals{{ stage.stage }},
         remainder_s0_vals{{ stage.stage }}_p,
@@ -850,14 +1007,196 @@ template {{ verifier_name }}() {
         root_{{ cc.name }}_0,
         remainder_s0_siblings_{{ cc.name }}_0,
 {% if last_level_verification_gt0 %}        s0_last_mt_levels_{{ cc.name }}_0,
-{% endif %}{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}        remainder_s{{ step.s }}_vals_p,
+{% endif %}{% endfor %}{% if is_stir %}        remainder_s1_vals_p,
+        remainder_s1_siblings,
+{% if last_level_verification_gt0 %}        s1_last_levels
+{% else %}        s1_root
+{% endif %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}        remainder_s{{ step.s }}_vals_p,
         remainder_s{{ step.s }}_siblings,
 {% if last_level_verification_gt0 %}        s{{ step.s }}_last_mt_levels,
 {% else %}        s{{ step.s }}_root,
 {% endif %}{% endif %}{% endfor %}        finalPol
-    );
+{% endif %}    );
     }
 
+{% if is_stir %}
+    ///////////
+    // STIR: quotient rounds and the final consistency check
+    ///////////
+
+    // Fold(f₀, 2^{k₀}, r^fold_0) at every round-1 query, collected out of the batch harness:
+    // these are the shift-query answers of G₁.
+    signal foldVals0[{{ n_queries }}][3];
+    for (var b = 0; b < N_FULL_BATCHES; b++) {
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            foldVals0[b * QUERIES_BATCH_SIZE + q] <== batchFoldVals[b][q];
+        }
+    }
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        foldVals0[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q] <== remainderFoldVals[q];
+    }
+{% for r in stir_rounds %}
+    // ══ Tree T_{{ r.i }}: t_{{ r.i }} = {{ r.t }} queries into L_{{ r.i }} (2^{{ r.log_l }}), cosets of 2^{{ r.log_k }} ══
+    signal {binary} leafBits{{ r.i }}[{{ r.t }}][{{ r.log_leaves }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        for (var i = 0; i < {{ r.log_leaves }}; i++) {
+            leafBits{{ r.i }}[q][i] <== {{ r.queries_sig }}[q][i];
+        }
+    }
+    // The point of L_{{ r.i }}^{2^{{ r.log_k }}} this query folds to: shift^{2^k}·ω^{leaf}.
+    signal gpt{{ r.i }}[{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        gpt{{ r.i }}[q] <== StirPointAcc({{ r.log_leaves }}, {{ r.log_leaves }}, {{ r.shift_pow }}, 0)(leafBits{{ r.i }}[q]);
+    }
+{% if not r.is_first %}{% set prev = r.prev %}
+    // Merkle openings of T_{{ r.i }} against its root.
+    signal {binary} s{{ r.tree }}_keys_merkle_bits[{{ r.t }}][{{ r.merkle_levels + last_level_verification }}][{{ n_bits_arity }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        for(var j = 0; j < {{ r.merkle_levels + last_level_verification }}; j++) {
+            for(var k = 0; k < {{ n_bits_arity }}; k++) {
+                if (k + j * {{ n_bits_arity }} >= {{ r.log_leaves }}) {
+                    s{{ r.tree }}_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s{{ r.tree }}_keys_merkle_bits[q][j][k] <== {{ r.queries_sig }}[q][j*{{ n_bits_arity }} + k];
+                }
+            }
+        }
+{% if last_level_verification_gt0 %}{% if r.merkle_levels == 0 %}        VerifyMerkleHashUntilLevelEmpty(3, {{ r.coset_size }}, {{ arity }}, {{ last_level_verification }}, {{ r.mt_size }})(s{{ r.tree }}_vals_p[q], s{{ r.tree }}_keys_merkle_bits[q], s{{ r.tree }}_last_levels, enabled);
+{% else %}        VerifyMerkleHashUntilLevel(3, {{ r.coset_size }}, {{ arity }}, {{ r.merkle_levels }}, {{ last_level_verification }}, {{ r.mt_size }})(s{{ r.tree }}_vals_p[q], s{{ r.tree }}_siblings[q], s{{ r.tree }}_keys_merkle_bits[q], s{{ r.tree }}_last_levels, enabled);
+{% endif %}{% else %}        VerifyMerkleHash(3, {{ r.coset_size }}, {{ arity }}, {{ r.merkle_levels + last_level_verification }})(s{{ r.tree }}_vals_p[q], s{{ r.tree }}_siblings[q], s{{ r.tree }}_keys_merkle_bits[q], s{{ r.tree }}_root, enabled);
+{% endif %}    }
+
+    // T_{{ r.i }} holds the committed g_{{ r.i }}; the virtual f_{{ r.i }} is obtained pointwise as
+    //   f(x) = (g(x) − Âns(x)) · V_G(x)^{−1} · Σ_{j=0}^{|G|} (r_comb·x)^j
+    // with round {{ r.i }}'s quotient data. Member j of leaf m sits at x = shift·ω^m·W_j.
+    signal cPt{{ r.i }}[{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        cPt{{ r.i }}[q] <== StirPointAcc({{ r.log_leaves }}, {{ r.log_l }}, {{ gl_shift }}, 0)(leafBits{{ r.i }}[q]);
+    }
+    signal xm{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+{% for off in r.member_offsets %}        xm{{ r.i }}[q][{{ loop.index0 }}] <== cPt{{ r.i }}[q] * {{ off }};
+{% endfor %}    }
+    signal ansAtX{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal vf{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][{{ prev.t }}];
+    signal vacc{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][{{ prev.t }}];
+    signal vg{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal vinv{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal geo{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal quot{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal fx{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        for (var j = 0; j < {{ r.coset_size }}; j++) {
+            ansAtX{{ r.i }}[q][j] <== EvalPol({{ prev.n_g_max }})(ansCoeffs{{ prev.i }}, [xm{{ r.i }}[q][j], 0, 0]);
+            // V_G(x): the fresh shift points contribute base-field factors, r_out the one
+            // extension factor. G ∩ L = ∅ (Remark 5.3), so V never vanishes on the domain.
+            for (var m = 0; m < {{ prev.t }}; m++) {
+                vf{{ r.i }}[q][j][m] <== fresh{{ prev.i }}[m] * (xm{{ r.i }}[q][j] - gpt{{ prev.i }}[m]);
+                if (m == 0) {
+                    vacc{{ r.i }}[q][j][0] <== vf{{ r.i }}[q][j][0] + 1 - fresh{{ prev.i }}[0];
+                } else {
+                    vacc{{ r.i }}[q][j][m] <== vacc{{ r.i }}[q][j][m-1] * (vf{{ r.i }}[q][j][m] + 1 - fresh{{ prev.i }}[m]);
+                }
+            }
+            vg{{ r.i }}[q][j][0] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (xm{{ r.i }}[q][j] - rOut[{{ prev.i }}][0]);
+            vg{{ r.i }}[q][j][1] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (- rOut[{{ prev.i }}][1]);
+            vg{{ r.i }}[q][j][2] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (- rOut[{{ prev.i }}][2]);
+            vinv{{ r.i }}[q][j] <== CInv()(vg{{ r.i }}[q][j]);
+            geo{{ r.i }}[q][j] <== StirGeoSum({{ prev.exp_bits }})([rComb[{{ prev.i }}][0] * xm{{ r.i }}[q][j], rComb[{{ prev.i }}][1] * xm{{ r.i }}[q][j], rComb[{{ prev.i }}][2] * xm{{ r.i }}[q][j]], expBits{{ prev.i }}, nG{{ prev.i }} + 1);
+            quot{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAtX{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAtX{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAtX{{ r.i }}[q][j][2]], vinv{{ r.i }}[q][j]);
+            fx{{ r.i }}[q][j] <== CMul()(quot{{ r.i }}[q][j], geo{{ r.i }}[q][j]);
+        }
+    }
+    // Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }}) at this round's points.
+    signal foldVals{{ r.i }}[{{ r.t }}][3];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        foldVals{{ r.i }}[q] <== StirFoldCoset({{ r.log_k }}, {{ r.log_l }}, {{ stir_shift_inv }})(fx{{ r.i }}[q], leafBits{{ r.i }}[q], rFold[{{ r.i }}]);
+    }
+{% endif %}{% if r.has_quotient %}
+    // ── Quotient data of round {{ r.i + 1 }}: G = {r_out} ∪ {fresh shift points} ──
+    // r_out is a single squeeze: a nonzero extension limb already puts it outside L ⊂ F_p.
+    // (The C++ re-squeezes with probability 2^{-128}; such a proof is not recursable.)
+    signal {binary} rOutBase{{ r.i }} <== StirIsZero3()([0, rOut[{{ r.i }}][1], rOut[{{ r.i }}][2]]);
+    enabled * rOutBase{{ r.i }} === 0;
+
+    // Repeated shift queries are dropped from G (sampling is with replacement):
+    // two queries collide iff their leaf indices agree — the point only depends on
+    // raw % nLeaves. The bits are already boolean-constrained by the transcript, so the
+    // packed field values compare faithfully. fresh[q] = no earlier query has the same leaf.
+    signal leafVal{{ r.i }}[{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        var acc = 0;
+        for (var i = 0; i < {{ r.log_leaves }}; i++) { acc += leafBits{{ r.i }}[q][i] * (1 << i); }
+        leafVal{{ r.i }}[q] <== acc;
+    }
+    signal {binary} eq{{ r.i }}[{{ r.t }}][{{ r.t }}];
+    signal fresh{{ r.i }}[{{ r.t }}];
+    signal freshAcc{{ r.i }}[{{ r.t }}][{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        for (var m = 0; m < {{ r.t }}; m++) {
+            if (m < q) {
+                eq{{ r.i }}[q][m] <== IsZero()(leafVal{{ r.i }}[q] - leafVal{{ r.i }}[m]);
+            } else {
+                eq{{ r.i }}[q][m] <== 0;
+            }
+        }
+    }
+    for (var q = 0; q < {{ r.t }}; q++) {
+        for (var m = 0; m < {{ r.t }}; m++) {
+            if (m == 0) {
+                if (q == 0) {
+                    freshAcc{{ r.i }}[q][0] <== 1;
+                } else {
+                    freshAcc{{ r.i }}[q][0] <== 1 - eq{{ r.i }}[q][0];
+                }
+            } else if (m < q) {
+                freshAcc{{ r.i }}[q][m] <== freshAcc{{ r.i }}[q][m-1] * (1 - eq{{ r.i }}[q][m]);
+            } else {
+                freshAcc{{ r.i }}[q][m] <== freshAcc{{ r.i }}[q][m-1];
+            }
+        }
+        fresh{{ r.i }}[q] <== freshAcc{{ r.i }}[q][{{ r.t - 1 }}];
+    }
+    // |G| = 1 + Σ fresh, and the Âns hint has exactly |G| live coefficients: the zero-padded
+    // tail is pinned to zero so a padded hint cannot smuggle extra degrees of freedom.
+    var nGAcc{{ r.i }} = 1;
+    for (var q = 0; q < {{ r.t }}; q++) { nGAcc{{ r.i }} += fresh{{ r.i }}[q]; }
+    signal nG{{ r.i }} <== nGAcc{{ r.i }};
+    signal {binary} expBits{{ r.i }}[{{ r.exp_bits }}] <== Num2Bits({{ r.exp_bits }})(nG{{ r.i }} + 1);
+    signal {binary} ansUsed{{ r.i }}[{{ r.n_g_max }}];
+    for (var m = 0; m < {{ r.n_g_max }}; m++) {
+        ansUsed{{ r.i }}[m] <== StirLessThan({{ r.exp_bits }})(m, nG{{ r.i }});
+        for (var e = 0; e < 3; e++) {
+            (1 - ansUsed{{ r.i }}[m]) * ansCoeffs{{ r.i }}[m][e] === 0;
+        }
+    }
+    // The hint must interpolate G: Âns(r_out) = β, and Âns(gpt) = Fold(f)(gpt) at every
+    // fresh shift point.
+    signal ansAtROut{{ r.i }}[3] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, rOut[{{ r.i }}]);
+    for (var e = 0; e < 3; e++) {
+        enabled * (ansAtROut{{ r.i }}[e] - betas[{{ r.i }}][e]) === 0;
+    }
+    signal ansAtG{{ r.i }}[{{ r.t }}][3];
+    signal enFresh{{ r.i }}[{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        ansAtG{{ r.i }}[q] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, [gpt{{ r.i }}[q], 0, 0]);
+        enFresh{{ r.i }}[q] <== enabled * fresh{{ r.i }}[q];
+        for (var e = 0; e < 3; e++) {
+            enFresh{{ r.i }}[q] * (ansAtG{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
+        }
+    }
+{% endif %}{% if r.is_last %}
+    // ── Final check: Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }})(r_shift) = p(r_shift) —
+    // the only explicit equality of the protocol. p arrives as its d_M coefficients, so the
+    // degree bound is structural.
+    signal finalAt{{ r.i }}[{{ r.t }}][3];
+    for (var q = 0; q < {{ r.t }}; q++) {
+        finalAt{{ r.i }}[q] <== EvalPol({{ final_pol_size }})(finalPol, [gpt{{ r.i }}[q], 0, 0]);
+        for (var e = 0; e < 3; e++) {
+            enabled * (finalAt{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
+        }
+    }
+{% endif %}{% endfor %}{% endif %}
     ///////////
     // Check constraints polynomial in the evaluation point
     ///////////
@@ -873,14 +1212,15 @@ template {{ verifier_name }}() {
 
 {% for cc in custom_commits %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels_{{ cc.name }}_0, root_{{ cc.name }}_0, enabled);
 {% endfor %}
-{% for step in fri_steps_info %}{% if step.s > 0 %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step.mt_size }})(s{{ step.s }}_last_mt_levels, s{{ step.s }}_root, enabled);
-{% endif %}{% endfor %}{% endif %}
+{% if is_stir %}{% for r in stir_rounds %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ r.mt_size }})(s{{ r.tree }}_last_levels, s{{ r.tree }}_root, enabled);
+{% endfor %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step.mt_size }})(s{{ step.s }}_last_mt_levels, s{{ step.s }}_root, enabled);
+{% endif %}{% endfor %}{% endif %}{% endif %}
     ///////////
     // Verify Merkle roots for optimized last levels (shared by all queries)
     ///////////
 
-    {{ verify_final_pol_name }}()(finalPol, enabled);
-}
+{% if not is_stir %}    {{ verify_final_pol_name }}()(finalPol, enabled);
+{% endif %}}
 {% if not skip_main %}
 component main {% if n_publics > 0 %}{public [publics]}{% endif %}= {{ verifier_name }}();
 {% endif %}

@@ -249,7 +249,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
     TimerStartCategoryGPU(timer, FRI);
-    // Challenges for FRI polynomial
+    // Challenges for the DEEP polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 3) {
@@ -268,7 +268,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);    
-    Goldilocks::Element *d_friPol = (Goldilocks::Element *)(h_params.aux_trace + offsetFRI);    
+    Goldilocks::Element *d_deepPol = (Goldilocks::Element *)(h_params.aux_trace + offsetFRI);    
     uint64_t nBits =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
 
     uint64_t nStepsFRI = setupCtx.starkInfo.starkStruct.logDomainSizes.size();
@@ -281,14 +281,14 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         }
         if (step < nStepsFRI - 1)
         {
-            merkelizeFRI_bn128_gpu(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], &d_transcript, timer, stream);
+            merkelizeFRI_bn128_gpu(setupCtx, h_params, step, d_deepPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], &d_transcript, timer, stream);
         }
         else
         {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream, &timer);
+                d_transcript.put((Goldilocks::Element *)d_deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream, &timer);
             } else {
-                calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
+                calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, (Goldilocks::Element *)d_deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION, stream);
                 d_transcript.put(d_hash_gpu, nFieldElements, stream, &timer);
             }
         }

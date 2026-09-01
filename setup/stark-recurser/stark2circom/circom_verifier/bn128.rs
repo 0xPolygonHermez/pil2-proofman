@@ -6,7 +6,7 @@
 //! Key differences from the GL generator (`pil2circom.rs`):
 //!
 //! - Hash primitive: `PoseidonEx` (or `CustomPoseidon` when `custom=true`)
-//! - No expression chunking (`VerifyEvaluationsChunks`/`CalculateFRIPolChunks`)
+//! - No expression chunking (`VerifyEvaluationsChunks`/`CalculateDeepPolChunks`)
 //! - No `airgroupId` suffix on template names
 //! - No batched query verification (`VerifyQueriesBatch`) — queries loop in `StarkVerifier`
 //! - Has a `Main()` wrapper template (with SHA256 publics hash) that wraps `StarkVerifier`
@@ -358,7 +358,7 @@ fn build_tera_context_bn128(
     if pow_bits > 0 {
         t_fri.put_single("nonce");
     }
-    t_fri.get_permutations("queriesFRI", n_queries, step0_bits, n_fields);
+    t_fri.get_permutations("queriesL0", n_queries, step0_bits, n_fields);
     let calculate_fri_queries_code = t_fri.get_code();
 
     let mut t = TranscriptBn128::new(transcript_arity, custom, None);
@@ -402,10 +402,10 @@ fn build_tera_context_bn128(
         transcript_evals_code = t_evals.get_code();
         t.put_single("evalsHash");
     }
-    t.get_field("challengesFRI[0]");
-    t.get_field("challengesFRI[1]");
+    t.get_field("challengesDeep[0]");
+    t.get_field("challengesDeep[1]");
     for si_idx in 0..n_steps {
-        t.get_field(&format!("challengesFRISteps[{si_idx}]"));
+        t.get_field(&format!("rFold[{si_idx}]"));
         if si_idx < n_steps - 1 {
             t.put_single(&format!("s{}_root", si_idx + 1));
         } else if !hash_commits {
@@ -450,7 +450,7 @@ fn build_tera_context_bn128(
             challenge_names.push(format!("challengesStage{stage}GL"));
         }
     }
-    challenge_names.extend(["challengeQGL", "challengeXiGL", "challengesFRIGL"].iter().map(|s| s.to_string()));
+    challenge_names.extend(["challengeQGL", "challengeXiGL", "challengesDeepGL"].iter().map(|s| s.to_string()));
     let challenge_names_joined = challenge_names.join(",");
 
     // ── transcript_call_inputs ───────────────────────────────────────────────

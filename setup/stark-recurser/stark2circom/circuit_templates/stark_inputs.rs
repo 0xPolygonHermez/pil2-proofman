@@ -63,7 +63,24 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
     let is_bn128 = hash_type == "BN128";
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let llv = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
-    let n_queries = ss["numQueries"].as_u64().unwrap_or(0) as usize;
+    // A STIR stark info opens the stage trees at its round-1 queries (t₀); its own proof
+    // section is declared below in the exact flat-buffer order.
+    let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
+    assert!(!(is_stir && is_bn128), "STIR is not supported for BN128 proofs");
+    let stir_num_queries: Vec<usize> = if is_stir {
+        ss["numQueries"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
+    } else {
+        vec![]
+    };
+    let stir_folding: Vec<usize> =
+        ss["foldingFactors"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
+    let stir_log_degrees: Vec<usize> =
+        ss["logDegrees"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
+    let n_queries = if is_stir {
+        stir_num_queries.first().copied().unwrap_or(0)
+    } else {
+        ss["numQueries"].as_u64().unwrap_or(0) as usize
+    };
     let n_constants = stark_info["nConstants"].as_u64().unwrap_or(0) as usize;
     let n_stages = stark_info["nStages"].as_u64().unwrap_or(0) as usize;
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
@@ -172,42 +189,76 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
         }
     }
 
-    // FRI step roots and vals/siblings for steps 1..
-    for s in 1..steps.len() {
-        out.push_str(&root_signal(&format!("s{s}_root")));
-    }
-    for s in 1..steps.len() {
-        let fold_vals = (1usize << (steps[s - 1] as usize - steps[s] as usize)) * 3;
-        out.push_str(&format!("    signal input {prefix_}s{s}_vals[{n_queries}][{fold_vals}];\n"));
-        if is_bn128 {
-            let d = siblings_depth_bn128(steps[s] as usize, arity, llv);
-            if d > 0 {
-                out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{arity}];\n"));
-            }
-            if llv > 0 {
-                let last_count = arity_pow(arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s{s}_last_levels[{last_count}];\n"));
-            }
-        } else {
-            let d = siblings_depth_gl(steps[s] as usize, arity, llv);
+    if is_stir {
+        // The STIR proof section, in the exact order Proofs::proof2pointer writes it:
+        // T_i roots, per tree {cosets, siblings, last level}, β, p's coefficients, the
+        // per-round nonces, and the zero-padded Âns hints.
+        let m = stir_folding.len();
+        for i in 0..m {
+            out.push_str(&root_signal(&format!("s{}_root", i + 1)));
+        }
+        for i in 0..m {
+            let t = stir_num_queries[i];
+            let coset_w = (1usize << stir_folding[i]) * 3;
+            let log_leaves = steps[i] as usize - stir_folding[i];
+            let d = siblings_depth_gl(log_leaves, arity, llv);
             let leaf_w = (arity - 1) * 4;
-            out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{leaf_w}];\n"));
+            let tree = i + 1;
+            out.push_str(&format!("    signal input {prefix_}s{tree}_vals[{t}][{coset_w}];\n"));
+            out.push_str(&format!("    signal input {prefix_}s{tree}_siblings[{t}][{d}][{leaf_w}];\n"));
             if llv > 0 {
                 let last_count = arity_pow(arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s{s}_last_mt_levels[{last_count}][4];\n"));
+                out.push_str(&format!("    signal input {prefix_}s{tree}_last_levels[{last_count}][4];\n"));
             }
         }
-    }
+        if m > 1 {
+            out.push_str(&format!("    signal input {prefix_}betas[{}][3];\n", m - 1));
+        }
+        let final_pol_len = 1usize << stir_log_degrees.last().copied().unwrap_or(0);
+        out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
+        out.push_str(&format!("    signal input {prefix_}nonces[{m}];\n"));
+        for i in 0..m.saturating_sub(1) {
+            let n_g_max = 1 + stir_num_queries[i];
+            out.push_str(&format!("    signal input {prefix_}ansCoeffs{i}[{n_g_max}][3];\n"));
+        }
+    } else {
+        // FRI step roots and vals/siblings for steps 1..
+        for s in 1..steps.len() {
+            out.push_str(&root_signal(&format!("s{s}_root")));
+        }
+        for s in 1..steps.len() {
+            let fold_vals = (1usize << (steps[s - 1] as usize - steps[s] as usize)) * 3;
+            out.push_str(&format!("    signal input {prefix_}s{s}_vals[{n_queries}][{fold_vals}];\n"));
+            if is_bn128 {
+                let d = siblings_depth_bn128(steps[s] as usize, arity, llv);
+                if d > 0 {
+                    out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{arity}];\n"));
+                }
+                if llv > 0 {
+                    let last_count = arity_pow(arity, llv);
+                    out.push_str(&format!("    signal input {prefix_}s{s}_last_levels[{last_count}];\n"));
+                }
+            } else {
+                let d = siblings_depth_gl(steps[s] as usize, arity, llv);
+                let leaf_w = (arity - 1) * 4;
+                out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{leaf_w}];\n"));
+                if llv > 0 {
+                    let last_count = arity_pow(arity, llv);
+                    out.push_str(&format!("    signal input {prefix_}s{s}_last_mt_levels[{last_count}][4];\n"));
+                }
+            }
+        }
 
-    // Final polynomial
-    let last_bits = steps.last().copied().unwrap_or(0) as usize;
-    let final_pol_len = 1usize << last_bits;
-    out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
+        // Final polynomial
+        let last_bits = steps.last().copied().unwrap_or(0) as usize;
+        let final_pol_len = 1usize << last_bits;
+        out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
 
-    // Proof-of-work nonce (optional)
-    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
-    if pow_bits > 0 {
-        out.push_str(&format!("    signal input {prefix_}nonce;\n"));
+        // Proof-of-work nonce (optional)
+        let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
+        if pow_bits > 0 {
+            out.push_str(&format!("    signal input {prefix_}nonce;\n"));
+        }
     }
 
     out
@@ -354,33 +405,56 @@ pub fn assign_stark_inputs(
         }
     }
 
-    // FRI step roots
-    for s in 1..steps.len() {
-        out.push_str(&format!("    {component_name}.s{s}_root <== {prefix_}s{s}_root;\n"));
-    }
-    // FRI step vals/siblings
-    for (s, step) in steps.iter().enumerate().skip(1) {
-        out.push_str(&format!("    {component_name}.s{s}_vals <== {prefix_}s{s}_vals;\n"));
-        let skip_siblings = is_bn128 && siblings_depth_bn128(*step as usize, arity, llv) == 0;
-        if !skip_siblings {
-            out.push_str(&format!("    {component_name}.s{s}_siblings <== {prefix_}s{s}_siblings;\n"));
+    let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
+    if is_stir {
+        let m = ss["foldingFactors"].as_array().map_or(0, |a| a.len());
+        for i in 0..m {
+            out.push_str(&format!("    {component_name}.s{0}_root <== {prefix_}s{0}_root;\n", i + 1));
         }
-        if llv > 0 {
-            if is_bn128 {
-                out.push_str(&format!("    {component_name}.s{s}_last_levels <== {prefix_}s{s}_last_levels;\n"));
-            } else {
-                out.push_str(&format!("    {component_name}.s{s}_last_mt_levels <== {prefix_}s{s}_last_mt_levels;\n"));
+        for i in 0..m {
+            out.push_str(&format!("    {component_name}.s{0}_vals <== {prefix_}s{0}_vals;\n", i + 1));
+            out.push_str(&format!("    {component_name}.s{0}_siblings <== {prefix_}s{0}_siblings;\n", i + 1));
+            if llv > 0 {
+                out.push_str(&format!("    {component_name}.s{0}_last_levels <== {prefix_}s{0}_last_levels;\n", i + 1));
             }
         }
-    }
+        if m > 1 {
+            out.push_str(&format!("    {component_name}.betas <== {prefix_}betas;\n"));
+        }
+        out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
+        out.push_str(&format!("    {component_name}.nonces <== {prefix_}nonces;\n"));
+        for i in 0..m.saturating_sub(1) {
+            out.push_str(&format!("    {component_name}.ansCoeffs{i} <== {prefix_}ansCoeffs{i};\n"));
+        }
+    } else {
+        // FRI step roots
+        for s in 1..steps.len() {
+            out.push_str(&format!("    {component_name}.s{s}_root <== {prefix_}s{s}_root;\n"));
+        }
+        // FRI step vals/siblings
+        for (s, step) in steps.iter().enumerate().skip(1) {
+            out.push_str(&format!("    {component_name}.s{s}_vals <== {prefix_}s{s}_vals;\n"));
+            let skip_siblings = is_bn128 && siblings_depth_bn128(*step as usize, arity, llv) == 0;
+            if !skip_siblings {
+                out.push_str(&format!("    {component_name}.s{s}_siblings <== {prefix_}s{s}_siblings;\n"));
+            }
+            if llv > 0 {
+                if is_bn128 {
+                    out.push_str(&format!("    {component_name}.s{s}_last_levels <== {prefix_}s{s}_last_levels;\n"));
+                } else {
+                    out.push_str(&format!("    {component_name}.s{s}_last_mt_levels <== {prefix_}s{s}_last_mt_levels;\n"));
+                }
+            }
+        }
 
-    // finalPol
-    out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
+        // finalPol
+        out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
 
-    // Proof-of-work nonce
-    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
-    if pow_bits > 0 {
-        out.push_str(&format!("    {component_name}.nonce <== {prefix_}nonce;\n"));
+        // Proof-of-work nonce
+        let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
+        if pow_bits > 0 {
+            out.push_str(&format!("    {component_name}.nonce <== {prefix_}nonce;\n"));
+        }
     }
 
     // Optional enable signal

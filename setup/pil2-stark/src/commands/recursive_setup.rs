@@ -320,7 +320,7 @@ pub(crate) fn run_recursive_setup(
                                     too_small.n_bits
                                 ));
                             };
-                            let cur_q = comp_ss.get("nQueries").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let cur_q = comp_ss.get("numQueries").and_then(|v| v.as_u64()).unwrap_or(0);
                             let cur_used = (too_small.n_used as u64).max(1);
                             if cur_q == 0 {
                                 return Err(anyhow::anyhow!(
@@ -367,7 +367,7 @@ pub(crate) fn run_recursive_setup(
                             );
                             let mut bumped = comp_ss;
                             if let Some(obj) = bumped.as_object_mut() {
-                                obj.insert("nQueries".to_string(), serde_json::json!(want_q));
+                                obj.insert("numQueries".to_string(), serde_json::json!(want_q));
                             }
                             compressor_ss_override = Some(bumped);
                             // loop: recompress with the bumped starkStruct + rerun recursive1.

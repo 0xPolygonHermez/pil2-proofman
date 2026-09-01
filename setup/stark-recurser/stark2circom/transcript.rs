@@ -253,7 +253,7 @@ impl Transcript {
     ///
     /// Mirrors `getPermutations(v, n, nBits)` from the GL EJS `Transcript` class.
     ///
-    /// - `v`          — circom signal name of the 2-D output array (e.g. `"queriesFRI"`)
+    /// - `v`          — circom signal name of the 2-D output array (e.g. `"queriesL0"`)
     /// - `n_queries`  — first dimension count (e.g. `starkStruct.nQueries`)
     /// - `query_bits` — second dimension / bits per query (e.g. `starkStruct.steps[0].nBits`)
     pub fn get_permutations(&mut self, v: &str, n_queries: usize, query_bits: usize) {
@@ -284,7 +284,7 @@ impl Transcript {
 
         // ── Bit-assignment loops ──────────────────────────────────────────────
         self.code.push(
-            "// From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions"
+            "// From each transcript hash converted to bits, we assign those bits to queriesL0[q] to define the query positions"
                 .into(),
         );
         self.code.push("var q = 0; // Query number ".into());
@@ -334,7 +334,7 @@ mod tests {
         // Prime with 3 items (doesn't fill input_width=12, so no Poseidon yet).
         t.put("challengeFRIQueries", 3);
         // Call get_permutations — triggers round 0 with pending padded to 12.
-        t.get_permutations("queriesFRI", 1, 3);
+        t.get_permutations("queriesL0", 1, 3);
         let code = t.get_code();
 
         // Round 0 Poseidon must appear (pending was 3, padded to 12).
@@ -361,7 +361,7 @@ mod tests {
         let mut t = Transcript::new(4, Some("friQueries".into()));
         t.set_poseidon2(true);
         t.put("challengeFRIQueries", 3);
-        t.get_permutations("queriesFRI", 1, 3);
+        t.get_permutations("queriesL0", 1, 3);
         let code = t.get_code();
         // Same width-16/rate-12 geometry as Poseidon1, but the `Poseidon2(4, 16)` head.
         assert!(
@@ -378,7 +378,7 @@ mod tests {
         // total_bits must = 63 * n_fields exactly → last field bits = 63.
         // n_queries=1, query_bits=63 → total_bits=63, n_fields=1.
         let mut t = Transcript::new(4, Some("friQueries".into()));
-        t.get_permutations("queriesFRI", 1, 63);
+        t.get_permutations("queriesL0", 1, 63);
         let code = t.get_code();
         // bits_this_field=63 → _ <== transcriptN2b_0[63]; // Unused last bit
         assert!(code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"), "code:\n{code}");
@@ -395,7 +395,7 @@ mod tests {
         let mut t = Transcript::new(4, Some("friQueries".into()));
         t.put("challengeFRIQueries", 3);
         t.put_single("nonce");
-        t.get_permutations("queriesFRI", 229, 23);
+        t.get_permutations("queriesL0", 229, 23);
         let code = t.get_code();
 
         // NFields = floor((229*23 - 1)/63) + 1 = floor(5266/63) + 1 = 83+1 = 84

@@ -78,7 +78,7 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             } else if stage == ctx.evals_stage {
                 Ok("challengeXi".into())
             } else if stage == ctx.fri_stage {
-                Ok(format!("challengesFRI[{stage_id}]"))
+                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }
@@ -490,7 +490,7 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
             } else if stage == ctx.evals_stage {
                 Ok("challengeXi".into())
             } else if stage == ctx.fri_stage {
-                Ok(format!("challengesFRI[{stage_id}]"))
+                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }

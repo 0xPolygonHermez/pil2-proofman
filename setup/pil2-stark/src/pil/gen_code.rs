@@ -3,7 +3,7 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - FRI polynomial
+//! - DEEP polynomial
 //! - Verifier evaluations
 //! - Hint computations
 
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef};
 use crate::expr::expression::Expression;
-use crate::pil::fri_poly::{self, ChallengeMapEntry};
+use crate::pil::deep_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
 use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo, FIELD_EXTENSION};
 use crate::expr::print::PrintCtx;
@@ -283,8 +283,8 @@ pub struct PilCodeResult {
     pub verifier_info: VerifierInfo,
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
-    /// The FRI polynomial expression ID (may differ from c_exp_id).
-    pub fri_exp_id: usize,
+    /// The DEEP polynomial expression ID (may differ from c_exp_id).
+    pub deep_exp_id: usize,
     /// Updated challenges map (with FRI challenges appended).
     pub challenges_map: Vec<ChallengeMapEntry>,
 }
@@ -300,7 +300,7 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    pub fri_exp_id: usize,
+    pub deep_exp_id: usize,
     pub q_deg: usize,
     pub q_dim: usize,
     pub opening_points: Vec<i64>,
@@ -330,7 +330,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then FRI polynomial
+    // In non-debug mode: generate verifier code, then the DEEP polynomial
     let q_verifier = if !debug {
         let qv = generate_constraint_polynomial_verifier_code(
             params,
@@ -340,13 +340,13 @@ pub fn generate_pil_code(
             &witness_index,
         );
 
-        // Generate FRI polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
+        // Generate the DEEP polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
         let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
             .iter()
             .map(|e| EvMapItem { entry_type: e.entry_type.clone(), id: e.id, prime: e.prime, commit_id: e.commit_id })
             .collect();
 
-        let fri_result = fri_poly::generate_fri_polynomial(
+        let fri_result = deep_poly::generate_deep_polynomial(
             params.n_stages,
             expressions,
             symbols,
@@ -354,7 +354,7 @@ pub fn generate_pil_code(
             &params.opening_points,
             &mut challenges_map,
         );
-        params.fri_exp_id = fri_result.fri_exp_id;
+        params.deep_exp_id = fri_result.deep_exp_id;
 
         qv
     } else {
@@ -370,7 +370,7 @@ pub fn generate_pil_code(
     // modifies the `expressionsCode` array. We replicate this by modifying
     // the entry in-place in `expressions_code` first, then cloning.
     let fri_entry_idx =
-        expressions_code.iter().position(|e| e.exp_id == params.fri_exp_id).expect("FRI expression code not found");
+        expressions_code.iter().position(|e| e.exp_id == params.deep_exp_id).expect("FRI expression code not found");
 
     // Overwrite last dest to be a tmp with FIELD_EXTENSION dim (in-place)
     {
@@ -397,13 +397,13 @@ pub fn generate_pil_code(
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index);
 
-    let fri_exp_id = params.fri_exp_id;
+    let deep_exp_id = params.deep_exp_id;
 
     PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
         verifier_info: VerifierInfo { q_verifier, query_verifier },
         ev_map: ev_map_items,
-        fri_exp_id,
+        deep_exp_id,
         challenges_map,
     }
 }
@@ -425,17 +425,17 @@ fn generate_expressions_code(
 
     for j in 0..expressions.len() {
         let exp = &expressions[j];
-        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && j != params.fri_exp_id;
+        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && j != params.deep_exp_id;
         if dominated {
             continue;
         }
 
-        let dom = if j == params.c_exp_id || j == params.fri_exp_id { "ext" } else { "n" };
+        let dom = if j == params.c_exp_id || j == params.deep_exp_id { "ext" } else { "n" };
 
         let mut ctx = CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), Vec::new());
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
-        if j == params.fri_exp_id {
+        if j == params.deep_exp_id {
             ctx.opening_points = params.opening_points.clone();
         }
 
@@ -488,7 +488,7 @@ fn generate_expressions_code(
             }
         }
 
-        if j == params.fri_exp_id {
+        if j == params.deep_exp_id {
             if let Some(last) = block.code.last_mut() {
                 last.dest = CodeRef {
                     ref_type: "f".to_string(),
@@ -888,7 +888,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: 3,
+            deep_exp_id: 3,
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -914,7 +914,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 999, // not matching any expr
-            fri_exp_id: 998,
+            deep_exp_id: 998,
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -976,7 +976,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: 999,
+            deep_exp_id: 999,
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],

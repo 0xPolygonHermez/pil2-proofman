@@ -293,6 +293,9 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     let final_settings = crate::types::stark_struct::StarkSettings {
         initial_blowup_factor: Some(4),
         initial_folding_factor: Some(4),
+        // Pinned to the committed vadcop_final verifier's schedule (domains 20,16,12,8,5):
+        // the final polynomial's log-degree bound is domain 5 minus the blowup.
+        final_degree: Some(1),
         grinding_bits: Some(22),
         // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
         last_level_verification: None,
@@ -350,7 +353,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         0,
         "vadcop_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;

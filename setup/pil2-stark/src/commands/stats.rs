@@ -83,40 +83,50 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts);
 
             // Both the native and the in-circuit verifier run the same algorithm, so one count
-            // serves both; only the price of a single hash differs.
+            // serves both; only the price of a single hash differs. The accounting only knows
+            // FRI so far — report a STIR air without it rather than panicking.
             let family = opts.hash.as_str();
-            let geom = crate::verifier_hashes::geometry_for_family(
-                &stark_struct,
-                &pil_result.setup,
-                pil_result.pil_code.ev_map.len(),
-            );
-            let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
+            let geom_counts = stark_struct.low_degree_test.fri().map(|_| {
+                let geom = crate::verifier_hashes::geometry_for_family(
+                    &stark_struct,
+                    &pil_result.setup,
+                    pil_result.pil_code.ev_map.len(),
+                );
+                let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
+                (geom, counts)
+            });
+            let verifier_hashes =
+                geom_counts.as_ref().map_or("n/a (STIR)".to_string(), |(_, c)| c.total().to_string());
 
             summary_lines.push(format!(
                 "{} | {} | {} | verifierHashes: {}",
                 airgroup_name,
                 air_name,
                 pil_result.summary,
-                counts.total()
+                verifier_hashes
             ));
 
             stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", pil_result.summary));
-            stats_lines.push(format!("Verifier hashes ({family}):"));
-            stats_lines.push(format!(
-                "    total: {:>9} | leaf: {:>8} merkle: {:>8} fri: {:>8} transcript: {:>5} grinding: {} \
-                 (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",
-                counts.total(),
-                counts.leaf,
-                counts.merkle,
-                counts.fri,
-                counts.transcript,
-                counts.grinding,
-                geom.arity,
-                geom.n_queries,
-                geom.last_level_verification,
-                geom.pow_bits,
-            ));
+            if let Some((geom, counts)) = &geom_counts {
+                stats_lines.push(format!("Verifier hashes ({family}):"));
+                stats_lines.push(format!(
+                    "    total: {:>9} | leaf: {:>8} merkle: {:>8} fri: {:>8} transcript: {:>5} grinding: {} \
+                     (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",
+                    counts.total(),
+                    counts.leaf,
+                    counts.merkle,
+                    counts.fri,
+                    counts.transcript,
+                    counts.grinding,
+                    geom.arity,
+                    geom.n_queries,
+                    geom.last_level_verification,
+                    geom.pow_bits,
+                ));
+            } else {
+                stats_lines.push("Verifier hashes: n/a (STIR hash accounting not implemented)".to_string());
+            }
 
             let (base_field, extended_field) = &pil_result.im_pols_info;
             if !base_field.is_empty() {

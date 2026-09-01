@@ -355,12 +355,21 @@ pub fn gen_recursive_setup(
             // JS formula:
             //   nRowsPerFri = NUsed / starkInfo.starkStruct.nQueries
             //   minimumQueriesRequired = ceil((2^(recursiveBits-1) + 2^12) / nRowsPerFri)
-            let current_n_queries = config
-                .stark_info
-                .get("starkStruct")
-                .and_then(|s| s.get("nQueries"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            // The knob is FRI's scalar `numQueries`, or STIR's `numQueries[0]` (t₀ — the
+            // round-1 queries that drive the circuit size; raising it only adds security,
+            // and the C++ loader re-validates |G₁| < d₁).
+            let ss_json = config.stark_info.get("starkStruct");
+            let is_stir_inner = ss_json.and_then(|s| s.get("lowDegreeTest")).and_then(|v| v.as_str()) == Some("STIR");
+            let current_n_queries = if is_stir_inner {
+                ss_json
+                    .and_then(|s| s.get("numQueries"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            } else {
+                ss_json.and_then(|s| s.get("numQueries")).and_then(|v| v.as_u64()).unwrap_or(0)
+            };
             if current_n_queries > 0 {
                 // Use integer ceil to avoid f64 precision loss:
                 // ceil(numer / nRowsPerFri) = ceil(numer * nQueries / NUsed)
@@ -384,11 +393,17 @@ pub fn gen_recursive_setup(
                         current_n_queries,
                         min_queries
                     );
-                    // Build adjusted copy of stark_info with updated nQueries.
+                    // Build adjusted copy of stark_info with the updated query count.
                     let mut adjusted_si = config.stark_info.clone();
                     if let Some(ss) = adjusted_si.get_mut("starkStruct") {
                         if let Some(obj) = ss.as_object_mut() {
-                            obj.insert("nQueries".to_string(), serde_json::json!(min_queries));
+                            if is_stir_inner {
+                                if let Some(arr) = obj.get_mut("numQueries").and_then(|v| v.as_array_mut()) {
+                                    arr[0] = serde_json::json!(min_queries);
+                                }
+                            } else {
+                                obj.insert("numQueries".to_string(), serde_json::json!(min_queries));
+                            }
                         }
                     }
                     // Persist the adjusted starkInfo so subsequent re-runs pick it up.
@@ -503,6 +518,19 @@ pub fn gen_recursive_setup(
             // directory (the const tree needs a starkinfo.json on disk).
             let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
 
+            // The reused setup assumes every air's circuit has the same shape; a mismatch
+            // would otherwise surface as a bare exit inside the C++ const-tree loader.
+            if (1u64 << stark_info_loaded.stark_struct.n_bits) != (1u64 << plonk_result.n_bits) {
+                bail!(
+                    "{} for air '{}' has 2^{} rows but the reused setup expects 2^{} — the \
+                     recursive circuits are not uniform (query-count equalization failed?)",
+                    template_str,
+                    config.air_name,
+                    plonk_result.n_bits,
+                    stark_info_loaded.stark_struct.n_bits,
+                );
+            }
+
             // Write const file: load pilout to get inline selector polynomial values
             {
                 let proxy = PilOutProxy::new(pilout_path.to_str().unwrap_or(""))
@@ -576,7 +604,10 @@ pub fn gen_recursive_setup(
                 crate::types::stark_struct::StarkSettings {
                     initial_blowup_factor: Some(blowup),
                     initial_folding_factor: Some(3),
-                    final_degree: Some(5),
+                    // Pinned so recursive1/2 keep the schedule the committed native verifiers
+                    // encode (domains 20,17,14,11,8,5 at 2^17): finalDegree is the final
+                    // polynomial's log-degree bound, i.e. final domain 5 minus the blowup.
+                    final_degree: Some(5 - blowup),
                     // Pinned: the committed native verifiers and circom fixtures encode the query
                     // count this buys (73 at blowup 3), so it cannot follow the family default.
                     grinding_bits: Some(RECURSIVE_POW_BITS),
@@ -653,7 +684,7 @@ pub fn gen_recursive_setup(
                 config.air_id,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
-                pil_info_result.fri_exp_id,
+                pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
             let verifier_info_ref = &pil_info_result.pil_code.verifier_info;

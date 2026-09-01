@@ -271,7 +271,12 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
 
         // 2(e)  f_i := DegCor(d_i, r_comb^i, Quotient(g_i, G_i, Ans_i, Fill_i), d_i − |G_i|) on L_i,
         //       with Ans_i(r_shift) = Fold(f_{i−1}, k_{i-1}, r^fold_{i−1})(r_shift) taken from the fold.
-        prover.degreeCorrect(rOut, beta, shiftIndices, rComb);
+        //       The Âns_i coefficients also travel in the proof (zero-padded) as hints for the
+        //       recursion circuit; the native verifier recomputes them.
+        std::vector<Goldilocks::Element> ansCoeffs;
+        prover.degreeCorrect(rOut, beta, shiftIndices, rComb, &ansCoeffs);
+        assert(ansCoeffs.size() <= proof.ansCoeffs[i - 1].size());
+        std::memcpy(proof.ansCoeffs[i - 1].data(), ansCoeffs.data(), ansCoeffs.size() * sizeof(Goldilocks::Element));
 
         Goldilocks3::copy(rFold, rFoldNext);
     }

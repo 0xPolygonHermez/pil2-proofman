@@ -205,7 +205,9 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         grinding_bits: Some(22),
         merkle_tree_arity: Some(2),
         last_level_verification: Some(6),
-        final_degree: Some(10),
+        // Pinned to the committed compressed verifier's schedule (domains 19,16,13,10):
+        // final domain 10 minus the blowup.
+        final_degree: Some(6),
         ..Default::default()
     };
     let compressed_stark_struct =
@@ -262,7 +264,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         0,
         "compressed_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;

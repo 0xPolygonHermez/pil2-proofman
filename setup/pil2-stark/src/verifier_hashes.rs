@@ -54,7 +54,7 @@ pub struct VerifierGeometry {
     pub stage_challenges: Vec<u64>,
     /// Extension-field air values absorbed after each of those same stage roots.
     pub stage_air_values: Vec<u64>,
-    /// Coefficients of the final FRI polynomial, each a field-extension element.
+    /// Coefficients of the final polynomial FRI sends in clear, each a field-extension element.
     pub final_pol_size: u64,
 }
 

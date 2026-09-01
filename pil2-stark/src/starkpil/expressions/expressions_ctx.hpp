@@ -225,7 +225,7 @@ public:
         if (compilation_time) {
             domainSize = 1;
             domainExtended = false;
-        } else if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
+        } else if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.deepExpId) {
             setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
             domainExtended = true;

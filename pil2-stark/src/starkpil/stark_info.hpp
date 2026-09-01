@@ -194,7 +194,7 @@ public:
 
     uint64_t nConstraints;
 
-    uint64_t friExpId;
+    uint64_t deepExpId;
     uint64_t cExpId;
 
     std::map<std::string, uint64_t> mapSectionsN;

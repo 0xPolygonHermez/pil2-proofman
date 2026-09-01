@@ -36,7 +36,7 @@ pub struct StarkInfoOutput {
     pub n_constraints: usize,
     pub n_commitments_stage1: usize,
     pub ev_map: Vec<EvMapEntry>,
-    pub fri_exp_id: usize,
+    pub deep_exp_id: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityInfo>,
 }

@@ -153,14 +153,14 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         uint64_t numNodesLevel = starkInfo.starkStruct.lastLevelVerification == 0 ? 0 : std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification);
 
         for(uint64_t i = 0; i < M; ++i) {
-            j["i" + std::to_string(i) + "_root"] = json::array();
+            j["s" + std::to_string(i + 1) + "_root"] = json::array();
             for(uint64_t k = 0; k < 4; k++) {
-                j["i" + std::to_string(i) + "_root"][k] = std::to_string(pointer[p++]);
+                j["s" + std::to_string(i + 1) + "_root"][k] = std::to_string(pointer[p++]);
             }
         }
 
         for(uint64_t i = 0; i < M; ++i) {
-            std::string prefix = "i" + std::to_string(i);
+            std::string prefix = "s" + std::to_string(i + 1);
             uint64_t k = uint64_t(1) << stir.foldingFactors[i];
             uint64_t logLeaves = stir.logDomainSizes[i] - stir.foldingFactors[i];
             uint64_t nSiblingsStir = merkleProofLevels(logLeaves, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
@@ -209,6 +209,14 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         j["nonces"] = json::array();
         for(uint64_t i = 0; i < M; ++i) {
             j["nonces"][i] = std::to_string(pointer[p++]);
+        }
+
+        j["ansCoeffs"] = json::array();
+        for(uint64_t i = 0; i + 1 < M; ++i) {
+            j["ansCoeffs"][i] = json::array();
+            for(uint64_t l = 0; l < (stir.numOodSamples + stir.numQueries[i]) * FIELD_EXTENSION; l++) {
+                j["ansCoeffs"][i][l] = std::to_string(pointer[p++]);
+            }
         }
 
         return j;
