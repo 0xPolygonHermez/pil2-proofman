@@ -34,13 +34,14 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <algorithm>
 #include <map>
 #include "stream_commit.cuh"
-#include "gate_bands.hpp"
+#include "recursion_trace/gate_bands/gate_bands.hpp"
 
 // gate_bands_gpu.cu
-extern "C" void uploadGateBandConstantsGPU();
+extern "C" void uploadGateBandConstantsGPU(uint64_t family);
+extern "C" uint64_t gateBandScratchWordsGPU(uint64_t family);
 extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
-                                   const uint64_t *d_bands, uint64_t nBands, uint64_t lanes,
-                                   bool anyBlake3, uint64_t *d_blake3Mul, void *stream);
+                                   const uint64_t *d_bands, uint64_t nBands, uint64_t aux,
+                                   uint64_t family, uint64_t *d_scratch, void *stream);
 extern "C" void widenCompactWitnessGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
                                        const uint64_t *d_compact, uint64_t mapCols, void *stream);
 
@@ -790,12 +791,18 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         }
     }
 
+    // A band list is one hash family: each back-end skips kinds it does not own, so a mixed list
+    // would leave the other family's bands unwritten rather than failing. Decided once, at setup.
+    const gate_bands::Family family = gate_bands::family_of_bands(hostBands, nBands);
+    if (family == gate_bands::Family::Mixed) {
+        zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                    ") has gate bands of two different hash families; no expander owns them all");
+        exitProcess();
+    }
     // LANES and the band width both have to have travelled for a BLAKE3 air: the kernel can recover
     // neither, and a wrong value silently writes the whole band into the wrong columns. Checked once,
     // at setup.
-    bool anyBlake3 = false;
-    for (uint64_t i = 0; i < nBands && !anyBlake3; i++) anyBlake3 = gate_bands::is_blake3(hostBands[i * 3 + 1]);
-    if (anyBlake3 && ((bandView.aux & 0xFFFFFFFFull) == 0 || (bandView.aux >> 32) == 0)) {
+    if (family == gate_bands::Family::Blake3 && ((bandView.aux & 0xFFFFFFFFull) == 0 || (bandView.aux >> 32) == 0)) {
         zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
                     ") has BLAKE3 gate bands but its exec file carries no LANES or no band width");
         exitProcess();
@@ -813,8 +820,8 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
             execMapCols, 1ULL << setupCtx->starkInfo.starkStruct.nBits,
             setupCtx->starkInfo.mapSectionsN["cm1"]);
         if (nBands > 0) {
-            uploadGateBandConstantsGPU();
-            d_buffers->air_instances[key][proofType][i]->set_gate_bands(hostBands, nBands, bandView.aux, anyBlake3);
+            uploadGateBandConstantsGPU((uint64_t)family);
+            d_buffers->air_instances[key][proofType][i]->set_gate_bands(hostBands, nBands, bandView.aux, (uint64_t)family);
         }
     }
 }
@@ -1350,11 +1357,12 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer, false);
     }
 
-    // Stream-owned scratch; see StreamData::d_blake3_mul. Once per stream, never for poseidon.
-    if (air_instance_info->gate_bands_have_blake3 && sd.d_blake3_mul == nullptr) {
+    // Stream-owned scratch; see StreamData::d_gate_band_scratch. Once per stream, and only for a
+    // family that asks for one.
+    const uint64_t gateBandScratchWords = gateBandScratchWordsGPU(air_instance_info->gate_band_family);
+    if (gateBandScratchWords > 0 && sd.d_gate_band_scratch == nullptr) {
         cudaSetDevice(gpuId);
-        CHECKCUDAERR(cudaMalloc(&sd.d_blake3_mul,
-                                AirInstanceInfo::blake3MulWords() * sizeof(uint64_t)));
+        CHECKCUDAERR(cudaMalloc(&sd.d_gate_band_scratch, gateBandScratchWords * sizeof(uint64_t)));
     }
 
     // The host copied up the boundary cells; the interiors get rebuilt here. Stream-ordered
@@ -1364,9 +1372,9 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     expandGateBandsGPU((uint64_t*)(d_aux_trace + offsetStage1Extended), nCols,
                        1ULL << setupCtx->starkInfo.starkStruct.nBits,
                        air_instance_info->d_gate_bands, air_instance_info->n_gate_bands,
-                       air_instance_info->gate_band_lanes,
-                       air_instance_info->gate_bands_have_blake3,
-                       sd.d_blake3_mul, stream);
+                       air_instance_info->gate_band_aux,
+                       air_instance_info->gate_band_family,
+                       sd.d_gate_band_scratch, stream);
     TimerStopGPU(timer, STARK_GPU_WITNESS);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];

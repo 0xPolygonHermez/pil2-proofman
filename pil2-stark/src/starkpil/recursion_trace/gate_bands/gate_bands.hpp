@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <climits>
 #include "goldilocks_base_field.hpp"
-#include "exec_layout.hpp"
+#include "../exec_layout.hpp"
 
 // Mirrors GateBandKind. Serialized, so these are a wire format: append, never renumber.
 enum GateBandKind : uint64_t {
@@ -103,6 +103,30 @@ constexpr bool is_known_kind(uint64_t kind) {
     return kind >= GB_POSEIDON1_COMPRESSOR_SPONGE && kind <= GB_BLAKE3_COMPRESS_PARENT;
 }
 
+// Which back-end expands a band. A setup is ONE hash family, so this is an air-wide property --
+// but it is derived from the bands rather than declared, so `Mixed` exists to be rejected: each
+// back-end skips kinds it does not own, and a mixed list would leave the other family's bands
+// unwritten rather than failing.
+enum class Family : uint64_t {
+    None = 0,      // no bands at all
+    Poseidon = 1,  // P1 and P2 share a back-end: same geometry, different constants
+    Blake3 = 2,
+    Mixed = 3,     // never valid; a band list must be one family
+};
+
+// Only meaningful for a kind `is_known_kind` accepts.
+constexpr Family family_of(uint64_t kind) { return is_blake3(kind) ? Family::Blake3 : Family::Poseidon; }
+
+inline Family family_of_bands(const uint64_t *b, uint64_t nBands) {
+    Family f = Family::None;
+    for (uint64_t i = 0; i < nBands; i++) {
+        const Family k = family_of(b[i * 3 + 1]);
+        if (f == Family::None) f = k;
+        else if (f != k) return Family::Mixed;
+    }
+    return f;
+}
+
 // Rows a band of this kind occupies.
 constexpr int BLAKE3_ROWS = 56;
 constexpr int band_rows(uint64_t kind) {
@@ -174,6 +198,28 @@ inline BandsView band_section(const uint64_t *exec, uint64_t execWords) {
     v.status = BandSection::Ok;
     return v;
 }
+
+// Why an expansion stopped. Reported rather than logged so the back-ends need nothing beyond the
+// field; the API boundary owns the logging and the abort.
+enum class ExpandStatus {
+    Ok = 0,
+    MalformedSection,       // the band section does not describe this buffer
+    UnsupportedVersion,     // the key's section layout is not the one this build reads
+    UnsupportedExecFormat,  // the enclosing exec file's layout is not the one this build reads
+    UnexpandableBand,       // unknown kind, or a band that would run off the end of the trace
+    OutputMismatch,         // the band's own input does not hash to the output already in place
+    TableTooLargeForTrace,  // a BLAKE3 air whose trace cannot hold the 2^17-row lookup table
+    MixedFamilies,          // one band list naming two hash families; no back-end owns all of it
+};
+
+struct ExpandResult {
+    uint64_t nBands = 0;    // bands in the section (all expanded when status is Ok)
+    uint64_t badBand = 0;   // index of the offending band, meaningful only for the band errors
+    uint64_t row = 0;
+    uint64_t kind = 0;
+    uint64_t version = 0;   // section version seen, for the version error
+    ExpandStatus status = ExpandStatus::Ok;
+};
 
 // Index of the first band this expander cannot fill -- unknown kind, or one that would write
 // past row `nRows` -- or `nBands` if they are all good.

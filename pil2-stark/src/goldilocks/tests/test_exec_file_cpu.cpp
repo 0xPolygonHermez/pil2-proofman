@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "../src/goldilocks_base_field.hpp"
-#include "../../starkpil/exec_file.hpp"
+#include "../../starkpil/recursion_trace/exec_file.hpp"
 
 using GL = Goldilocks::Element;
 

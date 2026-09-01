@@ -9,8 +9,8 @@
 #include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
-#include "gate_bands_cpu.hpp"
-#include "exec_file.hpp"
+#include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
+#include "recursion_trace/exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
@@ -983,6 +983,10 @@ uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommited
                         "hold the 2^17-row XOR/ROTR table, so its lookup counts have nowhere to go; "
                         "circuits/blake3.pil rejects this at setup, so the proving key and this "
                         "build disagree");
+            break;
+        case gate_bands::ExpandStatus::MixedFamilies:
+            zklog.error("expand_gate_bands: this air's gate bands name two different hash families, "
+                        "so no expander owns them all; the proving key was built from mismatched setups");
             break;
         case gate_bands::ExpandStatus::Ok: break;
     }

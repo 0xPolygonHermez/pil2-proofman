@@ -95,10 +95,11 @@ struct AirInstanceInfo {
     // (see expandGateBandsGPU). A property of the circuit, so uploaded once with the setup.
     uint64_t *d_gate_bands = nullptr;   // n_gate_bands * 3 words: {row, kind, payload}
     uint64_t  n_gate_bands = 0;
-    // BLAKE3 only. LANES is a setup parameter -- it travels in the section header rather than
-    // being derived from the column count, which cannot distinguish the lane layouts.
-    uint64_t  gate_band_lanes = 0;
-    bool      gate_bands_have_blake3 = false;
+    // The band section's aux word: setup parameters no kernel can recover from the trace (BLAKE3
+    // packs LANES and the band width here; Poseidon writes 0).
+    uint64_t  gate_band_aux = 0;
+    // gate_bands::Family, kept untyped so this header does not depend on starkpil.
+    uint64_t  gate_band_family = 0;
     // Dense BLAKE3 lookup counters, 2^17 + 2^16 words. The AIR holds these as two trace COLUMNS, so
     // counting straight into the trace makes every atomicAdd take a cache line of its own, shared with
     // witness cells other threads are writing. Accumulating here keeps the whole working set
@@ -135,23 +136,19 @@ struct AirInstanceInfo {
     }
 
     // Caller must have selected the target GPU. Replaces whatever was there.
-    void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t lanes, bool anyBlake3) {
+    void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t aux, uint64_t family) {
         if (d_gate_bands != nullptr) {
             CHECKCUDAERR(cudaFree(d_gate_bands));
             d_gate_bands = nullptr;
         }
         n_gate_bands = nBands;
-        gate_band_lanes = lanes;
-        gate_bands_have_blake3 = anyBlake3;
+        gate_band_aux = aux;
+        gate_band_family = family;
         if (nBands > 0) {
             CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 3 * sizeof(uint64_t)));
             CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice));
         }
     }
-
-    // Words of a stream's `d_blake3_mul`: the table's 2^17 counters then the range checker's 2^16.
-    // Mirrors gate_bands::blake3::TABLE_SIZE and RANGE_SIZE, which the .cu asserts against.
-    static constexpr uint64_t blake3MulWords() { return (1ull << 17) + (1ull << 16); }
 
     // Upload (replacing any previous) the program-specific instruction table. Caller must
     // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
@@ -420,9 +417,10 @@ struct StreamData{
     // async copy (no per-copy stream sync); reused only on event-gated stream
     // reselect. Used by commit_witness_gpu only.
     Goldilocks::Element *pinned_aux_values;
-    // Dense BLAKE3 lookup-count scratch, blake3MulWords() words. Per STREAM: the expander's
-    // memset/fill/scatter are ordered only within one. Allocated on its first BLAKE3 commit.
-    uint64_t *d_blake3_mul = nullptr;
+    // Dense scratch for whichever gate-band family needs one, gateBandScratchWordsGPU() words. Per
+    // STREAM: the expander's memset/fill/scatter are ordered only within one. Allocated on this
+    // stream's first commit of an air whose family asks for it.
+    uint64_t *d_gate_band_scratch = nullptr;
 
     //runtime data
     // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
@@ -609,9 +607,9 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_aux_values);
-        if (d_blake3_mul != nullptr) {
-            cudaFree(d_blake3_mul);
-            d_blake3_mul = nullptr;
+        if (d_gate_band_scratch != nullptr) {
+            cudaFree(d_gate_band_scratch);
+            d_gate_band_scratch = nullptr;
         }
     }
 };

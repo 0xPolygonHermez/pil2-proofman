@@ -14,13 +14,13 @@
 #include "../src/poseidon_goldilocks.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
 
-#include "gate_bands.hpp"
-#include "gate_bands_cpu.hpp"
-#include "gate_bands_blake3.hpp"
+#include "recursion_trace/gate_bands/gate_bands.hpp"
+#include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
+#include "recursion_trace/gate_bands/gate_bands_blake3.hpp"
 
 // Pulled in directly so the test needs no extra link rule; the prover library compiles the
 // same file separately.
-#include "gate_bands_gpu.cu"
+#include "recursion_trace/gate_bands/gate_bands_gpu.cu"
 
 using GL = Goldilocks::Element;
 
@@ -113,8 +113,9 @@ TEST(GateBandsGPU, MatchesTheHostExpander)
     ASSERT_EQ(cudaMemcpy(d_bands, l.bands.data(), l.bands.size() * sizeof(uint64_t),
                          cudaMemcpyHostToDevice), cudaSuccess);
 
-    uploadGateBandConstantsGPU();
-    expandGateBandsGPU(d_trace, nCols, l.nRows, d_bands, nBands, 0, false, nullptr, nullptr);
+    const uint64_t family = (uint64_t)gate_bands::Family::Poseidon;
+    uploadGateBandConstantsGPU(family);
+    expandGateBandsGPU(d_trace, nCols, l.nRows, d_bands, nBands, 0, family, nullptr, nullptr);
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
     std::vector<uint64_t> device(seed.size());
@@ -204,11 +205,12 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     // The dense multiplicity scratch AirInstanceInfo owns in production; the counters accumulate
     // here and one kernel scatters them into the trace's two columns, which is what this test then
     // compares against the host expander's own tally.
-    const size_t mulWords = gate_bands::blake3::TABLE_SIZE + gate_bands::blake3::RANGE_SIZE;
+    const size_t mulWords = gateBandScratchWordsGPU((uint64_t)gate_bands::Family::Blake3);
     uint64_t *d_mul = nullptr;
     ASSERT_EQ(cudaMalloc(&d_mul, mulWords * sizeof(uint64_t)), cudaSuccess);
 
-    expandGateBandsGPU(d_trace, nCols, nRows, d_bands, BLOCKS, LANES | (BAND << 32), true, d_mul, nullptr);
+    expandGateBandsGPU(d_trace, nCols, nRows, d_bands, BLOCKS, LANES | (BAND << 32),
+                       (uint64_t)gate_bands::Family::Blake3, d_mul, nullptr);
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
     std::vector<uint64_t> device(seed.size());

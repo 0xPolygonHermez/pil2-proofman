@@ -14,11 +14,11 @@
 #include "../src/poseidon_goldilocks.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
 
-#include "../../starkpil/gate_bands.hpp"
-#include "../../starkpil/gate_bands_poseidon1.hpp"
-#include "../../starkpil/gate_bands_poseidon2.hpp"
-#include "../../starkpil/gate_bands_blake3.hpp"
-#include "../../starkpil/gate_bands_cpu.hpp"
+#include "../../starkpil/recursion_trace/gate_bands/gate_bands.hpp"
+#include "../../starkpil/recursion_trace/gate_bands/gate_bands_poseidon1.hpp"
+#include "../../starkpil/recursion_trace/gate_bands/gate_bands_poseidon2.hpp"
+#include "../../starkpil/recursion_trace/gate_bands/gate_bands_blake3.hpp"
+#include "../../starkpil/recursion_trace/gate_bands/gate_bands_cpu.hpp"
 
 using GL = Goldilocks::Element;
 static constexpr int W = 16;

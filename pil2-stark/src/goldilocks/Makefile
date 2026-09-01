@@ -45,8 +45,8 @@ ifeq ($(UNAME_S),Linux)
     NVCC := /usr/local/cuda/bin/nvcc
     include CudaArch.mk
     BUILD_DIR_GPU := ./build_gpu
-    # ../starkpil is on the path so the gate-band expander (and its test) resolve
-    # gate_bands.hpp; that expander lives with the trace code, not the field code.
+    # ../starkpil is on the path so the recursion-trace tests resolve their headers by the
+    # recursion_trace/... prefix; that code lives with the trace code, not the field code.
     CUDA_SRC_DIRS := ./src ../utils ./utils ../starkpil ../../external/sppark/ff
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
     NVCCFLAGS := --expt-relaxed-constexpr -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ -DGL64_PARTIALLY_REDUCED $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -U STARK_POSEIDON1
@@ -64,8 +64,9 @@ SRCS := $(shell find $(SRC_DIR) -name *.cpp)
 OBJS := $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(SRCS))
 DEPS := $(OBJS:.o=.d)
 
-# Include directories
-INC_DIRS := $(shell find $(SRC_DIR) -type d)
+# Include directories. ../starkpil for the same reason the CUDA flags carry it: the recursion-trace
+# tests reach into the trace code, and its headers include siblings by bare name.
+INC_DIRS := $(shell find $(SRC_DIR) -type d) ../starkpil
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 # Preprocessor flags
