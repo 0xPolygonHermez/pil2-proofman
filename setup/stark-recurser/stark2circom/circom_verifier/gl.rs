@@ -575,6 +575,9 @@ fn build_tera_context(
     // the lastPolFRI side transcript so that it appears before the drain+final-hash.
     let mut transcript_code_fri_mid = String::new();
     for si_idx in 0..n_steps {
+        // challengesFRISteps[0] is the slot the native verifier reserves and leaves zero (folding
+        // reads n_challenges + s + 1). Squeezing it is free only because the absorb below discards
+        // unread output -- never squeeze twice here without one between.
         t.get_field(&format!("challengesFRISteps[{si_idx}]"));
         if si_idx < n_steps - 1 {
             t.put(&format!("s{}_root", si_idx + 1), 4);
@@ -813,6 +816,30 @@ mod tests {
             "qVerifier": { "code": [] },
             "queryVerifier": { "code": [] }
         })
+    }
+
+    /// blake3 + hashCommits drives the three `get_state` side transcripts, the only callers of the
+    /// fresh-XOF assert. Nothing else in this module reaches them, and a stale XOF there would emit
+    /// a circuit reading XOF[4..8] where the prover reads XOF[0..4].
+    #[test]
+    fn blake3_hash_commits_side_transcripts_read_a_fresh_xof() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["starkStruct"]["hashCommits"] = json!(true);
+        si["starkStruct"]["merkleTreeArity"] = json!(2);
+        si["nPublics"] = json!(3);
+        si["evMap"] = json!([{"type": "cm", "id": 0, "prime": 0}]);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        // Each digest must be words 0..4 of its own finalize; anything else is the stale-XOF bug.
+        for (sig, tag) in [("publicsHash", "publics"), ("evalsHash", "evals"), ("lastPolFRIHash", "lastPolFRI")] {
+            let want = format!("{sig} <== [b3fin_{tag}_");
+            let line = out.lines().find(|l| l.contains(&want)).unwrap_or_else(|| panic!("no {sig} line in:\n{out}"));
+            for i in 0..4 {
+                assert!(line.contains(&format!("[{i}]")), "{sig} does not read XOF[{i}]: {line}");
+            }
+            assert!(!line.contains("[4]") && !line.contains("[5]"), "{sig} reads past the digest: {line}");
+        }
     }
 
     #[test]

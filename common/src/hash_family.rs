@@ -253,6 +253,11 @@ pub fn transcript_arity(family: &str) -> u64 {
 /// Elements in one digest, i.e. the sponge capacity (`nFieldElements` in the C++ trees).
 pub const DIGEST_SIZE: u64 = 4;
 
+// The four helpers below describe a SPONGE and take an arity, not a family, so they answer for
+// blake3 without being about it: at arity 2 they give a rate of 4 and a pending size of 4, while a
+// BLAKE3 block absorbs 8. Anything on the blake3 path wants `compression_block_elements` instead --
+// see `verifier_hashes.rs`, the one caller, which special-cases it.
+
 /// Sponge width of `family`'s permutation at `arity`. The Merkle node hash absorbs
 /// `arity * DIGEST_SIZE` children, and the trees pick the width that exactly fits them.
 pub fn sponge_width(arity: u64) -> u64 {

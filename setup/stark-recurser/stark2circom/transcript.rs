@@ -70,6 +70,7 @@ impl Sponge {
     }
 
     fn absorb(&mut self, name: Suffix, code: &mut Vec<String>, a: String) {
+        // Unread output is dropped, so a spare squeeze before this cannot shift a later challenge.
         self.out.clear();
         self.pending.push(a);
         if self.pending.len() == Self::IN_W {
@@ -227,7 +228,8 @@ impl Blake3 {
             self.flush_block(name, code);
         }
         self.buf.push(a);
-        // The stream changed, so XOF material from the old prefix is stale.
+        // The stream changed, so XOF material from the old prefix is stale. Same consequence as the
+        // sponge's out.clear(): a spare squeeze before this cannot shift a later challenge.
         self.xof = None;
         self.xof_offset = 0;
         self.ob = 0;
@@ -384,7 +386,9 @@ impl Engine {
     /// while the read starts at offset 0 — the assert pins that.
     fn state_words(&mut self, name: Suffix, code: &mut Vec<String>) -> [String; 4] {
         if let Engine::Blake3(b) = self {
-            debug_assert!(
+            // assert, not debug_assert: setup runs in release, and a stale XOF here emits a circuit
+            // that reads XOF[4..8] where the prover reads XOF[0..4].
+            assert!(
                 b.xof.is_none() && b.xof_offset == 0,
                 "blake3 get_state must read a fresh XOF to match TranscriptGL::getState"
             );
