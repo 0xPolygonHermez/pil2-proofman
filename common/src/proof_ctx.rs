@@ -630,14 +630,27 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances
+        let mut tables = dctx
+            .instances
             .iter()
             .enumerate()
             .filter(|(id, inst)| {
                 inst.table && (dctx.process_instances.contains(id) || inst.shared) && !dctx.is_skipped_instance(*id)
             })
             .map(|(id, _)| id)
-            .collect()
+            .collect::<Vec<_>>();
+
+        // Table witnesses are materialized serially, while each completed table can already be
+        // committed by a contribution worker. Start the heaviest GPU table first so more of its
+        // materialization and commit can overlap the remaining, smaller table work. Keep CPU table
+        // ordering unchanged and use the existing deterministic proof-cost estimate as the key.
+        if self.gpu {
+            tables.sort_unstable_by(|&a, &b| {
+                dctx.instances[b].total_weight().cmp(&dctx.instances[a].total_weight()).then_with(|| a.cmp(&b))
+            });
+        }
+
+        tables
     }
 
     pub fn dctx_get_process_instances(&self) -> Vec<usize> {
