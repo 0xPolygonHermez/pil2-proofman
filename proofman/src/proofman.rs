@@ -10,7 +10,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, set_gpu_mode_c, load_device_const_pols_c,
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, prefetch_witness_c, set_gpu_mode_c,
+    load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
@@ -2965,6 +2966,15 @@ where
         let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
         let proofs_pending = completions.ledger();
 
+        // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
+        // ready basics from the scheduler ahead of dispatch and stages the front
+        // one's trace to the zone while the current proof computes. Only READY
+        // (stored/computed) witnesses ever enter the scheduler queue, so a held
+        // instance is always launchable. Single basic stream only; default ON with
+        // the zone, PROOFMAN_PREFETCH=0 disables.
+        let prefetch_dequeue_ahead = self.pctx.gpu
+            && self.n_streams_non_recursive == 1
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
@@ -3316,6 +3326,15 @@ where
             let proofs_pending_clone = proofs_pending.clone();
             let scheduler_clone = scheduler.clone();
             let handle_recursive = std::thread::spawn(move || {
+                // Dequeued-ahead basics (id, airgroup, air), dispatch order, depth <= 2.
+                // Front: launches next, its trace is (or is about to be) in the zone.
+                let mut held: std::collections::VecDeque<(usize, usize, usize)> = std::collections::VecDeque::new();
+                // Ids currently staged in zone slots (depth 1: only the front stages ahead).
+                let mut zone_staged: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                // PROOFMAN_PREFETCH_LOG=1: one summary line at the drained exit (hits/total).
+                let mut zone_hits: u64 = 0;
+                let mut zone_picks: u64 = 0;
+                let prefetch_log = std::env::var("PROOFMAN_PREFETCH_LOG").map(|v| v == "1").unwrap_or(false);
                 loop {
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
 
@@ -3328,6 +3347,7 @@ where
                     // so no error path can strand a stream at status=1.
                     let mut reservation: Option<crate::StreamReservation> = None;
                     let mut gpu_witness: Option<Proof<F>> = None;
+                    let mut picked_from_held = false;
                     let basic: Option<(usize, Option<usize>)> = if let Some(sched) = scheduler_clone.as_ref() {
                         let (lock, cvar) = (&sched.lock, &sched.ready);
                         let mut guard = lock.lock().unwrap();
@@ -3345,6 +3365,13 @@ where
                                         }
                                         Err(e) => {
                                             cancellation_info_clone.write_recover().cancel(Some(e));
+                                            for (hid, _, _) in held.drain(..) {
+                                                let (is_shared, buf) = pctx_clone.free_instance(hid);
+                                                if is_shared {
+                                                    let _ = memory_handler_clone.release_buffer(buf);
+                                                }
+                                                proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                                            }
                                             return;
                                         }
                                     }
@@ -3352,6 +3379,20 @@ where
                             }
                             let pick = if force_recursive_stream {
                                 guard.next_recursive().map(|(w, s)| crate::WorkerPick::Recursive(w, s))
+                            } else if let Some(&(hid, hag, hair)) = held.front() {
+                                // A held instance always launches next (its trace is in
+                                // the zone); only the stream reservation can make it wait.
+                                let r = guard.reserve_for_basic(hag, hair).map(|s| crate::WorkerPick::Basic(hid, s));
+                                if r.is_some() {
+                                    held.pop_front();
+                                    picked_from_held = zone_staged.contains(&hid);
+                                    zone_picks += 1;
+                                    if picked_from_held {
+                                        zone_hits += 1;
+                                    }
+                                    zone_staged.retain(|id| *id != hid);
+                                }
+                                r
                             } else {
                                 guard.next_nonrecursive()
                             };
@@ -3373,7 +3414,11 @@ where
                                     if proofs_finished_clone.load(Ordering::Relaxed)
                                         && guard.is_empty()
                                         && (force_recursive_stream || guard.basic_is_empty())
+                                        && held.is_empty()
                                     {
+                                        if prefetch_log && zone_picks > 0 {
+                                            tracing::info!("prefetch zone: {zone_hits} hits / {zone_picks} basic dispatches");
+                                        }
                                         return;
                                     }
                                     let (g, _) = cvar.wait_timeout(guard, std::time::Duration::from_millis(1)).unwrap();
@@ -3401,6 +3446,26 @@ where
                             }
                             continue;
                         } else {
+                            // A pick that was not dequeued ahead (first proof of the
+                            // phase) has no zone entry yet: seed one now so gen_proof
+                            // takes the hit path (device-side wait) instead of the
+                            // host-synced miss route.
+                            if prefetch_dequeue_ahead && !picked_from_held {
+                                if let (Ok((pag, pair)), true) = (pctx_clone.dctx_get_instance_info(instance_id), reserved.is_some()) {
+                                    if let Ok(psetup) = sctx_clone.get_setup(pag, pair) {
+                                        let prm = pctx_clone.get_air_instance_params(instance_id, true);
+                                        let pp: *mut std::ffi::c_void = (&psetup.p_setup).into();
+                                        let _ = prefetch_witness_c(
+                                            pp,
+                                            pctx_clone.get_device_buffers_ptr(),
+                                            instance_id as u64,
+                                            pag as u64,
+                                            pair as u64,
+                                            prm.trace as *mut std::ffi::c_void,
+                                        );
+                                    }
+                                }
+                            }
                             let proof_stream_id = match Self::gen_proof(
                                 &proofs_clone,
                                 &pctx_clone,
@@ -3427,6 +3492,60 @@ where
                                     break;
                                 }
                             };
+                            // Dequeue-ahead: refill the held queue (ready witnesses only --
+                            // the scheduler queue never holds an uncomputed one) and upload
+                            // the front instance's trace to the zone on the copy stream while
+                            // the proof just launched computes. Witness buffers stay alive
+                            // because held instances are not freed until their own launch.
+                            if prefetch_dequeue_ahead {
+                                if let Some(sched) = scheduler_clone.as_ref() {
+                                    let mut guard = sched.lock.lock().unwrap();
+                                    // Make newly-ready instances visible to the lookahead.
+                                    while let Ok(id) = proofs_rx.try_recv() {
+                                        match pctx_clone.dctx_get_instance_info(id) {
+                                            Ok((ag, air)) => {
+                                                let resident = sctx_clone
+                                                    .get_setup(ag, air)
+                                                    .map(|s| s.preallocate)
+                                                    .unwrap_or(false);
+                                                guard.push_basic(id, ag, air, resident);
+                                            }
+                                            Err(e) => {
+                                                cancellation_info_clone.write_recover().cancel(Some(e));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    while held.len() < 2 {
+                                        match guard.pop_basic_prefetch() {
+                                            Some(h) => held.push_back(h),
+                                            None => break,
+                                        }
+                                    }
+                                }
+                                // Stage the FRONT instance's trace (one look-ahead entry; the
+                                // 2 zone slots ping-pong across successive proofs).
+                                zone_staged.retain(|id| held.iter().any(|&(h, _, _)| h == *id));
+                                if let Some(&(nid, nag, nair)) = held.front() {
+                                    if !zone_staged.contains(&nid) {
+                                        if let Ok(nsetup) = sctx_clone.get_setup(nag, nair) {
+                                            let nparams = pctx_clone.get_air_instance_params(nid, true);
+                                            let p_next_setup: *mut std::ffi::c_void = (&nsetup.p_setup).into();
+                                            let rc = prefetch_witness_c(
+                                                p_next_setup,
+                                                pctx_clone.get_device_buffers_ptr(),
+                                                nid as u64,
+                                                nag as u64,
+                                                nair as u64,
+                                                nparams.trace as *mut std::ffi::c_void,
+                                            );
+                                            if rc == 0 {
+                                                zone_staged.push_back(nid);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
@@ -3442,6 +3561,15 @@ where
                     }
 
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        // Held (dequeued-ahead) basics are no longer in the scheduler's queues, so
+                        // the teardown drain can't recover them either: same recovery inline.
+                        for (hid, _, _) in held.drain(..) {
+                            let (is_shared, buf) = pctx_clone.free_instance(hid);
+                            if is_shared {
+                                let _ = memory_handler_clone.release_buffer(buf);
+                            }
+                            proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                        }
                         // The pick above may already have handed us a witness. Dropping it here would
                         // lose its pooled `circom_witness` for the rest of the process — the teardown
                         // drain can't recover it, since it is no longer in the scheduler's queues.
