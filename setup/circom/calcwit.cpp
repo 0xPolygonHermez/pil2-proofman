@@ -2,8 +2,22 @@
 #include <sstream>
 #include <assert.h>
 #include "calcwit.hpp"
+#include <mutex>
 
 extern void run(Circom_CalcWit* ctx);
+
+// One componentMemory array is kept per circuit and reused by the next witness of it.
+//
+// The array is 144 B x get_number_of_components() -- 67 MB for ZisK's recursive2 -- and every
+// witness of a circuit builds an identical one, so `new[]` faults in the whole thing and runs a
+// constructor per element: 16.5 ms of a 95 ms solve. The destructor nulls every pointer member as
+// it frees, which is what leaves the array reusable.
+//
+// One .so serves one circuit, so a cached array always has the right length. Concurrent solves of
+// the same circuit take separate arrays; only one is kept, hence the mutex.
+static std::mutex componentCacheMutex;
+static Circom_Component *componentCache = nullptr;
+
 
 std::string int_to_hex( u64 i )
 {
@@ -42,7 +56,14 @@ Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh, u64* signal
     // `new Circom_Component[N]` default-initializes, and every pointer member carries a `= NULL`
     // default member initializer (see circom.hpp), so the six are already null here. The loop that
     // set them again cost ~6 ns per component -- 2.9 ms per recursive2 witness, on 488,841 of them.
-    componentMemory = new Circom_Component[get_number_of_components()];
+    {
+        std::lock_guard<std::mutex> lk(componentCacheMutex);
+        componentMemory = componentCache;
+        componentCache = nullptr;
+    }
+    if (componentMemory == nullptr) {
+        componentMemory = new Circom_Component[get_number_of_components()];
+    }
 
     // circuitConstants = circuit ->circuitConstants;
     templateInsId2IOSignalInfo = circuit->templateInsId2IOSignalInfo;
@@ -54,26 +75,18 @@ Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh, u64* signal
 }
 Circom_CalcWit::~Circom_CalcWit() {
 
-  // Clean up any component memory that wasn't released during execution
+  // Clean up any component memory that wasn't released during execution. Nulling as it frees is
+  // what makes the array reusable: a cached array is handed to the next witness as-is, and its
+  // `_create` calls only set the members of components that have subcomponents -- a stale pointer
+  // left in a leaf would be freed twice.
   for (uint i = 0; i < get_number_of_components(); i++) {
-    if (componentMemory[i].subcomponents) {
-      delete[] componentMemory[i].subcomponents;
-    }
-    if (componentMemory[i].subcomponentsParallel) {
-      delete[] componentMemory[i].subcomponentsParallel;
-    }
-    if (componentMemory[i].outputIsSet) {
-      delete[] componentMemory[i].outputIsSet;
-    }
-    if (componentMemory[i].mutexes) {
-      delete[] componentMemory[i].mutexes;
-    }
-    if (componentMemory[i].cvs) {
-      delete[] componentMemory[i].cvs;
-    }
-    if (componentMemory[i].sbct) {
-      delete[] componentMemory[i].sbct;
-    }
+    Circom_Component &c = componentMemory[i];
+    delete[] c.subcomponents;         c.subcomponents = NULL;
+    delete[] c.subcomponentsParallel; c.subcomponentsParallel = NULL;
+    delete[] c.outputIsSet;           c.outputIsSet = NULL;
+    delete[] c.mutexes;               c.mutexes = NULL;
+    delete[] c.cvs;                   c.cvs = NULL;
+    delete[] c.sbct;                  c.sbct = NULL;
   }
   
   // Let circom handle all component memory cleanup via release_memory_component()
@@ -84,6 +97,14 @@ Circom_CalcWit::~Circom_CalcWit() {
   
   delete[] inputSignalAssigned;
   if (ownsSignalValues) delete[] signalValues;
+  {
+    std::lock_guard<std::mutex> lk(componentCacheMutex);
+    if (componentCache == nullptr) {
+      componentCache = componentMemory;
+      componentMemory = NULL;
+    }
+  }
+  // NULL when the cache kept it; `delete[] NULL` is a no-op.
   delete[] componentMemory;
 }
 
