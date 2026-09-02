@@ -741,7 +741,12 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
     timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
-    let setup = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    let setup = setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
+        ProofmanError::InvalidConfiguration(
+            "Proving key was built without the vadcop_final_compressed stage; no compressed final setup to prove with"
+                .to_string(),
+        )
+    })?;
 
     let p_setup: *mut c_void = (&setup.p_setup).into();
 

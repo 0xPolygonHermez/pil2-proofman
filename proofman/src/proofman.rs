@@ -2268,11 +2268,27 @@ where
         self._generate_proof(phase_inputs, proof_options, phase)
     }
 
+    /// Error unless the loaded proving key was built with the `vadcop_final_compressed` stage.
+    pub fn ensure_compressed_final_supported(&self) -> ProofmanResult<()> {
+        if !self.pctx.global_info.has_compressed_final {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "Proving key {:?} (hash {}) was built without the vadcop_final_compressed stage, \
+                 so a compressed final proof cannot be generated. Rebuild the key with \
+                 --compressed-final, add the stage with `setup-compressed-final`, or ask for an \
+                 uncompressed vadcop final proof.",
+                self.get_proving_key_path(),
+                self.pctx.global_info.hash,
+            )));
+        }
+        Ok(())
+    }
+
     pub fn generate_vadcop_final_proof_compressed(
         &self,
         vadcop_final_proof: &VadcopFinalProof,
     ) -> ProofmanResult<VadcopFinalProof> {
         let _computing = self.acquire_computing("generate_vadcop_final_proof_compressed");
+        self.ensure_compressed_final_supported()?;
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
@@ -2570,6 +2586,12 @@ where
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_proof");
+
+        // Fail before the inner proofs, not after them: the compressed stage is the last thing a
+        // full run does, so an unsupported request would otherwise burn the whole proof first.
+        if options.compressed {
+            self.ensure_compressed_final_supported()?;
+        }
 
         if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !self.pctx.is_setup_partition_init() {
@@ -3876,6 +3898,9 @@ where
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         let _computing = self.acquire_computing("receive_aggregated_proofs");
+        if options.compressed {
+            self.ensure_compressed_final_supported()?;
+        }
         self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
     }
 

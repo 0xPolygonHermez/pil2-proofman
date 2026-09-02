@@ -328,7 +328,13 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::VadcopFinal => Ok(self.setup_vadcop_final.as_ref().unwrap()),
-            ProofType::VadcopFinalCompressed => Ok(self.setup_vadcop_final_compressed.as_ref().unwrap()),
+            // The only optional setup of the family: keys built without the compressed-final
+            // stage (blake3's default) legitimately have none.
+            ProofType::VadcopFinalCompressed => self.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
+                ProofmanError::InvalidSetup(
+                    "Proving key was built without the vadcop_final_compressed stage".into(),
+                )
+            }),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }
     }
