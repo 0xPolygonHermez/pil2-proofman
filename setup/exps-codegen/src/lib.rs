@@ -462,7 +462,11 @@ fn run_pipeline(
                 items.push((ec.exp_id, eir, od));
             }
             if !items.is_empty() {
-                std::fs::write(work.join(format!("gen_{}_cexprs.cu", c.sym)), emit::emit_exprs_tu(&c.sym, &items))?;
+                let pairs = c.expr_info.quotient_pairs();
+                std::fs::write(
+                    work.join(format!("gen_{}_cexprs.cu", c.sym)),
+                    emit::emit_exprs_tu(&c.sym, &items, &pairs),
+                )?;
             }
         }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;

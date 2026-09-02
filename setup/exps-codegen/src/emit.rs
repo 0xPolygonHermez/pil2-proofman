@@ -7,10 +7,15 @@
 //! nvcc compiles, so treat these strings as code, not free-form text.
 
 use crate::ir::{ChunkPlan, Instr, Ir, Operand};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
 pub const GEN_BLK: u64 = 256;
+/// Grid cap for the trace-domain expression launchers (singles AND pairs — same work class, same
+/// prologue-vs-rows tradeoff, one policy). Empirical, not a hardware bound: challenge powers are
+/// rebuilt per THREAD, so a bigger grid trades rows per thread against redundant prologue work.
+/// Per-air tuning belongs in autotune.rs.
+pub const EXPR_GRID_CAP: u64 = 2048;
 /// Chunk kernels bundled per .cu — amortizes the gen_common.cuh header parse across the batch.
 pub const CHUNKS_PER_TU: usize = 8;
 
@@ -79,6 +84,25 @@ __device__ __forceinline__ void exps_expr_store(gl64_t* dest, uint64_t row, uint
   if (destDim == 1) { dest[idx0] = sc * inv.a; return; }
   g3 r = cg_mul31(inv, sc);
   dest[idx0] = r.a; dest[idx1] = r.b; dest[idx2] = r.c;
+}
+__device__ __forceinline__ void exps_expr_store_pair(gl64_t* dest, uint64_t row, uint64_t destDomain,
+    uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr,
+    g3 num, uint64_t ndim, g3 den, uint64_t ddim)
+{
+  uint64_t idx0, idx1 = 0, idx2 = 0;
+  if (destExpr) { idx0=row*destDim; idx1=idx0+1; idx2=idx0+2; }
+  else {
+    const Layout lyt=resolveLayout(63-__clzll(destDomain),stageCols);
+    idx0=getBufferOffset(row,stagePos,destDomain,stageCols,lyt);
+    if (destDim>1) { idx1=getBufferOffset(row,stagePos+1,destDomain,stageCols,lyt); idx2=getBufferOffset(row,stagePos+2,destDomain,stageCols,lyt); }
+  }
+  if (ndim==1) { num.b=gl64_t(uint64_t(0)); num.c=gl64_t(uint64_t(0)); }
+  g3 inv;
+  if (ddim==1) { inv.a=den.a.reciprocal(); inv.b=gl64_t(uint64_t(0)); inv.c=gl64_t(uint64_t(0)); }
+  else inv=cg_inv3(den);
+  if (destDim==1) { dest[idx0]=num.a*inv.a; return; }
+  g3 r=(ddim==1)?cg_mul31(num,inv.a):cg_mul33(num,inv);
+  dest[idx0]=r.a; dest[idx1]=r.b; dest[idx2]=r.c;
 }
 "#;
 
@@ -181,6 +205,21 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
 /// (lines, is_out). The caller adds tmp dsts to `declared` afterward.
 fn emit_op(instr: &Instr, ir: &Ir, declared: &HashSet<u64>) -> (Vec<String>, bool) {
     let mut lines = Vec::new();
+    let dst_dim = instr.ddim;
+    let is_out = !instr.dst_is_tmp;
+    let dst = if is_out { "qq".to_string() } else { format!("t{}", instr.dst_id.unwrap()) };
+    let decl = if !is_out && instr.dst_id.is_some_and(|id| declared.contains(&id)) {
+        ""
+    } else if dst_dim == 1 {
+        "gl64_t "
+    } else {
+        "g3 "
+    };
+    // NOTE: do NOT emit `x * uint32_t(c)` for small constants. sppark's
+    // gl64_t::mul(uint32_t) PTX is miscompiled by ptxas -O3 (CUDA 13.0, sm_120):
+    // in large fused kernels its 32-bit carry-chain rewrite corrupts the result
+    // for some inputs (repro: scratchpad micro.cu, correct at -Xptxas -O0). The
+    // full 64-bit gl64_t multiply below is unaffected.
     let a_val = match instr.a.as_tmp() {
         Some((id, _)) => format!("t{id}"),
         None => {
@@ -197,16 +236,6 @@ fn emit_op(instr: &Instr, ir: &Ir, declared: &HashSet<u64>) -> (Vec<String>, boo
     };
     let a_dim = instr.a.dim();
     let b_dim = instr.b.dim();
-    let dst_dim = instr.ddim;
-    let is_out = !instr.dst_is_tmp;
-    let dst = if is_out { "qq".to_string() } else { format!("t{}", instr.dst_id.unwrap()) };
-    let decl = if !is_out && instr.dst_id.is_some_and(|id| declared.contains(&id)) {
-        ""
-    } else if dst_dim == 1 {
-        "gl64_t "
-    } else {
-        "g3 "
-    };
     if dst_dim == 1 {
         let op_symbol = match instr.op.as_str() {
             "add" => "+",
@@ -423,8 +452,13 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
   const uint64_t BLK = {GEN_BLK}ull;
 {guard}
 {prologue}
+  // Grid sets how many WAVES the domain is split into, and each wave waits for the previous one
+  // (shared scratch). Occupancy saturates well below the scratch limit, so take what the scratch
+  // allows but never more blocks than there is work for: extra waves only add serialization.
   uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
-  if (grid > 512ull) grid = 512ull;
+  const uint64_t need = (NExt + BLK - 1) / BLK;
+  if (grid > need) grid = need;
+  if (grid < 1ull) grid = 1ull;
   const uint64_t WAVE = grid * BLK;
   for (uint64_t base=0; base<NExt; base+=WAVE) {{
 {}
@@ -577,7 +611,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 // ---------------------------------------------------------------------------
 
 /// Emit the `gen_<sym>_cexprs.cu` TU covering `items` = (expId, ir, out_dim).
-pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
+pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i64, i64)]) -> String {
     let mut kernels: Vec<String> = Vec::new();
     let mut cases_launch: Vec<String> = Vec::new();
     let mut cases_covered: Vec<String> = Vec::new();
@@ -655,10 +689,83 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)]) -> String {
         cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
         cases_covered.push(format!("    case {exp_id}ull: return 1;"));
     }
+    let item_by_id: HashMap<i64, (&crate::ir::Ir, u64)> = items.iter().map(|(id, ir, dim)| (*id, (ir, *dim))).collect();
+    let mut pair_kernels = Vec::new();
+    let mut pair_cases = Vec::new();
+    for &(num_id, den_id) in pairs {
+        let (Some(&(num_ir, num_dim)), Some(&(den_ir, den_dim))) = (item_by_id.get(&num_id), item_by_id.get(&den_id))
+        else {
+            continue;
+        };
+        let emit_eval = |ir: &crate::ir::Ir, tag: &str| -> (String, String) {
+            let mut body = Vec::new();
+            let mut declared = HashSet::new();
+            for instr in &ir.instrs {
+                let (ls, out) = emit_op(instr, ir, &declared);
+                body.extend(ls);
+                if !out {
+                    declared.insert(instr.dst_id.unwrap());
+                }
+            }
+            let last = ir.instrs.last().unwrap();
+            let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
+            let vt = if ir.out_dim() == Some(3) { "g3" } else { "gl64_t" };
+            (
+                format!(
+                    "  auto eval_{tag}_ = [&](uint64_t row) -> {vt} {{\n{}\n    return {result};\n  }};",
+                    body.join("\n")
+                ),
+                vt.to_string(),
+            )
+        };
+        let (num_eval, num_vt) = emit_eval(num_ir, "num");
+        let (den_eval, den_vt) = emit_eval(den_ir, "den");
+        let mut powers: BTreeMap<u64, u64> = BTreeMap::new();
+        for &(base, n) in num_ir.pow.iter().chain(den_ir.pow.iter()) {
+            powers.entry(base).and_modify(|old| *old = (*old).max(n)).or_insert(n);
+        }
+        let mut pw = Vec::new();
+        for (base, n) in powers {
+            if n < 2 {
+                continue;
+            }
+            pw.push(format!("  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",base+1,base+2));
+            for j in 2..n {
+                pw.push(format!(
+                    "  [[maybe_unused]] g3 pwreg_{base}_{j}=cg_mul33(pwreg_{base}_{},pwreg_{base}_1);",
+                    j - 1
+                ));
+            }
+        }
+        let num_to = if num_vt == "g3" {
+            "g3 num_=eval_num_(row);".to_string()
+        } else {
+            "gl64_t nv_=eval_num_(row); g3 num_; num_.a=nv_; num_.b=gl64_t(uint64_t(0)); num_.c=gl64_t(uint64_t(0));"
+                .to_string()
+        };
+        let den_to = if den_vt == "g3" {
+            "g3 den_=eval_den_(row);".to_string()
+        } else {
+            "gl64_t dv_=eval_den_(row); g3 den_; den_.a=dv_; den_.b=gl64_t(uint64_t(0)); den_.c=gl64_t(uint64_t(0));"
+                .to_string()
+        };
+        let sig="(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest, uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
+        pair_kernels.push(format!(r#"__global__ void gen_{sym}_xp{num_id}_{den_id}{sig} {{
+  const uint64_t NExt=N; const uint64_t MASK=N-1;
+  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
+  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues; const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs; [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
+{}
+{num_eval}
+{den_eval}
+  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{ {num_to} {den_to} exps_expr_store_pair(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,num_,{num_dim},den_,{den_dim}); }}
+}}"#,pw.join("\n")));
+        pair_cases.push(format!("  if (numId=={num_id}ull && denId=={den_id}ull) {{ gen_{sym}_xp{num_id}_{den_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,stagePos,stageCols,destDim,destExpr); return 1; }}"));
+    }
     format!(
         r#"// AUTO-GENERATED generic expression kernels for {sym} ({} expressions)
 #include "gen_common.cuh"
 #define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
+{}
 {}
 extern "C" int exps_expr_covered(unsigned long long expId) {{
   switch (expId) {{
@@ -672,19 +779,27 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     unsigned long long mode, unsigned long long scalar,
     unsigned long long stagePos, unsigned long long stageCols,
     unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+  // Cap rationale: see EXPR_GRID_CAP in emit.rs (shared with the pair launcher below).
   uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
-  if (grid > 512ull) grid = 512ull;
+  if (grid > {EXPR_GRID_CAP}ull) grid = {EXPR_GRID_CAP}ull;
   if (grid < 1ull) grid = 1ull;
   switch (expId) {{
 {}
     default: return 0;
   }}
 }}
+extern "C" int exps_launch_expr_pair(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+  uint64_t grid=(N+{GEN_BLK}ull-1)/{GEN_BLK}ull; if(grid>{EXPR_GRID_CAP}ull)grid={EXPR_GRID_CAP}ull; if(grid<1ull)grid=1ull;
+{}
+  return 0;
+}}
 #undef OFF
 "#,
         items.len(),
         kernels.join("\n"),
+        pair_kernels.join("\n"),
         cases_covered.join("\n"),
-        cases_launch.join("\n")
+        cases_launch.join("\n"),
+        pair_cases.join("\n")
     )
 }

@@ -130,16 +130,16 @@ struct AirInstanceInfo {
 
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
-        uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + 3) / 4;
+        uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + EVALS_OPENING_BATCH - 1) / EVALS_OPENING_BATCH;
 
         evalsInfo = new EvalInfo*[num_batches];
         evalsInfoSizes = new uint64_t[num_batches];
         numBatchesEvals = num_batches;
 
         uint64_t count = 0;
-        for(uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); i += 4) {
+        for(uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
             std::vector<int64_t> openingPoints;
-            for(uint64_t j = 0; j < 4; ++j) {
+            for(uint64_t j = 0; j < EVALS_OPENING_BATCH; ++j) {
                 if(i + j < setupCtx->starkInfo.openingPoints.size()) {
                     openingPoints.push_back(setupCtx->starkInfo.openingPoints[i + j]);
                 }

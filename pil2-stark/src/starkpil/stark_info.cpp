@@ -741,14 +741,15 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), uint64_t(4));
+    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), EVALS_OPENING_BATCH);
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
     if(!gpu) {
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
         LEvSize += maxOpenings * N * FIELD_EXTENSION;
     } else {    
-        mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
-        LEvSize += FIELD_EXTENSION * N + openingPoints.size() * FIELD_EXTENSION;
+        // Scratch for the evaluations step 
+        mapOffsets[std::make_pair("lev_helper", false)] = LEvSize;
+        LEvSize += 2 * maxOpenings * FIELD_EXTENSION + evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);

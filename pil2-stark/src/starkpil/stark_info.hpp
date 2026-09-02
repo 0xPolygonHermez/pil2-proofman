@@ -156,6 +156,16 @@ public:
     }
 };
 
+// Opening points are processed in batches of at most this many per LEv build /
+// evaluation pass. Used by the proof drivers' batching loops, the per-air EvalInfo
+// tables, the lev/lev_helper arena sizing and the helper-offset arithmetic -- they
+// must all agree, so never hardcode the value at a call site.
+static constexpr uint64_t EVALS_OPENING_BATCH = 4;
+
+// Row-stripe count of the evaluations reduction (computeEvals_v2 grid.y). Shared with
+// setMapOffsets, which sizes the "lev_helper" region for the reduction partials.
+static constexpr uint64_t EVALS_HELPER_CHUNKS = 16;
+
 class StarkInfo
 {
 public:

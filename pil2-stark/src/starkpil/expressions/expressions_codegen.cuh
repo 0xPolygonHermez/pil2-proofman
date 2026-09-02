@@ -32,6 +32,7 @@ typedef int (*ExprLaunchFn)(unsigned long long expId, StepsParams*, gl64_t* dest
                                 unsigned long long mode, unsigned long long scalar,
                                 unsigned long long stagePos, unsigned long long stageCols,
                                 unsigned long long destDim, unsigned int destExpr, cudaStream_t);
+typedef int (*ExprPairLaunchFn)(unsigned long long, unsigned long long, StepsParams*, gl64_t*, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned int, cudaStream_t);
 // One AIR's resolved generated kernels. Two families (see expressions_gpu.cuh):
 //   lib        : dlopen handle for the AIR's .exps.so (kept open for the AIR's lifetime; dlclose'd in dtor)
 //   qLaunch    : the Q launcher (`exps_launch`) -- chunked kernels over the extended domain
@@ -44,6 +45,7 @@ struct ExpsKernel {
     uint64_t qMinScratch = 0;
     ExprCoveredFn exprCovered = nullptr;
     ExprLaunchFn exprLaunch = nullptr;
+    ExprPairLaunchFn exprPairLaunch = nullptr;
 };
 
 // The library sits next to the AIR's .bin with the .exps.so suffix: swap a trailing ".bin" -> ".exps.so".
@@ -76,6 +78,7 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     r.lib = h; r.qLaunch = qLaunch; r.qMinScratch = (uint64_t)minf();
     r.exprCovered = (ExprCoveredFn)dlsym(h, "exps_expr_covered");
     r.exprLaunch = (ExprLaunchFn)dlsym(h, "exps_launch_expr");
+    r.exprPairLaunch = (ExprPairLaunchFn)dlsym(h, "exps_launch_expr_pair");
     if ((r.exprCovered == nullptr) != (r.exprLaunch == nullptr)) { r.exprCovered = nullptr; r.exprLaunch = nullptr; }
     return r;
 }

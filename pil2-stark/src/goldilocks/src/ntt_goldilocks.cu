@@ -664,25 +664,42 @@ __device__ __forceinline__ void nttIntermediateRoots(gl64_t &root0, gl64_t &root
     }
 }
 
+// Read-once load: caching the LDE's source would only evict the scratch the next pass
+// re-reads. operator[] is raw access -- the gl64_t(uint64_t) ctor would convert.
+__device__ __forceinline__ gl64_t nttLoadStream(const gl64_t *p)
+{
+    gl64_t v;
+    v[0] = __ldcs(reinterpret_cast<const unsigned long long *>(p));
+    return v;
+}
+
 // Coalesced z_count-element load/store: consecutive lanes read consecutive
 // addresses, then a warp-level shared transpose hands each lane its strided set.
 template<int z_count>
 __device__ __forceinline__ void nttCoalescedLoad(gl64_t r[z_count], const gl64_t *inout,
-                                                 uint32_t idx, uint32_t stage)
+                                                 uint32_t idx, uint32_t stage, bool stream = false)
 {
     const uint32_t x = threadIdx.x & (z_count - 1);
     idx &= ~((uint32_t)(z_count - 1) << stage);
     idx += x;
     #pragma unroll
     for (int z = 0; z < z_count; z++, idx += (uint32_t)1 << stage)
-        r[z] = inout[idx];
+        r[z] = stream ? nttLoadStream(&inout[idx]) : inout[idx];
 }
+
+// Shared-exchange row stride: z_count 8-byte elements padded to z_count+1. With the
+// natural 32-byte rows every half-warp access lands on the same 4 bank groups
+// (8 wavefronts per 64-bit warp access, measured); a 40-byte stride spreads the
+// 16 rows of a half-warp over distinct 8-byte bank slots. Layout only -- no
+// arithmetic changes. z_count == 1 rows are already 8 bytes apart.
+template<int z_count>
+struct NttXchg { static constexpr int stride = z_count > 1 ? z_count + 1 : 1; };
 
 template<int z_count>
 __device__ __forceinline__ void nttTranspose(gl64_t r[z_count])
 {
     extern __shared__ int nttTransposeShm[];
-    gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(nttTransposeShm);
+    gl64_t (*xchg)[NttXchg<z_count>::stride] = reinterpret_cast<decltype(xchg)>(nttTransposeShm);
 
     const uint32_t x = threadIdx.x & (z_count - 1);
     const uint32_t y = threadIdx.x & ~(z_count - 1);
@@ -723,7 +740,7 @@ __device__ __forceinline__ gl64_t nttCosetLoadVal_(const gl64_t *src,
     if (p & bmask)
         return gl64_t(uint64_t(0));
     uint32_t idx = p >> lg_blowup;
-    gl64_t r = src[idx];
+    gl64_t r = nttLoadStream(&src[idx]);
     uint32_t pow = nttBitRev(idx, lg_domain_size - lg_blowup);
     gl64_t root = cosetPows[0][pow % NTT_WIN_SIZE];
     #pragma unroll
@@ -735,12 +752,33 @@ __device__ __forceinline__ gl64_t nttCosetLoadVal_(const gl64_t *src,
     return r * root;
 }
 
+// Fused computeQ load for the cmQ forward NTT's stage-0 (bit-reversed input order):
+// cmQ column c = (p, k) with p = c / qDim, k = c % qDim. The bit-rev-order input at
+// index idx is coeff[r] of the coset-shifted zero-padded column, r = bitrev(idx):
+//   coeff[r] = (r < N) ? q_k[r + p*N] * shiftIn^p : 0
+// and q's coefficients come from a DIF iNTT, i.e. bit-reversed:
+//   q_k[m] = q_rev[k][bitrev_NExt(m)].
+// Replaces the two bit-reversal passes and the materialized coset-shift pass of the
+// NN-order flow with index math inside the loads -- identical field values.
+__device__ __forceinline__ gl64_t nttQRevLoadVal_(const gl64_t *q_rev_k, uint32_t lg_next,
+                                                  uint32_t lg_n, uint32_t pN, gl64_t spow,
+                                                  uint32_t idx)
+{
+    uint32_t r = nttBitRev(idx, lg_next);
+    if (r >> lg_n)
+        return gl64_t(uint64_t(0));
+    return q_rev_k[nttBitRev(r + pN, lg_next)] * spow;
+}
+
 // DIT (decimation-in-time) step: bit-reversed input order, natural output -- the
 // forward NTT of the LDE. gridDim.y selects the column (stride col_stride elements).
 // coset_load (stage-0, non-coalesced launches only): loads come from the caller's compact
 // iNTT result (d_csrc, column stride csrc_stride) rather than d_inout, so stage 0 only ever
 // WRITES d_inout -- hazard-free provided d_csrc is disjoint from the written columns.
-template<int z_count, bool coalesced = false, bool coset_load = false>
+// qrev_load (stage-0, non-coalesced): the fused computeQ load above; then d_csrc is the
+// base of q's qDim bit-reversed columns (stride csrc_stride), lg_blowup carries
+// nBits | (qDim << 8), and domain_inv carries shiftIn.
+template<int z_count, bool coalesced = false, bool coset_load = false, bool qrev_load = false>
 __launch_bounds__(768, 1) __global__
 void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
                           const uint32_t stage, const uint32_t iterations,
@@ -755,6 +793,19 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
     if constexpr (coset_load)
         d_csrc += (size_t)blockIdx.y * csrc_stride;
+    uint32_t qrev_pN = 0, qrev_lgn = 0;
+    gl64_t qrev_spow = gl64_t(uint64_t(1));
+    if constexpr (qrev_load) {
+        const uint32_t qDim = (lg_blowup >> 8) & 0xff;
+        qrev_lgn = lg_blowup & 0xff;
+        const uint32_t col = (lg_blowup >> 16) + blockIdx.y;
+        const uint32_t pq = col / qDim;
+        d_csrc += (size_t)(col % qDim) * csrc_stride;
+        qrev_pN = pq << qrev_lgn;
+        const gl64_t shift = gl64_t(domain_inv);
+        for (uint32_t i = 0; i < pq; i++)
+            qrev_spow *= shift;
+    }
     extern __shared__ int nttShm[];
     gl64_t *shared_exchange = reinterpret_cast<gl64_t *>(nttShm);
 
@@ -783,7 +834,12 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         uint32_t z_shift = inp_mask == 0 ? iterations : 0;
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
-            if constexpr (coset_load) {
+            if constexpr (qrev_load) {
+                r[0][z] = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
+                                          idx0 + ((uint32_t)z << z_shift));
+                r[1][z] = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
+                                          idx1 + ((uint32_t)z << z_shift));
+            } else if constexpr (coset_load) {
                 r[0][z] = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
                                            idx0 + ((uint32_t)z << z_shift));
                 r[1][z] = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
@@ -863,7 +919,7 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
 
         gl64_t root = d_radixX[rank << (radix - (s + 1))];
 
-        gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(shared_exchange);
+        gl64_t (*xchg)[NttXchg<z_count>::stride] = reinterpret_cast<decltype(xchg)>(shared_exchange);
 
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
@@ -920,6 +976,9 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
 
 // DIF (decimation-in-frequency) step: natural input order, bit-reversed output --
 // the iNTT of the LDE. gridDim.y selects the column.
+// d_srcbase non-null (first launch only) makes the launch out-of-place: it reads d_srcbase
+// instead of d_base, same column stride, so ldeColMajor can honour preserve_src without a
+// staging copy.
 template<int z_count, bool coalesced = false>
 __launch_bounds__(768, 1) __global__
 void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
@@ -928,9 +987,12 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
                           const gl64_t (*d_partialRoots)[NTT_WIN_SIZE],
                           const gl64_t (*d_zStepRoots)[1024],
                           const gl64_t *d_radix6, const gl64_t *d_radixX,
-                          bool is_intt, const uint64_t domain_inv)
+                          bool is_intt, const uint64_t domain_inv,
+                          const gl64_t *d_srcbase)
 {
     gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
+    const bool oop = d_srcbase != nullptr;
+    const gl64_t *d_in = oop ? d_srcbase + (size_t)blockIdx.y * col_stride : d_inout;
     extern __shared__ int nttShm[];
     gl64_t *shared_exchange = reinterpret_cast<gl64_t *>(nttShm);
 
@@ -950,8 +1012,8 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     gl64_t r[2][z_count];
 
     if (coalesced) {
-        nttCoalescedLoad<z_count>(r[0], d_inout, idx0, stage - iterations);
-        nttCoalescedLoad<z_count>(r[1], d_inout, idx1, stage - iterations);
+        nttCoalescedLoad<z_count>(r[0], d_in, idx0, stage - iterations, oop);
+        nttCoalescedLoad<z_count>(r[1], d_in, idx1, stage - iterations, oop);
         nttTranspose<z_count>(r[0]);
         __syncwarp();
         nttTranspose<z_count>(r[1]);
@@ -959,8 +1021,8 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         uint32_t z_shift = out_mask == 0 ? iterations : 0;
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
-            r[0][z] = d_inout[idx0 + (z << z_shift)];
-            r[1][z] = d_inout[idx1 + (z << z_shift)];
+            r[0][z] = oop ? nttLoadStream(&d_in[idx0 + (z << z_shift)]) : d_in[idx0 + (z << z_shift)];
+            r[1][z] = oop ? nttLoadStream(&d_in[idx1 + (z << z_shift)]) : d_in[idx1 + (z << z_shift)];
         }
     }
 
@@ -981,7 +1043,7 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         }
         __syncthreads();
 
-        gl64_t (*xchg)[z_count] = reinterpret_cast<decltype(xchg)>(shared_exchange);
+        gl64_t (*xchg)[NttXchg<z_count>::stride] = reinterpret_cast<decltype(xchg)>(shared_exchange);
 
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
@@ -1090,6 +1152,7 @@ void nttDifColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         }
     }
 }
+
 
 // In-place bit-reversal permutation of each column (gridDim.y selects the column).
 // Each (i, rev(i)) pair is swapped once, by its lower-indexed side. Combined with a
@@ -1275,7 +1338,15 @@ struct NttRun {
     const gl64_t *cosetSrc = nullptr;
     const gl64_t (*cosetPows)[NTT_WIN_SIZE] = nullptr;
     uint32_t lgBlowup = 0;
+    // with lgBlowup repurposed as nBits | qDim << 8 | firstCol << 16.
     size_t cosetStride = 0;
+    // Fused computeQ load (see nttQRevLoadVal_): the FIRST DIT launch reads the shifted,
+    // zero-padded, bit-reversed q coefficients straight from cosetSrc/cosetStride above,
+    bool qrev = false;
+    uint64_t shiftQ = 0; // per-piece coset scale: shift^-N (piece pq is scaled by shiftQ^pq)
+    // When set, the FIRST DIF launch reads srcBase instead of base (same col_stride),
+    // leaving srcBase intact. Must be disjoint from base.
+    const gl64_t *srcBase = nullptr;
 
     void step(int iterations)
     {
@@ -1288,45 +1359,56 @@ struct NttRun {
         uint32_t num_blocks = (num_threads + block_size - 1) / block_size;
 
         // Z (z-count): independent butterfly pairs each thread carries in registers
-        // (r[2][Z] = 8 field elements). Chosen so 4 consecutive 8-byte elements = 32 B
-        // = exactly one memory sector: the coalesced load moves full sectors with no
-        // waste, and the positioning roots are derived once per thread then extended
-        // to the other Z-1 slots with one multiply each (the zStepRoots tables).
-        // Grid and shared memory scale with it: num_blocks/Z blocks, Z*shared_sz bytes.
-        const int Z = 4;
+        // (r[2][Z] = 16 field elements). Z consecutive 8-byte elements = 64 B = whole
+        // memory sectors per coalesced load, and Z independent butterflies give the ILP
+        // that hides the multiply-chain latency (these kernels are latency-bound).
+        // Positioning roots are derived once per thread, then extended to the other
+        // Z-1 slots with one multiply each (the zStepRoots tables). Grid and shared
+        // memory scale with it: num_blocks/Z blocks, (Z+1)*shared_sz bytes -- each
+        // thread's exchange row is padded by one element (NttXchg) to break the
+        // shared-memory bank conflicts a power-of-two row stride would cause.
+        const int Z = 8;
         size_t shared_sz = sizeof(gl64_t) << (radix - 1);
 
-#ifdef NTT_ARGS
-#error "NTT_ARGS is already defined -- rename one of the two definitions"
-#endif
         #define NTT_ARGS (uint32_t)radix, (uint32_t)lg, (uint32_t)stage, (uint32_t)iterations, \
                 base, col_stride, (const gl64_t(*)[NTT_WIN_SIZE])t.partialRoots, \
                 (const gl64_t(*)[1024])t.zStepRoots, t.radixTwiddles[0], t.radixTwiddles[radix-6], is_intt, nttDomainSizeInv[lg]
         if (dit) {
-            // Fused coset-spread load only ever applies to the first launch (stage 0),
-            // which is always a non-coalesced instantiation.
-            const bool fuse = (cosetSrc != nullptr) && (stage == 0);
+            // Fused coset-spread / q-rev loads only ever apply to the first launch
+            // (stage 0), which is always a non-coalesced instantiation.
+            const bool fuse = (cosetSrc != nullptr) && (stage == 0) && !qrev;
+            const bool fuseq = qrev && (stage == 0);
+            // qrev replaces the launch's domain_inv slot with shiftIn (is_intt is false here).
+            #define NTT_ARGS_Q (uint32_t)radix, (uint32_t)lg, (uint32_t)stage, (uint32_t)iterations, \
+                base, col_stride, (const gl64_t(*)[NTT_WIN_SIZE])t.partialRoots, \
+                (const gl64_t(*)[1024])t.zStepRoots, t.radixTwiddles[0], t.radixTwiddles[radix-6], false, shiftQ
             if (num_blocks < (uint32_t)Z) {
-                if (fuse)
+                if (fuseq)
+                    nttDitColMajorKernel<1, false, false, true><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS_Q, cosetSrc, nullptr, lgBlowup, cosetStride);
+                else if (fuse)
                     nttDitColMajorKernel<1, false, true><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup, cosetStride);
                 else
                     nttDitColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             } else if (stage == 0 || lg < 12) {
-                if (fuse)
-                    nttDitColMajorKernel<4, false, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup, cosetStride);
+                if (fuseq)
+                    nttDitColMajorKernel<8, false, false, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS_Q, cosetSrc, nullptr, lgBlowup, cosetStride);
+                else if (fuse)
+                    nttDitColMajorKernel<8, false, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, cosetSrc, cosetPows, lgBlowup, cosetStride);
                 else
-                    nttDitColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
+                    nttDitColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             } else {
-                nttDitColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
+                nttDitColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, nullptr, nullptr, 0, 0);
             }
             stage += iterations;
         } else {
+            // Only the first launch (stage == lg) still reads the caller's source.
+            const gl64_t *src = (stage == lg) ? srcBase : nullptr;
             if (num_blocks < (uint32_t)Z)
-                nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<1><<<dim3(num_blocks, ncols), block_size, shared_sz, s>>>(NTT_ARGS, src);
             else if (stage == iterations || lg < 12)
-                nttDifColMajorKernel<4><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, src);
             else
-                nttDifColMajorKernel<4, true><<<dim3(num_blocks/Z, ncols), block_size, Z*shared_sz, s>>>(NTT_ARGS);
+                nttDifColMajorKernel<8, true><<<dim3(num_blocks/Z, ncols), block_size, (Z+1)*shared_sz, s>>>(NTT_ARGS, src);
             stage -= iterations;
         }
         #undef NTT_ARGS
@@ -1337,7 +1419,11 @@ struct NttRun {
     {
         stage = dit ? 0 : lg;
         if (lg <= 10) { step(lg); }
-        else if (lg <= 18) {
+        else if (lg <= 19) {
+            // lg 19 included: one 10+9 split beats three radix-6/7 passes of 32/64-thread
+            // blocks on the 2^19 extended domains (Keccakf-class, measured -3%); at lg 20
+            // the radix-10 passes' extra shared stages eat the saved pass (+5%), so the
+            // three-step split stays for 20..30.
             int st = lg / 2;
             if (dit) { step(st + lg % 2); step(st); }
             else     { step(st); step(st + lg % 2); }
@@ -1467,14 +1553,17 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         gl64_t *dchunk = d_dst_ + (size_t)c0 * Next;
         gl64_t *csrc = d_src_ + (size_t)c0 * N;
 
-        // Stage when src must survive, or when a chunk's output covers its own input.
+        // Stage when src must survive, or when a chunk's output covers its own input: the
+        // iNTT's first pass reads csrc and writes scratch itself, so no copy is needed.
+        const gl64_t *oop_src = nullptr;
         if (preserve_src || (overlaps && (uint64_t)c0 * (blowup - 1) < nc)) {
-            CHECKCUDAERR(cudaMemcpyAsync(scratch, csrc, (size_t)nc * N * sizeof(gl64_t),
-                                         cudaMemcpyDeviceToDevice, stream));
+            oop_src = csrc;
             csrc = scratch;
         }
 
-        NttRun{csrc, N, nc, (int)nBits, true, ti, stream, false}.run();
+        NttRun intt{csrc, N, nc, (int)nBits, true, ti, stream, false};
+        intt.srcBase = oop_src;
+        intt.run();
 
         NttRun fwd{dchunk, Next, nc, (int)nBitsExt, false, tf, stream, true};
         fwd.cosetSrc = csrc;
@@ -1520,23 +1609,38 @@ void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, 
     uint32_t N = 1u << nBits;
     uint32_t Next = 1u << nBitsExt;
 
+    // The qrev stage-0 load packs nBits | qDim << 8 | firstCol << 16 into one word and
+    // derives its q reads from col / qDim (see nttDitColMajorKernel<..., qrev_load>).
+    assert(nBitsExt >= nBits);
+    assert(qDim > 0 && qDim <= 0xff);
+    assert(nCols == qDeg * qDim && nCols <= 0xffff);
+    assert(qDeg <= (1ull << (nBitsExt - nBits)));
+
+    // q iNTT as DIF (natural -> bit-reversed coefficients, 1/N folded into the last step):
+    // the intermediate order is internal, so the NN flow's bit-reversal pass is unnecessary.
     uint32_t chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), qDim);
     for (uint32_t c0 = 0; c0 < qDim; c0 += chunk) {
         uint32_t nc = (c0 + chunk <= qDim) ? chunk : (uint32_t)(qDim - c0);
-        nttTransformNN(d_q + (size_t)c0 * Next, Next, nc, (int)nBitsExt, true, ti, stream);
+        NttRun{d_q + (size_t)c0 * Next, Next, nc, (int)nBitsExt, true, ti, stream, false}.run();
     }
 
-    uint32_t thr = 256;
-    uint32_t blk = (Next + thr - 1) / thr;
-    nttCosetShiftQKernel<<<blk, thr, 0, stream>>>(d_q, d_cmQ, N, Next, (uint32_t)qDeg, (uint32_t)qDim, shiftIn.fe);
-    CHECKCUDAERR(cudaGetLastError());
-
+    // cmQ forward NTT as DIT (bit-reversed in -> natural out) with the coset shift,
+    // zero padding and both bit reversals fused into the stage-0 load (nttQRevLoadVal_):
+    // no materialized coset pass and no bit-reversal passes. Same field values as the
+    // NN flow -- only the schedule and the intermediate storage order change.
     chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), nCols);
     for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
         uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
-        nttTransformNN(d_cmQ + (size_t)c0 * Next, Next, nc, (int)nBitsExt, false, tf, stream);
+        NttRun fwd{d_cmQ + (size_t)c0 * Next, Next, nc, (int)nBitsExt, false, tf, stream, true};
+        fwd.qrev = true;
+        fwd.cosetSrc = d_q;
+        fwd.cosetStride = Next;
+        fwd.lgBlowup = (uint32_t)nBits | ((uint32_t)qDim << 8) | (c0 << 16);
+        fwd.shiftQ = shiftIn.fe;
+        fwd.run();
     }
 }
+
 
 
 // =============================================================================

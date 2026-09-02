@@ -16,7 +16,8 @@ use proofman_common::{
 use std::os::raw::{c_void, c_char};
 
 use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
+    timer_stop_and_log_debug_net, create_buffer_fast,
 };
 
 use crate::{add_publics_circom, add_publics_aggregation};
@@ -126,8 +127,9 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         add_publics_circom(&mut updated_proof, 0, pctx, None);
         let circom_witness =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
-        timer_stop_and_log_debug!(
+        timer_stop_and_log_debug_net!(
             GENERATE_COMPRESSOR_WITNESS,
+            proofman_common::take_buffer_wait(circom_witness.as_ptr() as *const u8),
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
             proof.airgroup_id,
@@ -172,8 +174,9 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 
         let circom_witness =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
-        timer_stop_and_log_debug!(
+        timer_stop_and_log_debug_net!(
             GENERATE_RECURSIVE1_WITNESS,
+            proofman_common::take_buffer_wait(circom_witness.as_ptr() as *const u8),
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
             proof.airgroup_id,
@@ -235,7 +238,11 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     let circom_witness =
         generate_witness::<F>(setup_recursive2, memory_handler_recursive_witness, 0, &updated_proof_recursive2)?;
 
-    timer_stop_and_log_debug!(GENERATE_WITNESS_AGGREGATION);
+    timer_stop_and_log_debug_net!(
+        GENERATE_WITNESS_AGGREGATION,
+        proofman_common::take_buffer_wait(circom_witness.as_ptr() as *const u8),
+        "GENERATE_WITNESS_AGGREGATION"
+    );
     Ok(Proof::new_witness(
         ProofType::Recursive2,
         airgroup_id,

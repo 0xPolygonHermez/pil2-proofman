@@ -189,3 +189,32 @@ macro_rules! timer_stop_and_log_trace {
         tracing::trace!("{}<<< {} ({}ms){}", escape_in, format!($($arg)+), $name.as_millis(), escape_out);
     };
 }
+
+/// Like [`timer_stop_and_log_debug`] but subtracts a known blocked interval, so the logged span is
+/// the work itself. `$waited` is a `Duration`; it is reported alongside rather than dropped.
+#[macro_export]
+macro_rules! timer_stop_and_log_debug_net {
+    ($name:ident, $waited:expr, $($arg:tt)+) => {
+        #[allow(non_snake_case)]
+        let $name = std::time::Instant::now() - $name;
+        let waited: std::time::Duration = $waited;
+        let net = $name.saturating_sub(waited);
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
+            true => "\x1b[2m",
+            false => "",
+        };
+        let escape_out = match is_terminal {
+            true => "\x1b[37;0m",
+            false => "",
+        };
+        tracing::debug!(
+            "{}<<< {} ({}ms) [waited {}ms]{}",
+            escape_in,
+            format!($($arg)+),
+            net.as_millis(),
+            waited.as_millis(),
+            escape_out
+        );
+    };
+}
