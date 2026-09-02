@@ -4,7 +4,9 @@
 // order, the coset/leaf conventions, the Merkle openings and the final consistency check.
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <random>
 #include <vector>
 
@@ -221,6 +223,129 @@ TEST_F(StirTamperTest, invalid_grinding_nonce_is_rejected)
 // Note: there is no "malicious prover" test here — `Prover::fold` asserts that an honest f_0 was
 // given, so a dishonest one aborts rather than producing a proof. That the *arithmetic* rejects a
 // high-degree f_0 is covered by STIR_TEST.dishonest_f0_is_not_low_degree_at_the_end.
+
+// Cross-implementation fixtures for the native Rust verifier (verifier/tests/stir_fixture.rs):
+// the parameters, the transcript seed, the f_0 claims a verify run records, and the proof
+// section serialized exactly as `Proofs::proof2pointer` lays it out on the wire. Skipped unless
+// STIR_DUMP_DIR is set; regenerate with
+//   STIR_DUMP_DIR=$(realpath ../verifier/tests/data) make stir_test
+void dumpRustFixture(const std::string &path, const StirParams &params, const std::vector<FE> &f0, const Proof &proof)
+{
+    // Re-verify with a recording checkF0: the (index, value) pairs are the fixture's stand-in
+    // for the DEEP cross-check the STARK verifier performs.
+    std::vector<uint64_t> claims;
+    TranscriptGL t = freshTranscript(params);
+    auto checkF0 = [&](uint64_t, uint64_t idx, const E3 &committed) {
+        claims.push_back(idx);
+        claims.push_back(Goldilocks::toU64(committed[0]));
+        claims.push_back(Goldilocks::toU64(committed[1]));
+        claims.push_back(Goldilocks::toU64(committed[2]));
+        return stir::equal(committed, (const E3 &)f0[idx * FIELD_EXTENSION]);
+    };
+    std::string why;
+    ASSERT_TRUE(Stir::verify(proof, params, t, checkF0, powOk, &why)) << why;
+    ASSERT_EQ(claims.size(), params.numQueries[0] * 4);
+
+    // The proof section, in proof2pointer's STIR order.
+    const uint64_t M = params.M();
+    const uint64_t numNodesLevel = params.lastLevelVerification == 0
+                                       ? 0
+                                       : (uint64_t)std::pow(params.merkleTreeArity, params.lastLevelVerification);
+    std::vector<uint64_t> section;
+    for (uint64_t i = 0; i < M; i++)
+    {
+        for (uint64_t e = 0; e < HASH_SIZE; e++) section.push_back(Goldilocks::toU64(proof.trees[i].root[e]));
+    }
+    for (uint64_t i = 0; i < M; i++)
+    {
+        uint64_t k = uint64_t(1) << params.logFoldingFactors[i];
+        uint64_t logLeaves = params.logDomainSizes[i] - params.logFoldingFactors[i];
+        uint64_t nSiblings = merkleProofLevels(logLeaves, params.merkleTreeArity, params.lastLevelVerification, false);
+        uint64_t nSiblingsPerLevel = (params.merkleTreeArity - 1) * HASH_SIZE;
+        for (uint64_t q = 0; q < params.numQueries[i]; q++)
+        {
+            for (uint64_t l = 0; l < k * FIELD_EXTENSION; l++)
+            {
+                section.push_back(Goldilocks::toU64(proof.trees[i].polQueries[q][0].v[l][0]));
+            }
+        }
+        for (uint64_t q = 0; q < params.numQueries[i]; q++)
+        {
+            for (uint64_t l = 0; l < nSiblings; l++)
+            {
+                for (uint64_t c = 0; c < nSiblingsPerLevel; c++)
+                {
+                    section.push_back(Goldilocks::toU64(proof.trees[i].polQueries[q][0].mp[l][c]));
+                }
+            }
+        }
+        for (uint64_t l = 0; l < numNodesLevel * HASH_SIZE; l++)
+        {
+            section.push_back(Goldilocks::toU64(proof.trees[i].last_levels[l]));
+        }
+    }
+    for (uint64_t i = 0; i + 1 < M; i++)
+    {
+        for (uint64_t l = 0; l < params.numOodSamples * FIELD_EXTENSION; l++)
+        {
+            section.push_back(Goldilocks::toU64(proof.betas[i][l]));
+        }
+    }
+    for (uint64_t l = 0; l < proof.finalPol.size(); l++) section.push_back(Goldilocks::toU64(proof.finalPol[l]));
+    for (uint64_t i = 0; i < M; i++) section.push_back(proof.nonces[i]);
+    for (uint64_t i = 0; i + 1 < M; i++)
+    {
+        for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++)
+        {
+            section.push_back(Goldilocks::toU64(proof.ansCoeffs[i][l]));
+        }
+    }
+
+    std::vector<uint64_t> words;
+    words.push_back(M);
+    for (uint64_t v : params.logFoldingFactors) words.push_back(v);
+    for (uint64_t v : params.logDegrees) words.push_back(v);
+    for (uint64_t v : params.logDomainSizes) words.push_back(v);
+    for (uint64_t v : params.numQueries) words.push_back(v);
+    for (uint64_t v : params.grindingBitsQueries) words.push_back(v);
+    words.push_back(params.merkleTreeArity);
+    words.push_back(params.lastLevelVerification);
+    words.push_back(params.hashCommits ? 1 : 0);
+    for (uint64_t e = 0; e < 4; e++) words.push_back(Goldilocks::toU64(SEED[e]));
+    words.insert(words.end(), claims.begin(), claims.end());
+    words.push_back(section.size());
+    words.insert(words.end(), section.begin(), section.end());
+
+    std::ofstream out(path, std::ios::binary);
+    ASSERT_TRUE(out.is_open()) << "cannot open " << path;
+    out.write(reinterpret_cast<const char *>(words.data()), words.size() * sizeof(uint64_t));
+}
+
+TEST_F(StirProverTest, dump_rust_fixture_plain)
+{
+    const char *dir = std::getenv("STIR_DUMP_DIR");
+    if (dir == nullptr) GTEST_SKIP() << "set STIR_DUMP_DIR to write the Rust verifier fixtures";
+    StirParams params = testParams();
+    std::vector<FE> f0;
+    honestF0(f0, params, 0xA11CE);
+    Proof proof = Stir::makeProof(params);
+    std::string why;
+    ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
+    dumpRustFixture(std::string(dir) + "/stir_plain.bin", params, f0, proof);
+}
+
+TEST_F(StirProverTest, dump_rust_fixture_hashed_llv)
+{
+    const char *dir = std::getenv("STIR_DUMP_DIR");
+    if (dir == nullptr) GTEST_SKIP() << "set STIR_DUMP_DIR to write the Rust verifier fixtures";
+    StirParams params = testParams(/*hashCommits=*/true, /*lastLevelVerification=*/2);
+    std::vector<FE> f0;
+    honestF0(f0, params, 0xB0B);
+    Proof proof = Stir::makeProof(params);
+    std::string why;
+    ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
+    dumpRustFixture(std::string(dir) + "/stir_hashed_llv.bin", params, f0, proof);
+}
 
 // The shape a real air produces: fibonacci-square's Module air with lowDegreeTest = STIR and
 // blake3 geometry — six iterations, a final folding factor of 1 (fold by two), arity 2, a
