@@ -400,7 +400,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     });
     TimerStopCategoryGPU(timer, EXPRESSIONS);
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);
-    });
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
