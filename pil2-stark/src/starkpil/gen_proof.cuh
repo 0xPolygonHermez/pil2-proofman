@@ -87,6 +87,9 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false) {
+    // The GPU pipeline below is FRI-only: refuse a STIR stark info loudly instead of silently
+    // proving the wrong low-degree test (the CPU prover in gen_proof.hpp implements STIR).
+    setupCtx.starkInfo.requireFri("genProof_gpu");
     // Per-stream timer is reused: drop categories left open by an aborted job, and the load
     // phase's, so KERNELS CONTRIBUTIONS covers the proof window only.
     TimerResetCategoriesGPU(timer);

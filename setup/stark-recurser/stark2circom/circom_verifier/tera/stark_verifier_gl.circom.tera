@@ -646,9 +646,7 @@ template {{ verifier_name }}() {
 {% if input_challenges %}    signal input globalChallenge[3];
 {% endif %}
 
-{% if multi_fri %}    signal output queryVals[{{ n_queries }}][3];
-{% else %}    signal queryVals[{{ n_queries }}][3];
-{% endif %}
+    signal queryVals[{{ n_queries }}][3];
 
 {% for cp in challenges_per_stage %}    signal challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}

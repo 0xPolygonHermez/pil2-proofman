@@ -376,7 +376,7 @@ void StarkInfo::load(json j)
 
 void StarkInfo::requireFri(const std::string &what) const {
     if (starkStruct.lowDegreeTest != LowDegreeTestKind::FRI) {
-        zklog.error(what + ": the stark info selects the STIR low-degree test, which the C++ prover/verifier do not implement yet (FRI only)");
+        zklog.error(what + ": the stark info selects the STIR low-degree test, which this code path does not implement (FRI only)");
         exitProcess();
     }
 }

@@ -504,6 +504,22 @@ impl Stir {
         &self.sec_params
     }
 
+    /// Raise the round-1 query count `t₀` to `num_queries` if that is more than the solver
+    /// found necessary — the STIR twin of `Fri::raise_n_queries`, for callers that size a
+    /// wrapping circuit by the query count (more queries only ever add security). Later rounds
+    /// keep their solved counts; the |G₁| < d₁ requirement is re-checked since `t₀` feeds `G₁`.
+    /// Returns whether anything changed.
+    pub fn raise_num_queries(&mut self, num_queries: u64) -> bool {
+        if num_queries > self.sec_params.num_queries[0] {
+            let mut raised = self.sec_params.clone();
+            raised.num_queries[0] = num_queries;
+            self.validate_query_counts(&raised);
+            self.sec_params = raised;
+            return true;
+        }
+        false
+    }
+
     /// The deduced gap-widening factor.
     pub fn alpha(&self) -> f64 {
         self.alpha

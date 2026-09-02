@@ -221,8 +221,8 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
         let final_pol_len = 1usize << stir_log_degrees.last().copied().unwrap_or(0);
         out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
         out.push_str(&format!("    signal input {prefix_}nonces[{m}];\n"));
-        for i in 0..m.saturating_sub(1) {
-            let n_g_max = 1 + stir_num_queries[i];
+        for (i, &t) in stir_num_queries.iter().enumerate().take(m.saturating_sub(1)) {
+            let n_g_max = 1 + t;
             out.push_str(&format!("    signal input {prefix_}ansCoeffs{i}[{n_g_max}][3];\n"));
         }
     } else {

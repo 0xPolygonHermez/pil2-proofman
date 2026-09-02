@@ -27,7 +27,6 @@ pub struct Pil2CircomOptions {
     pub enable_input: bool,
     pub input_challenges: bool,
     pub fri_queries_batch_size: Option<usize>,
-    pub multi_fri: bool,
     pub hash: String,
 }
 
@@ -39,7 +38,6 @@ impl Default for Pil2CircomOptions {
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
-            multi_fri: false,
             hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
         }
     }
@@ -99,7 +97,6 @@ fn build_tera_context(
     }
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0);
-    let multi_fri = opts.multi_fri;
 
     // ── Low-degree test selection ─────────────────────────────────────────────
     // A STIR stark info is recognised by its marker; everything below that reads a
@@ -107,9 +104,6 @@ fn build_tera_context(
     // round-1 queries (t₀ into L₀, which is where the stage trees are opened too)
     // and to the final polynomial p sent as coefficients.
     let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
-    if is_stir && multi_fri {
-        bail!("gen_stark_verifier_gl: multiFri is not supported for STIR stark infos");
-    }
     let stir_folding_factors: Vec<u64> =
         ss["foldingFactors"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let stir_log_degrees: Vec<u64> =
@@ -859,7 +853,6 @@ fn build_tera_context(
     ctx.insert("hash_commits", &hash_commits);
     ctx.insert("last_level_verification", &last_level_verification);
     ctx.insert("last_level_verification_gt0", &(last_level_verification > 0));
-    ctx.insert("multi_fri", &multi_fri);
     ctx.insert("skip_main", &opts.skip_main);
     ctx.insert("verkey_input", &opts.verkey_input);
     ctx.insert("enable_input", &opts.enable_input);

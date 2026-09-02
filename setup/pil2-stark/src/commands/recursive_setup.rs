@@ -34,6 +34,19 @@ pub(crate) fn run_recursive_setup(
     use crate::proving_key::compressed_final;
     use crate::proving_key::final_setup;
 
+    // Recursion needs Poseidon basic proofs: the wrap circuits only carry in-circuit Poseidon1 /
+    // Poseidon2 transcripts and Merkle verifiers (and the generated native Rust verifiers likewise).
+    // Anything else would fail deep inside circom with an unrelated-looking
+    // "template Poseidon does not exist".
+    if !matches!(opts.hash.as_str(), "Poseidon1" | "Poseidon2") {
+        anyhow::bail!(
+            "Recursive setup requires --hash Poseidon1 or Poseidon2 (got {:?}): the recursion circuits have no \
+             in-circuit {} verifier",
+            opts.hash,
+            opts.hash
+        );
+    }
+
     let build_dir = &opts.build_dir;
 
     let circuits_gl_path =
@@ -320,7 +333,19 @@ pub(crate) fn run_recursive_setup(
                                     too_small.n_bits
                                 ));
                             };
-                            let cur_q = comp_ss.get("numQueries").and_then(|v| v.as_u64()).unwrap_or(0);
+                            // The knob is FRI's scalar `numQueries` or STIR's `numQueries[0]` (t₀).
+                            let comp_is_stir =
+                                comp_ss.get("lowDegreeTest").and_then(|v| v.as_str()) == Some("STIR");
+                            let cur_q = if comp_is_stir {
+                                comp_ss
+                                    .get("numQueries")
+                                    .and_then(|v| v.as_array())
+                                    .and_then(|a| a.first())
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                            } else {
+                                comp_ss.get("numQueries").and_then(|v| v.as_u64()).unwrap_or(0)
+                            };
                             let cur_used = (too_small.n_used as u64).max(1);
                             if cur_q == 0 {
                                 return Err(anyhow::anyhow!(
@@ -367,7 +392,15 @@ pub(crate) fn run_recursive_setup(
                             );
                             let mut bumped = comp_ss;
                             if let Some(obj) = bumped.as_object_mut() {
-                                obj.insert("numQueries".to_string(), serde_json::json!(want_q));
+                                if comp_is_stir {
+                                    // Keep the vector shape: a scalar here would make the untagged
+                                    // starkStruct re-parse as FRI downstream.
+                                    if let Some(arr) = obj.get_mut("numQueries").and_then(|v| v.as_array_mut()) {
+                                        arr[0] = serde_json::json!(want_q);
+                                    }
+                                } else {
+                                    obj.insert("numQueries".to_string(), serde_json::json!(want_q));
+                                }
                             }
                             compressor_ss_override = Some(bumped);
                             // loop: recompress with the bumped starkStruct + rerun recursive1.
