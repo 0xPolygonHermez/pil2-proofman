@@ -7,6 +7,7 @@
 //! - Verifier evaluations
 //! - Hint computations
 
+use crate::pil::cse;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -398,6 +399,16 @@ pub fn generate_pil_code(
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index);
 
     let fri_exp_id = params.fri_exp_id;
+
+    // Verifier entries only: these feed the Rust/C++ verifiers and the circom
+    // recursion circuit, none of which is the prover's cExp.
+    let mut q_verifier = q_verifier;
+    let mut query_verifier = query_verifier;
+    for (name, entry) in [("qVerifier", &mut q_verifier), ("queryVerifier", &mut query_verifier)] {
+        let result = cse::cse_code(&entry.code);
+        tracing::debug!("CSE {name}: {} -> {} ops", entry.code.len(), result.code.len());
+        entry.code = result.code;
+    }
 
     PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },

@@ -49,23 +49,9 @@ fn prepare_verifier_rust(
     let verify_q_rust = q_result.verify_rust;
     let verify_q_helpers = q_result.verify_rust_helpers;
 
-    let mut numbers_fri = Vec::new();
-    let fri_result = get_parser_args(
-        stark_info,
-        &verifier_info.query_verifier.code,
-        &mut numbers_fri,
-        false,
-        true,
-        None,
-        "query_verify",
-    )?;
-    let verify_fri_rust = fri_result.verify_rust;
-    let verify_fri_helpers = fri_result.verify_rust_helpers;
-
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("use alloc::vec;".to_string());
-    lines.push("use alloc::vec::Vec;".to_string());
     lines.push("use alloc::string::ToString;".to_string());
     let mut hash_imports: Vec<&str> = Vec::new();
     for ht in [merkle_hash_type, grinding_type]
@@ -78,7 +64,7 @@ fn prepare_verifier_rust(
     }
     lines
         .push(format!("use proofman_fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
-    lines.push("use crate::{stark_verify, Boundary, VerifierInfo};".to_string());
+    lines.push("use crate::{stark_verify, Boundary, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     if vadcop_final_proof {
         lines.push("use crate::VadcopFinalProof;".to_string());
     }
@@ -99,20 +85,6 @@ fn prepare_verifier_rust(
     lines.push("}".to_string());
     lines.push(String::new());
     lines.push(String::new());
-
-    // query_verify helper functions (if chunked)
-    for line in &verify_fri_helpers {
-        lines.push(line.clone());
-    }
-
-    // query_verify function
-    lines.push("#[rustfmt::skip]".to_string());
-    lines.push("#[allow(clippy::all)]".to_string());
-    lines.push("fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {".to_string());
-    for line in &verify_fri_rust {
-        lines.push(line.clone());
-    }
-    lines.push("}\n".to_string());
 
     // verifier_info function
     lines.push("#[rustfmt::skip]".to_string());
@@ -167,6 +139,38 @@ fn prepare_verifier_rust(
     }
     lines.push(format!("        boundaries: vec![{}],", boundary_strs.join(", ")));
 
+    // The FRI query polynomial is structural, so the verifier evaluates it from
+    // the evaluation map instead of an unrolled per-air function.
+    let mut group_strs: Vec<String> = Vec::new();
+    let mut next_eval = 0usize;
+    for (o, opening) in stark_info.opening_points.iter().enumerate() {
+        let mut ref_strs: Vec<String> = Vec::new();
+        for (i, ev) in stark_info.ev_map.iter().enumerate() {
+            if ev.prime != *opening {
+                continue;
+            }
+            let (bucket, offset, dim) = match ev.ev_type.as_str() {
+                "const" => (0u64, ev.id, 1u64),
+                "cm" => {
+                    let pol = &stark_info.cm_pols_map[ev.id as usize];
+                    (pol.stage, pol.stage_pos, pol.dim)
+                }
+                "custom" => (stark_info.n_stages + 1 + ev.commit_id, ev.id, 1u64),
+                other => panic!("Unknown evMap type: {other}"),
+            };
+            // The runtime indexes `evals` with a running counter.
+            assert_eq!(i, next_eval, "evMap is not ordered by opening point");
+            next_eval += 1;
+            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim})"));
+        }
+        // Opening points from hint expressions have no evaluations.
+        if ref_strs.is_empty() {
+            continue;
+        }
+        group_strs.push(format!("FriEvalGroup {{ opening: {o}, refs: vec![{}] }}", ref_strs.join(", ")));
+    }
+    lines.push(format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            ")));
+
     lines.push(format!("        q_deg: {},", stark_info.q_deg));
 
     // Find q_index: the evMap index of the cm polynomial at stage nStages+1, stageId 0
@@ -186,15 +190,15 @@ fn prepare_verifier_rust(
     if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
-            "    stark_verify::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)"
+            "    stark_verify::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
         ));
         lines.push("}\n".to_string());
         lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     } else {
         lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     }
 
