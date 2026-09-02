@@ -109,8 +109,23 @@ struct SetupArgs {
 #[derive(Parser)]
 struct StatsArgs {
     /// Path to compiled .pilout file
-    #[arg(short = 'a', long)]
+    #[arg(
+        short = 'a',
+        long,
+        required_unless_present = "proving_key",
+        conflicts_with = "proving_key",
+        default_value = ""
+    )]
     airout: String,
+
+    /// A built proving key to read as-built circuit stats from (uses the key's own hash
+    /// family and the solved query counts, and can include the recursion circuits).
+    #[arg(short = 'k', long)]
+    proving_key: Option<String>,
+
+    /// Include the recursion circuits (compressor/recursive/final) of the proving key.
+    #[arg(long, requires = "proving_key")]
+    aggregation: bool,
 
     /// Hash family the setup will use; determines tree/transcript geometry.
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
@@ -350,6 +365,8 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
             let opts = StatsOptions {
+                proving_key_path: args.proving_key,
+                aggregation: args.aggregation,
                 airout_path: args.airout,
                 hash: args.hash,
                 output_path: args.output,

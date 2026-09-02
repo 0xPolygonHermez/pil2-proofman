@@ -40,6 +40,8 @@ pub struct StarkStruct {
     pub transcript_arity: u64,
     #[serde(rename = "merkleTreeCustom")]
     pub merkle_tree_custom: bool,
+    #[serde(default, rename = "lastLevelVerification")]
+    pub last_level_verification: u64,
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTest,
 }

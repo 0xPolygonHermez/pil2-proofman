@@ -313,6 +313,70 @@ pub fn geometry_for_family(
     }
 }
 
+/// Build the geometry from an as-built starkinfo (a proving key's `starkinfo.json`), using the
+/// solved query counts and grinding bits as written — unlike [`geometry_for_family`], nothing is
+/// re-derived, so post-solve adjustments (A2's query equalization) are reflected.
+pub fn geometry_from_stark_info(si: &proofman_common::StarkInfo) -> VerifierGeometry {
+    use proofman_common::LowDegreeTest as Ldt;
+
+    let ss = &si.stark_struct;
+    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &ss.low_degree_test {
+        Ldt::Fri(fri) => (
+            fri.num_queries,
+            fri.grinding_bits_queries,
+            fri.log_domain_sizes.clone(),
+            vec![],
+            1u64 << fri.log_domain_sizes.last().copied().unwrap_or(0).min(63),
+        ),
+        Ldt::Stir(stir) => {
+            let rounds: Vec<StirRoundGeometry> = (0..stir.num_iterations())
+                .map(|i| StirRoundGeometry {
+                    log_domain_size: stir.log_domain_sizes[i],
+                    log_folding_factor: stir.folding_factors[i],
+                    n_queries: stir.num_queries[i],
+                    grinding_bits: stir.grinding_bits_queries[i],
+                })
+                .collect();
+            (
+                stir.num_queries.first().copied().unwrap_or(0),
+                stir.grinding_bits_queries.iter().copied().max().unwrap_or(0),
+                vec![],
+                rounds,
+                // p travels as its d_M coefficients.
+                1u64 << stir.log_degrees.last().copied().unwrap_or(0).min(63),
+            )
+        }
+    };
+
+    let width = |section: &str| si.map_sections_n.get(section).copied().unwrap_or(0);
+    let n_stages = si.n_stages as u64;
+    let per_stage = |map: &Option<Vec<proofman_common::PolMap>>| -> Vec<u64> {
+        (2..=n_stages + 1)
+            .map(|s| map.as_ref().map_or(0, |m| m.iter().filter(|p| p.stage == s).count() as u64))
+            .collect()
+    };
+
+    VerifierGeometry {
+        n_bits_ext: ss.n_bits_ext,
+        arity: ss.merkle_tree_arity,
+        transcript_arity: ss.transcript_arity,
+        last_level_verification: ss.last_level_verification,
+        n_queries,
+        pow_bits,
+        hash_commits: ss.hash_commits,
+        stage_widths: (1..=n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
+        n_constants: si.n_constants,
+        custom_commit_widths: si.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
+        step_n_bits,
+        stir_rounds,
+        n_publics: si.n_publics,
+        n_evals: si.ev_map.len() as u64,
+        stage_challenges: per_stage(&si.challenges_map),
+        stage_air_values: per_stage(&si.airvalues_map),
+        final_pol_size,
+    }
+}
+
 /// Hashes the verifier performs for one air, under `family`.
 pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     let mut counts = HashCounts::default();

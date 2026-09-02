@@ -38,7 +38,7 @@ pub fn new_transcript<F: PrimeField64>(hash_id: &str) -> TranscriptDyn<F> {
     match hash_id {
         "Poseidon1" => TranscriptDyn::Poseidon1(Transcript::<F, Poseidon1_16>::new()),
         "Poseidon2" => TranscriptDyn::Poseidon2(Transcript::<F, Poseidon2_16>::new()),
-        "blake3" => TranscriptDyn::Blake3(Transcript::<F, Blake3_8>::new()),
+        "Blake3" => TranscriptDyn::Blake3(Transcript::<F, Blake3_8>::new()),
         other => panic!("Unknown hash family: {other:?}"),
     }
 }
@@ -47,7 +47,7 @@ pub fn hash_state<F: PrimeField64>(hash_id: &str, state: &mut [F]) {
     match (hash_id, state.len()) {
         ("Poseidon1", 16) => Poseidon1_16::hash(state.try_into().unwrap()),
         ("Poseidon2", 16) => Poseidon2_16::hash(state.try_into().unwrap()),
-        ("blake3", 8) => Blake3_8::hash(state.try_into().unwrap()),
+        ("Blake3", 8) => Blake3_8::hash(state.try_into().unwrap()),
         (other, n) => panic!("Unknown hash family/width: {other:?}/{n}"),
     }
 }

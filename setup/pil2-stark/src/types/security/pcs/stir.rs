@@ -125,11 +125,7 @@ impl Stir {
     fn validate(cfg: StirConfig) -> Self {
         let num_rounds = cfg.log_folding_factors.len();
 
-        assert_eq!(
-            cfg.max_grinding_bits_queries.len(),
-            num_rounds,
-            "Expected one query grinding budget per iteration"
-        );
+        assert_eq!(cfg.max_grinding_bits_queries.len(), num_rounds, "Expected one query grinding budget per iteration");
         for &g in &cfg.max_grinding_bits_queries {
             assert!(g < 64, "A grinding budget of {g} bits does not fit the 64-bit proof-of-work check");
         }
@@ -799,7 +795,10 @@ mod tests {
 
         let t_uniform = &uniform.security_params().num_queries;
         let t_skewed = &skewed.security_params().num_queries;
-        assert!(t_skewed[2] > t_uniform[2], "round 2 lost its grinding, so it must query more: {t_skewed:?} vs {t_uniform:?}");
+        assert!(
+            t_skewed[2] > t_uniform[2],
+            "round 2 lost its grinding, so it must query more: {t_skewed:?} vs {t_uniform:?}"
+        );
         for i in [0, 1, 3, 4] {
             assert_eq!(t_skewed[i], t_uniform[i], "round {i} kept its budget, so its query count must not move");
         }

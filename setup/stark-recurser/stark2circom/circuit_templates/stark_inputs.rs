@@ -68,14 +68,18 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
     let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
     assert!(!(is_stir && is_bn128), "STIR is not supported for BN128 proofs");
     let stir_num_queries: Vec<usize> = if is_stir {
-        ss["numQueries"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
+        ss["numQueries"]
+            .as_array()
+            .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
     } else {
         vec![]
     };
-    let stir_folding: Vec<usize> =
-        ss["foldingFactors"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
-    let stir_log_degrees: Vec<usize> =
-        ss["logDegrees"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
+    let stir_folding: Vec<usize> = ss["foldingFactors"]
+        .as_array()
+        .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
+    let stir_log_degrees: Vec<usize> = ss["logDegrees"]
+        .as_array()
+        .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
     let n_queries = if is_stir {
         stir_num_queries.first().copied().unwrap_or(0)
     } else {
@@ -442,7 +446,9 @@ pub fn assign_stark_inputs(
                 if is_bn128 {
                     out.push_str(&format!("    {component_name}.s{s}_last_levels <== {prefix_}s{s}_last_levels;\n"));
                 } else {
-                    out.push_str(&format!("    {component_name}.s{s}_last_mt_levels <== {prefix_}s{s}_last_mt_levels;\n"));
+                    out.push_str(&format!(
+                        "    {component_name}.s{s}_last_mt_levels <== {prefix_}s{s}_last_mt_levels;\n"
+                    ));
                 }
             }
         }

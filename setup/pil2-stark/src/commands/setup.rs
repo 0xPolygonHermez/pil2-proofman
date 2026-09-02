@@ -239,6 +239,24 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     pil_result.q_deg,
                 );
 
+                // Say which low-degree test this air runs, with the solved schedule.
+                match &starkinfo_output.stark_struct.low_degree_test {
+                    crate::types::stark_struct::LowDegreeTest::Fri(fri) => tracing::info!(
+                        "Air '{}' low-degree test: FRI — folds {:?}, {} queries, {} grinding bits",
+                        item.air_name,
+                        fri.folding_factors,
+                        fri.num_queries,
+                        fri.grinding_bits_queries,
+                    ),
+                    crate::types::stark_struct::LowDegreeTest::Stir(stir) => tracing::info!(
+                        "Air '{}' low-degree test: STIR — folds {:?}, queries {:?}, grinding bits {:?}",
+                        item.air_name,
+                        stir.folding_factors,
+                        stir.num_queries,
+                        stir.grinding_bits_queries,
+                    ),
+                }
+
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
                 fs::write(&starkinfo_path, &starkinfo_json)?;
 
