@@ -54,9 +54,10 @@ cd pil2-proofman
 To begin, compile the PIL files:
 
 ```bash
-cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
+cargo run --bin proofman-setup -- compile-pil \
+     -p ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -u ./examples/fibonacci-square/build/fixed --fixed-to-file \
+     --fixed-to-file -u ./examples/fibonacci-square/build/fixed \
      -o ./examples/fibonacci-square/pil/build.pilout
 ```
 
@@ -68,7 +69,21 @@ After compiling the PIL files, generate the setup:
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -u ./examples/fibonacci-square/build/fixed \
-     -b ./examples/fibonacci-square/build -r
+     --hash Poseidon1 \
+     --recursive-jobs 4 --setup-jobs 4 \
+     -b ./examples/fibonacci-square/build \
+     -r -s examples/fibonacci-square/src/config.stir.json
+```
+
+Optionally, you can get some stats by running:
+
+```bash
+cargo run --bin proofman-setup -- stats \
+     --proving-key examples/fibonacci-square/build/provingKey \
+     --hash Poseidon1 \
+     --output tmp/stats_fibosq.txt \
+     -s examples/fibonacci-square/src/config.stir.json \
+     --aggregation
 ```
 
 Additionally, to run the snark setup:

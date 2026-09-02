@@ -101,12 +101,13 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
             let verifier_hashes = counts.total().to_string();
 
+            let ldt = if stark_struct.low_degree_test.kind().is_fri() { "FRI" } else { "STIR" };
             summary_lines.push(format!(
-                "{} | {} | {} | verifierHashes: {}",
-                airgroup_name, air_name, pil_result.summary, verifier_hashes
+                "{} | {} | {} | {} | verifierHashes: {}",
+                airgroup_name, air_name, ldt, pil_result.summary, verifier_hashes
             ));
 
-            stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
+            stats_lines.push(format!("Airgroup: {} Air: {} ({ldt})", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", pil_result.summary));
             stats_lines.push(format!("Verifier hashes ({family}):"));
             stats_lines.push(format!(
