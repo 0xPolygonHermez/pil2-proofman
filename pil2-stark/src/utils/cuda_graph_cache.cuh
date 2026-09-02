@@ -3,6 +3,7 @@
 
 #ifdef USE_CUDA_GRAPH
 
+#include <mutex>
 #include <cuda_runtime.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -225,11 +226,20 @@ namespace cudagraph {
     //     as stageExpsSlot does).
     //  2. Shape-determinism: every variable that changes WHICH work the body enqueues
     //     must be part of `key`.
+    // Captures are one-time events per (air, stream, region); serializing them costs
+    // nothing at steady state and removes concurrent-capture interactions between
+    // streams (suspected in the phase-B invalid-proof failure).
+    inline std::mutex &captureMutex() {
+        static std::mutex m;
+        return m;
+    }
+
     template <typename Body>
     inline void run(uint64_t key, uint64_t &countId, cudaStream_t stream, Body&& body) {
         CudaGraphCache *gc = enabled() ? current() : nullptr;
         if (gc) {
             if (gc->tryLaunch(key, stream)) return;
+            std::lock_guard<std::mutex> capLk(captureMutex());
             if (gc->shouldCapture(key) && gc->beginCapture(key, stream)) {
                 uint64_t countIdSnap = countId;
                 body();

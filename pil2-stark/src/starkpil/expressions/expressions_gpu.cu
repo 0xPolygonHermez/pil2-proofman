@@ -79,6 +79,15 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
     exprPairLaunchFn = (void *)ek.exprPairLaunch;
+    // Claim the .so module's device code + kernel local-memory pools NOW, while VRAM headroom
+    // exists; a lazy first launch inside a proof can OOM silently (see expsWarmup). A skipped
+    // warmup only WARNS: disabling the expr fast paths on skip measured +5s/proof on the
+    // flagship (the setup window is routinely under the guard while proof-time headroom is
+    // fine), which is far worse than the narrow silent-launch risk it closed -- Q keeps its
+    // first-launch sentinel either way, and the base-split config warms successfully.
+    if (!expsWarmup(setupCtx, ek)) {
+        zklog.warning("ExpressionsGPU: exps module warmup skipped (low VRAM); first generated-kernel launches stay lazy for this air");
+    }
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -138,7 +147,7 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints, uint64_t scratchShift)
 {
     // Generated-kernel fast path for trace-domain dests: a single covered
     // expression, or the hint pair (numerator x denominator^{-1}) fused as two
@@ -218,9 +227,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)] + scratchShift;
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)] + scratchShift;
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)] + scratchShift;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
@@ -287,14 +296,29 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
+void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint64_t scratchShift)
 {
     // Generated Q kernel first: it takes everything by value, so the interpreter's
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
-    if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
+    // Debug kill-switch for the split-divergence hunt: PROOFMAN_GENQ=0 forces the interpreter.
+    static const bool genQEnabled = [] { const char *e = getenv("PROOFMAN_GENQ"); return e == nullptr || e[0] != '0'; }();
+    if (genQEnabled && dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, scratchShift, &qLaunchVerified);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
+        // Debug-only Q-path telemetry for the split-layout divergence hunt.
+        static const bool qTrace = [] { const char *e = getenv("PROOFMAN_SUMCHECK"); return e != nullptr && e[0] == '1'; }();
+        if (qTrace) {
+            fprintf(stderr, "[QPATH] gen=%d minScratch=%lu avail=%lu shift=%lu nrowsPack=%u maxNBlocks=%u tmp1=%lu q=%lu cm1=%lu cm2=%lu cm3=%lu zi=%lu\n",
+                    (int)computed, (unsigned long)qMinScratch, (unsigned long)expsScratchAvail(setupCtx), (unsigned long)scratchShift,
+                    (unsigned)setupCtx.starkInfo.nrowsPack, (unsigned)setupCtx.starkInfo.maxNBlocks,
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)],
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)],
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)],
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", true)],
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("cm3", true)],
+                    (unsigned long)setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)]);
+        }
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());
             return;
@@ -320,9 +344,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)] + scratchShift;
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)] + scratchShift;
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)] + scratchShift;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {

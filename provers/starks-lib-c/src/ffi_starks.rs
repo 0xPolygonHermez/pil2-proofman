@@ -1498,6 +1498,7 @@ pub fn alloc_device_large_buffers_c(
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
     unified_buffer_pad_area: u64,
+    prefetch_region_area: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1506,6 +1507,7 @@ pub fn alloc_device_large_buffers_c(
             const_pols_area,
             const_pols_aggregation_area,
             unified_buffer_pad_area,
+            prefetch_region_area,
         );
     }
 }
@@ -1589,6 +1591,77 @@ pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, wor
 
 pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
     unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+}
+
+pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
+    unsafe { set_pipeline_mode(d_buffers, enable) }
+}
+
+pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { harvest_pipeline(d_buffers) }
+}
+
+pub fn configure_prefetch_zone_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    witness_bytes: u64,
+    fixed_tree_bytes: u64,
+    packed_const_bytes: u64,
+    rec_witness_bytes: u64,
+) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes) }
+}
+
+pub fn prefetch_fixed_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    const_tree_path: &str,
+    bytes: u64,
+) -> i64 {
+    let path = std::ffi::CString::new(const_tree_path).unwrap();
+    unsafe { prefetch_fixed(d_buffers, airgroup_id, air_id, path.as_ptr(), bytes) }
+}
+
+pub fn prefetch_recursive_tree_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    const_tree_path: &str,
+) -> i64 {
+    let ptype = std::ffi::CString::new(proof_type).unwrap();
+    let path = std::ffi::CString::new(const_tree_path).unwrap();
+    unsafe {
+        prefetch_recursive_tree(d_buffers, p_setup_ctx, airgroup_id, air_id, ptype.as_ptr(), path.as_ptr())
+    }
+}
+
+pub fn configure_phase_b_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_phase_b(d_buffers) }
+}
+
+pub fn set_phase_b_c(d_buffers: *mut ::std::os::raw::c_void, state: u32) -> i64 {
+    unsafe { set_phase_b(d_buffers, state) }
+}
+
+pub fn prefetch_witness_c(
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    trace: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
+}
+
+pub fn prefetch_recursive_witness_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    trace: *const ::std::os::raw::c_void,
+    bytes: u64,
+) -> i64 {
+    unsafe { prefetch_recursive_witness(d_buffers, trace, bytes) }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -97,6 +97,10 @@ pub fn gen_witness_recursive<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
 ) -> ProofmanResult<Proof<F>> {
+    struct _T(std::time::Instant);
+    impl Drop for _T { fn drop(&mut self) { tracing::info!("WGREC took {}ms", self.0.elapsed().as_millis()); } }
+    let _t = _T(std::time::Instant::now());
+
     let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
 
     if proof.proof_type != ProofType::Basic && proof.proof_type != ProofType::Compressor {
@@ -197,6 +201,10 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     proofs: &[&Proof<F>],
 ) -> ProofmanResult<Proof<F>> {
+    struct _T(std::time::Instant);
+    impl Drop for _T { fn drop(&mut self) { tracing::info!("WGAGG took {}ms", self.0.elapsed().as_millis()); } }
+    let _t = _T(std::time::Instant::now());
+
     timer_start_debug!(GENERATE_WITNESS_AGGREGATION);
     let arity = pctx.global_info.aggregation_arity;
     if proofs.len() != arity {
@@ -353,6 +361,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     let exec_data_ptr = exec.as_ptr() as *mut u64;
     let exec_words = exec.len() as u64;
 
+    let t_committed = std::time::Instant::now();
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
         exec_data_ptr,
@@ -363,6 +372,40 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         setup.stark_info.n_publics,
         recursion_trace_stride(exec, witness.n_cols as u64, pctx.gpu),
     );
+    let committed_ms = t_committed.elapsed().as_millis();
+    // Stage the just-built trace on the prefetch copy stream NOW, before the stream
+    // acquisition below blocks on the previous proof: the upload overlaps its kernels.
+    // Lifetime: the pool trace buffers are PINNED, so this copy is truly asynchronous;
+    // the consume path re-records the stream's trace_copy_event on the copy stream and
+    // wait_trace_h2d_done below gates the lease drop on it. Bytes must equal
+    // gen_recursive's own upload size (compact stride when the exec maps fewer cols)
+    // or the consume falls back.
+    if pctx.gpu {
+        let n_rows = 1u64 << setup.stark_info.stark_struct.n_bits;
+        let stride = recursion_trace_stride(exec, witness.n_cols as u64, pctx.gpu);
+        let _ = prefetch_recursive_witness_c(
+            pctx.get_device_buffers_ptr(),
+            trace_ptr as *const std::ffi::c_void,
+            n_rows * stride * 8,
+        );
+        // Also PRE-COMPUTE this circuit's const tree into the zone's fixed segment
+        // on the low-priority side stream (no PCIe: rebuilt from the resident packed
+        // aggregation pols), so the air-switch rebuild overlaps the previous proof
+        // instead of running serially in front of this one. Skips stored/warm trees.
+        // PROOFMAN_REC_TREE_PRESTAGE=0 disables (the C side checks the same env).
+        if std::env::var("PROOFMAN_REC_TREE_PRESTAGE").map(|v| v != "0").unwrap_or(true) {
+            let ptype: &str = witness.proof_type.into();
+            let _ = prefetch_recursive_tree_c(
+                pctx.get_device_buffers_ptr(),
+                p_setup,
+                airgroup_id as u64,
+                air_id as u64,
+                ptype,
+                &setup.const_pols_tree_path,
+            );
+        }
+    }
+
     // The hash gates map only their boundary; the rest is rebuilt from it. On GPU that happens
     // device-side inside gen_recursive_proof_c, right after the trace copy.
     if !pctx.gpu {
@@ -410,6 +453,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     // `reserved_stream`: scheduler-reserved stream, or `u64::MAX` to select internally
     // (one-off launches — outer aggregation, vadcop_final, recursers).
+    let t_gen = std::time::Instant::now();
     let stream_id = gen_recursive_proof_c(
         p_setup,
         trace_ptr,
@@ -431,6 +475,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         "",
         reserved_stream, // scheduler-reserved stream, or u64::MAX for one-off internal selection
     );
+    tracing::info!("RECTRACE {:?} committed={}ms gen={}ms", witness.proof_type, committed_ms, t_gen.elapsed().as_millis());
 
     // Trace H2D is async: gate reuse on the stream's commit event so a concurrent take() can't
     // overwrite `trace` mid-copy. Must finish before the lease drops at scope exit and pools the trace.
@@ -626,6 +671,13 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
+    // Phase-B: the two aliased recursive streams overlay the basic stream's buffer;
+    // VadcopFinal needs that buffer back. Drain and close the pair (no-op when
+    // phase-B is not configured).
+    if pctx.gpu {
+        let _ = set_phase_b_c(pctx.get_device_buffers_ptr(), 2);
+    }
+
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
     let publics_circom_size =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
@@ -734,6 +786,13 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
+    // Phase-B: the two aliased recursive streams overlay the basic stream's buffer;
+    // VadcopFinal needs that buffer back. Drain and close the pair (no-op when
+    // phase-B is not configured).
+    if pctx.gpu {
+        let _ = set_phase_b_c(pctx.get_device_buffers_ptr(), 2);
+    }
+
     timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
     let setup = setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
         ProofmanError::InvalidConfiguration(
@@ -1097,7 +1156,12 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
         let witness_ptr = witness.as_mut_ptr();
 
         let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
-        let nmutex = std::cmp::min(8, rayon::current_num_threads());
+        let nmutex = std::env::var("PROOFMAN_WITNESS_NMUTEX")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v >= 1 && *v <= 64)
+        .unwrap_or(8)
+        .min(rayon::current_num_threads());
         let res = get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex as u64);
         if res != 0 {
             return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
@@ -1195,7 +1259,12 @@ fn generate_witness<F: PrimeField64>(
     let get_witness_fn =
         state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
 
-    let nmutex = std::cmp::min(8, rayon::current_num_threads());
+    let nmutex = std::env::var("PROOFMAN_WITNESS_NMUTEX")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v >= 1 && *v <= 64)
+        .unwrap_or(8)
+        .min(rayon::current_num_threads());
 
     // Capture the zkin feeding this recursion witness, to build test-recursive fixtures from a real
     // run. `PIL2_DUMP_ZKIN=recursive2` (or `all`) writes the first proof of each kind. Diagnostic

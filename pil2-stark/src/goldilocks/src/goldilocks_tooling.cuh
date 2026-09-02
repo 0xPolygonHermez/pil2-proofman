@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cassert>
 #include <atomic>
+#include <set>
 #ifdef USE_CUDA_GRAPH
 #include <memory>
 #include "cuda_graph_cache.cuh"
@@ -52,6 +53,9 @@ public:
 };
 
 #ifndef __GOLDILOCKS_ENV__
+// Bump-allocate from DeviceCommitBuffers::scratchArena (defined below); nullptr when full/absent.
+void *deviceScratchArenaAlloc(void *d_buffers, uint64_t bytes);
+
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
@@ -72,6 +76,24 @@ struct AirInstanceInfo {
     uint64_t *evalsInfoFRISizes;
     
     SetupCtx *setupCtx;
+
+    // No-const-buffer mode (PROOFMAN_NO_CONST_BUF=1): the packed const-pols
+    // file identity, stashed at load time so gen_proof/commit_witness can stage
+    // the blob into the prefetch zone on a slot switch instead of reading a
+    // GPU-resident copy. const_pols_offset stays as the slot/reuse KEY only.
+    std::string constPolsFile;
+    uint64_t constPolsPackedBytes = 0;
+
+    // Per-air pinned exps staging (deep pipeline only): CUDA-graph capture bakes
+    // the buffer address into the graph's H2D nodes, and the content (per-stream
+    // device pointers + per-air descriptors) must stay frozen for every later
+    // replay. Sharing the per-stream buffer would make an air's capture overwrite
+    // what an in-flight replay of the previous air still reads -- per-air copies
+    // remove the hazard (and the stream-drain that guarded it). Allocated lazily
+    // at the air's first pipelined launch; single-stream mode only (the content
+    // embeds ONE stream's device pointers).
+    Goldilocks::Element *pinnedExpsParams = nullptr;
+    Goldilocks::Element *pinnedExpsArgs = nullptr;
 
     Goldilocks::Element *verkeyRoot;
 
@@ -124,16 +146,27 @@ struct AirInstanceInfo {
     uint64_t *d_witness_compact = nullptr;
 
     /// Allocate the landing buffer. Idempotent; must not run while work using it is in flight.
-    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols) {
+    /// `arena` (optional): bump-allocate from the unified buffer's scratch arena instead of
+    /// cudaMalloc -- per-proof transient data, safe under the mops borrow.
+    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols, void *arena_owner = nullptr) {
         witness_map_cols = mapCols;
         if (d_witness_compact != nullptr) {
-            CHECKCUDAERR(cudaFree(d_witness_compact));
+            if (!witness_compact_in_arena) CHECKCUDAERR(cudaFree(d_witness_compact));
             d_witness_compact = nullptr;
+            witness_compact_in_arena = false;
         }
         if (mapCols > 0 && mapCols < nCols) {
-            CHECKCUDAERR(cudaMalloc(&d_witness_compact, nRows * mapCols * sizeof(uint64_t)));
+            uint64_t bytes = nRows * mapCols * sizeof(uint64_t);
+            if (arena_owner != nullptr) {
+                d_witness_compact = (uint64_t *)deviceScratchArenaAlloc(arena_owner, bytes);
+                witness_compact_in_arena = d_witness_compact != nullptr;
+            }
+            if (d_witness_compact == nullptr) {
+                CHECKCUDAERR(cudaMalloc(&d_witness_compact, bytes));
+            }
         }
     }
+    bool witness_compact_in_arena = false;
 
     // Caller must have selected the target GPU. Replaces whatever was there.
     void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t aux, uint64_t family) {
@@ -388,7 +421,7 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaFree(d_gate_bands));
         }
 
-        if (d_witness_compact != nullptr) {
+        if (d_witness_compact != nullptr && !witness_compact_in_arena) {
             CHECKCUDAERR(cudaFree(d_witness_compact));
         }
     }
@@ -407,6 +440,31 @@ struct StreamData{
 
     //const data
     cudaStream_t stream;
+    // Stage-1 overlap lane (PROOFMAN_STAGE1_OVERLAP): the cm1 LDE+Merkle run here while the
+    // main stream computes stage 2. cm1Fork orders the side work after the witness staging;
+    // cm1LdeDone gates commit-2 (cm2-extended aliases the base trace the LDE reads, and Q
+    // reads the LDE output); cm1TreeDone gates the query phase (first reader of mt1).
+    cudaStream_t sideStream;
+    // Phase-split lane: DEFAULT priority. The max-priority sideStream is for work the main
+    // stream BLOCKS on (stage-1 float); phase-A is background fill with a huge window, and at
+    // max priority it would preempt the predecessor's critical-path tail (measured: the split's
+    // gain fully displaced). Equal priority = the same fair co-scheduling the 3-stream
+    // reference gets.
+    cudaStream_t phaseStream;
+    cudaEvent_t cm1Fork;
+    cudaEvent_t cm1LdeDone;
+    cudaEvent_t cm1TreeDone;
+    // Query-phase split: FRI-tree openings run on the side stream while the main stream opens
+    // the commitment trees; the buffers are disjoint per-tree slices of d_queries_buff.
+    cudaEvent_t friQFork;
+    cudaEvent_t friQDone;
+    // Base/ext split phase choreography: phaseADone = this proof's early phase (base zone,
+    // side stream) complete -- its phase-B waits it; baseFree = this proof's extends have
+    // consumed the base-zone coefficients -- the NEXT same-air proof's phase-A waits it.
+    // smallsUp = this proof's smalls upload (main stream) done -- its phase-A waits it.
+    cudaEvent_t phaseADone;
+    cudaEvent_t baseFree;
+    cudaEvent_t smallsUp;
     uint32_t gpuId;
     uint64_t localStreamId;
     StepsParams *pinned_params;
@@ -438,6 +496,10 @@ struct StreamData{
 
     TranscriptGL_GPU *transcript;
     TranscriptGL_GPU *transcript_helper;
+    // Base/ext split parity transcripts: proof k+1's early phase seeds and pulls stage-2
+    // challenges from ITS transcript while proof k's tail still folds on its own.
+    TranscriptGL_GPU *transcript_parity;
+    TranscriptGL_GPU *transcript_helper_parity;
 
     StepsParams *params;
     ExpsArguments *d_expsArgs;
@@ -491,12 +553,55 @@ struct StreamData{
     std::unique_ptr<CudaGraphCache> graph_cache;
 #endif
 
+    // ---- Deep pipeline (single-stream zone mode, DeviceCommitBuffers::pipelineMode):
+    // up to 2 basic proofs in flight on this stream. Completion metadata lives in this
+    // 2-slot ring, harvested off the reserve path (reserve no longer host-syncs), and
+    // enqueue-time host-written pinned staging (params / aux_values / proof) is
+    // parity-sliced by launchSeq so proof N+1's CPU writes never race proof N's
+    // still-pending async copies.
+    struct PipelineSlot {
+        int64_t instanceId = -1;
+        uint64_t airgroupId = 0, airId = 0;
+        std::string proofType = "basic";   // completion callback tag (ring carries recursives too)
+        void *pSetupCtx = nullptr;
+        uint64_t *proofBuffer = nullptr;
+        std::string proofFile;
+        Goldilocks::Element *pinnedProof = nullptr;
+        cudaEvent_t done = nullptr;
+    };
+    PipelineSlot pipeSlots[2];
+    uint32_t pipeHead = 0;
+    uint32_t pipeCount = 0;      // guarded by pipeMutex
+    uint64_t launchSeq = 0;      // single-writer (the launching worker)
+    std::mutex pipeMutex;
+    // Serializes harvesters: writeProof runs outside pipeMutex (it is slow and the
+    // enqueue push must not block behind it), so without this two concurrent
+    // harvesters (worker + settle poller) would both claim the same head slot,
+    // double-pop, and underflow pipeCount into a livelock.
+    std::mutex harvestMutex;
+    uint64_t maxProofSize = 0;
+
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
+        // Highest priority: the main stream BLOCKS on this stream's LDE (fence before the
+        // quotient expressions), so its kernels must win co-scheduling over main's throughput
+        // work or the fence stall eats the whole overlap.
+        int prioLo = 0, prioHi = 0;
+        CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&prioLo, &prioHi));
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&sideStream, cudaStreamNonBlocking, prioHi));
+        CHECKCUDAERR(cudaStreamCreateWithFlags(&phaseStream, cudaStreamNonBlocking));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&cm1Fork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&cm1LdeDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&cm1TreeDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&friQFork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&friQDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&phaseADone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&baseFree, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&smallsUp, cudaEventDisableTiming));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -505,11 +610,17 @@ struct StreamData{
         cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
+        // x2: parity slots for the deep pipeline (slot 0 is the only one used
+        // outside pipeline mode, so single-proof behavior is unchanged).
+        maxProofSize = max_size_proof;
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, 2 * max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, 2 * sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, 2 * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        for (int k = 0; k < 2; k++) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&pipeSlots[k].done, cudaEventDisableTiming));
+        }
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -531,15 +642,21 @@ struct StreamData{
         transcript_helper = new TranscriptGL_GPU(merkleTreeArity,
                                            true,
                                            stream);
+        transcript_parity = new TranscriptGL_GPU(merkleTreeArity, true, stream);
+        transcript_helper_parity = new TranscriptGL_GPU(merkleTreeArity, true, stream);
 
-        CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
+        // x2: parity slots -- under the base/ext phase split, the NEXT proof's early phase
+        // H2Ds its argument structs while THIS proof's tail kernels still read theirs.
+        CHECKCUDAERR(cudaMalloc(&params, 2 * sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc(&d_expsArgs, 2 * sizeof(ExpsArguments)));
     }
 
     ~StreamData() {
         delete transcript;
         delete transcript_helper;
+        delete transcript_parity;
+        delete transcript_helper_parity;
         CHECKCUDAERR(cudaFree(params));
         CHECKCUDAERR(cudaFree(d_destParams));
         CHECKCUDAERR(cudaFree(d_expsArgs));
@@ -600,16 +717,29 @@ struct StreamData{
         graph_cache.reset();
 #endif
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(sideStream);
+        cudaStreamDestroy(phaseStream);
+        cudaEventDestroy(cm1Fork);
+        cudaEventDestroy(cm1LdeDone);
+        cudaEventDestroy(cm1TreeDone);
+        cudaEventDestroy(friQFork);
+        cudaEventDestroy(friQDone);
+        cudaEventDestroy(phaseADone);
+        cudaEventDestroy(baseFree);
+        cudaEventDestroy(smallsUp);
         cudaEventDestroy(end_event);
         cudaEventDestroy(trace_copy_event);
+        if (d_gate_band_scratch != nullptr) {
+            cudaFree(d_gate_band_scratch);
+            d_gate_band_scratch = nullptr;
+        }
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_aux_values);
-        if (d_gate_band_scratch != nullptr) {
-            cudaFree(d_gate_band_scratch);
-            d_gate_band_scratch = nullptr;
+        for (int k = 0; k < 2; k++) {
+            if (pipeSlots[k].done != nullptr) cudaEventDestroy(pipeSlots[k].done);
         }
     }
 };
@@ -678,6 +808,11 @@ struct DeviceCommitBuffers
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
+    // Retirement events for the two pinned staging halves above (per GPU, index
+    // 0 = pinned_buffer, 1 = pinned_buffer_extra). The chunked upload loops wait
+    // on THESE before refilling a half, instead of cudaStreamSynchronize, which
+    // under pipelining drains every queued kernel of the previous proof.
+    cudaEvent_t (*pinned_copy_done)[2];
     gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
@@ -724,6 +859,23 @@ struct DeviceCommitBuffers
     // Stashed at allocation for configure_stream_commit_slots' overlap computation. Non-recursive
     // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
     uint64_t auxTraceTotalBytes = 0;
+    // Mops-floor pad: dead space between the recursive aux area and the const regions so
+    // the first-GPU borrow window (mem-ops planner) reaches PROOFMAN_MOPS_FLOOR_GB even
+    // when the stream layout is small (blake, Main 2^23). Shifts the const offsets and
+    // the stream-commit floor up; costs idle VRAM only.
+    uint64_t mopsFloorPadBytes = 0;
+    // Prefetch region: the zone (witness slots + fixed + packed) and the recursive-witness
+    // slots live INSIDE the unified buffer, below the const regions — one planned budget,
+    // and the space doubles as mops-borrow donor (keys invalidated on borrow release).
+    gl64_t *prefetchRegionBase = nullptr;   // first GPU only
+    uint64_t prefetchRegionBytes = 0;
+    // Scratch arena over the mops-floor pad: bump allocations for per-air staging
+    // buffers (compact witness). Pad space is dead otherwise; arena contents are
+    // per-proof transient, so the mops borrow clobbering them is harmless.
+    uint8_t *scratchArenaBase = nullptr;    // first GPU only
+    uint64_t scratchArenaBytes = 0;
+    uint64_t scratchArenaCursor = 0;
+    std::mutex scratchArenaMutex;
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
     // Shared-hold of the overlapped legacy streams: the first in-flight slot
@@ -738,8 +890,102 @@ struct DeviceCommitBuffers
     // borrow acquire.
     std::atomic<uint32_t> streamCommitQuiesced{0};
 
+    // Witness prefetch zone (PROOFMAN_PREFETCH, single-compute-stream mode):
+    // the next basic instance's trace is uploaded on a dedicated copy stream
+    // while the current proof computes; gen_proof drains it with one D2D and
+    // records prefetchDrained so the next upload never overwrites live data.
+    // FIRST GPU only. prefetchInstanceId == -1 means the zone is free.
+    // Deep pipeline switch: set by the Rust proofs phase (single-stream zone mode
+    // only), cleared at phase end. Read by the reserve paths and gen_proof.
+    bool pipelineMode = false;
+    gl64_t *prefetchZone = nullptr;
+    uint64_t prefetchZoneBytes = 0;
+    // Witness slots: 2 under the base/ext phase split (staging k+1 must not chain behind the
+    // transpose of k), 1 otherwise. Per-slot ready/drained events and identity tags.
+    uint32_t prefetchNSlots = 1;
+    uint32_t prefetchStageSlot = 0;
+    uint64_t prefetchSlotStride = 0; // elements between slot bases
+    cudaStream_t prefetchStream = nullptr;
+    cudaEvent_t prefetchReady[2] = {nullptr, nullptr};
+    cudaEvent_t prefetchDrained[2] = {nullptr, nullptr};
+    std::mutex prefetchMutex;
+    int64_t prefetchInstanceId[2] = {-1, -1};
+    uint64_t prefetchTraceBytes[2] = {0, 0};
+    // Fixed half of the zone: next air's const TREE, staged from disk by the
+    // prefetch worker thread. Key (-1,-1) = free. Its own events: tree and
+    // witness prefetches interleave on the same copy stream.
+    gl64_t *prefetchFixed = nullptr;
+    // Packed const-pols segment of the zone (no-const-buffer mode): holds ONE
+    // fixed-slot's packed blob, keyed by the slot offset; replaced on switch.
+    gl64_t *prefetchPacked = nullptr;
+    uint64_t prefetchPackedBytes = 0;
+    int64_t packedSlotKey = -1;          // const_pols_offset of current content
+    std::mutex packedMutex;
+    cudaEvent_t packedReady = nullptr;   // staging complete (copy stream)
+    cudaEvent_t packedDrained = nullptr; // last unpack read done (consumer stream)
+    // Serializes users of the shared pinned staging pair (tree stager thread vs
+    // inline packed/tree staging on the worker).
+    std::mutex pinnedPairMutex;
+    uint64_t prefetchFixedBytes = 0;
+    // Recursive-witness staging (same copy stream): the NEXT recursive proof's
+    // circom witness uploads while the current proof computes on the single
+    // device stream. Two lazily-sized slots, keyed by the host trace pointer
+    // (unique per in-flight witness buffer). recWitReady/recWitDrained pace
+    // producer vs consumer exactly like the basic zone's events.
+    gl64_t *recWitSlot[2] = {nullptr, nullptr};
+    uint64_t recWitSlotBytes[2] = {0, 0};
+    const void *recWitKey[2] = {nullptr, nullptr};
+    uint64_t recWitBytes[2] = {0, 0};
+    uint32_t recWitCursor = 0;
+    cudaEvent_t recWitReady[2] = {nullptr, nullptr};
+    cudaEvent_t recWitDrained[2] = {nullptr, nullptr};
+    std::mutex recWitMutex;
+    bool recWitCarved = false;   // slots carved from the prefetch region (fixed size)
+    // Two 128 MB pinned staging chunks for file reads, used alternately so the
+    // fread of chunk i+1 overlaps the H2D DMA of chunk i.
+    Goldilocks::Element *prefetchPinned[2] = {nullptr, nullptr};
+    cudaEvent_t prefetchFixedReady = nullptr;
+    cudaEvent_t prefetchFixedDrained = nullptr;
+    cudaEvent_t prefetchPinnedFree[2] = {nullptr, nullptr};  // pinned chunk reusable
+    // Low-priority side stream for on-device rec-tree PRE-computation into the
+    // fixed segment (prestage_rec_tree_compute): rebuild kernels fill SM gaps of
+    // the in-flight proof instead of serializing ahead of the next one.
+    cudaStream_t treeBuildStream = nullptr;
+    TimerGPU treeBuildTimer;  // disabled: build kernels are not part of any proof window
+    // Phase-B two-stream recursion (PROOFMAN_PHASE_B=1, single-basic-stream configs).
+    // Two recursive streams whose aux buffers ALIAS the pre-const area of the unified
+    // buffer ([0..A) and [A..2A), A = the rec1/rec2 class size): they cost no VRAM and
+    // are only eligible while phaseBState==1 (after every basic+compressor completed,
+    // when the basic stream's buffer and the prefetch region are dead). State machine:
+    //   0 = phase A (basics/compressors on the basic stream; aliased rec streams OFF)
+    //   1 = phase B (rec1/rec2 on the two aliased streams; non-recursive streams OFF)
+    //   2 = final   (rec streams drained + OFF; basic stream back for VadcopFinal)
+    std::atomic<uint32_t> phaseBState{0};
+    bool phaseBAliased = false;              // aliased pair registered and safe to use
+    uint8_t *phaseBSpareBase = nullptr;      // pre-const spare above the two aliases
+    uint64_t phaseBSpareBytes = 0;
+    uint8_t *phaseBMissScratch[2] = {nullptr, nullptr};  // compact-witness miss fallback per rec stream
+    std::mutex prefetchFixedMutex;
+    int64_t prefetchFixedAirgroup = -1;
+    int64_t prefetchFixedAir = -1;
+    uint64_t prefetchFixedSize = 0;      // 0 while staging is in flight
+    // Set by gen_proof when it finds this air's staging still in flight (it
+    // fell back to the legacy load): the stager drops the entry on completion
+    // instead of leaving a never-consumed key that blocks the zone forever.
+    bool prefetchFixedAbandon = false;
+
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };
+
+inline void *deviceScratchArenaAlloc(void *d_buffers_, uint64_t bytes) {
+    auto *db = (DeviceCommitBuffers *)d_buffers_;
+    if (db == nullptr || db->scratchArenaBase == nullptr || bytes == 0) return nullptr;
+    std::lock_guard<std::mutex> lk(db->scratchArenaMutex);
+    uint64_t cur = (db->scratchArenaCursor + 255) & ~255ull;
+    if (cur + bytes > db->scratchArenaBytes) return nullptr;
+    db->scratchArenaCursor = cur + bytes;
+    return db->scratchArenaBase + cur;
+}
 
 // RAII guard for the device-idle barrier. Construct at the top of a device entry (before touching
 // the device) so teardown waits for this thread before freeing. Coverage is partial (not every

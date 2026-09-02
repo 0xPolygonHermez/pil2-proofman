@@ -688,6 +688,7 @@ extern "C" {
         totalConstPols: u64,
         totalConstPolsAggregation: u64,
         unifiedBufferPadArea: u64,
+        prefetchRegionArea: u64,
     );
     
     pub fn get_instances_ready(
@@ -719,6 +720,39 @@ extern "C" {
     pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64;
+    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
+    pub fn set_pipeline_mode(d_buffers_: *mut ::std::os::raw::c_void, enable: bool);
+    pub fn harvest_pipeline(d_buffers_: *mut ::std::os::raw::c_void);
+    pub fn prefetch_fixed(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        constTreePath: *const ::std::os::raw::c_char,
+        bytes: u64,
+    ) -> i64;
+    pub fn prefetch_witness(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instanceId: u64,
+        airgroupId: u64,
+        airId: u64,
+        trace: *mut ::std::os::raw::c_void,
+    ) -> i64;
+    pub fn prefetch_recursive_witness(
+        d_buffers: *mut ::std::os::raw::c_void,
+        trace: *const ::std::os::raw::c_void,
+        bytes: u64,
+    ) -> i64;
+    pub fn prefetch_recursive_tree(
+        d_buffers: *mut ::std::os::raw::c_void,
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *const ::std::os::raw::c_char,
+        constTreePath: *const ::std::os::raw::c_char,
+    ) -> i64;
+    pub fn configure_phase_b(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn set_phase_b(d_buffers: *mut ::std::os::raw::c_void, state: u32) -> i64;
     pub fn configure_stream_commit_slots(
         d_buffers: *mut ::std::os::raw::c_void,
         n_slots: u64,

@@ -85,20 +85,117 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
 
 inline void expsClose(void* lib) { if (lib) dlclose(lib); }
 
+// Warm up an AIR's generated Q kernel right after resolving it: launch with NExt=0 (the row
+// loops do nothing) against throwaway buffers. The FIRST launch of a .so's module lazy-loads
+// its code and carves the kernel's local-memory pool -- device allocations that can FAIL when
+// VRAM is tight, and the .so statically links its own CUDA runtime, so the failure is
+// invisible to the host binary's cudaGetLastError (root-caused 2026-08-30: base-split layout
+// left ~0.4GB free at the first Q launch, the launch OOMed silently, the quotient stayed
+// stale memory and every downstream verify rejected it). Warming at ExpressionsGPU
+// construction claims module + local pool while memory is still available.
+// Returns true when the module was warmed. When it returns false (VRAM guard), the caller
+// must DISABLE the generated expr/pair fast paths for this air: unlike Q (whose first-call
+// sentinel in tryLaunchExpsQ catches a silent failure), the trace-domain expr kernels have
+// no sentinel, and a silently failed first launch leaves garbage the verifier only catches
+// proofs later (observed 2026-08-30: split layout + a chunked-Main .so -> Q ineligible, so
+// nothing warmed the module, and phase-A's first exprLaunch OOMed silently).
+inline bool expsWarmup(SetupCtx& sc, const ExpsKernel& ek) {
+    if (ek.qLaunch == nullptr) return true;  // no generated kernels at all
+    // Never let the warmup itself exhaust setup memory: later per-air setup allocations
+    // (witness_compact can be ~1GB) must still fit.
+    size_t freeB = 0, totalB = 0;
+    if (cudaMemGetInfo(&freeB, &totalB) != cudaSuccess || freeB < (1ull << 30)) return false;
+    uint64_t words = (ek.qMinScratch < 1024 ? 1024 : ek.qMinScratch) + 4096;
+    gl64_t *dummy = nullptr;
+    if (cudaMalloc(&dummy, words * sizeof(uint64_t)) != cudaSuccess) return false;
+    CHECKCUDAERR(cudaMemset(dummy, 0, words * sizeof(uint64_t)));
+    // Every pointer in the params points at the zeroed dummy: the pow/tab prologue reads
+    // challenges/airvalues/publics from it (garbage powers, discarded), row kernels run 0 rows.
+    StepsParams warm = {};
+    warm.trace = (Goldilocks::Element *)dummy;
+    warm.aux_trace = (Goldilocks::Element *)dummy;
+    warm.publicInputs = (Goldilocks::Element *)dummy;
+    warm.proofValues = (Goldilocks::Element *)dummy;
+    warm.challenges = (Goldilocks::Element *)dummy;
+    warm.airgroupValues = (Goldilocks::Element *)dummy;
+    warm.airValues = (Goldilocks::Element *)dummy;
+    warm.evals = (Goldilocks::Element *)dummy;
+    warm.xDivXSub = (Goldilocks::Element *)dummy;
+    warm.pConstPolsAddress = (Goldilocks::Element *)dummy;
+    warm.pConstPolsExtendedTreeAddress = (Goldilocks::Element *)dummy;
+    warm.pCustomCommitsFixed = (Goldilocks::Element *)dummy;
+    StepsParams *d_warm = nullptr;
+    bool warmed = false;
+    if (cudaMalloc(&d_warm, sizeof(StepsParams)) == cudaSuccess) {
+        CHECKCUDAERR(cudaMemcpy(d_warm, &warm, sizeof(StepsParams), cudaMemcpyHostToDevice));
+        // Q launcher with NExt=0 loads the module code and claims the Q kernels' local pools.
+        // Launched even when the layout's scratch region is smaller than qMinScratch (Q then
+        // always runs the interpreter): the module's EXPR kernels still launch in production,
+        // and the module load must not happen lazily mid-proof.
+        ek.qLaunch(d_warm, dummy, dummy, words, /*NExt=*/0, 0, 0, 0, 0, (cudaStream_t)0);
+        // One real trace-domain expr launch (first covered expression, one row into the dummy)
+        // claims the expr kernels' pool too; their per-launch pool growth can fail exactly like
+        // Q's did. destExpr=1 writes row*destDim = dummy[0].
+        if (ek.exprCovered != nullptr && ek.exprLaunch != nullptr) {
+            for (const auto& kv : sc.expressionsBin.expressionsInfo) {
+                if (ek.exprCovered(kv.first)) {
+                    ek.exprLaunch(kv.first, d_warm, dummy, /*N=*/1, /*destDomain=*/1,
+                                  0, 0, 0, EXPR_MODE_WRITE, 0, /*stagePos=*/0, /*stageCols=*/1,
+                                  /*destDim=*/1, /*destExpr=*/1, (cudaStream_t)0);
+                    break;
+                }
+            }
+        }
+        cudaStreamSynchronize((cudaStream_t)0);
+        cudaFree(d_warm);
+        warmed = true;
+    }
+    cudaFree(dummy);
+    return warmed;
+}
+
 // Launch the AIR's pre-resolved Q kernel. Returns false (caller falls back to the interpreter) if
-// the kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
+// the kernel's single-block scratch requirement doesn't fit the tmp...destVals region, or if the
+// launch demonstrably did not execute (first-call sentinel below).
 inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
-                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream) {
+                          StepsParams* d_params, gl64_t* d_q, cudaStream_t stream, uint64_t scratchShift = 0,
+                          bool* launchVerified = nullptr) {
     uint64_t scratchAvail = expsScratchAvail(sc);
     if (minScratch > scratchAvail) return false;
     uint64_t NExt = 1ull << sc.starkInfo.starkStruct.nBitsExt;
     uint64_t oq = sc.starkInfo.mapOffsets[std::make_pair("q", true)];
     uint64_t otmp = sc.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    gl64_t*  os = d_q - oq + otmp;  // scratch offset == aux_trace (d_q - oq) + offsetTmp1 (otmp)
+    gl64_t*  os = d_q - oq + otmp + scratchShift;  // scratch offset == aux_trace (d_q - oq) + offsetTmp1 (otmp) [+ parity copy]
     uint64_t o1 = sc.starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t o2 = sc.starkInfo.mapOffsets[std::make_pair("cm2", true)];
     uint64_t o3 = sc.starkInfo.mapOffsets[std::make_pair("cm3", true)];
     uint64_t oz = sc.starkInfo.mapOffsets[std::make_pair("zi",  true)];
+    // First-call sentinel: a silently failed launch (see expsWarmupQ's comment -- the .so's
+    // private CUDA runtime hides the error) leaves scratch untouched, while a successful one
+    // writes the table head (pw[0] = v^0 = 1 when the air has challenge powers, a hoisted tab
+    // value otherwise -- either way nonzero in practice, vs the 0 we pre-write). Verified once
+    // per ExpressionsGPU; only airs with a table (minScratch > 0) can be checked this way.
+    const bool verify = launchVerified != nullptr && !*launchVerified && minScratch > 0;
+    if (verify) {
+        CHECKCUDAERR(cudaMemsetAsync(os, 0, sizeof(uint64_t), stream));
+    }
     fn(d_params, d_q, os, scratchAvail, NExt, o1, o2, o3, oz, stream);
+    cudaError_t launchErr = cudaGetLastError();
+    if (launchErr != cudaSuccess) {
+        fprintf(stderr, "[exps] Q kernel launch failed (%s); falling back to the interpreter\n",
+                cudaGetErrorString(launchErr));
+        return false;
+    }
+    if (verify) {
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        uint64_t pw0 = 0;
+        CHECKCUDAERR(cudaMemcpy(&pw0, os, sizeof(pw0), cudaMemcpyDeviceToHost));
+        if (pw0 == 0) {
+            fprintf(stderr, "[exps] Q kernel launch did not execute (pw[0] still 0, likely lazy module-load OOM); "
+                            "falling back to the interpreter\n");
+            return false;
+        }
+        *launchVerified = true;
+    }
     return true;
 }

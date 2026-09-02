@@ -20,7 +20,7 @@ use crate::{
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
-    check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+    check_device_memory_c, configure_phase_b_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
     alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
 };
@@ -585,6 +585,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
@@ -993,6 +994,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
+        prefetch_region_area: u64,
         // -> (basic streams/GPU, recursive streams/GPU, aggregation workers/GPU, GPUs)
     ) -> ProofmanResult<(u64, u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
@@ -1035,9 +1037,18 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut total_const_area = 0;
         let mut total_const_area_aggregation = 0;
 
+        // No-const-buffer mode: basic const pols/trees never become GPU-resident
+        // (they stage per fixed-slot switch through the prefetch zone), so their
+        // area drops out of the budget entirely.
+        let no_const_buf = std::env::var("PROOFMAN_NO_CONST_BUF").map(|v| v == "1").unwrap_or(false);
         if gpu {
-            total_const_area += sctx.total_const_pols_size as u64;
-            total_const_area += sctx.total_const_tree_size as u64;
+            // No-const-buffer mode only drops the BASIC const residency (those stage
+            // through the prefetch zone per fixed-slot switch). Aggregation consts are
+            // read by every recursive proof and have no staging path: keep them resident.
+            if !no_const_buf {
+                total_const_area += sctx.total_const_pols_size as u64;
+                total_const_area += sctx.total_const_tree_size as u64;
+            }
             if aggregation {
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
                 total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
@@ -1073,7 +1084,46 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
 
+        // Single-proof model (PROOFMAN_SINGLE_PROOF_GB=<n>, GPU): ONE proof in
+        // flight in ONE proof buffer of exactly <n> GB (headroom for future
+        // larger air-instance N), plus the prefetch zone carved separately.
+        // Streams beyond the compute one exist only for copies / intra-proof
+        // work, never for a second concurrent proof.
+        let single_proof_gb: Option<usize> = std::env::var("PROOFMAN_SINGLE_PROOF_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|gb| *gb > 0);
+        // The prefetch region and the scratch arena are carved INSIDE the unified buffer
+        // after planning; hide them from the planner's budget or its streams overrun VRAM.
+        let scratch_reserve_elems: u64 = if prefetch_region_area > 0 {
+            let gb = std::env::var("PROOFMAN_ARENA_GB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(3);
+            prefetch_region_area + (gb << 30) / 8
+        } else {
+            0
+        };
+        let max_size_buffer = max_size_buffer.saturating_sub(scratch_reserve_elems);
+
         let layout = match gpu {
+            true if single_proof_gb.is_some() => {
+                let want = single_proof_gb.unwrap() * (1usize << 30) / 8;
+                let s0 = want.max(sctx.max_prover_buffer_size.max(recursive_capable_size));
+                if s0 > max_size_buffer as usize {
+                    return Err(ProofmanError::InvalidConfiguration(format!(
+                        "PROOFMAN_SINGLE_PROOF_GB={} does not fit: {} elements available",
+                        single_proof_gb.unwrap(),
+                        max_size_buffer
+                    )));
+                }
+                StreamLayout {
+                    basic: vec![StreamClass { size: s0, count: 1 }],
+                    recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                    aggregation_workers: 0,
+                    unused: max_size_buffer as usize - s0,
+                }
+            }
             true => plan_stream_layout(
                 max_size_buffer as usize,
                 &basic_sizes,
@@ -1096,7 +1146,22 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Retained so the witness admission can tell which airs are confined to a subset of streams.
         self.basic_stream_sizes = layout.basic_stream_sizes();
         let n_streams_per_gpu = layout.n_basic_streams();
-        let n_recursive_streams_per_gpu = layout.recursive.count;
+        let mut n_recursive_streams_per_gpu = layout.recursive.count;
+
+        // Phase-B two-stream recursion (PROOFMAN_PHASE_B=1): register TWO recursive
+        // streams whose aux buffers ALIAS the pre-const area (no extra VRAM; the C
+        // alloc validates fit and the streams are only eligible after every basic and
+        // compressor completed). Single-basic-stream aggregation configs only.
+        let phase_b = gpu
+            && aggregation
+            && n_streams_per_gpu == 1
+            && n_recursive_streams_per_gpu == 0
+            && std::env::var("PROOFMAN_PHASE_B").map(|v| v == "1").unwrap_or(false);
+        if phase_b {
+            configure_phase_b_c(d_buffers.get_ptr());
+            n_recursive_streams_per_gpu = 2;
+            tracing::info!("Phase-B recursion: registering 2 aliased recursive streams");
+        }
 
         if gpu {
             let classes = layout
@@ -1138,7 +1203,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                + if phase_b { 0 } else { n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64 }
                 + total_const_area_aggregation
                 + total_const_area;
             let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);
@@ -1168,6 +1233,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             total_const_area,
             total_const_area_aggregation,
             unified_buffer_pad_area,
+            prefetch_region_area,
         );
 
         self.d_buffers = d_buffers;

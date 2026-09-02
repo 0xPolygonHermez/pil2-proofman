@@ -178,6 +178,14 @@ public:
     void inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled (legacy)
     void inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
+    // Split LDE (base/ext phase overlap): iNTT to BIT-REVERSED coefficients in place (DIF,
+    // batched), then later extend a section from those coefficients (per-column forward DIT
+    // over the extended domain with the coset load fused into the first launch). Together they
+    // equal ldeColMajor, but the two halves can run in different phases / on different data
+    // zones: the coeffs stay in the base zone, the extension writes the ext zone.
+    void inttToCoeffsRevColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
+    void extendFromCoeffsColMajor(gl64_t *d_dst, const gl64_t *d_coeffs, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, cudaStream_t stream);
+
     // Allocates the static twiddle/coset tables (16B * 2^maxLogDomainSize per GPU) used ONLY by the
     // legacy tiled backend and NTT(). The prover never calls this anymore -- the ColMajor engine
     // builds its own compact tables lazily; tests/benches init it via the sizing constructor.

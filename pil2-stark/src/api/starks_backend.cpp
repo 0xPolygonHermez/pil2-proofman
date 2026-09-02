@@ -61,7 +61,7 @@ void free_device_buffers_recursivef_gpu(void *d_buffers);
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea);
 void get_instances_ready_gpu(void *d_buffers, int64_t* instances_ready);
 void reset_device_streams_gpu(void *d_buffers_);
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size);
@@ -78,6 +78,17 @@ uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
+void harvest_pipeline_gpu(void *d_buffers_);
+int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
+                             uint64_t airgroupId, uint64_t airId, void *trace);
+int64_t prefetch_recursive_witness_gpu(void *d_buffers_, const void *trace, uint64_t bytes);
+int64_t prefetch_fixed_gpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId,
+                           const char *constTreePath, uint64_t bytes);
+int64_t prefetch_recursive_tree_gpu(void *d_buffers_, void *pSetupCtx, uint64_t airgroupId, uint64_t airId, const char *proofType, const char *constTreePath);
+void configure_phase_b_gpu(void *d_buffers_);
+int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
@@ -143,6 +154,15 @@ StarksBackend cpu_backend = []() {
     backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
     backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
+    backend.configure_prefetch_zone = nullptr;            // default: no-op
+    backend.prefetch_witness = nullptr;                   // default: declined
+    backend.prefetch_recursive_witness = nullptr;         // default: declined
+    backend.prefetch_fixed = nullptr;                     // default: declined
+    backend.prefetch_recursive_tree = nullptr;           // default: declined
+    backend.configure_phase_b = nullptr;
+    backend.set_phase_b = nullptr;
+    backend.set_pipeline_mode = nullptr;                  // default: no-op
+    backend.harvest_pipeline = nullptr;                   // default: no-op
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
@@ -205,6 +225,15 @@ StarksBackend gpu_backend = []() {
     backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
     backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
+    backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
+    backend.prefetch_witness = prefetch_witness_gpu;
+    backend.prefetch_recursive_witness = prefetch_recursive_witness_gpu;
+    backend.prefetch_fixed = prefetch_fixed_gpu;
+    backend.prefetch_recursive_tree = prefetch_recursive_tree_gpu;
+    backend.configure_phase_b = configure_phase_b_gpu;
+    backend.set_phase_b = set_phase_b_gpu;
+    backend.set_pipeline_mode = set_pipeline_mode_gpu;
+    backend.harvest_pipeline = harvest_pipeline_gpu;
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
@@ -408,9 +437,9 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_rec
     return backend->gen_device_streams ? backend->gen_device_streams(d_buffers_, n_streams, n_recursive_streams, auxTraceSizes, maxSizeProverBufferAggregation, maxProofSize, merkleTreeArity) : 1;
 }
 
-void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation, unifiedBufferPadArea);
+    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation, unifiedBufferPadArea, prefetchRegionArea);
 }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {
@@ -492,6 +521,62 @@ void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t s
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->configure_stream_commit_slots)
         backend->configure_stream_commit_slots(d_buffers_, nSlots, slotBytes);
+}
+
+void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->configure_prefetch_zone)
+        backend->configure_prefetch_zone(d_buffers_, witnessBytes, fixedTreeBytes, packedConstBytes, recWitnessBytes);
+}
+
+void set_pipeline_mode(void *d_buffers_, bool enable) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->set_pipeline_mode)
+        backend->set_pipeline_mode(d_buffers_, enable);
+}
+
+void harvest_pipeline(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->harvest_pipeline)
+        backend->harvest_pipeline(d_buffers_);
+}
+
+int64_t prefetch_fixed(void *d_buffers_, uint64_t airgroupId, uint64_t airId,
+                       const char *constTreePath, uint64_t bytes) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->prefetch_fixed
+               ? backend->prefetch_fixed(d_buffers_, airgroupId, airId, constTreePath, bytes)
+               : -1;
+}
+int64_t prefetch_recursive_tree(void *d_buffers_, void *pSetupCtx, uint64_t airgroupId, uint64_t airId,
+                                const char *proofType, const char *constTreePath) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->prefetch_recursive_tree
+        ? backend->prefetch_recursive_tree(d_buffers_, pSetupCtx, airgroupId, airId, proofType, constTreePath)
+        : -1;
+}
+void configure_phase_b(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->configure_phase_b) backend->configure_phase_b(d_buffers_);
+}
+int64_t set_phase_b(void *d_buffers_, uint32_t state) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->set_phase_b ? backend->set_phase_b(d_buffers_, state) : -1;
+}
+
+int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
+                         uint64_t airgroupId, uint64_t airId, void *trace) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->prefetch_witness
+               ? backend->prefetch_witness(pSetupCtx_, d_buffers_, instanceId, airgroupId, airId, trace)
+               : -1;
+}
+
+int64_t prefetch_recursive_witness(void *d_buffers_, const void *trace, uint64_t bytes) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->prefetch_recursive_witness
+               ? backend->prefetch_recursive_witness(d_buffers_, trace, bytes)
+               : -1;
 }
 
 uint64_t get_stream_commit_floor(void *d_buffers_) {

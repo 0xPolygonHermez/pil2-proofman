@@ -59,8 +59,10 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
+    configure_prefetch_zone_c, prefetch_witness_c, prefetch_fixed_c, get_const_tree_size_c,
+    set_pipeline_mode_c, harvest_pipeline_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c, set_phase_b_c,
     stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
@@ -1555,6 +1557,7 @@ where
 
         self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+
         let minimal_memory = true;
 
         let my_instances = self.pctx.dctx_get_process_instances();
@@ -1568,7 +1571,15 @@ where
             handles: self.handle_contributions.clone(),
         };
 
-        for _ in 0..self.n_streams {
+        // Completion workers also run gen_witness_recursive/aggregation inline: with a
+        // deep GPU pipeline the witness-gen latency (100-400 ms each) is the feeder,
+        // so allow more workers than streams (PROOFMAN_COMPLETION_WORKERS).
+        let n_completion_workers = std::env::var("PROOFMAN_COMPLETION_WORKERS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n >= 1 && *n <= 32)
+            .unwrap_or(self.n_streams);
+        for _ in 0..n_completion_workers {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let memory_handler_clone = self.memory_handler.clone();
@@ -2629,6 +2640,7 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+
             let first_contribution_logged = Arc::new(AtomicBool::new(false));
 
             // Reuse the process-wide aux_trace / const_pols buffers: CPU runs one proof at a time so
@@ -2673,7 +2685,8 @@ where
                 let aux_scratch = aux_scratch.clone();
                 let const_scratch = const_scratch.clone();
                 let slot_commit_ctx_clone = slot_commit_ctx.clone();
-                let contribution_handle = std::thread::spawn(move || loop {
+                let contribution_handle = std::thread::spawn(move || {
+                    loop {
                     match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
                             if instance_id == usize::MAX {
@@ -2727,7 +2740,7 @@ where
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                     }
-                });
+                }});
                 self.handle_contributions.lock().unwrap().push(contribution_handle);
             }
 
@@ -2918,6 +2931,13 @@ where
         }
 
         let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        // Debug: pin the global challenge so per-stage checksums are comparable
+        // across runs and layouts (witness nondeterminism in some instances makes
+        // the real challenge differ run-to-run). NEVER for production proofs.
+        if std::env::var("PROOFMAN_DEBUG_FIXED_CHALLENGE").map(|v| v == "1").unwrap_or(false) {
+            tracing::warn!("PROOFMAN_DEBUG_FIXED_CHALLENGE=1: global challenge pinned; proofs are NOT sound");
+            global_challenge = [F::from_u64(0x1234_5678_9abc_def0), F::from_u64(0x0fed_cba9_8765_4321), F::from_u64(0x1111_2222_3333_4444)];
+        }
         tracing::info!(
             "··· Global challenge: [{}, {}, {}]",
             global_challenge[0],
@@ -2963,7 +2983,85 @@ where
         let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
         let proofs_pending = completions.ledger();
 
+        // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
+        // ready basics from the scheduler ahead of dispatch and stages the front
+        // one's trace to the zone while the current proof computes. Only READY
+        // (stored/computed) witnesses ever enter the scheduler queue, so a held
+        // instance is always launchable. Gate on the BASIC stream count: the zone's
+        // dispatch-order prediction only concerns basics, which still run
+        // one-at-a-time on the single basic stream when aggregation adds recursive
+        // streams/workers on top.
+        let prefetch_dequeue_ahead = self.pctx.gpu
+            && self.n_streams_non_recursive == 1
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v == "1").unwrap_or(false);
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
+
+        // Phase-B (PROOFMAN_PHASE_B=1): defer recursive1/recursive2 work until every
+        // basic and compressor has completed, then open the two aliased recursive
+        // streams and drain the parked conversions through them. Parking happens
+        // BEFORE witness generation, so the bounded recursive-witness pool cannot
+        // deadlock the completion threads during phase A.
+        struct PhaseBCtl {
+            remaining_a: std::sync::atomic::AtomicI64,
+            parked: std::sync::Mutex<Vec<(u64, ProofType, usize, u8)>>,
+            draining: std::sync::atomic::AtomicBool,
+            /// true = park rec1 conversions too (small blocks); false = rec1 runs live
+            /// in phase A and only the rec2 tree defers (big blocks, where interleaved
+            /// rec1 usefully fills witness-arrival gaps).
+            defer_rec1: bool,
+        }
+        // Size gate: phase B pays on small/mid blocks (the rec2 tree is a large
+        // fraction and the two-wide drain shortens the tail). On big blocks the
+        // deferred rec2s were the gap-fillers of a long phase A -- measured +1.3
+        // to +2.3 s at 420-712 tx -- so above the threshold the job runs the
+        // classic fully-interleaved single-stream schedule.
+        let phase_b_max: usize = std::env::var("PROOFMAN_PHASE_B_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(64);
+        let phase_b_ctl: Option<Arc<PhaseBCtl>> = if self.pctx.gpu
+            && options.aggregation
+            && my_instances.len() < phase_b_max
+            && std::env::var("PROOFMAN_PHASE_B").map(|v| v == "1").unwrap_or(false)
+        {
+            // Full deferral (rec1 parked too, so rec1s also run two-wide) is the
+            // default wherever phase B is active: its two-stream race was the shared
+            // per-air blake3 gate-band multiplicity scratch, fixed by making it
+            // per-stream (StreamData::d_gate_band_scratch). 0 restores rec2-only deferral.
+            let full_max: usize = std::env::var("PROOFMAN_PHASE_B_FULL_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(usize::MAX);
+            let defer_rec1 = my_instances.len() < full_max;
+            let mut expected: i64 = 0;
+            for &instance_id in &my_instances {
+                if let Ok((ag, air)) = self.pctx.dctx_get_instance_info(instance_id) {
+                    // One Basic completion per instance; one Compressor where the air has
+                    // one; and, when rec1 runs live in phase A, one Recursive1 per basic.
+                    expected += if defer_rec1 { 1 } else { 2 };
+                    if self.pctx.global_info.get_air_has_compressor(ag, air) {
+                        expected += 1;
+                    }
+                }
+            }
+            tracing::info!(
+                "Phase-B deferral armed: {} phase-A completions expected (defer_rec1={})",
+                expected,
+                defer_rec1
+            );
+            Some(Arc::new(PhaseBCtl {
+                remaining_a: std::sync::atomic::AtomicI64::new(expected),
+                parked: std::sync::Mutex::new(Vec::new()),
+                draining: std::sync::atomic::AtomicBool::new(false),
+                defer_rec1,
+            }))
+        } else {
+            None
+        };
+        if phase_b_ctl.is_some() {
+            // Fresh job: phase A. (Idempotent; also covers warm --repeat iterations.)
+            let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+        }
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
         // channels). Condvar parks idle stream workers.
@@ -3028,6 +3126,7 @@ where
             let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
             let scheduler_clone = scheduler.clone();
+            let phase_b_ctl_clone = phase_b_ctl.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -3067,26 +3166,36 @@ where
                         ProofType::Recursive2 as usize
                     };
 
+                    // One completion's downstream conversion: witness generation + handoff.
+                    // Shared by the live path and the phase-B drain. Returns false on cancel.
+                    // mode: 0 = full; 1 = pop-only (the arriving proof was banked earlier);
+                    // 2 = bank-only (store the proof, defer the chunk pop + witness gen).
+                    let convert = |id: u64, p: ProofType, new_proof_type: usize, mode: u8| -> bool {
                     let witness = if new_proof_type == ProofType::Recursive2 as usize {
-                        let proof = if p == ProofType::Recursive1 {
-                            recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
-                        } else {
-                            recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
-                        };
-
-                        let recursive2_proof = {
-                            let mut recursive2_airgroup_proofs =
-                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                            recursive2_airgroup_proofs.push(proof);
-
-                            let arity = pctx_clone.global_info.aggregation_arity;
-                            if recursive2_airgroup_proofs.len() >= arity {
-                                let chunk: Vec<_> =
-                                    (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
-                                Some(chunk)
+                        if mode != 1 {
+                            let proof = if p == ProofType::Recursive1 {
+                                recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
                             } else {
-                                None
+                                recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
+                            };
+                            recursive2_proofs_clone[proof.airgroup_id].write().unwrap().push(proof);
+                        }
+                        let recursive2_proof = if mode == 2 {
+                            None
+                        } else {
+                            // The parked marker does not know its airgroup; every airgroup's
+                            // accumulator is a candidate (blake has one).
+                            let arity = pctx_clone.global_info.aggregation_arity;
+                            let mut popped: Option<Vec<Proof<F>>> = None;
+                            for lock in recursive2_proofs_clone.iter() {
+                                let mut acc = lock.write().unwrap();
+                                if acc.len() >= arity {
+                                    popped =
+                                        Some((0..arity).map(|_| acc.pop().unwrap()).collect());
+                                    break;
+                                }
                             }
+                            popped
                         };
 
                         match recursive2_proof {
@@ -3103,8 +3212,15 @@ where
                                             "Error generating recursive2 witness from recursive proofs: {}",
                                             e
                                         );
+                                        // Race forensics: name the children the circom witness rejected.
+                                        for c in chunk.iter() {
+                                            tracing::warn!(
+                                                "RACE-FORENSICS rejected child: air {}:{} global_idx {:?} type {:?}",
+                                                c.airgroup_id, c.air_id, c.global_idx, c.proof_type
+                                            );
+                                        }
                                         cancellation_info_clone.write_recover().cancel(Some(e));
-                                        break;
+                                        return false;
                                     }
                                 }
                             }
@@ -3123,7 +3239,7 @@ where
                             Err(e) => {
                                 tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
-                                break;
+                                return false;
                             }
                         }
                     } else {
@@ -3139,7 +3255,7 @@ where
                             Err(e) => {
                                 tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
-                                break;
+                                return false;
                             }
                         }
                     };
@@ -3185,10 +3301,79 @@ where
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
-                                    break;
+                                    return false;
                                 }
                             }
                         }
+                        }
+                        true
+                    };
+
+                    // Phase-B deferral: recursive1 conversions (from basics and compressors)
+                    // are parked until every basic+compressor has completed; then the two
+                    // aliased recursive streams open and the parked backlog drains through
+                    // this same `convert`. Parking precedes witness generation, so the
+                    // bounded recursive-witness pool cannot stall phase-A completions.
+                    let mut live_mode: u8 = 0;
+                    if let Some(ctl) = phase_b_ctl_clone.as_ref() {
+                        let phase_a_kind = p == ProofType::Basic
+                            || p == ProofType::Compressor
+                            || (!ctl.defer_rec1 && p == ProofType::Recursive1);
+                        let mut parked_this = false;
+                        if ctl.defer_rec1
+                            && (p == ProofType::Basic || p == ProofType::Compressor)
+                            && new_proof_type == ProofType::Recursive1 as usize
+                        {
+                            let mut parked = ctl.parked.lock().unwrap();
+                            if !ctl.draining.load(std::sync::atomic::Ordering::Acquire) {
+                                parked.push((id, p, new_proof_type, 0));
+                                parked_this = true;
+                            }
+                        } else if !ctl.defer_rec1 && p == ProofType::Recursive1 {
+                            // Big-block mode: rec1 ran live; bank its proof now (cheap, no
+                            // pool) and defer only the chunk pop + rec2 witness generation.
+                            if !convert(id, p, new_proof_type, 2) {
+                                break;
+                            }
+                            let mut parked = ctl.parked.lock().unwrap();
+                            if !ctl.draining.load(std::sync::atomic::Ordering::Acquire) {
+                                parked.push((id, p, new_proof_type, 1));
+                                parked_this = true;
+                            } else {
+                                live_mode = 1; // banked above; live conversion only pops
+                            }
+                        }
+                        let hit_zero = phase_a_kind
+                            && ctl.remaining_a.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1;
+                        if hit_zero {
+                            let rc = set_phase_b_c(pctx_clone.get_device_buffers_ptr(), 1);
+                            let drained: Vec<(u64, ProofType, usize, u8)> = {
+                                let mut g = ctl.parked.lock().unwrap();
+                                ctl.draining.store(true, std::sync::atomic::Ordering::Release);
+                                std::mem::take(&mut *g)
+                            };
+                            tracing::info!(
+                                "Phase-B open (rc={rc}): draining {} parked recursive conversions",
+                                drained.len()
+                            );
+                            let mut cancelled = false;
+                            for (cid, cp, cnew, cmode) in drained {
+                                if !convert(cid, cp, cnew, cmode) {
+                                    cancelled = true;
+                                    break;
+                                }
+                            }
+                            if cancelled {
+                                break;
+                            }
+                        }
+                        if parked_this {
+                            continue;
+                        }
+                    }
+
+                    if !convert(id, p, new_proof_type, live_mode) {
+                        break;
                     }
                 }
             });
@@ -3291,6 +3476,24 @@ where
         // Backstop: guarantees the generator threads below are told to stop on *any* early return,
         // so the `_recursives_guard` join at teardown cannot wedge (see `FinishOnDrop`).
         let _finish_generators = FinishOnDrop(proofs_finished.clone());
+        // Deep pipeline: with dequeue-ahead feeding the zone, the stream accepts a
+        // second proof while the first executes (reserve stops host-syncing, proof
+        // collection moves to the harvest ring). Proofs phase only -- contributions
+        // relies on harvest-on-reserve for commit roots.
+        // PROOFMAN_NO_PIPELINE=1: keep zone + dequeue-ahead but launch depth-1
+        // (debug bisect for zone-mode issues).
+        // Basic-only phases: with aggregation the recursive proofs share the one
+        // stream and the ring's completion bookkeeping is not defined for them --
+        // the phase deadlocks with every basic launched and none harvested
+        // (reproduced on 66-tx mainnet_24628607, 2026-08-22). Depth-1 launches
+        // keep the zone and dequeue-ahead and complete normally.
+        // The completion ring now carries recursive proofs too (PipelineSlot.proofType),
+        // so the depth-2 stream pipeline runs under aggregation as well.
+        let pipeline_enabled = prefetch_dequeue_ahead
+            && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
+        }
         for stream_id in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
@@ -3314,8 +3517,29 @@ where
             let proofs_pending_clone = proofs_pending.clone();
             let scheduler_clone = scheduler.clone();
             let handle_recursive = std::thread::spawn(move || {
+                // Dequeued-ahead basics (id, airgroup, air), dispatch order, depth <= 2.
+                // Front: launches next, trace already in the zone. Back: gives the tree
+                // stager exact (not predicted) knowledge of the next air switch -- pops
+                // ARE the dispatch order, so there is nothing to mispredict.
+                let mut held: std::collections::VecDeque<(usize, usize, usize)> = std::collections::VecDeque::new();
+                // Zone slot staging (see below): ids currently staged in zone slots. Depth
+                // mirrors the C side's prefetchNSlots (2 under the base/ext phase split).
+                let mut zone_staged: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                let zone_depth: usize =
+                    if std::env::var("PROOFMAN_BASE_SPLIT").map(|v| v == "1").unwrap_or(false) { 2 } else { 1 };
+                // Air whose const tree the one-shot stager thread was last asked to
+                // stage (avoids duplicate spawns during a same-air run).
+                let mut staged_air: Option<(usize, usize)> = None;
+                // The in-flight stager: joined before the next spawn and at every worker
+                // exit, so no stager can outlive the phase (and race device teardown).
+                let mut stager: Option<std::thread::JoinHandle<()>> = None;
                 loop {
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                    // Pipeline: collect any finished proofs (writeProof + completion
+                    // callback) off the ring; non-blocking, cheap when nothing fired.
+                    if prefetch_dequeue_ahead {
+                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
+                    }
 
                     // One locked pick per iteration (GPU): a Basic is dispatched right below; a
                     // Recursive witness (in `gpu_witness`) falls through to the recursive dispatch.
@@ -3326,6 +3550,7 @@ where
                     // so no error path can strand a stream at status=1.
                     let mut reservation: Option<crate::StreamReservation> = None;
                     let mut gpu_witness: Option<Proof<F>> = None;
+                    let mut picked_from_held = false;
                     let basic: Option<(usize, Option<usize>)> = if let Some(sched) = scheduler_clone.as_ref() {
                         let (lock, cvar) = (&sched.lock, &sched.ready);
                         let mut guard = lock.lock().unwrap();
@@ -3343,6 +3568,16 @@ where
                                         }
                                         Err(e) => {
                                             cancellation_info_clone.write_recover().cancel(Some(e));
+                                            if let Some(h) = stager.take() {
+                                                let _ = h.join();
+                                            }
+                                            for (hid, _, _) in held.drain(..) {
+                                                let (is_shared, buf) = pctx_clone.free_instance(hid);
+                                                if is_shared {
+                                                    let _ = memory_handler_clone.release_buffer(buf);
+                                                }
+                                                proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                                            }
                                             return;
                                         }
                                     }
@@ -3350,6 +3585,16 @@ where
                             }
                             let pick = if force_recursive_stream {
                                 guard.next_recursive().map(|(w, s)| crate::WorkerPick::Recursive(w, s))
+                            } else if let Some(&(hid, hag, hair)) = held.front() {
+                                // A held instance always launches next (its trace is in
+                                // the zone); only the stream reservation can make it wait.
+                                let r = guard.reserve_for_basic(hag, hair).map(|s| crate::WorkerPick::Basic(hid, s));
+                                if r.is_some() {
+                                    held.pop_front();
+                                    picked_from_held = zone_staged.contains(&hid);
+                                    zone_staged.retain(|id| *id != hid);
+                                }
+                                r
                             } else {
                                 guard.next_nonrecursive()
                             };
@@ -3371,8 +3616,19 @@ where
                                     if proofs_finished_clone.load(Ordering::Relaxed)
                                         && guard.is_empty()
                                         && (force_recursive_stream || guard.basic_is_empty())
+                                        && held.is_empty()
                                     {
+                                        if let Some(h) = stager.take() {
+                                            let _ = h.join();
+                                        }
                                         return;
+                                    }
+                                    // Pipeline: a full ring is what usually parks us here --
+                                    // harvest finished proofs NOW (not at the outer loop top,
+                                    // which a parked worker never revisits) so the reserve
+                                    // above succeeds the moment one proof completes.
+                                    if prefetch_dequeue_ahead {
+                                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
                                     }
                                     let (g, _) = cvar.wait_timeout(guard, std::time::Duration::from_millis(1)).unwrap();
                                     guard = g;
@@ -3399,6 +3655,26 @@ where
                             }
                             continue;
                         } else {
+                            // A pick that was not dequeued ahead (first proof of the
+                            // phase) has no zone entry yet: seed one now so gen_proof
+                            // takes the hit path (device-side wait) instead of the
+                            // host-synced miss route.
+                            if prefetch_dequeue_ahead && !picked_from_held {
+                                if let (Ok((pag, pair)), true) = (pctx_clone.dctx_get_instance_info(instance_id), reserved.is_some()) {
+                                    if let Ok(psetup) = sctx_clone.get_setup(pag, pair) {
+                                        let prm = pctx_clone.get_air_instance_params(instance_id, true);
+                                        let pp: *mut std::ffi::c_void = (&psetup.p_setup).into();
+                                        let _ = prefetch_witness_c(
+                                            pp,
+                                            pctx_clone.get_device_buffers_ptr(),
+                                            instance_id as u64,
+                                            pag as u64,
+                                            pair as u64,
+                                            prm.trace as *mut std::ffi::c_void,
+                                        );
+                                    }
+                                }
+                            }
                             let proof_stream_id = match Self::gen_proof(
                                 &proofs_clone,
                                 &pctx_clone,
@@ -3425,6 +3701,122 @@ where
                                     break;
                                 }
                             };
+                            // Dequeue-ahead (depth 2): refill the held queue, upload the front
+                            // instance's trace to the zone on the copy stream while the proof just
+                            // launched computes, and stage the const tree of the first air change
+                            // visible in [current, held0, held1] -- exact knowledge, pops are the
+                            // dispatch order. Witness buffers stay alive because held instances are
+                            // not freed until their own launch on a later iteration.
+                            if prefetch_dequeue_ahead {
+                                if let Some(sched) = scheduler_clone.as_ref() {
+                                    let mut guard = sched.lock.lock().unwrap();
+                                    // Make newly-ready instances visible to the lookahead.
+                                    while let Ok(id) = proofs_rx.try_recv() {
+                                        match pctx_clone.dctx_get_instance_info(id) {
+                                            Ok((ag, air)) => {
+                                                let resident = sctx_clone
+                                                    .get_setup(ag, air)
+                                                    .map(|s| s.preallocate)
+                                                    .unwrap_or(false);
+                                                guard.push_basic(id, ag, air, resident);
+                                            }
+                                            Err(e) => {
+                                                cancellation_info_clone.write_recover().cancel(Some(e));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    while held.len() < 2 {
+                                        match guard.pop_basic_prefetch() {
+                                            Some(h) => held.push_back(h),
+                                            None => break,
+                                        }
+                                    }
+                                }
+                                // Witness zone staging: depth = the zone's slot count (2 under
+                                // the base/ext phase split so staging k+1 never chains behind
+                                // the transpose of k; 1 otherwise). Held witnesses are always
+                                // ready (only stored/computed instances enter the queue).
+                                zone_staged.retain(|id| held.iter().any(|&(h, _, _)| h == *id));
+                                for idx in 0..zone_depth.min(held.len()) {
+                                    let (nid, nag, nair) = *held.get(idx).unwrap();
+                                    if zone_staged.contains(&nid) {
+                                        continue;
+                                    }
+                                    let mut staged = false;
+                                    if let Ok(nsetup) = sctx_clone.get_setup(nag, nair) {
+                                        let nparams = pctx_clone.get_air_instance_params(nid, true);
+                                        let p_next_setup: *mut std::ffi::c_void = (&nsetup.p_setup).into();
+                                        let rc = prefetch_witness_c(
+                                            p_next_setup,
+                                            pctx_clone.get_device_buffers_ptr(),
+                                            nid as u64,
+                                            nag as u64,
+                                            nair as u64,
+                                            nparams.trace as *mut std::ffi::c_void,
+                                        );
+                                        if rc == 0 {
+                                            zone_staged.push_back(nid);
+                                            staged = true;
+                                        }
+                                    }
+                                    if !staged {
+                                        break;
+                                    }
+                                }
+                                // Const-tree staging: first air different from the current one in
+                                // dispatch order. Only airs that LOAD a tree are staged: large
+                                // basics compute the extended fixed on-GPU instead (mirrors
+                                // stark_info.cpp's calculateFixedExtended predicate, >= 512 MB
+                                // extended const pols; a drift only costs a logged stale-drop,
+                                // never correctness).
+                                let (cur_ag, cur_air) =
+                                    pctx_clone.dctx_get_instance_info(instance_id).unwrap_or((usize::MAX, usize::MAX));
+                                let stage_target = held
+                                    .iter()
+                                    .map(|&(_, ag, air)| (ag, air))
+                                    .find(|&k| k != (cur_ag, cur_air));
+                                if let Some((sag, sair)) = stage_target {
+                                    // Airs sharing the current air's fixed-column slot reuse its
+                                    // resident tree (reuse_const_tree keys on the slot, not the
+                                    // air), so staging one would never be consumed.
+                                    let shares_slot = match (
+                                        sctx_clone.get_fixed_group(sag, sair),
+                                        sctx_clone.get_fixed_group(cur_ag, cur_air),
+                                    ) {
+                                        (Some(a), Some(b)) => a.owner == b.owner,
+                                        _ => false,
+                                    };
+                                    let fixed_prefetch_on = std::env::var("PROOFMAN_PREFETCH_FIXED")
+                                        .map(|v| v != "0")
+                                        .unwrap_or(true);
+                                    if fixed_prefetch_on && staged_air != Some((sag, sair)) && !shares_slot {
+                                        if let Ok(ssetup) = sctx_clone.get_setup(sag, sair) {
+                                            let n_ext = 1u64 << ssetup.stark_info.stark_struct.n_bits_ext;
+                                            let fixed_extended =
+                                                n_ext * ssetup.stark_info.n_constants * 8 >= (512 << 20);
+                                            if !ssetup.preallocate && !fixed_extended {
+                                                staged_air = Some((sag, sair));
+                                                let tree_bytes = get_const_tree_size_c(ssetup.p_setup.p_stark_info) * 8;
+                                                let path = ssetup.const_pols_tree_path.clone();
+                                                let dbuf = pctx_clone.get_device_buffers_ptr() as usize;
+                                                if let Some(h) = stager.take() {
+                                                    let _ = h.join();
+                                                }
+                                                stager = Some(std::thread::spawn(move || {
+                                                    let _ = prefetch_fixed_c(
+                                                        dbuf as *mut std::ffi::c_void,
+                                                        sag as u64,
+                                                        sair as u64,
+                                                        &path,
+                                                        tree_bytes,
+                                                    );
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
@@ -3440,6 +3832,18 @@ where
                     }
 
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        // Held (dequeued-ahead) basics are no longer in the scheduler's queues, so
+                        // the teardown drain can't recover them either: same recovery inline.
+                        if let Some(h) = stager.take() {
+                            let _ = h.join();
+                        }
+                        for (hid, _, _) in held.drain(..) {
+                            let (is_shared, buf) = pctx_clone.free_instance(hid);
+                            if is_shared {
+                                let _ = memory_handler_clone.release_buffer(buf);
+                            }
+                            proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                        }
                         // The pick above may already have handed us a witness. Dropping it here would
                         // lose its pooled `circom_witness` for the rest of the process — the teardown
                         // drain can't recover it, since it is no longer in the scheduler's queues.
@@ -3662,6 +4066,9 @@ where
         // idempotent no-op.
         proofs_finished.store(true, Ordering::Relaxed);
         drop(completions);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), false);
+        }
 
         if self.cancellation_info.read_recover().token.is_cancelled() {
             self.cancel_memory_handlers();
@@ -5274,6 +5681,67 @@ where
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
 
+        // Prefetch-zone sizing, needed BEFORE the unified-buffer allocation: the zone and
+        // the recursive-witness slots are carved from a region INSIDE the unified buffer
+        // (below the consts), so they share one planned budget and double as mops-borrow
+        // donor space. Reused verbatim by configure_prefetch_zone_c below.
+        let prefetch_sizes: Option<(u64, u64, u64, u64)> = if options.gpu
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v == "1").unwrap_or(false)
+        {
+            let mut witness_bytes: u64 = 0;
+            for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                    let packed_words = options
+                        .packed_info
+                        .get(&(airgroup_id, air_id))
+                        .filter(|pi| pi.is_packed && options.packed)
+                        .map(|pi| pi.num_packed_words);
+                    witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+                }
+            }
+            // The fixed (const-tree) segment only pays when trees are NOT resident
+            // (NO_CONST_BUF) or the stager is wanted; PROOFMAN_PREFETCH_FIXED=0 drops it
+            // (2 GB) -- with resident consts every tree is already on-device.
+            let fixed_stager_on = std::env::var("PROOFMAN_PREFETCH_FIXED").map(|v| v != "0").unwrap_or(true);
+            let mut fixed_bytes: u64 = 0;
+            if fixed_stager_on {
+                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                    for (air_id, _) in group.iter().enumerate() {
+                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                        if let Ok(meta) = std::fs::metadata(&setup.const_pols_tree_path) {
+                            fixed_bytes = fixed_bytes.max(meta.len());
+                        }
+                    }
+                }
+            }
+            let mut packed_bytes: u64 = 0;
+            if std::env::var("PROOFMAN_NO_CONST_BUF").map(|v| v == "1").unwrap_or(false) {
+                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                    for (air_id, _) in group.iter().enumerate() {
+                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                        packed_bytes = packed_bytes.max(setup.const_pols_size_packed as u64 * 8);
+                    }
+                }
+            }
+            // Recursive-witness staging slots: the pool's STAGING trace size is exactly
+            // what prefetch_recursive_witness uploads (compact width on GPU).
+            let rec_bytes = if options.aggregation { setups_vadcop.max_trace_size as u64 * 8 } else { 0 };
+            Some((witness_bytes, fixed_bytes, packed_bytes, rec_bytes))
+        } else {
+            None
+        };
+        let prefetch_region_area: u64 = prefetch_sizes
+            .map(|(w, f, pk, r)| {
+                // Two witness slots always (see configure_prefetch_zone_gpu): proof
+                // staging depth-2 and the contributions upload/compute ping-pong.
+                let n_slots: u64 = 2;
+                (w * n_slots + f + pk + 2 * r).div_ceil(8)
+            })
+            .unwrap_or(0);
+
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx
             .set_device_buffers(
                 &sctx,
@@ -5283,6 +5751,7 @@ where
                 options.max_number_streams,
                 options.max_number_recursive_streams,
                 options.final_snark,
+                prefetch_region_area,
             )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
@@ -5323,6 +5792,20 @@ where
                         "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
                     );
                 }
+            }
+        }
+
+        // Configure the prefetch zone with the sizes computed above (carved from the
+        // unified buffer's prefetch region when it fits; separate allocation otherwise).
+        if let Some((witness_bytes, fixed_bytes, packed_bytes, rec_bytes)) = prefetch_sizes {
+            if witness_bytes > 0 {
+                configure_prefetch_zone_c(
+                    pctx.get_device_buffers_ptr(),
+                    witness_bytes,
+                    fixed_bytes,
+                    packed_bytes,
+                    rec_bytes,
+                );
             }
         }
 
@@ -5586,10 +6069,13 @@ where
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
             return false;
         };
-        // Slots only pay off while gpu-mops holds the first GPU's buffer (no
-        // legacy stream is available there); once released, the legacy path is
-        // strictly better -- async, pinned, and it keeps witness residency.
-        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr()) {
+        // While gpu-mops holds the first GPU's buffer the slots are the ONLY lane.
+        // After release they stay useful as a SECOND lane beside the legacy stream
+        // (measured: contribution uploads and kernels strictly interleave on one
+        // stream). PROOFMAN_SLOT_LANE=0 restores the borrow-only behavior.
+        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr())
+            && std::env::var("PROOFMAN_SLOT_LANE").map(|v| v == "0").unwrap_or(false)
+        {
             return false;
         }
         // One-shot token take: a miss means all slots are busy right-now and the

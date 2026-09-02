@@ -118,12 +118,32 @@ pub fn plan_stream_layout(
     // A recursive launch falls back to a basic stream whenever the pool is busy or gone, so the floor
     // must cover it — enforced here rather than assumed of the caller.
     let class_floor = class_floor.max(recursive_size);
+    // The FIRST (large) class is raised to the floor so recursive/compressor launches always
+    // have a home; further classes may also be RAW air sizes — a stream below the floor is
+    // never selected for a recursive launch (the per-stream capacity check gates that), but
+    // it drains basics concurrently, which is pure win when the floor is fat (blake recursion:
+    // 12.6 GB floor vs 5-7 GB basic airs).
     let mut sizes: Vec<usize> = basic_sizes.iter().map(|&s| s.max(class_floor)).collect();
+    // EXPERIMENTAL (PROOFMAN_SUBFLOOR_CLASSES=1): sub-floor classes verify on basics-only
+    // runs but corrupt a Main proof under aggregation (root cause not yet isolated:
+    // suspicion is the two-stream contributions phase). Default keeps stock behavior.
+    if std::env::var("PROOFMAN_SUBFLOOR_CLASSES").map(|v| v == "1").unwrap_or(false) {
+        sizes.extend(basic_sizes.iter().copied());
+    }
     sizes.sort_unstable_by(|a, b| b.cmp(a));
     sizes.dedup();
 
     // The large class must hold anything that can land on a non-recursive stream.
     let &large = sizes.first()?;
+    tracing::info!(
+        "plan_stream_layout: budget={:.2}GB large={:.2}GB floor={:.2}GB recursive={:.2}GB maxB={} maxR={} candidates={:?}",
+        budget as f64 * 8.0 / (1u64 << 30) as f64,
+        large as f64 * 8.0 / (1u64 << 30) as f64,
+        class_floor as f64 * 8.0 / (1u64 << 30) as f64,
+        recursive_size as f64 * 8.0 / (1u64 << 30) as f64,
+        max_basic_streams, max_recursive_streams,
+        sizes.iter().take(6).map(|&s| (s as f64 * 8.0 / (1u64 << 30) as f64 * 100.0).round() / 100.0).collect::<Vec<_>>()
+    );
     if large == 0 || budget < large {
         return None;
     }

@@ -53,6 +53,11 @@ public:
     void *expsLib = nullptr;
     void *qLaunchFn = nullptr;
     uint64_t qMinScratch = 0;
+    // First-launch verification of the generated Q kernel: the .so statically links its own
+    // CUDA runtime, so a failed launch inside it (e.g. lazy module-load OOM) is INVISIBLE to
+    // our cudaGetLastError. Until verified, tryLaunchExpsQ pre-zeroes pw[0] and checks it
+    // reads back 1 (= v^0, the unconditional first table write) after the launch.
+    bool qLaunchVerified = false;
     void *exprCoveredFn = nullptr;
     void *exprLaunchFn = nullptr;
     void *exprPairLaunchFn = nullptr;
@@ -60,7 +65,7 @@ public:
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints = false);
-    void calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints = false, uint64_t scratchShift = 0);
+    void calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint64_t scratchShift = 0);
 };
 #endif

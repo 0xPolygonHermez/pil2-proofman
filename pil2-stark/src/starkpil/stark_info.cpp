@@ -443,6 +443,18 @@ void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 
+    {
+        const char *ovl = std::getenv("PROOFMAN_STAGE1_OVERLAP");
+        cm2Unaliased = gpu && !recursive && ovl != nullptr && ovl[0] == '1';
+        // Base/ext split (cross-proof phase overlap): every base-domain region steps 0-5 touch
+        // must be disjoint from every extended-domain region Q+ touches, so the NEXT same-air
+        // proof's early phase can run in the base zone while this proof's tail owns the ext
+        // zone. Implies cm2Unaliased (cm2-ext may not alias the base trace).
+        const char *bs = std::getenv("PROOFMAN_BASE_SPLIT");
+        baseSplit = gpu && !recursive && bs != nullptr && bs[0] == '1';
+        if (baseSplit) cm2Unaliased = true;
+    }
+
     // Set offsets for constants
     mapOffsets[std::make_pair("const", false)] = 0;
     mapOffsets[std::make_pair("const", true)] = 0;
@@ -546,7 +558,34 @@ void StarkInfo::setMapOffsets() {
         uint64_t permBits = starkStruct.steps.empty() ? 0 : starkStruct.steps[0].nBits;
         uint64_t permNFields = (starkStruct.nQueries * permBits + 62) / 63;
         mapOffsets[std::make_pair("fri_queries_perm", false)] = mapTotalN;
-        mapTotalN += permNFields;        
+        mapTotalN += permNFields;
+
+        // Side-stream copy of the query indices: proveFRIQueries MUTATES its indices in place
+        // (moduleQueries folds them per step), so the split query phase cannot share the
+        // original buffer with the commitment-tree openings.
+        mapOffsets[std::make_pair("fri_queries_side", false)] = mapTotalN;
+        mapTotalN += starkStruct.nQueries;
+
+        if (baseSplit) {
+            // Parity copy of the per-proof small state the EARLY phase writes (publics ..
+            // challenges, one contiguous span): proof k+1's stage-2 challenges and airValues
+            // must not clobber proof k's live ones mid-FRI. Tail-only state (xdivxsub, query
+            // indices/openings) stays single -- only one proof is ever in the tail.
+            uint64_t smallsStart = mapOffsets[std::make_pair("publics", false)];
+            uint64_t smallsEnd = mapOffsets[std::make_pair("challenges", false)] + challengesMap.size() * FIELD_EXTENSION;
+            mapOffsets[std::make_pair("smalls_parity", false)] = mapTotalN;
+            mapTotalN += smallsEnd - smallsStart;
+
+            // Base-zone scratch for the gsum/airgroup-value accumulation (accMulHintFieldsGPU /
+            // updateAirgroupValueGPU): stock code borrows the ("q",true) region, which under the
+            // phase split belongs to the PREVIOUS proof's still-running tail (q, f = the FRI
+            // polynomial share that offset). Two parity halves of 3N + slack each.
+            uint64_t hintVals = 3 * N + N / 64 + 8192;
+            mapOffsets[std::make_pair("hint_vals", false)] = mapTotalN;
+            mapTotalN += hintVals;
+            mapOffsets[std::make_pair("hint_vals_parity", false)] = mapTotalN;
+            mapTotalN += hintVals;
+        }
 
         maxTreeWidth = 0;
         for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
@@ -599,14 +638,23 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
     mapTotalNContributions = recursive ? 0 : mapTotalN + N * mapSectionsN["cm1"];
 
+    if (cm2Unaliased) {
+        mapTotalN += N * mapSectionsN["cm1"];
+    }
     mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm2"];
     mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
     mapTotalN += numNodes;
-    mapTotalN = std::max(mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"], mapTotalN);
+    if (!cm2Unaliased) {
+        mapTotalN = std::max(mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"], mapTotalN);
+    }
 
     mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
-    
+    if (baseSplit) {
+        // cm3-ext may not alias cm2(false): the next proof's early phase writes the base trace
+        // while this proof's Q commit writes cm3-ext.
+        mapTotalN += N * mapSectionsN["cm2"];
+    }
     mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm3"];
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
@@ -688,6 +736,20 @@ void StarkInfo::setMapOffsets() {
 
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
+    if (const char *dm = std::getenv("PROOFMAN_DUMP_MAP"); dm != nullptr && dm[0] == '1') {
+        std::vector<std::pair<uint64_t, std::string>> rows;
+        for (auto &kv : mapOffsets)
+            rows.push_back({kv.second, kv.first.first + (kv.first.second ? "(ext)" : "(base)")});
+        std::sort(rows.begin(), rows.end());
+        fprintf(stderr, "MAPDUMP air N=%lu total=%lu (%.2f GB)\n",
+                (uint64_t)1 << starkStruct.nBits, mapTotalN, mapTotalN * 8.0 / (1ull << 30));
+        for (size_t r = 0; r < rows.size(); r++) {
+            uint64_t end = (r + 1 < rows.size()) ? rows[r + 1].first : mapTotalN;
+            fprintf(stderr, "MAPDUMP   %-28s off=%-14lu size=%8.3f GB\n", rows[r].second.c_str(),
+                    rows[r].first, (end - rows[r].first) * 8.0 / (1ull << 30));
+        }
+    }
+
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
@@ -733,6 +795,16 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
         mapBuffHelper += destVals;
+    }
+
+    if (baseSplit) {
+        // Parity copy of the whole expression scratch (tmp1..tmp3..destVals): the next proof's
+        // early-phase expressions (STD2/imPols) run concurrently with this proof's quotient
+        // expressions, and both index the same scratch offsets otherwise. Consumers add
+        // expsScratchShift() for odd-parity proofs.
+        expsScratchSize = mapBuffHelper - mapOffsets[std::make_pair("tmp1", false)];
+        mapOffsets[std::make_pair("exps_scratch_parity", false)] = mapBuffHelper;
+        mapBuffHelper += expsScratchSize;
     }
 
     if(mapBuffHelper > mapTotalN) {
