@@ -339,17 +339,11 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
-    // Where stage 1 is built. On CPU that is the prover's own non-extended cm1 slot, which it
-    // reserves anyway and `extendAndMerkelize` reads step 1 from; a pooled buffer was a second copy
-    // of it. On GPU the fill is compact and lands in a staging buffer the device expands.
-    let mut trace_lease = pctx.gpu.then(|| memory_handler_recursive_witness.take_trace_lease());
-    let trace_ptr = match trace_lease.as_mut() {
-        Some(lease) => lease.as_mut_ptr() as *mut u8,
-        None => {
-            let cm1_at = setup.stark_info.map_offsets[&("cm1".to_string(), false)] as usize;
-            unsafe { (prover_buffer.as_ptr() as *mut F).add(cm1_at) as *mut u8 }
-        }
-    };
+    // Where stage 1 is built. On GPU the fill is compact and the device widens it; on CPU it is the
+    // air's full cm1 width. Both lease it: aliasing the prover's own cm1 slot would need that
+    // section's aux_trace offset, which only C++ `StarkInfo::setMapOffsets` computes.
+    let mut trace_lease = memory_handler_recursive_witness.take_trace_lease();
+    let trace_ptr = trace_lease.as_mut_ptr() as *mut u8;
 
     let p_setup: *mut c_void = (&setup.p_setup).into();
 

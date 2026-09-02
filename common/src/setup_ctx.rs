@@ -49,17 +49,17 @@ pub fn is_preload_fixed(
 /// Columns the recursion's HOST trace buffer needs for one air.
 ///
 /// On GPU it only stages the exec map's width for `widenCompactWitnessGPU` to widen device-side; on
-/// CPU nothing leases it, because the fill goes straight into the prover's own cm1 slot. Must agree
-/// with `recursion_trace_stride`, which decides the fill from the same exec header -- sizing narrow
-/// while the fill goes wide overruns the buffer.
+/// CPU the fill is the air's full cm1 width. Must agree with `recursion_trace_stride`, which decides
+/// the fill from the same exec header -- sizing narrow while the fill goes wide overruns the buffer.
 ///
 /// One function because three call sites decide this, and the one that did it inline sized the whole
 /// pool at the air's full width while the other two were compact.
 pub fn recursion_staging_cols<F: PrimeField64>(setup: &Setup<F>, gpu: bool) -> u64 {
-    if !gpu {
-        return 0;
-    }
     let cm1 = setup.stark_info.map_sections_n["cm1"];
+    if !gpu {
+        // `recursion_trace_stride` fills n_cols on CPU, so the pool must hold n_cols.
+        return cm1;
+    }
     setup.exec_data.as_deref().map(|e| exec_header(e).map_cols).filter(|&m| m > 0 && m < cm1).unwrap_or(cm1)
 }
 

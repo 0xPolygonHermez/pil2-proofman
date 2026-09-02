@@ -211,8 +211,6 @@ pub struct StarkInfo {
     #[serde(rename = "mapSectionsN")]
     pub map_sections_n: HashMap<String, u64>,
 
-    #[serde(default, rename = "mapOffsets")]
-    pub map_offsets: HashMap<(String, bool), u64>,
     #[serde(default, rename = "mapTotalN")]
     pub map_total_n: u64,
 
