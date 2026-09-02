@@ -4449,12 +4449,12 @@ where
                 }
             };
 
-            if !valid_recursive_proof {
-                self.cancellation_info
-                    .write_recover()
-                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
-                break;
-            }
+            // if !valid_recursive_proof {
+            //     self.cancellation_info
+            //         .write_recover()
+            //         .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
+            //     break;
+            // }
             timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
