@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{init_gpu_setup, MpiCtx, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
+use proofman_common::{init_gpu_setup, CustomCommitValidation, MpiCtx, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -66,7 +66,7 @@ impl GenCustomCommitsFixedCmd {
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?);
         pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1, false, 0)?;
-        pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
+        pctx.initialize_custom_commits(custom_commits_map, &sctx, CustomCommitValidation::Skip)?;
 
         let pctx = Arc::new(pctx);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));

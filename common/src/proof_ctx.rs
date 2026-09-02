@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::RwLock,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -11,18 +11,19 @@ use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
-use std::fs;
 use proofman_fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    CustomCommits, PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
-    check_device_memory_c, configure_phase_b_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
-    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
+    upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
+    gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
+    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
+    get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -304,7 +305,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
     pub compressor_weights: HashMap<(usize, usize), u64>,
-    pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
+    pub custom_commits_values: Mutex<HashMap<String, CustomCommitEntry>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
@@ -429,17 +430,55 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+    /// `words_per_row` and root of a registered custom-commit file, or why it cannot be used.
+    fn read_custom_commit_header(
+        setup: &Setup<F>,
+        custom_commit: &CustomCommits,
+        path: &Path,
+    ) -> ProofmanResult<(u64, [u8; 32])> {
+        if !path.exists() {
+            return Err(ProofmanError::ProofmanError(format!("{} does not exist", path.display())));
+        }
+        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+        let n_extended = 1u64 << setup.stark_info.stark_struct.n_bits_ext;
+        let n_cols = custom_commit.stage_widths[0] as u64;
+        let arity = setup.stark_info.stark_struct.merkle_tree_arity;
+        let words_per_row = custom_commit_words_per_row(path, n, n_extended, n_cols, arity)?;
+
+        let mut root_bytes = [0u8; 32];
+        File::open(path)?.read_exact(&mut root_bytes)?;
+        Ok((words_per_row, root_bytes))
+    }
+
+    /// Packed `words_per_row` of a registered custom commit; 0 if its file is not generated yet.
+    pub fn get_custom_commit_words_per_row(&self, name: &str) -> u64 {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.get(name).map(|(_, _, wpr)| *wpr).unwrap_or(0)
+    }
+
+    /// Names of the custom commits whose files still have to be generated.
+    pub fn custom_commits_pending(&self) -> Vec<String> {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.iter().filter(|(_, (_, _, wpr))| *wpr == 0).map(|(name, _)| name.clone()).collect()
+    }
+
+    /// The registered name -> file map, to re-run validation after a regeneration.
+    pub fn custom_commits_paths(&self) -> HashMap<String, PathBuf> {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.iter().map(|(name, (path, _, _))| (name.clone(), path.clone())).collect()
+    }
+
     pub fn initialize_custom_commits(
         &self,
         custom_commits_fixed: HashMap<String, PathBuf>,
         sctx: &SetupCtx<F>,
-        only_init: bool,
+        validation: CustomCommitValidation,
     ) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                for (commit_id, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
+                for custom_commit in setup.stark_info.custom_commits.iter() {
                     if custom_commit.stage_widths[0] > 0 {
                         let custom_file_path = custom_commits_fixed.get(&custom_commit.name).ok_or_else(|| {
                             ProofmanError::ProofmanError(format!(
@@ -448,59 +487,56 @@ impl<F: PrimeField64> ProofCtx<F> {
                             ))
                         })?;
 
+                        // words_per_row == 0 marks the entry as still needing generation.
                         let mut root_bytes = [0u8; 32];
-                        if !only_init {
-                            if !PathBuf::from(&custom_file_path).exists() {
-                                let error_message = format!(
-                                    "Error: Unable to find {} custom commit at '{}'.\n\
-                                    Please run the following command:\n\
-                                    \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                    custom_commit.name,
-                                    custom_file_path.display(),
-                                );
-                                tracing::warn!("{}", error_message);
-                                return Err(ProofmanError::ProofmanError(error_message));
-                            }
-
-                            let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
-                            let expected_size = (size + 4) * 8;
-
-                            match fs::metadata(custom_file_path) {
-                                Ok(metadata) => {
-                                    let actual_size = metadata.len() as usize;
-                                    if actual_size != expected_size {
+                        let mut words_per_row = 0u64;
+                        if validation != CustomCommitValidation::Skip {
+                            match Self::read_custom_commit_header(setup, custom_commit, custom_file_path) {
+                                Ok((wpr, root)) => {
+                                    words_per_row = wpr;
+                                    root_bytes = root;
+                                }
+                                Err(err) => {
+                                    if validation == CustomCommitValidation::Strict {
                                         let error_message = format!(
-                                            "Error: The custom commit file for {} at '{}' has the wrong size for the current proving key \
-                                            (expected {} bytes, found {} bytes). It was most likely generated with different setup \
-                                            parameters (blowup factor, merkle tree arity, hash mode) or is stale/corrupted.\n\
+                                            "Error: The custom commit file for {} at '{}' cannot be used ({}) and \
+                                            regenerating it did not help.\n\
                                             Please regenerate it by running:\n\
                                             \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
                                             custom_commit.name,
                                             custom_file_path.display(),
-                                            expected_size,
-                                            actual_size,
+                                            err,
                                         );
                                         tracing::warn!("{}", error_message);
                                         return Err(ProofmanError::ProofmanError(error_message));
                                     }
-                                }
-                                Err(err) => {
-                                    let error_message = format!(
-                                        "Failed to open {} for custom_commit {}: {}",
-                                        setup.air_name, custom_commit.name, err
+                                    tracing::info!(
+                                        "Custom commit {} at '{}' will be regenerated ({})",
+                                        custom_commit.name,
+                                        custom_file_path.display(),
+                                        err
                                     );
-                                    tracing::warn!("{}", error_message);
-                                    return Err(ProofmanError::ProofmanError(error_message));
                                 }
                             }
-                            let mut file = File::open(custom_file_path)?;
-                            file.read_exact(&mut root_bytes)?;
                         }
 
-                        self.custom_commits_values
-                            .lock()
-                            .unwrap()
-                            .insert(custom_commit.name.clone(), (custom_file_path.clone(), root_bytes.to_vec()));
+                        // Resident for the process lifetime: no proof DMAs a custom commit.
+                        if setup.gpu && words_per_row > 0 {
+                            upload_custom_commit_packed_c(
+                                airgroup_id as u64,
+                                air_id as u64,
+                                setup.setup_type.into(),
+                                &custom_file_path.to_string_lossy(),
+                                words_per_row,
+                                (&setup.p_setup).into(),
+                                self.get_device_buffers_ptr(),
+                            );
+                        }
+
+                        self.custom_commits_values.lock().unwrap().insert(
+                            custom_commit.name.clone(),
+                            (custom_file_path.clone(), root_bytes.to_vec(), words_per_row),
+                        );
                     }
                 }
             }
@@ -512,7 +548,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let custom_commit_lock = self.custom_commits_values.lock().unwrap();
         let root_bytes = custom_commit_lock.get(name);
         match root_bytes {
-            Some((_, bytes)) => Ok(bytes.clone()),
+            Some((_, bytes, _)) => Ok(bytes.clone()),
             None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
@@ -566,7 +602,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let custom_commits_lock = self.custom_commits_values.lock().unwrap();
         let file_name = custom_commits_lock.get(name);
         match file_name {
-            Some((path, _)) => Ok(path.to_path_buf()),
+            Some((path, _, _)) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
                     Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))
@@ -584,7 +620,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             proof_tx.send(global_idx).unwrap();
         }
     }
-
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
@@ -1048,6 +1083,8 @@ impl<F: PrimeField64> ProofCtx<F> {
             if !no_const_buf {
                 total_const_area += sctx.total_const_pols_size as u64;
                 total_const_area += sctx.total_const_tree_size as u64;
+            } else {
+                total_const_area += sctx.total_custom_commits_reserved_words as u64;
             }
             if aggregation {
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
@@ -1089,17 +1126,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         // larger air-instance N), plus the prefetch zone carved separately.
         // Streams beyond the compute one exist only for copies / intra-proof
         // work, never for a second concurrent proof.
-        let single_proof_gb: Option<usize> = std::env::var("PROOFMAN_SINGLE_PROOF_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|gb| *gb > 0);
+        let single_proof_gb: Option<usize> =
+            std::env::var("PROOFMAN_SINGLE_PROOF_GB").ok().and_then(|v| v.parse().ok()).filter(|gb| *gb > 0);
         // The prefetch region and the scratch arena are carved INSIDE the unified buffer
         // after planning; hide them from the planner's budget or its streams overrun VRAM.
         let scratch_reserve_elems: u64 = if prefetch_region_area > 0 {
-            let gb = std::env::var("PROOFMAN_ARENA_GB")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(3);
+            let gb = std::env::var("PROOFMAN_ARENA_GB").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(3);
             prefetch_region_area + (gb << 30) / 8
         } else {
             0
@@ -1203,7 +1235,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + if phase_b { 0 } else { n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64 }
+                + if phase_b {
+                    0
+                } else {
+                    n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                }
                 + total_const_area_aggregation
                 + total_const_area;
             let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);

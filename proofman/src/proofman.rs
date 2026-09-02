@@ -2,10 +2,10 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
 use proofman_fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
-    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES,
-    PreLoadedConstTree, PackedInfo,
+    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
+    CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
+    MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConstTree, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -2533,7 +2533,30 @@ where
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("register_custom_commits");
-        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
+        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, CustomCommitValidation::Lenient)?;
+        self.ensure_custom_commits_fixed()
+    }
+
+    /// Generate any custom-commit file that is missing or not in the packed layout. Only the
+    /// witness library can produce them, so this is a no-op until one is registered.
+    pub fn ensure_custom_commits_fixed(&self) -> ProofmanResult<()> {
+        let pending = self.pctx.custom_commits_pending();
+        if pending.is_empty() || !self.wcm.has_components() {
+            return Ok(());
+        }
+        tracing::info!("Generating custom commits fixed: {}", pending.join(", "));
+        timer_start_info!(GENERATING_CUSTOM_COMMITS_FIXED);
+        // One writer per node: the files are shared, and every rank validates them below.
+        if self.mpi_ctx.rank == 0 {
+            self.wcm.gen_custom_commits_fixed()?;
+        }
+        self.mpi_ctx.barrier();
+        timer_stop_and_log_info!(GENERATING_CUSTOM_COMMITS_FIXED);
+        self.pctx.initialize_custom_commits(
+            self.pctx.custom_commits_paths(),
+            &self.sctx,
+            CustomCommitValidation::Strict,
+        )
     }
 
     /// Upload (per program) the instruction table for an indexed air. `table` is
@@ -2585,7 +2608,8 @@ where
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
-        Ok(())
+        // Custom commits registered before the library was loaded could not be generated then.
+        self.ensure_custom_commits_fixed()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5976,15 +6000,15 @@ where
             let n_custom_commits = setup.stark_info.custom_commits.len();
             for commit_id in 0..n_custom_commits {
                 if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path = pctx
-                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, true)
-                        .unwrap();
+                    let name = &setup.stark_info.custom_commits[commit_id].name;
+                    let custom_commit_file_path = pctx.get_custom_commits_fixed_buffer(name, true).unwrap();
 
                     load_custom_commit_c(
                         (&setup.p_setup).into(),
                         commit_id as u64,
                         air_instance.get_custom_commits_fixed_ptr(),
                         custom_commit_file_path.to_str().expect("Invalid path"),
+                        pctx.get_custom_commit_words_per_row(name),
                     );
                 }
             }

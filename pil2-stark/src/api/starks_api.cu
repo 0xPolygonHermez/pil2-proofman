@@ -6,6 +6,7 @@
 #include "starks_api.hpp"
 #include "starks_api_internal.cuh"
 #include "starks_api_internal.hpp"
+#include "pack_columns.hpp"
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -1016,21 +1017,96 @@ static const uint8_t *hostCacheGet(const char *path, uint64_t bytes) {
     return hostCacheGetSkip(path, bytes, 0);
 }
 
-// Custom-commits fixed blobs (e.g. the ROM merkle data) reload on every air
-// switch of a stream, in gen_proof AND in the contributions-phase root calc.
-// The chunked file path syncs the COMPUTE stream around every 128 MB fread
-// (~17 ms of GPU idle per chunk, measured); the cached path is one direct DMA
-// from registered host memory.
-static void uploadCustomCommitsFixed(DeviceCommitBuffers *d_buffers, const char *path,
-                                     uint8_t *dst, uint64_t bytes, uint64_t streamId) {
-    const uint8_t *cached = hostCacheGetSkip(path, bytes, 32);
-    if (getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[ccf] path=%s bytes=%lu cached=%d\n", path, bytes, cached != nullptr);
-    if (cached) {
-        cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-        CHECKCUDAERR(cudaMemcpyAsync(dst, cached, bytes, cudaMemcpyHostToDevice, stream));
-        return;
+
+// Rebuild the region from the resident packed blob on the stream's LOWEST-priority lane: unpack,
+// then LDE + merkelize with the same calls that produced the root. No H2D -- the source never left
+// the device. preserve_src keeps the small domain, which the expressions read. customFixedFork
+// fences against the previous proof's reads of custom_fixed (conservatively: all prior work on
+// `stream`); the caller waits customFixedDone before the first use, AFTER enqueuing the witness
+// copies, or the overlap is lost.
+static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *setupCtx, AirInstanceInfo *air,
+                                      uint32_t gpuLocalId, Goldilocks::Element *dst, StreamData &sd,
+                                      TimerGPU &timer) {
+    if (air == nullptr || air->customPolsPackedWords == 0) {
+        zklog.error("rebuildCustomCommitsFixed: no resident packed custom commit for this air");
+        exitProcess();
     }
-    load_and_copy_to_device_in_chunks(d_buffers, path, dst, bytes, streamId, 32);
+    StarkInfo &si = setupCtx->starkInfo;
+    uint64_t N = 1ull << si.starkStruct.nBits;
+    uint64_t w = si.mapSectionsN[si.customCommits[0].name + "0"];
+
+    // Custom commits are a basic-air section, so they only ever live in the basic const buffer.
+    Goldilocks::Element *packed =
+        (Goldilocks::Element *)(d_buffers->d_constPols[gpuLocalId] + air->custom_pols_offset);
+
+    CHECKCUDAERR(cudaEventRecord(sd.customFixedFork, sd.stream));
+    CHECKCUDAERR(cudaStreamWaitEvent(sd.customStream, sd.customFixedFork, 0));
+
+    unpack_fixed((uint64_t *)packed, (uint64_t *)(packed + 1), (uint64_t *)(packed + 1 + w),
+                 (uint64_t *)dst, w, N, sd.customStream, timer);
+    extendAndMerkelizeSection(w, si.starkStruct.nBits, si.starkStruct.nBitsExt,
+                              si.starkStruct.merkleTreeArity,
+                              si.getNumNodesMT(1ull << si.starkStruct.nBitsExt),
+                              dst, dst + N * w, true, timer, sd.customStream);
+
+    CHECKCUDAERR(cudaEventRecord(sd.customFixedDone, sd.customStream));
+}
+
+// Fill the slot reserved by reserve_custom_commit_slot. Once per air per GPU, from
+// register_custom_commits: the blob then stays resident, so no proof ever DMAs a custom commit.
+void upload_custom_commit_packed_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StarkInfo &si = setupCtx->starkInfo;
+    uint64_t N = 1ull << si.starkStruct.nBits;
+    uint64_t w = si.mapSectionsN[si.customCommits[0].name + "0"];
+    uint64_t words = 1 + w + N * wordsPerRow;
+
+    std::pair<uint64_t, uint64_t> key = {airgroupId, airId};
+    auto itK = d_buffers->air_instances.find(key);
+    if (itK == d_buffers->air_instances.end()) return;
+    auto itT = itK->second.find(std::string(proofType));
+    if (itT == itK->second.end()) return;
+
+    // new[], not vector: the load overwrites every word, so zero-init would be 256 MB of waste.
+    // Header word + widths + rows -- the device blob keeps the file layout, so its own header
+    // describes it, the same trick the packed const pols use.
+    std::unique_ptr<uint64_t[]> host(new uint64_t[words]);
+    loadFileParallel(host.get(), std::string(customFile), words * sizeof(uint64_t), true, CUSTOM_COMMIT_ROOT_BYTES);
+
+    for (int i = 0; i < d_buffers->n_gpus && i < (int)itT->second.size(); ++i) {
+        AirInstanceInfo *air = itT->second[i];
+        // Reserved-only: a path that reserved just GPU 0 leaves the others at offset 0, which is
+        // the const pols' own slot.
+        if (air == nullptr || air->customPolsReservedWords == 0) continue;
+        if (words > air->customPolsReservedWords) {
+            zklog.error("upload_custom_commit_packed: " + std::to_string(words) +
+                        " words exceeds the reserved " + std::to_string(air->customPolsReservedWords));
+            exitProcess();
+        }
+        cudaSetDevice(d_buffers->my_gpu_ids[i]);
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols[i] + air->custom_pols_offset, host.get(),
+                                words * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        air->customPolsPackedWords = words;
+    }
+}
+
+// Record the custom-commit slot this air was given in the const-pols buffer. Nothing is uploaded
+// here: the commit's file path only arrives with register_custom_commits, later.
+void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::pair<uint64_t, uint64_t> key = {airgroupId, airId};
+    auto itK = d_buffers->air_instances.find(key);
+    if (itK == d_buffers->air_instances.end()) return;
+    auto itT = itK->second.find(std::string(proofType));
+    if (itT == itK->second.end()) return;
+    for (int i = 0; i < d_buffers->n_gpus && i < (int)itT->second.size(); ++i) {
+        if (onlyFirstGPU && i > 0) break;
+        AirInstanceInfo *air = itT->second[i];
+        if (air == nullptr) continue;
+        air->custom_pols_offset = offset;
+        air->customPolsReservedWords = reservedWords;
+    }
 }
 
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU, bool alreadyLoaded) {
@@ -1273,11 +1349,14 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
-    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && !reuse_custom_fixed) {
-        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-        uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
-        // Skip the 32-byte Merkle-root header at the start of the file (assumes 1 custom commit per AIR).
-        uploadCustomCommitsFixed(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId);
+    bool customFixedRebuilt = false;
+    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        if (getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[ccf] air=%lu:%lu reuse=%d\n", airgroupId, airId, (int)reuse_custom_fixed);
+        if (!reuse_custom_fixed) {
+            Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            rebuildCustomCommitsFixed(d_buffers, setupCtx, air_instance_info, gpuLocalId, pCustomCommitsFixed, sd, timer);
+            customFixedRebuilt = true;
+        }
     }
 
     if (!skipRecalculation) {
@@ -1533,6 +1612,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                 (unsigned long)sd.launchSeq, (int)splitPhases);
     }
 
+    if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree, splitPhases);
     if (pipeline) {
         std::lock_guard<std::mutex> plk(sd.pipeMutex);
@@ -1597,10 +1677,16 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
-    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && !reuse_custom_fixed) {
-        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-        uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
-        uploadCustomCommitsFixed(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId);
+    // Rebuild now, wait at the end of the function: whatever consumes this instance next runs on
+    // the same stream, so the wait there orders it.
+    bool customFixedRebuilt = false;
+    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        if (getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[ccf] air=%lu:%lu reuse=%d\n", airgroupId, airId, (int)reuse_custom_fixed);
+        if (!reuse_custom_fixed) {
+            Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            rebuildCustomCommitsFixed(d_buffers, setupCtx, air_instance_info, gpuLocalId, pCustomCommitsFixed, sd, timer);
+            customFixedRebuilt = true;
+        }
     }
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
@@ -1669,6 +1755,8 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), (gl64_t*)(d_aux_trace + offsetCm1), resolveLayout(setupCtx->starkInfo.starkStruct.nBits, nCols), stream);
     }
     PROOFMAN_SUMCHECK("proof_after_unpack", d_aux_trace + offsetCm1, N * nCols, stream);
+
+    if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
 
     return streamId;
 }
@@ -2398,6 +2486,8 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
 }
 
 uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
+    // Set by the custom-commit rebuild below; the matching wait sits before its first reader.
+    bool customFixedRebuilt = false;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -2583,10 +2673,12 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             }
         }
 
+        // Rebuild now, wait just before the commit body below reads it.
+        if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[ccf-contrib] air=%lu:%lu reuse=%d\n", airgroupId, airId, (int)reuse_custom_fixed);
         if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && !reuse_custom_fixed) {
             Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
-            uploadCustomCommitsFixed(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixedDst, customCommitsSize, streamId);
+            rebuildCustomCommitsFixed(d_buffers, setupCtx, air_instance_info, gpuLocalId, pCustomCommitsFixedDst, sd, timer);
+            customFixedRebuilt = true;
         }
 
         size_t totalCopySize = 0;
@@ -2654,6 +2746,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         };
         cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
     }
+
+    if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
 
     PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
     auto commitLdeBody = [&] {
@@ -2750,21 +2844,17 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaSetDevice(d_buffers->my_gpu_ids[0]);
 
-    TimerGPU timer;
-
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
+    // Not allocating: only numNodes is wanted, the tree itself stays on the device.
     MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
 
     uint64_t treeSize = (NExtended * nCols) + mt.numNodes;
-    Goldilocks::Element* customCommitsTree = new Goldilocks::Element[treeSize];
-    mt.setSource(customCommitsTree);
-    mt.setNodes(&customCommitsTree[NExtended * nCols]);
 
     uint32_t streamId = 0;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    
+
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
@@ -2780,34 +2870,32 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     // row-major input into the storage layout.
     fromRowMajorToColMajor(N, nCols, d_buffer, d_customCommitsPols, fixedLayout(), stream);
 
-    Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
-    cudaMemcpyAsync(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
     NTTGoldilocksGPU ntt;
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    // The small-domain pols were copied to the host above, so preserve_src=false is fine even where
-    // the serial flow runs its iNTT in place on d_customCommitsPols.
     ntt.ldeColMajor((gl64_t *)d_customCommitsTree, (gl64_t *)d_customCommitsPols, nBits, nBitsExt, nCols, stream, false, (gl64_t *)pNodes, mt.numNodes);
     buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_customCommitsTree, nCols, 1ULL << nBitsExt, fixedLayout(), stream);
 
-    cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-
+    // Only the root leaves the device: the file no longer stores the tree it came from.
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    mt.getRoot(&rootGL[0]);
+    CHECKCUDAERR(cudaMemcpyAsync(rootGL, pNodes + (mt.numNodes - HASH_SIZE), HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     if(std::string(bufferFile) != "") {
+        // The packed rows are LOGICAL rows, so this file is layout-agnostic: the same file serves
+        // the CPU and GPU provers.
+        std::vector<uint64_t> pack_info(nCols, 0);
+        uint64_t words_per_row = packWidthsRowMajor((const uint64_t *)buffer, N, nCols, pack_info.data());
+        std::vector<uint64_t> packed(N * words_per_row, 0);
+        packRowsBits((const uint64_t *)buffer, packed.data(), N, nCols, pack_info.data(), words_per_row);
+
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
-        writeFileParallel(buffFile, customCommitsPols, N * nCols * sizeof(Goldilocks::Element), 32);
-        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
-        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, &words_per_row, sizeof(uint64_t), 32);
+        writeFileParallel(buffFile, pack_info.data(), nCols * sizeof(uint64_t), 40);
+        writeFileParallel(buffFile, packed.data(), N * words_per_row * sizeof(uint64_t), 40 + nCols * sizeof(uint64_t));
         fw.close();
     }
-
-    delete[] customCommitsTree;
-    delete[] customCommitsPols;
 }
 
 void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_, void *unified_buffer_gpu) {
