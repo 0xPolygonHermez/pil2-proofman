@@ -377,6 +377,11 @@ pub(crate) fn run_recursive_setup(
                             };
                             // Always make real progress even if the model rounds flat.
                             let want_q = want_q.max(cur_q + 1);
+                            crate::proving_key::recursive::check_stir_t0_fits(
+                                &comp_ss,
+                                want_q,
+                                &format!("Air '{}' compressor sizing", item.air_name),
+                            )?;
                             prev_point = Some((cur_q, cur_used));
                             tracing::info!(
                                 "Air '{}' recursive1 packs to 2^{} (n_used={}) below 2^{}; bumping compressor \

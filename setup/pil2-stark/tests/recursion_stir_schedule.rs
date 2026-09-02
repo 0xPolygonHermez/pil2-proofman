@@ -4,7 +4,7 @@
 // larger trace sizes a big air's verifier packs into. `Stir::new` asserts the |Gᵢ| < dᵢ invariant,
 // so constructing the solved test *is* the validity check.
 use pil2_stark_setup::output::stark_info::solve_low_degree_test;
-use pil2_stark_setup::proving_key::recursive::{recursive_stark_settings, RecursiveTemplate};
+use pil2_stark_setup::proving_key::recursive::{check_stir_t0_fits, recursive_stark_settings, RecursiveTemplate};
 use pil2_stark_setup::types::security::pcs::LowDegreeTest as Solved;
 use pil2_stark_setup::types::stark_struct::{generate_stark_struct, LowDegreeTest};
 
@@ -35,4 +35,21 @@ fn compressor_is_stir_across_its_trace_sizes() {
         assert_eq!(domains[0], n_bits + 2, "compressor blowup is 2");
         println!("compressor STIR at 2^{n_bits}: domains {domains:?}, t = {t:?}");
     }
+}
+
+#[test]
+fn raising_t0_respects_the_first_quotient_round() {
+    // A single fold has no quotient round: any t₀ goes (SpecifiedRanges at 2^8, t₀ 228 → 511).
+    let one_fold = serde_json::json!({"lowDegreeTest": "STIR", "logDegrees": [8, 5], "numQueries": [228]});
+    assert!(check_stir_t0_fits(&one_fold, 511, "test").is_ok());
+
+    // Two folds: iteration 1 quotients over |G₁| = t₀ + 1 points and needs |G₁| < d₁ = 2^9.
+    let two_folds = serde_json::json!({"lowDegreeTest": "STIR", "logDegrees": [12, 9, 6], "numQueries": [228, 60]});
+    assert!(check_stir_t0_fits(&two_folds, 510, "test").is_ok());
+    let err = check_stir_t0_fits(&two_folds, 511, "test").unwrap_err().to_string();
+    assert!(err.contains("|G₁| = t₀ + 1 = 512 ≥ d₁ = 2^9"), "{err}");
+
+    // FRI structs are not concerned.
+    let fri = serde_json::json!({"logDegrees": [12, 9, 6], "numQueries": 511});
+    assert!(check_stir_t0_fits(&fri, 100_000, "test").is_ok());
 }

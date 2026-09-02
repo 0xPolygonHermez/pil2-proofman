@@ -75,6 +75,36 @@ use crate::proving_key::bctree;
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 
+/// Whether a STIR schedule can take a round-1 query count of `t0`. With s = 1 the quotient of
+/// iteration 1 divides by ∏_{a∈G₁}(X − a) over |G₁| = t₀ + 1 points and needs |G₁| < d₁; raising
+/// t₀ to size a wrapping circuit (the A2 rule, the compressor bump) must respect that, or the C++
+/// loader rejects the key at prove time with a far less helpful error. A single-fold schedule
+/// has no quotient round and takes any t₀; FRI structs are not concerned.
+pub fn check_stir_t0_fits(stark_struct: &serde_json::Value, t0: u64, what: &str) -> Result<()> {
+    if stark_struct.get("lowDegreeTest").and_then(|v| v.as_str()) != Some("STIR") {
+        return Ok(());
+    }
+    let log_degrees: Vec<u64> = stark_struct
+        .get("logDegrees")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect())
+        .unwrap_or_default();
+    if log_degrees.len() < 3 {
+        return Ok(()); // M = 1: no quotient round
+    }
+    let d1 = 1u64 << log_degrees[1];
+    if t0 + 1 >= d1 {
+        bail!(
+            "{what}: raising the STIR round-1 query count to t₀ = {t0} gives |G₁| = t₀ + 1 = {} ≥ d₁ = 2^{}, \
+             leaving the quotient of iteration 1 no degree. Give this air a compressor (hasCompressor), \
+             lower its foldingFactor or raise finalDegree, or keep FRI for it.",
+            t0 + 1,
+            log_degrees[1]
+        );
+    }
+    Ok(())
+}
+
 /// Which recursive template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecursiveTemplate {
@@ -412,6 +442,9 @@ pub fn gen_recursive_setup(
                     min_queries
                 );
                 if min_queries > current_n_queries {
+                    if let Some(ss) = ss_json {
+                        check_stir_t0_fits(ss, min_queries, &format!("Air '{}' recursive1 sizing", config.air_name))?;
+                    }
                     tracing::info!(
                         "A2: adjusting nQueries for air '{}' recursive1: {} → {}",
                         config.air_name,
