@@ -504,6 +504,32 @@ pub fn gen_recursive_setup(
         }));
     }
 
+    // Above the threshold there is no escape left: a recursive1 that already wraps its
+    // compressor proof, or a recursive2, has nothing smaller to verify. Fail here with the
+    // real cause rather than later, when the next air's circuit fails to match the setup this
+    // oversize one would have become ("the recursive circuits are not uniform").
+    if ((template == RecursiveTemplate::Recursive1 && config.has_compressor) || template == RecursiveTemplate::Recursive2)
+        && plonk_result.n_bits > RECURSIVE_BITS_THRESHOLD
+    {
+        let wraps = if template == RecursiveTemplate::Recursive2 {
+            "two recursive1/recursive2 proofs".to_string()
+        } else {
+            format!("the compressor proof of air '{}'", config.air_name)
+        };
+        bail!(
+            "{} for air '{}' verifies {} and packs to 2^{} rows (n_used = {}), above the 2^{} every \
+             recursion circuit must share. The verified proof's low-degree test is too expensive in-circuit \
+             for the recursion domain: give the verified circuit a cheaper schedule (fewer round-1 queries \
+             through grinding, a smaller folding factor, or FRI), or raise RECURSIVE_BITS_THRESHOLD.",
+            template_str,
+            config.air_name,
+            wraps,
+            plonk_result.n_bits,
+            plonk_result.n_used,
+            RECURSIVE_BITS_THRESHOLD
+        );
+    }
+
     // Generate witness library (background) — done AFTER the threshold / A2 check
     // so the compiled output is from the final (possibly adjusted) circom. When
     // `defer_witness_lib` is set (compressor inside the resize loop), skip it here and

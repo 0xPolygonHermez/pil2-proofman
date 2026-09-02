@@ -1,5 +1,11 @@
 {
   "default": {
     "lowDegreeTest": "STIR"
+  },
+  "FibonacciSquare": {
+    "hasCompressor": true
+  },
+  "Module": {
+    "hasCompressor": true
   }
 }
