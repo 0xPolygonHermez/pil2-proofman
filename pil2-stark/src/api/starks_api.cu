@@ -416,8 +416,30 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
     uint64_t totalAuxTraceSize = totalAuxTraceArea * sizeof(Goldilocks::Element);
     uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
 
+    // Mops-floor pad (see DeviceCommitBuffers::MOPS_FLOOR_BYTES): raise the region BELOW the
+    // const pols to the floor so the mem-ops planner's borrow fits (its fixed regions plus the
+    // streaming-commit slots it must stay under; short of it the planner falls back to CPU mops,
+    // loudly). Clamped to the memory actually free on the first GPU minus the post-allocation margin.
+    uint64_t mopsFloorPadSize = 0;
+    {
+        uint64_t belowConsts = totalAuxTraceSize + totalAuxTraceRecursiveSize + prefetchRegionSize;
+        if (DeviceCommitBuffers::MOPS_FLOOR_BYTES > belowConsts) {
+            mopsFloorPadSize = DeviceCommitBuffers::MOPS_FLOOR_BYTES - belowConsts;
+            size_t freeMem = 0, totalMem = 0;
+            cudaSetDevice(d_buffers->my_gpu_ids[0]);
+            CHECKCUDAERR(cudaMemGetInfo(&freeMem, &totalMem));
+            uint64_t base = constPolsAggregationSize + constPolsSize + unifiedBufferPadSize + belowConsts;
+            uint64_t room = (freeMem > base + DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES)
+                                ? freeMem - base - DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES : 0;
+            if (mopsFloorPadSize > room) mopsFloorPadSize = room;
+            mopsFloorPadSize &= ~((1ull << 20) - 1);  // MiB-align, keeps offsets tidy
+        }
+    }
+    d_buffers->mopsFloorPadBytes = mopsFloorPadSize;
+    uint64_t mopsFloorPadArea = mopsFloorPadSize / sizeof(Goldilocks::Element);
+
     uint64_t totalGpuMemoryPerGpu = constPolsAggregationSize + constPolsSize + unifiedBufferPadSize +
-                                     totalAuxTraceSize + totalAuxTraceRecursiveSize + prefetchRegionSize;
+                                     totalAuxTraceSize + totalAuxTraceRecursiveSize + prefetchRegionSize + mopsFloorPadSize;
 
     uint64_t totalPinnedMemoryPerGpu = 2 * d_buffers->pinned_size * sizeof(Goldilocks::Element);
 
@@ -426,6 +448,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
     zklog.info("  - Constant polynomials aggregation: " + std::to_string(constPolsAggregationSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Snark floor padding: " + std::to_string(unifiedBufferPadSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Prefetch region: " + std::to_string(prefetchRegionSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Mops floor padding: " + std::to_string(mopsFloorPadSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     // Collapse the per-stream sizes back into "count x size" classes; they arrive grouped.
     std::string auxTraceClasses;
     for (uint32_t j = 0; j < d_buffers->n_streams; ) {
@@ -499,6 +522,9 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
             d_buffers->prefetchRegionBytes = prefetchRegionSize;
         }
         offset += prefetchRegionArea;
+
+        // Mops-floor pad: nothing lives here, it only pushes the const pols up.
+        offset += mopsFloorPadArea;
 
         // Constant polynomials aggregation
         d_buffers->d_constPolsAggregation[i] = gpuMemoryBlock + offset;
@@ -838,9 +864,7 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
         // The exec map's width, so the proof path knows the host trace's row stride. See
         // AirInstanceInfo::witness_map_cols.
-        d_buffers->air_instances[key][proofType][i]->set_witness_map(
-            execMapCols, 1ULL << setupCtx->starkInfo.starkStruct.nBits,
-            setupCtx->starkInfo.mapSectionsN["cm1"]);
+        d_buffers->air_instances[key][proofType][i]->set_witness_map(execMapCols);
         if (nBands > 0) {
             uploadGateBandConstantsGPU((uint64_t)family);
             d_buffers->air_instances[key][proofType][i]->set_gate_bands(hostBands, nBands, bandView.aux, (uint64_t)family);
@@ -1505,17 +1529,27 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // Every Rust caller that can reach this function fills compactly under the same condition, since
     // both sides read mapCols out of the same exec header. See widenCompactWitnessKernel.
     const uint64_t mapCols = air_instance_info->witness_map_cols;
-    const bool compactWitness = mapCols > 0 && mapCols < nCols && air_instance_info->d_witness_compact != nullptr;
+    const bool compactWitness = mapCols > 0 && mapCols < nCols;
+    // The compact trace lands in the stream's WITNESS TAIL past mapTotalN: every recursive-capable
+    // class is planned as mapTotalN + recursive_witness_tail_size (a full trace; SetupsVadcop) and
+    // nothing on the device addresses past mapTotalN, so N x mapCols (< N x cm1) always fits there.
+    gl64_t *d_witnessTail = d_aux_trace + setupCtx->starkInfo.mapTotalN;
+    if (compactWitness && sd.auxTraceCapacity < setupCtx->starkInfo.mapTotalN + N * mapCols) {
+        zklog.error("gen_recursive_proof: stream " + std::to_string(streamId) + " (capacity " +
+                    std::to_string(sd.auxTraceCapacity) + " elements) has no witness tail for the compact witness of air (" +
+                    std::to_string(airgroupId) + "," + std::to_string(airId) + ") " + proofType);
+        exitProcess();
+    }
     // Getting the witness onto the device happens BEFORE genProof_gpu opens STARK_GPU_PROOF, so it
     // is a timer of its own rather than a category: a category here would be divided by a window
     // that does not contain it, which is what made that table total 102% with OTHER pinned at zero.
     TimerStartGPU(timer, STARK_GPU_WITNESS);
     if (compactWitness) {
         CHECKCUDAERR(cudaMemsetAsync((uint8_t*)(d_aux_trace + offsetStage1Extended), 0, sizeTrace, stream));
-        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)air_instance_info->d_witness_compact,
+        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)d_witnessTail,
                                  N * mapCols * sizeof(Goldilocks::Element), streamId, timer, false);
         widenCompactWitnessGPU((uint64_t*)(d_aux_trace + offsetStage1Extended), nCols, N,
-                               air_instance_info->d_witness_compact, mapCols, stream);
+                               (const uint64_t*)d_witnessTail, mapCols, stream);
     } else {
         copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer, false);
     }
@@ -2424,7 +2458,8 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
 
     uint64_t totalAuxTraceSize = d_buffers->auxTraceTotalBytes;
     uint64_t constAggOffsetBytes =
-        totalAuxTraceSize + d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes;
+        totalAuxTraceSize + d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes +
+        d_buffers->prefetchRegionBytes + d_buffers->mopsFloorPadBytes;
     if (nSlots * slotBytes > constAggOffsetBytes) {
         zklog.error("stream commit slots: " + std::to_string(nSlots) + " x " +
                     std::to_string(slotBytes >> 20) + " MB does not fit below the const pols offset (" +
