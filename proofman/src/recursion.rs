@@ -14,6 +14,8 @@ use proofman_common::{
 };
 
 use std::os::raw::{c_void, c_char};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
@@ -88,6 +90,207 @@ impl fmt::Debug for AggProofs {
     }
 }
 
+/// A batched recursive1's `zkin`, in circom's input order: publics, each slot's proof, the null flags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchedZkin {
+    pub total: usize,
+    /// Offset of each slot's proof; the publics sit at 0.
+    pub slot_body: Vec<usize>,
+    /// `None` for compressor slots: their circuitType is the flag.
+    pub is_null: Option<usize>,
+    pub body_len: usize,
+}
+
+pub fn batched_zkin(k: usize, proof_len: usize, publics_circom_size: usize, basic_slots: bool) -> BatchedZkin {
+    let mut at = publics_circom_size;
+    let slot_body = (0..k)
+        .map(|_| {
+            let start = at;
+            at += proof_len;
+            start
+        })
+        .collect();
+    let is_null = basic_slots.then_some(at);
+    if is_null.is_some() {
+        at += k;
+    }
+    BatchedZkin { total: at, slot_body, is_null, body_len: proof_len }
+}
+
+/// Witness for a batched recursive1: up to `k` proofs of one air; empty slots are zeros plus their flag.
+pub fn gen_witness_recursive_batch<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    setups: &SetupsVadcop<F>,
+    proofs: &[&Proof<F>],
+) -> ProofmanResult<Proof<F>> {
+    let first = proofs.first().ok_or_else(|| ProofmanError::ProofmanError("Empty recursive1 batch".into()))?;
+    let (airgroup_id, air_id) = (first.airgroup_id, first.air_id);
+    let k = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
+    if k < 2 {
+        return Err(ProofmanError::ProofmanError(format!(
+            "Air [{airgroup_id}:{air_id}] is not batched (r1BatchSize {k}); use gen_witness_recursive"
+        )));
+    }
+    if proofs.len() > k {
+        return Err(ProofmanError::ProofmanError(format!(
+            "Recursive1 batch for air [{airgroup_id}:{air_id}] holds {k} slots, got {} proofs",
+            proofs.len()
+        )));
+    }
+    // One compile-time verkey: every slot must be this air.
+    if let Some((i, p)) = proofs.iter().enumerate().find(|(_, p)| (p.airgroup_id, p.air_id) != (airgroup_id, air_id)) {
+        return Err(ProofmanError::ProofmanError(format!(
+            "Recursive1 batch mixes airs: slot 0 is [{airgroup_id}:{air_id}], slot {i} is [{}:{}]",
+            p.airgroup_id, p.air_id
+        )));
+    }
+    let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
+    let want = if has_compressor { ProofType::Compressor } else { ProofType::Basic };
+    if let Some((i, p)) = proofs.iter().enumerate().find(|(_, p)| p.proof_type != want) {
+        return Err(ProofmanError::InvalidProof(format!(
+            "Recursive1 batch for air [{airgroup_id}:{air_id}] expects {want:?} proofs, slot {i} is {:?}",
+            p.proof_type
+        )));
+    }
+    let proof_len = first.proof.len();
+    if let Some((i, p)) = proofs.iter().enumerate().find(|(_, p)| p.proof.len() != proof_len) {
+        return Err(ProofmanError::ProofmanError(format!(
+            "Inconsistent proof sizes in recursive1 batch: slot 0 is {proof_len}, slot {i} is {}",
+            p.proof.len()
+        )));
+    }
+
+    timer_start_debug!(
+        GENERATE_RECURSIVE1_WITNESS,
+        "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
+        first.global_idx.unwrap_or(0),
+        airgroup_id,
+        air_id
+    );
+    let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+    let recursive2_setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
+
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
+    let layout = batched_zkin(k, proof_len, publics_circom_size, !has_compressor);
+
+    let mut zkin: Vec<u64> = vec![0; layout.total];
+    for (slot, p) in proofs.iter().enumerate() {
+        let at = layout.slot_body[slot];
+        zkin[at..at + proof_len].copy_from_slice(&p.proof);
+    }
+    if let Some(at) = layout.is_null {
+        for slot in proofs.len()..k {
+            zkin[at + slot] = 1;
+        }
+    }
+    add_publics_circom(&mut zkin, 0, pctx, Some(&recursive2_setup.verkey));
+
+    tracing::info!(
+        "Batched recursive1 [{}:{}]: {} of {} slots filled (instances {:?})",
+        airgroup_id,
+        air_id,
+        proofs.len(),
+        k,
+        proofs.iter().map(|p| p.global_idx).collect::<Vec<_>>()
+    );
+    let (trace, publics) = generate_witness::<F>(
+        setup,
+        memory_handler_recursive_witness,
+        first.global_idx.unwrap_or(0),
+        &zkin,
+        recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        memory_handler_recursive_witness.witness_threads(),
+    )?;
+    timer_stop_and_log_debug_net!(
+        GENERATE_RECURSIVE1_WITNESS,
+        proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
+        "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
+        first.global_idx.unwrap_or(0),
+        airgroup_id,
+        air_id
+    );
+    Ok(Proof::new_witness(
+        ProofType::Recursive1,
+        airgroup_id,
+        air_id,
+        first.global_idx,
+        trace,
+        publics,
+        setup.n_cols as usize,
+    ))
+}
+
+/// Recursive1 circuits per airgroup: `ceil(n / k)` per air.
+pub fn recursive1_counts_per_airgroup(expected: &[Vec<usize>], batch: &[Vec<usize>]) -> Vec<usize> {
+    expected
+        .iter()
+        .enumerate()
+        .map(|(ag, airs)| {
+            airs.iter()
+                .enumerate()
+                .map(|(air, &n)| n.div_ceil(batch.get(ag).and_then(|b| b.get(air)).copied().unwrap_or(1).max(1)))
+                .sum()
+        })
+        .collect()
+}
+
+/// Full, or holding the air's last planned input.
+fn should_flush(in_slot: usize, k: usize, seen: usize, planned: usize) -> bool {
+    in_slot >= k || seen >= planned
+}
+
+/// Collects one air's proofs until its batch is full or its last planned proof arrives. The plan
+/// is exact: tables skip before it is read, and every planned instance is armed in the proof ledger.
+pub struct Recursive1Batcher<F: PrimeField64> {
+    /// `[airgroup][air]`: proofs waiting for slot-mates.
+    slots: Vec<Vec<Mutex<Vec<Proof<F>>>>>,
+    /// `[airgroup][air]`: inputs this air has fed so far.
+    seen: Vec<Vec<AtomicUsize>>,
+    /// `[airgroup][air]`: inputs this process proves for the air.
+    planned: Vec<Vec<usize>>,
+}
+
+impl<F: PrimeField64> Recursive1Batcher<F> {
+    pub fn new(planned: Vec<Vec<usize>>) -> Self {
+        Self {
+            slots: planned.iter().map(|airs| airs.iter().map(|_| Mutex::new(Vec::new())).collect()).collect(),
+            seen: planned.iter().map(|airs| airs.iter().map(|_| AtomicUsize::new(0)).collect()).collect(),
+            planned,
+        }
+    }
+
+    /// Returns the witness once the batch is complete, `None` while it is still filling.
+    pub fn offer(
+        &self,
+        pctx: &ProofCtx<F>,
+        memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+        setups: &SetupsVadcop<F>,
+        proof: Proof<F>,
+    ) -> ProofmanResult<Option<Proof<F>>> {
+        let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
+        let k = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
+        if k < 2 {
+            return gen_witness_recursive(pctx, memory_handler_recursive_witness, setups, &proof).map(Some);
+        }
+
+        let chunk = {
+            let mut slot = self.slots[airgroup_id][air_id].lock().unwrap();
+            slot.push(proof);
+            let seen = self.seen[airgroup_id][air_id].fetch_add(1, Ordering::AcqRel) + 1;
+            if !should_flush(slot.len(), k, seen, self.planned[airgroup_id][air_id]) {
+                return Ok(None);
+            }
+            // Taken under the lock, so two streams cannot flush the same proofs.
+            std::mem::take(&mut *slot)
+        };
+
+        let refs: Vec<&Proof<F>> = chunk.iter().collect();
+        gen_witness_recursive_batch(pctx, memory_handler_recursive_witness, setups, &refs).map(Some)
+    }
+}
+
 pub fn gen_witness_recursive<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
@@ -153,6 +356,13 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.airgroup_id,
             proof.air_id
         );
+        // The batched circuit reads another layout; this one would produce a wrong witness.
+        let batch = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
+        if batch > 1 {
+            return Err(ProofmanError::ProofmanError(format!(
+                "Air [{airgroup_id}:{air_id}] has r1BatchSize {batch}; use gen_witness_recursive_batch"
+            )));
+        }
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
         let publics_circom_size =
@@ -1422,6 +1632,109 @@ pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
         Recursive2Proofs::new(total + 1, true)
     } else {
         Recursive2Proofs::new(total, false)
+    }
+}
+
+#[cfg(test)]
+mod batcher_tests {
+    use super::{recursive1_counts_per_airgroup, should_flush};
+
+    /// Batch sizes for `n` planned offers at batch size `k`.
+    fn sizes(n: usize, k: usize) -> Vec<usize> {
+        let (mut out, mut in_slot) = (Vec::new(), 0usize);
+        for seen in 1..=n {
+            in_slot += 1;
+            if should_flush(in_slot, k, seen, n) {
+                out.push(in_slot);
+                in_slot = 0;
+            }
+        }
+        assert_eq!(in_slot, 0, "the batcher left {in_slot} proofs unflushed");
+        out
+    }
+
+    /// What the tree depends on: the batcher emits exactly the promised count.
+    #[test]
+    fn the_batcher_emits_exactly_the_promised_count() {
+        for k in 1..=6 {
+            for n in 0..40 {
+                let s = sizes(n, k);
+                assert_eq!(s.iter().sum::<usize>(), n, "k={k} n={n}: proofs lost or duplicated");
+                assert_eq!(s.len(), recursive1_counts_per_airgroup(&[vec![n]], &[vec![k]])[0], "k={k} n={n}");
+                assert!(s.iter().all(|&x| x <= k), "k={k} n={n}: a batch overflowed its slots");
+                assert!(s.iter().rev().skip(1).all(|&x| x == k), "k={k} n={n}: only the tail may be short");
+            }
+        }
+    }
+
+    #[test]
+    fn counts_sum_over_the_airs_of_an_airgroup() {
+        // airgroup 0: 10 instances at k=5 and 7 at k=2 -> 2 + 4; airgroup 1: 3 at k=1 -> 3.
+        let counts = recursive1_counts_per_airgroup(&[vec![10, 7], vec![3]], &[vec![5, 2], vec![1]]);
+        assert_eq!(counts, vec![6, 3]);
+    }
+
+    /// A missing or zero batch size reads as unbatched rather than dividing by zero.
+    #[test]
+    fn empty_airs_and_absent_batch_sizes() {
+        assert_eq!(recursive1_counts_per_airgroup(&[vec![0, 4]], &[vec![5, 0]]), vec![4]);
+        assert_eq!(recursive1_counts_per_airgroup(&[vec![4]], &[]), vec![4]);
+    }
+}
+
+#[cfg(test)]
+mod batched_zkin_tests {
+    use super::batched_zkin;
+
+    /// No gap a signal would read as zero, no overlap where one slot writes over another.
+    fn assert_tiles(k: usize, proof_len: usize, publics: usize, basic: bool) {
+        let l = batched_zkin(k, proof_len, publics, basic);
+        assert_eq!(l.is_null.is_some(), basic, "basic slots, and only they, carry a flag");
+        let mut seen = vec![0u8; l.total];
+        let mut mark = |start: usize, len: usize, what: &str| {
+            assert!(start + len <= l.total, "{what} runs past the buffer at {} of {}", start + len, l.total);
+            for (i, s) in seen.iter_mut().enumerate().skip(start).take(len) {
+                assert_eq!(*s, 0, "{what} overlaps at {i}");
+                *s = 1;
+            }
+        };
+        mark(0, publics, "publics");
+        for (slot, &at) in l.slot_body.iter().enumerate() {
+            mark(at, l.body_len, &format!("slot {slot}"));
+        }
+        if let Some(at) = l.is_null {
+            mark(at, k, "isNull");
+        }
+        let holes = seen.iter().filter(|&&b| b == 0).count();
+        assert_eq!(holes, 0, "the layout leaves {holes} words unwritten");
+    }
+
+    /// Publics first, then each slot's proof verbatim: the unbatched shape, once per slot.
+    #[test]
+    fn publics_then_a_slot_per_proof() {
+        let l = batched_zkin(3, 100, 12, true);
+        assert_eq!(l.body_len, 100);
+        assert_eq!(l.slot_body, vec![12, 112, 212]);
+        assert_eq!(l.is_null, Some(312));
+        assert_eq!(l.total, 315);
+    }
+
+    /// Its aggregation values head its own proof, and the flag they carry replaces the separate one.
+    #[test]
+    fn compressor_slots_need_no_flag_of_their_own() {
+        let l = batched_zkin(2, 100, 12, false);
+        assert_eq!(l.slot_body, vec![12, 112]);
+        assert_eq!(l.is_null, None);
+        assert_eq!(l.total, 212);
+    }
+
+    #[test]
+    fn the_regions_tile_the_buffer() {
+        for k in 1..=5 {
+            for basic in [true, false] {
+                assert_tiles(k, 100, 12, basic);
+            }
+        }
     }
 }
 

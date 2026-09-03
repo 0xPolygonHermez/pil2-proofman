@@ -3647,11 +3647,23 @@ where
         let instances = self.pctx.dctx_get_instances();
         let mut my_instances = self.pctx.dctx_get_process_instances();
 
-        let mut n_airgroup_proofs = vec![0; n_airgroups];
+        // Proofs this process feeds each air's recursive1, Basic or compressed.
+        let mut expected_rec1: Vec<Vec<usize>> =
+            (0..n_airgroups).map(|ag| vec![0usize; self.pctx.global_info.get_n_airs_for_airgroup(ag)]).collect();
         for &instance_id in my_instances.iter() {
-            let instance_info = instances[instance_id];
-            n_airgroup_proofs[instance_info.airgroup_id] += 1;
+            let info = instances[instance_id];
+            expected_rec1[info.airgroup_id][info.air_id] += 1;
         }
+        let batch_sizes: Vec<Vec<usize>> = (0..n_airgroups)
+            .map(|ag| {
+                (0..self.pctx.global_info.get_n_airs_for_airgroup(ag))
+                    .map(|air| self.pctx.global_info.get_air_r1_batch_size(ag, air))
+                    .collect()
+            })
+            .collect();
+        // The tree counts recursive1 circuits, not instances.
+        let n_airgroup_proofs = crate::recursive1_counts_per_airgroup(&expected_rec1, &batch_sizes);
+        let rec1_batcher = Arc::new(crate::Recursive1Batcher::<F>::new(expected_rec1));
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
@@ -3795,6 +3807,7 @@ where
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
+            let rec1_batcher_clone = rec1_batcher.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
@@ -3913,34 +3926,38 @@ where
                             }
                             None => None,
                         }
-                    } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
-                        let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
+                    } else if new_proof_type == ProofType::Compressor as usize {
+                        // Compressors are never batched; only the recursive1 above them.
+                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
+                        match gen_witness_recursive(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &compressor_proof,
-                        );
-                        match w {
+                            &proof,
+                        ) {
                             Ok(witness) => Some(witness),
                             Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
+                                tracing::info!("Error generating compressor witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         }
                     } else {
-                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
+                        // Held until the air's batch is full.
+                        let proof = if p == ProofType::Compressor {
+                            compressor_proofs_clone[id as usize].write().unwrap().take().unwrap()
+                        } else {
+                            proofs_clone[id as usize].write().unwrap().take().unwrap()
+                        };
+                        match rec1_batcher_clone.offer(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &proof,
-                        );
-                        match w {
-                            Ok(witness) => Some(witness),
+                            proof,
+                        ) {
+                            Ok(witness) => witness,
                             Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
+                                tracing::info!("Error generating recursive1 witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }

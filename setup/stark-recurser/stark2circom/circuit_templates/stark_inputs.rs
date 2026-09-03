@@ -227,6 +227,8 @@ pub enum EnableInput {
     One,
     /// Emit `{component_name}.enable <== {n};`
     Value(u64),
+    /// Emit `{component_name}.enable <== {expr};`, for an enable driven by a signal.
+    Expr(String),
 }
 
 /// Generate the StarkVerifier component instantiation and signal wiring.
@@ -281,11 +283,11 @@ pub fn assign_stark_inputs(
     };
     out.push_str(&format!("    component {component_name} = {comp_type};\n"));
 
-    // Publics
+    // Publics are the template's, shared by every verifier in it, so unprefixed.
     if opts.add_publics && n_publics > 0 {
         out.push_str(&format!(
             "    for (var i=0; i< {n_publics}; i++) {{\n        \
-             {component_name}.publics[i] <== {prefix_}publics[i];\n    }}\n"
+             {component_name}.publics[i] <== publics[i];\n    }}\n"
         ));
     }
 
@@ -392,6 +394,7 @@ pub fn assign_stark_inputs(
         EnableInput::None => {}
         EnableInput::One => out.push_str(&format!("    {component_name}.enable <== 1;\n")),
         EnableInput::Value(n) => out.push_str(&format!("    {component_name}.enable <== {n};\n")),
+        EnableInput::Expr(e) => out.push_str(&format!("    {component_name}.enable <== {e};\n")),
     }
 
     out

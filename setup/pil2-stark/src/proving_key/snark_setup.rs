@@ -108,6 +108,7 @@ pub fn gen_snark_setup(
         has_recursion: false,
         is_final: false,
         agg_arity: 0,
+        batch_size: 1,
     };
     let rf_basic_vk: Vec<Vec<Vec<String>>> = vec![vec![const_root_str.to_vec()]];
     let gen_input_rf = GenCircomInput {
@@ -407,6 +408,7 @@ pub fn gen_snark_setup(
         has_recursion: false,
         is_final: true,
         agg_arity: 0,
+        batch_size: 1,
     };
     let gen_input_final = GenCircomInput {
         template_name: "src/recursion/templates/final.circom.ejs",

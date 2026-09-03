@@ -23,16 +23,28 @@ fn parse_num_proof_values(v: &Value) -> usize {
 /// Emits signal declarations for the vadcop inter-circuit signals.
 /// If `publics_names` is `Some`, each declared signal name is appended to it
 /// (mirrors `options.publicsNames` in the JS).
+/// How vadcop signals are declared; `Internal` for a batched recursive1's per-slot values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VadcopSignals {
+    Input,
+    Output,
+    Internal,
+}
+
 pub fn define_vadcop_inputs(
     vadcop_info: &Value,
     airgroup_id: usize,
     prefix: &str,
-    is_input: bool,
+    kind: VadcopSignals,
     mut publics_names: Option<&mut Vec<String>>,
 ) -> String {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-    let signal_type = if is_input { "input" } else { "output" };
+    let signal_type = match kind {
+        VadcopSignals::Input => "input ",
+        VadcopSignals::Output => "output ",
+        VadcopSignals::Internal => "",
+    };
 
     let agg_types_len = vadcop_info["aggTypes"]
         .as_array()
@@ -45,32 +57,32 @@ pub fn define_vadcop_inputs(
     let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
 
     // circuitType
-    out.push_str(&format!("    signal {signal_type} {prefix_}circuitType;\n"));
+    out.push_str(&format!("    signal {signal_type}{prefix_}circuitType;\n"));
     if let Some(ref mut pn) = publics_names {
         pn.push(format!("{prefix_}circuitType"));
     }
 
     // aggregatedProofs
-    out.push_str(&format!("    signal {signal_type} {prefix_}aggregatedProofs;\n"));
+    out.push_str(&format!("    signal {signal_type}{prefix_}aggregatedProofs;\n"));
     if let Some(ref mut pn) = publics_names {
         pn.push(format!("{prefix_}aggregatedProofs"));
     }
 
     if agg_types_len > 0 {
-        out.push_str(&format!("    signal {signal_type} {prefix_}aggregationTypes[{agg_types_len}];\n"));
+        out.push_str(&format!("    signal {signal_type}{prefix_}aggregationTypes[{agg_types_len}];\n"));
         if let Some(ref mut pn) = publics_names {
             pn.push(format!("{prefix_}aggregationTypes"));
         }
-        out.push_str(&format!("    signal {signal_type} {prefix_}airgroupvalues[{agg_types_len}][3];\n"));
+        out.push_str(&format!("    signal {signal_type}{prefix_}airgroupvalues[{agg_types_len}][3];\n"));
         if let Some(ref mut pn) = publics_names {
             pn.push(format!("{prefix_}airgroupvalues"));
         }
     }
 
     if curve == "None" {
-        out.push_str(&format!("    signal {signal_type} {prefix_}stage1Hash[{lattice_size}];\n"));
+        out.push_str(&format!("    signal {signal_type}{prefix_}stage1Hash[{lattice_size}];\n"));
     } else {
-        out.push_str(&format!("    signal {signal_type} {prefix_}stage1Hash[2][5];\n"));
+        out.push_str(&format!("    signal {signal_type}{prefix_}stage1Hash[2][5];\n"));
     }
     if let Some(ref mut pn) = publics_names {
         pn.push(format!("{prefix_}stage1Hash"));
@@ -187,6 +199,55 @@ pub fn assign_vadcop_inputs(
     out
 }
 
+/// The `circuitType` of this air's proofs, offset by 2 where type 0 marks a null proof.
+pub fn basic_circuit_type(stark_info: &Value, vadcop_info: &Value) -> u64 {
+    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
+    let airs_0_len =
+        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let air_id = stark_info["airId"].as_u64().unwrap_or(0);
+    if air_groups_len > 1 || airs_0_len > 1 {
+        air_id + 2
+    } else {
+        air_id + 1
+    }
+}
+
+/// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
+pub fn agg_types_consistency(
+    vadcop_info: &Value,
+    airgroup_id: usize,
+    slot_prefixes: &[String],
+    skip_empty_slots: bool,
+) -> String {
+    let n = vadcop_info["aggTypes"]
+        .as_array()
+        .and_then(|a| a.get(airgroup_id))
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if n == 0 {
+        return String::new();
+    }
+    // Gated on circuitType: an empty slot's types are zeros.
+    let eqs: String = slot_prefixes[1..]
+        .iter()
+        .map(|p| {
+            if skip_empty_slots {
+                format!(
+                    "        {p}_circuitType * ({}_aggregationTypes[i] - {p}_aggregationTypes[i]) === 0;\n",
+                    slot_prefixes[0]
+                )
+            } else {
+                format!("        {}_aggregationTypes[i] === {p}_aggregationTypes[i];\n", slot_prefixes[0])
+            }
+        })
+        .collect();
+    format!(
+        "    signal aggregationTypes[{n}];\n    for(var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== {}_aggregationTypes[i];\n{eqs}    }}",
+        slot_prefixes[0]
+    )
+}
+
 // ── init_vadcop_inputs ────────────────────────────────────────────────────────
 
 /// Port of `main_templates/vadcop/init_vadcop_inputs.circom.ejs`.
@@ -199,17 +260,14 @@ pub fn init_vadcop_inputs(
     airgroup_id: usize,
     stark_info: &Value,
     vadcop_info: &Value,
+    // Binary signal that is 1 when this slot carries no proof; None for a slot always full.
+    is_null: Option<&str>,
 ) -> String {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
 
-    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
-    let airs_0_len =
-        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-
-    let air_id = stark_info["airId"].as_u64().unwrap_or(0);
-    let circuit_type = if air_groups_len > 1 || airs_0_len > 1 { air_id + 2 } else { air_id + 1 };
+    let circuit_type = basic_circuit_type(stark_info, vadcop_info);
 
     let agg_types_len = vadcop_info["aggTypes"]
         .as_array()
@@ -227,9 +285,14 @@ pub fn init_vadcop_inputs(
     out.push_str(&format!("    {component_name}.globalChallenge <== globalChallenge;\n\n"));
     out.push_str("    // --> Assign the VADCOP data\n");
 
-    // circuitType
-    out.push_str(&format!("    {prefix_}circuitType <== {circuit_type};\n"));
-    // aggregatedProofs
+    // The verifier's compile-time rootC fixes the air, so an empty slot may report 0.
+    match is_null {
+        None => out.push_str(&format!("    {prefix_}circuitType <== {circuit_type};\n")),
+        Some(n) => out.push_str(&format!(
+            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * {circuit_type};\n"
+        )),
+    }
+    // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
     out.push_str(&format!("    {prefix_}aggregatedProofs <== 1;\n"));
 
     if agg_types_len > 0 {
@@ -269,7 +332,22 @@ pub fn init_vadcop_inputs(
 ///
 /// Aggregates VADCOP signals from `slot_prefixes.len()` verifier instances into one
 /// output, folding them left-to-right.  Used by `recursive2`.
-pub fn agg_vadcop_inputs(vadcop_info: &Value, airgroup_id: usize, slot_prefixes: &[String], prefix: &str) -> String {
+/// Options for `agg_vadcop_inputs`. `Default` is recursive2's behaviour.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AggVadcopOptions {
+    /// Let the caller emit `{prefix}_circuitType`; a batched recursive1 keeps its air's type.
+    pub own_circuit_type: bool,
+    /// Fold null-aware even in a single-air topology: empty SLOTS exist in every topology.
+    pub force_null: bool,
+}
+
+pub fn agg_vadcop_inputs(
+    vadcop_info: &Value,
+    airgroup_id: usize,
+    slot_prefixes: &[String],
+    prefix: &str,
+    opts: &AggVadcopOptions,
+) -> String {
     let mut out = String::new();
     let p: Vec<String> =
         slot_prefixes.iter().map(|s| if s.is_empty() { String::new() } else { format!("{s}_") }).collect();
@@ -299,8 +377,10 @@ pub fn agg_vadcop_inputs(vadcop_info: &Value, airgroup_id: usize, slot_prefixes:
     let multi_air = air_groups_len > 1 || airs_0_len > 1;
 
     // circuitType — constant based on topology
-    let circuit_type_val = if multi_air { 1 } else { 0 };
-    out.push_str(&format!("    {prefix_}circuitType <== {circuit_type_val};\n\n"));
+    if !opts.own_circuit_type {
+        let circuit_type_val = if multi_air { 1 } else { 0 };
+        out.push_str(&format!("    {prefix_}circuitType <== {circuit_type_val};\n\n"));
+    }
 
     if agg_types_len > 0 {
         out.push_str(&format!(
@@ -308,7 +388,7 @@ pub fn agg_vadcop_inputs(vadcop_info: &Value, airgroup_id: usize, slot_prefixes:
         ));
     }
 
-    if multi_air {
+    if multi_air || opts.force_null {
         // Running isNull for each intermediate accumulator.
         for k in 2..n {
             let terms: String = p[..k].iter().map(|q| format!(" - {q}isNull")).collect();
@@ -415,6 +495,10 @@ pub fn agg_vadcop_inputs(vadcop_info: &Value, airgroup_id: usize, slot_prefixes:
 mod fold_tests {
     use super::*;
 
+    fn d() -> AggVadcopOptions {
+        AggVadcopOptions::default()
+    }
+
     fn single_air() -> serde_json::Value {
         serde_json::json!({
             "aggTypes": [[{"aggType": 0, "stage": 2}]], "air_groups": ["g"],
@@ -480,13 +564,13 @@ mod fold_tests {
 
     #[test]
     fn arity_three_output_is_unchanged() {
-        assert_eq!(agg_vadcop_inputs(&single_air(), 0, &slots(3), "sv"), EXPECTED_N3_SINGLE);
-        assert_eq!(agg_vadcop_inputs(&multi_air(), 0, &slots(3), "sv"), EXPECTED_N3_MULTI);
+        assert_eq!(agg_vadcop_inputs(&single_air(), 0, &slots(3), "sv", &d()), EXPECTED_N3_SINGLE);
+        assert_eq!(agg_vadcop_inputs(&multi_air(), 0, &slots(3), "sv", &d()), EXPECTED_N3_MULTI);
     }
 
     #[test]
     fn arity_two_folds_once_and_names_no_intermediate_twice() {
-        let out = agg_vadcop_inputs(&single_air(), 0, &slots(2), "sv");
+        let out = agg_vadcop_inputs(&single_air(), 0, &slots(2), "sv", &d());
         // One combine, so exactly one AB intermediate and no reference to slot c.
         assert_eq!(out.matches("AggregateProofs(2)").count(), 1);
         assert!(!out.contains("c_sv"), "N=2 must not mention a third slot:\n{out}");

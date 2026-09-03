@@ -69,6 +69,8 @@ pub struct GenCircomOptions {
     /// Proofs a `recursive2` circuit aggregates; other templates pass 0. See
     /// `CircomGenOptions::agg_arity`, which this is forwarded into.
     pub agg_arity: usize,
+    /// Proofs one recursive1 verifies; forwarded into `CircomGenOptions::batch_size`.
+    pub batch_size: usize,
 }
 
 /// All inputs for a single `gen_circom` call.
@@ -102,6 +104,7 @@ pub fn gen_circom(input: &GenCircomInput<'_>) -> Result<String> {
         has_recursion: input.options.has_recursion,
         is_final: input.options.is_final,
         agg_arity: input.options.agg_arity,
+        batch_size: input.options.batch_size.max(1),
     };
     let rust_input = GenCircomCircuitInput {
         template_name: input.template_name,
