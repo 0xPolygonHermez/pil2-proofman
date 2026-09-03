@@ -76,7 +76,7 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             if stage == ctx.q_stage {
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
-                Ok("challengeXi".into())
+                Ok("challengeOut".into())
             } else if stage == ctx.fri_stage {
                 Ok(format!("challengesDeep[{stage_id}]"))
             } else {
@@ -87,7 +87,7 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             let id = r["id"].as_u64().unwrap_or(0);
             Ok(format!("publics[{id}]"))
         }
-        "x" => Ok("challengeXi".into()),
+        "x" => Ok("challengeOut".into()),
         "Zi" => {
             let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
             let boundary = ctx
@@ -488,7 +488,7 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
             if stage == ctx.q_stage {
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
-                Ok("challengeXi".into())
+                Ok("challengeOut".into())
             } else if stage == ctx.fri_stage {
                 Ok(format!("challengesDeep[{stage_id}]"))
             } else {
@@ -496,7 +496,7 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
             }
         }
         "public" => Ok(format!("publics[{}]", r["id"].as_u64().unwrap_or(0))),
-        "x" => Ok("challengeXi".into()),
+        "x" => Ok("challengeOut".into()),
         "Zi" => {
             let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
             let boundary = ctx

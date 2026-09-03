@@ -76,9 +76,9 @@ template Transcript() {
 
 {% for cp in challenges_per_stage %}    signal output {maxNum} challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}    signal output {maxNum} challengeQ[3];
-    signal output {maxNum} challengeXi[3];
+    signal output {maxNum} challengeOut[3];
     signal output {maxNum} challengesDeep[2][3];
-    signal output {maxNum} rFold[{{ n_steps }}][3];
+    signal output {maxNum} rFold[{{ n_folds }}][3];
     signal output {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
 
 {% if hash_commits %}{% if n_publics > 0 %}    signal publicsHash;
@@ -167,7 +167,7 @@ template VerifyFRI(prevStepBits, currStepBits, nextStepBits, e0, e1) {
 template parallel VerifyEvaluations() {
 {% for cp in challenges_per_stage %}    signal input {maxNum} challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}    signal input {maxNum} challengeQ[3];
-    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengeOut[3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
 {% if n_publics > 0 %}    signal input {maxNum} publics[{{ n_publics }}];
 {% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
@@ -175,12 +175,12 @@ template parallel VerifyEvaluations() {
 
     var q = 0xFFFFFFFFFFFFFFFF;
 
-    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
     signal {maxNum} zMul[{{ n_bits }}][3];
     zMul.maxNum = q;
     for (var i=0; i< {{ n_bits }} ; i++) {
         if(i==0){
-            zMul[i] <== GLCMul()(challengeXi, challengeXi);
+            zMul[i] <== GLCMul()(challengeOut, challengeOut);
         } else {
             zMul[i] <== GLCMul()(zMul[i-1], zMul[i-1]);
         }
@@ -194,14 +194,14 @@ template parallel VerifyEvaluations() {
     signal {maxNum} Z[3] <== GLCSub()(zMul[{{ n_bits - 1 }}], oneGL);
     signal {maxNum} Zh[3] <== GLCInv()(Z);
 
-{% if has_first_row %}    signal {maxNum} Zf[3] <== GLCSub()(challengeXi, oneGL);
+{% if has_first_row %}    signal {maxNum} Zf[3] <== GLCSub()(challengeOut, oneGL);
     signal {maxNum} Zfirst[3] <== GLCInv()(Zf);
 {% endif %}
 {% if has_last_row %}    signal {maxNum} rootGL[3];
     rootGL.maxNum = {{ zlast_root }};
     rootGL <== [{{ zlast_root }},0,0];
 
-    signal {maxNum} Zl[3] <== GLCSub()(challengeXi, rootGL);
+    signal {maxNum} Zl[3] <== GLCSub()(challengeOut, rootGL);
     signal {maxNum} Zlast[3] <== GLCInv()(Zl);
 {% endif %}
 {% for frame in every_frames %}    signal {maxNum} Zframe{{ frame.idx }}[{{ frame.size }}][3];
@@ -209,7 +209,7 @@ template parallel VerifyEvaluations() {
     signal {maxNum} root{{ frame.idx }}GL[{{ frame.size }}][3];
     root{{ frame.idx }}GL.maxNum = q;
 {% for op in frame.ops %}    root{{ frame.idx }}GL[{{ op.c }}] <== [{{ op.root }},0,0];
-    Zf{{ frame.idx }}[{{ op.c }}] <== GLCSub()(challengeXi, root{{ frame.idx }}GL[{{ op.c }}]);
+    Zf{{ frame.idx }}[{{ op.c }}] <== GLCSub()(challengeOut, root{{ frame.idx }}GL[{{ op.c }}]);
 {% if op.is_first %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zh, Zf{{ frame.idx }}[{{ op.c }}]);
 {% else %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zframe{{ frame.idx }}[{{ op.c - 1 }}], Zf{{ frame.idx }}[{{ op.c }}]);
 {% endif %}{% endfor %}{% endfor %}
@@ -252,7 +252,7 @@ template parallel VerifyEvaluations() {
 template parallel VerifyQuery(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits;
     signal input {binary} queriesL0[{{ step0_bits }}];
-    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengeOut[3];
     signal input {maxNum} challengesDeep[2][3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input {maxNum} cm{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
@@ -309,10 +309,10 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 {% for j in range(end=op.abs_opening) %}{% if op.is_positive %}    w{{ op.idx }}[{{ j + 1 }}] <== GLMul()(root, w{{ op.idx }}[{{ j }}]);
 {% else %}    w{{ op.idx }}[{{ j + 1 }}] <== GLMul()(invroot, w{{ op.idx }}[{{ j }}]);
 {% endif %}{% endfor %}    signal {maxNum} W{{ op.idx }}[3] <== GLC3()(w{{ op.idx }}[{{ op.abs_opening }}]);
-    signal {maxNum} mul{{ op.idx }}[3] <== GLCMul()(challengeXi, W{{ op.idx }});
+    signal {maxNum} mul{{ op.idx }}[3] <== GLCMul()(challengeOut, W{{ op.idx }});
     signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, mul{{ op.idx }});
     xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
-{% else %}    signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, challengeXi);
+{% else %}    signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, challengeOut);
     xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
 {% endif %}{% endfor %}
 
@@ -380,9 +380,9 @@ template VerifyFinalPol() {
 
 template parallel VerifySingleQuery() {
     signal input {binary} queriesL0[{{ step0_bits }}];
-    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengeOut[3];
     signal input {maxNum} challengesDeep[2][3];
-    signal input {maxNum} rFold[{{ n_steps }}][3];
+    signal input {maxNum} rFold[{{ n_folds }}][3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
 
@@ -475,12 +475,12 @@ template parallel VerifySingleQuery() {
 {% endif %}{% endif %}{% endfor %}
 
     // Verify the DEEP polynomial query
-    VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeXi, challengesDeep, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
+    VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, challengesDeep, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
 
     // Verify FRI construction for each folding step
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesL0[{{ step.n_bits }}];
     for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesL0[i] <== queriesL0[i]; }
-    VerifyFRI({{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }}, {{ step.e1 }})(s{{ step.s }}_queriesL0, rFold[{{ step.s }}], s{{ step.s }}_vals_p, {{ step.next_pol }}, enable);
+    VerifyFRI({{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }}, {{ step.e1 }})(s{{ step.s }}_queriesL0, rFold[{{ step.fold_idx }}], s{{ step.s }}_vals_p, {{ step.next_pol }}, enable);
 {% endif %}{% endfor %}}
 
 template StarkVerifier() {
@@ -567,10 +567,10 @@ template StarkVerifier() {
 {% for cp in challenges_per_stage %}    signal {maxNum} challengesStage{{ cp.stage }}GL[{{ cp.count }}][3];
 {% endfor %}
     signal {maxNum} challengeQGL[3];
-    signal {maxNum} challengeXiGL[3];
+    signal {maxNum} challengeOutGL[3];
     signal {maxNum} challengesDeepGL[2][3];
 
-    signal {maxNum} rFoldGL[{{ n_steps }}][3];
+    signal {maxNum} rFoldGL[{{ n_folds }}][3];
 
     signal {binary} queriesL0GL[{{ n_queries }}][{{ step0_bits }}];
 
@@ -597,7 +597,7 @@ template StarkVerifier() {
     for (var q = 0; q < {{ n_queries }}; q++) {
         VerifySingleQuery()(
             queriesL0GL[q],
-            challengeXiGL,
+            challengeOutGL,
             challengesDeepGL,
             rFoldGL,
             evalsGL,

@@ -139,7 +139,8 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
 
-    Goldilocks::Element challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size() + 1) * FIELD_EXTENSION];
+    // Stage challenges, then for FRI one r^fold per fold (M = domains − 1) and the query seed.
+    Goldilocks::Element challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size()) * FIELD_EXTENSION];
 
     TranscriptType transcript(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
     if(!challengesVadcop) {
@@ -265,11 +266,12 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         return false;
     }
     } else {
+    // r^fold_{step−1} is drawn after the root of f_{step−1}; nothing precedes f_0's root.
     for (uint64_t step=0; step<starkInfo.starkStruct.logDomainSizes.size(); step++) {
         if (step > 0) {
             transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+            c++;
         }
-        c++;
         if (step < starkInfo.starkStruct.logDomainSizes.size() - 1) {
             ElementType root[nFieldElements];
             if(nFieldElements == 1) {
@@ -303,9 +305,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
     transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
     c++;
-    assert(c == (starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size() + 1));
+    assert(c == (starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size()));
 
-    Goldilocks::Element *challenge = &challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size()) * FIELD_EXTENSION];
+    Goldilocks::Element *challenge = &challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.logDomainSizes.size() - 1) * FIELD_EXTENSION];
 
     Goldilocks::Element nonce = Goldilocks::fromString(jproof["nonce"]);
     if constexpr (std::is_same<ElementType, Goldilocks::Element>::value) {
@@ -779,7 +781,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                     starkInfo.starkStruct.nBitsExt, 
                     starkInfo.starkStruct.logDomainSizes[step], 
                     starkInfo.starkStruct.logDomainSizes[step - 1],
-                    &challenges[(starkInfo.challengesMap.size() + step)*FIELD_EXTENSION],
+                    &challenges[(starkInfo.challengesMap.size() + step - 1)*FIELD_EXTENSION], // r^fold_{step−1}
                     idx,
                     values
                 );

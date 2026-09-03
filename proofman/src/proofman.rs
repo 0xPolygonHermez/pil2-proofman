@@ -5468,10 +5468,11 @@ where
             air_instance.init_aux_trace(shared_aux_trace.expect("CPU verify requires shared aux_trace").clone());
         }
         air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
+        // Stage challenges plus the low-degree test's (FRI: one r^fold per fold and the query
+        // seed), the same count the native verifier allocates.
         air_instance.init_challenges(
             (setup.stark_info.challenges_map.as_ref().unwrap().len()
-                + setup.stark_info.stark_struct.low_degree_test.num_ldt_challenges()
-                + 1)
+                + setup.stark_info.stark_struct.low_degree_test.num_ldt_challenges())
                 * 3,
         );
 

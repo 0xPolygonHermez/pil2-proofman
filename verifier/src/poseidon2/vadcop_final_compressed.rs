@@ -4433,7 +4433,7 @@ fn verifier_info() -> VerifierInfo {
         n_fri_queries: 54,
         n_fri_steps: 4,
         n_challenges: 6,
-        n_challenges_total: 11,
+        n_challenges_total: 10,
         fri_steps: vec![19, 16, 13, 10],
         hash_commits: true,
         last_level_verification: 6,

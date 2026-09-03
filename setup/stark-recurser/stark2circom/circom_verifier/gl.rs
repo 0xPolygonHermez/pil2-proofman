@@ -106,6 +106,7 @@ fn build_tera_context(
     let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
     let stir_folding_factors: Vec<u64> =
         ss["foldingFactors"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
+    // `log₂ dᵢ` of every oracle, f₀ first, then the final polynomial (both tests carry it).
     let stir_log_degrees: Vec<u64> =
         ss["logDegrees"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let stir_num_queries: Vec<u64> = if is_stir {
@@ -299,10 +300,19 @@ fn build_tera_context(
             };
             let val_size = 1u64 << prev_bits.saturating_sub(n_bits_s);
             let mt_size = 1u64 << n_bits_s;
+            // Tree s commits f_{s−1} over L_{s−1} (2^prev_bits points); FRI keeps the rate, so
+            // its degree bound is the domain minus the blowup when the schedule does not say.
+            let log_degree = stir_log_degrees
+                .get(s.saturating_sub(1))
+                .copied()
+                .unwrap_or(prev_bits.saturating_sub((n_bits_ext - n_bits) as u64));
             serde_json::json!({
                 "s": s,
                 "n_bits": n_bits_s,
                 "prev_bits": prev_bits,
+                "log_degree": log_degree,
+                // r^fold_{s−1} folds f_{s−1} (tree s) into f_s.
+                "fold_idx": s.saturating_sub(1),
                 "next_bits": next_bits,
                 "exponent": exponent,
                 "merkle_levels": ml,
@@ -362,6 +372,7 @@ fn build_tera_context(
                 "tree": i + 1,
                 "t": t,
                 "log_l": log_l,
+                "log_d": stir_log_degrees.get(i).copied().unwrap_or(0),
                 "log_k": log_k,
                 "coset_size": 1u64 << log_k,
                 "log_leaves": log_leaves,
@@ -520,7 +531,7 @@ fn build_tera_context(
         }
     }
     inputs_p.push("challengeQ".into());
-    inputs_p.push("challengeXi".into());
+    inputs_p.push("challengeOut".into());
     inputs_p.push("evals".into());
     if n_publics > 0 {
         inputs_p.push("publics".into());
@@ -657,7 +668,7 @@ fn build_tera_context(
 
     t.get_field("challengeQ");
     t.put(&format!("root{q_stage}"), 4);
-    t.get_field("challengeXi");
+    t.get_field("challengeOut");
 
     // In hash_commits mode the EJS calls transcript.getCode() HERE (split 1) before
     // emitting the side evals transcript and continuing with FRI challenges.
@@ -723,8 +734,12 @@ fn build_tera_context(
         }
         t.get_field(&format!("challengesQueries[{}]", stir_m - 1));
     } else {
+        // s{s+1}_root commits f_s; r^fold_s is drawn right after it and folds f_s into f_{s+1}.
+        // Nothing is drawn before f_0's root, so FRI has M = n_steps − 1 folding challenges, like STIR.
         for si_idx in 0..n_steps {
-            t.get_field(&format!("rFold[{si_idx}]"));
+            if si_idx > 0 {
+                t.get_field(&format!("rFold[{}]", si_idx - 1));
+            }
             if si_idx < n_steps - 1 {
                 t.put(&format!("s{}_root", si_idx + 1), 4);
             } else if !hash_commits {
@@ -732,7 +747,7 @@ fn build_tera_context(
                     t.put(&format!("finalPol[{j}]"), 3);
                 }
             } else {
-                // Split 2: capture FRI code up to rFold[n_steps-1].
+                // Split 2: capture FRI code up to the last folding challenge.
                 transcript_code_fri_mid = t.get_code();
                 let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
                 t_fp.set_drain_in_update_state(true);
@@ -775,7 +790,7 @@ fn build_tera_context(
             challenge_names.push(format!("challengesStage{stage}"));
         }
     }
-    challenge_names.extend(["challengeQ", "challengeXi", "challengesDeep"].iter().map(|s| s.to_string()));
+    challenge_names.extend(["challengeQ", "challengeOut", "challengesDeep"].iter().map(|s| s.to_string()));
     let challenge_names_joined = challenge_names.join(",");
 
     // ── si_roots_joined — the LDT roots handed to the transcript ─────────────
@@ -811,7 +826,7 @@ fn build_tera_context(
             verify_evals_inputs.push(format!("challengesStage{stage}"));
         }
     }
-    verify_evals_inputs.extend(["challengeQ", "challengeXi", "evals"].iter().map(|s| s.to_string()));
+    verify_evals_inputs.extend(["challengeQ", "challengeOut", "evals"].iter().map(|s| s.to_string()));
     if n_publics > 0 {
         verify_evals_inputs.push("publics".into());
     }
@@ -869,7 +884,25 @@ fn build_tera_context(
     ctx.insert("max_deg_bits", &max_deg_bits);
     let max_deg_size: u64 = 1u64 << max_deg_bits;
     ctx.insert("max_deg_size", &max_deg_size);
+    let final_log_degree: u64 = if is_stir { stir_log_degrees.last().copied().unwrap_or(0) } else { max_deg_bits };
+    ctx.insert("final_log_degree", &final_log_degree);
+    // Header summary of the main template: the air and its schedule, preformatted so the
+    // template only interpolates strings.
+    ctx.insert("air_name", &si["name"].as_str().unwrap_or(""));
+    ctx.insert("blowup_bits", &(n_bits_ext - n_bits));
+    let folding_factors: Vec<u64> = if !stir_folding_factors.is_empty() {
+        stir_folding_factors.clone()
+    } else {
+        steps.windows(2).map(|w| w[0] - w[1]).collect()
+    };
+    ctx.insert("folding_factors_str", &format!("{folding_factors:?}"));
+    ctx.insert("log_domain_sizes_str", &format!("{steps:?}"));
+    ctx.insert("log_degrees_str", &format!("{stir_log_degrees:?}"));
+    ctx.insert("queries_str", &if is_stir { format!("{stir_num_queries:?}") } else { n_queries.to_string() });
+    ctx.insert("grinding_str", &if is_stir { format!("{stir_grinding:?}") } else { pow_bits.to_string() });
     ctx.insert("n_steps", &n_steps);
+    // M, the number of folds (and of r^fold challenges): one fewer than the committed domains.
+    ctx.insert("n_folds", &n_steps.saturating_sub(1));
     ctx.insert("arity", &arity);
     ctx.insert("n_bits_arity", &n_bits_arity);
     ctx.insert("siblings_width", &siblings_width);

@@ -258,11 +258,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     {
     TimerStart(STARK_FRI_FOLDING);
         uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
+        // Commit f_0 (the DEEP polynomial), then for step = 1..M draw r^fold_{step-1}, fold f_{step-1}
+        // into f_step and commit it; f_M is sent in clear. A last squeeze seeds the query phase.
         for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); step++)
-        {   
+        {
             uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
-            uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
-            FRI<Goldilocks::Element>::fold(step, deepPol, challenge, nBitsExt, prevBits, currentBits);
+            if (step > 0)
+            {
+                starks.getChallenge(transcript, *challenge);
+                FRI<Goldilocks::Element>::fold(step, deepPol, challenge, nBitsExt, setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1], currentBits);
+            }
             if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
             {
                 FRI<Goldilocks::Element>::merkelize(step, proof, deepPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1]);
@@ -279,8 +284,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
                 } 
                 
             }
-            starks.getChallenge(transcript, *challenge);
         }
+        starks.getChallenge(transcript, *challenge);
         TimerStopAndLog(STARK_FRI_FOLDING);
         TimerStart(STARK_FRI_QUERIES);
 

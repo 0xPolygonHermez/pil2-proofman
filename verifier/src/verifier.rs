@@ -395,11 +395,12 @@ where
     transcript.get_field(&mut challenges[5].value);
 
     let mut c = 6;
+    // r^fold_{i-1} is drawn after the root of f_{i-1}; nothing precedes f_0's root.
     for i in 0..verifier_info.n_fri_steps {
         if i > 0 {
             transcript.get_field(&mut challenges[c].value);
+            c += 1;
         }
-        c += 1;
         if i < verifier_info.n_fri_steps - 1 {
             transcript.put(&roots_fri[i as usize]);
         } else {
@@ -561,7 +562,7 @@ where
                 verifier_info.n_bits_ext,
                 verifier_info.fri_steps[s as usize + 1],
                 verifier_info.fri_steps[s as usize],
-                challenges[verifier_info.n_challenges as usize + s as usize + 1],
+                challenges[verifier_info.n_challenges as usize + s as usize], // r^fold_s
                 idx,
                 &vals_fri[q][s as usize],
             );

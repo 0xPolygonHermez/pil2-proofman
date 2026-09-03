@@ -290,6 +290,7 @@ fn build_tera_context_bn128(
                 "e1": e1,
                 "is_last": is_last,
                 "next_pol": next_pol,
+                "fold_idx": s.saturating_sub(1),
             })
         })
         .collect();
@@ -387,7 +388,7 @@ fn build_tera_context_bn128(
     }
     t.get_field("challengeQ");
     t.put_single(&format!("root{q_stage}"));
-    t.get_field("challengeXi");
+    t.get_field("challengeOut");
 
     if !hash_commits {
         for i in 0..ev_map_len {
@@ -404,8 +405,11 @@ fn build_tera_context_bn128(
     }
     t.get_field("challengesDeep[0]");
     t.get_field("challengesDeep[1]");
+    // r^fold_s is drawn right after the root of f_s (nothing before f_0's root): M = n_steps − 1.
     for si_idx in 0..n_steps {
-        t.get_field(&format!("rFold[{si_idx}]"));
+        if si_idx > 0 {
+            t.get_field(&format!("rFold[{}]", si_idx - 1));
+        }
         if si_idx < n_steps - 1 {
             t.put_single(&format!("s{}_root", si_idx + 1));
         } else if !hash_commits {
@@ -450,7 +454,7 @@ fn build_tera_context_bn128(
             challenge_names.push(format!("challengesStage{stage}GL"));
         }
     }
-    challenge_names.extend(["challengeQGL", "challengeXiGL", "challengesDeepGL"].iter().map(|s| s.to_string()));
+    challenge_names.extend(["challengeQGL", "challengeOutGL", "challengesDeepGL"].iter().map(|s| s.to_string()));
     let challenge_names_joined = challenge_names.join(",");
 
     // ── transcript_call_inputs ───────────────────────────────────────────────
@@ -476,7 +480,7 @@ fn build_tera_context_bn128(
             verify_evals_inputs.push(format!("challengesStage{stage}GL"));
         }
     }
-    verify_evals_inputs.extend(["challengeQGL", "challengeXiGL", "evalsGL"].iter().map(|s| s.to_string()));
+    verify_evals_inputs.extend(["challengeQGL", "challengeOutGL", "evalsGL"].iter().map(|s| s.to_string()));
     if n_publics > 0 {
         verify_evals_inputs.push("publicsGL".into());
     }
@@ -509,6 +513,7 @@ fn build_tera_context_bn128(
     ctx.insert("ev_map_len", &ev_map_len);
     ctx.insert("n_air_group_values", &n_air_group_values);
     ctx.insert("n_steps", &n_steps);
+    ctx.insert("n_folds", &n_steps.saturating_sub(1));
     ctx.insert("arity", &arity);
     ctx.insert("n_bits_arity", &n_bits_arity);
     ctx.insert("merkle_levels_s0", &merkle_levels_s0);

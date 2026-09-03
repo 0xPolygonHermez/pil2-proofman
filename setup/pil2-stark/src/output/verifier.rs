@@ -158,9 +158,10 @@ fn prepare_verifier_rust(
             lines.push(format!("        n_fri_queries: {},", fri.num_queries));
             lines.push(format!("        n_fri_steps: {},", fri.log_domain_sizes.len()));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
+            // Stage challenges, one r^fold per fold (M = domains − 1) and the query seed.
             lines.push(format!(
                 "        n_challenges_total: {},",
-                stark_info.challenges_map.len() + fri.log_domain_sizes.len() + 1
+                stark_info.challenges_map.len() + fri.log_domain_sizes.len()
             ));
 
             lines.push(format!("        fri_steps: vec![{}],", vec_str(&fri.log_domain_sizes)));
