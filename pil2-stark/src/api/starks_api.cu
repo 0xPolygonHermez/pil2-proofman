@@ -1614,7 +1614,10 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         uint64_t offsetConstTree = itConstTree->second;
         d_const_tree = d_aux_trace + offsetConstTree;
 
-        if (!reuse_const_tree) {
+        // calculateFixedExtended airs rebuild the tree inside genProof_gpu (same flag, same reuse
+        // gate); the rest still upload the consttree file. Either way ("const", true) holds this
+        // slot's tree on exit.
+        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
             load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
         }
     }
