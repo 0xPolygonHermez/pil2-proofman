@@ -337,7 +337,7 @@ template {{ map_values_name }}() {
 {% else %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.idx }} <== [vals_{{ cc.name }}_0[{{ pol.stage_pos }}],vals_{{ cc.name }}_0[{{ pol.stage_pos + 1 }}] , vals_{{ cc.name }}_0[{{ pol.stage_pos + 2 }}]];
 {% endif %}{% endfor %}{% endfor %}{% endfor %}
 {% for stage_pols in cm_pols_by_stage %}{% for pol in stage_pols.pols %}{% if pol.dim == 1 %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== vals{{ stage_pols.stage }}[{{ pol.stage_pos }}];
-{% else %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== [vals{{ stage_pols.stage }}[{{ pol.stage_pos }}],vals{{ stage_pols.stage }}[{{ pol.stage_pos + 1 }}] , vals{{ stage_pols.stage }}[{{ pol.stage_pos + 2 }}]];
+{% else %}    cm{{ stage_pols.stage }}_{{ pol.idx }} <== [vals{{ stage_pols.stage }}[{{ pol.stage_pos }}], vals{{ stage_pols.stage }}[{{ pol.stage_pos + 1 }}], vals{{ stage_pols.stage }}[{{ pol.stage_pos + 2 }}]];
 {% endif %}{% endfor %}{% endfor %}}
 
 {% if not is_stir %}template {{ verify_final_pol_name }}() {
@@ -1084,7 +1084,10 @@ template {{ verifier_name }}() {
 
     // T_{{ r.i }} holds the committed g_{{ r.i }}; the virtual f_{{ r.i }} is obtained pointwise as
     //   f(x) = (g(x) − Ans(x)) · V_G(x)^{−1} · Σ_{j=0}^{|G|} (r_comb·x)^j
-    // with round {{ r.i }}'s quotient data. Member j of leaf m sits at x = shift·ω^m·W_j.
+    // with round {{ r.i }}'s quotient data. Member j of leaf m sits at x = c·ω^j, c = shift·ω^m.
+    // Ans and U = V_G/(x − r_out)·X^d are evaluated on each whole coset at once (reduction
+    // modulo X^{2^k} − c^{2^k} plus a DFT, see StirCosetEval*), and the degree-correction power
+    // (r_comb·x)^{|G|+1} = (r_comb·c)^{|G|+1}·ω^{j(|G|+1)} is raised once per coset.
     signal cPt{{ r.i }}[{{ r.t }}];
     for (var q = 0; q < {{ r.t }}; q++) {
         cPt{{ r.i }}[q] <== StirPointAcc({{ r.log_leaves }}, {{ r.log_l }}, {{ gl_shift }}, 0)(leafBits{{ r.i }}[q]);
@@ -1093,34 +1096,76 @@ template {{ verifier_name }}() {
     for (var q = 0; q < {{ r.t }}; q++) {
 {% for off in r.member_offsets %}        xm{{ r.i }}[q][{{ loop.index0 }}] <== cPt{{ r.i }}[q] * {{ off }};
 {% endfor %}    }
-    signal ansAtX{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal vf{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][{{ prev.t }}];
-    signal vacc{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][{{ prev.t }}];
-    signal vg{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal vinv{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal geo{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    // Constant twiddles ω^{j·v} selected by the data-dependent v = d mod 2^k (dropped repeats)
+    // and v = (|G|+1) mod 2^k (degree-correction exponent), from their low k bits.
+    signal {binary} dLow{{ r.i }}[{{ r.log_k }}];
+    signal {binary} eLow{{ r.i }}[{{ r.log_k }}];
+    for (var i = 0; i < {{ r.log_k }}; i++) {
+        dLow{{ r.i }}[i] <== dBits{{ prev.i }}[i];
+        eLow{{ r.i }}[i] <== expBits{{ prev.i }}[i];
+    }
+    signal {binary} indD{{ r.i }}[{{ r.coset_size }}] <== StirIndicators({{ r.log_k }})(dLow{{ r.i }});
+    signal {binary} indE{{ r.i }}[{{ r.coset_size }}] <== StirIndicators({{ r.log_k }})(eLow{{ r.i }});
+    signal wD{{ r.i }}[{{ r.coset_size }}];
+    signal wE{{ r.i }}[{{ r.coset_size }}];
+    for (var j = 0; j < {{ r.coset_size }}; j++) {
+        var accD = 0;
+        var accE = 0;
+        for (var v = 0; v < {{ r.coset_size }}; v++) {
+            accD += indD{{ r.i }}[v] * (roots({{ r.log_k }}) ** (j * v));
+            accE += indE{{ r.i }}[v] * (roots({{ r.log_k }}) ** (j * v));
+        }
+        wD{{ r.i }}[j] <== accD;
+        wE{{ r.i }}[j] <== accE;
+    }
+    signal ansAt{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal uAt{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
+    signal cD{{ r.i }}[{{ r.t }}];
+    signal zPow{{ r.i }}[{{ r.t }}][3];
+    signal xD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
+    signal vD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal den{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal {binary} denZero{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
+    signal vP{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal vPinv{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal num{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal dzG{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
+    signal numAdj{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal numS{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal quot{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal fx{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     for (var q = 0; q < {{ r.t }}; q++) {
+        ansAt{{ r.i }}[q] <== StirCosetEval3({{ prev.n_g_max }}, {{ r.log_k }})(ansCoeffs{{ prev.i }}, cPt{{ r.i }}[q]);
+        uAt{{ r.i }}[q] <== StirCosetEval1({{ prev.t + 1 }}, {{ r.log_k }})(uCoefs{{ prev.i }}, cPt{{ r.i }}[q]);
+        cD{{ r.i }}[q] <== StirPowBase({{ prev.exp_bits }})(cPt{{ r.i }}[q], dBits{{ prev.i }});
+        zPow{{ r.i }}[q] <== StirPowE3({{ prev.exp_bits }})([rComb[{{ prev.i }}][0] * cPt{{ r.i }}[q], rComb[{{ prev.i }}][1] * cPt{{ r.i }}[q], rComb[{{ prev.i }}][2] * cPt{{ r.i }}[q]], expBits{{ prev.i }});
         for (var j = 0; j < {{ r.coset_size }}; j++) {
-            ansAtX{{ r.i }}[q][j] <== EvalPol({{ prev.n_g_max }})(ansCoeffs{{ prev.i }}, [xm{{ r.i }}[q][j], 0, 0]);
-            // V_G(x): the fresh shift points contribute base-field factors, r_out the one
-            // extension factor. G ∩ L = ∅ (Remark 5.3), so V never vanishes on the domain.
-            for (var m = 0; m < {{ prev.t }}; m++) {
-                vf{{ r.i }}[q][j][m] <== fresh{{ prev.i }}[m] * (xm{{ r.i }}[q][j] - gpt{{ prev.i }}[m]);
-                if (m == 0) {
-                    vacc{{ r.i }}[q][j][0] <== vf{{ r.i }}[q][j][0] + 1 - fresh{{ prev.i }}[0];
-                } else {
-                    vacc{{ r.i }}[q][j][m] <== vacc{{ r.i }}[q][j][m-1] * (vf{{ r.i }}[q][j][m] + 1 - fresh{{ prev.i }}[m]);
-                }
+            // V_G(x) = (x − r_out) · U(x) · x^{−d}; G ∩ L = ∅ (Remark 5.3) keeps it nonzero. The
+            // x^d = c^d·ω^{jd} is applied to the inverse below.
+            xD{{ r.i }}[q][j] <== cD{{ r.i }}[q] * wD{{ r.i }}[j];
+            vD{{ r.i }}[q][j][0] <== (xm{{ r.i }}[q][j] - rOut[{{ prev.i }}][0]) * uAt{{ r.i }}[q][j];
+            vD{{ r.i }}[q][j][1] <== (- rOut[{{ prev.i }}][1]) * uAt{{ r.i }}[q][j];
+            vD{{ r.i }}[q][j][2] <== (- rOut[{{ prev.i }}][2]) * uAt{{ r.i }}[q][j];
+            // Degree correction Σ_{i=0}^{|G|} y^i = (y^{|G|+1} − 1)/(y − 1), y = r_comb·x, equal to
+            // |G|+1 when y = 1 (stir_math.hpp geometricSum). Branch-free: the denominator is
+            // bumped by 1 exactly when it vanishes, and the numerator swapped for |G|+1.
+            for (var e = 0; e < 3; e++) {
+                den{{ r.i }}[q][j][e] <== rComb[{{ prev.i }}][e] * xm{{ r.i }}[q][j] - (e == 0 ? 1 : 0);
+                num{{ r.i }}[q][j][e] <== zPow{{ r.i }}[q][e] * wE{{ r.i }}[j] - (e == 0 ? 1 : 0);
             }
-            vg{{ r.i }}[q][j][0] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (xm{{ r.i }}[q][j] - rOut[{{ prev.i }}][0]);
-            vg{{ r.i }}[q][j][1] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (- rOut[{{ prev.i }}][1]);
-            vg{{ r.i }}[q][j][2] <== vacc{{ r.i }}[q][j][{{ prev.t - 1 }}] * (- rOut[{{ prev.i }}][2]);
-            vinv{{ r.i }}[q][j] <== CInv()(vg{{ r.i }}[q][j]);
-            geo{{ r.i }}[q][j] <== StirGeoSum({{ prev.exp_bits }})([rComb[{{ prev.i }}][0] * xm{{ r.i }}[q][j], rComb[{{ prev.i }}][1] * xm{{ r.i }}[q][j], rComb[{{ prev.i }}][2] * xm{{ r.i }}[q][j]], expBits{{ prev.i }}, nG{{ prev.i }} + 1);
-            quot{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAtX{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAtX{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAtX{{ r.i }}[q][j][2]], vinv{{ r.i }}[q][j]);
-            fx{{ r.i }}[q][j] <== CMul()(quot{{ r.i }}[q][j], geo{{ r.i }}[q][j]);
+            denZero{{ r.i }}[q][j] <== StirIsZero3()(den{{ r.i }}[q][j]);
+            dzG{{ r.i }}[q][j] <== denZero{{ r.i }}[q][j] * (nG{{ prev.i }} + 1);
+            for (var e = 0; e < 3; e++) {
+                numAdj{{ r.i }}[q][j][e] <== num{{ r.i }}[q][j][e] * (1 - denZero{{ r.i }}[q][j]) + (e == 0 ? dzG{{ r.i }}[q][j] : 0);
+            }
+            // One inversion for V_G(x)·(y − 1): f(x) = (g(x) − Ans(x)) · x^d·num / ((x − r_out)·U(x)·(y − 1)).
+            vP{{ r.i }}[q][j] <== CMul()(vD{{ r.i }}[q][j], [den{{ r.i }}[q][j][0] + denZero{{ r.i }}[q][j], den{{ r.i }}[q][j][1], den{{ r.i }}[q][j][2]]);
+            vPinv{{ r.i }}[q][j] <== CInv()(vP{{ r.i }}[q][j]);
+            for (var e = 0; e < 3; e++) {
+                numS{{ r.i }}[q][j][e] <== numAdj{{ r.i }}[q][j][e] * xD{{ r.i }}[q][j];
+            }
+            quot{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAt{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAt{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAt{{ r.i }}[q][j][2]], vPinv{{ r.i }}[q][j]);
+            fx{{ r.i }}[q][j] <== CMul()(quot{{ r.i }}[q][j], numS{{ r.i }}[q][j]);
         }
     }
     // Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }}) at this round's points.
@@ -1135,50 +1180,24 @@ template {{ verifier_name }}() {
     signal {binary} rOutBase{{ r.i }} <== StirIsZero3()([0, rOut[{{ r.i }}][1], rOut[{{ r.i }}][2]]);
     enabled * rOutBase{{ r.i }} === 0;
 
-    // Repeated shift queries are dropped from G (sampling is with replacement):
-    // two queries collide iff their leaf indices agree — the point only depends on
-    // raw % nLeaves. The bits are already boolean-constrained by the transcript, so the
-    // packed field values compare faithfully. fresh[q] = no earlier query has the same leaf.
-    signal leafVal{{ r.i }}[{{ r.t }}];
-    for (var q = 0; q < {{ r.t }}; q++) {
-        var acc = 0;
-        for (var i = 0; i < {{ r.log_leaves }}; i++) { acc += leafBits{{ r.i }}[q][i] * (1 << i); }
-        leafVal{{ r.i }}[q] <== acc;
-    }
-    signal {binary} eq{{ r.i }}[{{ r.t }}][{{ r.t }}];
-    signal fresh{{ r.i }}[{{ r.t }}];
-    signal freshAcc{{ r.i }}[{{ r.t }}][{{ r.t }}];
-    for (var q = 0; q < {{ r.t }}; q++) {
-        for (var m = 0; m < {{ r.t }}; m++) {
-            if (m < q) {
-                eq{{ r.i }}[q][m] <== IsZero()(leafVal{{ r.i }}[q] - leafVal{{ r.i }}[m]);
-            } else {
-                eq{{ r.i }}[q][m] <== 0;
-            }
-        }
-    }
-    for (var q = 0; q < {{ r.t }}; q++) {
-        for (var m = 0; m < {{ r.t }}; m++) {
-            if (m == 0) {
-                if (q == 0) {
-                    freshAcc{{ r.i }}[q][0] <== 1;
-                } else {
-                    freshAcc{{ r.i }}[q][0] <== 1 - eq{{ r.i }}[q][0];
-                }
-            } else if (m < q) {
-                freshAcc{{ r.i }}[q][m] <== freshAcc{{ r.i }}[q][m-1] * (1 - eq{{ r.i }}[q][m]);
-            } else {
-                freshAcc{{ r.i }}[q][m] <== freshAcc{{ r.i }}[q][m-1];
-            }
-        }
-        fresh{{ r.i }}[q] <== freshAcc{{ r.i }}[q][{{ r.t - 1 }}];
-    }
+    // Repeated shift queries are dropped from G (sampling is with replacement): two queries
+    // collide iff they fold to the same point of L^{2^k}, which is injective in the leaf index.
+    // fresh[q] = no earlier query hit the same point.
+    signal {binary} fresh{{ r.i }}[{{ r.t }}] <== StirFresh({{ r.t }})(gpt{{ r.i }});
     // |G| = 1 + Σ fresh, and the Ans hint has exactly |G| live coefficients: the zero-padded
     // tail is pinned to zero so a padded hint cannot smuggle extra degrees of freedom.
     var nGAcc{{ r.i }} = 1;
     for (var q = 0; q < {{ r.t }}; q++) { nGAcc{{ r.i }} += fresh{{ r.i }}[q]; }
     signal nG{{ r.i }} <== nGAcc{{ r.i }};
     signal {binary} expBits{{ r.i }}[{{ r.exp_bits }}] <== Num2Bits({{ r.exp_bits }})(nG{{ r.i }} + 1);
+    // U(X) = Π_q (X − fresh_q·gpt_q) = V_{fresh points}(X) · X^d, d = t − Σ fresh dropped repeats
+    // (their factor degenerates to X). Built once here, evaluated on every coset of the next
+    // round, where the X^d is divided out again.
+    signal hPt{{ r.i }}[{{ r.t }}];
+    for (var q = 0; q < {{ r.t }}; q++) { hPt{{ r.i }}[q] <== fresh{{ r.i }}[q] * gpt{{ r.i }}[q]; }
+    signal uCoefs{{ r.i }}[{{ r.t + 1 }}] <== StirVanishingShifted({{ r.t }})(hPt{{ r.i }});
+    signal dDup{{ r.i }} <== {{ r.t + 1 }} - nG{{ r.i }};
+    signal {binary} dBits{{ r.i }}[{{ r.exp_bits }}] <== Num2Bits({{ r.exp_bits }})(dDup{{ r.i }});
     signal {binary} ansUsed{{ r.i }}[{{ r.n_g_max }}];
     for (var m = 0; m < {{ r.n_g_max }}; m++) {
         ansUsed{{ r.i }}[m] <== StirLessThan({{ r.exp_bits }})(m, nG{{ r.i }});

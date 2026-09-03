@@ -508,7 +508,8 @@ pub fn gen_recursive_setup(
     // compressor proof, or a recursive2, has nothing smaller to verify. Fail here with the
     // real cause rather than later, when the next air's circuit fails to match the setup this
     // oversize one would have become ("the recursive circuits are not uniform").
-    if ((template == RecursiveTemplate::Recursive1 && config.has_compressor) || template == RecursiveTemplate::Recursive2)
+    if ((template == RecursiveTemplate::Recursive1 && config.has_compressor)
+        || template == RecursiveTemplate::Recursive2)
         && plonk_result.n_bits > RECURSIVE_BITS_THRESHOLD
     {
         let wraps = if template == RecursiveTemplate::Recursive2 {
@@ -697,7 +698,8 @@ pub fn gen_recursive_setup(
                 // scalar `numQueries` written into it) re-parses as FRI without an error. Refuse
                 // that rather than silently switching the low-degree test of a circuit.
                 let marker_says_stir = ss_val.get("lowDegreeTest").and_then(|v| v.as_str()) == Some("STIR");
-                let parsed_is_stir = matches!(parsed.low_degree_test, crate::types::stark_struct::LowDegreeTest::Stir(_));
+                let parsed_is_stir =
+                    matches!(parsed.low_degree_test, crate::types::stark_struct::LowDegreeTest::Stir(_));
                 if marker_says_stir != parsed_is_stir {
                     bail!(
                         "starkStruct override for {} is marked lowDegreeTest={} but parsed as {:?}: \

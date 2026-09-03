@@ -334,8 +334,7 @@ pub(crate) fn run_recursive_setup(
                                 ));
                             };
                             // The knob is FRI's scalar `numQueries` or STIR's `numQueries[0]` (t₀).
-                            let comp_is_stir =
-                                comp_ss.get("lowDegreeTest").and_then(|v| v.as_str()) == Some("STIR");
+                            let comp_is_stir = comp_ss.get("lowDegreeTest").and_then(|v| v.as_str()) == Some("STIR");
                             let cur_q = if comp_is_stir {
                                 comp_ss
                                     .get("numQueries")

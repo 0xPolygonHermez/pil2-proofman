@@ -33,22 +33,32 @@ template StirIsZero3() {
     out <== z01 * z2;
 }
 
-// Whether two indices, given LSB-first in bits, are equal. Used to detect repeated shift
-// queries: G is a set, so a repeated point is dropped (prover and verifier alike).
-template StirEqualBits(nBits) {
-    signal input {binary} a[nBits];
-    signal input {binary} b[nBits];
-    signal output {binary} out;
+// Which shift queries are the first occurrence of their point. G is a set, so a repeated
+// point is dropped (prover and verifier alike): fresh[q] = 1 iff no earlier query hit pts[q].
+// The point is injective in the leaf index, so comparing field values is exact, and
+// Π_{m<q}(pts[q] − pts[m]) vanishes iff some earlier point equals pts[q]: one constraint per
+// pair plus one zero test per query.
+template StirFresh(t) {
+    signal input pts[t];
+    signal output {binary} fresh[t];
 
-    // a XOR b = a + b − 2ab for bits; the indices are equal iff the sum of XORs is zero.
-    signal ab[nBits];
-    var acc = 0;
-    for (var i = 0; i < nBits; i++) {
-        ab[i] <== a[i] * b[i];
-        acc += a[i] + b[i] - 2 * ab[i];
+    signal prod[t][t];
+    signal {binary} seen[t];
+    for (var q = 0; q < t; q++) {
+        if (q == 0) {
+            fresh[0] <== 1;
+        } else {
+            for (var m = 0; m < q; m++) {
+                if (m == 0) {
+                    prod[q][0] <== pts[q] - pts[0];
+                } else {
+                    prod[q][m] <== prod[q][m - 1] * (pts[q] - pts[m]);
+                }
+            }
+            seen[q] <== IsZero()(prod[q][q - 1]);
+            fresh[q] <== 1 - seen[q];
+        }
     }
-    signal diff <== acc;
-    out <== IsZero()(diff);
 }
 
 // Whether a < b, for a, b < 2^nBits. Used to zero the tail of the Âns coefficient hints:
@@ -106,30 +116,160 @@ template StirPowE3(maxBits) {
     out <== acc[maxBits - 1];
 }
 
-// The degree-correction factor Σ_{j=0}^{e} y^j = (y^{e+1} − 1)/(y − 1), with the y = 1 case
-// equal to e + 1 (stir_math.hpp geometricSum). The exponent is data-dependent — e = |G| after
-// dropping repeated shift queries — so it arrives as bits of e+1 plus the matching field value.
-// Branch-free: when y = 1 the quotient term is 0/adjusted-denominator = 0 and the correction
-// term denZero·(e+1) supplies the answer, so no signal is ever inverted at zero.
-template StirGeoSum(maxBits) {
-    signal input y[3];
-    signal input {binary} expBits[maxBits]; // e + 1, LSB-first
-    signal input expVal;                    // e + 1 as a field element (callers bind Σ bits·2^i)
-    signal output out[3];
+// y^e in F_p for a data-dependent exponent e < 2^maxBits, given LSB-first in bits.
+template StirPowBase(maxBits) {
+    signal input y;
+    signal input {binary} expBits[maxBits];
+    signal output out;
 
-    signal pow[3] <== StirPowE3(maxBits)(y, expBits);   // y^{e+1}
-    signal den[3] <== [y[0] - 1, y[1], y[2]];
-    signal num[3] <== [pow[0] - 1, pow[1], pow[2]];
-    signal {binary} denZero <== StirIsZero3()(den);
+    signal sq[maxBits];
+    signal sel[maxBits];
+    signal acc[maxBits];
+    sq[0] <== y;
+    for (var i = 1; i < maxBits; i++) {
+        sq[i] <== sq[i - 1] * sq[i - 1];
+    }
+    for (var i = 0; i < maxBits; i++) {
+        sel[i] <== expBits[i] * (sq[i] - 1) + 1;
+    }
+    acc[0] <== sel[0];
+    for (var i = 1; i < maxBits; i++) {
+        acc[i] <== acc[i - 1] * sel[i];
+    }
+    out <== acc[maxBits - 1];
+}
 
-    // (y − 1) + denZero never vanishes, and when y = 1 the numerator is 0 anyway.
-    signal denAdj[3] <== [den[0] + denZero, den[1], den[2]];
-    signal dinv[3] <== CInv()(denAdj);
-    signal quot[3] <== CMul()(num, dinv);
+// One-hot decoding of an nBits value given LSB-first in bits: ind[v] = 1 iff bits encode v.
+// Used to pick the constant ω^{j·v} of a data-dependent exponent v = e mod 2^k.
+template StirIndicators(nBits) {
+    signal input {binary} bits[nBits];
+    signal output {binary} ind[1 << nBits];
 
-    out[0] <== quot[0] + denZero * expVal;
-    out[1] <== quot[1];
-    out[2] <== quot[2];
+    var n = 1 << nBits;
+    signal lv[nBits + 1][n];
+    lv[0][0] <== 1;
+    for (var v = 1; v < n; v++) { lv[0][v] <== 0; }
+    for (var i = 0; i < nBits; i++) {
+        var w = 1 << i;
+        for (var v = 0; v < w; v++) {
+            lv[i + 1][v + w] <== lv[i][v] * bits[i];
+            lv[i + 1][v] <== lv[i][v] - lv[i + 1][v + w];
+        }
+        for (var v = 2 * w; v < n; v++) { lv[i + 1][v] <== 0; }
+    }
+    for (var v = 0; v < n; v++) { ind[v] <== lv[nBits][v]; }
+}
+
+// Coefficients (low degree first) of U(X) = Π_m (X − h[m]), monic of degree t. With
+// h[m] = fresh[m]·g_m this is the vanishing polynomial of the fresh shift points times X^d,
+// d = number of dropped repeats: one product per coefficient per factor, t(t+1)/2 in all.
+template StirVanishingShifted(t) {
+    signal input h[t];
+    signal output coefs[t + 1];
+
+    signal u[t + 1][t + 1];   // u[m] = the coefficients after m factors (degree m)
+    signal hu[t][t + 1];      // h[m] · u[m][k]
+    u[0][0] <== 1;
+    for (var k = 1; k <= t; k++) { u[0][k] <== 0; }
+    for (var m = 0; m < t; m++) {
+        for (var k = 0; k <= t; k++) {
+            if (k <= m) {
+                hu[m][k] <== h[m] * u[m][k];
+            } else {
+                hu[m][k] <== 0;
+            }
+            if (k == 0) {
+                u[m + 1][0] <== - hu[m][0];
+            } else {
+                u[m + 1][k] <== u[m][k - 1] - hu[m][k];
+            }
+        }
+    }
+    coefs <== u[t];
+}
+
+// A base-field polynomial P (n coefficients, low degree first) evaluated on the whole coset
+// {c·ω^u : u < 2^logK}, ω = roots(logK). Every coset point satisfies X^{2^k} = c^{2^k} =: y, so
+// P agrees on the coset with its remainder R(X) = Σ_{j<2^k} R_j X^j, R_j = Σ_m P[2^k·m + j] y^m:
+// 2^k Horner passes in y (n multiplications in all), then P(c·ω^u) = Σ_j (R_j c^j) ω^{ju}, a
+// size-2^k DFT with constant twiddles. Output u is the member ordering of the leaf.
+template StirCosetEval1(n, logK) {
+    var K = 1 << logK;
+    var nmax = (n + K - 1) \ K;
+    signal input coefs[n];
+    signal input c;
+    signal output vals[K];
+
+    signal cp[logK + 1];
+    cp[0] <== c;
+    for (var i = 1; i <= logK; i++) { cp[i] <== cp[i - 1] * cp[i - 1]; }
+
+    signal acc[K][nmax];
+    for (var j = 0; j < K; j++) {
+        for (var m = 0; m < nmax; m++) {
+            var idx = K * (nmax - 1 - m) + j;
+            if (m == 0) {
+                if (idx < n) { acc[j][0] <== coefs[idx]; } else { acc[j][0] <== 0; }
+            } else {
+                if (idx < n) { acc[j][m] <== acc[j][m - 1] * cp[logK] + coefs[idx]; }
+                else { acc[j][m] <== acc[j][m - 1] * cp[logK]; }
+            }
+        }
+    }
+    signal cj[K];
+    signal sc[K];
+    cj[0] <== 1;
+    for (var j = 1; j < K; j++) {
+        if (j == 1) { cj[1] <== c; } else { cj[j] <== cj[j - 1] * c; }
+    }
+    for (var j = 0; j < K; j++) { sc[j] <== acc[j][nmax - 1] * cj[j]; }
+    for (var u = 0; u < K; u++) {
+        var sum = 0;
+        for (var j = 0; j < K; j++) { sum += sc[j] * (roots(logK) ** (u * j)); }
+        vals[u] <== sum;
+    }
+}
+
+// StirCosetEval1 for F_p³ coefficients: the Horner passes run in EvalPol (EvPol4 gates) at the
+// base point y = c^{2^k}, the scaling and the DFT act coordinate-wise.
+template StirCosetEval3(n, logK) {
+    var K = 1 << logK;
+    var nmax = (n + K - 1) \ K;
+    signal input coefs[n][3];
+    signal input c;
+    signal output vals[K][3];
+
+    signal cp[logK + 1];
+    cp[0] <== c;
+    for (var i = 1; i <= logK; i++) { cp[i] <== cp[i - 1] * cp[i - 1]; }
+
+    signal sub[K][nmax][3];
+    signal res[K][3];
+    for (var j = 0; j < K; j++) {
+        for (var m = 0; m < nmax; m++) {
+            var idx = K * m + j;
+            for (var e = 0; e < 3; e++) {
+                if (idx < n) { sub[j][m][e] <== coefs[idx][e]; } else { sub[j][m][e] <== 0; }
+            }
+        }
+        res[j] <== EvalPol(nmax)(sub[j], [cp[logK], 0, 0]);
+    }
+    signal cj[K];
+    signal sc[K][3];
+    cj[0] <== 1;
+    for (var j = 1; j < K; j++) {
+        if (j == 1) { cj[1] <== c; } else { cj[j] <== cj[j - 1] * c; }
+    }
+    for (var j = 0; j < K; j++) {
+        for (var e = 0; e < 3; e++) { sc[j][e] <== res[j][e] * cj[j]; }
+    }
+    for (var u = 0; u < K; u++) {
+        for (var e = 0; e < 3; e++) {
+            var sum = 0;
+            for (var j = 0; j < K; j++) { sum += sc[j][e] * (roots(logK) ** (u * j)); }
+            vals[u][e] <== sum;
+        }
+    }
 }
 
 // Fold(f, 2^logK, r) evaluated at one point of L^{2^logK}, from the opened coset of f on L
