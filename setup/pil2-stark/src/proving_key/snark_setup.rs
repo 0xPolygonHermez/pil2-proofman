@@ -244,6 +244,7 @@ pub fn gen_snark_setup(
         pil_result_rf.deep_exp_id,
         pil_result_rf.q_deg,
     );
+    tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());
     let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;
     let starkinfo_rf_path = recursivef_dir.join("recursivef.starkinfo.json");
     fs::write(&starkinfo_rf_path, &starkinfo_rf_json)?;

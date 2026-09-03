@@ -164,6 +164,22 @@ impl LowDegreeTest {
         }
     }
 
+    /// One line naming the test and its solved schedule, for the setup log:
+    /// `FRI — folds [3, 3], 228 queries, 16 grinding bits` or
+    /// `STIR — folds [3, 3], queries [228, 76], grinding bits [16, 16]`.
+    pub fn describe(&self) -> String {
+        match self {
+            LowDegreeTest::Fri(fri) => format!(
+                "FRI — folds {:?}, {} queries, {} grinding bits",
+                fri.folding_factors, fri.num_queries, fri.grinding_bits_queries
+            ),
+            LowDegreeTest::Stir(stir) => format!(
+                "STIR — folds {:?}, queries {:?}, grinding bits {:?}",
+                stir.folding_factors, stir.num_queries, stir.grinding_bits_queries
+            ),
+        }
+    }
+
     pub fn fri(&self) -> Option<&FriStruct> {
         match self {
             LowDegreeTest::Fri(fri) => Some(fri),

@@ -247,6 +247,11 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        template,
+        starkinfo_output.stark_struct.low_degree_test.describe()
+    );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
 

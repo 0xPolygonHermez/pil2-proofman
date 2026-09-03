@@ -227,6 +227,11 @@ pub fn gen_recursive_test_setup(
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        circom_name,
+        starkinfo_output.stark_struct.low_degree_test.describe()
+    );
 
     let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", NAME_FILE));
     fs::write(&starkinfo_path, crate::output::json::to_json_string(&starkinfo_output)?)?;

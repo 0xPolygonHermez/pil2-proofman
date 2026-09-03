@@ -765,6 +765,15 @@ pub fn gen_recursive_setup(
                 pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
+
+            // Say which low-degree test this circuit runs, with the solved schedule
+            // (recursive2 is one circuit per airgroup, the others one per air).
+            let circuit = match template {
+                RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
+                _ => format!("Air '{}' {}", config.air_name, template_str),
+            };
+            tracing::info!("{} low-degree test: {}", circuit, starkinfo_output.stark_struct.low_degree_test.describe());
+
             let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
             let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
             let si_json = serde_json::to_value(&starkinfo_output)?;

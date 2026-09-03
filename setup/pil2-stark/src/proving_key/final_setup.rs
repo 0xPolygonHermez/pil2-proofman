@@ -338,6 +338,10 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
+    tracing::info!(
+        "Circuit 'vadcop_final' low-degree test: {}",
+        starkinfo_output.stark_struct.low_degree_test.describe()
+    );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
 
