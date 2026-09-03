@@ -3,9 +3,11 @@
     "lowDegreeTest": "STIR"
   },
   "FibonacciSquare": {
+    "lowDegreeTest": "STIR",
     "hasCompressor": true
   },
   "Module": {
+    "lowDegreeTest": "STIR",
     "hasCompressor": true
   }
 }

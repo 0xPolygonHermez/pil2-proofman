@@ -22,7 +22,6 @@ include "tree/treeselector4.circom";
     grinding nonce, with the proof of work checked first{% endif %}.
 */
 template {{ calculate_fri_queries_name }}() {
-    
     signal input challengeFRIQueries[3];
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}    signal input {binary} enable;

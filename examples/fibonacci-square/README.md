@@ -62,7 +62,7 @@ To begin, compile the PIL files:
 cargo run --bin proofman-setup -- compile-pil \
      -p ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     --fixed-to-file -u ./examples/fibonacci-square/build/fixed \
+     --fixed-to-file -u ./examples/fibonacci-square/pil/fixed \
      -o ./examples/fibonacci-square/pil/build.pilout
 ```
 
@@ -73,7 +73,7 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -u ./examples/fibonacci-square/build/fixed \
+     -u ./examples/fibonacci-square/pil/fixed \
      --hash Poseidon1 \
      --recursive-jobs 4 --setup-jobs 4 \
      -b ./examples/fibonacci-square/build \

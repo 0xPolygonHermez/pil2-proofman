@@ -50,7 +50,6 @@ template GLC3() {
     grinding nonce, with the proof of work checked first{% endif %} (gen_recursivef_proof.hpp).
 */
 template calculateFRIQueries() {
-
     signal input challengeFRIQueries[3];
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}    signal input {binary} enable;
