@@ -116,24 +116,7 @@ struct AirInstanceInfo {
     /// the full-width path is used.
     uint64_t witness_map_cols = 0;
 
-    /// Landing buffer for the compact host trace, `N * witness_map_cols` words. The copy has to be one
-    /// contiguous run to get PCIe bandwidth: a 2D copy straight into the strided columns is slower than
-    /// shipping the full width, because the rows are only `mapCols * 8` bytes -- too small for the DMA
-    /// engine. So the transfer lands here and a kernel widens it on device, where the strided writes
-    /// are cheap.
-    uint64_t *d_witness_compact = nullptr;
-
-    /// Allocate the landing buffer. Idempotent; must not run while work using it is in flight.
-    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols) {
-        witness_map_cols = mapCols;
-        if (d_witness_compact != nullptr) {
-            CHECKCUDAERR(cudaFree(d_witness_compact));
-            d_witness_compact = nullptr;
-        }
-        if (mapCols > 0 && mapCols < nCols) {
-            CHECKCUDAERR(cudaMalloc(&d_witness_compact, nRows * mapCols * sizeof(uint64_t)));
-        }
-    }
+    void set_witness_map(uint64_t mapCols) { witness_map_cols = mapCols; }
 
     // Caller must have selected the target GPU. Replaces whatever was there.
     void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t aux, uint64_t family) {
@@ -386,10 +369,6 @@ struct AirInstanceInfo {
 
         if (d_gate_bands != nullptr) {
             CHECKCUDAERR(cudaFree(d_gate_bands));
-        }
-
-        if (d_witness_compact != nullptr) {
-            CHECKCUDAERR(cudaFree(d_witness_compact));
         }
     }
 };
@@ -714,6 +693,18 @@ struct DeviceCommitBuffers
     // Prefetch region
     gl64_t *prefetchRegionBase = nullptr;   // first GPU only
     uint64_t prefetchRegionBytes = 0;
+    // Mops-floor pad: raises the region BELOW the const pols to MOPS_FLOOR_BYTES so the
+    // gpu-mops planner's borrow fits. The planner is offered that region MINUS the streaming-
+    // commit slots (its ceiling is the slot floor); it carves 15.03 GiB of fixed regions (zisk
+    // MAX_CHUNKS x MAX_MEMOPS_PER_CHUNK, block-independent) and uses the REST as its ops pool, and whose exhaustion
+    // aborts the process. zisk's own default pool is 2 GiB: 15.03 + 2 + 2 x 2 GiB slots = 21.1
+    // GiB, hence 22 (pool 2.97 GiB). Clamped to what is free on the first GPU minus
+    // POST_ALLOC_HEADROOM_BYTES, the measured headroom the allocations after the unified buffer
+    // need (per-air setup buffers, .exps.so module loads, transcripts). Short of the floor the
+    // planner falls back to CPU mops at setup and says so.
+    static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
+    uint64_t mopsFloorPadBytes = 0;
 
     // Witness prefetch zone (PROOFMAN_PREFETCH): the next basic instance's trace is
     // uploaded on a dedicated copy stream while the current proof computes; gen_proof

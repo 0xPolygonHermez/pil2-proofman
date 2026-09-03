@@ -73,7 +73,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_trace_size: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
-    pub max_prover_trace_size: usize,
+    pub recursive_witness_tail_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_recursive_buffer_size: usize,
     pub max_prover_recursive2_buffer_size: usize,
@@ -181,10 +181,10 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_const_tree_size)
                 .max(setup_vadcop_final.const_tree_size)
                 .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_tree_size));
-            let max_prover_trace_size = sctx_compressor
-                .max_prover_trace_size
-                .max(sctx_recursive1.max_prover_trace_size)
-                .max(sctx_recursive2.max_prover_trace_size)
+            let recursive_witness_tail_size = sctx_compressor
+                .recursive_witness_tail_size
+                .max(sctx_recursive1.recursive_witness_tail_size)
+                .max(sctx_recursive2.recursive_witness_tail_size)
                 .max(vadcop_final_trace_size as usize);
             let max_prover_buffer_size = sctx_compressor
                 .max_prover_buffer_size
@@ -193,14 +193,19 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(setup_vadcop_final.prover_buffer_size as usize)
                 .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size as usize));
 
+            // Recursive-capable buffers = prover buffer (mapTotalN) + witness tail: room for the
+            // recursive proof's witness INSIDE the stream buffer, past the proof layout. Sized at the
+            // full trace (4e44d5549 placed the whole witness there); the GPU lands only the compact
+            // host trace (staging cols x N) at `d_aux_trace + mapTotalN` and widens it into cm1 --
+            // gen_recursive_proof_gpu checks the room at launch.
             let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
-                + sctx_recursive2.max_prover_trace_size)
-                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size);
+                + sctx_recursive2.recursive_witness_tail_size)
+                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.recursive_witness_tail_size);
 
             let max_prover_recursive_buffer_size = (sctx_recursive2.max_prover_buffer_size
-                + sctx_recursive2.max_prover_trace_size)
-                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
-                .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
+                + sctx_recursive2.recursive_witness_tail_size)
+                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.recursive_witness_tail_size)
+                .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.recursive_witness_tail_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize)
                 // Its OWN trace size, not vadcop_final's. The two airs have had identical geometry
                 // so far, which is why pairing the compressed buffer with the uncompressed trace
@@ -216,13 +221,13 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             tracing::debug!(
                 "Recursive buffer requirement: compressor {}, recursive1 {}, recursive2 {}, vadcop_final {}, vadcop_final_compressed {}",
                 format_bytes(
-                    (sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size) as f64 * 8.0
+                    (sctx_compressor.max_prover_buffer_size + sctx_compressor.recursive_witness_tail_size) as f64 * 8.0
                 ),
                 format_bytes(
-                    (sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size) as f64 * 8.0
+                    (sctx_recursive1.max_prover_buffer_size + sctx_recursive1.recursive_witness_tail_size) as f64 * 8.0
                 ),
                 format_bytes(
-                    (sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size) as f64 * 8.0
+                    (sctx_recursive2.max_prover_buffer_size + sctx_recursive2.recursive_witness_tail_size) as f64 * 8.0
                 ),
                 format_bytes(
                     (setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize) as f64 * 8.0
@@ -286,7 +291,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 setup_vadcop_final_compressed,
                 max_const_tree_size,
                 max_const_size,
-                max_prover_trace_size,
+                recursive_witness_tail_size,
                 max_prover_buffer_size,
                 max_prover_recursive_buffer_size,
                 max_prover_recursive2_buffer_size,
@@ -310,7 +315,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 recurser_const_slot_size: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
-                max_prover_trace_size: 0,
+                recursive_witness_tail_size: 0,
                 max_prover_buffer_size: 0,
                 max_prover_recursive_buffer_size: 0,
                 max_prover_recursive2_buffer_size: 0,
@@ -348,7 +353,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_buffer_size: usize,
     prover_buffer_sizes: Vec<((usize, usize), usize)>,
     max_prover_contributions_size: usize,
-    max_prover_trace_size: usize,
+    recursive_witness_tail_size: usize,
     max_pinned_proof_size: usize,
     max_witness_size: usize,
     max_trace_size: usize,
@@ -400,7 +405,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_prover_contributions_size = 0;
         let mut max_prover_buffer_size = 0;
         let mut prover_buffer_sizes: Vec<((usize, usize), usize)> = Vec::new();
-        let mut max_prover_trace_size = 0;
+        let mut recursive_witness_tail_size = 0;
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
@@ -441,13 +446,15 @@ impl<F: PrimeField64> SetupRepository<F> {
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
                     let n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+                    // Witness tail of this air (see SetupsVadcop): the full trace plus the small
+                    // per-proof values that travel with it.
                     let trace_size = setup.stark_info.map_sections_n["cm1"] * n;
-                    let mut total_prover_trace_size = trace_size as usize;
-                    total_prover_trace_size += setup.stark_info.n_publics as usize;
-                    total_prover_trace_size += setup.stark_info.airvalues_map.as_ref().map_or(0, |v| 3 * v.len());
-                    total_prover_trace_size += setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
-                    total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
-                    total_prover_trace_size += 3;
+                    let mut witness_tail_size = trace_size as usize;
+                    witness_tail_size += setup.stark_info.n_publics as usize;
+                    witness_tail_size += setup.stark_info.airvalues_map.as_ref().map_or(0, |v| 3 * v.len());
+                    witness_tail_size += setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
+                    witness_tail_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
+                    witness_tail_size += 3;
                     if max_const_tree_size < setup.const_tree_size {
                         max_const_tree_size = setup.const_tree_size;
                     }
@@ -461,7 +468,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     if max_prover_contributions_size < setup.contributions_size {
                         max_prover_contributions_size = setup.contributions_size;
                     }
-                    max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
+                    recursive_witness_tail_size = recursive_witness_tail_size.max(witness_tail_size);
 
                     if setup.gpu {
                         sized_airs.push((airgroup_id, air_id));
@@ -531,7 +538,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_prover_contributions_size: max_prover_contributions_size as usize,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             prover_buffer_sizes,
-            max_prover_trace_size,
+            recursive_witness_tail_size,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
             total_const_tree_size,
@@ -552,7 +559,7 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_buffer_size: usize,
     /// Per-air prover buffer size, largest first. See `SetupRepository::prover_buffer_sizes`.
     pub prover_buffer_sizes: Vec<((usize, usize), usize)>,
-    pub max_prover_trace_size: usize,
+    pub recursive_witness_tail_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_witness_size: usize,
     pub max_trace_size: usize,
@@ -578,7 +585,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let prover_buffer_sizes = setup_repository.prover_buffer_sizes.clone();
-        let max_prover_trace_size = setup_repository.max_prover_trace_size;
+        let recursive_witness_tail_size = setup_repository.recursive_witness_tail_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
@@ -594,7 +601,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             prover_buffer_sizes,
             max_witness_size,
             max_trace_size,
-            max_prover_trace_size,
+            recursive_witness_tail_size,
             max_pinned_proof_size,
             max_n_bits_ext,
             total_const_pols_size,

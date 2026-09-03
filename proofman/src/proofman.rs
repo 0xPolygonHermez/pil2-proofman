@@ -5448,8 +5448,8 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Arm the prefetch zone with the size computed above (glued into the unified
-        // buffer's region when it fits; separate allocation otherwise).
+        // Arm the prefetch zone with the size computed above: the zone IS the unified
+        // buffer's region (arming refuses on a mismatch).
         if prefetch_witness_bytes > 0 {
             configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes, 0, 0, 0);
         }
