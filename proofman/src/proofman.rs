@@ -2385,7 +2385,7 @@ where
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
             setups_vadcop.max_witness_size,
-            setups_vadcop.max_trace_size,
+            setups_vadcop.max_compact_trace_size,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
