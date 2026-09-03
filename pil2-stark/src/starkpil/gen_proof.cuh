@@ -146,6 +146,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
     
     Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false, false);
+    // Every tree's source/nodes is set HERE, outside every capture region: a graph replay skips
+    // host code, so a setter inside a region body leaves a fresh (per-proof) tree object with
+    // its pointers unset for anything that runs after the replay (proveQueries_inplace).
+    for (uint64_t s = 0; s < setupCtx.starkInfo.nStages + 1; s++) {
+        std::string sec = "cm" + std::to_string(s + 1);
+        starks.treesGL[s]->setSource((Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair(sec, true)]);
+        starks.treesGL[s]->setNodes((Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + std::to_string(s + 1), true)]);
+    }
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(pConstPolsExtendedTreeAddress);
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setNodes(&pConstPolsExtendedTreeAddress[setupCtx.starkInfo.nConstants * NExtended]);
     for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {

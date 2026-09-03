@@ -354,9 +354,9 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
     Goldilocks::Element * dstGL = (Goldilocks::Element*) (d_aux_trace);
 
-    treesGL[step - 1]->setSource(dstGL + offset_dst);
+    // source/nodes were set by genProof_gpu right after the Starks ctor (outside the capture
+    // regions this runs in); a setter here would be skipped on replay.
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes(pNodes);
 
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
@@ -420,9 +420,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
      
     Goldilocks::Element* d_aux_traceGL = (Goldilocks::Element*) d_aux_trace;
 
-    treesGL[step - 1]->setSource(d_aux_traceGL + offset_cmQ);
     Goldilocks::Element *pNodes = d_aux_traceGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes(pNodes);
 
     if (nCols > 0)
     {
@@ -1176,11 +1174,18 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
     CHECKCUDAERR(cudaGetLastError());
 
 
+    // Node arrays come from the layout, never from tree-object state: the same source setProof
+    // reads roots/ll from. A mismatch means a tree object was consumed with stale pointers.
     for (uint k = 0; k < nStages + 1; k++)
     {
+        gl64_t *nodesK = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + std::to_string(k + 1), true)];
+        if ((gl64_t *)trees[k]->get_nodes_ptr() != nodesK) {
+            zklog.error("proveQueries: tree " + std::to_string(k) + " nodes pointer disagrees with the layout (stale tree object)");
+            exitProcess();
+        }
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[k]->get_nodes_ptr(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>(nodesK, trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
         CHECKCUDAERR(cudaGetLastError());
     }
     CHECKCUDAERR(cudaGetLastError());
