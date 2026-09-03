@@ -1531,8 +1531,8 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     const uint64_t mapCols = air_instance_info->witness_map_cols;
     const bool compactWitness = mapCols > 0 && mapCols < nCols;
     // The compact trace lands in the stream's WITNESS TAIL past mapTotalN: every recursive-capable
-    // class is planned as mapTotalN + recursive_witness_tail_size (a full trace; SetupsVadcop) and
-    // nothing on the device addresses past mapTotalN, so N x mapCols (< N x cm1) always fits there.
+    // class is planned as mapTotalN + the largest compact trace of its repository (staging cols x N,
+    // SetupsVadcop max_compact_trace_size) and nothing on the device addresses past mapTotalN.
     gl64_t *d_witnessTail = d_aux_trace + setupCtx->starkInfo.mapTotalN;
     if (compactWitness && sd.auxTraceCapacity < setupCtx->starkInfo.mapTotalN + N * mapCols) {
         zklog.error("gen_recursive_proof: stream " + std::to_string(streamId) + " (capacity " +
