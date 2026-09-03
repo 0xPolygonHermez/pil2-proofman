@@ -1098,6 +1098,31 @@ impl<F: PrimeField64> ProofCtx<F> {
             },
         };
 
+        // Phase B aliases two recursive1/recursive2 streams over the first GPU's pre-const area,
+        // which with one basic stream is that stream plus the prefetch zone and the mops-floor pad.
+        // Make the footprint a planned property: with aggregation and a single basic stream, the
+        // stream itself holds two recursive classes. Memory-neutral on the device -- the pad below
+        // the const pols shrinks by the same amount (the pre-const area stays at the mops floor).
+        let mut layout = layout;
+        if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
+            let phase_b_floor = 2 * max_prover_recursive2_buffer_size;
+            let large = &mut layout.basic[0];
+            if large.size < phase_b_floor {
+                let grow = phase_b_floor - large.size;
+                if grow <= layout.unused {
+                    large.size = phase_b_floor;
+                    layout.unused -= grow;
+                } else {
+                    tracing::warn!(
+                        "single basic stream ({}) cannot grow to hold two recursive streams ({}): only {} unused -- phase-B two-stream recursion will not be available on this layout",
+                        format_bytes(large.size as f64 * 8.0),
+                        format_bytes(phase_b_floor as f64 * 8.0),
+                        format_bytes(layout.unused as f64 * 8.0)
+                    );
+                }
+            }
+        }
+
         let aux_trace_sizes: Vec<u64> = layout.basic_stream_sizes().iter().map(|&s| s as u64).collect();
         // Retained so the witness admission can tell which airs are confined to a subset of streams.
         self.basic_stream_sizes = layout.basic_stream_sizes();
