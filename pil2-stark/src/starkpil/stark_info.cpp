@@ -6,7 +6,7 @@
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_)
 {
 
     recursive = recursive_;
@@ -14,7 +14,6 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify = verify_;
     gpu = gpu_;
     preallocate = preallocate_;
-    singleUse = single_use_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -486,20 +485,16 @@ void StarkInfo::setMapOffsets() {
             calculateFixedExtended = true;
         }
 
-        // extendAndMerkelizeFixed is the last reader of the unpacked const pols (quotient, evals
-        // and FRI use the extended tree), and a single-use air never reuses them across proofs, so
-        // they can live in the region they extend into and cost nothing.
-        constPolsAliasTree = singleUse && calculateFixedExtended;
     }
 
     if (gpu) {
-        if (constPolsAliasTree) {
-            mapOffsets[std::make_pair("const", false)] =
-                mapOffsets[std::make_pair("const", true)];
-        } else {
-            mapOffsets[std::make_pair("const", false)] = mapTotalN;
-            mapTotalN += N * nConstants;
-        }
+        // Const pols and const tree are always distinct regions. They used to be allowed to
+        // overlap for single-use airs (the merkelize was their last reader, so it could eat its
+        // own source), but the tree is now built by prepareConstPols_gpu before the proof runs,
+        // and the aliasing only bought aux-trace bytes at the price of an ordering constraint
+        // nothing else in the pipeline respects.
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
     }
 
     if(gpu) {

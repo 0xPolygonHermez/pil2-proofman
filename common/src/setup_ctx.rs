@@ -96,14 +96,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         gpu: bool,
     ) -> ProofmanResult<Self> {
         if aggregation {
-            // No `table_airs` here: the const-pols alias needs calculateFixedExtended, which
-            // stark_info.cpp only ever sets for non-recursive setups.
             let sctx_compressor =
-                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preloaded_const, &[], gpu)?;
+                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preloaded_const, gpu)?;
             let sctx_recursive1 =
-                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preloaded_const, &[], gpu)?;
+                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preloaded_const, gpu)?;
             let sctx_recursive2 =
-                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preloaded_const, &[], gpu)?;
+                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preloaded_const, gpu)?;
             let preallocate_final = is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
             let setup_vadcop_final = Setup::new(
                 &global_info.get_setup_path("vadcop_final"),
@@ -113,7 +111,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 &ProofType::VadcopFinal,
                 verify_constraints,
                 preallocate_final,
-                false,
                 gpu,
                 None,
             )?;
@@ -130,7 +127,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     &GlobalInfoAir::new("VadcopFinalCompressed".to_string()),
                     &ProofType::VadcopFinalCompressed,
                     verify_constraints,
-                    false,
                     false,
                     gpu,
                     None,
@@ -378,7 +374,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preloaded_const: &[PreLoadedConstTree],
-        table_airs: &[(usize, usize)],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
@@ -428,7 +423,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                 let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const)
                     && !std::env::var("PROOFMAN_NO_CONST_BUF").map(|v| v == "1").unwrap_or(false)
                     && std::env::var("PROOFMAN_CONST_TREE_RESIDENT").map(|v| v == "1").unwrap_or(false);
-                let single_use = table_airs.contains(&(airgroup_id, air_id));
                 let setup_path = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
                 let setup = Setup::new(
                     &setup_path,
@@ -438,7 +432,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                     setup_type,
                     verify_constraints,
                     preallocate,
-                    single_use,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
                 )?;
@@ -586,11 +579,10 @@ impl<F: PrimeField64> SetupCtx<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preloaded_const: &[PreLoadedConstTree],
-        table_airs: &[(usize, usize)],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         let setup_repository =
-            SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, table_airs, gpu)?;
+            SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, gpu)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;

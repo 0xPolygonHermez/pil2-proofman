@@ -1495,7 +1495,7 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         return a0 < b0 + bElems * sizeof(gl64_t) && b0 < a0 + aElems * sizeof(gl64_t);
     };
 
-    // src may alias dst (constPolsAliasTree); chunks then descend so a chunk's writes stay
+    // src may alias dst; chunks then descend so a chunk's writes stay
     // above the sources still to be read.
     const bool overlaps = rangesOverlap(d_src_, (size_t)nCols * N, d_dst_, (size_t)nCols * Next);
     if (overlaps && d_src_ != d_dst_) {

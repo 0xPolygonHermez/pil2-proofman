@@ -60,7 +60,7 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("");
 
         let sctx =
-            Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], self.gpu)?);
+            Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], self.gpu)?);
 
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
 

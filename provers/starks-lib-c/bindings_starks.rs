@@ -52,7 +52,6 @@ extern "C" {
         verify: bool,
         gpu: bool,
         preallocate: bool,
-        single_use: bool,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn set_hash_family(fam: u8);

@@ -103,7 +103,38 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, scratchShift, hintValsOffset);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool splitPhases = false) {
+// Unpack this air's resident packed const pols into the aux trace's ("const", false) slot and,
+// when `build_tree`, merkelize them into `d_const_tree` (the ("const", true) slot).
+//
+// Owned by the CALLER, not by genProof_gpu: gen_recursive_proof_gpu already prepares its tree
+// before the proof (zone D2D / host cache / inline rebuild), and gen_proof_gpu now does the same
+// for basics, so the proof body can assume both are in place. Skip it when the slot is reused --
+// the previous proof on this stream left the unpacked pols and the tree behind.
+void prepareConstPols_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
+                          gl64_t *d_const_tree, DeviceCommitBuffers *d_buffers, bool build_tree,
+                          TimerGPU &timer, cudaStream_t stream) {
+    uint64_t N = 1ull << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+    Goldilocks::Element *packed = (Goldilocks::Element *)d_const_pols;
+    Goldilocks::Element *unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+    unpack_fixed((uint64_t *)d_const_pols, (uint64_t *)(packed + 1),
+                 (uint64_t *)(packed + 1 + setupCtx.starkInfo.nConstants),
+                 (uint64_t *)unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
+    CHECKCUDAERR(cudaGetLastError());
+    // No-const-buffer mode: mark the packed zone segment's last read so the next slot's
+    // staging cannot overwrite it mid-unpack.
+    if (d_buffers->prefetchPacked != nullptr && (gl64_t *)packed == d_buffers->prefetchPacked) {
+        CHECKCUDAERR(cudaEventRecord(d_buffers->packedDrained, stream));
+    }
+    if (build_tree) {
+        TimerStartGPU(timer, FIXED_POLS_TREE);
+        extendAndMerkelizeFixed(setupCtx, unpacked, (Goldilocks::Element *)d_const_tree,
+                                /*preserve_src=*/true, timer, stream);
+        TimerStopGPU(timer, FIXED_POLS_TREE);
+    }
+}
+
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool splitPhases = false) {
     // Per-stream timer is reused: drop categories left open by an aborted job, and the load
     // phase's, so KERNELS CONTRIBUTIONS covers the proof window only.
     TimerResetCategoriesGPU(timer);
@@ -238,18 +269,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
     uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
 
-    Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
+    // Const pols (and the tree, when this air needs one built) are prepared by the caller via
+    // prepareConstPols_gpu before the launch; both slots are live on entry.
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
-    if(!reuse_constants) {
-        uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
-        unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx.starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
-        CHECKCUDAERR(cudaGetLastError());
-        // No-const-buffer mode: mark the packed zone segment's last read so the
-        // next slot's staging cannot overwrite it mid-unpack.
-        if (d_buffers->prefetchPacked != nullptr && (gl64_t *)packed_const_pols == d_buffers->prefetchPacked) {
-            CHECKCUDAERR(cudaEventRecord(d_buffers->packedDrained, stream));
-        }
-    }
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
@@ -496,13 +518,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
-
-    if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
-        TimerStartGPU(timer, FIXED_POLS_TREE);
-        extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress,
-                                !setupCtx.starkInfo.constPolsAliasTree, timer, stream);
-        TimerStopGPU(timer, FIXED_POLS_TREE);
-    }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     // Stage-1 overlap fence #1 (un-aliased layout): quotient expressions read cm1-extended.

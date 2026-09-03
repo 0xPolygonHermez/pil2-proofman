@@ -195,11 +195,6 @@ pub struct ProofmanOptions {
     /// per-proof load from disk. Airgroup 0's Recursive2 is always preloaded and must not be
     /// listed.
     pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
-    /// Tables: airs proved at most once, so their const pols need not survive the proof and
-    /// the layout can alias them onto the const tree's node area, saving `N * nConstants` per
-    /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
-    /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
-    pub table_airs_gpu: Vec<(usize, usize)>,
     /// This run produces a final SNARK
     pub final_snark: bool,
 }
@@ -219,7 +214,6 @@ impl Default for ProofmanOptions {
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
             preloaded_const_tree_gpu: Vec::new(),
-            table_airs_gpu: Vec::new(),
             final_snark: false,
         }
     }
@@ -289,9 +283,6 @@ impl ProofmanOptions {
         self.preloaded_const_tree_gpu = preloaded_const_tree_gpu;
     }
 
-    pub fn table_airs_gpu(&mut self, table_airs_gpu: Vec<(usize, usize)>) {
-        self.table_airs_gpu = table_airs_gpu;
-    }
 }
 
 #[allow(dead_code)]

@@ -206,7 +206,7 @@ impl ProveAirCmd {
         };
 
         let sctx: SetupCtx<Goldilocks> =
-            SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], &[], self.gpu)?;
+            SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], self.gpu)?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;

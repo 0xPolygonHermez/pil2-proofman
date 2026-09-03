@@ -1327,11 +1327,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     bool wantSplitPhases = setupCtx->starkInfo.baseSplit && pipeline && !skipRecalculation
                            && sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
     bool splitPhases = false;
-    // constPolsAliasTree airs cannot reuse: their pols sit in the tree's node area, which the
-    // previous proof's merkelize overwrote.
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "")
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
@@ -1497,6 +1494,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
         d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
     }
     gl64_t *d_const_tree;
+    // Set below when we skip the file staging and let genProof_gpu merkelize on device instead.
+    bool compute_const_tree = false;
     if (air_instance_info->stored_tree) {
         // Preallocated in the const buffer, so it is in place unconditionally.
         d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
@@ -1541,6 +1540,17 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                                       std::to_string(airgroupId) + ":" + std::to_string(airId) + ")");
                         CHECKCUDAERR(cudaEventSynchronize(d_buffers->prefetchFixedReady));
                     }
+                    // Nothing staged for us: rebuild from the resident packed const pols instead
+                    // of reading the tree back. genProof_gpu merkelizes into d_const_tree, so we
+                    // also skip the zone D2D below -- there is nothing in the zone to land.
+                    {
+                        if (getenv("PROOFMAN_COPY_TRACE")) {
+                            fprintf(stderr, "[site-BASIC-TREE-COMPUTE] size=%lu\n", sizeConstTree);
+                        }
+                        compute_const_tree = true;
+                    }
+                }
+                if (!hit && !compute_const_tree) {
                     // Inline staging: file -> pinned -> zone on the copy stream.
                     // The pinned-free sync only waits for the previous chunk's
                     // H2D, never for the proof stream's kernel backlog.
@@ -1585,23 +1595,25 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                 d_buffers->prefetchFixedAirgroup = -1;
                 d_buffers->prefetchFixedAir = -1;
                 d_buffers->prefetchFixedSize = 0;
-                CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchFixedReady, 0));
-                CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_const_tree, d_buffers->prefetchFixed,
-                                             sizeConstTree, cudaMemcpyDeviceToDevice, stream));
-                CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchFixedDrained, stream));
+                // Nothing to land when we rebuild: genProof_gpu merkelizes straight into
+                // d_const_tree, and the zone segment holds no tree of ours.
+                if (!compute_const_tree) {
+                    CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchFixedReady, 0));
+                    CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_const_tree, d_buffers->prefetchFixed,
+                                                 sizeConstTree, cudaMemcpyDeviceToDevice, stream));
+                    CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchFixedDrained, stream));
+                }
             } else {
-                if (getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[site-TREE-FALLBACK] size=%lu\n", sizeConstTree);
-                load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
+                if (getenv("PROOFMAN_COPY_TRACE")) {
+                    fprintf(stderr, "[site-BASIC-TREE-COMPUTE] size=%lu\n", sizeConstTree);
+                }
+                compute_const_tree = true;
             }
         }
     }
     sd.constTreeResident = true;
 
-
     proofman_sumcheck_set_context(instanceId, airgroupId, airId);
-    // The tree-aware flag, not the slot one: genProof_gpu's reuse also gates the
-    // calculateFixedExtended merkelize, and a slot claimed by commit_witness has pols but no
-    // tree. Costs a redundant unpack in exactly that case.
     static const bool pbTraceB = [] {
         const char *e = getenv("PROOFMAN_PHASE_B_TRACE");
         return e != nullptr && e[0] == '1';
@@ -1613,7 +1625,14 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
 
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree, splitPhases);
+    // Unpack the resident packed const pols, and merkelize the tree here when nothing staged
+    // one for us (compute_const_tree) or when this air always builds its own.
+    if (!reuse_const_tree) {
+        prepareConstPols_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, d_buffers,
+                             compute_const_tree || setupCtx->starkInfo.calculateFixedExtended,
+                             timer, stream);
+    }
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, splitPhases);
     if (pipeline) {
         std::lock_guard<std::mutex> plk(sd.pipeMutex);
         StreamData::PipelineSlot &ps = sd.pipeSlots[(sd.pipeHead + sd.pipeCount) % 2];
@@ -1662,8 +1681,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "")
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
 
     sd.pSetupCtx = pSetupCtx_;
     sd.airgroupId = airgroupId;
@@ -1939,8 +1957,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
                                              setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], true,
-                                             string(recurser_id))
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             string(recurser_id));
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
@@ -2089,6 +2106,9 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
     gl64_t *d_const_tree;
+    // Set by the inline-rebuild branch below, which prepares pols AND tree in one call. The
+    // zone / host-cache branches only land a tree, so they still need the unpack afterwards.
+    bool rec_const_pols_ready = false;
     if (air_instance_info->stored_tree) {
         // Preallocated in the const buffer, so it is in place unconditionally.
         d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
@@ -2144,20 +2164,20 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
                     // uses (calculate_const_tree_fixed_gpu); scratch stays inside the
                     // tree area, so the staged witness in cm1ext is untouched.
                     if (getenv("PROOFMAN_COPY_TRACE")) fprintf(stderr, "[site-TREE-COMPUTE] size=%lu\n", sizeConstTree);
-                    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-                    Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
-                    Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
-                    unpack_fixed((uint64_t*)d_const_pols, (uint64_t*)(packed_const_pols + 1),
-                                 (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants),
-                                 (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants,
-                                 1ull << setupCtx->starkInfo.starkStruct.nBits, stream, timer);
-                    extendAndMerkelizeFixed(*setupCtx, d_const_pols_unpacked,
-                                            (Goldilocks::Element *)d_const_tree, true, timer, stream);
+                    prepareConstPols_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree,
+                                         d_buffers, /*build_tree=*/true, timer, stream);
+                    rec_const_pols_ready = true;
                 } else {
                     load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
                 }
             }
         }
+    }
+    // Branches that only LANDED a tree (zone D2D, host cache, chunked file) still owe the
+    // unpack that genProof_gpu used to do; the inline rebuild already did both.
+    if (!reuse_const_tree && !rec_const_pols_ready) {
+        prepareConstPols_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, d_buffers,
+                             /*build_tree=*/false, timer, stream);
     }
     sd.constTreeResident = true;
 
@@ -2172,7 +2192,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
                 (int)reuse_const_tree, (int)air_instance_info->stored_tree);
     }
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true);
     if (d_buffers->pipelineMode && !sd.recursive) {
         // Phase-split protocol: a recursive proof owns the WHOLE stream buffer (no
         // base/ext split in its layout), so the next basic's early phase must order
@@ -2652,8 +2672,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
         // Claims the slot but not constTreeResident: this never touches the const tree.
-        bool needUnpack = !sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")
-            || setupCtx->starkInfo.constPolsAliasTree;
+        bool needUnpack = !sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "");
         gl64_t *d_const_pols;
         if (d_buffers->prefetchPacked != nullptr) {
             d_const_pols = needUnpack ? ensurePackedConstPols(d_buffers, air_instance_info, stream)
@@ -3957,9 +3976,7 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     // air sharing this slot is just as warm, since that is what gen_*_proof keys reuse on.
     const AirInstanceInfo *wantAir = requestedAirInstance(d_buffers, airgroupId, airId, proofType);
     // Must match adoptFixedSlot's key exactly, or this steers to a stream that then cannot
-    // reuse anyway. An aliased air never reuses, so it is never warm by slot.
-    const bool slotUsable = wantAir != nullptr && wantAir->setupCtx != nullptr
-                            && !wantAir->setupCtx->starkInfo.constPolsAliasTree;
+    const bool slotUsable = wantAir != nullptr && wantAir->setupCtx != nullptr;
     const uint64_t wantSlot = slotUsable ? wantAir->const_pols_offset : UINT64_MAX;
     const uint64_t wantAux = slotUsable
         ? wantAir->setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)] : 0;

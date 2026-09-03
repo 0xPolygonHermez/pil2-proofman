@@ -196,15 +196,11 @@ public:
     bool verify = false;
     bool gpu = false;
     bool preallocate = false;
-    // Table air: proved at most once, so nothing reuses its unpacked const pols.
-    bool singleUse = false;
-
     bool calculateFixedExtended = false;
     // ("const", false) aliases the node area of ("const", true) instead of getting its own
     // region. Implies calculateFixedExtended, which makes extendAndMerkelizeFixed the last
     // reader of the const pols before the nodes overwrite them. Forbids const reuse across
     // proofs: afterwards the region holds Merkle nodes.
-    bool constPolsAliasTree = false;
 
     // Stage-1 overlap layout (PROOFMAN_STAGE1_OVERLAP): cm2-extended normally aliases the base
     // trace, which forces the overlapped stage-1 LDE (whose src IS the base trace) to complete
@@ -241,7 +237,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false, bool single_use = false);
+    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
     StarkInfo() {};
     
     /* Loads data from a json object */

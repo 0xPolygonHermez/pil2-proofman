@@ -474,7 +474,7 @@ static void checkLdeBackendsEquivalent(NTTGoldilocksGPU &gpu_ntt, cudaStream_t s
     CHECKCUDAERR(cudaFree(d_dst_tiled));
 }
 
-// Aliased LDE (the constPolsAliasTree layout): the small-domain source columns are packed at
+// Aliased LDE (src == dst): the small-domain source columns are packed at
 // the BASE of the destination buffer (src col c at base + c*N, dst col c at base + c*Next,
 // equal bases) and extended in place. ldeColMajor's two flows carry independent aliasing
 // logic (descending whole-slot ordering in the batched flow, column-0 staging in the serial

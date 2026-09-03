@@ -900,7 +900,7 @@ where
 
         let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
 
         proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
 
@@ -2079,7 +2079,6 @@ where
             0,
             &air_info,
             &ProofType::RecurserAggregator,
-            false,
             false,
             false,
             self.options.gpu,
@@ -5659,39 +5658,21 @@ where
             }
         }
 
-        // Both lists name airs by index, so a typo would otherwise be silently ignored.
-        for (option, airs) in [
-            ("preloaded_const_tree_gpu", &options.preloaded_const_tree_gpu),
-            ("table_airs_gpu", &options.table_airs_gpu),
-        ] {
-            for &(airgroup_id, air_id) in airs {
-                if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
-                    return Err(ProofmanError::InvalidConfiguration(format!(
-                        "{option} names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
-                    )));
-                }
-            }
-        }
-
-        // A preallocated tree lives in the const buffer, so there is no in-aux-trace node
-        // area to alias the const pols onto.
-        for air in &options.table_airs_gpu {
-            if options.preloaded_const_tree_gpu.contains(air) {
+        // The list names airs by index, so a typo would otherwise be silently ignored.
+        for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
+            if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
                 return Err(ProofmanError::InvalidConfiguration(format!(
-                    "air ({}, {}) is in both table_airs_gpu and preloaded_const_tree_gpu",
-                    air.0, air.1
+                    "preloaded_const_tree_gpu names air ({airgroup_id}, {air_id}), \
+                     which does not exist in this proving key"
                 )));
             }
         }
-
-        let table_airs: &[(usize, usize)] = if options.gpu { &options.table_airs_gpu } else { &[] };
 
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
             &pctx.global_info,
             &ProofType::Basic,
             options.verify_constraints,
             &preloaded_const,
-            table_airs,
             options.gpu,
         )?);
 
