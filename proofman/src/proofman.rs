@@ -2785,6 +2785,19 @@ where
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
 
+            // Close phase B before anything touches a basic stream. The aliased rec pair overlays
+            // the basic stream's buffer, so while the state says "open" the selector refuses every
+            // basic stream -- and contributions runs here, LONG before the arming below would have
+            // reset it. A worker reuses one process across jobs and its Prove never reaches
+            // VadcopFinal (the coordinator does), so the state 2 that hands the buffer back is
+            // never set: the next job's contributions then starved forever on the one stream large
+            // enough for Keccakf. Unconditional and idempotent -- a no-op unless phase B is
+            // configured, and it must not hang off `phase_b_ctl`, which a contributions-only job
+            // never builds.
+            if self.pctx.gpu {
+                let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            }
+
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
             timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_debug!(PREPARING_CONTRIBUTIONS);
@@ -3028,6 +3041,16 @@ where
             remaining_a: std::sync::atomic::AtomicI64,
             parked: std::sync::Mutex<Vec<(u64, ProofType, usize, u8)>>,
             draining: std::sync::atomic::AtomicBool,
+            /// Phase-A completions each instance still owes, by instance id. `remaining_a` is
+            /// armed before proving starts, but an instance can be dropped afterwards --
+            /// `std_virtual_table` skips a table whose multiplicities are all zero, which on a
+            /// distributed worker proving a partial set is the common case. Its completions never
+            /// arrive, so the countdown stalls and phase B never opens (observed: current 11,
+            /// expected 13, two owed by one skipped table). Reconciled on every completion.
+            owed: std::sync::Mutex<HashMap<usize, i64>>,
+            /// Guards the one-shot open: reconciliation can subtract several at once, so the
+            /// transition cannot be detected by `remaining_a` hitting exactly 1.
+            opened: std::sync::atomic::AtomicBool,
             /// true = park rec1 conversions too (small blocks); false = rec1 runs live
             /// in phase A and only the rec2 tree defers (big blocks, where interleaved
             /// rec1 usefully fills witness-arrival gaps).
@@ -3057,14 +3080,17 @@ where
                 .unwrap_or(usize::MAX);
             let defer_rec1 = my_instances.len() < full_max;
             let mut expected: i64 = 0;
+            let mut owed: HashMap<usize, i64> = HashMap::new();
             for &instance_id in &my_instances {
                 if let Ok((ag, air)) = self.pctx.dctx_get_instance_info(instance_id) {
                     // One Basic completion per instance; one Compressor where the air has
                     // one; and, when rec1 runs live in phase A, one Recursive1 per basic.
-                    expected += if defer_rec1 { 1 } else { 2 };
+                    let mut n = if defer_rec1 { 1 } else { 2 };
                     if self.pctx.global_info.get_air_has_compressor(ag, air) {
-                        expected += 1;
+                        n += 1;
                     }
+                    expected += n;
+                    owed.insert(instance_id, n);
                 }
             }
             tracing::info!(
@@ -3076,15 +3102,13 @@ where
                 remaining_a: std::sync::atomic::AtomicI64::new(expected),
                 parked: std::sync::Mutex::new(Vec::new()),
                 draining: std::sync::atomic::AtomicBool::new(false),
+                owed: std::sync::Mutex::new(owed),
+                opened: std::sync::atomic::AtomicBool::new(false),
                 defer_rec1,
             }))
         } else {
             None
         };
-        if phase_b_ctl.is_some() {
-            // Fresh job: phase A. (Idempotent; also covers warm --repeat iterations.)
-            let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
-        }
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
         // channels). Condvar parks idle stream workers.
@@ -3366,8 +3390,34 @@ where
                                 live_mode = 1; // banked above; live conversion only pops
                             }
                         }
+                        if phase_a_kind {
+                            // Settle this completion, and write off instances skipped since
+                            // arming -- they owe completions that will never arrive. One pass,
+                            // one lock: a handful of entries, and only while phase A runs.
+                            let mut forgiven: i64 = 0;
+                            {
+                                let mut owed = ctl.owed.lock().unwrap();
+                                if let Some(n) = owed.get_mut(&(id as usize)) {
+                                    *n -= 1;
+                                }
+                                owed.retain(|&iid, &mut n| {
+                                    if pctx_clone.dctx_is_skipped_process_instance(iid) {
+                                        forgiven += n;
+                                        return false;
+                                    }
+                                    n > 0
+                                });
+                            }
+                            if forgiven > 0 {
+                                tracing::info!("Phase-B: writing off {forgiven} completion(s) owed by skipped instance(s)");
+                            }
+                            ctl.remaining_a.fetch_sub(1 + forgiven, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        // `<= 0` plus the one-shot flag, not `== 1`: reconciliation can subtract
+                        // several at once and step straight past the exact-one boundary.
                         let hit_zero = phase_a_kind
-                            && ctl.remaining_a.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1;
+                            && ctl.remaining_a.load(std::sync::atomic::Ordering::SeqCst) <= 0
+                            && !ctl.opened.swap(true, std::sync::atomic::Ordering::SeqCst);
                         if hit_zero {
                             let rc = set_phase_b_c(pctx_clone.get_device_buffers_ptr(), 1);
                             let drained: Vec<(u64, ProofType, usize, u8)> = {
