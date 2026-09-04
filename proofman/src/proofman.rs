@@ -14,7 +14,7 @@ use proofman_starks_lib_c::{
     set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c, set_phase_b_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
@@ -3023,6 +3023,21 @@ where
             });
         }
 
+        // Phase B: one Basic completion per instance plus one Compressor where the air has
+        // one; when the last lands, the basic stream closes and recursion moves to the two
+        // aliased streams (set_phase_b 1). Phase A starts fresh on every job.
+        let phase_a_remaining: Option<Arc<std::sync::atomic::AtomicI64>> = if self.pctx.phase_b {
+            let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            let mut expected: i64 = 0;
+            for &instance_id in my_instances.iter() {
+                let (ag, air) = self.pctx.dctx_get_instance_info(instance_id)?;
+                expected += 1 + self.pctx.global_info.get_air_has_compressor(ag, air) as i64;
+            }
+            tracing::debug!("Phase B armed: {expected} phase-A completions expected");
+            Some(Arc::new(std::sync::atomic::AtomicI64::new(expected)))
+        } else {
+            None
+        };
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
@@ -3040,6 +3055,7 @@ where
             let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
             let scheduler_clone = scheduler.clone();
+            let phase_a_remaining_clone = phase_a_remaining.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -3050,6 +3066,14 @@ where
                     let _settled = proofs_pending_clone.adopt(id, p.as_usize());
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
+                    }
+                    if let Some(remaining) = phase_a_remaining_clone.as_ref() {
+                        if (p == ProofType::Basic || p == ProofType::Compressor)
+                            && remaining.fetch_sub(1, Ordering::SeqCst) == 1
+                        {
+                            let rc = set_phase_b_c(pctx_clone.get_device_buffers_ptr(), 1);
+                            tracing::info!("Phase B requested: every basic and compressor completed (rc={rc})");
+                        }
                     }
                     if *DEBUG_CHALLENGES {
                         Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);

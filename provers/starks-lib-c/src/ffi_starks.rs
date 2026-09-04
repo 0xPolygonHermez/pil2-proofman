@@ -1530,6 +1530,14 @@ pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool)
     unsafe { set_pipeline_mode(d_buffers, enable) }
 }
 
+pub fn configure_phase_b_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_phase_b(d_buffers) }
+}
+
+pub fn set_phase_b_c(d_buffers: *mut ::std::os::raw::c_void, state: u32) -> i64 {
+    unsafe { set_phase_b(d_buffers, state) }
+}
+
 pub fn dump_pipeline_state_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { dump_pipeline_state(d_buffers) }
 }

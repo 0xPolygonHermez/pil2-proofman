@@ -416,7 +416,19 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         totalAuxTraceArea += d_buffers->aux_trace_sizes[j];
     }
     uint64_t totalAuxTraceSize = totalAuxTraceArea * sizeof(Goldilocks::Element);
-    uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
+    // Phase-B aliases live inside the basic stream's buffer: no area of their own.
+    uint64_t totalAuxTraceRecursiveSize =
+        d_buffers->phaseBAliased ? 0 : d_buffers->n_recursive_streams * auxTraceRecursiveSize;
+    if (d_buffers->phaseBAliased &&
+        (d_buffers->n_streams != 1 || d_buffers->n_recursive_streams != 2 ||
+         d_buffers->aux_trace_sizes[0] < 2 * auxTraceRecursiveArea)) {
+        zklog.error("Phase B needs one basic stream holding two recursive classes (" +
+                    std::to_string(d_buffers->n_streams) + " basic, " +
+                    std::to_string(d_buffers->n_recursive_streams) + " recursive, basic " +
+                    std::to_string(d_buffers->aux_trace_sizes[0]) + " vs 2 x " +
+                    std::to_string(auxTraceRecursiveArea) + " elements)");
+        exitProcess();
+    }
 
     // Mops-floor pad (see DeviceCommitBuffers::MOPS_FLOOR_BYTES): raise the region BELOW the
     // const pols to the floor so the mem-ops planner's borrow fits (its fixed regions plus the
@@ -463,7 +475,8 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         j = k;
     }
     zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB [" + auxTraceClasses + "]");
-    zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB" +
+               (d_buffers->phaseBAliased ? " (phase B: aliased over the basic stream)" : ""));
     zklog.info("  - Unified buffer per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Pinned host memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
 
@@ -512,10 +525,15 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
             offset += d_buffers->aux_trace_sizes[j];
         }
 
-        // Auxiliary trace buffers (recursive)
+        // Auxiliary trace buffers (recursive). Phase B: [0..A) and [A..2A) over the basic
+        // stream's buffer (validated above), usable only while that stream is idle.
         for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {
-            d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
-            offset += auxTraceRecursiveArea;
+            if (d_buffers->phaseBAliased) {
+                d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + (uint64_t)j * auxTraceRecursiveArea;
+            } else {
+                d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
+                offset += auxTraceRecursiveArea;
+            }
         }
 
         // Prefetch region lives INSIDE the unified buffer
@@ -1514,7 +1532,9 @@ static void harvestPipelineStream(DeviceCommitBuffers *d_buffers, uint64_t strea
 void dump_pipeline_state_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr) return;
-    fprintf(stderr, "[pipeline] mode=%d streams=%u\n", (int)d_buffers->pipelineMode, d_buffers->n_total_streams);
+    fprintf(stderr, "[pipeline] mode=%d streams=%u phaseB=%d state=%u closing=%d\n", (int)d_buffers->pipelineMode,
+            d_buffers->n_total_streams, (int)d_buffers->phaseBAliased, d_buffers->phaseBState.load(),
+            (int)d_buffers->phaseBClosing.load());
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         StreamData &sd = d_buffers->streamsData[i];
         cudaSetDevice(sd.gpuId);
@@ -1549,6 +1569,43 @@ void set_pipeline_mode_gpu(void *d_buffers_, bool enable) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr) return;
     d_buffers->pipelineMode = enable;
+}
+
+// Phase B registration, before gen_device_streams: the two recursive streams alias the basic
+// stream's buffer (see DeviceCommitBuffers::phaseBAliased).
+void configure_phase_b_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr) return;
+    d_buffers->phaseBAliased = true;
+}
+
+// Phase-B transitions. 0: job start, phase A. 1: every basic and compressor completed -- close
+// the basic stream to new reservations; the aliases open once it has drained (tryOpenPhaseB).
+// 2: recursion complete -- fence the aliases, drop the basic stream's const identity (the
+// aliases overwrote its buffer) and hand it back for VadcopFinal. Returns 0, or -1 when phase B
+// is not configured.
+int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr || !d_buffers->phaseBAliased) return -1;
+    if (state == 1) {
+        d_buffers->phaseBClosing.store(true, std::memory_order_release);
+        return 0;
+    }
+    if (state == 2) {
+        for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+            StreamData &sd = d_buffers->streamsData[i];
+            cudaSetDevice(sd.gpuId);
+            if (sd.recursive) {
+                CHECKCUDAERR(cudaStreamSynchronize(sd.stream));
+            } else {
+                std::lock_guard<std::mutex> lk(sd.mutex_stream_selection);
+                sd.invalidateContext();
+            }
+        }
+    }
+    d_buffers->phaseBClosing.store(false, std::memory_order_release);
+    d_buffers->phaseBState.store(state, std::memory_order_release);
+    return 0;
 }
 
 void get_stream_proofs_gpu(void *d_buffers_){
@@ -2644,7 +2701,7 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
 
     uint64_t totalAuxTraceSize = d_buffers->auxTraceTotalBytes;
     uint64_t constAggOffsetBytes =
-        totalAuxTraceSize + d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes +
+        totalAuxTraceSize + (d_buffers->phaseBAliased ? 0 : d_buffers->n_recursive_streams * d_buffers->auxTraceRecursiveBytes) +
         d_buffers->prefetchRegionBytes + d_buffers->mopsFloorPadBytes;
     if (nSlots * slotBytes > constAggOffsetBytes) {
         zklog.error("stream commit slots: " + std::to_string(nSlots) + " x " +
@@ -2668,7 +2725,7 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
         // Sizes differ per stream, so the offset is a prefix sum of the carve, not localStreamId * size.
         uint64_t start, end;
         if (sd.recursive) {
-            start = totalAuxTraceSize + sd.localStreamId * d_buffers->auxTraceRecursiveBytes;
+            start = (d_buffers->phaseBAliased ? 0 : totalAuxTraceSize) + sd.localStreamId * d_buffers->auxTraceRecursiveBytes;
             end = start + d_buffers->auxTraceRecursiveBytes;
         } else {
             start = 0;
@@ -3023,7 +3080,53 @@ static const AirInstanceInfo *requestedAirInstance(DeviceCommitBuffers* d_buffer
 // A forced request may only be held to a pool that exists: the Rust carve drops it when an
 // aggregation-only stream costs what a basic one does.
 static bool hasRecursivePool(DeviceCommitBuffers* d_buffers){
+    // Phase-B aliases count as a pool only while open; otherwise a forced recursive request
+    // would refuse the basic-stream fallback for the whole phase A.
+    if (d_buffers->phaseBAliased && d_buffers->phaseBState.load(std::memory_order_acquire) != 1) return false;
     return d_buffers->n_recursive_streams > 0;
+}
+
+// Phase B (DeviceCommitBuffers::phaseBAliased): may `sd` be reserved in the current phase?
+static bool phaseBEligible(DeviceCommitBuffers* d_buffers, const StreamData &sd){
+    if (!d_buffers->phaseBAliased) return true;
+    const uint32_t st = d_buffers->phaseBState.load(std::memory_order_acquire);
+    if (sd.recursive) return st == 1;
+    return st != 1 && !d_buffers->phaseBClosing.load(std::memory_order_acquire);
+}
+
+// Completes a requested phase-B switch once every basic stream is idle: no reservation held
+// (status 1, or a pick in progress holding its selection mutex), nothing queued (status 2 with
+// the end event pending, or ring entries). Then a hard stream fence, and the aliases' const
+// identity is dropped: the basic stream's proofs overwrote their buffers. Caller holds
+// stream_selection_mutex, so no basic reservation can slip in between the check and the flip.
+static void tryOpenPhaseB(DeviceCommitBuffers* d_buffers){
+    if (!d_buffers->phaseBClosing.load(std::memory_order_acquire)) return;
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        StreamData &sd = d_buffers->streamsData[i];
+        if (sd.recursive) continue;
+        if (!sd.mutex_stream_selection.try_lock()) return;
+        const uint32_t st = sd.status.load(std::memory_order_acquire);
+        uint32_t ring;
+        { std::lock_guard<std::mutex> plk(sd.pipeMutex); ring = sd.pipeCount; }
+        cudaSetDevice(sd.gpuId);
+        const bool idle = ring == 0 &&
+            (st == 0 || st == 3 || (st == 2 && cudaEventQuery(sd.end_event) == cudaSuccess));
+        sd.mutex_stream_selection.unlock();
+        if (!idle) return;
+    }
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        StreamData &sd = d_buffers->streamsData[i];
+        cudaSetDevice(sd.gpuId);
+        if (!sd.recursive) {
+            CHECKCUDAERR(cudaStreamSynchronize(sd.stream));
+        } else {
+            std::lock_guard<std::mutex> lk(sd.mutex_stream_selection);
+            sd.invalidateContext();
+        }
+    }
+    d_buffers->phaseBState.store(1, std::memory_order_release);
+    d_buffers->phaseBClosing.store(false, std::memory_order_release);
+    zklog.info("Phase B open: recursion continues on the two aliased streams");
 }
 
 static uint64_t largestBasicCapacity(DeviceCommitBuffers* d_buffers){
@@ -3111,11 +3214,13 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
         // try_lock, so this never blocks on harvest/reserve.
         std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
         const bool firstGpuBorrowed = d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
+        tryOpenPhaseB(d_buffers);
         // One pool pass; the best candidate per GPU is left locked.
         auto scanPool = [&](auto pool) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
                 StreamData &sd = d_buffers->streamsData[i];
                 if (firstGpuBorrowed && sd.gpuId == firstGpuId) continue;
+                if (!phaseBEligible(d_buffers, sd)) continue;
                 if (!pool(sd) || !sd.mutex_stream_selection.try_lock()) continue;
                 // Re-check the borrow flag under the lock.
                 if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
@@ -3199,6 +3304,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
             uint64_t largest = 0;
             for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
                 const StreamData &sd = d_buffers->streamsData[i];
+                if (!phaseBEligible(d_buffers, sd)) continue;
                 if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) continue;
                 largest = std::max(largest, sd.auxTraceCapacity);
                 if (sd.auxTraceCapacity >= requirementFor(d_buffers, sd, need)) eligible++;
@@ -3246,6 +3352,7 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
     if (streamId >= d_buffers->n_total_streams) return 0;
     StreamData& sd = d_buffers->streamsData[streamId];
+    if (!phaseBEligible(d_buffers, sd)) return 0;
     // A forced recursive launch must stay on a recursive stream while a pool exists; refuse
     // otherwise so the caller falls back to the cold scan.
     if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) return 0;
