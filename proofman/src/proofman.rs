@@ -14,7 +14,7 @@ use proofman_starks_lib_c::{
     set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c, set_phase_b_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
@@ -3272,9 +3272,11 @@ where
             set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
         }
 
+        // Resident-witness launches (skipRecalculation) are DISABLED: the path relaunched the table
+        // air committed last in contributions without recomputing it, for ~18 ms per job, and was
+        // behind two cluster-only failures (the C1c deadlock and the pinned-half race). Every
+        // instance takes the recompute path; the C++ side of the path is removed in R1.
         let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_device_streams];
-        get_instances_ready_c(self.pctx.get_device_buffers_ptr(), instance_ids_in_streams.as_ptr() as *mut i64);
-        tracing::debug!("resident witnesses per stream at proofs start: {:?}", instance_ids_in_streams);
 
         instance_ids_in_streams.par_iter().enumerate().for_each(|(stream_id, instance_id)| {
             if *instance_id < 0 {
