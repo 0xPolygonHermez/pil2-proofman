@@ -4195,47 +4195,12 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
-            let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
-            let (publics, rec_proof) = proof.proof.split_at(publics_aggregation);
-
-            let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
-            publics_extended[0..publics.len()].copy_from_slice(publics);
-
-            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
-
-            let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
-            recursive2_proof[0] = publics_extended.len() as u64;
-            recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
-            recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
-
-            let vadcop_proof =
-                VadcopFinalProof::new_from_proof(&recursive2_proof, false, self.pctx.global_info.hash.clone())
-                    .map_err(|e| {
-                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
-                    })?;
-
-            let v = verifier(&self.pctx.global_info.hash);
-
-            // Select the verkey by circuit_type (0 = null, 1 = recursive2, k >= 2 = recursive1 of air
-            // k-2). A single-instance worker sends an un-aggregated recursive1 proof that must use that
-            // air's recursive1 verkey, not the recursive2 one (else wrong root_c); a null proof is a no-op.
-            let circuit_type = publics[0];
-            let valid_recursive_proof = match circuit_type {
-                0 => true,
-                1 => v.verify_recursive2(&vadcop_proof, &setup.get_vk()),
-                _ => {
-                    let air_id = circuit_type as usize - 2;
-                    let vk = self
-                        .setups
-                        .sctx_recursive1
-                        .as_ref()
-                        .unwrap()
-                        .get_setup(proof.airgroup_id as usize, air_id)?
-                        .get_vk();
-                    v.verify_recursive2(&vadcop_proof, &vk)
-                }
-            };
+            // Verified with the C++ STARK verifier on the key's own setup files (starkinfo, verifier
+            // expressions, verkey): the same setup the sender proved against. The generated Rust
+            // verifier is tied to the setup it was generated from, and rejected valid proofs of a key
+            // built from a different revision of the recursion circuit ("Quotient polynomial
+            // verification failed" on every received proof).
+            let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -5310,6 +5275,45 @@ where
         if let Some(nonce) = buf.last() {
             tracing::info!("··· Instance {} [{}:{}]: nonce: {}", id, airgroup_id, air_id, nonce);
         }
+    }
+
+    /// Verify an aggregated proof received from a worker with the C++ STARK verifier on the key's
+    /// own setup files. circuit_type (publics[0]): 0 = null proof (no-op), 1 = recursive2, k >= 2 =
+    /// the un-aggregated recursive1 of air k-2 that a single-instance worker sends -- verified with
+    /// that air's recursive1 setup (same circuit shape, its own root_c).
+    fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
+        let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
+        let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
+        let circuit_type = publics[0];
+        if circuit_type == 0 {
+            return Ok(true);
+        }
+        let (setup, setup_path) = if circuit_type == 1 {
+            (
+                self.setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
+            )
+        } else {
+            let air_id = circuit_type as usize - 2;
+            (
+                self.setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
+            )
+        };
+        let mut publics_extended = vec![0u64; setup.stark_info.n_publics as usize];
+        publics_extended[0..publics.len()].copy_from_slice(publics);
+        add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
+        let publics_f: Vec<F> = publics_extended.iter().map(|&x| F::from_u64(x)).collect();
+        let base = setup_path.display().to_string();
+        Ok(verify_proof::<F>(
+            rec_proof.as_ptr() as *mut u64,
+            base.clone() + ".starkinfo.json",
+            base.clone() + ".verifier.bin",
+            base + ".verkey.json",
+            Some(publics_f),
+            None,
+            None,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
