@@ -10,11 +10,11 @@ pub const CLOCKS_MIXING: usize = 48;
 /// Rows dedicated to writing the state
 pub const CLOCKS_WRITE_STATE: usize = 4;
 
-/// Rows per SHA2-256 invocation
-pub const CLOCKS: usize = CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT + CLOCKS_MIXING + CLOCKS_WRITE_STATE;
-
-/// Number of mixing steps
+/// Steps of the message schedule / mixer, one per row
 pub const NUM_STEPS: usize = CLOCKS_LOAD_INPUT + CLOCKS_MIXING;
+
+/// Rows per compression
+pub const CLOCKS: usize = CLOCKS_LOAD_STATE + NUM_STEPS + CLOCKS_WRITE_STATE;
 
 /// Round constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
 pub const RC: [u32; NUM_STEPS] = [
@@ -27,6 +27,3 @@ pub const RC: [u32; NUM_STEPS] = [
     0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
     0xc67178f2,
 ];
-
-/// Range checker size (3 + 3 + 2 bits)
-pub const RANGE_SIZE: usize = 1 << 8;

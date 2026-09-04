@@ -21,7 +21,9 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/hashes/pil/main.pilout \
-     -b ./examples/hashes/build -u ./examples/hashes/build/fixed --gen-exps --hash blake3 -s ./examples/hashes/pil/config.json
+     -b ./examples/hashes/build -u ./examples/hashes/build/fixed \
+     --hash blake3 -s ./examples/hashes/pil/config.json \
+     --gen-exps
 ```
 
 Additionally, you can generate some stats about the setup by running:
