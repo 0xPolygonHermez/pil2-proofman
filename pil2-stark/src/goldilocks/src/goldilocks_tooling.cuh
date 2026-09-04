@@ -398,6 +398,14 @@ struct StreamData{
     cudaStream_t customStream;
     cudaEvent_t customFixedFork;
     cudaEvent_t customFixedDone;
+    // Fixed-pols rebuild lane (non-aliased airs), same LOWEST priority and protocol: fixedTreeFork
+    // orders it after the previous proof's reads of the const sections; fixedPolsDone (after the
+    // unpack) gates stage 1, fixedTreeDone (after the extend + merkelize) gates Q, so the tree part
+    // runs under stages 1-2.
+    cudaStream_t fixedStream;
+    cudaEvent_t fixedTreeFork;
+    cudaEvent_t fixedPolsDone;
+    cudaEvent_t fixedTreeDone;
 
     uint32_t gpuId;
     uint64_t localStreamId;
@@ -527,6 +535,10 @@ struct StreamData{
         CHECKCUDAERR(cudaStreamCreateWithPriority(&customStream, cudaStreamNonBlocking, prioLo));
         CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedFork, cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&fixedStream, cudaStreamNonBlocking, prioLo));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeFork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedPolsDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeDone, cudaEventDisableTiming));
         for (TimerGPU &t : timers) t.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -641,6 +653,10 @@ struct StreamData{
         cudaStreamDestroy(customStream);
         cudaEventDestroy(customFixedFork);
         cudaEventDestroy(customFixedDone);
+        cudaStreamDestroy(fixedStream);
+        cudaEventDestroy(fixedTreeFork);
+        cudaEventDestroy(fixedPolsDone);
+        cudaEventDestroy(fixedTreeDone);
         cudaEventDestroy(end_event);
         cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);

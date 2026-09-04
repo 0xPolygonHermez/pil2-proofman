@@ -86,7 +86,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false) {
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool fixedTreePending = false) {
     // Per-stream timer is reused: drop categories left open by an aborted job, and the load
     // phase's, so KERNELS CONTRIBUTIONS covers the proof window only.
     TimerResetCategoriesGPU(timer);
@@ -333,6 +333,10 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress,
                                 !setupCtx.starkInfo.constPolsAliasTree, timer, stream);
         TimerStopGPU(timer, FIXED_POLS_TREE);
+    } else if (fixedTreePending) {
+        // Rebuilt on the stream's lane since launch (prebuildFixedTree); Q is its first reader.
+        // Outside the capture regions: an event from another stream cannot be waited inside one.
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->streamsData[stream_id].fixedTreeDone, 0));
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
