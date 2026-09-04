@@ -1089,7 +1089,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
@@ -1260,6 +1260,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
         ps.proofFile = string(proofFile);
         ps.proofType = "basic";
         ps.pinnedProof = sd.pinned_buffer_proof + (uint64_t)pinnedSlot * sd.maxProofSize;
+        ps.timer = &sd.curTimer();
         CHECKCUDAERR(cudaEventRecord(ps.done, stream));
         sd.pipeCount++;
         sd.launchSeq++;
@@ -1284,7 +1285,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
@@ -1392,7 +1393,7 @@ void calculate_trace_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
@@ -1414,7 +1415,7 @@ void verify_constraints_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airI
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
@@ -1431,7 +1432,7 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t * proofBuffer = d_buffers->streamsData[streamId].proofBuffer;
     string proofType = d_buffers->streamsData[streamId].proofType;
     string proofFile = d_buffers->streamsData[streamId].proofFile;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     closeStreamTimer(timer, instanceId, airgroupId, airId, true);
 
@@ -1492,6 +1493,8 @@ static void harvestPipelineStream(DeviceCommitBuffers *d_buffers, uint64_t strea
         } else if (cudaEventQuery(ps->done) != cudaSuccess) {
             return;
         }
+        // Every event of this proof precedes `done` on the stream, so the syncs inside are immediate.
+        closeStreamTimer(*ps->timer, (uint64_t)ps->instanceId, ps->airgroupId, ps->airId, true);
         SetupCtx *setupCtx = (SetupCtx *)ps->pSetupCtx;
         writeProof(*setupCtx, ps->pinnedProof, ps->proofBuffer, ps->airgroupId, ps->airId,
                    (uint64_t)ps->instanceId, ps->proofFile);
@@ -1541,16 +1544,11 @@ void harvest_pipeline_gpu(void *d_buffers_) {
 }
 
 // Toggle deep pipelining (proofs phase only: the contributions phase relies on
-// harvest-on-reserve for commit roots, so it must stay off there). Also gates the
-// per-stream GPU timers: the next proof is enqueued while the current one still
-// runs, so its timer events would be booked to the current proof's open categories.
+// harvest-on-reserve for commit roots, so it must stay off there).
 void set_pipeline_mode_gpu(void *d_buffers_, bool enable) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr) return;
     d_buffers->pipelineMode = enable;
-    for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
-        d_buffers->streamsData[i].timer.enabled = !enable;
-    }
 }
 
 void get_stream_proofs_gpu(void *d_buffers_){
@@ -1634,7 +1632,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
     
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -1781,6 +1779,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         ps.proofFile = string(proof_file);
         ps.proofType = string(proofType);
         ps.pinnedProof = sd.pinned_buffer_proof + (uint64_t)(sd.launchSeq & 1) * sd.maxProofSize;
+        ps.timer = &sd.curTimer();
         CHECKCUDAERR(cudaEventRecord(ps.done, stream));
         sd.pipeCount++;
         sd.launchSeq++;
@@ -1798,7 +1797,7 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
@@ -2118,7 +2117,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
 
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
     TimerStartGPU(timer, STARK_GPU_COMMIT);
 
 #ifdef USE_CUDA_GRAPH
@@ -2285,7 +2284,7 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
-    closeStreamTimer(d_buffers->streamsData[streamId].timer, instanceId, airgroupId, airId, false);
+    closeStreamTimer(d_buffers->streamsData[streamId].curTimer(), instanceId, airgroupId, airId, false);
     // Contributions commit_root does NOT fire proof_done_callback: that decrement is owned by the
     // Prove-path accounting, and firing it here could hit the NULL-callback window and wedge proofs_pending.
 }

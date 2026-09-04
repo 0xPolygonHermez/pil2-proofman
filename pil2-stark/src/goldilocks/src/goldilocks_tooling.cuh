@@ -413,7 +413,11 @@ struct StreamData{
     // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
     // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
     cudaEvent_t trace_copy_event;
-    TimerGPU timer;
+    // One timer per ring slot: the next proof is enqueued while the current one still runs,
+    // so it must record into its own object. launchSeq advances only at ring pushes, so
+    // outside the pipeline every path shares timers[0].
+    TimerGPU timers[2];
+    TimerGPU &curTimer() { return timers[launchSeq & 1]; }
 
     TranscriptGL_GPU *transcript;
     TranscriptGL_GPU *transcript_helper;
@@ -485,6 +489,7 @@ struct StreamData{
         std::string proofFile;
         Goldilocks::Element *pinnedProof = nullptr;
         cudaEvent_t done = nullptr;
+        TimerGPU *timer = nullptr;   // closed (synced + logged) by the harvester
     };
     PipelineSlot pipeSlots[2];
     uint32_t pipeHead = 0;
@@ -504,7 +509,7 @@ struct StreamData{
         uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
-        timer.init(stream);
+        for (TimerGPU &t : timers) t.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
         recursive = recursive_;
@@ -573,7 +578,7 @@ struct StreamData{
 
         // Clear stale open timer categories: a cancel mid-category leaves one open, and the next
         // job's stopCategory then mismatches and CHECKCUDAERR-aborts. Host-side only, no CUDA calls.
-        timer.resetCategories();
+        for (TimerGPU &t : timers) t.resetCategories();
     }
 
     // Invalidate the const-reuse identity so the next proof reloads constants.
