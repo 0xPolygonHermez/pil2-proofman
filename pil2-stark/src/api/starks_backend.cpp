@@ -58,6 +58,8 @@ void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint6
 void free_device_buffers_gpu(void *d_buffers);
 void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
 void free_device_buffers_recursivef_gpu(void *d_buffers);
+void upload_custom_commit_packed_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_);
+void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU);
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
@@ -133,6 +135,8 @@ StarksBackend cpu_backend = []() {
     backend.gen_device_buffers_recursivef = nullptr;      // default: nullptr
     backend.free_device_buffers_recursivef = nullptr;
     backend.load_device_const_pols = nullptr;
+    backend.reserve_custom_commit_slot = nullptr;
+    backend.upload_custom_commit_packed = nullptr;
     backend.load_device_setup = load_device_setup_cpu;
     backend.gen_device_streams = nullptr;                 // default: 1
     backend.alloc_device_large_buffers = nullptr;
@@ -203,6 +207,8 @@ StarksBackend gpu_backend = []() {
     backend.gen_device_buffers_recursivef = gen_device_buffers_recursivef_gpu;
     backend.free_device_buffers_recursivef = free_device_buffers_recursivef_gpu;
     backend.load_device_const_pols = load_device_const_pols_gpu;
+    backend.reserve_custom_commit_slot = reserve_custom_commit_slot_gpu;
+    backend.upload_custom_commit_packed = upload_custom_commit_packed_gpu;
     backend.load_device_setup = load_device_setup_gpu;
     backend.gen_device_streams = gen_device_streams_gpu;
     backend.alloc_device_large_buffers = alloc_device_large_buffers_gpu;
@@ -416,6 +422,16 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
 void free_device_buffers_recursivef(void *d_buffers) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->free_device_buffers_recursivef) backend->free_device_buffers_recursivef(d_buffers);
+}
+
+void upload_custom_commit_packed(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->upload_custom_commit_packed) backend->upload_custom_commit_packed(airgroupId, airId, proofType, customFile, wordsPerRow, pSetupCtx_, d_buffers_);
+}
+
+void reserve_custom_commit_slot(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->reserve_custom_commit_slot) backend->reserve_custom_commit_slot(airgroupId, airId, proofType, offset, reservedWords, d_buffers_, onlyFirstGPU);
 }
 
 void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded) {

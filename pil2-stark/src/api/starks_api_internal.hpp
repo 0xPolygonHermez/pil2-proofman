@@ -14,6 +14,7 @@
 #include "blake3_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
+#include "pack_columns.hpp"
 
 inline void runGrinding(uint64_t &nonce,
                         const uint64_t *challenge, uint32_t powBits) {
@@ -173,39 +174,7 @@ struct DeviceCommitBuffersCPU
         uint64_t words_per_row,
         const std::vector<uint64_t> &unpack_info
     ) {
-        // #pragma omp parallel for
-        for (uint64_t row = 0; row < nRows; row++) {
-            const uint64_t* packed_row = &src[row * words_per_row];
-            uint64_t* unpacked_row = &dst[row * nCols];
-
-            uint64_t word = packed_row[0];
-            uint64_t word_idx = 0;
-            uint64_t bit_offset = 0;
-
-            for (uint64_t c = 0; c < nCols; c++) {
-                uint64_t nbits = unpack_info[c];
-                uint64_t val;
-                uint64_t bits_left = 64 - bit_offset;
-
-                if (nbits <= bits_left) {
-                    uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
-                    val = (word >> bit_offset) & mask;
-                    bit_offset += nbits;
-                    if (bit_offset == 64 && word_idx + 1 < words_per_row) {
-                        word = packed_row[++word_idx];
-                        bit_offset = 0;
-                    }
-                } else {
-                    uint64_t low = word >> bit_offset;
-                    word = packed_row[++word_idx];
-                    uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
-                    val = (high << bits_left) | low;
-                    bit_offset = nbits - bits_left;
-                }
-
-                unpacked_row[c] = val;
-            }
-        }
+        unpackRowsBits(src, dst, nRows, nCols, unpack_info.data(), words_per_row);
     }
 };
 

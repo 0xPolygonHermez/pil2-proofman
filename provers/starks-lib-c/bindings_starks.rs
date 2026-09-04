@@ -286,6 +286,7 @@ extern "C" {
         commitId: u64,
         buffer: *mut ::std::os::raw::c_void,
         customCommitFile: *mut ::std::os::raw::c_char,
+        wordsPerRow: u64,
     );
 
     pub fn write_custom_commit(
@@ -646,6 +647,26 @@ extern "C" {
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
     
+    pub fn upload_custom_commit_packed(
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        customFile: *mut ::std::os::raw::c_char,
+        wordsPerRow: u64,
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+    );
+
+    pub fn reserve_custom_commit_slot(
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        offset: u64,
+        reservedWords: u64,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        onlyFirstGPU: bool,
+    );
+
     pub fn load_device_const_pols(
         airgroupId: u64,
         airId: u64,

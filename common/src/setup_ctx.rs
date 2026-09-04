@@ -333,6 +333,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_compact_trace_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
+    total_custom_commits_reserved_words: usize,
     fixed_groups: HashMap<(usize, usize), FixedGroup>,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
@@ -382,6 +383,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
+        let mut total_custom_commits_reserved_words = 0;
         let mut max_witness_size = 0;
         let mut max_compact_trace_size = 0;
 
@@ -473,12 +475,17 @@ impl<F: PrimeField64> SetupRepository<F> {
             fixed_groups.insert(air, group);
             if sized_slots.insert(group.owner) {
                 total_const_pols_size += setup.const_pols_size_packed;
+                // Custom commits ride the same buffer; the slot is filled later, when
+                // register_custom_commits supplies the file path.
+                total_const_pols_size += setup.custom_commits_reserved_words;
+                total_custom_commits_reserved_words += setup.custom_commits_reserved_words;
                 if group.load_tree {
                     total_const_tree_size += setup.const_tree_size;
                 }
             } else {
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
+                saved += setup.custom_commits_reserved_words;
                 if group.load_tree {
                     saved += setup.const_tree_size;
                 }
@@ -508,6 +515,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
             total_const_tree_size,
+            total_custom_commits_reserved_words,
             max_witness_size,
             max_compact_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
@@ -531,6 +539,9 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
+    /// Included in `total_const_pols_size`, and tracked separately because it stays resident even
+    /// in no-const-buf mode: nothing stages custom commits per switch.
+    pub total_custom_commits_reserved_words: usize,
     setup_type: ProofType,
 }
 
@@ -553,6 +564,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
+        let total_custom_commits_reserved_words = setup_repository.total_custom_commits_reserved_words;
         let max_witness_size = setup_repository.max_witness_size;
         let max_compact_trace_size = setup_repository.max_compact_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
@@ -569,6 +581,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_n_bits_ext,
             total_const_pols_size,
             total_const_tree_size,
+            total_custom_commits_reserved_words,
             setup_type: *setup_type,
         })
     }

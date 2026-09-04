@@ -666,7 +666,13 @@ pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
     unsafe { custom_commit_size(p_setup, commit_id) }
 }
 
-pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
+pub fn load_custom_commit_c(
+    setup: *mut c_void,
+    commit_id: u64,
+    buffer: *mut u8,
+    buffer_file: &str,
+    words_per_row: u64,
+) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         load_custom_commit(
@@ -674,6 +680,7 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
             commit_id,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
         );
     }
 }
@@ -1720,6 +1727,57 @@ pub fn load_device_setup_c(
             packed_info,
             exec_data,
             exec_words,
+        );
+    }
+}
+
+/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+#[allow(clippy::too_many_arguments)]
+pub fn upload_custom_commit_packed_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    custom_file: &str,
+    words_per_row: u64,
+    p_setup_ctx: *mut c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let custom_file_name = CString::new(custom_file).unwrap();
+    unsafe {
+        upload_custom_commit_packed(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            custom_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
+            p_setup_ctx,
+            d_buffers,
+        );
+    }
+}
+
+/// Record the const-buffer slot reserved for an air's packed custom commits. Called for every air,
+/// shared slot or not, so a slot-sharing air also learns the offset.
+pub fn reserve_custom_commit_slot_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    offset: u64,
+    reserved_words: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    unsafe {
+        reserve_custom_commit_slot(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            offset,
+            reserved_words,
+            d_buffers,
+            only_first_gpu,
         );
     }
 }
