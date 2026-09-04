@@ -996,6 +996,27 @@ static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *
     CHECKCUDAERR(cudaEventRecord(sd.customFixedDone, sd.customStream));
 }
 
+// Non-aliased airs only: unpack + extend + merkelize the fixed pols on the stream's low-priority
+// fixedStream, forked after the previous proof's work, so the rebuild overlaps this proof's witness upload
+// instead of running inline. Aliased airs (constPolsAliasTree) keep the inline order: their LDE
+// destroys the small-domain pols that stages 1 and 2 still read. The caller waits fixedPolsDone
+// before genProof_gpu (stage 1 reads the small domain) and passes fixedTreePending so genProof_gpu
+// skips both steps and waits fixedTreeDone only where Q first reads the extended pols.
+static void prebuildFixedTree(SetupCtx *setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree,
+                              StreamData &sd, TimerGPU &timer) {
+    StarkInfo &si = setupCtx->starkInfo;
+    uint64_t N = 1ull << si.starkStruct.nBits;
+    Goldilocks::Element *packed = (Goldilocks::Element *)d_const_pols;
+    Goldilocks::Element *unpacked = (Goldilocks::Element *)d_aux_trace + si.mapOffsets[std::make_pair("const", false)];
+    CHECKCUDAERR(cudaEventRecord(sd.fixedTreeFork, sd.stream));
+    CHECKCUDAERR(cudaStreamWaitEvent(sd.fixedStream, sd.fixedTreeFork, 0));
+    unpack_fixed((uint64_t *)packed, (uint64_t *)(packed + 1), (uint64_t *)(packed + 1 + si.nConstants),
+                 (uint64_t *)unpacked, si.nConstants, N, sd.fixedStream, timer);
+    CHECKCUDAERR(cudaEventRecord(sd.fixedPolsDone, sd.fixedStream));
+    extendAndMerkelizeFixed(*setupCtx, unpacked, (Goldilocks::Element *)d_const_tree, true, timer, sd.fixedStream);
+    CHECKCUDAERR(cudaEventRecord(sd.fixedTreeDone, sd.fixedStream));
+}
+
 // Fill the slot reserved by reserve_custom_commit_slot. Once per air per GPU, from
 // register_custom_commits: the blob then stays resident, so no proof ever DMAs a custom commit.
 void upload_custom_commit_packed_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_) {
@@ -1166,6 +1187,42 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
+    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+    gl64_t *d_const_tree;
+    if (air_instance_info->stored_tree) {
+        // Preallocated in the const buffer, so it is in place unconditionally.
+        d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
+        reuse_const_tree = reuse_constants;
+    } else {
+        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
+        // operator[] would silently insert offset 0 -- the tree would then be written over the
+        // aux BASE.
+        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
+        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
+            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
+            exitProcess();
+        }
+        uint64_t offsetConstTree = itConstTree->second;
+        d_const_tree = d_aux_trace + offsetConstTree;
+
+        // calculateFixedExtended airs merkelize inside genProof_gpu instead, on the same
+        // flag -- either way ("const", true) holds this slot's tree on exit.
+        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
+            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
+        }
+    }
+    sd.constTreeResident = true;
+
+    // Fixed pols: non-aliased airs rebuild on the lane now (overlapping the witness upload below);
+    // aliased ones inside genProof_gpu, in order.
+    bool fixedPrebuilt = false;
+    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended &&
+        !setupCtx->starkInfo.constPolsAliasTree) {
+        prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
+        fixedPrebuilt = true;
+    }
+
     bool customFixedRebuilt = false;
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
         if (!reuse_custom_fixed) {
@@ -1254,40 +1311,14 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
 
     CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
 
-    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
-    gl64_t *d_const_tree;
-    if (air_instance_info->stored_tree) {
-        // Preallocated in the const buffer, so it is in place unconditionally.
-        d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
-        reuse_const_tree = reuse_constants;
-    } else {
-        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
-        // operator[] would silently insert offset 0 -- the tree would then be written over the
-        // aux BASE.
-        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
-        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
-            exitProcess();
-        }
-        uint64_t offsetConstTree = itConstTree->second;
-        d_const_tree = d_aux_trace + offsetConstTree;
-
-        // calculateFixedExtended airs merkelize inside genProof_gpu instead, on the same
-        // flag -- either way ("const", true) holds this slot's tree on exit.
-        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
-            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
-        }
-    }
-    sd.constTreeResident = true;
-
 
     proofman_sumcheck_set_context(instanceId, airgroupId, airId);
     // The tree-aware flag, not the slot one: genProof_gpu's reuse also gates the
     // calculateFixedExtended merkelize, and a slot claimed by commit_witness has pols but no
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree);
+    if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -1773,6 +1804,43 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // Getting the witness onto the device happens BEFORE genProof_gpu opens STARK_GPU_PROOF, so it
     // is a timer of its own rather than a category: a category here would be divided by a window
     // that does not contain it, which is what made that table total 102% with OTHER pinned at zero.
+    gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
+    gl64_t *d_const_tree;
+    if (air_instance_info->stored_tree) {
+        // Preallocated in the const buffer, so it is in place unconditionally.
+        d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
+        reuse_const_tree = reuse_constants;
+    } else {
+        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
+        // operator[] would silently insert offset 0 -- the tree would then be written over the
+        // aux BASE.
+        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
+        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
+            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
+            exitProcess();
+        }
+        uint64_t offsetConstTree = itConstTree->second;
+        d_const_tree = d_aux_trace + offsetConstTree;
+
+        // calculateFixedExtended airs rebuild the tree inside genProof_gpu (same flag, same reuse
+        // gate); the rest still upload the consttree file. Either way ("const", true) holds this
+        // slot's tree on exit.
+        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
+            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
+        }
+    }
+    sd.constTreeResident = true;
+
+    // Fixed pols: non-aliased airs rebuild on the lane now (overlapping the witness upload below);
+    // aliased ones inside genProof_gpu, in order.
+    bool fixedPrebuilt = false;
+    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended &&
+        !setupCtx->starkInfo.constPolsAliasTree) {
+        prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
+        fixedPrebuilt = true;
+    }
+
     TimerStartGPU(timer, STARK_GPU_WITNESS);
     if (compactWitness) {
         CHECKCUDAERR(cudaMemsetAsync((uint8_t*)(d_aux_trace + offsetStage1Extended), 0, sizeTrace, stream));
@@ -1822,36 +1890,9 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     memcpy(pinned_publics, pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), pinned_publics, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
 
-    gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
-    gl64_t *d_const_tree;
-    if (air_instance_info->stored_tree) {
-        // Preallocated in the const buffer, so it is in place unconditionally.
-        d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
-        reuse_const_tree = reuse_constants;
-    } else {
-        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
-        // operator[] would silently insert offset 0 -- the tree would then be written over the
-        // aux BASE.
-        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
-        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
-            exitProcess();
-        }
-        uint64_t offsetConstTree = itConstTree->second;
-        d_const_tree = d_aux_trace + offsetConstTree;
-
-        // calculateFixedExtended airs rebuild the tree inside genProof_gpu (same flag, same reuse
-        // gate); the rest still upload the consttree file. Either way ("const", true) holds this
-        // slot's tree on exit.
-        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
-            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
-        }
-    }
-    sd.constTreeResident = true;
-
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree);
+    if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (d_buffers->pipelineMode && !sd.recursive) {
         // Depth-2 in-flight on the shared stream: snapshot the completion into the ring
         // (the per-stream sd fields will be overwritten by the next launch) and let the
