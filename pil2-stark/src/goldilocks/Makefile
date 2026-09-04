@@ -22,7 +22,7 @@ endif
 
 ifeq ($(UNAME_S),Linux)
     CXX      = g++
-    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp -mavx2 -I/../utils
+    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp -mavx2
     CPPFLAGS =
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
     LDLIBS_COMMON = -fopenmp -lgmpxx -lgmp -lpthread -lstdc++
@@ -66,7 +66,7 @@ DEPS := $(OBJS:.o=.d)
 
 # Include directories. ../starkpil for the same reason the CUDA flags carry it: the recursion-trace
 # tests reach into the trace code, and its headers include siblings by bare name.
-INC_DIRS := $(shell find $(SRC_DIR) -type d) ../starkpil
+INC_DIRS := $(shell find $(SRC_DIR) -type d) ../starkpil ../utils
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 # Preprocessor flags

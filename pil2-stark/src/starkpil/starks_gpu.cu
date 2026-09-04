@@ -386,22 +386,27 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
 // preserve_src: must the unpacked const pols survive? Yes whenever a later proof of the same air
 // can reuse them instead of re-unpacking -- so for everything except an aliased air.
-void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    uint64_t nCols = setupCtx.starkInfo.nConstants;
+// Extend one fixed/preprocessed section and build its Merkle tree in place. Sections are stored
+// fixedLayout() (ColMajor); pNodes sits above the LDE's writes, so it doubles as LDE scratch.
+void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+    uint64_t NExtended = 1ull << nBitsExt;
     NTTGoldilocksGPU ntt;
-
-    Goldilocks::Element *src = d_fixedPols;
-    Goldilocks::Element *dst = d_fixedPolsExtended;
-    Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // Const sections are stored fixedLayout() (ColMajor); the Merkle build reads dst in that
-    // layout. pNodes is free scratch: above the LDE's writes, filled by the merkelize below.
+    Goldilocks::Element *pNodes = d_polsExtended + nCols * NExtended;
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+    ntt.ldeColMajor((gl64_t *)d_polsExtended, (gl64_t *)d_pols, nBits, nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, numNodes);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
+    buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_polsExtended, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
+}
+
+void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    extendAndMerkelizeSection(setupCtx.starkInfo.nConstants, setupCtx.starkInfo.starkStruct.nBits,
+                              setupCtx.starkInfo.starkStruct.nBitsExt,
+                              setupCtx.starkInfo.starkStruct.merkleTreeArity,
+                              setupCtx.starkInfo.getNumNodesMT(NExtended),
+                              d_fixedPols, d_fixedPolsExtended, preserve_src, timer, stream);
 }
 
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)

@@ -14,6 +14,7 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+#include "pack_columns.hpp"
 #include "build_const_tree.hpp"
 #include "../rapidsnark/fflonk_setup.hpp"
 #include "../rapidsnark/plonk_setup.hpp"
@@ -617,18 +618,40 @@ uint64_t custom_commit_size(void *pSetup, uint64_t commitId) {
     return (N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended);
 }
 
-void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
+void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile, uint64_t wordsPerRow)
 {
     auto setupCtx = *(SetupCtx *)pSetup;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
 
     std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-    
+
     Goldilocks::Element *bufferGL = (Goldilocks::Element *)buffer;
-    loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
+    Goldilocks::Element *base = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]];
+    Goldilocks::Element *extended = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]];
+
+    // One read of everything past the root: loadFileParallel only does whole-file loads (it
+    // asserts size + skipBytes == the file size).
+    std::vector<uint64_t> blob(1 + nCols + N * wordsPerRow);
+    loadFileParallel(blob.data(), bufferFile, blob.size() * sizeof(uint64_t), true, 32);
+    if (blob[0] != wordsPerRow) {
+        zklog.error("load_custom_commit: " + string(bufferFile) + " header says words_per_row " +
+                    to_string(blob[0]) + ", caller said " + to_string(wordsPerRow));
+        exitProcess();
+    }
+
+    unpackRowsBits(&blob[1 + nCols], (uint64_t *)base, N, nCols, &blob[1], wordsPerRow);
+
+    // Same three calls write_custom_commit_cpu makes, so the root the caller read still matches.
+    MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
+    mt.setSource(extended);
+    mt.setNodes(&extended[NExtended * nCols]);
+    NTT_Goldilocks ntt(N);
+    ntt.LDE(mt.source, base, NExtended, N, nCols);
+    mt.merkelize();
 }
 
 void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
@@ -647,12 +670,18 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     mt.getRoot(&rootGL[0]);
 
     if(std::string(bufferFile) != "") {
+        // Packed small domain only: the LDE leaves and nodes are rebuilt by whoever loads it.
+        std::vector<uint64_t> pack_info(nCols, 0);
+        uint64_t words_per_row = packWidthsRowMajor((const uint64_t *)buffer, N, nCols, pack_info.data());
+        std::vector<uint64_t> packed(N * words_per_row, 0);
+        packRowsBits((const uint64_t *)buffer, packed.data(), N, nCols, pack_info.data(), words_per_row);
+
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
-        writeFileParallel(buffFile, buffer, N * nCols * sizeof(Goldilocks::Element), 32);
-        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
-        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, &words_per_row, sizeof(uint64_t), 32);
+        writeFileParallel(buffFile, pack_info.data(), nCols * sizeof(uint64_t), 40);
+        writeFileParallel(buffFile, packed.data(), N * words_per_row * sizeof(uint64_t), 40 + nCols * sizeof(uint64_t));
         fw.close();
     }
 }

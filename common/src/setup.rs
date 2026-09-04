@@ -29,7 +29,7 @@ use proofman_starks_lib_c::{
     calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -73,6 +73,7 @@ pub struct Setup<F: PrimeField64> {
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
+    pub custom_commits_reserved_words: usize,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
@@ -509,6 +510,20 @@ impl<F: PrimeField64> Setup<F> {
                 (None, None, None, None, None, None, None)
             };
 
+        // Worst case (words_per_row == n_cols): the real value is in the commit file, which is
+        // registered long after the const buffer is sized.
+        let custom_commits_reserved_words = match gpu {
+            true => custom_commit_reserved_words(
+                stark_info.stark_struct.n_bits as u32,
+                &stark_info
+                    .custom_commits
+                    .iter()
+                    .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
+                    .collect::<Vec<_>>(),
+            ),
+            false => 0,
+        };
+
         Ok(Self {
             air_id,
             airgroup_id,
@@ -516,6 +531,7 @@ impl<F: PrimeField64> Setup<F> {
             p_setup: SetupC { p_stark_info, p_expressions_bin },
             const_pols_size,
             const_pols_size_packed,
+            custom_commits_reserved_words,
             const_tree_size,
             verkey,
             verkey_file,

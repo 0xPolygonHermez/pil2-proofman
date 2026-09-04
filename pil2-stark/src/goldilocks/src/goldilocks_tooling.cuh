@@ -73,6 +73,12 @@ struct AirInstanceInfo {
     
     SetupCtx *setupCtx;
 
+    // Packed custom commits, in the same const-pols buffer. Reserved at load time (worst case,
+    // words_per_row == nCols); customPolsPackedWords stays 0 until the blob is uploaded.
+    uint64_t custom_pols_offset = 0;
+    uint64_t customPolsReservedWords = 0;
+    uint64_t customPolsPackedWords = 0;
+
     Goldilocks::Element *verkeyRoot;
 
     bool is_packed = false;
@@ -386,6 +392,13 @@ struct StreamData{
 
     //const data
     cudaStream_t stream;
+    // Custom-commit rebuild lane: LOWEST priority. The rebuild fills the proof's front-end gap
+    // (witness H2D), so it must never preempt the proof's own kernels. customFixedFork orders it
+    // after the previous proof's reads of custom_fixed; customFixedDone gates this proof's first use.
+    cudaStream_t customStream;
+    cudaEvent_t customFixedFork;
+    cudaEvent_t customFixedDone;
+
     uint32_t gpuId;
     uint64_t localStreamId;
     StepsParams *pinned_params;
@@ -509,6 +522,11 @@ struct StreamData{
         uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
+        int prioLo = 0, prioHi = 0;
+        CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&prioLo, &prioHi));
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&customStream, cudaStreamNonBlocking, prioLo));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedFork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedDone, cudaEventDisableTiming));
         for (TimerGPU &t : timers) t.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -620,6 +638,9 @@ struct StreamData{
         graph_cache.reset();
 #endif
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(customStream);
+        cudaEventDestroy(customFixedFork);
+        cudaEventDestroy(customFixedDone);
         cudaEventDestroy(end_event);
         cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);

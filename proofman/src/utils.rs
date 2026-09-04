@@ -12,7 +12,7 @@ use colored::*;
 use proofman_common::{
     format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
-use proofman_starks_lib_c::load_device_const_pols_c;
+use proofman_starks_lib_c::{load_device_const_pols_c, reserve_custom_commit_slot_c};
 use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
@@ -986,12 +986,30 @@ fn load_const_pols_slot<F: PrimeField64>(
         shared_slot.is_some(),
     );
 
+    // Every air, shared or not: a slot-sharing air must learn the offset too. Must mirror the
+    // order SetupRepository::new sizes them in -- const pols, tree, then custom commits.
+    if setup.custom_commits_reserved_words > 0 {
+        let custom_offset = slot_offset
+            + setup.const_pols_size_packed as u64
+            + if load_tree { setup.const_tree_size as u64 } else { 0 };
+        reserve_custom_commit_slot_c(
+            airgroup_id as u64,
+            air_id as u64,
+            proof_type,
+            custom_offset,
+            setup.custom_commits_reserved_words as u64,
+            d_buffers,
+            only_first_gpu,
+        );
+    }
+
     if shared_slot.is_none() {
         slots.insert(group.owner, slot_offset);
         *offset += setup.const_pols_size_packed as u64;
         if load_tree {
             *offset += setup.const_tree_size as u64;
         }
+        *offset += setup.custom_commits_reserved_words as u64;
     }
 }
 
