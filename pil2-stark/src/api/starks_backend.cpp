@@ -80,6 +80,9 @@ uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
 uint32_t get_prefetch_witness_slots_gpu();
+void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
+void harvest_pipeline_gpu(void *d_buffers_);
+void dump_pipeline_state_gpu(void *d_buffers_);
 int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
                              uint64_t airgroupId, uint64_t airId, void *trace);
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
@@ -149,6 +152,9 @@ StarksBackend cpu_backend = []() {
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
+    backend.set_pipeline_mode = nullptr;                  // default: no-op
+    backend.harvest_pipeline = nullptr;                   // default: no-op
+    backend.dump_pipeline_state = nullptr;                // default: no-op
     backend.prefetch_witness = nullptr;                   // default: declined
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
@@ -214,6 +220,9 @@ StarksBackend gpu_backend = []() {
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
+    backend.set_pipeline_mode = set_pipeline_mode_gpu;
+    backend.harvest_pipeline = harvest_pipeline_gpu;
+    backend.dump_pipeline_state = dump_pipeline_state_gpu;
     backend.prefetch_witness = prefetch_witness_gpu;
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
@@ -513,6 +522,21 @@ void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t f
 uint32_t get_prefetch_witness_slots() {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_prefetch_witness_slots ? backend->get_prefetch_witness_slots() : 0;
+}
+
+void set_pipeline_mode(void *d_buffers_, bool enable) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->set_pipeline_mode) backend->set_pipeline_mode(d_buffers_, enable);
+}
+
+void harvest_pipeline(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->harvest_pipeline) backend->harvest_pipeline(d_buffers_);
+}
+
+void dump_pipeline_state(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->dump_pipeline_state) backend->dump_pipeline_state(d_buffers_);
 }
 
 int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,

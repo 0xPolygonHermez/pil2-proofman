@@ -239,6 +239,16 @@ impl Ledger {
             }
             if let Some(limit) = timeout {
                 if start.elapsed() >= limit {
+                    // Name the units that never settled: the only trace a wedged pipeline leaves.
+                    let mut left: Vec<UnitKey> =
+                        self.outstanding.lock().unwrap_or_else(|p| p.into_inner()).iter().copied().collect();
+                    left.sort_unstable();
+                    tracing::warn!(
+                        "ledger: {} unit(s) never settled after {:?}: {:?} (id, kind)",
+                        left.len(),
+                        limit,
+                        left
+                    );
                     return false;
                 }
             }

@@ -1526,6 +1526,18 @@ pub fn get_prefetch_witness_slots_c() -> u32 {
     unsafe { get_prefetch_witness_slots() }
 }
 
+pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
+    unsafe { set_pipeline_mode(d_buffers, enable) }
+}
+
+pub fn dump_pipeline_state_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { dump_pipeline_state(d_buffers) }
+}
+
+pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { harvest_pipeline(d_buffers) }
+}
+
 pub fn prefetch_witness_c(
     p_setup_ctx: *mut ::std::os::raw::c_void,
     d_buffers: *mut ::std::os::raw::c_void,

@@ -129,10 +129,21 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //   0x574c4445 "WLDE"  contributions LDE + Merkle + root   (commit_witness_gpu, starks_api.cu)
     const uint64_t graphCtxId = (uint64_t)(uintptr_t)&setupCtx;
 
-    StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params;
-    Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
-    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
-    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
+    // Pipeline: pinned params/proof staging is parity-sliced by launchSeq (incremented at
+    // the ring push after this call), so the proof enqueued behind the running one never
+    // overwrites staging it may still be copying. Resident (skipRecalculation) proofs were
+    // staged at slot 0 by the contributions phase; recursive-class streams have no ring.
+    const uint32_t pipeSlot = (d_buffers->pipelineMode && !skipRecalculation)
+        ? (uint32_t)(d_buffers->streamsData[stream_id].launchSeq & 1) : 0;
+    StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params + pipeSlot;
+    Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof
+        + (uint64_t)pipeSlot * d_buffers->streamsData[stream_id].maxProofSize;
+    // Same parity for the interpreter's exps staging (stageExpsSlot poisons captures, so a
+    // replay never reads it; the hazard is the queued H2D of the previous proof).
+    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params
+        + (uint64_t)pipeSlot * ((uint64_t)PINNED_EXPS_SLOTS * 2 * sizeof(DestParamsGPU) / sizeof(Goldilocks::Element));
+    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args
+        + (uint64_t)pipeSlot * ((uint64_t)PINNED_EXPS_SLOTS * sizeof(ExpsArguments) / sizeof(Goldilocks::Element));
     TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;
     TranscriptGL_GPU *d_transcript_helper = d_buffers->streamsData[stream_id].transcript_helper;
     StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
