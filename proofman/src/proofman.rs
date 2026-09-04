@@ -10,8 +10,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, prefetch_witness_c, set_gpu_mode_c,
-    load_device_const_pols_c,
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c, prefetch_witness_c,
+    set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
@@ -3207,8 +3207,19 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
+        // Pipeline: the next proof is enqueued on the stream while the current one still
+        // runs (no host sync at reserve; completions come off the harvest ring). Proofs phase
+        // only, and enabled BEFORE the resident-witness (table air) launches below so they ride
+        // the ring too. PROOFMAN_NO_PIPELINE=1 disables it.
+        let pipeline_enabled = prefetch_dequeue_ahead
+            && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
+        }
+
         let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_device_streams];
         get_instances_ready_c(self.pctx.get_device_buffers_ptr(), instance_ids_in_streams.as_ptr() as *mut i64);
+        tracing::debug!("resident witnesses per stream at proofs start: {:?}", instance_ids_in_streams);
 
         instance_ids_in_streams.par_iter().enumerate().for_each(|(stream_id, instance_id)| {
             if *instance_id < 0 {
@@ -3337,6 +3348,11 @@ where
                 let prefetch_log = std::env::var("PROOFMAN_PREFETCH_LOG").map(|v| v == "1").unwrap_or(false);
                 loop {
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                    // Pipeline: collect any finished proofs (writeProof + completion
+                    // callback) off the ring; non-blocking, cheap when nothing fired.
+                    if pipeline_enabled {
+                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
+                    }
 
                     // One locked pick per iteration (GPU): a Basic is dispatched right below; a
                     // Recursive witness (in `gpu_witness`) falls through to the recursive dispatch.
@@ -3405,6 +3421,9 @@ where
                                 }
                                 Some(crate::WorkerPick::Basic(id, s)) => {
                                     let sid = s.stream_id() as usize;
+                                    if prefetch_log {
+                                        tracing::info!("dispatch basic instance {id} on stream {sid}");
+                                    }
                                     reservation = Some(s);
                                     break Some((id, Some(sid)));
                                 }
@@ -3420,6 +3439,13 @@ where
                                             tracing::info!("prefetch zone: {zone_hits} hits / {zone_picks} basic dispatches");
                                         }
                                         return;
+                                    }
+                                    // Pipeline: a full ring is what usually parks us here --
+                                    // harvest finished proofs NOW (not at the outer loop top,
+                                    // which a parked worker never revisits) so the reserve
+                                    // above succeeds the moment one proof completes.
+                                    if pipeline_enabled {
+                                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
                                     }
                                     let (g, _) = cvar.wait_timeout(guard, std::time::Duration::from_millis(1)).unwrap();
                                     guard = g;
@@ -3776,12 +3802,17 @@ where
 
         // Wait for every launched proof to settle. The 600s backstop returns false without
         // cancelling, so cancel then — an incomplete result must not be mistaken for success.
+        // PROOFMAN_SETTLE_TIMEOUT_S shortens the backstop for wedge diagnosis (default 600).
+        let settle_timeout_s: u64 =
+            std::env::var("PROOFMAN_SETTLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
         let settled = completions.wait_settled(
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
-            Some(std::time::Duration::from_secs(600)),
+            Some(std::time::Duration::from_secs(settle_timeout_s)),
         );
         if !settled && !self.cancellation_info.read_recover().token.is_cancelled() {
+            // The ledger already named the unsettled units; add what the device streams hold.
+            dump_pipeline_state_c(self.pctx.get_device_buffers_ptr());
             self.cancellation_info
                 .write_recover()
                 .cancel(Some(ProofmanError::ProofmanError("timed out waiting for proofs to settle".into())));
@@ -3792,6 +3823,9 @@ where
         // idempotent no-op.
         proofs_finished.store(true, Ordering::Relaxed);
         drop(completions);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), false);
+        }
 
         if self.cancellation_info.read_recover().token.is_cancelled() {
             self.cancel_memory_handlers();

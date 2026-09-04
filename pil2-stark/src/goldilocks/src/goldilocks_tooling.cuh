@@ -470,6 +470,34 @@ struct StreamData{
     std::unique_ptr<CudaGraphCache> graph_cache;
 #endif
 
+    // ---- Deep pipeline (DeviceCommitBuffers::pipelineMode): up to 2 basic proofs
+    // in flight on this stream. Completion metadata lives in this 2-slot ring,
+    // harvested off the reserve path (reserve no longer host-syncs), and the
+    // enqueue-time host-written pinned staging (params / aux_values / proof) is
+    // parity-sliced by launchSeq so proof N+1's CPU writes never race proof N's
+    // still-pending async copies.
+    struct PipelineSlot {
+        int64_t instanceId = -1;
+        uint64_t airgroupId = 0, airId = 0;
+        std::string proofType = "basic";   // completion callback tag (ring carries recursives too)
+        void *pSetupCtx = nullptr;
+        uint64_t *proofBuffer = nullptr;
+        std::string proofFile;
+        Goldilocks::Element *pinnedProof = nullptr;
+        cudaEvent_t done = nullptr;
+    };
+    PipelineSlot pipeSlots[2];
+    uint32_t pipeHead = 0;
+    uint32_t pipeCount = 0;      // guarded by pipeMutex
+    uint64_t launchSeq = 0;      // single-writer (the launching worker)
+    std::mutex pipeMutex;
+    // Serializes harvesters: writeProof runs outside pipeMutex (it is slow and the
+    // enqueue push must not block behind it), so without this two concurrent
+    // harvesters would both claim the same head slot, double-pop, and underflow
+    // pipeCount into a livelock.
+    std::mutex harvestMutex;
+    uint64_t maxProofSize = 0;
+
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
@@ -484,11 +512,19 @@ struct StreamData{
         cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        // x2: parity slots for the deep pipeline (slot 0 is the only one used
+        // outside pipeline mode, so single-proof behavior is unchanged).
+        maxProofSize = max_size_proof;
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, 2 * max_size_proof * sizeof(Goldilocks::Element)));
+        // x2: parity halves for the pipeline (see genProof_gpu pipeSlot) -- the next proof's host
+        // staging must not overwrite a slot whose H2D is still queued behind the running proof.
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, 2 * maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, 2 * maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, 2 * sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, 2 * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        for (int k = 0; k < 2; k++) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&pipeSlots[k].done, cudaEventDisableTiming));
+        }
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -590,6 +626,9 @@ struct StreamData{
             cudaFree(d_gate_band_scratch);
             d_gate_band_scratch = nullptr;
         }
+        for (int k = 0; k < 2; k++) {
+            if (pipeSlots[k].done != nullptr) cudaEventDestroy(pipeSlots[k].done);
+        }
     }
 };
 
@@ -657,6 +696,11 @@ struct DeviceCommitBuffers
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
+    // Retirement events for the two pinned staging halves above (per GPU, index
+    // 0 = pinned_buffer, 1 = pinned_buffer_extra). The chunked upload loops wait
+    // on THESE before refilling a half, instead of cudaStreamSynchronize, which
+    // under pipelining drains every queued kernel of the previous proof.
+    cudaEvent_t (*pinned_copy_done)[2];
     gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
@@ -689,6 +733,10 @@ struct DeviceCommitBuffers
     std::mutex stream_selection_mutex;
 
     bool packedTrace = false;
+
+    // Deep pipeline switch: set by the Rust proofs phase (single-stream zone mode
+    // only), cleared at phase end. Read by the reserve paths and gen_proof.
+    bool pipelineMode = false;
 
     // Prefetch region
     gl64_t *prefetchRegionBase = nullptr;   // first GPU only

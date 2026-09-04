@@ -53,6 +53,7 @@ static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
+static void harvestPipelineStream(DeviceCommitBuffers *d_buffers, uint64_t streamId, bool blocking);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
@@ -351,6 +352,7 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
     d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
     d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+    d_buffers->pinned_copy_done = (cudaEvent_t (*)[2])malloc(d_buffers->n_gpus * sizeof(cudaEvent_t[2]));
     d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
         d_buffers->gpuMemoryBuffer[i] = nullptr;
@@ -539,6 +541,8 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         // Allocate pinned host buffers separately (one block per buffer type)
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->pinned_copy_done[i][0], cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->pinned_copy_done[i][1], cudaEventDisableTiming));
 
         // Verify we used exactly the amount we calculated 
         if (offset + unifiedBufferPadArea != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
@@ -635,6 +639,7 @@ static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
                    std::chrono::steady_clock::now() < stream_deadline) {
                 std::this_thread::sleep_for(std::chrono::microseconds(200));
             }
+            if (d_buffers->pipelineMode) harvestPipelineStream(d_buffers, s, true);
             if (std::chrono::steady_clock::now() >= stream_deadline) {
                 any_timed_out = true;
             }
@@ -705,6 +710,8 @@ void free_device_buffers_gpu(void *d_buffers_)
         // Free pinned host buffers
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
+        CHECKCUDAERR(cudaEventDestroy(d_buffers->pinned_copy_done[i][0]));
+        CHECKCUDAERR(cudaEventDestroy(d_buffers->pinned_copy_done[i][1]));
     }
     if (d_buffers->prefetchArmed) {
         int prevDevice = 0;
@@ -745,6 +752,7 @@ void free_device_buffers_gpu(void *d_buffers_)
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
+    free(d_buffers->pinned_copy_done);
     free(d_buffers->gpuMemoryBuffer);
 
     for (auto &outer_pair : d_buffers->air_instances) {
@@ -1091,6 +1099,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
 
+    const bool pipeline = d_buffers->pipelineMode;
+
     // Read the prior context before overwriting it below. Fixed columns are keyed by slot,
     // so an air sharing them with the stream's previous air reuses them; custom_fixed is
     // per-air.
@@ -1104,7 +1114,9 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
-    sd.proofBuffer = proofBuffer;
+    // Pipeline: completion metadata lives in the ring (per proof); leaving
+    // proofBuffer set would make a stray collectStreamResult read stale fields.
+    sd.proofBuffer = pipeline ? nullptr : proofBuffer;
     sd.proofFile = string(proofFile);
     sd.airgroupId = airgroupId;
     sd.airId = airId;
@@ -1177,7 +1189,12 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                     " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
         exitProcess();
     }
-    Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values;
+    // Parity slot: proof N+1's CPU staging must not overwrite the region proof N's
+    // still-pending async H2D reads (launchSeq increments at ring push, below).
+    const uint32_t pinnedSlot = (pipeline && !skipRecalculation)
+        ? (uint32_t)(d_buffers->streamsData[streamId].launchSeq & 1) : 0;
+    Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values
+        + (uint64_t)pinnedSlot * PINNED_AUX_VALUES_MAX;
     uint64_t offset = 0;
     memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     offset += setupCtx->starkInfo.nPublics;
@@ -1230,6 +1247,23 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // calculateFixedExtended merkelize, and a slot claimed by commit_witness has pols but no
     // tree. Costs a redundant unpack in exactly that case.
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree);
+    if (pipeline) {
+        // Snapshot the completion into the ring (the per-stream sd fields will be
+        // overwritten by the next launch); the harvester writeProofs + fires the callback.
+        std::lock_guard<std::mutex> plk(sd.pipeMutex);
+        StreamData::PipelineSlot &ps = sd.pipeSlots[(sd.pipeHead + sd.pipeCount) % 2];
+        ps.instanceId = (int64_t)instanceId;
+        ps.airgroupId = airgroupId;
+        ps.airId = airId;
+        ps.pSetupCtx = pSetupCtx_;
+        ps.proofBuffer = proofBuffer;
+        ps.proofFile = string(proofFile);
+        ps.proofType = "basic";
+        ps.pinnedProof = sd.pinned_buffer_proof + (uint64_t)pinnedSlot * sd.maxProofSize;
+        CHECKCUDAERR(cudaEventRecord(ps.done, stream));
+        sd.pipeCount++;
+        sd.launchSeq++;
+    }
     cudaEventRecord(sd.end_event, stream);
     sd.status = 2;
     return streamId;
@@ -1421,6 +1455,104 @@ static void collectStreamResult(DeviceCommitBuffers *d_buffers, uint64_t streamI
     sd.reset(false);
 }
 
+// Requires the caller to hold streamsData[streamId].mutex_stream_selection.
+// Deep pipeline: a busy basic stream is reservable while it holds fewer than 2
+// in-flight proofs. pipeCount has its own lock.
+static bool pipelineReservable(DeviceCommitBuffers *d_buffers, StreamData &sd) {
+    if (!d_buffers->pipelineMode || sd.recursive) return false;
+    if (sd.status.load(std::memory_order_relaxed) != 2) return false;
+    std::lock_guard<std::mutex> plk(sd.pipeMutex);
+    return sd.pipeCount < 2;
+}
+
+// Harvest fired pipeline ring entries on one stream: writeProof from the per-proof
+// pinned slot + completion callback. Never touches sd.* proof fields (stale under
+// pipelining) and never host-blocks unless `blocking`.
+static void harvestPipelineStream(DeviceCommitBuffers *d_buffers, uint64_t streamId, bool blocking) {
+    StreamData &sd = d_buffers->streamsData[streamId];
+    // One harvester at a time: a non-blocking caller yields to whoever is already
+    // draining (the entries WILL be collected); a blocking caller must wait for
+    // the ring to be truly empty, so it takes the lock unconditionally.
+    std::unique_lock<std::mutex> hlk(sd.harvestMutex, std::defer_lock);
+    if (blocking) {
+        hlk.lock();
+    } else if (!hlk.try_lock()) {
+        return;
+    }
+    for (;;) {
+        StreamData::PipelineSlot *ps = nullptr;
+        {
+            std::lock_guard<std::mutex> plk(sd.pipeMutex);
+            if (sd.pipeCount == 0) return;
+            ps = &sd.pipeSlots[sd.pipeHead];
+        }
+        cudaSetDevice(sd.gpuId);
+        if (blocking) {
+            CHECKCUDAERR(cudaEventSynchronize(ps->done));
+        } else if (cudaEventQuery(ps->done) != cudaSuccess) {
+            return;
+        }
+        SetupCtx *setupCtx = (SetupCtx *)ps->pSetupCtx;
+        writeProof(*setupCtx, ps->pinnedProof, ps->proofBuffer, ps->airgroupId, ps->airId,
+                   (uint64_t)ps->instanceId, ps->proofFile);
+        if (proof_done_callback != nullptr) {
+            proof_done_callback((uint64_t)ps->instanceId, ps->proofType.c_str());
+        }
+        {
+            std::lock_guard<std::mutex> plk(sd.pipeMutex);
+            sd.pipeHead = (sd.pipeHead + 1) % 2;
+            sd.pipeCount--;
+        }
+    }
+}
+
+// Diagnostic for a wedged proofs phase (called from the settle-timeout path): every stream's
+// status, ring occupancy and slot identities, and whether its last event has fired.
+void dump_pipeline_state_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr) return;
+    fprintf(stderr, "[pipeline] mode=%d streams=%u\n", (int)d_buffers->pipelineMode, d_buffers->n_total_streams);
+    for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
+        StreamData &sd = d_buffers->streamsData[i];
+        cudaSetDevice(sd.gpuId);
+        cudaError_t ev = cudaEventQuery(sd.end_event);
+        uint32_t cnt, head;
+        { std::lock_guard<std::mutex> plk(sd.pipeMutex); cnt = sd.pipeCount; head = sd.pipeHead; }
+        fprintf(stderr, "[pipeline] stream %lu gpu %u recursive=%d status=%u end_event=%s inst=%ld type=%s witnessResident=%d ring count=%u head=%u\n",
+                i, sd.gpuId, (int)sd.recursive, sd.status.load(), ev == cudaSuccess ? "done" : cudaGetErrorName(ev),
+                (long)sd.instanceId, sd.proofType.c_str(), (int)sd.witnessResident, cnt, head);
+        for (uint32_t k = 0; k < cnt; k++) {
+            StreamData::PipelineSlot &ps = sd.pipeSlots[(head + k) % 2];
+            cudaError_t d = ps.done ? cudaEventQuery(ps.done) : cudaErrorInvalidValue;
+            fprintf(stderr, "[pipeline]    slot %u: inst=%ld air %lu:%lu type=%s done=%s\n", (head + k) % 2, (long)ps.instanceId,
+                    ps.airgroupId, ps.airId, ps.proofType.c_str(), d == cudaSuccess ? "yes" : cudaGetErrorName(d));
+        }
+        cudaGetLastError();
+    }
+    fflush(stderr);
+}
+
+void harvest_pipeline_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr || !d_buffers->pipelineMode) return;
+    for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
+        harvestPipelineStream(d_buffers, i, false);
+    }
+}
+
+// Toggle deep pipelining (proofs phase only: the contributions phase relies on
+// harvest-on-reserve for commit roots, so it must stay off there). Also gates the
+// per-stream GPU timers: the next proof is enqueued while the current one still
+// runs, so its timer events would be booked to the current proof's open categories.
+void set_pipeline_mode_gpu(void *d_buffers_, bool enable) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr) return;
+    d_buffers->pipelineMode = enable;
+    for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
+        d_buffers->streamsData[i].timer.enabled = !enable;
+    }
+}
+
 void get_stream_proofs_gpu(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -1437,6 +1569,7 @@ void get_stream_proofs_gpu(void *d_buffers_){
         }
         cudaSetDevice(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
+        if (d_buffers->pipelineMode) harvestPipelineStream(d_buffers, i, true);
         collectStreamResult(d_buffers, i);
         d_buffers->streamsData[i].mutex_stream_selection.unlock();
     }
@@ -1445,6 +1578,7 @@ void get_stream_proofs_gpu(void *d_buffers_){
 void get_stream_proofs_non_blocking_gpu(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
+        if (d_buffers->pipelineMode) harvestPipelineStream(d_buffers, i, false);
         if (d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
             if(d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess) {
                 cudaSetDevice(d_buffers->streamsData[i].gpuId);
@@ -1479,6 +1613,7 @@ void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
         return;
     }
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
+    if (d_buffers->pipelineMode) harvestPipelineStream(d_buffers, streamId, true);
     collectStreamResult(d_buffers, streamId);
 }
 
@@ -1523,7 +1658,8 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
-    sd.proofBuffer = proofBuffer;
+    // Pipeline on the shared stream: completion metadata rides the ring below.
+    sd.proofBuffer = (d_buffers->pipelineMode && !sd.recursive) ? nullptr : proofBuffer;
     sd.proofFile = string(proof_file);
     sd.recurserId = string(recurser_id);
     sd.airgroupId = airgroupId;
@@ -1591,7 +1727,13 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
                     " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
         exitProcess();
     }
-    Goldilocks::Element *pinned_publics = d_buffers->streamsData[streamId].pinned_aux_values;
+    // Pinned staging parity, as in gen_proof_gpu. `sd.recursive` is the STREAM class: on the
+    // shared basic stream this recursive proof rides the ring; a dedicated recursive-class
+    // stream has no ring (launchSeq stays 0), so it always uses slot 0.
+    const uint32_t pipeSlot = (d_buffers->pipelineMode && !d_buffers->streamsData[streamId].recursive)
+        ? (uint32_t)(d_buffers->streamsData[streamId].launchSeq & 1) : 0;
+    Goldilocks::Element *pinned_publics = d_buffers->streamsData[streamId].pinned_aux_values
+        + (uint64_t)pipeSlot * PINNED_AUX_VALUES_MAX;
     memcpy(pinned_publics, pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), pinned_publics, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
 
@@ -1625,6 +1767,24 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree);
+    if (d_buffers->pipelineMode && !sd.recursive) {
+        // Depth-2 in-flight on the shared stream: snapshot the completion into the ring
+        // (the per-stream sd fields will be overwritten by the next launch) and let the
+        // harvester writeProof + fire the callback with the REAL proof type.
+        std::lock_guard<std::mutex> plk(sd.pipeMutex);
+        StreamData::PipelineSlot &ps = sd.pipeSlots[(sd.pipeHead + sd.pipeCount) % 2];
+        ps.instanceId = (int64_t)instanceId;
+        ps.airgroupId = airgroupId;
+        ps.airId = airId;
+        ps.pSetupCtx = pSetupCtx_;
+        ps.proofBuffer = proofBuffer;
+        ps.proofFile = string(proof_file);
+        ps.proofType = string(proofType);
+        ps.pinnedProof = sd.pinned_buffer_proof + (uint64_t)(sd.launchSeq & 1) * sd.maxProofSize;
+        CHECKCUDAERR(cudaEventRecord(ps.done, stream));
+        sd.pipeCount++;
+        sd.launchSeq++;
+    }
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -2965,7 +3125,8 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                 }
                 // Ran to completion but not yet harvested: free to take, and its const-tree is still
                 // loaded. Queried once and reused by the warm test.
-                const bool drained = sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess;
+                const bool drained = (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess)
+                    || pipelineReservable(d_buffers, sd);
                 if (!(sd.status==0 || sd.status==3 || drained) || !fitsCapacity(sd)) {
                     sd.mutex_stream_selection.unlock();
                     continue;
@@ -3105,7 +3266,8 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
             sd.mutex_stream_selection.unlock();
             return 0;
         }
-        bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess);
+        bool free = sd.status==0 || sd.status==3 || (sd.status==2 && cudaEventQuery(sd.end_event) == cudaSuccess)
+                    || pipelineReservable(d_buffers, sd);
         if (!free) { sd.mutex_stream_selection.unlock(); return 0; }
         // Warm but too roomy: taking it would park this launch on a stream some larger air may be the
         // only user of. Refuse, and let the scan apply its tightest-fit rule. Sized pool only -- the
@@ -3141,14 +3303,37 @@ void release_stream_reservation_gpu(void* d_buffers_, uint32_t streamId){
 
 // Requires the caller to hold streamsData[streamId].mutex_stream_selection
 void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId){
-    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
-    if(d_buffers->streamsData[streamId].status==2) {
-        // No-op via selectStream (event already fired); any other caller must wait.
-        CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].end_event));
-        collectStreamResult(d_buffers, streamId);
+    StreamData &sd = d_buffers->streamsData[streamId];
+    cudaSetDevice(sd.gpuId);
+    if(sd.status==2) {
+        // A proof launched outside the ring (sd.proofBuffer set: legacy path, e.g. before the
+        // pipeline was enabled) is collected only by the sync-and-collect below; skipping it
+        // would drop its completion for good.
+        if (d_buffers->pipelineMode && !sd.recursive && sd.proofBuffer == nullptr && sd.root == nullptr) {
+            // Pipeline: harvest whatever already fired, and reserve WITHOUT the
+            // host sync as long as a ring slot is free -- that is the whole point.
+            harvestPipelineStream(d_buffers, streamId, false);
+            bool slotFree;
+            {
+                std::lock_guard<std::mutex> plk(sd.pipeMutex);
+                slotFree = sd.pipeCount < 2;
+            }
+            if (slotFree) {
+                // No reset: warm/const identity fields stay valid (maintained at
+                // enqueue), and the ring keeps the in-flight proof's metadata.
+                sd.status = 1;
+                return;
+            }
+            CHECKCUDAERR(cudaEventSynchronize(sd.end_event));
+            harvestPipelineStream(d_buffers, streamId, true);
+        } else {
+            // No-op via selectStream (event already fired); any other caller must wait.
+            CHECKCUDAERR(cudaEventSynchronize(sd.end_event));
+            collectStreamResult(d_buffers, streamId);
+        }
     }
-    d_buffers->streamsData[streamId].reset(false);
-    d_buffers->streamsData[streamId].status = 1;
+    sd.reset(false);
+    sd.status = 1;
 }
 
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){

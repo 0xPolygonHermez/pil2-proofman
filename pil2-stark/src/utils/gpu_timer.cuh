@@ -55,8 +55,15 @@ public:
         return cudaStreamIsCapturing(stream, &status) == cudaSuccess && status != cudaStreamCaptureStatusNone;
     }
 
+    // Pipeline mode disables per-proof GPU timing. The stream still executes proofs one
+    // after the other, but the next proof is ENQUEUED while the current one runs, so its
+    // category events would be recorded inside the current proof's open categories and
+    // attributed to it -- and startCategory would accumulate entries that only
+    // closeStreamTimer (skipped in pipeline mode) drains.
+    bool enabled = true;
+
     void start(const std::string& name) {
-        if (capturing()) return;
+        if (!enabled || capturing()) return;
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
             if (!createEvent(start) || !createEvent(stop)) return;
@@ -68,7 +75,7 @@ public:
     }
 
     void stop(const std::string& name) {
-        if (capturing()) return;
+        if (!enabled || capturing()) return;
         auto it = timers.find(name);
         if (it == timers.end()) {
 #ifndef __GOLDILOCKS_ENV__
@@ -83,7 +90,7 @@ public:
     }
 
     void startCategory(const std::string& name) {
-        if (capturing()) return;
+        if (!enabled || capturing()) return;
         if (activeCategoryTimers.find(name) != activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
@@ -101,7 +108,7 @@ public:
     }
 
     void stopCategory(const std::string& name) {
-        if (capturing()) return;
+        if (!enabled || capturing()) return;
         auto it = activeCategoryTimers.find(name);
         if (it == activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
