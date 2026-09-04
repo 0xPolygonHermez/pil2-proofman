@@ -962,63 +962,6 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
     }
 }
 
-// Host artifact cache for staging: a file is read ONCE into host memory and
-// cudaHostRegister'd, so every later upload is a single full-speed async DMA --
-// no fread, no pinned bounce (fread showed up as a top warm-profile gap
-// contributor). PROOFMAN_HOST_CACHE=0 disables.
-static std::mutex gHostCacheMutex;
-static std::map<std::string, std::pair<uint8_t *, uint64_t>> gHostArtifactCache;
-static uint64_t gHostCacheBytes = 0;
-
-// Cap: registered host memory is pinned RAM; unbounded caching would pin most
-// of the machine (24 GB OOM-killed a large block on a 62 GB box). Measured:
-// 4 GB beats 16 GB (larger caches' DMAs competed with witness staging for
-// PCIe). PROOFMAN_HOST_CACHE_GB overrides.
-static uint64_t hostCacheCapBytes() {
-    static const uint64_t v = [] {
-        const char *e = getenv("PROOFMAN_HOST_CACHE_GB");
-        uint64_t gb = 4;
-        if (e != nullptr) { char *q; uint64_t p = strtoull(e, &q, 10); if (q != e) gb = p; }
-        return gb << 30;
-    }();
-    return v;
-}
-
-static bool hostCacheEnabled() {
-    static const bool v = getenv("PROOFMAN_HOST_CACHE") == nullptr ||
-                          std::string(getenv("PROOFMAN_HOST_CACHE")) != "0";
-    return v;
-}
-
-// Returns a registered host pointer holding >= bytes of `path` starting at
-// `skip` bytes into the file, or nullptr (caller falls back to the chunked
-// fread path). Cache key includes the skip so distinct views never collide.
-static const uint8_t *hostCacheGetSkip(const char *path, uint64_t bytes, uint64_t skip) {
-    if (!hostCacheEnabled()) return nullptr;
-    std::lock_guard<std::mutex> lk(gHostCacheMutex);
-    std::string key = std::string(path) + ":" + std::to_string(skip);
-    auto it = gHostArtifactCache.find(key);
-    if (it != gHostArtifactCache.end()) {
-        return it->second.second >= bytes ? it->second.first : nullptr;
-    }
-    if (gHostCacheBytes + bytes > hostCacheCapBytes()) return nullptr;
-    FILE *f = fopen(path, "rb");
-    if (f == nullptr) return nullptr;
-    if (skip != 0 && fseek(f, (long)skip, SEEK_SET) != 0) { fclose(f); return nullptr; }
-    uint8_t *buf = (uint8_t *)malloc(bytes);
-    if (buf == nullptr) { fclose(f); return nullptr; }
-    if (fread(buf, 1, bytes, f) != bytes) { fclose(f); free(buf); return nullptr; }
-    fclose(f);
-    if (cudaHostRegister(buf, bytes, cudaHostRegisterDefault) != cudaSuccess) {
-        cudaGetLastError();
-        free(buf);
-        return nullptr;
-    }
-    gHostCacheBytes += bytes;
-    gHostArtifactCache.emplace(std::move(key), std::make_pair(buf, bytes));
-    return buf;
-}
-
 // Rebuild the region from the resident packed blob on the stream's LOWEST-priority lane: unpack,
 // then LDE + merkelize with the same calls that produced the root. No H2D -- the source never left
 // the device. preserve_src keeps the small domain, which the expressions read. customFixedFork
