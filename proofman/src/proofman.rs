@@ -2776,6 +2776,13 @@ where
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
 
+            // Phase B is per job. A cluster worker never runs VadcopFinal, the only other point
+            // that hands the basic stream back, so the previous job can leave the aliases open:
+            // its basics would then find no eligible stream and starve here.
+            if self.pctx.gpu && self.pctx.phase_b {
+                let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            }
+
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
             timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_debug!(PREPARING_CONTRIBUTIONS);

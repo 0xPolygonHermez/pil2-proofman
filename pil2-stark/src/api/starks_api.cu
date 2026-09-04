@@ -1642,9 +1642,10 @@ void configure_phase_b_gpu(void *d_buffers_) {
 
 // Phase-B transitions. 0: job start, phase A. 1: every basic and compressor completed -- close
 // the basic stream to new reservations; the aliases open once it has drained (tryOpenPhaseB).
-// 2: recursion complete -- fence the aliases, drop the basic stream's const identity (the
-// aliases overwrote its buffer) and hand it back for VadcopFinal. Returns 0, or -1 when phase B
-// is not configured.
+// 2: recursion complete -- hand the basic stream back for VadcopFinal. Whenever the aliases may
+// have run (leaving 1, or a pending request), fence them and drop the basic stream's const
+// identity: the aliases overwrote its buffer. A cluster worker never runs VadcopFinal, so the
+// job-start reset to 0 is what closes its phase B. Returns 0, or -1 when phase B is not configured.
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr || !d_buffers->phaseBAliased) return -1;
@@ -1652,7 +1653,9 @@ int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state) {
         d_buffers->phaseBClosing.store(true, std::memory_order_release);
         return 0;
     }
-    if (state == 2) {
+    const bool aliasesRan = d_buffers->phaseBState.load(std::memory_order_acquire) == 1 ||
+                            d_buffers->phaseBClosing.load(std::memory_order_acquire);
+    if (state == 2 || aliasesRan) {
         for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
             StreamData &sd = d_buffers->streamsData[i];
             cudaSetDevice(sd.gpuId);
