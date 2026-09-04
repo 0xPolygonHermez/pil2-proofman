@@ -210,7 +210,11 @@ impl Default for ProofmanOptions {
             max_number_streams: 20,
             max_number_recursive_streams: 10,
             number_threads_pools_witness: 4,
-            max_witness_stored: 10,
+            // Witness pool depth (basic trace buffers, pinned; the recursive pool is half of it).
+            // Instances beyond it are recomputed in the proofs phase: 32 keeps every witness of the
+            // small blocks (31 instances at 60tx) and measured -0.5% over the 15-block suite; 14 GB
+            // of pinned host memory on the blake3 key. `-x` overrides.
+            max_witness_stored: 32,
             are_threads_per_witness_set: false,
             packed: false,
             gpu: false,
