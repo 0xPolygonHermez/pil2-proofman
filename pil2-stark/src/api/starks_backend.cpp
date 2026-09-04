@@ -81,6 +81,8 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
 uint32_t get_prefetch_witness_slots_gpu();
 void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
+void configure_phase_b_gpu(void *d_buffers_);
+int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
 void harvest_pipeline_gpu(void *d_buffers_);
 void dump_pipeline_state_gpu(void *d_buffers_);
 int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
@@ -153,6 +155,8 @@ StarksBackend cpu_backend = []() {
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
     backend.set_pipeline_mode = nullptr;                  // default: no-op
+    backend.configure_phase_b = nullptr;
+    backend.set_phase_b = nullptr;
     backend.harvest_pipeline = nullptr;                   // default: no-op
     backend.dump_pipeline_state = nullptr;                // default: no-op
     backend.prefetch_witness = nullptr;                   // default: declined
@@ -221,6 +225,8 @@ StarksBackend gpu_backend = []() {
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
     backend.set_pipeline_mode = set_pipeline_mode_gpu;
+    backend.configure_phase_b = configure_phase_b_gpu;
+    backend.set_phase_b = set_phase_b_gpu;
     backend.harvest_pipeline = harvest_pipeline_gpu;
     backend.dump_pipeline_state = dump_pipeline_state_gpu;
     backend.prefetch_witness = prefetch_witness_gpu;
@@ -527,6 +533,16 @@ uint32_t get_prefetch_witness_slots() {
 void set_pipeline_mode(void *d_buffers_, bool enable) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->set_pipeline_mode) backend->set_pipeline_mode(d_buffers_, enable);
+}
+
+void configure_phase_b(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->configure_phase_b) backend->configure_phase_b(d_buffers_);
+}
+
+int64_t set_phase_b(void *d_buffers_, uint32_t state) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->set_phase_b ? backend->set_phase_b(d_buffers_, state) : -1;
 }
 
 void harvest_pipeline(void *d_buffers_) {

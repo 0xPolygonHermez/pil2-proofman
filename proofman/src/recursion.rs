@@ -626,6 +626,11 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
+    // Phase B: the aliased recursive streams overlay the basic stream's buffer, which
+    // VadcopFinal needs back. No-op when phase B is not configured.
+    if pctx.gpu {
+        let _ = set_phase_b_c(pctx.get_device_buffers_ptr(), 2);
+    }
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
     let publics_circom_size =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
@@ -734,6 +739,9 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
+    if pctx.gpu {
+        let _ = set_phase_b_c(pctx.get_device_buffers_ptr(), 2);
+    }
     timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
     let setup = setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
         ProofmanError::InvalidConfiguration(

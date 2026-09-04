@@ -78,6 +78,8 @@ struct StarksBackend {
     void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
     uint32_t (*get_prefetch_witness_slots)();
     void (*set_pipeline_mode)(void *d_buffers_, bool enable);
+    void (*configure_phase_b)(void *d_buffers_);
+    int64_t (*set_phase_b)(void *d_buffers_, uint32_t state);
     void (*harvest_pipeline)(void *d_buffers_);
     void (*dump_pipeline_state)(void *d_buffers_);
     int64_t (*prefetch_witness)(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,

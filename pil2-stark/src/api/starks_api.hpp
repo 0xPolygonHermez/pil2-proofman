@@ -217,6 +217,8 @@ extern "C" {
     void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
     void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
     void set_pipeline_mode(void *d_buffers_, bool enable);
+    void configure_phase_b(void *d_buffers_);
+    int64_t set_phase_b(void *d_buffers_, uint32_t state);
     void harvest_pipeline(void *d_buffers_);
     void dump_pipeline_state(void *d_buffers_);
     uint32_t get_prefetch_witness_slots();

@@ -20,7 +20,7 @@ use crate::{
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
-    check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+    check_device_memory_c, configure_phase_b_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
     alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
 };
@@ -321,6 +321,9 @@ pub struct ProofCtx<F: PrimeField64> {
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
     /// this is what makes stream eligibility visible to the Rust-side schedulers.
     pub basic_stream_sizes: Vec<usize>,
+    /// Phase B registered: the two recursive streams alias the single basic stream's buffer and
+    /// open only after every basic and compressor completed (set_phase_b_c from the proofs phase).
+    pub phase_b: bool,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -378,6 +381,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
+            phase_b: false,
         })
     }
 
@@ -1127,7 +1131,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Retained so the witness admission can tell which airs are confined to a subset of streams.
         self.basic_stream_sizes = layout.basic_stream_sizes();
         let n_streams_per_gpu = layout.n_basic_streams();
-        let n_recursive_streams_per_gpu = layout.recursive.count;
+        let mut n_recursive_streams_per_gpu = layout.recursive.count;
+
+        // Phase B: with aggregation and one basic stream, two recursive streams alias that
+        // stream's buffer (sized above to hold both). They cost no memory and open once every
+        // basic and compressor has completed. PROOFMAN_NO_PHASE_B=1 disables.
+        self.phase_b = gpu
+            && aggregation
+            && n_streams_per_gpu == 1
+            && n_recursive_streams_per_gpu == 0
+            && layout.basic[0].size >= 2 * max_prover_recursive2_buffer_size
+            && !std::env::var("PROOFMAN_NO_PHASE_B").map(|v| v == "1").unwrap_or(false);
+        if self.phase_b {
+            configure_phase_b_c(d_buffers.get_ptr());
+            n_recursive_streams_per_gpu = 2;
+        }
 
         if gpu {
             let classes = layout
@@ -1138,6 +1156,7 @@ impl<F: PrimeField64> ProofCtx<F> {
                 .join(" + ");
             let aggregation_desc = match n_recursive_streams_per_gpu {
                 0 => format!("{} aggregation workers sharing the basic streams", layout.aggregation_workers),
+                2 if self.phase_b => "2 phase-B recursive streams aliased over the basic stream".to_string(),
                 n => format!("{n} dedicated streams per GPU for recursive proofs"),
             };
             tracing::info!(
@@ -1169,7 +1188,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                + if self.phase_b { 0 } else { n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64 }
                 + total_const_area_aggregation
                 + total_const_area;
             let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);

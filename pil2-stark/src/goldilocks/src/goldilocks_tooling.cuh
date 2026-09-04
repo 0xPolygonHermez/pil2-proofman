@@ -743,6 +743,17 @@ struct DeviceCommitBuffers
     // only), cleared at phase end. Read by the reserve paths and gen_proof.
     bool pipelineMode = false;
 
+    // ---- Phase B (aggregation with one basic stream). The two recursive streams are ALIASES of
+    // the basic stream's buffer ([0..A) and [A..2A), A = the recursive class size; the planner
+    // sized the stream to hold both), so they cost no memory and may only run while the basic
+    // stream is idle. phaseBState: 0 = phase A (basic stream on, aliases off); 1 = phase B
+    // (aliases on, basic stream off); 2 = final (basic stream back for VadcopFinal). The switch
+    // to 1 is REQUESTED by set_phase_b (phaseBClosing: no new basic reservation) and completed
+    // by tryOpenPhaseB once every basic stream has drained.
+    bool phaseBAliased = false;
+    std::atomic<uint32_t> phaseBState{0};
+    std::atomic<bool> phaseBClosing{false};
+
     // Prefetch region
     gl64_t *prefetchRegionBase = nullptr;   // first GPU only
     uint64_t prefetchRegionBytes = 0;

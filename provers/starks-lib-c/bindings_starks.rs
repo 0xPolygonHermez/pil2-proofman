@@ -694,6 +694,8 @@ extern "C" {
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
     pub fn get_prefetch_witness_slots() -> u32;
     pub fn set_pipeline_mode(d_buffers_: *mut ::std::os::raw::c_void, enable: bool);
+    pub fn configure_phase_b(d_buffers_: *mut ::std::os::raw::c_void);
+    pub fn set_phase_b(d_buffers_: *mut ::std::os::raw::c_void, state: u32) -> i64;
     pub fn harvest_pipeline(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn dump_pipeline_state(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn prefetch_witness(
