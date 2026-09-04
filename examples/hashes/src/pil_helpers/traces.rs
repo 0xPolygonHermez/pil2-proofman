@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "1163c38f91febaa0b8f2279fe55478d58824770031107e050050a4d1e3102747";
+pub const PILOUT_HASH: &str = "c2f57e8cadf2feb7d27f9238b082a0da68a608c2c2277c1101c98183f07c39c0";
 
 //AIRGROUP CONSTANTS
 
@@ -32,12 +32,12 @@ pub const BLAKE_3_AIR_IDS: &[usize] = &[2];
 
   
 trace_row!(Sha2FixedRow<F> {
- CLK_0: F, RANGE1: F, RANGE2: F, RANGE3: F, __L1__: F,
+ IS_ROUND: F, IS_MIXING: F, IS_WRITE_STATE: F, K: F,
 });
 pub type Sha2Fixed<F> = GenericTrace<Sha2FixedRow<F>, 65536, 0, 0>;
 
 trace_row!(Sha2TraceRow<F> {
- s0:[bit; 32], s1:[bit; 32], w:[bit; 32], new_s0_carry_bits:ubit(3), new_s1_carry_bits:ubit(3), new_w_carry_bits:ubit(2), mul_range:u64,
+ s0:[u64; 32], s1:[u64; 32], w:[u64; 32], s0_pk:u32, s1_pk:u32, w_pk:u32, ca0:u64, ce0:u64, cw0:u64, ca1:bit, ce1:bit, ce2:bit, cw1:bit,
 });
 
 pub type Sha2Trace<R> = GenericTrace<R, 65536, 0, 0>;
@@ -79,8 +79,8 @@ values!(Blake3AirGroupValues<F> {
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     (0, 0, PackedInfoConst {
         is_packed: true,
-        num_packed_words: 3,
-        unpack_info: &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 2, 64],
+        num_packed_words: 101,
+        unpack_info: &[64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 32, 32, 32, 64, 64, 64, 1, 1, 1, 1],
     }),
     (0, 1, PackedInfoConst {
         is_packed: true,

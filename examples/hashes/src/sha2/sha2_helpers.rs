@@ -14,13 +14,6 @@ pub(crate) fn bits32(w: u32) -> [bool; 32] {
     core::array::from_fn(|i| (w >> i) & 1 == 1)
 }
 
-/// Row index of the (3, 3, 2)-bit range-checker triple
-#[inline]
-pub(crate) fn range_row(s0_carry: u8, s1_carry: u8, w_carry: u8) -> usize {
-    debug_assert!(s0_carry < 8 && s1_carry < 8 && w_carry < 4);
-    (s0_carry as usize) + 8 * (s1_carry as usize) + 64 * (w_carry as usize)
-}
-
 /// σ₀(w) = (w >>> 7) ^ (w >>> 18) ^ (w >> 3)
 #[inline]
 pub(crate) fn small_sigma0(w: u32) -> u32 {

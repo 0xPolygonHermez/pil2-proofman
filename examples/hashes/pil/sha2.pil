@@ -1,7 +1,6 @@
 require "std_constants.pil"
-require "std_lookup.pil"
 
-// Precompile in charge of performing the SHA2-256 permutation 
+// Precompile in charge of performing the SHA2-256 permutation
 // For reference: Section 6.2 of https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf
 
 airtemplate Sha2(const int N = 2**8) {
@@ -22,17 +21,7 @@ airtemplate Sha2(const int N = 2**8) {
                     s1 := (w[i-2] >>> 17) ^ (w[i-2] >>> 19) ^ (w[i-2] >> 10)
                     w[i] := w[i-16] + s0 + w[i-7] + s1
 
-            • Variable initialization:
-                a := state[0]
-                b := state[1]
-                c := state[2]
-                d := state[3]
-                e := state[4]
-                f := state[5]
-                g := state[6]
-                h := state[7]
-
-            • Mixer:
+            • Mixer, from (a, b, c, d, e, f, g, h) := state:
                 for i in 0..63:
                     s1  := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
                     ch  := (e & f) ^ ((~e) & g)
@@ -40,37 +29,21 @@ airtemplate Sha2(const int N = 2**8) {
                     s0  := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
                     maj := (a & b) ^ (a & c) ^ (b & c)
                     t2  := s0 + maj
+                    (a, b, c, d, e, f, g, h) := (t1 + t2, a, b, c, d + t1, e, f, g)
 
-                    h := g
-                    g := f
-                    f := e
-                    e := d + t1
-                    d := c
-                    c := b
-                    b := a
-                    a := t1 + t2
-
-            • Variable finalization:
-                state[0] := state[0] + a
-                state[1] := state[1] + b
-                state[2] := state[2] + c
-                state[3] := state[3] + d
-                state[4] := state[4] + e
-                state[5] := state[5] + f
-                state[6] := state[6] + g
-                state[7] := state[7] + h
+            • Output: state[j] + (a, b, c, d, e, f, g, h)[j]
 
        ═══════════════════════════════════════════════════════════════════════════
-       EXECUTION TRACE LAYOUT
+       EXECUTION TRACE LAYOUT (72 rows per compression)
        ═══════════════════════════════════════════════════════════════════════════
 
            ROW    s0[0..32]     s1[0..32]        w[0..32]             STAGE
         |  0   | 0bD₁D₂..D₃₂ | 0bH₁H₂..H₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
-        |  1   | 0bC₁C₂..C₃₂ | 0bG₁G₂..G₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      | 
-        |  2   | 0bB₁B₂..B₃₂ | 0bF₁F₂..F₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      | 
+        |  1   | 0bC₁C₂..C₃₂ | 0bG₁G₂..G₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
+        |  2   | 0bB₁B₂..B₃₂ | 0bF₁F₂..F₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
         |  3   | 0bA₁A₂..A₃₂ | 0bE₁E₂..E₃₂ | XXXXXXXXXXXXXXXX |      LOAD STATE      |
         |----------------------------------------------------------------------------|
-        |  4   | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bM₁M₂.......M₃₂ |  MIXING & LOAD INPUT |      
+        |  4   | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bM₁M₂.......M₃₂ |  MIXING & LOAD INPUT |
         |  ... |     ...     |     ...     |        ...       |         ...          |
         |  19  | 0bX₁X₂..X₃₂ | 0bX₁X₂..X₃₂ | 0bM₄₈₁M₄₈₂..M₅₁₂ |  MIXING & LOAD INPUT |
         |----------------------------------------------------------------------------|
@@ -82,13 +55,44 @@ airtemplate Sha2(const int N = 2**8) {
         |  69  | 0bC₁C₂..C₃₂ | 0bG₁G₂..G₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
         |  70  | 0bB₁B₂..B₃₂ | 0bF₁F₂..F₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
         |  71  | 0bA₁A₂..A₃₂ | 0bE₁E₂..E₃₂ | XXXXXXXXXXXXXXXX |     WRITE STATE      |
+
+       ═══════════════════════════════════════════════════════════════════════════
+       HOW THE ROUND EQUATIONS ARE ENFORCED
+       ═══════════════════════════════════════════════════════════════════════════
+
+       The three round equations (new e, new a, new w) hold on EVERY row. Each reads
+
+           packed(this row) + carry * 2^32 == sum of the round terms (previous rows)
+
+       where `carry` is a small integer written as bit columns. Those bits are constrained to be
+       bits only on the rows where the equation is meaningful (IS_ROUND for a/e, IS_MIXING for w).
+       On the other rows (load, write, tail) the low carry cell is a free field element that
+       absorbs the difference, so the equation is satisfiable for any loaded / written word.
+
+       new a is written as new_e - d + Σ₀(a) + maj(a, b, c) (the same value mod 2^32 as
+       t1 + t2), whose range (-2^32, 3*2^32) needs a 2-bit carry offset by one, and does not repeat
+       the t1 terms.
+
+       ═══════════════════════════════════════════════════════════════════════════
+       BIT ENCODING: +1 / -1
+       ═══════════════════════════════════════════════════════════════════════════
+
+       A bit b of s0, s1 and w is stored as σ = 1 - 2b (0 --> 1, 1 --> -1). Then
+       xor(x, y, z) = σx * σy * σz, maj(x, y, z) = (σx + σy + σz - σx σy σz) / 2 and
+       ch(e, f, g) = (σf + σg + σe (σg - σf)) / 2, and a word is recovered as
+       Σ 2^i (1 - σ_i) / 2 = (2^32 - 1) / 2 - Σ 2^(i-1) σ_i.
     */
+
+    // 1/2 and 1/4 in the Goldilocks field: (p + 1) / 2 and (p + 1) / 4.
+    const int HALF = 0x7FFFFFFF80000001;
+    const int QUARTER = 0xBFFFFFFF40000001;
 
     const int CLOCKS_LOAD_STATE  = 4;
     const int CLOCKS_LOAD_INPUT  = 16;
     const int CLOCKS_MIXING      = 48;
     const int CLOCKS_WRITE_STATE = 4;
-    const int CLOCKS = CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT + CLOCKS_MIXING + CLOCKS_WRITE_STATE;
+    const int CLOCKS_ROUND = CLOCKS_LOAD_INPUT + CLOCKS_MIXING;
+    const int CLOCKS = CLOCKS_LOAD_STATE + CLOCKS_ROUND + CLOCKS_WRITE_STATE;
 
     // Calculate usable capacity
     const int NUM_NON_USABLE_ROWS = N % CLOCKS;
@@ -98,239 +102,192 @@ airtemplate Sha2(const int N = 2**8) {
     }
     println(`The total number of SHA2-256's with N = 2^${log2(N)} is ${NUM_OPS}`);
 
-    // Round constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
-    const int RC[64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    ];
-
-    // Argument identifiers
-    const int RANGE_CHECKER_ID = 252;
-
     // ═══════════════════════════════════════════════════════════════════════════
-    // CLOCK SELECTORS
+    // FIXED COLUMNS: phase selectors and the round constant
     // ═══════════════════════════════════════════════════════════════════════════
+    // K holds the round constants (first 32 bits of the fractional parts of the cube roots of the
+    // first 64 primes) on the 64 round rows of each block and 0 elsewhere.
 
-    // Base clock: 1 at first cycle row, 0 elsewhere within each cycle
     if (NUM_NON_USABLE_ROWS == 0) {
-        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS];
+        col fixed air.IS_ROUND       = [[0:CLOCKS_LOAD_STATE, 1:CLOCKS_ROUND, 0:CLOCKS_WRITE_STATE]:NUM_OPS];
+        col fixed air.IS_MIXING      = [[0:(CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT), 1:CLOCKS_MIXING, 0:CLOCKS_WRITE_STATE]:NUM_OPS];
+        col fixed air.IS_WRITE_STATE = [[0:(CLOCKS - CLOCKS_WRITE_STATE), 1:CLOCKS_WRITE_STATE]:NUM_OPS];
+        col fixed air.K = [[0:CLOCKS_LOAD_STATE,
+                            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+                            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+                            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+                            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+                            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+                            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+                            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+                            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+                            0:CLOCKS_WRITE_STATE]:NUM_OPS];
     } else {
-        col fixed air.CLK_0 = [[1, 0:(CLOCKS-1)]:NUM_OPS, 0...];
-    }
-
-    // Clock selectors for each row in the cycle
-    const expr CLK[CLOCKS];
-    for (int i = 0; i < CLOCKS; i++) {
-        CLK[i] = (i)'CLK_0;
+        col fixed air.IS_ROUND       = [[0:CLOCKS_LOAD_STATE, 1:CLOCKS_ROUND, 0:CLOCKS_WRITE_STATE]:NUM_OPS, 0...];
+        col fixed air.IS_MIXING      = [[0:(CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT), 1:CLOCKS_MIXING, 0:CLOCKS_WRITE_STATE]:NUM_OPS, 0...];
+        col fixed air.IS_WRITE_STATE = [[0:(CLOCKS - CLOCKS_WRITE_STATE), 1:CLOCKS_WRITE_STATE]:NUM_OPS, 0...];
+        col fixed air.K = [[0:CLOCKS_LOAD_STATE,
+                            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+                            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+                            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+                            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+                            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+                            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+                            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+                            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+                            0:CLOCKS_WRITE_STATE]:NUM_OPS, 0...];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // MAIN CONSTRAINTS
+    // COLUMNS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    col witness bits(1) s0[32];
-    col witness bits(1) s1[32];
-    col witness bits(1)  w[32];
+    // +1 / -1 encoded bits
+    col witness bits(64, signed) s0[32];
+    col witness bits(64, signed) s1[32];
+    col witness bits(64, signed)  w[32];
 
-    // s0,s1 and w are bits
+    // s0, s1 and w are +1/-1 on every row
     for (int i = 0; i < 32; i++) {
-        s0[i] * (1 - s0[i]) === 0;
-        s1[i] * (1 - s1[i]) === 0;
-        w[i] * (1 - w[i]) === 0;
+        s0[i] * s0[i] - 1 === 0;
+        s1[i] * s1[i] - 1 === 0;
+        w[i] * w[i] - 1 === 0;
     }
 
-    int offset = 0;
-    const expr is_loading_state = clock_set(start: offset, end: offset + CLOCKS_LOAD_STATE);
-    offset += CLOCKS_LOAD_STATE;
-    const expr is_loading_input = clock_set(start: offset, end: offset + CLOCKS_LOAD_INPUT);
-    offset += CLOCKS_LOAD_INPUT;
-    const expr is_mixing        = clock_set(start: offset, end: offset + CLOCKS_MIXING);
-    offset += CLOCKS_MIXING;
-    const expr is_writing_state = clock_set(start: offset, end: offset + CLOCKS_WRITE_STATE);
+    // Packed shadows of the three bit vectors. Every place that needs a word only as a number
+    // reads one column at one offset instead of opening the 32 bit columns there.
+    col witness bits(32) s0_pk;
+    col witness bits(32) s1_pk;
+    col witness bits(32) w_pk;
+    s0_pk <== pack_pm(s0);
+    s1_pk <== pack_pm(s1);
+    w_pk <== pack_pm(w);
 
-    const expr a[32],b[32],c[32],d[32],e[32],f[32],g[32],h[32];
-    const expr w2[32], w7[32], w15[32], w16[32];
+    // Carries of the three round equations, as bits:
+    //   new e = d + h + Σ₁(e) + ch(e,f,g) + k + w               : six terms, carry in [0, 6) -> 3 bits
+    //   new a = new e - d + Σ₀(a) + maj(a,b,c)                  : in (-2^32, 3*2^32), carry+1 in [0, 4) -> 2 bits
+    //   new w = Σ₁(w[i-2]) + w[i-7] + Σ₀(w[i-15]) + w[i-16]     : four terms, carry in [0, 4) -> 2 bits
+    // ce0, ca0 and cw0 are bits only where the equation is enforced and absorb the difference
+    // elsewhere; the other carry bits are bits everywhere, and ca1 / ce1 double as the output
+    // carries on the write rows.
+    col witness ca0;
+    col witness ce0;
+    col witness cw0;
+    col witness bits(1) ca1;
+    col witness bits(1) ce1;
+    col witness bits(1) ce2;
+    col witness bits(1) cw1;
+    IS_ROUND  * ca0 * (1 - ca0) === 0;
+    IS_ROUND  * ce0 * (1 - ce0) === 0;
+    IS_MIXING * cw0 * (1 - cw0) === 0;
+    ca1 * (1 - ca1) === 0;
+    ce1 * (1 - ce1) === 0;
+    ce2 * (1 - ce2) === 0;
+    cw1 * (1 - cw1) === 0;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ROUND EQUATIONS (every row)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const expr a[32],b[32],c[32],e[32],f[32],g[32];
+    const expr w2[32], w15[32];
     for (int i = 0; i < 32; i++) {
         a[i] = 's0[i];
         b[i] = 2's0[i];
         c[i] = 3's0[i];
-        d[i] = 4's0[i];
 
         e[i] = 's1[i];
         f[i] = 2's1[i];
         g[i] = 3's1[i];
-        h[i] = 4's1[i];
 
         w2[i] = 2'w[i];
-        w7[i] = 7'w[i];
         w15[i] = 15'w[i];
-        w16[i] = 16'w[i];
     }
+    const expr d_packed = 4's0_pk;
+    const expr h_packed = 4's1_pk;
+    const expr w7_packed = 7'w_pk;
+    const expr w16_packed = 16'w_pk;
 
-    // Compute the new message schedule value
-    const expr new_w_packed = compute_new_w(w2, w7, w15, w16);
+    // σ₀(w15) = (w15 >>> 7) ^ (w15 >>> 18) ^ (w15 >> 3)
+    // σ₁(w2) = (w2 >>> 17) ^ (w2 >>> 19) ^ (w2 >> 10)
+    const expr small_s0[32] = sigma_pm(w15, 7, 18, 3, 1);
+    const expr small_s1[32] = sigma_pm(w2, 17, 19, 10, 1);
 
-    // Compute the new state values
-    const expr k = clock_set_weighted(start: 0, end: CLOCKS_LOAD_INPUT + CLOCKS_MIXING, offset: CLOCKS_LOAD_STATE, weights: RC);
-    const expr new_state[2] = compute_new_state(a, b, c, d, e, f, g, h, w, k);
-    const expr new_s0_packed = new_state[0];
-    const expr new_s1_packed = new_state[1];
+    // new w = σ₁(w2) + w7 + σ₀(w15) + w16
+    const expr new_w = pack_pm(small_s1) + w7_packed + pack_pm(small_s0) + w16_packed;
+    w_pk + (cw0 + 2 * cw1) * P2_32 - new_w === 0;
 
-    // The new a/e/w expressions have degree 3 (3-input XORs, ch and maj).
-    // We commit them into intermediate columns so that following constraints has degree at most 3.
-    // The new a/e values are sums of 7 and 6 32-bit numbers, respectively, so they fit in 35 bits,
-    // while the new w value is a sum of 4 32-bit numbers, so it fits in 34 bits.
-    col witness bits(35) im_new_s0;
-    col witness bits(35) im_new_s1;
-    col witness bits(34) im_new_w;
-    im_new_s0 <== new_s0_packed;
-    im_new_s1 <== new_s1_packed;
-    im_new_w <== new_w_packed;
+    // Σ₀(a) = (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
+    // Σ₁(e) = (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
+    const expr big_s0[32] = sigma_pm(a, 2, 13, 22, 0);
+    const expr big_s1[32] = sigma_pm(e, 6, 11, 25, 0);
 
-    // We should prove that the unpacking of the new a/e/w values is correct.
-    // For the new a/e values, we add 7 and 6 32-bit numbers, respectively, and this
-    // generates numbers of at most 35 bits, since 2^34 < 6*(2^32-1),7*(2^32-1) < 2^35
-    // Similarly, for the new w value, we add 4 32-bit numbers, and this generates
-    // a number of at most 34 bits, since 2^33 < 4*(2^32-1) < 2^34
-    // We use the following columns to store the carry bits
-    col witness bits(3) new_s0_carry_bits;
-    col witness bits(3) new_s1_carry_bits;
-    col witness bits(2) new_w_carry_bits;
-    range_check_triple(a: new_s0_carry_bits, b: new_s1_carry_bits, c: new_w_carry_bits);
+    // new e = d + t1 =  d + (h + Σ₁(e) + ch(e,f,g) + k + w)
+    const expr new_e = d_packed + h_packed + pack_pm(big_s1) + pack_pm2(ch_pm2(e, f, g)) + K + w_pk;
+    s1_pk + (ce0 + 2 * ce1 + 4 * ce2) * P2_32 - new_e === 0;
 
-    const expr s0_packed = pack_bits(s0);
-    const expr s1_packed = pack_bits(s1);
-    const expr w_packed = pack_bits(w);
-    s0_packed + new_s0_carry_bits * P2_32
-        - is_loading_state * s0_packed
-        - (is_loading_input + is_mixing) * im_new_s0
-        - is_writing_state * ((CLOCKS_WRITE_STATE)'s0_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s0_packed) === 0;
-    s1_packed + new_s1_carry_bits * P2_32
-        - is_loading_state * s1_packed
-        - (is_loading_input + is_mixing) * im_new_s1
-        - is_writing_state * ((CLOCKS_WRITE_STATE)'s1_packed + (CLOCKS - CLOCKS_WRITE_STATE)'s1_packed) === 0;
-    w_packed + new_w_carry_bits * P2_32
-        - is_loading_input * w_packed
-        - is_mixing * im_new_w === 0;
+    // new a = t1 + t2 = (new e - d) + (Σ₀(a) + maj(a,b,c)) (mod 2^32)
+    const expr new_a = s1_pk - d_packed + pack_pm(big_s0) + pack_pm2(maj_pm2(a, b, c));
+    s0_pk + (ca0 + 2 * ca1 - 1) * P2_32 - new_a === 0;
 
-    // Given w[i-2], w[i-7], w[i-15], w[i-16], computes the new w[i] value
-    function compute_new_w(const expr w2[], const expr w7[], const expr w15[], const expr w16[]): expr {
-        // s0 := (w[i-15] >>> 7) ^ (w[i-15] >>> 18) ^ (w[i-15] >> 3)
-        // s1 := (w[i-2] >>> 17) ^ (w[i-2] >>> 19) ^ (w[i-2] >> 10)
-        // w[i] := w[i-16] + s0 + w[i-7] + s1
-        const expr s0[32] = xor(rotate_right(w15, 7), xor(rotate_right(w15, 18), shift_right(w15, 3)));
-        const expr s1[32] = xor(rotate_right(w2, 17), xor(rotate_right(w2, 19), shift_right(w2, 10)));
-        const expr new_w = pack_bits(s1) + pack_bits(w7) + pack_bits(s0) + pack_bits(w16);
-        return new_w;
-    }
-    
-    // Given a,b,c,d,e,f,g,h,w,k, computes the new a and e values
-    function compute_new_state(const expr a[], const expr b[], const expr c[], const expr d[],
-                            const expr e[], const expr f[], const expr g[], const expr h[], 
-                            const expr w[], const expr k): expr[] 
-    {
-        // s0 := (a >>> 2) ^ (a >>> 13) ^ (a >>> 22)
-        // s1 := (e >>> 6) ^ (e >>> 11) ^ (e >>> 25)
-        // ch := (e & f) ^ ((~e) & g)
-        // temp1 := h + s1 + ch + k[i] + w[i]
-        // maj := (a & b) ^ (a & c) ^ (b & c)
-        // temp2 := s0 + maj
-        // a := temp1 + temp2
-        // e := d + temp1
-        const expr s0[32] = xor(rotate_right(a, 2), xor(rotate_right(a, 13), rotate_right(a, 22)));
-        const expr s1[32] = xor(rotate_right(e, 6), xor(rotate_right(e, 11), rotate_right(e, 25)));
-        const expr t1 = pack_bits(h) + pack_bits(s1) + pack_bits(ch(e, f, g)) + k + pack_bits(w);
-        const expr t2 = pack_bits(s0) + pack_bits(maj(a, b, c));
-        const expr new_a = t1 + t2;
-        const expr new_e = pack_bits(d) + t1;
-        const expr result[2] = [new_a, new_e];
-        return result;
-    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // OUTPUT (write rows): state + final state, word by word, with a one-bit carry
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    function xor(const expr a[], const expr b[]): expr[] {
-        const int len = length(a);
-        const expr result[len];
-        for (int i = 0; i < len; i++) {
-            result[i] = a[i] + b[i] - 2 * a[i] * b[i];
-        }
-        return result;
-    }
+    IS_WRITE_STATE * (s0_pk + ca1 * P2_32 - (CLOCKS_WRITE_STATE)'s0_pk - (CLOCKS - CLOCKS_WRITE_STATE)'s0_pk) === 0;
+    IS_WRITE_STATE * (s1_pk + ce1 * P2_32 - (CLOCKS_WRITE_STATE)'s1_pk - (CLOCKS - CLOCKS_WRITE_STATE)'s1_pk) === 0;
 
-    function rotate_right(const expr state[], const int n): expr[] {
-        const int len = length(state);
-        const expr result[len];
-        for (int i = 0; i < len; i++) {
-            if (i + n < len) {
-                result[i] = state[i + n];
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HELPERS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // (x >>> r1) ^ (x >>> r2) ^ (x >>> r3), or with (x >> r3) when shift3 == 1, on +1/-1 bits:
+    // xor is a product, and a shifted-out position is a 0 bit, i.e. a factor +1.
+    function sigma_pm(const expr x[], const int r1, const int r2, const int r3, const int shift3): expr[] {
+        const expr result[32];
+        for (int i = 0; i < 32; i++) {
+            if (shift3 == 1 && i + r3 >= 32) {
+                result[i] = x[(i + r1) % 32] * x[(i + r2) % 32];
             } else {
-                result[i] = state[i + n - len];
+                result[i] = x[(i + r1) % 32] * x[(i + r2) % 32] * x[(i + r3) % 32];
             }
         }
         return result;
     }
 
-    function shift_right(const expr state[], const int n): expr[] {
-        const int len = length(state);
-        const expr result[len];
-        for (int i = 0; i < len; i++) {
-            if (i + n < len) {
-                result[i] = state[i + n];
-            } else {
-                result[i] = 0;
-            }
+    // Twice maj(x, y, z) on +1/-1 bits: x + y + z - xyz (the 1/2 is folded into pack_pm2).
+    function maj_pm2(const expr x[], const expr y[], const expr z[]): expr[] {
+        const expr result[32];
+        for (int i = 0; i < 32; i++) {
+            result[i] = x[i] + y[i] + z[i] - x[i] * y[i] * z[i];
         }
         return result;
     }
 
-    function maj(const expr a[], const expr b[], const expr c[]): expr[] {
-        const int len = length(a);
-        const expr result[len];
-        for (int i = 0; i < len; i++) {
-            result[i] = a[i] * b[i] * (1 - c[i]) +
-                        a[i] * (1 - b[i]) * c[i] +
-                        (1 - a[i]) * b[i] * c[i] +
-                        a[i] * b[i] * c[i];
+    // Twice ch(e, f, g) = e ? f : g on +1/-1 bits (e = -1 means the bit 1): f + g + e (g - f).
+    function ch_pm2(const expr e[], const expr f[], const expr g[]): expr[] {
+        const expr result[32];
+        for (int i = 0; i < 32; i++) {
+            result[i] = f[i] + g[i] + e[i] * (g[i] - f[i]);
         }
         return result;
     }
 
-    function ch(const expr a[], const expr b[], const expr c[]): expr[] {
-        const int len = length(a);
-        const expr result[len];
-        for (int i = 0; i < len; i++) {
-            result[i] = a[i] * b[i] + (1 - a[i]) * c[i];
+    // The word whose bits are the +1/-1 values s: Σ 2^i (1 - s_i) / 2 = (2^32 - 1) / 2 - Σ 2^(i-1) s_i.
+    function pack_pm(const expr s[]): expr {
+        expr acc = (P2_32 - 1) * air.HALF;
+        for (int i = 0; i < 32; i++) {
+            acc -= s[i] * (2**i * air.HALF);
         }
-        return result;
+        return acc;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SHA2-256 RANGE CHECKER
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    const int RANGE_CHECKER_SIZE = P2_8;
-    if (N < RANGE_CHECKER_SIZE) {
-        error(`N must be at least ${RANGE_CHECKER_SIZE}, but N=${N} was provided`);
-    }
-
-    // Range1 (3 bits)
-    col fixed RANGE1 = [0..MASK_3]...;
-
-    // Range2 (3 bits)
-    col fixed RANGE2 = [0:P2_3..MASK_3:P2_3]...;
-
-    // Range3 (2 bits)
-    col fixed RANGE3 = [0:P2_6..MASK_2:P2_6]...;
-
-    col witness mul_range;
-    lookup_proves(RANGE_CHECKER_ID, [RANGE1, RANGE2, RANGE3], mul_range);
-
-    function range_check_triple(const expr a, const expr b, const expr c) {
-        lookup_assumes(air.RANGE_CHECKER_ID, [a, b, c]);
+    // The same for values t_i that are twice a +1/-1 bit: Σ 2^i (1 - t_i / 2) / 2.
+    function pack_pm2(const expr t[]): expr {
+        expr acc = (P2_32 - 1) * air.HALF;
+        for (int i = 0; i < 32; i++) {
+            acc -= t[i] * (2**i * air.QUARTER);
+        }
+        return acc;
     }
 }
