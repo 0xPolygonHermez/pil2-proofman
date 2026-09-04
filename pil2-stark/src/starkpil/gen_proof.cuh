@@ -131,9 +131,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     // Pipeline: pinned params/proof staging is parity-sliced by launchSeq (incremented at
     // the ring push after this call), so the proof enqueued behind the running one never
-    // overwrites staging it may still be copying. Resident (skipRecalculation) proofs were
-    // staged at slot 0 by the contributions phase; recursive-class streams have no ring.
-    const uint32_t pipeSlot = (d_buffers->pipelineMode && !skipRecalculation)
+    // overwrites staging it may still be copying. Every ring launch follows the parity,
+    // resident-witness ones included (see gen_proof_gpu); recursive-class streams have no ring.
+    const uint32_t pipeSlot = d_buffers->pipelineMode
         ? (uint32_t)(d_buffers->streamsData[stream_id].launchSeq & 1) : 0;
     StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params + pipeSlot;
     Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof

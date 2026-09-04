@@ -683,11 +683,34 @@ void reset_device_streams_gpu(void *d_buffers_) {
         // Mutate under the per-stream lock or SEGV: a concurrent get_stream_proofs harvest reads
         // `proofType` (a std::string) under this same lock; unlocked, invalidateContext()'s
         // `proofType = ""` frees it mid-read.
-        std::lock_guard<std::mutex> lg(d_buffers->streamsData[i].mutex_stream_selection);
-        d_buffers->streamsData[i].invalidateContext();
-        d_buffers->streamsData[i].instanceId = -1;   // full teardown: no resident witness
-        d_buffers->streamsData[i].reset(true);
+        StreamData &sd = d_buffers->streamsData[i];
+        std::lock_guard<std::mutex> lg(sd.mutex_stream_selection);
+        sd.invalidateContext();
+        sd.instanceId = -1;   // full teardown: no resident witness
+        sd.reset(true);
+        // Completion ring: a job cancelled with proofs in flight leaves finished slots here, and
+        // the next job's first harvest would write them into a dead host buffer and fire
+        // completions for instance ids that now belong to another block (seen as a recursive1
+        // witness failing VerifyEvaluations 100 ms into the proofs phase). Drop them unharvested.
+        {
+            std::lock_guard<std::mutex> hlk(sd.harvestMutex);
+            std::lock_guard<std::mutex> plk(sd.pipeMutex);
+            for (StreamData::PipelineSlot &ps : sd.pipeSlots) {
+                ps.instanceId = -1;
+                ps.proofBuffer = nullptr;
+                ps.pSetupCtx = nullptr;
+                ps.pinnedProof = nullptr;
+                ps.timer = nullptr;
+            }
+            sd.pipeCount = 0;
+            sd.pipeHead = 0;
+            sd.launchSeq = 0;
+        }
+        for (TimerGPU &t : sd.timers) t.clear();   // events of the dropped proofs
     }
+    // Phase B is per job; the streams above are fenced and their identities dropped already.
+    d_buffers->phaseBClosing.store(false, std::memory_order_release);
+    d_buffers->phaseBState.store(0, std::memory_order_release);
 
     // Clear a stranded first-GPU-buffer borrow: zisk's Phase-1 error paths skip release, so a cancel
     // can leave it set and then selectStream skips every first-GPU stream forever. Safe here because
@@ -1287,9 +1310,12 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
         exitProcess();
     }
     // Parity slot: proof N+1's CPU staging must not overwrite the region proof N's
-    // still-pending async H2D reads (launchSeq increments at ring push, below).
-    const uint32_t pinnedSlot = (pipeline && !skipRecalculation)
-        ? (uint32_t)(d_buffers->streamsData[streamId].launchSeq & 1) : 0;
+    // still-pending async H2D reads (launchSeq increments at ring push, below). Every ring launch
+    // follows the parity, the resident-witness one included: forcing it to slot 0 put it on the
+    // same half as the next proof whenever launchSeq was odd, and that proof's D2H then overwrote
+    // its proof bytes before the harvester read them (a valid proof of another instance delivered
+    // under the resident instance's id -- recursive1 VerifyEvaluations failure, ~1 job in 100).
+    const uint32_t pinnedSlot = pipeline ? (uint32_t)(d_buffers->streamsData[streamId].launchSeq & 1) : 0;
     Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values
         + (uint64_t)pinnedSlot * PINNED_AUX_VALUES_MAX;
     uint64_t offset = 0;
