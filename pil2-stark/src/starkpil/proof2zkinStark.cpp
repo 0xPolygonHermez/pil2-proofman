@@ -60,7 +60,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         }
     }
 
-    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[0].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+    uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
 
     j["s0_siblingsC"] = json::array();
@@ -147,24 +147,99 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         }
     }
 
-    for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+    if (starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+        const StirStruct &stir = starkInfo.starkStruct.stir;
+        uint64_t M = stir.numIterations();
+        uint64_t numNodesLevel = starkInfo.starkStruct.lastLevelVerification == 0 ? 0 : std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification);
+
+        for(uint64_t i = 0; i < M; ++i) {
+            j["s" + std::to_string(i + 1) + "_root"] = json::array();
+            for(uint64_t k = 0; k < 4; k++) {
+                j["s" + std::to_string(i + 1) + "_root"][k] = std::to_string(pointer[p++]);
+            }
+        }
+
+        for(uint64_t i = 0; i < M; ++i) {
+            std::string prefix = "s" + std::to_string(i + 1);
+            uint64_t k = uint64_t(1) << stir.foldingFactors[i];
+            uint64_t logLeaves = stir.logDomainSizes[i] - stir.foldingFactors[i];
+            uint64_t nSiblingsStir = merkleProofLevels(logLeaves, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+
+            j[prefix + "_vals"] = json::array();
+            j[prefix + "_siblings"] = json::array();
+            for (uint64_t q = 0; q < stir.numQueries[i]; q++) {
+                j[prefix + "_vals"][q] = json::array();
+                for(uint64_t l = 0; l < k * FIELD_EXTENSION; l++) {
+                    j[prefix + "_vals"][q][l] = std::to_string(pointer[p++]);
+                }
+            }
+            for (uint64_t q = 0; q < stir.numQueries[i]; q++) {
+                j[prefix + "_siblings"][q] = json::array();
+                for(uint64_t l = 0; l < nSiblingsStir; ++l) {
+                    j[prefix + "_siblings"][q][l] = json::array();
+                    for(uint64_t c = 0; c < nSiblingsPerLevel; ++c) {
+                        j[prefix + "_siblings"][q][l][c] = std::to_string(pointer[p++]);
+                    }
+                }
+            }
+            if(starkInfo.starkStruct.lastLevelVerification != 0) {
+                j[prefix + "_last_levels"] = json::array();
+                for(uint64_t l = 0; l < numNodesLevel; ++l) {
+                    j[prefix + "_last_levels"][l] = json::array();
+                    for(uint64_t c = 0; c < 4; ++c) {
+                        j[prefix + "_last_levels"][l][c] = std::to_string(pointer[p++]);
+                    }
+                }
+            }
+        }
+
+        j["betas"] = json::array();
+        for(uint64_t i = 0; i + 1 < M; ++i) {
+            j["betas"][i] = json::array();
+            for(uint64_t l = 0; l < stir.numOodSamples * FIELD_EXTENSION; l++) {
+                j["betas"][i][l] = std::to_string(pointer[p++]);
+            }
+        }
+
+        j["finalPol"] = json::array();
+        for(uint64_t l = 0; l < (uint64_t(1) << stir.logDegrees[M]) * FIELD_EXTENSION; l++) {
+            j["finalPol"][l] = std::to_string(pointer[p++]);
+        }
+
+        j["nonces"] = json::array();
+        for(uint64_t i = 0; i < M; ++i) {
+            j["nonces"][i] = std::to_string(pointer[p++]);
+        }
+
+        j["ansCoeffs"] = json::array();
+        for(uint64_t i = 0; i + 1 < M; ++i) {
+            j["ansCoeffs"][i] = json::array();
+            for(uint64_t l = 0; l < (stir.numOodSamples + stir.numQueries[i]) * FIELD_EXTENSION; l++) {
+                j["ansCoeffs"][i][l] = std::to_string(pointer[p++]);
+            }
+        }
+
+        return j;
+    }
+
+    for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
         j["s" + std::to_string(step) + "_root"] = json::array();
         for(uint64_t i = 0; i < 4; i++) {
             j["s" + std::to_string(step) + "_root"][i] = std::to_string(pointer[p++]);
         }
     }
 
-    for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+    for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
             j["s" + std::to_string(step) + "_vals"][i] = json::array();
-            for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
+            for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.logDomainSizes[step - 1] - starkInfo.starkStruct.logDomainSizes[step])) * FIELD_EXTENSION; l++) {
                 j["s" + std::to_string(step) + "_vals"][i][l] = std::to_string(pointer[p++]);
             }
         }
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
             j["s" + std::to_string(step) + "_siblings"][i] = json::array();
-            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.steps[step].nBits, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.logDomainSizes[step], starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
             uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
             for(uint64_t l = 0; l < nSiblings; ++l) {
                 for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
@@ -183,7 +258,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
     }
 
     j["finalPol"] = json::array();
-    for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits)); i++)
+    for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.logDomainSizes[starkInfo.starkStruct.logDomainSizes.size() - 1])); i++)
     {
         j["finalPol"][i] = json::array();
         for(uint64_t l = 0; l < FIELD_EXTENSION; l++) {
@@ -200,7 +275,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
 json joinzkin(json &zkin1, json &zkin2, json &verKey, StarkInfo &starkInfo)
 {
 
-    uint64_t friSteps = starkInfo.starkStruct.steps.size();
+    uint64_t friSteps = starkInfo.starkStruct.logDomainSizes.size();
     uint64_t nStages = starkInfo.nStages;
 
     string valsQ = "s0_vals" + to_string(nStages + 1);
@@ -427,7 +502,7 @@ json joinzkinfinal(json& globalInfo, Goldilocks::Element* publics, Goldilocks::E
 
         zkinFinal["s" + to_string(i) + "_evals"] = zkin["evals"];
 
-        for(uint64_t s = 1; s < starkInfo.starkStruct.steps.size(); ++s) {
+        for(uint64_t s = 1; s < starkInfo.starkStruct.logDomainSizes.size(); ++s) {
             zkinFinal["s" + to_string(i) + "_s" + to_string(s) + "_root"] = zkin["s" + to_string(s) + "_root"];
             zkinFinal["s" + to_string(i) + "_s" + to_string(s) + "_vals"] = zkin["s" + to_string(s) + "_vals"];
             zkinFinal["s" + to_string(i) + "_s" + to_string(s) + "_siblings"] = zkin["s" + to_string(s) + "_siblings"];
@@ -501,7 +576,7 @@ json joinzkinrecursive2(json& globalInfo, uint64_t airgroupId, Goldilocks::Eleme
     zkinRecursive2["b_evals"] = zkin2["evals"];
 
 
-    for(uint64_t s = 1; s < starkInfo.starkStruct.steps.size(); ++s) {
+    for(uint64_t s = 1; s < starkInfo.starkStruct.logDomainSizes.size(); ++s) {
         zkinRecursive2["a_s" + to_string(s) + "_root"] = zkin1["s" + to_string(s) + "_root"];
         zkinRecursive2["a_s" + to_string(s) + "_vals"] = zkin1["s" + to_string(s) + "_vals"];
         zkinRecursive2["a_s" + to_string(s) + "_siblings"] = zkin1["s" + to_string(s) + "_siblings"];

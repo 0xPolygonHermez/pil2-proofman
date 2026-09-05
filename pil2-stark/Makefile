@@ -116,6 +116,7 @@ TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
+TARGET_STIR_TEST := stirTests
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -226,12 +227,15 @@ endif
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 else
     # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -248,6 +252,12 @@ else
     SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
+
+# STIR prover/verifier round-trip tests (gtest). The STIR argument only needs the Merkle trees,
+# the transcript and goldilocks, so this links a small subset rather than the whole library.
+SRCS_STIR_TEST := $(shell find ./src/starkpil/stir/tests ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/transcript/transcriptGL.cpp ./src/goldilocks/src ./src/utils ./src/rapidsnark/logger.cpp -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+OBJS_STIR_TEST := $(SRCS_STIR_TEST:%=$(BUILD_DIR)/%.o)
+DEPS_STIR_TEST := $(OBJS_STIR_TEST:.o=.d)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
 SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions/expressions_bin.cpp ./src/starkpil/expressions/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
@@ -302,6 +312,8 @@ plonk_setup: $(BUILD_DIR)/$(TARGET_SETUP_PLONK)
 
 plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
+stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
+
 $(LIB_DIR)/$(TARGET_STARKS_LIB): $(OBJS_STARKS_LIB)
 	mkdir -p $(LIB_DIR)
 	mkdir -p $(LIB_DIR)/include
@@ -316,6 +328,9 @@ $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU): $(OBJS_STARKS_LIB_GPU)
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 	$(CXX) $(OBJS_BCT) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
+
+$(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
+	$(CXX) $(OBJS_STIR_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
 $(BUILD_DIR)/$(TARGET_SETUP): $(OBJS_SETUP)
 	$(CXX) $(OBJS_SETUP) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
@@ -370,7 +385,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu
+.PHONY: clean clean_cpu clean_gpu stir_test
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)

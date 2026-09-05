@@ -7,7 +7,7 @@
 //! chunks).
 //!
 //! This exactly mirrors the JS split so that:
-//!   - Each `VerifyEvaluationsChunks{i}` / `CalculateFRIPolChunks{i}` template
+//!   - Each `VerifyEvaluationsChunks{i}` / `CalculateDeepPolChunks{i}` template
 //!     receives the right `signal input tmp_*` / `signal output tmp_*` declarations.
 //!   - Cross-chunk wiring (the `(out1, out2, ...) <== ChunkI()(inputs...)` call
 //!     sites) uses the correct sorted id lists.

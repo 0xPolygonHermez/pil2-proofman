@@ -13,7 +13,7 @@ pub struct HashCounts {
     pub leaf: u64,
     /// Merkle path node hashes for the committed and constant trees.
     pub merkle: u64,
-    /// Node and leaf hashes of the FRI folding trees.
+    /// Node and leaf hashes of the low-degree test's own trees.
     pub fri: u64,
     /// Fiat-Shamir transcript permutations.
     pub transcript: u64,
@@ -45,7 +45,12 @@ pub struct VerifierGeometry {
     /// Width of each custom-commit tree.
     pub custom_commit_widths: Vec<u64>,
     /// `nBits` of each FRI step; `steps[0]` is the committed domain and has no tree of its own.
+    /// Empty when the low-degree test is STIR (see `stir_rounds`).
     pub step_n_bits: Vec<u64>,
+    /// STIR rounds, when the air's low-degree test is STIR: one entry per committed tree
+    /// `s{i+1}` (holding g_i on L_i, grouped in cosets of `2^{k_i}`, opened at `t_i` queries).
+    /// Empty for FRI.
+    pub stir_rounds: Vec<StirRoundGeometry>,
     pub n_publics: u64,
     /// Evaluations put into the transcript, each a field-extension element.
     pub n_evals: u64,
@@ -54,8 +59,21 @@ pub struct VerifierGeometry {
     pub stage_challenges: Vec<u64>,
     /// Extension-field air values absorbed after each of those same stage roots.
     pub stage_air_values: Vec<u64>,
-    /// Coefficients of the final FRI polynomial, each a field-extension element.
+    /// Coefficients of the final polynomial FRI sends in clear, each a field-extension element.
     pub final_pol_size: u64,
+}
+
+/// One STIR round's tree geometry, straight off the solved schedule.
+#[derive(Debug, Clone, Default)]
+pub struct StirRoundGeometry {
+    /// `log₂|L_i|`.
+    pub log_domain_size: u64,
+    /// `k_i`, in bits.
+    pub log_folding_factor: u64,
+    /// `t_i`, the queries opening this tree (drawn in round i+1).
+    pub n_queries: u64,
+    /// Grinding bits on this round's query message.
+    pub grinding_bits: u64,
 }
 
 /// Blake3 compressions over `bytes`: one per 64-byte block, plus one parent per extra 1024-byte
@@ -71,7 +89,7 @@ pub fn blake3_compressions(bytes: u64) -> u64 {
 /// per permutation (`linear_hash_seq`); Blake3 hashes the bytes in one call.
 pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
     match family {
-        "blake3" => blake3_compressions(width * 8),
+        "Blake3" => blake3_compressions(width * 8),
         // sponge_rate is 0 at arity 1 and underflows at 0; the trees support 2..=4.
         _ if arity < 2 => 0,
         _ => width.div_ceil(sponge_rate(arity)),
@@ -196,27 +214,76 @@ pub fn geometry_for_family(
     use crate::types::security::pcs::{Batching, Fri, FriConfig};
     use crate::types::security::regimes::DecodingRegime;
 
+    use crate::types::stark_struct::LowDegreeTest;
+
     // The arity the setup actually builds: only blake3 has it forced, so any other family can be
     // configured away from the family default and the whole geometry moves with it.
     let arity = stark_struct.merkle_tree_arity as u64;
+    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(stark_struct);
 
-    // Same configuration `build_starkinfo_output` uses: the query count and grinding bits come
+    // Same configuration `build_starkinfo_output` uses: the query counts and grinding bits come
     // out of the security analysis, not out of the settings.
-    let fri = Fri::new(FriConfig {
-        field_size: security::goldilocks_safe_extension_field_size(),
-        trace_length: 1u32 << stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-        batch_size: n_evals.max(1) as u64,
-        batching: Batching::Powers,
-        log_folding_factors: crate::output::stark_info::compute_log_folding_factors(stark_struct),
-        max_grinding_bits_query: stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: arity,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime: DecodingRegime::Jbr,
-    });
-    let security = fri.security_params();
+    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &stark_struct.low_degree_test {
+        LowDegreeTest::Fri(fri_struct) => {
+            let fri = Fri::new(FriConfig {
+                field_size: security::goldilocks_safe_extension_field_size(),
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
+                batch_size: n_evals.max(1) as u64,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_query: fri_struct.grinding_bits_queries as u64,
+                use_max_grinding_bits_query: true,
+                tree_arity: arity,
+                hash_size_bits: 256,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            });
+            let sec = fri.security_params();
+            (
+                sec.n_queries,
+                sec.grinding_bits_query as u64,
+                fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect::<Vec<_>>(),
+                vec![],
+                1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
+            )
+        }
+        LowDegreeTest::Stir(stir_struct) => {
+            use crate::types::security::pcs::{Stir, StirConfig};
+            let stir = Stir::new(StirConfig {
+                field_size: security::goldilocks_safe_extension_field_size(),
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
+                batch_size: n_evals.max(1) as u64,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_queries: stir_struct.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
+                use_max_grinding_bits_query: true,
+                tree_arity: arity,
+                hash_size_bits: 256,
+                base_field_bits: 64,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            });
+            let sec = stir.security_params().clone();
+            let rounds: Vec<StirRoundGeometry> = (0..stir_struct.num_iterations())
+                .map(|i| StirRoundGeometry {
+                    log_domain_size: stir_struct.log_domain_sizes[i] as u64,
+                    log_folding_factor: stir_struct.folding_factors[i] as u64,
+                    n_queries: sec.num_queries[i],
+                    grinding_bits: sec.grinding_bits_queries[i] as u64,
+                })
+                .collect();
+            (
+                sec.num_queries[0],
+                sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
+                vec![],
+                rounds,
+                // p travels as its d_M coefficients.
+                1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
+            )
+        }
+    };
 
     let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
 
@@ -225,14 +292,15 @@ pub fn geometry_for_family(
         arity,
         transcript_arity: stark_struct.transcript_arity as u64,
         last_level_verification: stark_struct.last_level_verification as u64,
-        n_queries: security.n_queries,
-        pow_bits: security.grinding_bits_query as u64,
+        n_queries,
+        pow_bits,
         hash_commits: stark_struct.hash_commits,
         // One committed tree per stage, plus the quotient stage.
         stage_widths: (1..=setup.n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
         n_constants: setup.n_constants as u64,
         custom_commit_widths: setup.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
-        step_n_bits: stark_struct.steps.iter().map(|s| s.n_bits as u64).collect(),
+        step_n_bits,
+        stir_rounds,
         n_publics: setup.n_publics as u64,
         n_evals: n_evals as u64,
         stage_challenges: (2..=setup.n_stages + 1)
@@ -241,7 +309,71 @@ pub fn geometry_for_family(
         stage_air_values: (2..=setup.n_stages + 1)
             .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
             .collect(),
-        final_pol_size: 1u64 << stark_struct.steps.last().map_or(0, |s| s.n_bits),
+        final_pol_size,
+    }
+}
+
+/// Build the geometry from an as-built starkinfo (a proving key's `starkinfo.json`), using the
+/// solved query counts and grinding bits as written — unlike [`geometry_for_family`], nothing is
+/// re-derived, so post-solve adjustments (A2's query equalization) are reflected.
+pub fn geometry_from_stark_info(si: &proofman_common::StarkInfo) -> VerifierGeometry {
+    use proofman_common::LowDegreeTest as Ldt;
+
+    let ss = &si.stark_struct;
+    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &ss.low_degree_test {
+        Ldt::Fri(fri) => (
+            fri.num_queries,
+            fri.grinding_bits_queries,
+            fri.log_domain_sizes.clone(),
+            vec![],
+            1u64 << fri.log_domain_sizes.last().copied().unwrap_or(0).min(63),
+        ),
+        Ldt::Stir(stir) => {
+            let rounds: Vec<StirRoundGeometry> = (0..stir.num_iterations())
+                .map(|i| StirRoundGeometry {
+                    log_domain_size: stir.log_domain_sizes[i],
+                    log_folding_factor: stir.folding_factors[i],
+                    n_queries: stir.num_queries[i],
+                    grinding_bits: stir.grinding_bits_queries[i],
+                })
+                .collect();
+            (
+                stir.num_queries.first().copied().unwrap_or(0),
+                stir.grinding_bits_queries.iter().copied().max().unwrap_or(0),
+                vec![],
+                rounds,
+                // p travels as its d_M coefficients.
+                1u64 << stir.log_degrees.last().copied().unwrap_or(0).min(63),
+            )
+        }
+    };
+
+    let width = |section: &str| si.map_sections_n.get(section).copied().unwrap_or(0);
+    let n_stages = si.n_stages as u64;
+    let per_stage = |map: &Option<Vec<proofman_common::PolMap>>| -> Vec<u64> {
+        (2..=n_stages + 1)
+            .map(|s| map.as_ref().map_or(0, |m| m.iter().filter(|p| p.stage == s).count() as u64))
+            .collect()
+    };
+
+    VerifierGeometry {
+        n_bits_ext: ss.n_bits_ext,
+        arity: ss.merkle_tree_arity,
+        transcript_arity: ss.transcript_arity,
+        last_level_verification: ss.last_level_verification,
+        n_queries,
+        pow_bits,
+        hash_commits: ss.hash_commits,
+        stage_widths: (1..=n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
+        n_constants: si.n_constants,
+        custom_commit_widths: si.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
+        step_n_bits,
+        stir_rounds,
+        n_publics: si.n_publics,
+        n_evals: si.ev_map.len() as u64,
+        stage_challenges: per_stage(&si.challenges_map),
+        stage_air_values: per_stage(&si.airvalues_map),
+        final_pol_size,
     }
 }
 
@@ -265,19 +397,33 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
         open(width, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
     }
 
-    // ── FRI folding trees: one per step past the committed domain ──
-    for step in 1..geom.step_n_bits.len() {
-        let n_bits = geom.step_n_bits[step];
-        // A deserialized starkinfo is not guaranteed to have decreasing steps.
-        let group_size = 1u64 << geom.step_n_bits[step - 1].saturating_sub(n_bits).min(63);
-        let (mut leaf, mut merkle) = (0, 0);
-        open(group_size * FIELD_EXTENSION, n_bits, &mut leaf, &mut merkle);
-        counts.fri += leaf + merkle;
+    if geom.stir_rounds.is_empty() {
+        // ── FRI folding trees: one per step past the committed domain ──
+        for step in 1..geom.step_n_bits.len() {
+            let n_bits = geom.step_n_bits[step];
+            // A deserialized starkinfo is not guaranteed to have decreasing steps.
+            let group_size = 1u64 << geom.step_n_bits[step - 1].saturating_sub(n_bits).min(63);
+            let (mut leaf, mut merkle) = (0, 0);
+            open(group_size * FIELD_EXTENSION, n_bits, &mut leaf, &mut merkle);
+            counts.fri += leaf + merkle;
+        }
+    } else {
+        // ── STIR trees: s{i+1} holds g_i on L_i in cosets of 2^{k_i}, opened at t_i queries
+        // (its own query set, unlike FRI's shared one) ──
+        for r in &geom.stir_rounds {
+            let leaf_width = (1u64 << r.log_folding_factor.min(63)) * FIELD_EXTENSION;
+            let n_leaves_bits = r.log_domain_size.saturating_sub(r.log_folding_factor);
+            counts.fri += r.n_queries * leaf_hashes(family, geom.arity, leaf_width);
+            counts.fri +=
+                r.n_queries * merkle_path_permutations(n_leaves_bits, geom.arity, geom.last_level_verification);
+            counts.fri += root_reduction_hashes(geom.arity, geom.last_level_verification, n_leaves_bits);
+        }
     }
 
     counts.transcript = transcript_hashes(geom);
     // `starkVerify` runs the permutation unconditionally; powBits only picks the threshold.
-    counts.grinding = 1;
+    // STIR grinds once per query message.
+    counts.grinding = geom.stir_rounds.len().max(1) as u64;
     counts
 }
 
@@ -323,30 +469,57 @@ fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
 
     t.get_field(); // evals challenge
     put_values(&mut t, geom.n_evals * FIELD_EXTENSION);
-    t.get_field(); // the two FRI challenges
+    t.get_field(); // the two DEEP challenges
     t.get_field();
 
-    // One folding challenge per step past the first, and a root for every step but the last, which
-    // sends the final polynomial instead.
-    for step in 0..geom.step_n_bits.len() {
-        if step > 0 {
-            t.get_field();
+    // Query indices come from transcripts of their own, each seeded with a challenge and a nonce
+    // (FRI once, STIR once per round).
+    let query_transcript = |t_i: u64, bits: u64| -> u64 {
+        let mut queries = TranscriptSim::new(geom.transcript_arity);
+        queries.put(FIELD_EXTENSION);
+        queries.put(1);
+        queries.get_permutations(t_i, bits);
+        queries.hashes
+    };
+
+    let mut query_hashes = 0;
+    if geom.stir_rounds.is_empty() {
+        // One folding challenge per step past the first, and a root for every step but the last,
+        // which sends the final polynomial instead.
+        for step in 0..geom.step_n_bits.len() {
+            if step > 0 {
+                t.get_field();
+            }
+            if step + 1 < geom.step_n_bits.len() {
+                t.put(DIGEST_SIZE);
+            } else {
+                put_values(&mut t, geom.final_pol_size * FIELD_EXTENSION);
+            }
         }
-        if step + 1 < geom.step_n_bits.len() {
-            t.put(DIGEST_SIZE);
-        } else {
-            put_values(&mut t, geom.final_pol_size * FIELD_EXTENSION);
+        t.get_field();
+        query_hashes += query_transcript(geom.n_queries, geom.step_n_bits.first().copied().unwrap_or(0));
+    } else {
+        // STIR: T₀ root → r^fold_0; per round i = 1..M−1: T_i root → r_out →
+        // β → r^fold_i, r_comb → the round's query challenge; then the final polynomial and the
+        // last query challenge. Every round derives its queries from its own transcript.
+        t.put(DIGEST_SIZE);
+        t.get_field(); // r^fold_0
+        for (i, r) in geom.stir_rounds.iter().enumerate() {
+            if i + 1 < geom.stir_rounds.len() {
+                t.put(DIGEST_SIZE); // T_{i+1} root
+                t.get_field(); // r_out
+                t.put(FIELD_EXTENSION); // β
+                t.get_field(); // r^fold
+                t.get_field(); // r_comb
+            } else {
+                put_values(&mut t, geom.final_pol_size * FIELD_EXTENSION);
+            }
+            t.get_field(); // the round's query challenge
+            query_hashes += query_transcript(r.n_queries, r.log_domain_size);
         }
     }
-    t.get_field();
 
-    // Query indices come from a transcript of their own, seeded with the last challenge and a nonce.
-    let mut queries = TranscriptSim::new(geom.transcript_arity);
-    queries.put(FIELD_EXTENSION);
-    queries.put(1);
-    queries.get_permutations(geom.n_queries, geom.step_n_bits.first().copied().unwrap_or(0));
-
-    t.hashes + queries.hashes
+    t.hashes + query_hashes
 }
 
 #[cfg(test)]
@@ -385,8 +558,8 @@ mod tests {
     /// A Blake3 leaf hashes `width * 8` bytes in one call.
     #[test]
     fn a_blake3_leaf_hashes_the_whole_row() {
-        assert_eq!(leaf_hashes("blake3", 2, 8), 1); // 64 bytes
-        assert_eq!(leaf_hashes("blake3", 2, 128), 16); // 1024 bytes
+        assert_eq!(leaf_hashes("Blake3", 2, 8), 1); // 64 bytes
+        assert_eq!(leaf_hashes("Blake3", 2, 128), 16); // 1024 bytes
     }
 
     /// `ceil(log_arity(height))`, less the levels the verifier reads from the proof instead.
@@ -544,13 +717,14 @@ mod tests {
             n_constants: 8,
             custom_commit_widths: vec![],
             step_n_bits: vec![22, 19, 16, 13, 10, 7, 5],
+            stir_rounds: vec![],
             n_publics: 0,
             n_evals: 531,
             stage_challenges: vec![2, 1],
             stage_air_values: vec![0, 0],
             final_pol_size: 1 << 5,
         };
-        let counts = verifier_hashes(&geom, "blake3");
+        let counts = verifier_hashes(&geom, "Blake3");
 
         assert_eq!(counts.leaf, 6042, "114 queries x 53 compressions");
         assert_eq!(counts.merkle, 9132, "4 trees x 114 x 20 levels + 4 root reductions");
@@ -578,6 +752,7 @@ mod tests {
             n_constants: 8,
             custom_commit_widths: vec![],
             step_n_bits: vec![22, 19, 16, 13, 10, 7, 5],
+            stir_rounds: vec![],
             n_publics: 0,
             n_evals: 531,
             stage_challenges: vec![2, 1],
@@ -601,10 +776,10 @@ mod tests {
     #[test]
     fn the_family_changes_the_count_not_just_the_price() {
         let poseidon = verifier_hashes(&minimal_geometry(), "Poseidon1");
-        let blake3_arity = merkle_tree_arity("blake3");
+        let blake3_arity = merkle_tree_arity("Blake3");
         let blake3 = verifier_hashes(
             &VerifierGeometry { arity: blake3_arity, transcript_arity: blake3_arity, ..minimal_geometry() },
-            "blake3",
+            "Blake3",
         );
 
         assert_eq!(blake3.merkle, poseidon.merkle * 2, "binary paths are twice as long");

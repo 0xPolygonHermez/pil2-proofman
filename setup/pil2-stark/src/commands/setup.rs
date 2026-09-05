@@ -12,13 +12,8 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::security::{
-    self,
-    pcs::{FriConfig, Fri, Batching},
-    regimes::DecodingRegime,
-};
 use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
-use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_log_folding_factors};
+use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
 
 /// Setup options parsed from CLI args.
 pub struct SetupOptions {
@@ -227,38 +222,28 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let pil_code = &pil_result.pil_code;
 
                 let ev_map_len = pil_code.ev_map.len();
-                let log_folding_factors = compute_log_folding_factors(&stark_struct);
                 let opening_points = collect_opening_points(setup_result);
-                let field_size = security::goldilocks_safe_extension_field_size();
-                let regime = DecodingRegime::Jbr;
-                let fri_config = FriConfig {
-                    field_size,
-                    trace_length: 1u32 << stark_struct.n_bits,
-                    rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                    batch_size: ev_map_len.max(1) as u64,
-                    batching: Batching::Powers,
-                    log_folding_factors,
-                    max_grinding_bits_query: stark_struct.pow_bits as u64,
-                    use_max_grinding_bits_query: true,
-                    tree_arity: stark_struct.merkle_tree_arity as u64,
-                    hash_size_bits: 256,
-                    target_security_bits: 128,
-                    regime,
-                };
-                let fri = Fri::new(fri_config);
+                let ldt = solve_low_degree_test(&stark_struct, ev_map_len.max(1) as u64);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
                     &stark_struct,
                     pil_code,
                     &opening_points,
-                    &fri,
+                    &ldt,
                     item.ag_idx,
                     item.air_idx,
                     &item.air_name,
                     pil_result.c_exp_id,
-                    pil_result.fri_exp_id,
+                    pil_result.deep_exp_id,
                     pil_result.q_deg,
+                );
+
+                // Say which low-degree test this air runs, with the solved schedule.
+                tracing::info!(
+                    "Air '{}' low-degree test: {}",
+                    item.air_name,
+                    starkinfo_output.stark_struct.low_degree_test.describe()
                 );
 
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;

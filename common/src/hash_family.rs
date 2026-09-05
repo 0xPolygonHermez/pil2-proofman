@@ -14,14 +14,14 @@ pub enum GateRole {
     SelectVal1,
 }
 
-pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
+pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "Blake3"];
 pub const DEFAULT_HASH_ID: &str = "Poseidon1";
 
 /// Merkle-tree arity of `family`'s commitment trees over Goldilocks digests
 pub fn merkle_tree_arity(family: &str) -> u64 {
     match family {
         "Poseidon1" | "Poseidon2" => GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY,
-        "blake3" => 2,
+        "Blake3" => 2,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
@@ -31,7 +31,7 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
 pub fn default_grinding_bits(family: &str) -> usize {
     match family {
         "Poseidon1" | "Poseidon2" => 16,
-        "blake3" => 24,
+        "Blake3" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
@@ -71,12 +71,12 @@ pub fn transcript_out_size(arity: u64) -> u64 {
 /// re-checks via get_hash_family() and returns -15 on mismatch, so this list
 /// must stay in sync with commit_witness_streaming_gpu's family gate.
 pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "blake3")
+    matches!(family, "Poseidon1" | "Blake3")
 }
 
 /// True when the family's kernels support exactly one tree geometry
 pub fn has_forced_tree_geometry(family: &str) -> bool {
-    family == "blake3"
+    family == "Blake3"
 }
 
 // (gate template name, role, owning family). `None` for family-agnostic gates.
@@ -160,7 +160,7 @@ mod tests {
             assert!(default_grinding_bits(family) > 0, "{family} has no grinding default");
         }
         assert_eq!(default_grinding_bits("Poseidon1"), default_grinding_bits("Poseidon2"));
-        assert!(default_grinding_bits("blake3") > default_grinding_bits("Poseidon1"));
+        assert!(default_grinding_bits("Blake3") > default_grinding_bits("Poseidon1"));
     }
 
     /// The node hash absorbs every child in one permutation, so the width must be exactly

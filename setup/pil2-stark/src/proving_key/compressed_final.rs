@@ -75,7 +75,6 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
-            multi_fri: false,
         };
         let circom_src =
             gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)
@@ -200,12 +199,14 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Compressed final stark struct settings
     let compressed_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
-        folding_factor: Some(3),
-        pow_bits: Some(22),
+        initial_blowup_factor: Some(4),
+        initial_folding_factor: Some(3),
+        grinding_bits: Some(22),
         merkle_tree_arity: Some(2),
         last_level_verification: Some(6),
-        final_degree: Some(10),
+        // Pinned to the committed compressed verifier's schedule (domains 19,16,13,10):
+        // final domain 10 minus the blowup.
+        final_degree: Some(6),
         ..Default::default()
     };
     let compressed_stark_struct =
@@ -229,38 +230,26 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&compressed_stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << compressed_stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (compressed_stark_struct.n_bits_ext - compressed_stark_struct.n_bits)) as f64,
-        batch_size: ev_map_len.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: compressed_stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: compressed_stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(&compressed_stark_struct, ev_map_len.max(1) as u64);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &compressed_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         "compressed_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        template,
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;

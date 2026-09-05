@@ -101,7 +101,7 @@ impl TranscriptBn128 {
             if first_unused < out_w {
                 let prev_sig = self.signal_name(self.h_cnt - 1);
                 self.code.push(format!(
-                    "for(var i = {first_unused}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}"
+                    "for (var i = {first_unused}; i < {out_w}; i++) {{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}"
                 ));
             }
         }
@@ -204,7 +204,7 @@ impl TranscriptBn128 {
     /// BN128 uses 253-bit fields (`Num2Bits_strictT`, 254-element arrays) and
     /// `NFields = floor((n*nBits - 1) / 253) + 1`.
     ///
-    /// - `v`          — 2-D signal name (e.g. `"queriesFRI"`)
+    /// - `v`          — 2-D signal name (e.g. `"queriesL0"`)
     /// - `n_queries`  — first dimension
     /// - `query_bits` — bits per query (`starkStruct.steps[0].nBits`)
     /// - `n_fields`   — pre-computed `NFields` (passed in because the JS compute it
@@ -228,14 +228,14 @@ impl TranscriptBn128 {
         if self.hi_cnt < out_w {
             let prev_sig = self.signal_name(self.h_cnt - 1);
             self.code.push(format!(
-                "for(var i = {}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values           \n    }}\n",
+                "for (var i = {}; i < {out_w}; i++) {{\n        _ <== {prev_sig}[i]; // Unused transcript values           \n    }}\n",
                 self.hi_cnt
             ));
         }
 
         // ── Bit-assignment preamble ───────────────────────────────────────────
         self.code.push(
-            "// From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions"
+            "// From each transcript hash converted to bits, we assign those bits to queriesL0[q] to define the query positions"
                 .into(),
         );
         self.code.push("var q = 0; // Query number ".into());
@@ -247,14 +247,14 @@ impl TranscriptBn128 {
             let bits_this_field = if i + 1 == n_fields { total_bits - 253 * i } else { 253 };
 
             self.code.push(format!(
-                "for(var j = 0; j < {bits_this_field}; j++) {{\n        {v}[q][b] <== {name}[j];\n        b++;\n        if(b == {query_bits}) {{\n            b = 0; \n            q++;\n        }}\n    }}"
+                "for (var j = 0; j < {bits_this_field}; j++) {{\n        {v}[q][b] <== {name}[j];\n        b++;\n        if(b == {query_bits}) {{\n            b = 0; \n            q++;\n        }}\n    }}"
             ));
 
             if bits_this_field == 253 {
                 self.code.push(format!("_ <== {name}[253]; // Unused last bit\n"));
             } else {
                 self.code.push(format!(
-                    "for(var j = {bits_this_field}; j < 254; j++) {{\n        _ <== {name}[j]; // Unused bits\n    }}"
+                    "for (var j = {bits_this_field}; j < 254; j++) {{\n        _ <== {name}[j]; // Unused bits\n    }}"
                 ));
             }
         }
@@ -349,7 +349,7 @@ mod tests {
         }
         let code = t.get_code();
         // drain from 1 (not 0) because max(0,1)=1
-        assert!(code.contains("for(var i = 1; i < 17; i++)"), "expected drain from 1:\n{code}");
+        assert!(code.contains("for (var i = 1; i < 17; i++)"), "expected drain from 1:\n{code}");
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
         // NFields for 10 queries × 8 bits = 80 bits → floor(79/253)+1 = 1
         let mut t = make_t(Some("friQueries"));
         t.put("challengeFRIQueries", 3);
-        t.get_permutations("queriesFRI", 10, 8, 1);
+        t.get_permutations("queriesL0", 10, 8, 1);
         let code = t.get_code();
         assert!(code.contains("Num2Bits_strictT()"), "expected Num2Bits_strictT: {code}");
         assert!(code.contains("signal {binary} transcriptN2b_0[254]"), "expected 254-bit N2b: {code}");
@@ -417,14 +417,14 @@ mod tests {
         // Total: 1 query × 300 bits → NFields = floor(299/253)+1 = 2
         let mut t = make_t(None);
         t.put_single("challengeFRIQueries");
-        t.get_permutations("queriesFRI", 1, 300, 2);
+        t.get_permutations("queriesL0", 1, 300, 2);
         let code = t.get_code();
         // First field: 253 bits, unused last bit
-        assert!(code.contains("for(var j = 0; j < 253; j++)"), "first field 253 bits: {code}");
+        assert!(code.contains("for (var j = 0; j < 253; j++)"), "first field 253 bits: {code}");
         assert!(code.contains("_ <== transcriptN2b_0[253]; // Unused last bit"), "unused last bit: {code}");
         // Second field: 300 - 253 = 47 bits, unused j in 47..254
-        assert!(code.contains("for(var j = 0; j < 47; j++)"), "remainder 47 bits: {code}");
-        assert!(code.contains("for(var j = 47; j < 254; j++)"), "unused remainder: {code}");
+        assert!(code.contains("for (var j = 0; j < 47; j++)"), "remainder 47 bits: {code}");
+        assert!(code.contains("for (var j = 47; j < 254; j++)"), "unused remainder: {code}");
     }
 
     #[test]
@@ -434,9 +434,9 @@ mod tests {
         // After N2b for that 1 field, drain from 1 to 17.
         let mut t = make_t(None);
         t.put_single("rootC");
-        t.get_permutations("queriesFRI", 1, 63, 1);
+        t.get_permutations("queriesL0", 1, 63, 1);
         let code = t.get_code();
-        assert!(code.contains("for(var i = 1; i < 17; i++)"), "drain: {code}");
+        assert!(code.contains("for (var i = 1; i < 17; i++)"), "drain: {code}");
     }
 
     // ── n2b_cnt increments across calls ──────────────────────────────────────
@@ -461,23 +461,23 @@ mod tests {
 
     #[test]
     fn integration_small_transcript() {
-        // Mirrors JS: put rootC, get challengeQ, get queriesFRI
+        // Mirrors JS: put rootC, get challengeQ, get queriesL0
         // n_queries=2, step0_bits=4 → total=8 → NFields=1
         let mut t = make_t(None);
 
         t.put_single("rootC");
         t.get_field("challengeQ[0]");
         t.put_single("root1");
-        t.get_permutations("queriesFRI", 2, 4, 1);
+        t.get_permutations("queriesL0", 2, 4, 1);
         let code = t.get_code();
 
         // At least one PoseidonEx hash emitted
         assert!(code.contains("PoseidonEx(16, 17)"), "code:\n{code}");
         // challengeQ via BN1toGL3
         assert!(code.contains("challengeQ[0] <== BN1toGL3()"), "code:\n{code}");
-        // N2b for queriesFRI
+        // N2b for queriesL0
         assert!(code.contains("Num2Bits_strictT()"), "code:\n{code}");
         // bit-assignment loop
-        assert!(code.contains("queriesFRI[q][b] <== transcriptN2b_0[j]"), "code:\n{code}");
+        assert!(code.contains("queriesL0[q][b] <== transcriptN2b_0[j]"), "code:\n{code}");
     }
 }

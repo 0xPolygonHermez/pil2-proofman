@@ -358,7 +358,7 @@ pub fn gen_recursive2(
     // aggregationTypes consistency block
     let agg_types_consistency = if agg_types_len > 0 {
         format!(
-            "    signal aggregationTypes[{n}];\n    for(var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== a_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === b_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === c_sv_aggregationTypes[i];\n    }}",
+            "    signal aggregationTypes[{n}];\n    for (var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== a_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === b_sv_aggregationTypes[i];\n        a_sv_aggregationTypes[i] === c_sv_aggregationTypes[i];\n    }}",
             n = agg_types_len
         )
     } else {
@@ -478,7 +478,7 @@ pub fn gen_vadcop_final(
             "    sV{i}.rootC <== {sel_fn}({airs_i_len})(s{i}_sv_circuitType, s{i}_sv_rootCBasics, s{i}_sv_rootCAgg);\n"
         ));
         section.push_str(&format!(
-            "    for (var i=0; i<4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
+            "    for (var i = 0; i < 4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
             n_pub_raw - 4
         ));
         assign_sections.push(section);

@@ -411,7 +411,7 @@ fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::Valu
         airgroup_id: 0,
         n_stages,
         c_exp_id: 0,
-        fri_exp_id: 0,
+        deep_exp_id: 0,
         q_deg: 0,
         q_dim: FIELD_EXTENSION,
         opening_points: Vec::new(),

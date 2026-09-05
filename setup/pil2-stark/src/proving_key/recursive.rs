@@ -75,12 +75,67 @@ use crate::proving_key::bctree;
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 
+/// Whether a STIR schedule can take a round-1 query count of `t0`. With s = 1 the quotient of
+/// iteration 1 divides by ∏_{a∈G₁}(X − a) over |G₁| = t₀ + 1 points and needs |G₁| < d₁; raising
+/// t₀ to size a wrapping circuit (the A2 rule, the compressor bump) must respect that, or the C++
+/// loader rejects the key at prove time with a far less helpful error. A single-fold schedule
+/// has no quotient round and takes any t₀; FRI structs are not concerned.
+pub fn check_stir_t0_fits(stark_struct: &serde_json::Value, t0: u64, what: &str) -> Result<()> {
+    if stark_struct.get("lowDegreeTest").and_then(|v| v.as_str()) != Some("STIR") {
+        return Ok(());
+    }
+    let log_degrees: Vec<u64> = stark_struct
+        .get("logDegrees")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect())
+        .unwrap_or_default();
+    if log_degrees.len() < 3 {
+        return Ok(()); // M = 1: no quotient round
+    }
+    let d1 = 1u64 << log_degrees[1];
+    if t0 + 1 >= d1 {
+        bail!(
+            "{what}: raising the STIR round-1 query count to t₀ = {t0} gives |G₁| = t₀ + 1 = {} ≥ d₁ = 2^{}, \
+             leaving the quotient of iteration 1 no degree. Give this air a compressor (hasCompressor), \
+             lower its foldingFactor or raise finalDegree, or keep FRI for it.",
+            t0 + 1,
+            log_degrees[1]
+        );
+    }
+    Ok(())
+}
+
 /// Which recursive template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecursiveTemplate {
     Compressor,
     Recursive1,
     Recursive2,
+}
+
+/// The stark settings of a recursion circuit — the configuration the whole recursion tree is
+/// built from (there is no per-circuit config file; an explicit `starkStruct` override only ever
+/// raises the query count, see `gen_recursive_setup`).
+///
+/// STIR is the low-degree test of compressor, recursive1 and recursive2. The vadcop-final layers
+/// stay FRI: their proofs are checked by the committed native Rust verifiers, which are FRI builds.
+pub fn recursive_stark_settings(template: RecursiveTemplate) -> crate::types::stark_struct::StarkSettings {
+    let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
+    crate::types::stark_struct::StarkSettings {
+        low_degree_test: Some(crate::types::stark_struct::LowDegreeTestKind::Stir),
+        initial_blowup_factor: Some(blowup),
+        initial_folding_factor: Some(3),
+        // finalDegree is the final polynomial's log-degree bound. Every quotient round needs
+        // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
+        // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
+        // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
+        // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
+        final_degree: Some(5),
+        // The uniform per-round grinding seed; the solver derives every tᵢ from it.
+        grinding_bits: Some(RECURSIVE_POW_BITS),
+        last_level_verification: None,
+        ..Default::default()
+    }
 }
 
 impl RecursiveTemplate {
@@ -355,12 +410,21 @@ pub fn gen_recursive_setup(
             // JS formula:
             //   nRowsPerFri = NUsed / starkInfo.starkStruct.nQueries
             //   minimumQueriesRequired = ceil((2^(recursiveBits-1) + 2^12) / nRowsPerFri)
-            let current_n_queries = config
-                .stark_info
-                .get("starkStruct")
-                .and_then(|s| s.get("nQueries"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            // The knob is FRI's scalar `numQueries`, or STIR's `numQueries[0]` (t₀ — the
+            // round-1 queries that drive the circuit size; raising it only adds security,
+            // and the C++ loader re-validates |G₁| < d₁).
+            let ss_json = config.stark_info.get("starkStruct");
+            let is_stir_inner = ss_json.and_then(|s| s.get("lowDegreeTest")).and_then(|v| v.as_str()) == Some("STIR");
+            let current_n_queries = if is_stir_inner {
+                ss_json
+                    .and_then(|s| s.get("numQueries"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            } else {
+                ss_json.and_then(|s| s.get("numQueries")).and_then(|v| v.as_u64()).unwrap_or(0)
+            };
             if current_n_queries > 0 {
                 // Use integer ceil to avoid f64 precision loss:
                 // ceil(numer / nRowsPerFri) = ceil(numer * nQueries / NUsed)
@@ -378,17 +442,26 @@ pub fn gen_recursive_setup(
                     min_queries
                 );
                 if min_queries > current_n_queries {
+                    if let Some(ss) = ss_json {
+                        check_stir_t0_fits(ss, min_queries, &format!("Air '{}' recursive1 sizing", config.air_name))?;
+                    }
                     tracing::info!(
                         "A2: adjusting nQueries for air '{}' recursive1: {} → {}",
                         config.air_name,
                         current_n_queries,
                         min_queries
                     );
-                    // Build adjusted copy of stark_info with updated nQueries.
+                    // Build adjusted copy of stark_info with the updated query count.
                     let mut adjusted_si = config.stark_info.clone();
                     if let Some(ss) = adjusted_si.get_mut("starkStruct") {
                         if let Some(obj) = ss.as_object_mut() {
-                            obj.insert("nQueries".to_string(), serde_json::json!(min_queries));
+                            if is_stir_inner {
+                                if let Some(arr) = obj.get_mut("numQueries").and_then(|v| v.as_array_mut()) {
+                                    arr[0] = serde_json::json!(min_queries);
+                                }
+                            } else {
+                                obj.insert("numQueries".to_string(), serde_json::json!(min_queries));
+                            }
                         }
                     }
                     // Persist the adjusted starkInfo so subsequent re-runs pick it up.
@@ -429,6 +502,33 @@ pub fn gen_recursive_setup(
             n_bits: plonk_result.n_bits,
             n_used: plonk_result.n_used,
         }));
+    }
+
+    // Above the threshold there is no escape left: a recursive1 that already wraps its
+    // compressor proof, or a recursive2, has nothing smaller to verify. Fail here with the
+    // real cause rather than later, when the next air's circuit fails to match the setup this
+    // oversize one would have become ("the recursive circuits are not uniform").
+    if ((template == RecursiveTemplate::Recursive1 && config.has_compressor)
+        || template == RecursiveTemplate::Recursive2)
+        && plonk_result.n_bits > RECURSIVE_BITS_THRESHOLD
+    {
+        let wraps = if template == RecursiveTemplate::Recursive2 {
+            "two recursive1/recursive2 proofs".to_string()
+        } else {
+            format!("the compressor proof of air '{}'", config.air_name)
+        };
+        bail!(
+            "{} for air '{}' verifies {} and packs to 2^{} rows (n_used = {}), above the 2^{} every \
+             recursion circuit must share. The verified proof's low-degree test is too expensive in-circuit \
+             for the recursion domain: give the verified circuit a cheaper schedule (fewer round-1 queries \
+             through grinding, a smaller folding factor, or FRI), or raise RECURSIVE_BITS_THRESHOLD.",
+            template_str,
+            config.air_name,
+            wraps,
+            plonk_result.n_bits,
+            plonk_result.n_used,
+            RECURSIVE_BITS_THRESHOLD
+        );
     }
 
     // Generate witness library (background) — done AFTER the threshold / A2 check
@@ -503,6 +603,19 @@ pub fn gen_recursive_setup(
             // directory (the const tree needs a starkinfo.json on disk).
             let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
 
+            // The reused setup assumes every air's circuit has the same shape; a mismatch
+            // would otherwise surface as a bare exit inside the C++ const-tree loader.
+            if (1u64 << stark_info_loaded.stark_struct.n_bits) != (1u64 << plonk_result.n_bits) {
+                bail!(
+                    "{} for air '{}' has 2^{} rows but the reused setup expects 2^{} — the \
+                     recursive circuits are not uniform (query-count equalization failed?)",
+                    template_str,
+                    config.air_name,
+                    plonk_result.n_bits,
+                    stark_info_loaded.stark_struct.n_bits,
+                );
+            }
+
             // Write const file: load pilout to get inline selector polynomial values
             {
                 let proxy = PilOutProxy::new(pilout_path.to_str().unwrap_or(""))
@@ -571,27 +684,32 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            let make_recursive_settings = || {
-                let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
-                crate::types::stark_struct::StarkSettings {
-                    blowup_factor: Some(blowup),
-                    folding_factor: Some(3),
-                    final_degree: Some(5),
-                    // Pinned: the committed native verifiers and circom fixtures encode the query
-                    // count this buys (73 at blowup 3), so it cannot follow the family default.
-                    pow_bits: Some(RECURSIVE_POW_BITS),
-                    last_level_verification: None,
-                    ..Default::default()
-                }
-            };
+            let make_recursive_settings = || recursive_stark_settings(template);
             let stark_struct = if let Some(ss_val) = config.stark_struct {
-                serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone()).unwrap_or_else(|_| {
-                    crate::types::stark_struct::generate_stark_struct(
-                        &make_recursive_settings(),
-                        n_bits_air,
-                        config.hash,
-                    )
-                })
+                let parsed = serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone())
+                    .unwrap_or_else(|_| {
+                        crate::types::stark_struct::generate_stark_struct(
+                            &make_recursive_settings(),
+                            n_bits_air,
+                            config.hash,
+                        )
+                    });
+                // `LowDegreeTest` is untagged: a STIR struct that lost its vector shape (say a
+                // scalar `numQueries` written into it) re-parses as FRI without an error. Refuse
+                // that rather than silently switching the low-degree test of a circuit.
+                let marker_says_stir = ss_val.get("lowDegreeTest").and_then(|v| v.as_str()) == Some("STIR");
+                let parsed_is_stir =
+                    matches!(parsed.low_degree_test, crate::types::stark_struct::LowDegreeTest::Stir(_));
+                if marker_says_stir != parsed_is_stir {
+                    bail!(
+                        "starkStruct override for {} is marked lowDegreeTest={} but parsed as {:?}: \
+                         the STIR fields (numQueries/grindingBitsQueries vectors) are malformed",
+                        template_str,
+                        if marker_says_stir { "STIR" } else { "FRI" },
+                        parsed.low_degree_test.kind()
+                    );
+                }
+                parsed
             } else {
                 crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air, config.hash)
             };
@@ -601,35 +719,31 @@ pub fn gen_recursive_setup(
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
             let ev_map_len = pil_info_result.pil_code.ev_map.len();
-            let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-            let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-            let fri_config = crate::types::security::pcs::FriConfig {
-                field_size,
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: ev_map_len.max(1) as u64,
-                batching: crate::types::security::pcs::Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_query: stark_struct.pow_bits as u64,
-                use_max_grinding_bits_query: true,
-                tree_arity: stark_struct.merkle_tree_arity as u64,
-                hash_size_bits: 256,
-                target_security_bits: 128,
-                regime,
-            };
-            let mut fri = crate::types::security::pcs::Fri::new(fri_config);
+            let mut ldt = crate::output::stark_info::solve_low_degree_test(&stark_struct, ev_map_len.max(1) as u64);
 
             // An explicit starkStruct override (config.stark_struct) may request MORE queries
             // than the security-optimal count — this is how the caller sizes a has-compressor
             // recursive1 up to the shared domain (more compressor queries → bigger recursive1
             // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
-            // strengthens. The solver otherwise discards the override entirely.
-            let override_q = stark_struct.n_queries as u64;
+            // strengthens. The solver otherwise discards the override entirely. The knob is FRI's
+            // scalar `numQueries` or STIR's `numQueries[0]` (t₀, the round-1 queries that drive
+            // the wrapping circuit's size).
             if config.stark_struct.is_some() {
-                let security_floor = fri.security_params().n_queries;
-                if fri.raise_n_queries(override_q) {
+                use crate::types::security::pcs::LowDegreeTest as Solved;
+                use crate::types::stark_struct::LowDegreeTest as Wire;
+                let (override_q, security_floor) = match (&stark_struct.low_degree_test, &ldt) {
+                    (Wire::Fri(f), Solved::Fri(fri)) => (f.num_queries as u64, fri.security_params().n_queries),
+                    (Wire::Stir(st), Solved::Stir(stir)) => {
+                        (st.num_queries.first().copied().unwrap_or(0) as u64, stir.security_params().num_queries[0])
+                    }
+                    _ => unreachable!("solve_low_degree_test keeps the stark struct's low-degree test"),
+                };
+                let raised = match &mut ldt {
+                    Solved::Fri(fri) => fri.raise_n_queries(override_q),
+                    Solved::Stir(stir) => stir.raise_num_queries(override_q),
+                };
+                if raised {
                     tracing::info!(
                         "Honoring nQueries override for {}: {} → {} (security floor {})",
                         template_str,
@@ -645,14 +759,23 @@ pub fn gen_recursive_setup(
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri,
+                &ldt,
                 config.airgroup_id,
                 config.air_id,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
-                pil_info_result.fri_exp_id,
+                pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
+
+            // Say which low-degree test this circuit runs, with the solved schedule
+            // (recursive2 is one circuit per airgroup, the others one per air).
+            let circuit = match template {
+                RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
+                _ => format!("Air '{}' {}", config.air_name, template_str),
+            };
+            tracing::info!("{} low-degree test: {}", circuit, starkinfo_output.stark_struct.low_degree_test.describe());
+
             let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
             let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
             let si_json = serde_json::to_value(&starkinfo_output)?;

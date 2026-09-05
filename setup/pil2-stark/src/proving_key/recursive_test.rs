@@ -193,10 +193,14 @@ pub fn gen_recursive_test_setup(
     // JS genRecursiveSetupTest always uses {blowupFactor: 3, lastLevelVerification: 1}
     // regardless of the setup type (unlike gen_recursive_setup which varies by template).
     let settings = StarkSettings {
-        blowup_factor: Some(3),
+        // Same low-degree test as the real recursion layers.
+        low_degree_test: Some(crate::types::stark_struct::LowDegreeTestKind::Stir),
+        initial_blowup_factor: Some(3),
+        // Same final-degree bound as the real recursion layers (see `recursive_stark_settings`).
+        final_degree: Some(5),
         last_level_verification: Some(1),
         // Same pin as the real recursion layers, so a test key matches their geometry.
-        pow_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
+        grinding_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
         ..Default::default()
     };
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
@@ -207,38 +211,26 @@ pub fn gen_recursive_test_setup(
     // Step 10: Build and write starkinfo JSON.
     // -------------------------------------------------------------------------
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-        batch_size: ev_map_len.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(&stark_struct, ev_map_len.max(1) as u64);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         NAME_FILE,
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        circom_name,
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
 
     let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", NAME_FILE));

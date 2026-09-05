@@ -291,9 +291,12 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
-        folding_factor: Some(4),
-        pow_bits: Some(22),
+        initial_blowup_factor: Some(4),
+        initial_folding_factor: Some(4),
+        // Pinned to the committed vadcop_final verifier's schedule (domains 20,16,12,8,5):
+        // the final polynomial's log-degree bound is domain 5 minus the blowup.
+        final_degree: Some(1),
+        grinding_bits: Some(22),
         // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
         last_level_verification: None,
         ..Default::default()
@@ -319,38 +322,25 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&final_stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << final_stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (final_stark_struct.n_bits_ext - final_stark_struct.n_bits)) as f64,
-        batch_size: ev_map_len.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: final_stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: final_stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(&final_stark_struct, ev_map_len.max(1) as u64);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &final_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         "vadcop_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit 'vadcop_final' low-degree test: {}",
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;

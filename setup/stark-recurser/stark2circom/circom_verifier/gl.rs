@@ -27,7 +27,6 @@ pub struct Pil2CircomOptions {
     pub enable_input: bool,
     pub input_challenges: bool,
     pub fri_queries_batch_size: Option<usize>,
-    pub multi_fri: bool,
     pub hash: String,
 }
 
@@ -39,7 +38,6 @@ impl Default for Pil2CircomOptions {
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
-            multi_fri: false,
             hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
         }
     }
@@ -86,10 +84,9 @@ fn build_tera_context(
     let n_stages = si["nStages"].as_u64().unwrap_or(0) as usize;
     let q_stage = n_stages + 1;
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
-    let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     let q_deg = si["qDeg"].as_u64().unwrap_or(1) as usize;
     let split_linear_hash = ss["splitLinearHash"].as_bool().unwrap_or(false);
     if split_linear_hash && opts.hash == "Poseidon1" {
@@ -100,12 +97,44 @@ fn build_tera_context(
     }
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0);
-    let multi_fri = opts.multi_fri;
-    let steps: Vec<Value> = ss["steps"].as_array().map_or(vec![], |a| a.clone());
-    let n_steps = steps.len();
-    let step0_bits = steps.first().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
-    let last_step_bits = steps.last().and_then(|s| s["nBits"].as_u64()).unwrap_or(0);
-    let final_pol_size: u64 = 1 << last_step_bits;
+
+    // ── Low-degree test selection ─────────────────────────────────────────────
+    // A STIR stark info is recognised by its marker; everything below that reads a
+    // "query count", "query bit width" or "final polynomial" then refers to STIR's
+    // round-1 queries (t₀ into L₀, which is where the stage trees are opened too)
+    // and to the final polynomial p sent as coefficients.
+    let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
+    let stir_folding_factors: Vec<u64> =
+        ss["foldingFactors"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
+    // `log₂ dᵢ` of every oracle, f₀ first, then the final polynomial (both tests carry it).
+    let stir_log_degrees: Vec<u64> =
+        ss["logDegrees"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
+    let stir_num_queries: Vec<u64> = if is_stir {
+        ss["numQueries"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect())
+    } else {
+        vec![]
+    };
+    let stir_grinding: Vec<u64> = if is_stir {
+        ss["grindingBitsQueries"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect())
+    } else {
+        vec![]
+    };
+    let stir_m = if is_stir { stir_folding_factors.len() } else { 0 };
+
+    let n_queries = if is_stir {
+        stir_num_queries.first().copied().unwrap_or(0) as usize
+    } else {
+        ss["numQueries"].as_u64().unwrap_or(0) as usize
+    };
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
+    let n_steps = if is_stir { 0 } else { steps.len() };
+    let step0_bits = steps.first().copied().unwrap_or(0) as usize;
+    let last_step_bits = steps.last().copied().unwrap_or(0);
+    // For STIR the final polynomial travels as its d_M coefficients, so its degree bound is
+    // structural; for FRI it is the evaluations over the last folded domain.
+    let final_pol_size: u64 =
+        if is_stir { 1 << stir_log_degrees.last().copied().unwrap_or(0) } else { 1 << last_step_bits };
     let n_last_bits = last_step_bits;
     let max_deg_bits = n_last_bits.saturating_sub((n_bits_ext - n_bits) as u64);
     let n_publics = si["nPublics"].as_u64().unwrap_or(0);
@@ -255,9 +284,9 @@ fn build_tera_context(
     // ── FRI steps info ────────────────────────────────────────────────────────
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
-            let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0);
-            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) };
-            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
+            let n_bits_s = steps[s];
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1] };
+            let next_bits = if s < n_steps - 1 { steps[s + 1] } else { 0 };
             let exponent = if s == 0 { 1u64 } else { 1u64 << (prev_bits - n_bits_s) };
             let full_ml = (n_bits_s as f64 / log2_arity).ceil() as u64;
             let ml = full_ml.saturating_sub(last_level_verification);
@@ -271,10 +300,19 @@ fn build_tera_context(
             };
             let val_size = 1u64 << prev_bits.saturating_sub(n_bits_s);
             let mt_size = 1u64 << n_bits_s;
+            // Tree s commits f_{s−1} over L_{s−1} (2^prev_bits points); FRI keeps the rate, so
+            // its degree bound is the domain minus the blowup when the schedule does not say.
+            let log_degree = stir_log_degrees
+                .get(s.saturating_sub(1))
+                .copied()
+                .unwrap_or(prev_bits.saturating_sub((n_bits_ext - n_bits) as u64));
             serde_json::json!({
                 "s": s,
                 "n_bits": n_bits_s,
                 "prev_bits": prev_bits,
+                "log_degree": log_degree,
+                // r^fold_{s−1} folds f_{s−1} (tree s) into f_s.
+                "fold_idx": s.saturating_sub(1),
                 "next_bits": next_bits,
                 "exponent": exponent,
                 "merkle_levels": ml,
@@ -287,6 +325,96 @@ fn build_tera_context(
             })
         })
         .collect();
+
+    // Select the transcript hash family: a Poseidon2 proof verifies with the
+    // Poseidon2 sponge, otherwise (Poseidon1 recursion) with the Poseidon1 sponge.
+    let transcript_poseidon2 = opts.hash == "Poseidon2";
+
+    // ── STIR rounds info ──────────────────────────────────────────────────────
+    // One entry per committed tree T_i, i = 0..M−1 (holding g_i on L_i, grouped in cosets of
+    // 2^{k_i}), opened at the t_i queries drawn in round i+1. Quotient data (|G|, Âns hints)
+    // belongs to trees 0..M−2: tree i's fold values populate G_{i+1}.
+    let stir_rounds: Vec<serde_json::Value> = (0..stir_m)
+        .map(|i| {
+            let log_l = steps[i];
+            let log_k = stir_folding_factors[i];
+            let log_leaves = log_l - log_k;
+            let t = stir_num_queries[i];
+            let grinding_bits = stir_grinding.get(i).copied().unwrap_or(0);
+            let full_ml = (log_leaves as f64 / log2_arity).ceil() as u64;
+            let ml = full_ml.saturating_sub(last_level_verification);
+            let last_mt_size =
+                if last_level_verification > 0 { (arity as u64).pow(last_level_verification as u32) } else { 0 };
+            // G-points live on L_i^{2^{k_i}} = shift^{2^{k_i}}·⟨ω_{logLeaves}⟩ and depend only on
+            // the leaf index (the whole coset folds to one point).
+            let shift_pow = gl_exp(GL_SHIFT, 1u64 << log_k);
+            // The coset of leaf m is {shift·ω_{logL}^{m + j·nLeaves}}: member j sits at the fixed
+            // offset W_j = ω_{logL}^{j·nLeaves} = ω_{logK}^j from the leaf point shift·ω^m.
+            let member_offsets: Vec<String> =
+                (0..(1u64 << log_k)).map(|j| gl_exp(GL_W[log_k as usize], j).to_string()).collect();
+            // |G_{i+1}| ≤ s + t_i; its Âns hint is zero-padded to that. e+1 = |G|+1 needs
+            // ceil(log2(s + t_i + 2)) bits.
+            let n_g_max = 1 + t;
+            let exp_bits = 64 - (n_g_max + 1u64).leading_zeros() as u64;
+            // Per-round query derivation: a fresh transcript over {c_i, nonce_i}, exactly the
+            // C++ deriveShiftQueries. The nonce is always absorbed, grinding checked separately.
+            let mut t_q = Transcript::new(arity, Some(format!("stirQueries{i}")));
+            t_q.set_drain_in_update_state(true);
+            t_q.set_poseidon2(transcript_poseidon2);
+            t_q.put("challengeStirQueries", 3);
+            t_q.put_single("nonce");
+            t_q.get_permutations("queries", t as usize, log_l as usize);
+            let calc_queries_code = t_q.get_code();
+            serde_json::json!({
+                "i": i,
+                // The committed-oracle name: s{tree} = T_i, 1-based to match FRI (s1 commits
+                // the DEEP polynomial in both tests).
+                "tree": i + 1,
+                "t": t,
+                "log_l": log_l,
+                "log_d": stir_log_degrees.get(i).copied().unwrap_or(0),
+                "log_k": log_k,
+                "coset_size": 1u64 << log_k,
+                "log_leaves": log_leaves,
+                "n_leaves": 1u64 << log_leaves,
+                "merkle_levels": ml,
+                "full_merkle_levels": full_ml,
+                "last_mt_size": last_mt_size,
+                "mt_size": 1u64 << log_leaves,
+                "grinding_bits": grinding_bits,
+                "shift_pow": shift_pow.to_string(),
+                "member_offsets": member_offsets,
+                "n_g_max": n_g_max,
+                "exp_bits": exp_bits,
+                "calc_queries_code": calc_queries_code,
+                "is_first": i == 0,
+                "is_last": i + 1 == stir_m,
+                "has_quotient": i + 1 < stir_m,
+                "queries_sig": if i == 0 { "queriesL0".to_string() } else { format!("queriesL{i}") },
+            })
+        })
+        .collect();
+    // Openings of tree i ≥ 1 evaluate the virtual f_i through the quotient of round i, whose
+    // data (G points, Âns hints, |G|) hangs off tree i−1's entry — copy the fields the
+    // template needs so it never has to index the list dynamically.
+    let stir_rounds: Vec<serde_json::Value> = stir_rounds
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut r = r.clone();
+            if i > 0 {
+                r["prev"] = serde_json::json!({
+                    "i": i - 1,
+                    "t": stir_rounds[i - 1]["t"],
+                    "log_leaves": stir_rounds[i - 1]["log_leaves"],
+                    "n_g_max": stir_rounds[i - 1]["n_g_max"],
+                    "exp_bits": stir_rounds[i - 1]["exp_bits"],
+                });
+            }
+            r
+        })
+        .collect();
+    let stir_shift_inv = gl_inv(GL_SHIFT).to_string();
 
     // ── Boundary flags ────────────────────────────────────────────────────────
     let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
@@ -403,7 +531,7 @@ fn build_tera_context(
         }
     }
     inputs_p.push("challengeQ".into());
-    inputs_p.push("challengeXi".into());
+    inputs_p.push("challengeOut".into());
     inputs_p.push("evals".into());
     if n_publics > 0 {
         inputs_p.push("publics".into());
@@ -428,8 +556,8 @@ fn build_tera_context(
         inputs_p.push(format!("Zframe{fi}"));
     }
 
-    // ── inputsQ — for CalculateFRIPolChunks calls ─────────────────────────────
-    let mut inputs_q: Vec<String> = vec!["challengesFRI".into(), "evals".into()];
+    // ── inputsQ — for CalculateDeepPolChunks calls ─────────────────────────────
+    let mut inputs_q: Vec<String> = vec!["challengesDeep".into(), "evals".into()];
     for stage in 1..=n_stages {
         if sec_len(&format!("cm{stage}")) > 0 {
             inputs_q.push(format!("cm{stage}"));
@@ -483,18 +611,19 @@ fn build_tera_context(
     let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
 
     // ── Transcript code strings ───────────────────────────────────────────────
-    // Select the transcript hash family: a Poseidon2 proof verifies with the
-    // Poseidon2 sponge, otherwise (Poseidon1 recursion) with the Poseidon1 sponge.
-    let transcript_poseidon2 = opts.hash == "Poseidon2";
-    let mut t_fri = Transcript::new(arity, Some("friQueries".into()));
-    t_fri.set_drain_in_update_state(true);
-    t_fri.set_poseidon2(transcript_poseidon2);
-    t_fri.put("challengeFRIQueries", 3);
-    if pow_bits > 0 {
-        t_fri.put_single("nonce");
-    }
-    t_fri.get_permutations("queriesFRI", n_queries, step0_bits);
-    let calculate_fri_queries_code = t_fri.get_code();
+    let calculate_fri_queries_code = if is_stir {
+        String::new()
+    } else {
+        let mut t_fri = Transcript::new(arity, Some("friQueries".into()));
+        t_fri.set_drain_in_update_state(true);
+        t_fri.set_poseidon2(transcript_poseidon2);
+        t_fri.put("challengeFRIQueries", 3);
+        if pow_bits > 0 {
+            t_fri.put_single("nonce");
+        }
+        t_fri.get_permutations("queriesL0", n_queries, step0_bits);
+        t_fri.get_code()
+    };
 
     let mut t = Transcript::new(arity, None);
     t.set_drain_in_update_state(true);
@@ -539,7 +668,7 @@ fn build_tera_context(
 
     t.get_field("challengeQ");
     t.put(&format!("root{q_stage}"), 4);
-    t.get_field("challengeXi");
+    t.get_field("challengeOut");
 
     // In hash_commits mode the EJS calls transcript.getCode() HERE (split 1) before
     // emitting the side evals transcript and continuing with FRI challenges.
@@ -565,23 +694,33 @@ fn build_tera_context(
         transcript_code_stage = String::new(); // all code collected at the end
     }
 
-    t.get_field("challengesFRI[0]");
-    t.get_field("challengesFRI[1]");
+    t.get_field("challengesDeep[0]");
+    t.get_field("challengesDeep[1]");
 
-    // transcript_code_fri_mid: FRI challenges up to (but not including) the final
-    // challengesFRISteps[n_steps].  In hash_commits mode we split again just before
-    // the lastPolFRI side transcript so that it appears before the drain+final-hash.
+    // The low-degree-test tail of the transcript. transcript_code_fri_mid holds the code up
+    // to just before the final-polynomial absorb; in hash_commits mode that boundary is where
+    // the lastPolFRI side transcript is interleaved.
     let mut transcript_code_fri_mid = String::new();
-    for si_idx in 0..n_steps {
-        t.get_field(&format!("challengesFRISteps[{si_idx}]"));
-        if si_idx < n_steps - 1 {
-            t.put(&format!("s{}_root", si_idx + 1), 4);
-        } else if !hash_commits {
+    if is_stir {
+        // STIR (stir.hpp verify): T₀ root → r_fold_0; per iteration i = 1..M−1: T_i root →
+        // r_out (a single squeeze — the circuit rejects the 2^{-128} re-squeeze case) → β_i →
+        // r_fold_i, r_comb_i → the round's query challenge c_i. The grinding nonce is not
+        // absorbed here: each c_i seeds its own query transcript (calculateStirQueries).
+        t.put("s1_root", 4);
+        t.get_field("rFold[0]");
+        for i in 1..stir_m {
+            t.put(&format!("s{}_root", i + 1), 4);
+            t.get_field(&format!("rOut[{}]", i - 1));
+            t.put(&format!("betas[{}]", i - 1), 3);
+            t.get_field(&format!("rFold[{i}]"));
+            t.get_field(&format!("rComb[{}]", i - 1));
+            t.get_field(&format!("challengesQueries[{}]", i - 1));
+        }
+        if !hash_commits {
             for j in 0..final_pol_size {
                 t.put(&format!("finalPol[{j}]"), 3);
             }
         } else {
-            // Split 2: capture FRI code up to challengesFRISteps[n_steps-1].
             transcript_code_fri_mid = t.get_code();
             let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
             t_fp.set_drain_in_update_state(true);
@@ -593,11 +732,39 @@ fn build_tera_context(
             transcript_last_pol_fri_code = t_fp.get_code();
             t.put("lastPolFRIHash", 4);
         }
+        t.get_field(&format!("challengesQueries[{}]", stir_m - 1));
+    } else {
+        // s{s+1}_root commits f_s; r^fold_s is drawn right after it and folds f_s into f_{s+1}.
+        // Nothing is drawn before f_0's root, so FRI has M = n_steps − 1 folding challenges, like STIR.
+        for si_idx in 0..n_steps {
+            if si_idx > 0 {
+                t.get_field(&format!("rFold[{}]", si_idx - 1));
+            }
+            if si_idx < n_steps - 1 {
+                t.put(&format!("s{}_root", si_idx + 1), 4);
+            } else if !hash_commits {
+                for j in 0..final_pol_size {
+                    t.put(&format!("finalPol[{j}]"), 3);
+                }
+            } else {
+                // Split 2: capture FRI code up to the last folding challenge.
+                transcript_code_fri_mid = t.get_code();
+                let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
+                t_fp.set_drain_in_update_state(true);
+                t_fp.set_poseidon2(transcript_poseidon2);
+                for j in 0..final_pol_size {
+                    t_fp.put(&format!("finalPol[{j}]"), 3);
+                }
+                t_fp.get_state("lastPolFRIHash");
+                transcript_last_pol_fri_code = t_fp.get_code();
+                t.put("lastPolFRIHash", 4);
+            }
+        }
+        t.get_field("challengeQueries");
     }
-    t.get_field(&format!("challengesFRISteps[{n_steps}]"));
 
     // In hash_commits mode: transcript_code is now only the final drain +
-    // transcriptHash_N + challengesFRISteps[n_steps] (captured after split 2).
+    // transcriptHash_N + challengeQueries (captured after split 2).
     // In !hash_commits mode: transcript_code holds everything (stage_code is empty).
     let transcript_code = t.get_code();
 
@@ -623,11 +790,15 @@ fn build_tera_context(
             challenge_names.push(format!("challengesStage{stage}"));
         }
     }
-    challenge_names.extend(["challengeQ", "challengeXi", "challengesFRI"].iter().map(|s| s.to_string()));
+    challenge_names.extend(["challengeQ", "challengeOut", "challengesDeep"].iter().map(|s| s.to_string()));
     let challenge_names_joined = challenge_names.join(",");
 
-    // ── si_roots_joined ───────────────────────────────────────────────────────
-    let si_roots: Vec<String> = (1..n_steps).map(|s| format!("s{s}_root")).collect();
+    // ── si_roots_joined — the LDT roots handed to the transcript ─────────────
+    let si_roots: Vec<String> = if is_stir {
+        (0..stir_m).map(|i| format!("s{}_root", i + 1)).collect()
+    } else {
+        (1..n_steps).map(|s| format!("s{s}_root")).collect()
+    };
     let si_roots_joined = si_roots.join(",");
 
     // ── transcript_call_inputs ────────────────────────────────────────────────
@@ -655,7 +826,7 @@ fn build_tera_context(
             verify_evals_inputs.push(format!("challengesStage{stage}"));
         }
     }
-    verify_evals_inputs.extend(["challengeQ", "challengeXi", "evals"].iter().map(|s| s.to_string()));
+    verify_evals_inputs.extend(["challengeQ", "challengeOut", "evals"].iter().map(|s| s.to_string()));
     if n_publics > 0 {
         verify_evals_inputs.push("publics".into());
     }
@@ -672,8 +843,16 @@ fn build_tera_context(
     let verify_evals_inputs_joined = verify_evals_inputs.join(", ");
 
     // ── next step bits (VerifyQuery call) ─────────────────────────────────────
-    let next_step0_bits = if n_steps > 1 { steps[1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
-    let next_vals_pol_0 = if n_steps > 1 { "s1_vals_p" } else { "finalPol" };
+    // FRI hands the DEEP value to the next folded oracle; STIR hands it to the member of
+    // T₀'s opened coset (leaf = raw % nLeaves, member = raw / nLeaves — the same low/high
+    // bit split VerifyQuery already does).
+    let (next_step0_bits, next_vals_pol_0) = if is_stir {
+        (steps[0] - stir_folding_factors[0], "s1_vals_p")
+    } else if n_steps > 1 {
+        (steps[1], "s1_vals_p")
+    } else {
+        (0, "finalPol")
+    };
 
     // ── Insert all context values ─────────────────────────────────────────────
     ctx.insert("split_linear_hash", &split_linear_hash);
@@ -689,7 +868,6 @@ fn build_tera_context(
     ctx.insert("hash_commits", &hash_commits);
     ctx.insert("last_level_verification", &last_level_verification);
     ctx.insert("last_level_verification_gt0", &(last_level_verification > 0));
-    ctx.insert("multi_fri", &multi_fri);
     ctx.insert("skip_main", &opts.skip_main);
     ctx.insert("verkey_input", &opts.verkey_input);
     ctx.insert("enable_input", &opts.enable_input);
@@ -706,7 +884,25 @@ fn build_tera_context(
     ctx.insert("max_deg_bits", &max_deg_bits);
     let max_deg_size: u64 = 1u64 << max_deg_bits;
     ctx.insert("max_deg_size", &max_deg_size);
+    let final_log_degree: u64 = if is_stir { stir_log_degrees.last().copied().unwrap_or(0) } else { max_deg_bits };
+    ctx.insert("final_log_degree", &final_log_degree);
+    // Header summary of the main template: the air and its schedule, preformatted so the
+    // template only interpolates strings.
+    ctx.insert("air_name", &si["name"].as_str().unwrap_or(""));
+    ctx.insert("blowup_bits", &(n_bits_ext - n_bits));
+    let folding_factors: Vec<u64> = if !stir_folding_factors.is_empty() {
+        stir_folding_factors.clone()
+    } else {
+        steps.windows(2).map(|w| w[0] - w[1]).collect()
+    };
+    ctx.insert("folding_factors_str", &format!("{folding_factors:?}"));
+    ctx.insert("log_domain_sizes_str", &format!("{steps:?}"));
+    ctx.insert("log_degrees_str", &format!("{stir_log_degrees:?}"));
+    ctx.insert("queries_str", &if is_stir { format!("{stir_num_queries:?}") } else { n_queries.to_string() });
+    ctx.insert("grinding_str", &if is_stir { format!("{stir_grinding:?}") } else { pow_bits.to_string() });
     ctx.insert("n_steps", &n_steps);
+    // M, the number of folds (and of r^fold challenges): one fewer than the committed domains.
+    ctx.insert("n_folds", &n_steps.saturating_sub(1));
     ctx.insert("arity", &arity);
     ctx.insert("n_bits_arity", &n_bits_arity);
     ctx.insert("siblings_width", &siblings_width);
@@ -728,7 +924,8 @@ fn build_tera_context(
     ctx.insert("next_vals_pol_0", &next_vals_pol_0);
     let q_stage_cm_section_len: u64 = sec_len(&format!("cm{q_stage}"));
     ctx.insert("q_stage_cm_section_len", &q_stage_cm_section_len);
-    let s0_last_mt_size: u64 = fri_steps_info.first().and_then(|s| s["last_mt_size"].as_u64()).unwrap_or(0);
+    let s0_last_mt_size: u64 =
+        if last_level_verification > 0 { (arity as u64).pow(last_level_verification as u32) } else { 0 };
     ctx.insert("s0_last_mt_size", &s0_last_mt_size);
     ctx.insert("query_vals_joined", &query_vals_joined);
     ctx.insert("challenge_names_joined", &challenge_names_joined);
@@ -762,6 +959,11 @@ fn build_tera_context(
     ctx.insert("eval_p_chunks", &eval_p_chunks);
     ctx.insert("eval_q_chunks", &eval_q_chunks);
     ctx.insert("fri_steps_info", &fri_steps_info);
+    ctx.insert("is_stir", &is_stir);
+    ctx.insert("stir_m", &stir_m);
+    ctx.insert("stir_rounds", &stir_rounds);
+    ctx.insert("stir_shift_inv", &stir_shift_inv);
+    ctx.insert("calculate_stir_queries_name", &mk("calculateStirQueries"));
     ctx.insert("opening_points", &opening_points);
     ctx.insert("every_frames", &every_frames);
 
@@ -779,15 +981,15 @@ mod tests {
         json!({
             "starkStruct": {
                 "verificationHashType": "GL",
-                "nQueries": n_queries,
+                "numQueries": n_queries,
                 "nBits": 16,
                 "nBitsExt": 17,
-                "powBits": 0,
+                "grindingBitsQueries": 0,
                 "merkleTreeArity": 4,
                 "lastLevelVerification": 0,
                 "splitLinearHash": false,
                 "hashCommits": false,
-                "steps": [{"nBits": step0_bits}]
+                "logDomainSizes": [step0_bits]
             },
             "nStages": n_stages,
             "nPublics": 0,
@@ -891,6 +1093,75 @@ mod tests {
         let opts = Pil2CircomOptions::default();
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
         assert!(!out.contains("{public"), "got:\n{out}");
+    }
+
+    fn minimal_stir_stark_info(n_stages: u64) -> Value {
+        // A tiny STIR schedule: nBits 8, blowup 1, folds [3, 3, 2] down to degree 0... kept
+        // structurally valid rather than sound (query counts are arbitrary here).
+        json!({
+            "starkStruct": {
+                "verificationHashType": "GL",
+                "lowDegreeTest": "STIR",
+                "nBits": 8,
+                "nBitsExt": 9,
+                "merkleTreeArity": 4,
+                "lastLevelVerification": 0,
+                "splitLinearHash": false,
+                "hashCommits": false,
+                "foldingFactors": [3, 3],
+                "logDegrees": [8, 5, 2],
+                "logDomainSizes": [9, 8, 7],
+                "numQueries": [10, 6],
+                "grindingBitsQueries": [4, 4]
+            },
+            "nStages": n_stages,
+            "nPublics": 0,
+            "evMap": [],
+            "cmPolsMap": [],
+            "customCommits": [],
+            "customCommitsMap": [],
+            "challengesMap": [],
+            "boundaries": [{"name": "everyRow"}],
+            "airgroupValuesMap": [],
+            "airValuesMap": [],
+            "proofValuesMap": [],
+            "mapSectionsN": {},
+            "openingPoints": [],
+            "nConstants": 0,
+            "qDeg": 1,
+        })
+    }
+
+    #[test]
+    fn stir_stark_info_renders() {
+        let si = minimal_stir_stark_info(2);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"stir.circom\";"), "got:\n{}", &out[..out.len().min(1500)]);
+        assert!(out.contains("template calculateStirQueries_0("), "missing round-0 query template");
+        assert!(out.contains("template calculateStirQueries_1("), "missing round-1 query template");
+        assert!(!out.contains("template calculateFRIQueries"), "FRI query template must not render");
+        assert!(!out.contains("VerifyFinalPol"), "STIR's degree bound is structural — no IFFT check");
+        assert!(out.contains("signal input ansCoeffs0["), "missing the Âns hint input");
+        assert!(out.contains("signal input nonces[2];"), "one nonce per query message");
+        assert!(out.contains("StirFoldCoset("), "missing the fold");
+        assert!(out.contains("EvalPol(4)(finalPol"), "final polynomial evaluated from d_M = 4 coefficients");
+    }
+
+    /// Render a STIR verifier from real starkinfo/verifierinfo files, for manual circom checks:
+    ///   STIR_STARKINFO=... STIR_VERIFIERINFO=... STIR_OUT=... cargo test -p pil2-stark-recurser render_stir_from_files -- --ignored
+    #[test]
+    #[ignore]
+    fn render_stir_from_files() {
+        let si_path = std::env::var("STIR_STARKINFO").expect("STIR_STARKINFO");
+        let vi_path = std::env::var("STIR_VERIFIERINFO").expect("STIR_VERIFIERINFO");
+        let out_path = std::env::var("STIR_OUT").expect("STIR_OUT");
+        let si: Value = serde_json::from_str(&std::fs::read_to_string(si_path).unwrap()).unwrap();
+        let vi: Value = serde_json::from_str(&std::fs::read_to_string(vi_path).unwrap()).unwrap();
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        std::fs::write(out_path, out).unwrap();
     }
 
     #[test]

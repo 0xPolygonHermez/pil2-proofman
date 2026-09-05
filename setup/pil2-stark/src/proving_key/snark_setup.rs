@@ -212,14 +212,14 @@ pub fn gen_snark_setup(
     // BN128 stark struct settings (matches JS: blowupFactor=6, powBits=17, arity=4).
     let bn128_settings = StarkSettings {
         verification_hash_type: Some("BN128".to_string()),
-        blowup_factor: Some(6),
+        initial_blowup_factor: Some(6),
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
         // Diverges from JS (which never implemented lastLevelVerification for
         // BN128): drop 2 Poseidon-BN128 levels per query per tree in the final
         // circuit, checked against a 16-node (arity^2) published last level.
         last_level_verification: Some(2),
-        pow_bits: Some(19),
+        grinding_bits: Some(19),
         ..Default::default()
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
@@ -228,39 +228,23 @@ pub fn gen_snark_setup(
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
     let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
-    let log_folding_factors_rf = crate::output::stark_info::compute_log_folding_factors(&stark_struct_rf);
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config_rf = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << stark_struct_rf.n_bits,
-        rate: 1.0 / (1u64 << (stark_struct_rf.n_bits_ext - stark_struct_rf.n_bits)) as f64,
-        batch_size: ev_map_len_rf.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors: log_folding_factors_rf,
-        max_grinding_bits_query: stark_struct_rf.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: stark_struct_rf.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri_rf = crate::types::security::pcs::Fri::new(fri_config_rf);
+    let ldt = crate::output::stark_info::solve_low_degree_test(&stark_struct_rf, ev_map_len_rf.max(1) as u64);
 
     let starkinfo_rf = crate::output::stark_info::build_starkinfo_output(
         &pil_result_rf.setup,
         &stark_struct_rf,
         &pil_result_rf.pil_code,
         &opening_points_rf,
-        &fri_rf,
+        &ldt,
         0,
         0,
         "Recursivef",
         pil_result_rf.c_exp_id,
-        pil_result_rf.fri_exp_id,
+        pil_result_rf.deep_exp_id,
         pil_result_rf.q_deg,
     );
+    tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());
     let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;
     let starkinfo_rf_path = recursivef_dir.join("recursivef.starkinfo.json");
     fs::write(&starkinfo_rf_path, &starkinfo_rf_json)?;

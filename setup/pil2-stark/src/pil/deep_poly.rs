@@ -4,27 +4,28 @@ use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::EvMapItem;
 use crate::types::pilout_info::{SymbolInfo, FIELD_EXTENSION};
 
-/// Result of FRI polynomial generation.
+/// Result of DEEP polynomial generation.
 #[derive(Debug, Clone)]
-pub struct FriPolyResult {
-    /// Expression index of the FRI polynomial in the expression arena.
-    pub fri_exp_id: usize,
+pub struct DeepPolyResult {
+    /// Expression index of the DEEP polynomial in the expression arena.
+    pub deep_exp_id: usize,
 }
 
-/// Generate the FRI polynomial expression.
+/// Generate the DEEP polynomial expression — the initial polynomial f₀ the
+/// low-degree test (FRI or STIR) is run on.
 ///
 /// In the JS version, all intermediate nodes are built inline and only ONE
 /// `expressions.push(friExp)` happens at the end. We match that by building
 /// the entire FRI tree with inline `ExprChild::Inline` children and pushing
 /// only the final composite expression.
-pub fn generate_fri_polynomial(
+pub fn generate_deep_polynomial(
     n_stages: usize,
     expressions: &mut Vec<Expression>,
     symbols: &mut Vec<SymbolInfo>,
     ev_map: &[EvMapItem],
     opening_points: &[i64],
     challenges_map: &mut Vec<ChallengeMapEntry>,
-) -> FriPolyResult {
+) -> DeepPolyResult {
     let stage = n_stages + 3;
 
     // Create std_vf1 challenge
@@ -181,7 +182,7 @@ pub fn generate_fri_polynomial(
 
     expressions.push(fri_final);
 
-    FriPolyResult { fri_exp_id: fri_final_id }
+    DeepPolyResult { deep_exp_id: fri_final_id }
 }
 
 /// Get dimension for an inline expression tree.
@@ -329,11 +330,11 @@ mod tests {
         let mut challenges_map = Vec::new();
 
         let result =
-            generate_fri_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
+            generate_deep_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
 
-        // fri_exp_id is the index in the expressions arena; when the arena
+        // deep_exp_id is the index in the expressions arena; when the arena
         // starts empty (as in this test) the first pushed expression gets id 0.
-        assert_eq!(result.fri_exp_id, 0);
+        assert_eq!(result.deep_exp_id, 0);
         assert!(!expressions.is_empty());
 
         // Should have added std_vf1 and std_vf2
@@ -356,10 +357,10 @@ mod tests {
         let mut challenges_map = Vec::new();
 
         let result =
-            generate_fri_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
+            generate_deep_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
 
-        // fri_exp_id is a valid index into the expressions arena
-        assert!(result.fri_exp_id < expressions.len());
+        // deep_exp_id is a valid index into the expressions arena
+        assert!(result.deep_exp_id < expressions.len());
         assert!(!expressions.is_empty());
     }
 }

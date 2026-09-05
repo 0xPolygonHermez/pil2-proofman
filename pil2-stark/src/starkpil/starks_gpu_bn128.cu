@@ -12,13 +12,13 @@ class gl64_t;
 #define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
 
 // Kernel to extract polynomial values at queried positions from trace
-__global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t querySize)
+__global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint64_t nRows, uint64_t *d_queriesL0, uint64_t nQueries, gl64_t *d_buffer, uint64_t querySize)
 {
     uint64_t idx_x = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t idx_y = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx_x < nCols && idx_y < nQueries)
     {
-        uint64_t row = d_friQueries[idx_y];
+        uint64_t row = d_queriesL0[idx_y];
         uint64_t idx_buffer = idx_y * querySize + idx_x;
         uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols, Layout::ColMajor);
         uint64_t val = d_treeTrace[idx_trace][0];
@@ -68,7 +68,7 @@ __device__ void genMerkleProofBN128_(
 __global__ void genMerkleProofBN128(
     PoseidonBN128GPU::FrElement *d_nodes,
     uint64_t nLeaves,
-    uint64_t *d_friQueries,
+    uint64_t *d_queriesL0,
     uint64_t nQueries,
     gl64_t *d_buffer,           // Output buffer (mixed: GL polynomial values + BN128 proofs)
     uint64_t bufferWidth,       
@@ -79,7 +79,7 @@ __global__ void genMerkleProofBN128(
     uint64_t idx_query = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx_query < nQueries)
     {
-        uint64_t row = d_friQueries[idx_query];
+        uint64_t row = d_queriesL0[idx_query];
         uint8_t *bufferBase = (uint8_t*)d_buffer;
         uint8_t *proofStart = bufferBase + idx_query * bufferWidth * sizeof(gl64_t) + maxTreeWidth * sizeof(gl64_t);
         PoseidonBN128GPU::FrElement *proof = (PoseidonBN128GPU::FrElement *)proofStart; 
@@ -89,22 +89,22 @@ __global__ void genMerkleProofBN128(
 }
 
 // Kernel to reduce query indices modulo current FRI domain size
-__global__ void moduleQueriesBN128(uint64_t* d_friQueries, uint64_t nQueries, uint64_t currentBits) {
+__global__ void moduleQueriesBN128(uint64_t* d_queriesL0, uint64_t nQueries, uint64_t currentBits) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < nQueries) {
-        d_friQueries[idx] %= (1ULL << currentBits);
+        d_queriesL0[idx] %= (1ULL << currentBits);
     }
 }
 
-// Kernel to extract FRI polynomial values at queried positions
+// Kernel to extract DEEP polynomial values at queried positions
 // FRI data is stored after transposeFRI in ROW-MAJOR format: leaf * width + col
-__global__ void getTracePolsFRIBN128(gl64_t *d_treeTrace, uint64_t nCols, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
+__global__ void getTracePolsFRIBN128(gl64_t *d_treeTrace, uint64_t nCols, uint64_t *d_queriesL0, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
 {
     uint64_t idx_x = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t idx_y = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx_x < nCols && idx_y < nQueries)
     {
-        uint64_t row = d_friQueries[idx_y];
+        uint64_t row = d_queriesL0[idx_y];
         uint64_t idx_buffer = idx_y * bufferWidth + idx_x;
         uint64_t idx_trace = row * nCols + idx_x;
         uint64_t val = d_treeTrace[idx_trace][0];
@@ -119,7 +119,7 @@ __global__ void getTracePolsFRIBN128(gl64_t *d_treeTrace, uint64_t nCols, uint64
 void proveQueries_bn128_gpu(
     SetupCtx& setupCtx,
     gl64_t *d_queries_buff,
-    uint64_t *d_friQueries,
+    uint64_t *d_queriesL0,
     uint64_t nQueries,
     MerkleTreeBN128 **trees,
     uint64_t nTrees,
@@ -141,7 +141,7 @@ void proveQueries_bn128_gpu(
             (gl64_t*)trees[k]->source,
             trees[k]->getMerkleTreeWidth(),
             trees[k]->height,
-            d_friQueries,
+            d_queriesL0,
             nQueries,
             d_queries_buff + k * nQueries * maxBuffSize,
             maxBuffSize
@@ -154,7 +154,7 @@ void proveQueries_bn128_gpu(
         genMerkleProofBN128<<<nblocks, nthreads, 0, stream>>>(
             (PoseidonBN128GPU::FrElement *)trees[k]->nodes,
             trees[k]->height,
-            d_friQueries,
+            d_queriesL0,
             nQueries,
             d_queries_buff + k * nQueries * maxBuffSize,
             maxBuffSize,
@@ -171,7 +171,7 @@ void proveFRIQueries_bn128_gpu(
     gl64_t *d_queries_buff,
     uint64_t step,
     uint64_t currentBits,
-    uint64_t *d_friQueries,
+    uint64_t *d_queriesL0,
     uint64_t nQueries,
     MerkleTreeBN128 *treeFRI,
     cudaStream_t stream
@@ -182,7 +182,7 @@ void proveFRIQueries_bn128_gpu(
     // Reduce query indices modulo current domain size
     dim3 nthreads_(64);
     dim3 nblocks_((nQueries + nthreads_.x - 1) / nthreads_.x);
-    moduleQueriesBN128<<<nblocks_, nthreads_, 0, stream>>>(d_friQueries, nQueries, currentBits);
+    moduleQueriesBN128<<<nblocks_, nthreads_, 0, stream>>>(d_queriesL0, nQueries, currentBits);
     CHECKCUDAERR(cudaGetLastError());
 
     // Extract polynomial values at queried positions
@@ -191,7 +191,7 @@ void proveFRIQueries_bn128_gpu(
     getTracePolsFRIBN128<<<nBlocks, nThreads, 0, stream>>>(
         (gl64_t *)treeFRI->source,
         friWidth,
-        d_friQueries,
+        d_queriesL0,
         nQueries,
         d_queries_buff,
         maxBuffSize
@@ -204,7 +204,7 @@ void proveFRIQueries_bn128_gpu(
     genMerkleProofBN128<<<nblocks, nthreads, 0, stream>>>(
         (PoseidonBN128GPU::FrElement *)treeFRI->nodes,
         treeFRI->height,
-        d_friQueries,
+        d_queriesL0,
         nQueries,
         d_queries_buff,
         maxBuffSize,
@@ -396,12 +396,12 @@ void setProof_bn128_gpu(
     Goldilocks::Element *d_evals = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
     Goldilocks::Element *d_airgroupValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
     Goldilocks::Element *d_airValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    Goldilocks::Element *d_friPol = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    Goldilocks::Element *d_deepPol = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     uint64_t *d_nonce = (uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)]);
     
     uint64_t nQueries = setupCtx.starkInfo.starkStruct.nQueries;
     uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
-    uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1;
     uint64_t maxProofBuffSize = setupCtx.starkInfo.maxProofBuffSize;
     
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
@@ -509,11 +509,11 @@ void setProof_bn128_gpu(
     }
 
     // ============ Copy FRI final polynomial ============
-    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits;
-    Goldilocks::Element *h_friPol = new Goldilocks::Element[finalPolDegree * FIELD_EXTENSION];
-    cudaMemcpy(h_friPol, d_friPol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    FRI<RawFr::Element>::setFinalPol(proof, h_friPol, setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits);
-    delete[] h_friPol;
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[nFRISteps];
+    Goldilocks::Element *h_deepPol = new Goldilocks::Element[finalPolDegree * FIELD_EXTENSION];
+    cudaMemcpy(h_deepPol, d_deepPol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    FRI<RawFr::Element>::setFinalPol(proof, h_deepPol, setupCtx.starkInfo.starkStruct.logDomainSizes[nFRISteps]);
+    delete[] h_deepPol;
 
     // ============ Copy nonce ============
     uint64_t h_nonce;
