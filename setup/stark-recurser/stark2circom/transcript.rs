@@ -133,7 +133,7 @@ impl Transcript {
             if first_unused < out_w {
                 let prev_sig = self.signal_name(self.h_cnt - 1);
                 self.code.push(format!(
-                    "for(var i = {first_unused}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values \n    }}"
+                    "for (var i = {first_unused}; i < {out_w}; i++) {{\n        _ <== {prev_sig}[i]; // Unused transcript values \n    }}"
                 ));
             }
         }
@@ -277,7 +277,7 @@ impl Transcript {
         if self.hi_cnt < out_w {
             let prev_sig = self.signal_name(self.h_cnt - 1);
             self.code.push(format!(
-                "for(var i = {}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}\n",
+                "for (var i = {}; i < {out_w}; i++) {{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}\n",
                 self.hi_cnt
             ));
         }
@@ -295,14 +295,14 @@ impl Transcript {
             let bits_this_field = if i + 1 == n_fields { total_bits - 63 * i } else { 63 };
 
             self.code.push(format!(
-                "for(var j = 0; j < {bits_this_field}; j++) {{\n        {v}[q][b] <== {name}[j];\n        b++;\n        if(b == {query_bits}) {{\n            b = 0; \n            q++;\n        }}\n    }}"
+                "for (var j = 0; j < {bits_this_field}; j++) {{\n        {v}[q][b] <== {name}[j];\n        b++;\n        if(b == {query_bits}) {{\n            b = 0; \n            q++;\n        }}\n    }}"
             ));
 
             if bits_this_field == 63 {
                 self.code.push(format!("_ <== {name}[63]; // Unused last bit\n"));
             } else {
                 self.code.push(format!(
-                    "for(var j = {bits_this_field}; j < 64; j++) {{\n        _ <== {name}[j]; // Unused bits        \n    }}"
+                    "for (var j = {bits_this_field}; j < 64; j++) {{\n        _ <== {name}[j]; // Unused bits        \n    }}"
                 ));
             }
         }
@@ -346,11 +346,11 @@ mod tests {
             "code:\n{code}"
         );
         // Drain: hi_cnt=1, 1 < 16 → drain from 1 to 16.
-        assert!(code.contains("for(var i = 1; i < 16; i++)"), "drain missing:\n{code}");
+        assert!(code.contains("for (var i = 1; i < 16; i++)"), "drain missing:\n{code}");
         // Last field partial: total_bits=3, n_fields=1, bits_this_field = 3-63*0 = 3.
-        assert!(code.contains("for(var j = 0; j < 3; j++)"), "bit-loop missing:\n{code}");
+        assert!(code.contains("for (var j = 0; j < 3; j++)"), "bit-loop missing:\n{code}");
         // Partial-bits drain: 3 < 63, so "Unused bits" drain.
-        assert!(code.contains("for(var j = 3; j < 64; j++)"), "unused bits drain missing:\n{code}");
+        assert!(code.contains("for (var j = 3; j < 64; j++)"), "unused bits drain missing:\n{code}");
         assert!(!code.contains("Unused last bit"), "should be partial not last-bit:\n{code}");
     }
 
@@ -382,7 +382,7 @@ mod tests {
         let code = t.get_code();
         // bits_this_field=63 → _ <== transcriptN2b_0[63]; // Unused last bit
         assert!(code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"), "code:\n{code}");
-        assert!(!code.contains("for(var j = 63; j < 64; j++)"), "should NOT have partial drain:\n{code}");
+        assert!(!code.contains("for (var j = 63; j < 64; j++)"), "should NOT have partial drain:\n{code}");
     }
 
     // ── get_permutations: integration against FibonacciSquare ground truth ───
@@ -420,11 +420,11 @@ mod tests {
         assert!(code.contains("Num2Bits_strict()(transcriptHash_friQueries_5[3])"), "N2b_83 source missing");
 
         // 84 mod 16 = 4 → drain from hi_cnt=4 to 16 (12 unused fields).
-        assert!(code.contains("for(var i = 4; i < 16; i++)"), "end-of-round-5 drain missing");
+        assert!(code.contains("for (var i = 4; i < 16; i++)"), "end-of-round-5 drain missing");
 
         // Last field has 38 bits (5267 - 63*83 = 38).
-        assert!(code.contains("for(var j = 0; j < 38; j++)"), "last-field 38-bit loop missing");
-        assert!(code.contains("for(var j = 38; j < 64; j++)"), "unused-bits drain for last field missing");
+        assert!(code.contains("for (var j = 0; j < 38; j++)"), "last-field 38-bit loop missing");
+        assert!(code.contains("for (var j = 38; j < 64; j++)"), "unused-bits drain for last field missing");
         // All full fields (0..82) end with Unused last bit.
         assert!(code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"), "unused-last-bit for N2b_0 missing");
 
