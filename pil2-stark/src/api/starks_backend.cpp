@@ -82,6 +82,7 @@ uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
 uint32_t get_prefetch_witness_slots_gpu();
+uint64_t get_mops_floor_bytes_gpu();
 void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
 void configure_phase_b_gpu(void *d_buffers_);
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
@@ -158,6 +159,7 @@ StarksBackend cpu_backend = []() {
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
+    backend.get_mops_floor_bytes = nullptr;               // default: 0 (no floor)
     backend.set_pipeline_mode = nullptr;                  // default: no-op
     backend.configure_phase_b = nullptr;
     backend.set_phase_b = nullptr;
@@ -230,6 +232,7 @@ StarksBackend gpu_backend = []() {
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
+    backend.get_mops_floor_bytes = get_mops_floor_bytes_gpu;
     backend.set_pipeline_mode = set_pipeline_mode_gpu;
     backend.configure_phase_b = configure_phase_b_gpu;
     backend.set_phase_b = set_phase_b_gpu;
@@ -544,6 +547,11 @@ void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t f
 uint32_t get_prefetch_witness_slots() {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_prefetch_witness_slots ? backend->get_prefetch_witness_slots() : 0;
+}
+
+uint64_t get_mops_floor_bytes() {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_mops_floor_bytes ? backend->get_mops_floor_bytes() : 0;
 }
 
 void set_pipeline_mode(void *d_buffers_, bool enable) {

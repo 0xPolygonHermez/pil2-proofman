@@ -224,6 +224,7 @@ extern "C" {
     void harvest_pipeline(void *d_buffers_);
     void dump_pipeline_state(void *d_buffers_);
     uint32_t get_prefetch_witness_slots();
+    uint64_t get_mops_floor_bytes();
     int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *trace);
     int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void stream_commit_pause();

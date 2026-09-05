@@ -1533,6 +1533,10 @@ pub fn get_prefetch_witness_slots_c() -> u32 {
     unsafe { get_prefetch_witness_slots() }
 }
 
+pub fn get_mops_floor_bytes_c() -> u64 {
+    unsafe { get_mops_floor_bytes() }
+}
+
 pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
     unsafe { set_pipeline_mode(d_buffers, enable) }
 }

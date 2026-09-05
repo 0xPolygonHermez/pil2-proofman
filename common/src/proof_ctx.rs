@@ -22,7 +22,7 @@ use std::ffi::c_void;
 use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
-    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
+    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c,
     get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
@@ -329,6 +329,9 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Phase B registered: the two recursive streams alias the single basic stream's buffer and
     /// open only after every basic and compressor completed (set_phase_b_c from the proofs phase).
     pub phase_b: bool,
+    /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
+    /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
+    pub phase_b_half: usize,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -387,6 +390,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
             phase_b: false,
+            phase_b_half: 0,
         })
     }
 
@@ -1142,28 +1146,30 @@ impl<F: PrimeField64> ProofCtx<F> {
             },
         };
 
-        // Phase B aliases two recursive1/recursive2 streams over the first GPU's pre-const area,
-        // which with one basic stream is that stream plus the prefetch zone and the mops-floor pad.
-        // Make the footprint a planned property: with aggregation and a single basic stream, the
-        // stream itself holds two recursive classes. Memory-neutral on the device -- the pad below
-        // the const pols shrinks by the same amount (the pre-const area stays at the mops floor).
+        // Phase B splits the single basic stream in two halves that host recursion and every basic
+        // that fits them (the big ones ran in phase A). The stream is grown to the mops floor -- the
+        // pre-const area below the consts that the pad would otherwise fill, so this is memory-neutral
+        // on the device -- which makes the halves as large as the card allows: the more airs fit a
+        // half, the shorter phase A. The halves must hold the recursive1/recursive2 class.
         let mut layout = layout;
+        let mut phase_b_half: usize = 0;
         if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
-            let phase_b_floor = 2 * max_prover_recursive2_buffer_size;
-            let large = &mut layout.basic[0];
-            if large.size < phase_b_floor {
-                let grow = phase_b_floor - large.size;
-                if grow <= layout.unused {
-                    large.size = phase_b_floor;
-                    layout.unused -= grow;
-                } else {
-                    tracing::warn!(
-                        "single basic stream ({}) cannot grow to hold two recursive streams ({}): only {} unused -- phase-B two-stream recursion will not be available on this layout",
-                        format_bytes(large.size as f64 * 8.0),
-                        format_bytes(phase_b_floor as f64 * 8.0),
-                        format_bytes(layout.unused as f64 * 8.0)
-                    );
-                }
+            let floor_area = (get_mops_floor_bytes_c() / 8) as usize;
+            let current = layout.basic[0].size;
+            let target = current
+                .max(floor_area.saturating_sub(prefetch_region_area as usize))
+                .min(current + layout.unused);
+            let half = target / 2;
+            if half >= max_prover_recursive2_buffer_size {
+                layout.unused -= target - current;
+                layout.basic[0].size = target;
+                phase_b_half = half;
+            } else {
+                tracing::warn!(
+                    "single basic stream can grow to {} at most, whose half does not hold the recursive class ({}) -- phase B will not be available on this layout",
+                    format_bytes(target as f64 * 8.0),
+                    format_bytes(max_prover_recursive2_buffer_size as f64 * 8.0)
+                );
             }
         }
 
@@ -1173,19 +1179,23 @@ impl<F: PrimeField64> ProofCtx<F> {
         let n_streams_per_gpu = layout.n_basic_streams();
         let mut n_recursive_streams_per_gpu = layout.recursive.count;
 
-        // Phase B: with aggregation and one basic stream, two recursive streams alias that
-        // stream's buffer (sized above to hold both). They cost no memory and open once every
-        // basic and compressor has completed. PROOFMAN_NO_PHASE_B=1 disables.
+        // Phase B: with aggregation and one basic stream, two recursive-class streams alias that
+        // stream's halves (sized above). They cost no memory and open once every instance that does
+        // not fit a half has completed (see the phase-A countdown in the proofs phase).
+        // PROOFMAN_NO_PHASE_B=1 disables.
         self.phase_b = gpu
             && aggregation
             && n_streams_per_gpu == 1
             && n_recursive_streams_per_gpu == 0
-            && layout.basic[0].size >= 2 * max_prover_recursive2_buffer_size
+            && phase_b_half > 0
             && !std::env::var("PROOFMAN_NO_PHASE_B").map(|v| v == "1").unwrap_or(false);
         if self.phase_b {
             configure_phase_b_c(d_buffers.get_ptr());
             n_recursive_streams_per_gpu = 2;
+            self.phase_b_half = phase_b_half;
         }
+        // The recursive-class streams' capacity: the halves under phase B, else the recursive class.
+        let recursive_stream_size = if self.phase_b { phase_b_half } else { max_prover_recursive2_buffer_size };
 
         if gpu {
             let classes = layout
@@ -1196,7 +1206,10 @@ impl<F: PrimeField64> ProofCtx<F> {
                 .join(" + ");
             let aggregation_desc = match n_recursive_streams_per_gpu {
                 0 => format!("{} aggregation workers sharing the basic streams", layout.aggregation_workers),
-                2 if self.phase_b => "2 phase-B recursive streams aliased over the basic stream".to_string(),
+                2 if self.phase_b => format!(
+                    "2 phase-B streams over the basic stream's halves ({} each, recursion + basics that fit)",
+                    format_bytes(phase_b_half as f64 * 8.0)
+                ),
                 n => format!("{n} dedicated streams per GPU for recursive proofs"),
             };
             tracing::info!(
@@ -1219,7 +1232,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             d_buffers.get_ptr(),
             &aux_trace_sizes,
             n_recursive_streams_per_gpu as u64,
-            max_prover_recursive2_buffer_size as u64,
+            recursive_stream_size as u64,
             max_pinned_proof_size,
             self.global_info.transcript_arity as u64,
         );
@@ -1254,7 +1267,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
-            max_prover_recursive2_buffer_size as u64,
+            recursive_stream_size as u64,
             total_const_area,
             total_const_area_aggregation,
             unified_buffer_pad_area,

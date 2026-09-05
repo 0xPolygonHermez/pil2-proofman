@@ -3011,9 +3011,22 @@ where
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
         // channels). Condvar parks idle stream workers.
         let scheduler: Option<Arc<crate::SharedScheduler<F>>> = if self.pctx.gpu {
-            Some(Arc::new(crate::SharedScheduler::new(crate::RecursiveScheduler::<F>::new(
-                self.pctx.get_device_buffers_ptr(),
-            ))))
+            let mut sched = crate::RecursiveScheduler::<F>::new(self.pctx.get_device_buffers_ptr());
+            if self.pctx.phase_b {
+                // Phase-A-only airs dispatch first so the halves open as early as possible.
+                let half = self.pctx.phase_b_half as u64;
+                let big: std::collections::HashSet<(usize, usize)> = self
+                    .pctx
+                    .global_info
+                    .airs
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(ag, group)| (0..group.len()).map(move |air| (ag, air)))
+                    .filter(|&(ag, air)| self.sctx.get_setup(ag, air).map(|s| s.prover_buffer_size > half).unwrap_or(false))
+                    .collect();
+                sched.set_big_keys(big);
+            }
+            Some(Arc::new(crate::SharedScheduler::new(sched)))
         } else {
             None
         };
@@ -3054,17 +3067,37 @@ where
             });
         }
 
-        // Phase B: one Basic completion per instance plus one Compressor where the air has
-        // one; when the last lands, the basic stream closes and recursion moves to the two
-        // aliased streams (set_phase_b 1). Phase A starts fresh on every job.
+        // Phase B: counts the completions that can only happen in phase A -- the Basic of every
+        // instance whose buffer exceeds a half, and every Compressor that does (its proof needs the
+        // compact witness tail too, as the class sizing does). When the last lands, the basic stream
+        // closes and everything left -- recursion and the small basics -- moves to the two halves
+        // (set_phase_b 1). Nothing to wait for means the request goes out at once. Phase A starts
+        // fresh on every job.
         let phase_a_remaining: Option<Arc<std::sync::atomic::AtomicI64>> = if self.pctx.phase_b {
             let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            let half = self.pctx.phase_b_half as u64;
             let mut expected: i64 = 0;
             for &instance_id in my_instances.iter() {
                 let (ag, air) = self.pctx.dctx_get_instance_info(instance_id)?;
-                expected += 1 + self.pctx.global_info.get_air_has_compressor(ag, air) as i64;
+                if self.sctx.get_setup(ag, air)?.prover_buffer_size > half {
+                    expected += 1;
+                }
+                if self.pctx.global_info.get_air_has_compressor(ag, air) {
+                    let compressor_big = self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
+                        true,
+                        |s| {
+                            let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                            s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
+                        },
+                    );
+                    expected += compressor_big as i64;
+                }
             }
             tracing::debug!("Phase B armed: {expected} phase-A completions expected");
+            if expected == 0 {
+                let rc = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 1);
+                tracing::info!("Phase B requested: no phase-A-only instance in this job (rc={rc})");
+            }
             Some(Arc::new(std::sync::atomic::AtomicI64::new(expected)))
         } else {
             None
@@ -3099,11 +3132,27 @@ where
                         break;
                     }
                     if let Some(remaining) = phase_a_remaining_clone.as_ref() {
-                        if (p == ProofType::Basic || p == ProofType::Compressor)
-                            && remaining.fetch_sub(1, Ordering::SeqCst) == 1
-                        {
+                        // Only the phase-A-only completions count (see the countdown's arming).
+                        let (ag, air) = pctx_clone.dctx_get_instance_info(id as usize).unwrap_or((usize::MAX, usize::MAX));
+                        let counts = ag != usize::MAX
+                            && match p {
+                                ProofType::Basic => sctx_clone
+                                    .get_setup(ag, air)
+                                    .map(|s| s.prover_buffer_size > pctx_clone.phase_b_half as u64)
+                                    .unwrap_or(false),
+                                ProofType::Compressor => setups_clone.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
+                                    true,
+                                    |s| {
+                                        let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                                        s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n
+                                            > pctx_clone.phase_b_half as u64
+                                    },
+                                ),
+                                _ => false,
+                            };
+                        if counts && remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
                             let rc = set_phase_b_c(pctx_clone.get_device_buffers_ptr(), 1);
-                            tracing::info!("Phase B requested: every basic and compressor completed (rc={rc})");
+                            tracing::info!("Phase B requested: every phase-A-only instance completed (rc={rc})");
                         }
                     }
                     if *DEBUG_CHALLENGES {
@@ -3452,6 +3501,10 @@ where
                             }
                             let pick = if force_recursive_stream {
                                 guard.next_recursive().map(|(w, s)| crate::WorkerPick::Recursive(w, s))
+                            } else if let Some(p) = guard.next_compressor() {
+                                // Ahead of the held basics: only this worker dispatches compressors, and
+                                // a big air's compressor holds phase B closed until it has run.
+                                Some(p)
                             } else if let Some(&(hid, hag, hair)) = held.front() {
                                 // A held instance always launches next (its trace is in
                                 // the zone); only the stream reservation can make it wait.

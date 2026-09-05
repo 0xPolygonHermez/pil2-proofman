@@ -1098,6 +1098,16 @@ void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *p
 }
 
 // Stage `trace` into the cursor slot on the copy stream and tag it for `instanceId`.
+// The aux trace a launch on `streamId` works in: a recursive-class stream's buffer is its own
+// (or, under phase B, a half of the basic stream's), a basic-class one's is its size class.
+// Every proof kind resolves through this, so any kind may run on either class.
+static gl64_t *auxTraceFor(DeviceCommitBuffers *d_buffers, uint32_t streamId) {
+    const StreamData &sd = d_buffers->streamsData[streamId];
+    const uint32_t gpuLocalId = d_buffers->gpus_g2l[sd.gpuId];
+    return sd.recursive ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][sd.localStreamId]
+                        : (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][sd.localStreamId];
+}
+
 // Caller MUST hold prefetchMutex. Drops a stale unconsumed entry (host-syncing its
 // in-flight upload first), orders the copy behind the slot's drain, records
 // prefetchReady and advances the cursor. Returns the slot used.
@@ -1173,7 +1183,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -1181,7 +1191,9 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
 
-    const bool pipeline = d_buffers->pipelineMode;
+    // The ring exists on basic-class streams only: a basic on a phase-B half (recursive class)
+    // takes the legacy path -- proofBuffer set, collected at the next reservation.
+    const bool pipeline = d_buffers->pipelineMode && !d_buffers->streamsData[streamId].recursive;
 
     // Read the prior context before overwriting it below. Fixed columns are keyed by slot,
     // so an air sharing them with the stream's previous air reuses them; custom_fixed is
@@ -1385,7 +1397,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -1500,7 +1512,7 @@ void calculate_trace_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, timer, stream);
 }
@@ -1522,7 +1534,7 @@ void verify_constraints_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airI
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
@@ -1784,9 +1796,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
 
-    gl64_t * d_aux_trace = d_buffers->streamsData[streamId].recursive
-        ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
-        : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t * d_aux_trace = auxTraceFor(d_buffers, streamId);
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
@@ -1979,9 +1989,7 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
 
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
 
-    gl64_t * d_aux_trace = d_buffers->streamsData[streamId].recursive
-        ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
-        : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t * d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
@@ -2293,7 +2301,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     // Key tags 0x57455843 "WEXC" / 0x574c4445 "WLDE" — full tag table at graphCtxId in gen_proof.cuh.
     const uint64_t witnessCtxId = (uint64_t)(uintptr_t)setupCtx;
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
@@ -2333,7 +2341,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
         gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
-        gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+        gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
         Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
         Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
         uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
@@ -2528,7 +2536,7 @@ void write_custom_commit_gpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
     gl64_t* d_buffer = d_aux_trace;
     gl64_t* d_customCommitsPols = d_aux_trace + N * nCols;
@@ -3048,6 +3056,12 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
 }
 
 
+// The mops floor (bytes below the const pols the mem-ops planner needs); the Rust side grows
+// the single basic stream to it so phase B's halves are as large as the memory allows.
+uint64_t get_mops_floor_bytes_gpu() {
+    return DeviceCommitBuffers::MOPS_FLOOR_BYTES;
+}
+
 // Slot count of the witness prefetch zone; the Rust side sizes the region with it.
 uint32_t get_prefetch_witness_slots_gpu() {
     return DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS;
@@ -3225,7 +3239,7 @@ static void tryOpenPhaseB(DeviceCommitBuffers* d_buffers){
     }
     d_buffers->phaseBState.store(1, std::memory_order_release);
     d_buffers->phaseBClosing.store(false, std::memory_order_release);
-    zklog.info("Phase B open: recursion continues on the two aliased streams");
+    zklog.info("Phase B open: recursion and the remaining basics continue on the two halves");
 }
 
 static uint64_t largestBasicCapacity(DeviceCommitBuffers* d_buffers){
@@ -3356,11 +3370,15 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
             scanPool([](const StreamData &sd) { return sd.recursive; });
         }
 
-        // A recursive request with no free recursive stream falls back here. The reverse is NOT
-        // allowed: only gen_recursive_proof_gpu resolves its aux trace by `sd.recursive`, so a basic
-        // launch on a recursive stream would index the basic pool with a recursive localStreamId.
+        // A recursive request with no free recursive stream falls back here.
         if (!someFree && (!recursive || !(force_recursive && hasRecursivePool(d_buffers)))) {
             scanPool([](const StreamData &sd) { return !sd.recursive; });
+        }
+        // Phase B: the basic stream is closed and the halves are open, so a basic that fits a half
+        // runs there (every launch resolves its aux trace by stream class, see auxTraceFor). The
+        // eligibility filter above is what keeps this to phase B; the capacity check to the small airs.
+        if (!someFree && !recursive && d_buffers->phaseBAliased) {
+            scanPool([](const StreamData &sd) { return sd.recursive; });
         }
     }
 
