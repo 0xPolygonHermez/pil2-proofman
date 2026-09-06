@@ -112,10 +112,12 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     /// they load nothing, and a big resident table draining first would starve ready
     /// compressors on the shared non-recursive streams.
     resident_keys: HashSet<Key>,
-    /// Basic AIRs that only fit the whole basic stream (phase A). While any is ready it goes
-    /// first, whatever the backlog or warmth says: phase B, where basics and recursion overlap,
-    /// cannot open until every one of them has run.
-    big_keys: HashSet<(usize, usize)>,
+    /// Basic AIRs that only fit the whole basic stream (phase A), with their dispatch rank: 0 for
+    /// an air whose compressor also gates phase B (basic, then a CPU witness, then the compressor
+    /// proof: the longest chain), 1 for the rest. While any is ready, only the lowest rank present
+    /// is eligible, whatever the backlog or warmth says: phase B, where basics and recursion
+    /// overlap, cannot open until every one of them has run.
+    big_keys: HashMap<(usize, usize), u8>,
     /// physical stream -> key it currently holds resident (mirrors the CUDA side across
     /// `reset(false)`). Shared across basic and recursive. Ordered, not hashed: pass 1 scans it to
     /// choose among equally-warm free streams, and a `HashMap`'s arbitrary order would make that
@@ -135,18 +137,18 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             basic_queue: HashMap::new(),
             last_prefetch_key: None,
             resident_keys: HashSet::new(),
-            big_keys: HashSet::new(),
+            big_keys: HashMap::new(),
             stream_warm: BTreeMap::new(),
         }
     }
 
-    /// Basic AIRs confined to phase A (see `big_keys`).
-    pub fn set_big_keys(&mut self, keys: HashSet<(usize, usize)>) {
+    /// Basic AIRs confined to phase A with their rank (see `big_keys`).
+    pub fn set_big_keys(&mut self, keys: HashMap<(usize, usize), u8>) {
         self.big_keys = keys;
     }
 
-    /// Ready basic keys most-preferred first: phase-A-only airs while any is ready, then backlog
-    /// desc (drain big runs first), then `(airgroup, air)` for determinism.
+    /// Ready basic keys most-preferred first: the lowest-ranked phase-A-only airs while any is
+    /// ready, then backlog desc (drain big runs first), then `(airgroup, air)` for determinism.
     fn ready_basics(&self, include_resident: bool) -> Vec<((usize, usize), usize)> {
         let mut ready: Vec<((usize, usize), usize)> = self
             .basic_queue
@@ -156,8 +158,8 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             })
             .map(|(k, q)| (*k, q.len()))
             .collect();
-        if ready.iter().any(|(k, _)| self.big_keys.contains(k)) {
-            ready.retain(|(k, _)| self.big_keys.contains(k));
+        if let Some(best) = ready.iter().filter_map(|(k, _)| self.big_keys.get(k)).min().copied() {
+            ready.retain(|(k, _)| self.big_keys.get(k) == Some(&best));
         }
         ready.sort_by(|(ka, ba), (kb, bb)| bb.cmp(ba).then(ka.cmp(kb)));
         ready

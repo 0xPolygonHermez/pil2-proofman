@@ -1117,8 +1117,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         );
         tracing::info!("Max prover recursive buffer size: {}", format_bytes(recursive_capable_size as f64 * 8.0));
         tracing::info!(
-            "Max prover recursive1/recursive2 buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+            "Max prover recursive1/recursive2 buffer size: {} (recursive2 map {} + compact witness tail {})",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0),
+            format_bytes(setups_vadcop.sctx_recursive2.as_ref().map_or(0, |s| s.max_prover_buffer_size) as f64 * 8.0),
+            format_bytes(setups_vadcop.sctx_recursive2.as_ref().map_or(0, |s| s.max_compact_trace_size) as f64 * 8.0),
         );
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();

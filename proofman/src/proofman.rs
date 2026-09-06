@@ -3013,9 +3013,10 @@ where
         let scheduler: Option<Arc<crate::SharedScheduler<F>>> = if self.pctx.gpu {
             let mut sched = crate::RecursiveScheduler::<F>::new(self.pctx.get_device_buffers_ptr());
             if self.pctx.phase_b {
-                // Phase-A-only airs dispatch first so the halves open as early as possible.
+                // Phase-A-only airs dispatch first so the halves open as early as possible; among
+                // them, the ones with a compressor first (their chain is the longest).
                 let half = self.pctx.phase_b_half as u64;
-                let big: std::collections::HashSet<(usize, usize)> = self
+                let big: std::collections::HashMap<(usize, usize), u8> = self
                     .pctx
                     .global_info
                     .airs
@@ -3023,6 +3024,7 @@ where
                     .enumerate()
                     .flat_map(|(ag, group)| (0..group.len()).map(move |air| (ag, air)))
                     .filter(|&(ag, air)| self.sctx.get_setup(ag, air).map(|s| s.prover_buffer_size > half).unwrap_or(false))
+                    .map(|(ag, air)| ((ag, air), if self.pctx.global_info.get_air_has_compressor(ag, air) { 0 } else { 1 }))
                     .collect();
                 sched.set_big_keys(big);
             }
