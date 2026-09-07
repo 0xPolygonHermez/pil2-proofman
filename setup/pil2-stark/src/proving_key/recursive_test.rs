@@ -55,6 +55,7 @@ pub fn gen_recursive_test_setup(
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
     blake3_lanes: Option<usize>,
+    recursion_settings: &crate::types::stark_struct::StarkSettings,
 ) -> Result<()> {
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
@@ -217,7 +218,7 @@ pub fn gen_recursive_test_setup(
     // Exactly the real recursion layers' settings (low-degree test, blowup, terminal degree,
     // grinding, kept levels), so a test key matches their geometry: left to generic defaults the
     // fixture once verified a FRI shape the pipeline never builds.
-    let settings = crate::proving_key::recursive::recursive_stark_settings(template, hash);
+    let settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
     let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());

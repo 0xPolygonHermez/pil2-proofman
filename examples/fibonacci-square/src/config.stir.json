@@ -1,5 +1,8 @@
 {
   "default": {
     "lowDegreeTest": "STIR"
+  },
+  "recursion": {
+    "lowDegreeTest": "STIR"
   }
 }

@@ -173,27 +173,39 @@ pub enum RecursiveTemplate {
 }
 
 /// The stark settings of a recursion circuit — the configuration the whole recursion tree is
-/// built from (there is no per-circuit config file; an explicit `starkStruct` override only ever
-/// raises the query count, see `gen_recursive_setup`).
+/// built from. There is no per-circuit config file: the defaults below are per template and
+/// family, and `user` — the starkstructs `"recursion"` entry, see
+/// `StarkStructsConfig::recursion_settings` — overlays the low-degree-test knobs on top of them
+/// (`lowDegreeTest`, `initialFoldingFactor`, `grindingBits`, `grindingBitsQueries`,
+/// `finalDegree`). An explicit `starkStruct` override only ever raises the query count, see
+/// `gen_recursive_setup`.
 ///
-/// STIR is the low-degree test of compressor, recursive1 and recursive2 for the Poseidon families.
-/// The vadcop-final layers stay FRI: their proofs are checked by the committed native Rust
-/// verifiers, which are FRI builds. blake3 stays FRI throughout as well: its recursion circuits
-/// (arity-2 Merkle paths, BLAKE3 transcript) were sized and pinned on FRI, and the STIR circuit
-/// has not been costed for that family.
-pub fn recursive_stark_settings(template: RecursiveTemplate, hash: &str) -> crate::types::stark_struct::StarkSettings {
+/// STIR is the default low-degree test of compressor, recursive1 and recursive2, for every
+/// family. The vadcop-final layers stay FRI: their proofs are checked by the committed native Rust
+/// verifiers, which are FRI builds.
+pub fn recursive_stark_settings(
+    template: RecursiveTemplate,
+    hash: &str,
+    user: &crate::types::stark_struct::StarkSettings,
+) -> crate::types::stark_struct::StarkSettings {
     crate::types::stark_struct::StarkSettings {
-        low_degree_test: Some(crate::types::stark_struct::LowDegreeTestKind::Stir),
+        low_degree_test: Some(user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir)),
         initial_blowup_factor: Some(recursive_blowup(template, hash)),
-        initial_folding_factor: Some(3),
+        initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(3)),
         // finalDegree is the final polynomial's log-degree bound. Every quotient round needs
         // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
         // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
         // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
         // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
-        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(hash)),
+        final_degree: Some(
+            user.final_degree.unwrap_or_else(|| proofman_common::hash_family::fri_terminal_degree(hash)),
+        ),
         // The uniform per-round grinding seed; the solver derives every tᵢ from it.
-        grinding_bits: Some(proofman_common::hash_family::recursive_grinding_bits(hash)),
+        grinding_bits: Some(
+            user.grinding_bits.unwrap_or_else(|| proofman_common::hash_family::recursive_grinding_bits(hash)),
+        ),
+        // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
+        grinding_bits_queries: user.grinding_bits_queries.clone(),
         last_level_verification: recursive_last_level_verification(template, hash),
         ..Default::default()
     }
@@ -241,6 +253,9 @@ pub struct RecursiveSetupConfig<'a> {
     pub stark_struct: Option<&'a Value>,
     pub has_compressor: bool,
     pub hash: &'a str,
+    /// The user's knobs on the recursion tree's own low-degree test (the starkstructs
+    /// `"recursion"` entry), overlaid on `recursive_stark_settings`' defaults.
+    pub recursion_settings: &'a crate::types::stark_struct::StarkSettings,
     /// Number of proofs the `recursive2` circuit aggregates. Ignored by the
     /// compressor and recursive1 templates.
     pub agg_arity: usize,
@@ -816,7 +831,7 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            let make_recursive_settings = || recursive_stark_settings(template, config.hash);
+            let make_recursive_settings = || recursive_stark_settings(template, config.hash, config.recursion_settings);
             let stark_struct = if let Some(ss_val) = config.stark_struct {
                 let parsed = serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone())
                     .unwrap_or_else(|_| {

@@ -247,6 +247,10 @@ struct SetupRecursiveTestArgs {
     #[arg(long)]
     blake3_lanes: Option<usize>,
 
+    /// starkstructs.json whose "recursion" entry picks the tree's low-degree test (default STIR)
+    #[arg(short = 's', long)]
+    starkstructs: Option<String>,
+
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end.
     /// No-op if nvcc is not on PATH.
     #[arg(long, default_value_t = false)]
@@ -500,6 +504,7 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
                 hash: args.hash,
                 blake3_lanes: args.blake3_lanes,
+                starkstructs: args.starkstructs,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)?;
 

@@ -54,7 +54,8 @@ impl LowDegreeTestKind {
 ///
 /// The config supports two schemas, decided per top-level key:
 ///   * Nested  — `{ "<airgroup>": { "<air>": { ...settings... } } }`
-///   * Flat    — `{ "<air>":      { ...settings... } }`  (and the special key "default")
+///   * Flat    — `{ "<air>":      { ...settings... } }`  (and the special keys "default" and
+///     "recursion", the latter for the recursion tree, see `recursion_settings`)
 ///
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -62,6 +63,10 @@ enum ConfigEntry {
     Nested(IndexMap<String, StarkSettings>),
     Flat(StarkSettings),
 }
+
+/// Reserved top-level key of the starkstructs config: settings for the recursion tree rather
+/// than for an air of that name. See `StarkStructsConfig::recursion_settings`.
+pub const RECURSION_KEY: &str = "recursion";
 
 #[derive(Debug, Clone, Default)]
 pub struct StarkStructsConfig {
@@ -80,9 +85,51 @@ impl StarkStructsConfig {
     /// `pow_bits` family-blind and shadowed the default below it.
     pub fn resolve(&self, airgroup_name: &str, air_name: &str) -> StarkSettings {
         self.lookup_nested(airgroup_name, air_name)
-            .or_else(|| self.lookup_flat(air_name))
+            .or_else(|| if air_name == RECURSION_KEY { None } else { self.lookup_flat(air_name) })
             .or_else(|| self.lookup_flat("default"))
             .unwrap_or_default()
+    }
+
+    /// The knobs the user turned on the recursion tree (compressor, recursive1, recursive2), from
+    /// the reserved top-level key `"recursion"`. The tree has no per-circuit config: every circuit
+    /// is built from `recursive::recursive_stark_settings`, and this entry overlays it. Only the
+    /// low-degree-test knobs may be set -- `lowDegreeTest`, `initialFoldingFactor`,
+    /// `grindingBits`, `grindingBitsQueries`, `finalDegree`.
+    pub fn recursion_settings(&self) -> anyhow::Result<StarkSettings> {
+        let Some(s) = self.lookup_flat(RECURSION_KEY) else {
+            return Ok(StarkSettings::default());
+        };
+        let mut fixed = Vec::new();
+        if s.initial_blowup_factor.is_some() {
+            fixed.push("initialBlowupFactor");
+        }
+        if s.last_level_verification.is_some() {
+            fixed.push("lastLevelVerification");
+        }
+        if s.merkle_tree_arity.is_some() {
+            fixed.push("merkleTreeArity");
+        }
+        if s.merkle_tree_custom.is_some() {
+            fixed.push("merkleTreeCustom");
+        }
+        if s.verification_hash_type.is_some() {
+            fixed.push("verificationHashType");
+        }
+        if s.hash_commits.is_some() {
+            fixed.push("hashCommits");
+        }
+        if s.has_compressor.is_some() {
+            fixed.push("hasCompressor");
+        }
+        if !fixed.is_empty() {
+            anyhow::bail!(
+                "starkstructs \"{RECURSION_KEY}\" sets {}: the recursion tree only takes the low-degree-test knobs \
+                 (lowDegreeTest, initialFoldingFactor, grindingBits, grindingBitsQueries, finalDegree); blowup and \
+                 kept levels are per template and family, the tree geometry is the hash family's",
+                fixed.join(", ")
+            );
+        }
+        Ok(s)
     }
 
     fn lookup_nested(&self, airgroup_name: &str, air_name: &str) -> Option<StarkSettings> {
@@ -798,6 +845,32 @@ mod tests {
         let cfg = StarkStructsConfig::from_json_str(r#"{ "default": { "initialBlowupFactor": 3 } }"#).unwrap();
         // Any unlisted air falls back to "default".
         assert_eq!(cfg.resolve("G", "Anything").initial_blowup_factor, Some(3));
+    }
+
+    #[test]
+    fn recursion_key_is_the_tree_s_settings_not_an_air_s() {
+        let cfg = StarkStructsConfig::from_json_str(
+            r#"{ "default": { "lowDegreeTest": "STIR" }, "recursion": { "lowDegreeTest": "FRI", "grindingBits": 26 } }"#,
+        )
+        .unwrap();
+        let rec = cfg.recursion_settings().unwrap();
+        assert_eq!(rec.low_degree_test, Some(LowDegreeTestKind::Fri));
+        assert_eq!(rec.grinding_bits, Some(26));
+        // The key is reserved: an air that happens to be called "recursion" gets "default".
+        assert_eq!(cfg.resolve("G", "recursion").low_degree_test, Some(LowDegreeTestKind::Stir));
+        // Absent key: nothing overlaid.
+        let none = StarkStructsConfig::from_json_str(r#"{ "default": {} }"#).unwrap();
+        assert_eq!(none.recursion_settings().unwrap().low_degree_test, None);
+    }
+
+    #[test]
+    fn recursion_key_rejects_the_pinned_knobs() {
+        let cfg = StarkStructsConfig::from_json_str(
+            r#"{ "recursion": { "lowDegreeTest": "FRI", "initialBlowupFactor": 3, "hasCompressor": true } }"#,
+        )
+        .unwrap();
+        let err = cfg.recursion_settings().unwrap_err().to_string();
+        assert!(err.contains("initialBlowupFactor, hasCompressor"), "{err}");
     }
 
     #[test]

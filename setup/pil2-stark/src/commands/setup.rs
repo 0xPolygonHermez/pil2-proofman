@@ -77,6 +77,8 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     } else {
         StarkStructsConfig::default()
     };
+    // A malformed "recursion" entry should fail here, not after the per-air setup has run.
+    settings_map.recursion_settings()?;
 
     struct AirWorkItem {
         ag_idx: usize,

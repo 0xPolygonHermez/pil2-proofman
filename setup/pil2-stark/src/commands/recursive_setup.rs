@@ -49,6 +49,15 @@ pub(crate) fn run_recursive_setup(
 
     let build_dir = &opts.build_dir;
 
+    // The tree's own low-degree test: STIR unless the starkstructs "recursion" entry says
+    // otherwise. Every recursion circuit below is built from it.
+    let recursion_settings = settings_map.recursion_settings()?;
+    tracing::info!(
+        "Recursion tree low-degree test: {:?}{}",
+        recursion_settings.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir),
+        if recursion_settings.low_degree_test.is_some() { " (from starkstructs \"recursion\")" } else { " (default)" }
+    );
+
     let circuits_gl_path =
         resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
     let recurser_circuits_path =
@@ -216,6 +225,7 @@ pub(crate) fn run_recursive_setup(
                         let cfg = RecursiveSetupConfig {
                             build_dir,
                             hash: &opts.hash,
+                            recursion_settings: &recursion_settings,
                             agg_arity: opts.agg_arity,
                             recursive_n_bits: opts.recursive_n_bits,
                             template: RecursiveTemplate::Compressor,
@@ -267,6 +277,7 @@ pub(crate) fn run_recursive_setup(
                     let r1_cfg = RecursiveSetupConfig {
                         build_dir,
                         hash: &opts.hash,
+                        recursion_settings: &recursion_settings,
                         agg_arity: opts.agg_arity,
                         recursive_n_bits: opts.recursive_n_bits,
                         template: RecursiveTemplate::Recursive1,
@@ -550,6 +561,7 @@ pub(crate) fn run_recursive_setup(
             let r2_config = RecursiveSetupConfig {
                 build_dir,
                 hash: &opts.hash,
+                recursion_settings: &recursion_settings,
                 agg_arity: opts.agg_arity,
                 recursive_n_bits: opts.recursive_n_bits,
                 template: RecursiveTemplate::Recursive2,

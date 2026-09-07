@@ -6,10 +6,13 @@
 use pil2_stark_setup::output::stark_info::solve_low_degree_test;
 use pil2_stark_setup::proving_key::recursive::{check_stir_t0_fits, recursive_stark_settings, RecursiveTemplate};
 use pil2_stark_setup::types::security::pcs::LowDegreeTest as Solved;
-use pil2_stark_setup::types::stark_struct::{generate_stark_struct, LowDegreeTest};
+use pil2_stark_setup::types::stark_struct::{
+    generate_stark_struct, LowDegreeTest, LowDegreeTestKind, StarkSettings, StarkStructsConfig,
+};
 
 fn solved_stir(template: RecursiveTemplate, n_bits: usize) -> (Vec<usize>, Vec<u64>) {
-    let stark_struct = generate_stark_struct(&recursive_stark_settings(template, "Poseidon2"), n_bits, "Poseidon2");
+    let settings = recursive_stark_settings(template, "Poseidon2", &StarkSettings::default());
+    let stark_struct = generate_stark_struct(&settings, n_bits, "Poseidon2");
     let LowDegreeTest::Stir(stir) = &stark_struct.low_degree_test else {
         panic!("{template:?} must select STIR, got {:?}", stark_struct.low_degree_test.kind());
     };
@@ -52,4 +55,38 @@ fn raising_t0_respects_the_first_quotient_round() {
     // FRI structs are not concerned.
     let fri = serde_json::json!({"logDegrees": [12, 9, 6], "numQueries": 511});
     assert!(check_stir_t0_fits(&fri, 100_000, "test").is_ok());
+}
+
+#[test]
+fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
+    // No entry: STIR, with the family's own grinding and terminal degree.
+    let stir = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &StarkSettings::default());
+    assert_eq!(stir.low_degree_test, Some(LowDegreeTestKind::Stir));
+    assert_eq!(stir.grinding_bits, Some(24));
+    assert_eq!(stir.final_degree, Some(7));
+
+    // `{"recursion": {"lowDegreeTest": "FRI"}}` flips the test and nothing else, so the blake3
+    // tree comes out on the solved FRI schedule it was originally sized on.
+    let cfg = StarkStructsConfig::from_json_str(r#"{ "recursion": { "lowDegreeTest": "FRI" } }"#).unwrap();
+    let user = cfg.recursion_settings().unwrap();
+    let fri = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &user);
+    assert_eq!(fri.low_degree_test, Some(LowDegreeTestKind::Fri));
+    assert_eq!(fri.initial_blowup_factor, stir.initial_blowup_factor);
+    assert_eq!(fri.grinding_bits, stir.grinding_bits);
+    assert_eq!(fri.final_degree, stir.final_degree);
+    assert_eq!(fri.last_level_verification, stir.last_level_verification);
+    let ss = generate_stark_struct(&fri, 19, "blake3");
+    assert_eq!(ss.low_degree_test.kind(), LowDegreeTestKind::Fri);
+    assert_eq!(ss.n_bits_ext, 21);
+
+    // The STIR-only knobs ride along when asked for.
+    let cfg = StarkStructsConfig::from_json_str(
+        r#"{ "recursion": { "initialFoldingFactor": 2, "grindingBitsQueries": [28, 26, 24, 22, 20, 18] } }"#,
+    )
+    .unwrap();
+    let tuned = recursive_stark_settings(RecursiveTemplate::Recursive2, "blake3", &cfg.recursion_settings().unwrap());
+    assert_eq!(tuned.initial_folding_factor, Some(2));
+    let ss = generate_stark_struct(&tuned, 19, "blake3");
+    let LowDegreeTest::Stir(s) = &ss.low_degree_test else { panic!("still STIR") };
+    assert_eq!(s.grinding_bits_queries, vec![28, 26, 24, 22, 20, 18]);
 }
