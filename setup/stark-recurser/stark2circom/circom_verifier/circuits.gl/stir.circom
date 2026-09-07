@@ -175,7 +175,7 @@ template StirVanishingShifted(t) {
     coefs <== u[t];
 }
 
-// A base-field polynomial P (n coefficients, low degree first) evaluated on the whole coset
+// A base-field polynomial P evaluated on the whole coset
 // {c·ω^u : u < 2^logK}, ω = roots(logK). Every coset point satisfies X^{2^k} = c^{2^k} =: y, so
 // P agrees on the coset with its remainder R(X) = Σ_{j<2^k} R_j X^j, R_j = Σ_m P[2^k·m + j] y^m:
 // 2^k Horner passes in y (n multiplications in all), then P(c·ω^u) = Σ_j (R_j c^j) ω^{ju}, a
@@ -218,7 +218,7 @@ template StirCosetEval1(n, logK) {
 }
 
 // StirCosetEval1 for F_p³ coefficients: the Horner passes run coordinate-wise in EvalPolBase at the
-// base point y = c^{2^k} (plain constraints, not EvPol4 gates), as do the scaling and the DFT.
+// base point y = c^{2^k}, as do the scaling and the DFT.
 template StirCosetEval3(n, logK) {
     var K = 1 << logK;
     var nmax = (n + K - 1) \ K;
@@ -239,7 +239,7 @@ template StirCosetEval3(n, logK) {
                 if (idx < n) { sub[j][m][e] <== coefs[idx][e]; } else { sub[j][m][e] <== 0; }
             }
         }
-        res[j] <== EvalPolBase(nmax)(sub[j], cp[logK]);
+        res[j] <== EvalPol(nmax)(sub[j], [cp[logK], 0, 0]);
     }
     signal cj[K];
     signal sc[K][3];
@@ -250,13 +250,8 @@ template StirCosetEval3(n, logK) {
     for (var j = 0; j < K; j++) {
         for (var e = 0; e < 3; e++) { sc[j][e] <== res[j][e] * cj[j]; }
     }
-    for (var u = 0; u < K; u++) {
-        for (var e = 0; e < 3; e++) {
-            var sum = 0;
-            for (var j = 0; j < K; j++) { sum += sc[j][e] * (roots(logK) ** (u * j)); }
-            vals[u][e] <== sum;
-        }
-    }
+
+    vals <== FFT(logK, 3, 0)(sc);
 }
 
 // Fold(f, 2^logK, r) evaluated at one point of L^{2^logK}, from the opened coset of f on L
