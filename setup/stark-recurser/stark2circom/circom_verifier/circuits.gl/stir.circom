@@ -21,18 +21,6 @@ include "evalpol.circom";
       Âns_i the interpolation of the claimed values on G_i.
 */
 
-// Whether an Fp³ element is zero (all three coordinates).
-template StirIsZero3() {
-    signal input in[3];
-    signal output {binary} out;
-
-    signal {binary} z0 <== IsZero()(in[0]);
-    signal {binary} z1 <== IsZero()(in[1]);
-    signal {binary} z2 <== IsZero()(in[2]);
-    signal {binary} z01 <== z0 * z1;
-    out <== z01 * z2;
-}
-
 // Which shift queries are the first occurrence of their point. G is a set, so a repeated
 // point is dropped (prover and verifier alike): fresh[q] = 1 iff no earlier query hit pts[q].
 // The point is injective in the leaf index, so comparing field values is exact, and
@@ -73,8 +61,7 @@ template StirLessThan(nBits) {
 }
 
 // base·ω^{index} (inv = 0) or base·ω^{−index} (inv = 1), where ω generates the subgroup of
-// order 2^{logDomain} and `index` is given LSB-first in bits. The same accumulation as
-// VerifyQuery's xacc: bit i multiplies by ω^{±2^i} = (inv)roots(logDomain − i).
+// order 2^{logDomain} and `index` is given LSB-first in bits.
 template StirPointAcc(nBits, logDomain, base, inv) {
     signal input {binary} bits[nBits];
     signal output out;

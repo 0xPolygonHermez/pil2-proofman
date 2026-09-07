@@ -1219,8 +1219,8 @@ template {{ verifier_name }}() {
             vD{{ r.i }}[q][j][1] <== (- rOut[{{ prev.i }}][1]) * uAt{{ r.i }}[q][j];
             vD{{ r.i }}[q][j][2] <== (- rOut[{{ prev.i }}][2]) * uAt{{ r.i }}[q][j];
             // Degree correction Σ_{i=0}^{|G|} y^i = (y^{|G|+1} − 1)/(y − 1), y = r_comb·x. The y = 1
-            // branch of stir_math.hpp geometricSum cannot occur here: r_comb has a nonzero extension
-            // limb (constrained next to its quotient data) and x ∈ F_p*, so y − 1 ≠ 0 always.
+            // branch of stir_math.hpp geometricSum is not needed here: r_comb has a nonzero extension
+            // limb (a transcript squeeze, see the quotient-data note below) and x ∈ F_p*, so y − 1 ≠ 0.
             for (var e = 0; e < 3; e++) {
                 den{{ r.i }}[q][j][e] <== rComb[{{ prev.i }}][e] * xm{{ r.i }}[q][j] - (e == 0 ? 1 : 0);
                 num{{ r.i }}[q][j][e] <== zPow{{ r.i }}[q][e] * wE{{ r.i }}[j] - (e == 0 ? 1 : 0);
@@ -1242,29 +1242,23 @@ template {{ verifier_name }}() {
     }
 {% endif %}{% if r.has_quotient %}
     // ── Quotient data of round {{ r.i + 1 }}: G = {r_out} ∪ {fresh shift points} ──
-    // r_out is a single squeeze: a nonzero extension limb already puts it outside L ⊂ F_p.
-    // (The C++ re-squeezes with probability 2^{-128}; such a proof is not recursable.)
-    signal {binary} rOutBase{{ r.i }} <== StirIsZero3()([0, rOut[{{ r.i }}][1], rOut[{{ r.i }}][2]]);
-    enabled * rOutBase{{ r.i }} === 0;
-    // r_comb likewise: with a nonzero extension limb, y = r_comb·x has y − 1 ≠ 0 at every x ∈ L ⊂ F_p*
-    // (y = 1 would need r_comb[1]·x = r_comb[2]·x = 0), so the degree-correction geometric sum of the
-    // next round needs no y = 1 branch. Same 2^{-128} completeness loss as r_out; the C++ keeps the branch.
-    signal {binary} rCombBase{{ r.i }} <== StirIsZero3()([0, rComb[{{ r.i }}][1], rComb[{{ r.i }}][2]]);
-    enabled * rCombBase{{ r.i }} === 0;
+    // r_out and r_comb are transcript squeezes, so each lands in the base field F_p ⊂ 𝔽 with
+    // probability 2^{-128}. Everything below assumes they did not — r_out ∉ L keeps V_G nonzero, and
+    // y = r_comb·x ≠ 1 at every x ∈ L keeps the geometric sum's denominator nonzero.
 
     // Repeated shift queries are dropped from G (sampling is with replacement): two queries
     // collide iff they fold to the same point of L^{2^k}, which is injective in the leaf index.
     // fresh[q] = no earlier query hit the same point.
     signal {binary} fresh{{ r.i }}[{{ r.t }}] <== StirFresh({{ r.t }})(gpt{{ r.i }});
+
     // |G| = 1 + Σ fresh, and the Ans hint has exactly |G| live coefficients: the zero-padded
     // tail is pinned to zero so a padded hint cannot smuggle extra degrees of freedom.
     var nGAcc{{ r.i }} = 1;
     for (var q = 0; q < {{ r.t }}; q++) { nGAcc{{ r.i }} += fresh{{ r.i }}[q]; }
     signal nG{{ r.i }} <== nGAcc{{ r.i }};
     signal {binary} expBits{{ r.i }}[{{ r.exp_bits }}] <== Num2Bits({{ r.exp_bits }})(nG{{ r.i }} + 1);
-    // U(X) = Π_q (X − fresh_q·gpt_q) = V_{fresh points}(X) · X^d, d = t − Σ fresh dropped repeats
-    // (their factor degenerates to X). Built once here, evaluated on every coset of the next
-    // round, where the X^d is divided out again.
+
+    // U(X) = Π_q (X − fresh_q·gpt_q) = V_{fresh points}(X) · X^d, d = t − Σ fresh dropped repeats.
     signal hPt{{ r.i }}[{{ r.t }}];
     for (var q = 0; q < {{ r.t }}; q++) { hPt{{ r.i }}[q] <== fresh{{ r.i }}[q] * gpt{{ r.i }}[q]; }
     signal uCoefs{{ r.i }}[{{ r.t + 1 }}] <== StirVanishingShifted({{ r.t }})(hPt{{ r.i }});
@@ -1277,6 +1271,7 @@ template {{ verifier_name }}() {
             (1 - ansUsed{{ r.i }}[m]) * ansCoeffs{{ r.i }}[m][e] === 0;
         }
     }
+
     // The hint must interpolate G: Ans(r_out) = β, and Ans(gpt) = Fold(f)(gpt) at every
     // fresh shift point.
     signal ansAtROut{{ r.i }}[3] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, rOut[{{ r.i }}]);
@@ -1294,8 +1289,6 @@ template {{ verifier_name }}() {
     }
 {% endif %}{% if r.is_last %}
     // ── Final check: Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }})(r_shift) = p(r_shift) —
-    // the only explicit equality of the protocol. p arrives as its d_M coefficients, so the
-    // degree bound is structural.
     signal finalAt{{ r.i }}[{{ r.t }}][3];
     for (var q = 0; q < {{ r.t }}; q++) {
         finalAt{{ r.i }}[q] <== EvalPolBase({{ final_pol_size }})(finalPol, gpt{{ r.i }}[q]);
