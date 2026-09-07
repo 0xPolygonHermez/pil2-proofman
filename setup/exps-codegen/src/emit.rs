@@ -302,17 +302,40 @@ extern "C" unsigned long long exps_min_scratch() {{ return {n_slots} * {GEN_BLK}
 fn tab_body(ir: &Ir) -> String {
     let mut lines: Vec<String> = Vec::new();
     let declared: HashSet<u64> = HashSet::new();
+    let base = ir.pow_words();
+    // Exported temps are stored the moment they are produced, not in a block at the end: with
+    // thousands of tab ops on one thread, deferring every export kept every exported value live
+    // to the end of the program and ptxas spilled them (Main b22/e10704: 16 KB of stack per
+    // thread, which the driver reserves for every thread the device can hold -- ~5.6 GB on an
+    // RTX 5090 -- so the first real launch failed for want of VRAM and Q fell to the interpreter).
+    let mut exports: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    for &(tmp, idx, dim) in &ir.tab_out {
+        exports.entry(tmp).or_default().push((base + idx, dim));
+    }
+    let store = |tmp: u64, w: u64, dim: u64| -> String {
+        if dim == 1 {
+            format!("    pw[{w}] = t{tmp};")
+        } else {
+            format!("    pw[{w}] = t{tmp}.a; pw[{}] = t{tmp}.b; pw[{}] = t{tmp}.c;", w + 1, w + 2)
+        }
+    };
+    let mut stored: HashSet<u64> = HashSet::new();
     for instr in &ir.tab {
         let (l, _) = emit_op(instr, ir, &declared);
         lines.extend(l.into_iter().map(|x| format!("  {x}")));
+        if let Some(tmp) = instr.dst_id.filter(|_| instr.dst_is_tmp) {
+            if let Some(outs) = exports.get(&tmp) {
+                for &(w, dim) in outs {
+                    lines.push(store(tmp, w, dim));
+                }
+                stored.insert(tmp);
+            }
+        }
     }
-    let base = ir.pow_words();
+    // Exports whose temp is not produced by a tab op (defensive: keeps the old behaviour for them).
     for &(tmp, idx, dim) in &ir.tab_out {
-        let w = base + idx;
-        if dim == 1 {
-            lines.push(format!("    pw[{w}] = t{tmp};"));
-        } else {
-            lines.push(format!("    pw[{w}] = t{tmp}.a; pw[{}] = t{tmp}.b; pw[{}] = t{tmp}.c;", w + 1, w + 2));
+        if !stored.contains(&tmp) {
+            lines.push(store(tmp, base + idx, dim));
         }
     }
     lines.join("\n")

@@ -403,6 +403,8 @@ void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint6
     }
 }
 
+static uint64_t postAllocHeadroomBytes();  // defined with the stream helpers below
+
 // Non-recursive areas are sized per stream from d_buffers->aux_trace_sizes, not one uniform size.
 void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -451,8 +453,8 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
             cudaSetDevice(d_buffers->my_gpu_ids[0]);
             CHECKCUDAERR(cudaMemGetInfo(&freeMem, &totalMem));
             uint64_t base = constPolsAggregationSize + constPolsSize + unifiedBufferPadSize + belowConsts;
-            uint64_t room = (freeMem > base + DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES)
-                                ? freeMem - base - DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES : 0;
+            const uint64_t headroom = postAllocHeadroomBytes();
+            uint64_t room = (freeMem > base + headroom) ? freeMem - base - headroom : 0;
             if (mopsFloorPadSize > room) mopsFloorPadSize = room;
             mopsFloorPadSize &= ~((1ull << 20) - 1);  // MiB-align, keeps offsets tidy
         }
@@ -1255,6 +1257,26 @@ void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *p
 
 // Stage `trace` into the cursor slot on the copy stream and tag it for `instanceId`.
 static bool isPhaseAAlias(DeviceCommitBuffers* d_buffers, const StreamData &sd);
+
+// Headroom kept free after the unified buffer: DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES, or
+// PROOFMAN_GPU_HEADROOM_MB when set (a full-string integer; anything else falls back to the
+// default, loudly). Read once; the value must be the same for the C++ pad clamp and the Rust
+// planner, both of which call this.
+static uint64_t postAllocHeadroomBytes() {
+    static const uint64_t bytes = [] {
+        const char *e = getenv("PROOFMAN_GPU_HEADROOM_MB");
+        if (e == nullptr || *e == '\0') return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
+        char *end = nullptr;
+        const unsigned long long mb = strtoull(e, &end, 10);
+        if (end == e || *end != '\0') {
+            zklog.warning("PROOFMAN_GPU_HEADROOM_MB='" + std::string(e) + "' is not an integer; using the default headroom");
+            return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
+        }
+        zklog.info("GPU post-allocation headroom overridden: " + std::to_string(mb) + " MB (PROOFMAN_GPU_HEADROOM_MB)");
+        return (uint64_t)mb << 20;
+    }();
+    return bytes;
+}
 
 // The aux trace a launch on `streamId` works in: a recursive-class stream's buffer is its own
 // (or, under phase B, a half of the basic stream's), a basic-class one's is its size class.
@@ -3240,7 +3262,7 @@ uint64_t get_mops_floor_bytes_gpu() {
 // The headroom the allocations after the unified buffer need (see POST_ALLOC_HEADROOM_BYTES); the
 // Rust side keeps that much free when it grows the single basic stream into the slack.
 uint64_t get_post_alloc_headroom_bytes_gpu() {
-    return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
+    return postAllocHeadroomBytes();
 }
 
 // Slot count of the witness prefetch zone; the Rust side sizes the region with it.

@@ -852,7 +852,9 @@ struct DeviceCommitBuffers
     // GiB, hence 22 (pool 2.97 GiB). Clamped to what is free on the first GPU minus
     // POST_ALLOC_HEADROOM_BYTES, the measured headroom the allocations after the unified buffer
     // need (per-air setup buffers, .exps.so module loads, transcripts). Short of the floor the
-    // planner falls back to CPU mops at setup and says so.
+    // planner falls back to CPU mops at setup and says so. PROOFMAN_GPU_HEADROOM_MB overrides the
+    // headroom (see postAllocHeadroomBytes()): raise it on a card or key where the allocations
+    // after the unified buffer run out of memory; every MB comes out of the single basic stream.
     static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
     static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
     uint64_t mopsFloorPadBytes = 0;
