@@ -299,6 +299,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
     pub compressor_weights: HashMap<(usize, usize), u64>,
+    pub recursion_weights: HashMap<(usize, usize), u64>,
     pub custom_commits_values: Mutex<HashMap<String, CustomCommitEntry>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
@@ -350,6 +351,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let weights = HashMap::new();
         let compressor_weights = HashMap::new();
+        let recursion_weights = HashMap::new();
 
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
@@ -367,6 +369,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             compressor_weights,
+            recursion_weights,
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
@@ -567,9 +570,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext))
     }
 
-    /// Cost of the basic proof of every air, plus the compressor proof it triggers if it has one.
-    /// Both are needed to balance instances: a compressor proof runs on the owner of its basic
-    /// proof, and its cost varies ~2x between airs in the current zisk proving key.
+    /// One `recursive1` per instance, plus its share of the `recursive2` tree: collapsing `n`
+    /// leaves at arity `a` takes `(n - 1) / (a - 1)` proofs. Arity >= 2 is enforced by GlobalInfo.
+    fn recursion_weight(w_recursive1: u64, w_recursive2: u64, aggregation_arity: usize) -> u64 {
+        w_recursive1 + w_recursive2 / (aggregation_arity as u64 - 1)
+    }
+
+    /// Basic proof of every air, its compressor if it has one, and its recursion chain. The
+    /// recursion is ~half the GPU work on blake3 and used to weigh nothing, which let one heavy
+    /// air eat a whole worker's budget and skew instance counts ~7x.
     pub fn set_weights(&mut self, sctx: &SetupCtx<F>, setups_vadcop: &SetupsVadcop<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -582,11 +591,25 @@ impl<F: PrimeField64> ProofCtx<F> {
                         self.compressor_weights.insert((airgroup_id, air_id), Self::setup_weight(compressor_setup));
                     }
                 }
+
+                // Both None without aggregation, and then no recursion proof runs
+                if let (Some(sctx_recursive1), Some(sctx_recursive2)) =
+                    (setups_vadcop.sctx_recursive1.as_ref(), setups_vadcop.sctx_recursive2.as_ref())
+                {
+                    let w_recursive1 = Self::setup_weight(sctx_recursive1.get_setup(airgroup_id, air_id)?);
+                    // recursive2 is per airgroup, hence air_id 0
+                    let w_recursive2 = Self::setup_weight(sctx_recursive2.get_setup(airgroup_id, 0)?);
+                    self.recursion_weights.insert(
+                        (airgroup_id, air_id),
+                        Self::recursion_weight(w_recursive1, w_recursive2, self.global_info.aggregation_arity),
+                    );
+                }
             }
         }
         Ok(())
     }
 
+    /// Basic proof alone: the whole cost only for tables, which trigger no recursion
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
@@ -594,6 +617,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     /// 0 if the air has no compressor, or if the compressor setups are not loaded (no aggregation)
     pub fn get_compressor_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         self.compressor_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
+    }
+
+    /// 0 without aggregation, and then no recursion proof runs
+    pub fn get_recursion_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        self.recursion_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
     }
 
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
@@ -760,14 +788,14 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
@@ -784,9 +812,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
+    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here
     pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
@@ -1347,5 +1377,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proofman_fields::Goldilocks;
+
+    type Pctx = super::ProofCtx<Goldilocks>;
+
+    /// At arity 2 a leaf pays for a whole recursive2 proof, at arity 3 for half of one
+    #[test]
+    fn recursion_weight_scales_with_the_aggregation_arity() {
+        assert_eq!(Pctx::recursion_weight(1000, 400, 2), 1400);
+        assert_eq!(Pctx::recursion_weight(1000, 400, 3), 1200);
+    }
+
+    /// Real setup weights: blake3 charges ~15.8x Poseidon, 11.8x circuit x 1.33x arity. This
+    /// ratio is what keeps the balance hash-agnostic with no per-family branch.
+    #[test]
+    fn recursion_weight_separates_the_hash_families() {
+        let blake3 = Pctx::recursion_weight(1_228_931_072, 1_228_931_072, 2);
+        let poseidon = Pctx::recursion_weight(103_809_024, 103_809_024, 3);
+        assert_eq!(blake3, 2_457_862_144);
+        assert_eq!(poseidon, 155_713_536);
+        assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));
     }
 }
