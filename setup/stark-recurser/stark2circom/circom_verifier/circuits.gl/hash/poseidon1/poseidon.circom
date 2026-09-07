@@ -6,17 +6,10 @@ include "poseidon_constants.circom";
 // Custom gate that calculates Poseidon hash of three inputs using Neptune optimization
 template custom extern_c Poseidon1_16() {
     signal input in[16];
-    signal output im[12][16];
     signal output out[16];
 
     var st[16];
     st = in;
-
-    var row = 0;
-    var index = 0;
-
-    im[row] <-- st;
-    row++;
 
     for(var i=0; i < 16; i++) {
         st[i] = st[i] + CNST(i);
@@ -41,14 +34,11 @@ template custom extern_c Poseidon1_16() {
             newSt[t] = acc;
         }
         st = newSt;
-        im[row] <-- st;
-        row++;
     }
 
     // S stride for width 16 = 2*16 - 1 = 31 entries per partial round.
     // Second slice (column-1..15 updates) begins at offset WIDTH - 1 = 15.
     for(var r = 0; r < 22; r++) {
-        im[row][index] <-- st[0];
         st[0] = st[0] ** 7;
         st[0] += CNST(80 + r);
 
@@ -61,14 +51,6 @@ template custom extern_c Poseidon1_16() {
         }
         st[0] = s0;
 
-        index++;
-        if(r == 10 || r == 21) {
-            im[row][index] <-- 0;
-            index = 0;
-            row++;
-            im[row] <-- st;
-            row++;
-        }
     }
 
     for(var r = 0; r < 4; r++) {
@@ -85,10 +67,9 @@ template custom extern_c Poseidon1_16() {
             newSt[t] = acc;
         }
         st = newSt;
-        if(r < 3) {
-            im[row] <-- st;
-            row++;
-        } else {
+        // Only the last round's state leaves the gate; the rest is recomputed when the
+        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
+        if(r == 3) {
             for(var t=0; t < 16; t++) {
                 out[t] <-- st[t];
             }
@@ -99,7 +80,6 @@ template custom extern_c Poseidon1_16() {
 template custom extern_c CustPoseidon1_16() {
     signal input in[16];
     signal input key[2];
-    signal output im[12][16];
     signal output out[16];
 
     assert(key[0]*(key[0] - 1) == 0);
@@ -166,12 +146,6 @@ template custom extern_c CustPoseidon1_16() {
     var st[16];
     st = initialSt;
 
-    var row = 0;
-    var index = 0;
-
-    im[row] <-- st;
-    row++;
-
     for(var i=0; i < 16; i++) {
         st[i] = st[i] + CNST(i);
     }
@@ -195,14 +169,11 @@ template custom extern_c CustPoseidon1_16() {
             newSt[t] = acc;
         }
         st = newSt;
-        im[row] <-- st;
-        row++;
     }
 
     // S stride for width 16 = 2*16 - 1 = 31 entries per partial round.
     // Second slice (column-1..15 updates) begins at offset WIDTH - 1 = 15.
     for(var r = 0; r < 22; r++) {
-        im[row][index] <-- st[0];
         st[0] = st[0] ** 7;
         st[0] += CNST(80 + r);
 
@@ -215,14 +186,6 @@ template custom extern_c CustPoseidon1_16() {
         }
         st[0] = s0;
 
-        index++;
-        if(r == 10 || r == 21) {
-            im[row][index] <-- 0;
-            index = 0;
-            row++;
-            im[row] <-- st;
-            row++;
-        }
     }
 
     for(var r = 0; r < 4; r++) {
@@ -239,17 +202,15 @@ template custom extern_c CustPoseidon1_16() {
             newSt[t] = acc;
         }
         st = newSt;
-        if(r < 3) {
-            im[row] <-- st;
-            row++;
-        } else {
+        // Only the last round's state leaves the gate; the rest is recomputed when the
+        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
+        if(r == 3) {
             for(var t=0; t < 16; t++) {
                 out[t] <-- st[t];
             }
         }
     }
 }
-
 
 // Calculate Poseidon Hash of 4 inputs (3 in + capacity) in GL field (each element has at most 63 bits)
 // -nOuts: Number of GL field elements that are being returned as output
@@ -273,8 +234,6 @@ template Poseidon(nOuts) {
         out[j] <== p.out[j];
     }
 
-    _ <== p.im;
-
     for (var j=nOuts; j<16; j++) {
         _ <== p.out[j];
     }
@@ -294,8 +253,6 @@ template CustPoseidon(arity, nOuts) {
     for (var j=0; j<nOuts; j++) {
         out[j] <== p.out[j];
     }
-
-    _ <== p.im;
 
     for (var j=nOuts; j<arity*4; j++) {
         _ <== p.out[j];

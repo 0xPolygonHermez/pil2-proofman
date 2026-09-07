@@ -2,14 +2,14 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, init_gpu_setup, initialize_logger, ProofmanOptions, SetupCtx, SetupsVadcop, MpiCtx, ProofCtx,
-    ProofmanError, ProofType,
+    calculate_fixed_tree, exec_header, init_gpu_setup, initialize_logger, load_exec_file, ProofmanOptions, SetupCtx,
+    SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;
 use proofman_starks_lib_c::{
-    add_publics_aggregation_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
-    load_device_const_pols_c, load_device_setup_c, read_exec_file_c,
+    add_publics_aggregation_c, expand_gate_bands_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
+    load_device_const_pols_c,
 };
 use libloading::{Library, Symbol};
 use std::fs::File;
@@ -36,7 +36,7 @@ type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mu
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct ProveAirCmd {
-    /// Recursion input: zkin file whose name encodes ag<N>_air<M>_t<ProofType>.
+    /// Recursion input: zkin file whose name encodes ag<N>_air<M>[_i<instance>]_t<ProofType>.
     #[clap(short = 'p', long, conflicts_with = "witness_lib", required_unless_present = "witness_lib")]
     pub proof: Option<PathBuf>,
 
@@ -71,6 +71,13 @@ pub struct ProveAirCmd {
     /// Never pack the trace, even on `--gpu`.
     #[clap(long, conflicts_with = "packed", requires = "witness_lib")]
     pub no_packed: bool,
+
+    /// Write the generated proof to this path, as the flat little-endian u64 array the recursion
+    /// passes between stages. That is the same shape `--proof` reads and the test-recursive fixtures
+    /// hold, so a proof produced here can be fed to the next stage's setup -- which is how a stage is
+    /// tested against a proof known to be good rather than against whatever the pipeline handed it.
+    #[clap(long)]
+    pub save_proof: Option<PathBuf>,
 
     /// Skip verifying the generated proof (witness-lib mode; useful for timing runs).
     #[clap(long, requires = "witness_lib")]
@@ -160,10 +167,13 @@ impl ProveAirCmd {
             ProofmanError::InvalidParameters(format!("Proof file name is not valid UTF-8: {proof_path:?}"))
         })?;
         let stem = name.strip_suffix(".bin").unwrap_or(name);
-        let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9_]+)$").unwrap();
+        // `_i<instance>` is optional: `dump_zkin_if_requested` puts it there so an air with several
+        // instances keeps every capture instead of racing over one name, and those dumps have to be
+        // replayable here.
+        let re = Regex::new(r"ag(\d+)_air(\d+)(?:_i\d+)?_t([A-Za-z0-9_]+)$").unwrap();
         let info = re.captures(stem).ok_or_else(|| {
             ProofmanError::InvalidParameters(format!(
-                "Proof file name {name:?} does not match [zkin_]ag<N>_air<M>_t<proof_type>.bin"
+                "Proof file name {name:?} does not match [zkin_]ag<N>_air<M>[_i<instance>]_t<proof_type>.bin"
             ))
         })?;
         let parse_id = |raw: &str, what: &str| -> Result<usize, ProofmanError> {
@@ -221,20 +231,12 @@ impl ProveAirCmd {
         let dat_filename_str = std::ffi::CString::new(dat_filename)?;
         let dat_filename_ptr = dat_filename_str.as_ptr() as *mut c_char;
 
-        // Header is n_adds then n_smap, body follows.
+        // Whole file, gate-band tail included -- the same loader Setup uses, so this AIR gets
+        // the same trace a full run would build for it.
         let exec_filename = setup.setup_path.display().to_string() + ".exec";
-        let mut exec_header_file = File::open(&exec_filename)?;
-        let mut bytes = [0u8; 8];
-        exec_header_file.read_exact(&mut bytes)?;
-        let n_adds = u64::from_le_bytes(bytes);
-        exec_header_file.read_exact(&mut bytes)?;
-        let n_smap = u64::from_le_bytes(bytes);
-        drop(exec_header_file);
-
         let n_cols = setup.stark_info.map_sections_n["cm1"];
-        let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
-        let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-        read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
+        let mut exec_file_data = load_exec_file(&exec_filename, n_cols)?;
+        let exec_words = exec_file_data.len() as u64;
 
         let library: Library = unsafe { Library::new(rust_lib_path)? };
 
@@ -249,7 +251,7 @@ impl ProveAirCmd {
         };
 
         // Total circom witness size = circuit witness + the n_adds from the exec header.
-        let witness_size = (size_witness + exec_file_data[0]) as usize;
+        let witness_size = (size_witness + exec_header(&exec_file_data).n_adds) as usize;
         let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
 
         timer_start_info!(WITNESS_GENERATION);
@@ -283,14 +285,15 @@ impl ProveAirCmd {
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();
         let d_buffers = pctx.get_device_buffers_ptr();
-        load_device_setup_c(
+        // This AIR's own exec buffer, loaded above: `Setup::new` only populates `exec_data` for
+        // setups it built the circom state for, which a standalone recursive AIR leaves unset.
+        setup.load_device_as(
+            proof_type_str,
             airgroup_id as u64,
             air_id as u64,
-            proof_type_str,
-            (&setup.p_setup).into(),
             d_buffers,
-            setup.verkey.as_ptr() as *mut u8,
             std::ptr::null_mut(),
+            Some(&exec_file_data),
         );
         let tree_path = if load_tree { setup.const_pols_tree_path.as_str() } else { "" };
         load_device_const_pols_c(
@@ -322,8 +325,17 @@ impl ProveAirCmd {
             size_witness,
             n,
             setup.stark_info.n_publics,
-            n_cols,
+            // Same stride the device side expects; see recursion_trace_stride. This is the second
+            // caller of get_committed_pols_c, and converting only the other one is what made the
+            // GPU proof fail its evaluations check.
+            proofman::recursion_trace_stride(&exec_file_data, n_cols, self.gpu),
         );
+        // The hash gates map only their boundary; fill the rest from it. On GPU the same
+        // reconstruction happens device-side inside gen_recursive_proof_c, so only do it here
+        // when proving on the host. No-op on an exec file without a band section.
+        if !self.gpu {
+            expand_gate_bands_c(trace.as_mut_ptr() as *mut u8, exec_file_data.as_mut_ptr(), n_cols, exec_words, n);
+        }
 
         // Layout: aggregation publics in [0..publics_aggregation), then the proof itself.
         let publics_aggregation = n_publics_aggregation(&pctx, airgroup_id);
@@ -401,6 +413,13 @@ impl ProveAirCmd {
             return Err(Box::new(ProofmanError::InvalidProof("Recursive proof verification failed".into())));
         }
         tracing::info!("    {}", "\u{2713} Recursive proof verified".bright_green().bold());
+
+        // After verification, so what lands on disk is a proof this run vouched for.
+        if let Some(path) = &self.save_proof {
+            let bytes: Vec<u8> = proof_buffer.iter().flat_map(|w| w.to_le_bytes()).collect();
+            std::fs::write(path, &bytes)?;
+            tracing::info!("Saved proof ({} words) to {}", proof_buffer.len(), path.display());
+        }
 
         Ok(())
     }

@@ -19,30 +19,18 @@ template Recursive2() {
     signal input globalChallenge[3];
     signal input rootCAgg[4];
 
-{{ vadcop_define_a }}
-{{ stark_signals_a }}
-{{ vadcop_define_b }}
-{{ stark_signals_b }}
-{{ vadcop_define_c }}
-{{ stark_signals_c }}
-{{ agg_types_consistency }}
-{{ stark_assign_a }}
-{{ stark_assign_b }}
-{{ stark_assign_c }}
-{{ vadcop_assign_a }}
-{{ vadcop_assign_b }}
-{{ vadcop_assign_c }}
-    vA.rootC <== {{ sel_fn }}({{ airs_in_group }})(a_sv_circuitType, rootCBasics, rootCAgg);
-    vB.rootC <== {{ sel_fn }}({{ airs_in_group }})(b_sv_circuitType, rootCBasics, rootCAgg);
-    vC.rootC <== {{ sel_fn }}({{ airs_in_group }})(c_sv_circuitType, rootCBasics, rootCAgg);
-
+{% for s in slots %}{{ s.vadcop_define }}
+{{ s.stark_signals }}
+{% endfor %}{{ agg_types_consistency }}
+{% for s in slots %}{{ s.stark_assign }}
+{% endfor %}{% for s in slots %}{{ s.vadcop_assign }}
+{% endfor %}{% for s in slots %}    v{{ s.upper }}.rootC <== {{ sel_fn }}({{ airs_in_group }})({{ s.prefix }}_circuitType, rootCBasics, rootCAgg);
+{% endfor %}
 {{ agg_vadcop }}
 
     for (var i=0; i<4; i++) {
-        vA.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
-        vB.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
-        vC.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
-    }
+{% for s in slots %}        v{{ s.upper }}.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
+{% endfor %}    }
 }
 
 component main {public [{{ pub_names }}]} = Recursive2();

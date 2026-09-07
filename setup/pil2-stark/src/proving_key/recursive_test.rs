@@ -54,6 +54,7 @@ pub fn gen_recursive_test_setup(
     recurser_pil_path: &str,
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
+    blake3_lanes: Option<usize>,
 ) -> Result<()> {
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
@@ -127,12 +128,30 @@ pub fn gen_recursive_test_setup(
     // Step 4: plonk2pil — convert R1CS to PIL.
     // Use airgroup_name = "Compressor" (deterministic, avoids random hex suffix).
     // -------------------------------------------------------------------------
-    let max_constraint_degree = if setup_type == "compressor" { Some(5) } else { None };
+    // The TEMPLATE being built, so a compressor fixture gets the compressor's geometry. llv was
+    // pinned to 1 here, which is what let a production llv reach a real run untested: every value
+    // this harness can exercise has to be the one production uses, or it reproduces nothing.
+    let template = if setup_type == "compressor" {
+        crate::proving_key::recursive::RecursiveTemplate::Compressor
+    } else {
+        crate::proving_key::recursive::RecursiveTemplate::Recursive2
+    };
+
+    // Derived from the blowup exactly as `gen_recursive_setup` does it, not pinned. Hardcoded to 5
+    // it built the compressor air at degree 5 where production builds it at 3 -- same template, same
+    // parameters, but 177 intermediate polynomials against far fewer, so stage 2 came out 501 columns
+    // wide against 255. A fixture that verifies THAT air says nothing about the one being shipped.
+    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
+        crate::proving_key::recursive::recursive_blowup(template, hash),
+    ));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
         max_constraint_degree,
         hash_id: hash.to_string(),
         merge_copies: true,
+        // None takes the air's default of 4; --blake3-lanes overrides it.
+        blake3_lanes,
+        min_n_bits: None,
     };
     let r1cs_path = build_inner.join(format!("{}.r1cs", circom_name));
     let r1cs_data =
@@ -190,13 +209,20 @@ pub fn gen_recursive_test_setup(
     let num_rows = air.num_rows.unwrap_or(0) as usize;
     let n_bits_air = if num_rows > 0 { (num_rows as f64).log2() as usize } else { plonk_result.n_bits };
 
-    // JS genRecursiveSetupTest always uses {blowupFactor: 3, lastLevelVerification: 1}
-    // regardless of the setup type (unlike gen_recursive_setup which varies by template).
+    // JS genRecursiveSetupTest always used {blowupFactor: 3, lastLevelVerification: 1} regardless of
+    // the setup type. The blowup now follows the family, because the point of a test key is to
+    // reproduce the geometry being debugged: blake3's recursion runs at blowup 2, where maxDeg 5
+    // fits exactly, and a fixture at 3 would carry a quotient the production air does not have.
+    // `recursive_blowup` gives 2 for blake3 and keeps poseidon's 3, which its README documents.
     let settings = StarkSettings {
-        blowup_factor: Some(3),
-        last_level_verification: Some(1),
-        // Same pin as the real recursion layers, so a test key matches their geometry.
-        pow_bits: Some(crate::proving_key::recursive::RECURSIVE_POW_BITS),
+        blowup_factor: Some(crate::proving_key::recursive::recursive_blowup(template, hash)),
+        last_level_verification: crate::proving_key::recursive::recursive_last_level_verification(template, hash),
+        // Same pins as the real recursion layers, so a test key matches their geometry. The terminal
+        // degree matters as much as the rest: left to the generic default of 5 it gave the fixture a
+        // six-step FRI schedule where production has five, so the fixture verified a shape the
+        // pipeline never builds.
+        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(hash)),
+        pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(hash)),
         ..Default::default()
     };
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
@@ -273,7 +299,7 @@ pub fn gen_recursive_test_setup(
         const_path.to_str().unwrap(),
         starkinfo_path.to_str().unwrap(),
         verkey_json_path.to_str().unwrap(),
-    );
+    )?;
 
     let mut verkey_bin = Vec::with_capacity(32);
     for &val in const_root.iter() {
@@ -318,7 +344,22 @@ pub fn gen_recursive_test_setup(
     // We pass pilout_name = "build" to match JS airout.name = "build".
     // -------------------------------------------------------------------------
     let empty_settings = crate::types::stark_struct::StarkStructsConfig::default();
-    crate::output::global_info::write_global_info(pilout, "build", build_dir, &empty_settings, hash)?;
+    // The test-recursive fixture is a single compressor/aggregation circuit with no
+    // recursive2 stage, and `setup-recursive-test` takes no --agg-arity, so no caller can
+    // supply a real one. Write the documented default rather than a bare literal.
+    crate::output::global_info::write_global_info(
+        pilout,
+        "build",
+        build_dir,
+        &empty_settings,
+        hash,
+        // Both of these are family-scoped, and this harness has the family in hand. Writing
+        // Poseidon's values for every family put `aggregationArity: 3` and a compressed final into
+        // a blake3 key, where the family aggregates at 2 and has no compressed final -- a
+        // globalInfo describing a proving key that was not built that way.
+        proofman_common::hash_family::default_aggregation_arity(hash),
+        proofman_common::hash_family::compressed_final_by_default(hash),
+    )?;
 
     println!("files Generated Correctly");
     Ok(())

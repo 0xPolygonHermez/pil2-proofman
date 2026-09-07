@@ -13,7 +13,7 @@ require "circuits/plonk.pil";
 // Poseidon2 AGGREGATOR
 //
 // Recursive-proof aggregation AIR. A single row hosts at most one "custom gate"
-// (Poseidon2 round, CMul, FFT4, EvPol4, TreeSelector4, SelectVal1, or a Plonk
+// (Poseidon2 round, CMul, FFT4, EvPol4, TreeSelector4, SelectValueArity4, or a Plonk
 // gate), selected by mutually-exclusive fixed columns. Custom gates reuse the
 // same witness columns a[] on disjoint rows.
 //
@@ -40,7 +40,7 @@ require "circuits/plonk.pil";
 //           a[9..14] @ PR = 6 partial overflow anchors ;
 //           a[16..31] = chain-F ; a[32..47] = chain-F2 ; S[24] = connection band a[0..23].
 // ============================================================================
-airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
+airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectValArity4) {
     col witness a[48];
 
     #pragma fixed_external
@@ -60,9 +60,9 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCo
     col fixed EVPOL4 = [0:(5*nPoseidon + nCMulRows), 1:nEvPol4, 0...];
     col fixed FFT4 = [0:(5*nPoseidon + nCMulRows + nEvPol4), 1:nFFT4, 0...];
     col fixed TREESELECTOR4 = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4), 1:nTreeSelector4, 0...];
-    col fixed SELECTVAL1 = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4), 1:nSelectVal1, 0...];
+    col fixed SELECTVAL_ARITY4 = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4), 1:nSelectValArity4, 0...];
 
-    col fixed PLONK = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelectVal1),1:nPlonkRows, 0...];
+    col fixed PLONK = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelectValArity4),1:nPlonkRows, 0...];
 
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
@@ -192,7 +192,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCo
     selectvals[3] = [a[12], a[13], a[14], a[15]];
     const expr selectvals_key[2] = [a[16], a[17]];
     const expr selected[4] = [a[18], a[19], a[20], a[21]];
-    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+    selectValueArity4(selectvals, selectvals_key, selected, SELECTVAL_ARITY4);
 
     const expr A[24];
     for (int i = 0; i < 24; i++) {

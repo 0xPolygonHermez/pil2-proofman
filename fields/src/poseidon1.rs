@@ -115,7 +115,7 @@ mod tests {
     use crate::Goldilocks;
 
     // Ground-truth values produced by the C++ reference Poseidon1_seq
-    // (setup/circom/poseidon_goldilocks.cpp).
+    // (setup/circom/poseidon_gate.cpp).
 
     #[test]
     fn poseidon1_12_zero_input() {

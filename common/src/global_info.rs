@@ -12,6 +12,23 @@ fn default_hash_id() -> String {
     DEFAULT_HASH_ID.to_string()
 }
 
+/// Arities the `recursive2` circuit can be generated for. Larger values are not known to work.
+pub const VALID_AGGREGATION_ARITIES: [usize; 2] = [2, 3];
+
+pub fn is_valid_aggregation_arity(n: usize) -> bool {
+    VALID_AGGREGATION_ARITIES.contains(&n)
+}
+
+/// Arity to assume when a `globalInfo.json` carries no `aggregationArity` at all.
+///
+/// This is Poseidon's value, kept because it is what every key written before the field existed
+/// implied. It is NOT "the default arity": blake3 aggregates at 2, and anything choosing an arity
+/// for a family must call [`crate::hash_family::default_aggregation_arity`] instead. Named apart
+/// from that one so a glob import cannot silently resolve to the wrong one.
+pub fn fallback_aggregation_arity() -> usize {
+    3
+}
+
 #[derive(Clone, Deserialize)]
 pub struct ProofValueMap {
     pub name: String,
@@ -67,8 +84,24 @@ pub struct GlobalInfo {
     #[serde(rename = "transcriptArity")]
     pub transcript_arity: usize,
 
+    /// Proofs each `recursive2` circuit aggregates. Fixed at setup, read back here.
+    #[serde(rename = "aggregationArity", default = "fallback_aggregation_arity")]
+    pub aggregation_arity: usize,
+
     #[serde(default = "default_hash_id")]
     pub hash: String,
+
+    /// Whether this proving key carries the `vadcop_final_compressed` stage.
+    ///
+    /// Defaults to `true`, which is what every key written before the flag existed means: the stage
+    /// was unconditional then. A key that skipped it says so, and the loader honours that rather
+    /// than trying to read a starkinfo that was never written.
+    #[serde(rename = "hasCompressedFinal", default = "default_has_compressed_final")]
+    pub has_compressed_final: bool,
+}
+
+fn default_has_compressed_final() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +164,33 @@ impl GlobalInfo {
                 "unknown hash family {:?}; known: {:?}",
                 global_info.hash,
                 hash_family::FAMILIES
+            )));
+        }
+
+        // Every proving key loads through here, so this catches an arity this build has no
+        // aggregation path for before any consumer chunks proofs or derives MPI tags from it.
+        if !is_valid_aggregation_arity(global_info.aggregation_arity) {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "proving key has aggregationArity {}, which this build does not support; valid values: {:?}",
+                global_info.aggregation_arity, VALID_AGGREGATION_ARITIES
+            )));
+        }
+
+        // `hash` has a serde default, `transcriptArity` does not, and the setup writes the latter as
+        // exactly `hash_family::transcript_arity(hash)`. So the two disagreeing means the family is
+        // wrong -- in practice a key written before `hash` existed, which is Poseidon at arity 4 but
+        // takes the default. Catch it here rather than let `set_hash_family_c` below point blake3's
+        // binary-tree kernels at arity-4 trees and fail somewhere unrecognisable.
+        let expected_arity = hash_family::transcript_arity(&global_info.hash) as usize;
+        if global_info.transcript_arity != expected_arity {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "proving key has transcriptArity {} but hash family {:?} uses {}; if the key predates \
+                 the `hash` field it is not {:?} -- add the right \"hash\" to {} or rebuild the key",
+                global_info.transcript_arity,
+                global_info.hash,
+                expected_arity,
+                global_info.hash,
+                file_path.display()
             )));
         }
 
@@ -236,5 +296,89 @@ impl GlobalInfo {
             }
         }
         Err(ProofmanError::InvalidConfiguration(format!("Public '{}' not found in publics_map", public_name)))
+    }
+}
+
+#[cfg(test)]
+mod aggregation_arity_tests {
+    use super::*;
+
+    #[test]
+    fn only_two_and_three_are_valid_arities() {
+        assert!(is_valid_aggregation_arity(2));
+        assert!(is_valid_aggregation_arity(3));
+        for n in [0usize, 1, 4, 5, 16] {
+            assert!(!is_valid_aggregation_arity(n), "{n} must be rejected");
+        }
+    }
+
+    #[test]
+    fn a_key_without_the_field_is_arity_three() {
+        // A key written before the field existed. Must load as 3; Default::default() gives 0.
+        let json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16
+        });
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.aggregation_arity, 3);
+    }
+
+    #[test]
+    fn from_file_rejects_an_unsupported_arity() {
+        // Covers `check_setup`, `prove_air` and `soundness`, not just the full proving path.
+        let dir = std::env::temp_dir().join(format!("gi_arity_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = serde_json::json!({
+            "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 4
+        });
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+
+        let result = GlobalInfo::from_file(&dir.display().to_string());
+        let Err(err) = result else { panic!("arity 4 must be rejected at load") };
+        assert!(err.to_string().contains("aggregationArity 4"), "unexpected error: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A key written before the `hash` field existed is Poseidon at arity 4, but `hash` has a
+    /// serde default and would take blake3. The transcriptArity it DID write contradicts that, and
+    /// loading must say so instead of pointing blake3's binary-tree kernels at arity-4 trees.
+    #[test]
+    fn from_file_rejects_a_hash_that_contradicts_the_transcript_arity() {
+        let dir = std::env::temp_dir().join(format!("gi_hash_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = serde_json::json!({
+            "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 4, "aggregationArity": 3
+        });
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+
+        let Err(err) = GlobalInfo::from_file(&dir.display().to_string()) else {
+            panic!("a key with no `hash` and Poseidon's arity must not load as the default family")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("transcriptArity 4"), "unexpected error: {msg}");
+
+        // The same key, with the hash it was actually built with, loads.
+        let mut json = json;
+        json["hash"] = serde_json::json!("Poseidon1");
+        std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        assert!(GlobalInfo::from_file(&dir.display().to_string()).is_ok());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_field_round_trips() {
+        let json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 2
+        });
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.aggregation_arity, 2);
     }
 }

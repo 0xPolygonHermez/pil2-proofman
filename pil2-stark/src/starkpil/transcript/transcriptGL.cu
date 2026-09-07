@@ -22,6 +22,97 @@ __device__ __constant__ gl64_t POSEIDON2_GPU_D[16];
 #define TRX_PENDING_SIZE(a) ((uint32_t)(4 * ((a) - 1)))
 #define TRX_OUT_SIZE(a)     ((uint32_t)(4 * (a)))
 
+// ─── blake3 transcript ───────────────────────────────────────────────────────
+// Mirrors the CPU branch; both wrap blake3core::Hasher from the shared core.
+// Absorbing `.fe` raw matches the CPU's toU64: both are a single conditional
+// subtract, and fill_block applies to_canonical to every word anyway.
+
+__device__ static void b3Absorb(Blake3TrxStateGPU* b3, const Goldilocks::Element* in, uint64_t n)
+{
+    // Element wraps a single u64, so absorbing the array directly is what
+    // Blake3Goldilocks::linearHash already does.
+    b3->h.absorb(reinterpret_cast<const uint64_t*>(in), (uint32_t)n);
+    b3->valid = 0;   // the stream changed; old XOF material is stale
+    b3->offset = 0;
+    b3->ob = 0;
+}
+
+__device__ static Goldilocks::Element b3GetFields1(Blake3TrxStateGPU* b3)
+{
+    // A refill advances only the output-block counter; the root is unchanged.
+    if (!b3->valid)
+    {
+        b3->ob = 0;
+        b3->h.finalize_xof(b3->ob, b3->xof);
+        b3->offset = 0;
+        b3->valid = 1;
+    }
+    else if (b3->offset == 8)
+    {
+        b3->ob += 1;
+        b3->h.finalize_xof(b3->ob, b3->xof);
+        b3->offset = 0;
+    }
+    Goldilocks::Element res;
+    res.fe = b3->xof[b3->offset];
+    b3->offset += 1;
+    return res;
+}
+
+__global__ void _b3Reset(Blake3TrxStateGPU* b3)
+{
+    b3->h.init();
+    b3->offset = 0;
+    b3->ob = 0;
+    b3->valid = 0;
+}
+
+__global__ void _b3Add(Goldilocks::Element* input, uint64_t size, Blake3TrxStateGPU* b3)
+{
+    b3Absorb(b3, input, size);
+}
+
+__global__ void _b3Add2(Goldilocks::Element* input1, uint64_t size1,
+                        Goldilocks::Element* input2, uint64_t size2, Blake3TrxStateGPU* b3)
+{
+    b3Absorb(b3, input1, size1);
+    b3Absorb(b3, input2, size2);
+}
+
+__global__ void _b3GetField(uint64_t* output, Blake3TrxStateGPU* b3)
+{
+    for (int i = 0; i < 3; i++) output[i] = b3GetFields1(b3).fe;
+}
+
+__global__ void _b3GetState(Goldilocks::Element* output, uint64_t nOutputs, Blake3TrxStateGPU* b3)
+{
+    if (nOutputs > 8) __trap();   // one XOF block is 8 words; the CPU errors here too
+    uint64_t xof[8];
+    b3->h.finalize_xof(0, xof);   // digest so far; does NOT consume
+    for (uint64_t i = 0; i < nOutputs; i++) output[i].fe = xof[i];
+}
+
+__global__ void _b3GetPermutations(uint64_t* res, uint64_t n, uint64_t nBits,
+                                   Goldilocks::Element* fields, Blake3TrxStateGPU* b3)
+{
+    const uint64_t NFields = (n * nBits + 62) / 63;
+    for (uint64_t i = 0; i < NFields; i++) fields[i] = b3GetFields1(b3);
+
+    uint64_t curField = 0, curBit = 0;
+    gl64_t* fields_ = (gl64_t*)fields;
+    for (uint64_t i = 0; i < n; i++)
+    {
+        uint64_t a = 0;
+        for (uint64_t j = 0; j < nBits; j++)
+        {
+            if ((uint64_t(fields_[curField]) >> curBit) & 1) a += (1ULL << j);
+            curBit++;
+            if (curBit == 63) { curBit = 0; curField++; }
+        }
+        res[i] = a;
+    }
+}
+
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
 {
     uint32_t transcriptStateSize = HASH_SIZE;
@@ -41,9 +132,11 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + transcriptPendingSize] = state[i];
     }
-    if (hashFamily == 3) {
-        blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
-    } else if (hashFamily == 1) {
+    // blake3 dispatches to its own kernels from the host; arriving here would
+    // silently restore the old sponge-shaped construction. __trap rather than
+    // assert so the guard survives NDEBUG.
+    if (hashFamily == static_cast<uint8_t>(HashFamily::Blake3)) __trap();
+    if (hashFamily == static_cast<uint8_t>(HashFamily::Poseidon1)) {
         switch(arity) {
             case 2:
                 poseidon1PermuteReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
@@ -227,17 +320,8 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
     }
     __syncwarp();
 
-    if (hashFamily == 3) {
-        if (lane == 0) {
-            const uint32_t transcriptStateSize = HASH_SIZE;
-            Goldilocks::Element inputs[16];
-            for (uint32_t i = 0; i < transcriptPendingSize; i++) inputs[i] = pending[i];
-            for (uint32_t i = 0; i < transcriptStateSize; i++) inputs[i + transcriptPendingSize] = state[i];
-            blake3core::permute_xof((const uint64_t*)inputs, transcriptOutSize, (uint64_t*)out);
-            for (uint32_t i = 0; i < transcriptOutSize; i++) state[i] = out[i];
-        }
-        __syncwarp();
-    } else {
+    if (hashFamily == static_cast<uint8_t>(HashFamily::Blake3)) __trap();   // see _updateState
+    {
     // Each active lane keeps its sponge element [pending | state] in a register.
     gl64_t v;
     if (lane < transcriptPendingSize)
@@ -247,7 +331,7 @@ __device__ void _updateStateWarp(Goldilocks::Element* state, Goldilocks::Element
 
     if (lane < W) {
         const uint32_t mask = (1u << W) - 1u;   // active lanes 0..W-1
-        if (hashFamily == 1) {
+        if (hashFamily == static_cast<uint8_t>(HashFamily::Poseidon1)) {
             switch(arity) {
                 case 2:
                     v = poseidon1PermuteWarpReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
@@ -450,6 +534,7 @@ TranscriptGL_GPU::TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t str
         CHECKCUDAERR(cudaMalloc((void**)&out, transcriptOutSize * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
         CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
+        CHECKCUDAERR(cudaMalloc((void**)&b3, sizeof(Blake3TrxStateGPU)));
 
         reset(stream);
 }
@@ -496,6 +581,10 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream)
 {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3Add<<<1, 1, 0, stream>>>(input, size, b3);
+        return;
+    }
     if (parallel)
         _addWarp<<<1, 32, 0, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
@@ -504,6 +593,10 @@ void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream
 
 void TranscriptGL_GPU::put2(Goldilocks::Element *input1, uint64_t size1, Goldilocks::Element *input2, uint64_t size2, cudaStream_t stream)
 {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3Add2<<<1, 1, 0, stream>>>(input1, size1, input2, size2, b3);
+        return;
+    }
     if (parallel)
         _add2Warp<<<1, 32, 0, stream>>>(input1, size1, input2, size2, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
@@ -512,6 +605,10 @@ void TranscriptGL_GPU::put2(Goldilocks::Element *input1, uint64_t size1, Goldilo
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3GetField<<<1, 1, 0, stream>>>(output, b3);
+        return;
+    }
     if (parallel)
         _getFieldWarp<<<1, 32, 0, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
@@ -519,6 +616,10 @@ void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3GetState<<<1, 1, 0, stream>>>(output, transcriptStateSize, b3);
+        return;
+    }
     if (parallel)
         __getStateWarp<<<1, 32, 0, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
@@ -526,6 +627,10 @@ void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream) {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3GetState<<<1, 1, 0, stream>>>(output, nOutputs, b3);
+        return;
+    }
     if (parallel)
         __getStateWarp<<<1, 32, 0, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else
@@ -534,6 +639,10 @@ void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, 
 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* perm_scratch, cudaStream_t stream)
 {
+    if (get_hash_family() == HashFamily::Blake3) {
+        _b3GetPermutations<<<1, 1, 0, stream>>>(res, n, nBits, perm_scratch, b3);
+        return;
+    }
     if (parallel)
         __getPermutationsWarp<<<1, 32, 0, stream>>>(res, n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     else

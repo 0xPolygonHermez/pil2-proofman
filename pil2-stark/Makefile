@@ -302,16 +302,24 @@ plonk_setup: $(BUILD_DIR)/$(TARGET_SETUP_PLONK)
 
 plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
+# Built into a temp file and moved into place: `ar r` on an existing archive keeps members whose
+# source is gone, and a linker reading it mid-rewrite sees a half-updated archive -- which shows
+# up as "undefined symbol" for a function that is right there in the source.
 $(LIB_DIR)/$(TARGET_STARKS_LIB): $(OBJS_STARKS_LIB)
 	mkdir -p $(LIB_DIR)
 	mkdir -p $(LIB_DIR)/include
-	$(AR) rcs $@ $^
+	$(RM) $@.tmp
+	$(AR) rcs $@.tmp $^
+	mv -f $@.tmp $@
 	cp src/api/starks_api.hpp $(LIB_DIR)/include/starks_lib.h
 
+# See the CPU archive above for why this goes through a temp file.
 $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU): $(OBJS_STARKS_LIB_GPU)
 	$(MKDIR_P) $(LIB_DIR_GPU)
 	$(MKDIR_P) $(LIB_DIR_GPU)/include
-	$(AR) rcs $@ $^
+	$(RM) $@.tmp
+	$(AR) rcs $@.tmp $^
+	mv -f $@.tmp $@
 	cp src/api/starks_api.hpp $(LIB_DIR_GPU)/include/starks_lib_gpu.h
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)

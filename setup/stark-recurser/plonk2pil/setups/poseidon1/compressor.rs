@@ -4,7 +4,7 @@
 //! full-round rows piggyback all 10; TreeSelector8's 30 signals fit one row.
 
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
-use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp, PlonkBand};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -14,7 +14,6 @@ use std::collections::HashMap;
 const COMMITTED_POLS: usize = 46;
 const N_COLS: usize = 30; // S connection columns
 const POSEIDON_ROWS: usize = 10;
-const COL_P: usize = 30; // first Poseidon chain column offset (width-16 slot a[30..45]; off-band)
 const CMUL_PER_ROW: usize = 3;
 const POSEIDON_WIDTH: usize = 16;
 
@@ -25,7 +24,7 @@ const G_ALL: u16 = 0x3FF; // gates 0..9  — inner Poseidon rows + pure-plonk ro
 const G_PR: u16 = 0x33F; // gates 0..5 + 8,9 — PR row (a[18..23] = overflow anchors)
 const G_Q1: u16 = 0x3C0; // gates 6..9 — INIT / FINAL rows
 const G_EVPOL: u16 = 0x380; // gates 7..9 — EvPol4 rows (gate 6 = resEVPOL a[18..20])
-const G_SELVAL: u16 = 0x300; // gates 8,9 — SelectVal1 rows (a[0..21] used)
+const G_SELVAL: u16 = 0x300; // gates 8,9 — SelectValueArity4 rows (a[0..21] used)
 
 fn rand_hex() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,7 +47,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
     let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector); // 30 signals = band width -> 1 row/gate
-    let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
+    let n_sel_val_arity4_rows = cgi.n(GateRole::SelectValArity4);
 
     // Per-gate row tiers for plonk piggyback. Band cells a[0..29] host 10 gates
     // (q0 = gates 0..5 on a[0..17], q1 = gates 6..9 on a[18..29]). The chain slot a[30..45]
@@ -58,7 +57,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     //   PR (1 row)            — q0 gates 0..5 + q1 gates 8,9 (a[18..23]=anchors) → pr tier.
     //   INIT, FINAL (2 rows)  — q1 gates 6..9 (a[0..17] = input+key / output) → four tier.
     //   EvPol4                — q1 gates 7..9 (gate 6 collides with resEVPOL a[18..20]) → three tier.
-    //   SelectVal1            — q1 gates 8,9 (a[0..21] used) → two tier.
+    //   SelectValueArity4            — q1 gates 8,9 (a[0..21] used) → two tier.
     //   pure-plonk row        — all 10 gates: q0 0..5 + q1 6..9.
     // TreeSelector8 fills the whole band (a[0..29]) and FFT4 needs cv[0..9] for its own
     // parameters, so neither piggybacks; CMul leaves only a[27..29] and is left alone.
@@ -66,7 +65,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let pr_count = n_total_poseidon; // PR row (q0 0..5 + q1 8,9)
     let four_count = n_total_poseidon * 2; // INIT + FINAL rows (q1 gates 6..9)
     let three_count = n_ev_pol4_rows; // EvPol4: q1 gates 7..9
-    let two_count = n_sel_val1_rows; // SelectVal1: q1 gates 8,9
+    let two_count = n_sel_val_arity4_rows; // SelectValueArity4: q1 gates 8,9
 
     cgi.n_plonk_rows = {
         let mut partial: HashMap<String, (usize, usize)> = HashMap::new(); // (n_used, max_used)
@@ -119,9 +118,13 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         + n_fft4_rows
         + n_ev_pol4_rows
         + n_tree_sel8_rows
-        + n_sel_val1_rows;
+        + n_sel_val_arity4_rows;
 
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
+    // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
+    // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
+    let n_bits_natural = n_bits;
+    let n_bits = n_bits.max(options.min_n_bits.unwrap_or(0));
     let n = 1usize << n_bits;
     let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Compressor{}", rand_hex()));
@@ -140,7 +143,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
         n_tree_selector8: cgi.n(GateRole::TreeSelector),
-        n_select_val1: cgi.n(GateRole::SelectVal1),
+        n_select_val_arity4: cgi.n(GateRole::SelectValArity4),
     });
 
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
@@ -148,13 +151,15 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
     let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
     let mut band = PlonkBand::new(n);
+    // Bands whose interiors the trace expander rebuilds; see GateBand.
+    let mut gate_bands: Vec<GateBand> = Vec::new();
 
     // Extra-constraint row queues. Plonk band a[0..29] = 10 gates (q0 0..5, q1 6..9).
     //   ten_extra   : Poseidon rows R1,R2,PR',R4,R26,R27,R28 — all 10 gates.
     //   pr_extra    : PR row — q0 gates 0..5 + q1 gates 8,9 (a[18..23] = overflow anchors).
     //   four_extra  : INIT + FINAL rows — q1 gates 6..9 (a[0..17] = input+key / output).
     //   three_extra : EvPol4 rows — q1 gates 7..9 (gate 6 collides with resEVPOL).
-    //   two_extra   : SelectVal1 rows — q1 gates 8,9.
+    //   two_extra   : SelectValueArity4 rows — q1 gates 8,9.
     let mut ten_extra: Vec<usize> = Vec::new();
     let mut pr_extra: Vec<usize> = Vec::new();
     let mut four_extra: Vec<usize> = Vec::new();
@@ -177,13 +182,17 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
     let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
     let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
-    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
+    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectValArity4));
 
     let mut r = 0usize;
 
     // ── Poseidon1 — 10 rows per gate (compression then sponge) ───────────────
-    // CustPoseidon1_16 (compression) signal layout: in[16] + key[2] + im[11][16] + out[16] = 210.
-    // Poseidon1_16   (sponge)      signal layout: in[16]         + im[11][16] + out[16] = 208.
+    // CustPoseidon1_16 (compression) signal layout: in[16] + key[2] + out[16] = 34.
+    // Poseidon1_16   (sponge)      signal layout: in[16]         + out[16] = 32.
+    //
+    // The gate publishes only its boundary. The round snapshots filling rows 0..9 of the chain
+    // slot and the anchor row are recomputed from it by the trace expander, so each application
+    // below records a band instead of mapping those cells. See gate_bands.hpp.
     //
     // R4 (= circom im[4], round-3 P-matrix output) IS stored at row 4 (a normal round
     // writing to the next-row chain slot), so the PIL no longer needs a dedicated preMatP
@@ -203,54 +212,18 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
                              band: &mut PlonkBand,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
-        let expected = POSEIDON_WIDTH + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        let expected = POSEIDON_WIDTH + key_off + POSEIDON_WIDTH;
         assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
 
         let input = &s[0..POSEIDON_WIDTH];
         let key = if is_compression { Some(&s[POSEIDON_WIDTH..POSEIDON_WIDTH + 2]) } else { None };
-        let im_base = POSEIDON_WIDTH + key_off;
-        let r0 = &s[im_base..im_base + POSEIDON_WIDTH]; // im[0]
-        let r1 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
-        let r2 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
-        let r3 = &s[im_base + 3 * POSEIDON_WIDTH..im_base + 4 * POSEIDON_WIDTH]; // im[3]
-        let r4 = &s[im_base + 4 * POSEIDON_WIDTH..im_base + 5 * POSEIDON_WIDTH]; // im[4]: R4 (post-P), stored at row 4
-        let im1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: h1 anchors[0..10]
-                                                                                  // im[6] = midState (intermediate, not used with single-chain layout)
-        let im2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: h2 anchors[0..10]
-        let r26 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
-        let r27 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
-        let r28 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
-        let r29 = &s[im_base + 11 * POSEIDON_WIDTH..im_base + 12 * POSEIDON_WIDTH]; // im[11]
-        let output = &s[im_base + 12 * POSEIDON_WIDTH..im_base + 13 * POSEIDON_WIDTH];
+        let output = &s[POSEIDON_WIDTH + key_off..POSEIDON_WIDTH + key_off + POSEIDON_WIDTH];
 
+        // Boundary only: input at the INIT row, output at FINAL. The chain slot and the
+        // anchor row are left unmapped for the expander to fill.
         for i in 0..POSEIDON_WIDTH {
             s_map[i][r] = input[i] as u32;
-            s_map[i + COL_P][r] = r0[i] as u32; // row 0 chain slot = R0 (= circom im[0], permuted input signal)
-            s_map[i + COL_P][r + 1] = r1[i] as u32;
-            s_map[i + COL_P][r + 2] = r2[i] as u32;
-            s_map[i + COL_P][r + 3] = r3[i] as u32;
-            s_map[i + COL_P][r + 4] = r4[i] as u32; // row 4 chain slot = R4 (stored)
-                                                    // row 5 chain slot is anchors[0..15] (filled below).
-            s_map[i + COL_P][r + 6] = r26[i] as u32;
-            s_map[i + COL_P][r + 7] = r27[i] as u32;
-            s_map[i + COL_P][r + 8] = r28[i] as u32;
-            s_map[i + COL_P][r + 9] = r29[i] as u32;
             s_map[i][r + 9] = output[i] as u32;
-        }
-
-        // Partial-chain anchors (single 22-round chain, one flat array):
-        //   anchors[0..15]  → row 5 (PR) chain slot a[30..45]
-        //   anchors[16..21] → row 5 (PR) cols a[18..23] (overflow, PR plonk band, same row)
-        // Source: anchors[0..10] = im1 (h1[0..10]); anchors[11..21] = im2 (h2[0..10]).
-        // First 5 of im2 sit at the PR chain-slot tail (a[41..45]); last 6 go to a[18..23]@PR.
-        for i in 0..11 {
-            s_map[i + COL_P][r + 5] = im1[i] as u32; // anchors[0..10] = im_h1
-        }
-        for i in 0..5 {
-            s_map[i + 11 + COL_P][r + 5] = im2[i] as u32; // anchors[11..15] = im_h2[0..4]
-        }
-        for i in 0..6 {
-            s_map[i + 18][r + 5] = im2[i + 5] as u32; // anchors[16..21] = im_h2[5..10] @ PR row
         }
 
         // Key bits at INIT row cols 16..17 (compression only). At INIT plonk gate 5
@@ -302,6 +275,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             &mut band,
             r,
         );
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon1CompressorCompression, payload: 0 });
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, POSEIDON_ROWS * cust_poseidon1_uses.len());
@@ -319,6 +293,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             &mut band,
             r,
         );
+        gate_bands.push(GateBand { row: r as u32, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0 });
         r += POSEIDON_ROWS;
     }
     assert_eq!(r, POSEIDON_ROWS * (cust_poseidon1_uses.len() + poseidon1_uses.len()));
@@ -417,7 +392,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         r += 1;
     }
 
-    // ── SelectVal1 ────────────────────────────────────────────────────────────
+    // ── SelectValueArity4 ────────────────────────────────────────────────────────────
     tracing::info!("Processing {} selectVal1 gates...", sel_val1_uses.len());
     for cgu in &sel_val1_uses {
         assert_eq!(cgu.signals.len(), 22);
@@ -530,7 +505,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             partial.insert(k, (row, 8, 10));
             plonk_in_custom += 1;
         } else if !two_extra.is_empty() {
-            let row = two_extra.remove(0); // SelectVal1: q1 gates 8,9
+            let row = two_extra.remove(0); // SelectValueArity4: q1 gates 8,9
             cv[5][row] = c[3];
             cv[6][row] = c[4];
             cv[7][row] = c[5];
@@ -578,13 +553,16 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 
     SetupResult {
+        gate_bands,
         fixed_pols,
         pil_str,
         n_bits,
+        n_bits_natural,
         n_used,
         s_map,
         plonk_additions,
         airgroup_name: airgroup_name.clone(),
         air_name: airgroup_name,
+        band_aux: 0,
     }
 }

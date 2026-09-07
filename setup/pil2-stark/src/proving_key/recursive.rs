@@ -17,9 +17,68 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-/// Grinding bits every recursion layer is built at. Pinned rather than taken from the hash
-/// family because the committed verifiers and fixtures encode the resulting query count.
-pub const RECURSIVE_POW_BITS: usize = 20;
+/// Blowup buys constraint degree: an air whose constraints reach degree d needs
+/// `2^blowup + 1 >= d`. The poseidon aggregator is built at degree 8 and so needs 3; blake3's is
+/// built at degree 5 (`PlonkOptions::max_constraint_degree`), which 2 already covers. Blowup
+/// beyond what the degree needs is paid for in prover time and memory and buys nothing.
+///
+/// Scoped by family rather than lowered for everyone because the recursive grinding bits pin a
+/// query count that the committed poseidon native verifiers and circom fixtures already encode.
+///
+/// blake3's COMPRESSOR runs at 1, alone among the templates: it matches nothing, where recursive1
+/// and recursive2 must be the same air and so share one blowup. Measured on the recursion air at
+/// 2^19/LANES=4, maxDeg 5/blowup 2 against maxDeg 3/blowup 1: stage2 117 -> 308 and total columns
+/// 385 -> 570, because `std_sum` packs `maxDeg - 1` bus terms per im pol; but on a domain half the
+/// size, and prover memory follows the product, 7.50 -> 5.28 GB.
+///
+/// The cost lands elsewhere: rate 1/2 instead of 1/4 takes the solved query count from 106 to 211,
+/// and those queries are Merkle paths the PINNED recursive1 verifies. A compressor is proved once
+/// per air that needs one; recursive1 is shared. Deliberate, not overlooked.
+pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
+    match template {
+        RecursiveTemplate::Compressor if hash == "blake3" => 1,
+        RecursiveTemplate::Compressor => 2,
+        _ if hash == "blake3" => 2,
+        _ => 3,
+    }
+}
+
+/// Merkle levels a proof carries outright, per TEMPLATE.
+///
+/// This value is paid by whoever VERIFIES the proof, not by the air that emits it: a level kept is a
+/// compression the verifier skips, bought with `arity^llv - 1` SelectValue gates per opening (see
+/// `hash_family::recursive_last_level_verification`). So the compressor's llv sizes the recursive1
+/// above it, and recursive1's own llv sizes recursive2.
+///
+/// The compressor takes 6 because its consumer has no room to spare, and 6 is the only value that
+/// fits: measured on ZisK's Keccakf, whose recursive1 at compressor-llv 5 needed 9539 hashing blocks
+/// against a capacity of 9361. Level 6 moves one compression per opening (1688 of them) out of the
+/// hashing and 54016 rows into the band, landing at 9340 of 9361; level 7 doubles the gates again and
+/// the band overflows instead, at 11591. A knife-edge, and deliberately chosen as such.
+///
+/// Everything else takes the family value: 5 for blake3, one above the size-based default of 4 at
+/// arity 2. So the compressor sits one level above the recursion pair, which sits one above the
+/// basic airs.
+pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str) -> Option<usize> {
+    match template {
+        RecursiveTemplate::Compressor if hash == "blake3" => Some(6),
+        _ => proofman_common::hash_family::recursive_last_level_verification(hash),
+    }
+}
+
+/// Whether a recursive1 must stop and ask for a compressor, from the circuit's OWN size.
+///
+/// Its own size and not the pinned one: `--recursive-n-bits` says how big the recursion runs, so
+/// reading the threshold off the pinned size would make every air look too big.
+///
+/// Kept separate from the floor check in `gen_recursive_setup` so their precedence is testable. It
+/// is load-bearing: an air over the threshold is exactly what a compressor fixes, and letting the
+/// floor bail first turns that into a fatal "cannot be reconciled".
+fn needs_compressor(template: RecursiveTemplate, has_compressor: bool, n_bits_natural: usize, hash: &str) -> bool {
+    template == RecursiveTemplate::Recursive1
+        && !has_compressor
+        && n_bits_natural > proofman_common::hash_family::recursive_bits_threshold(hash)
+}
 
 /// Sentinel error returned when recursive1 detects that a compressor is required.
 ///
@@ -125,10 +184,15 @@ pub struct RecursiveSetupConfig<'a> {
     pub stark_struct: Option<&'a Value>,
     pub has_compressor: bool,
     pub hash: &'a str,
+    /// Number of proofs the `recursive2` circuit aggregates. Ignored by the
+    /// compressor and recursive1 templates.
+    pub agg_arity: usize,
+    /// Pin this air to 2^N rows (see the --recursive-n-bits flag).
+    pub recursive_n_bits: Option<usize>,
 
     /// When `Some`, the path to the original air's `{air_name}.starkinfo.json` on disk.
     /// Used by the A2 nQueries adjustment: if the recursive1 circuit is smaller than
-    /// 2^RECURSIVE_BITS_THRESHOLD, the starkInfo is updated with `minimumQueriesRequired`
+    /// 2^recursive_bits_threshold, the starkInfo is updated with `minimumQueriesRequired`
     /// and written back to this path so the change is persisted for re-runs.
     pub stark_info_path: Option<&'a std::path::Path>,
 
@@ -192,6 +256,12 @@ pub fn gen_recursive_setup(
     let template = config.template;
     let template_str = template.as_str();
 
+    // One air runs several of these -- compressor, recursive1, recursive2 -- and the retry loop can
+    // run the same one twice. Nested under the `air` span from run_one_air (or `airgroup` for
+    // recursive2), so a line reads `air{name=X}:stage{t=recursive1}` and says which pass it belongs
+    // to. The enclosing span carries the name; repeating it here only made every line wider.
+    let _span = tracing::info_span!("stage", t = %template_str).entered();
+
     // Determine naming and paths based on template
     let (verifier_name, name_filename, files_dir, input_challenges, verkey_input, enable_input) =
         resolve_names_and_paths(config)?;
@@ -251,9 +321,33 @@ pub fn gen_recursive_setup(
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
         merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        min_n_bits: None,
     };
     if template == RecursiveTemplate::Compressor {
-        plonk_opts.max_constraint_degree = Some(5);
+        plonk_opts.max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
+            recursive_blowup(template, config.hash),
+        ));
+    }
+    // This air will reuse an existing starkSetup, so it has to compile to that setup's row count.
+    // Sizing itself to its own gate count instead produces a const file the reused starkinfo cannot
+    // describe, which the C++ const-tree builder rejects by killing the process.
+    if let Some((existing_si, _, _)) = config.existing_pil_info.as_ref() {
+        if let Some(nb) = existing_si["starkStruct"]["nBits"].as_u64() {
+            plonk_opts.min_n_bits = Some(nb as usize);
+        }
+    }
+    // An explicit pin outranks the reuse-derived floor: the caller is stating the size the whole
+    // recursion runs at, which is the only thing the fixpoint between recursive1 and recursive2
+    // can be built on.
+    //
+    // Not a compressor: it is not part of that fixpoint, and pinning it made the floor check below
+    // reject any compressor whose own search lands above the pin.
+    if let Some(pinned) = config.recursive_n_bits {
+        if template != RecursiveTemplate::Compressor {
+            plonk_opts.min_n_bits = Some(pinned);
+        }
     }
     let type_compressor = match template {
         RecursiveTemplate::Compressor => "compressor",
@@ -277,7 +371,9 @@ pub fn gen_recursive_setup(
         let gen_opts = crate::io::recurser::GenCircomOptions {
             airgroup_id: Some(config.airgroup_id as u64),
             has_compressor: config.has_compressor,
-            ..Default::default()
+            has_recursion: false,
+            is_final: false,
+            agg_arity: config.agg_arity,
         };
         let gen_input = crate::io::recurser::GenCircomInput {
             template_name: template.ejs_template(),
@@ -332,23 +428,27 @@ pub fn gen_recursive_setup(
     // First pass: compile and run plonk2pil with the original stark_info.
     let mut plonk_result = run_circom_and_plonk(config.stark_info)?;
 
-    // Threshold check and A2 nQueries adjustment (recursive1 only, no compressor).
-    const RECURSIVE_BITS_THRESHOLD: usize = 17;
-    if template == RecursiveTemplate::Recursive1 && !config.has_compressor {
-        if plonk_result.n_bits > RECURSIVE_BITS_THRESHOLD {
-            // For recursive1: bail early (before the expensive pil_info steps) if the
-            // circuit exceeds the 17-bit threshold.  The caller catches NeedsCompressorError
-            // and auto-retries with has_compressor = true.
-            tracing::warn!(
-                "Recursive1 for air '{}' has n_bits={} > {} — compressor needed",
-                config.air_name,
-                plonk_result.n_bits,
-                RECURSIVE_BITS_THRESHOLD
-            );
-            return Err(anyhow::Error::new(NeedsCompressorError { n_bits: plonk_result.n_bits }));
-        }
+    let recursive_bits_threshold = proofman_common::hash_family::recursive_bits_threshold(config.hash);
 
-        if plonk_result.n_bits < RECURSIVE_BITS_THRESHOLD {
+    // Too big for the shared recursion: hand it back so the caller retries with a compressor. Early,
+    // before the expensive pil_info steps, and before the floor check further down -- see the comment
+    // there for why that order is load-bearing.
+    if needs_compressor(template, config.has_compressor, plonk_result.n_bits_natural, config.hash) {
+        tracing::warn!(
+            "Recursive1 for air '{}' has n_bits={} > {} — compressor needed",
+            config.air_name,
+            plonk_result.n_bits_natural,
+            recursive_bits_threshold
+        );
+        return Err(anyhow::Error::new(NeedsCompressorError { n_bits: plonk_result.n_bits }));
+    }
+
+    // A2 nQueries adjustment: recursive1 only, and only where no compressor carries the knob.
+    if template == RecursiveTemplate::Recursive1 && !config.has_compressor {
+        // Also the circuit's own size: a pin says how big the recursion runs, not how much room
+        // this circuit has. The fill target stays at the threshold -- a pin does not raise it, so
+        // an air pinned larger keeps whatever queries its own size earns.
+        if plonk_result.n_bits_natural < recursive_bits_threshold {
             // A2: small circuit — adjust nQueries in the input starkInfo so the verifier
             // circuit fills close to 2^(THRESHOLD-1) rows, matching JS isCompressorNeeded.
             //
@@ -365,7 +465,7 @@ pub fn gen_recursive_setup(
                 // Use integer ceil to avoid f64 precision loss:
                 // ceil(numer / nRowsPerFri) = ceil(numer * nQueries / NUsed)
                 //                          = (numer * nQueries + NUsed - 1) / NUsed
-                let numer = (1u64 << (RECURSIVE_BITS_THRESHOLD - 1)) + (1u64 << 12);
+                let numer = (1u64 << (recursive_bits_threshold - 1)) + (1u64 << 12);
                 let n_used = plonk_result.n_used as u64;
                 let min_queries = (numer * current_n_queries).div_ceil(n_used);
                 tracing::info!(
@@ -408,6 +508,36 @@ pub fn gen_recursive_setup(
         }
     }
 
+    // Too big for the setup it shares -- checked HERE, after the compressor decision and after A2.
+    //
+    // Order matters twice. Before the threshold check above, this bail pre-empted the compressor:
+    // an air whose recursive1 exceeds the threshold is exactly what a compressor fixes, and bailing
+    // first turned that into a fatal "cannot be reconciled" (ZisK's Keccakf, natural 2^21 against a
+    // 2^19 pin, died here and never got the compressor it needed). After A2, because A2 re-runs
+    // plonk2pil with more queries and can only grow the circuit -- checking before it would pass an
+    // air that the re-run then pushes over the floor.
+    //
+    // What reaches this point is genuinely unreconcilable: a compressor was already applied (or the
+    // template cannot have one) and the air is still too big, and a floor can only pad up.
+    if let Some(floor) = plonk_opts.min_n_bits {
+        if plonk_result.n_bits > floor {
+            let why = if config.has_compressor {
+                "this air already has a compressor and is still too big, so the compressor is not \
+                 the answer here: either raise the pin, or take rows out of the air."
+            } else if config.recursive_n_bits == Some(floor) {
+                "--recursive-n-bits pins the recursion to that size. Either raise the pin, or take \
+                 rows out of this air -- for blake3 the gate rows placed outside the blake3 bands \
+                 are the slack, since a band leaves the plonk columns free on all but its first \
+                 LANES rows."
+            } else {
+                "the airgroup's first air sets the size every later air reuses, so it has to be the \
+                 largest; here a later air is bigger. Ordering the airs largest-first, or giving \
+                 this air its own starkSetup, are the two ways out."
+            };
+            bail!("{} compiles to 2^{} rows but must be 2^{}: {}", name_filename, plonk_result.n_bits, floor, why);
+        }
+    }
+
     // Has-compressor recursive1: the A2 nQueries knob above is the compressor's, not
     // this circuit's starkInfo, so we can't fix the size here. Instead bail early (before
     // the const-tree build, which would otherwise crash with a size mismatch against the
@@ -415,14 +545,14 @@ pub fn gen_recursive_setup(
     // All recursive1 in an airgroup share one setup, so they must all reach 2^(THRESHOLD-1).
     if template == RecursiveTemplate::Recursive1
         && config.has_compressor
-        && plonk_result.n_bits < RECURSIVE_BITS_THRESHOLD
+        && plonk_result.n_bits < recursive_bits_threshold
     {
         tracing::warn!(
             "Recursive1 for air '{}' (has compressor) packs to n_bits={} < {} (n_used={}); \
              requesting a compressor nQueries bump",
             config.air_name,
             plonk_result.n_bits,
-            RECURSIVE_BITS_THRESHOLD,
+            recursive_bits_threshold,
             plonk_result.n_used
         );
         return Err(anyhow::Error::new(RecursiveTooSmallError {
@@ -572,15 +702,16 @@ pub fn gen_recursive_setup(
 
             // Generate stark struct for this recursive circuit.
             let make_recursive_settings = || {
-                let blowup = if template == RecursiveTemplate::Compressor { 2 } else { 3 };
+                let blowup = recursive_blowup(template, config.hash);
                 crate::types::stark_struct::StarkSettings {
                     blowup_factor: Some(blowup),
                     folding_factor: Some(3),
-                    final_degree: Some(5),
-                    // Pinned: the committed native verifiers and circom fixtures encode the query
-                    // count this buys (73 at blowup 3), so it cannot follow the family default.
-                    pow_bits: Some(RECURSIVE_POW_BITS),
-                    last_level_verification: None,
+                    // The terminal the schedule stops at. For a family whose FRI steps are solved
+                    // for rather than folded uniformly, this is the ceiling the solver works under
+                    // rather than the exact degree it lands on.
+                    final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
+                    pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(config.hash)),
+                    last_level_verification: recursive_last_level_verification(template, config.hash),
                     ..Default::default()
                 }
             };
@@ -720,7 +851,7 @@ pub fn gen_recursive_setup(
             const_path.to_str().unwrap(),
             starkinfo_path.to_str().unwrap(),
             verkey_json_path.to_str().unwrap(),
-        );
+        )?;
 
         // Write verkey.bin
         let mut verkey_bin = Vec::with_capacity(32);
@@ -1029,4 +1160,82 @@ pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path:
     }
     let probe = format!("{package}/{sub_path}");
     bootstrapped_node_path(&probe).unwrap_or_else(|| format!("node_modules/{probe}"))
+}
+
+#[cfg(test)]
+mod blowup_tests {
+    use super::*;
+
+    /// A recursive1 over the threshold must ask for a compressor, and that decision has to be
+    /// reached BEFORE the "too big for its shared setup" bail -- ZisK's Keccakf packs to 2^21
+    /// against a 2^19 airgroup floor, and with the floor checked first it died with
+    /// "compiles to 2^21 rows but must be 2^19" and never got the compressor that fixes it.
+    #[test]
+    fn over_the_threshold_asks_for_a_compressor_before_the_floor_complains() {
+        // Keccakf's real numbers: natural 2^21, blake3 threshold 19.
+        assert!(
+            super::needs_compressor(RecursiveTemplate::Recursive1, false, 21, "blake3"),
+            "an air 2 bits over the threshold must ask for a compressor"
+        );
+        // Already compressed and still too big: nothing left to try, so the floor bail is correct.
+        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, true, 21, "blake3"));
+        // recursive2 cannot have a compressor, so it never asks for one.
+        for t in [RecursiveTemplate::Recursive2, RecursiveTemplate::Compressor] {
+            assert!(!super::needs_compressor(t, false, 21, "blake3"), "{t:?} must not ask");
+        }
+        // At or below the threshold the air fits the shared recursion and needs nothing.
+        for n in 0..=19 {
+            assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, n, "blake3"), "n_bits {n}");
+        }
+        // Poseidon's threshold is lower, so the same air crosses it earlier.
+        assert!(super::needs_compressor(RecursiveTemplate::Recursive1, false, 18, "Poseidon1"));
+        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, 17, "Poseidon1"));
+    }
+
+    /// The compressor keeps one more Merkle level than the recursion pair, and only the compressor.
+    ///
+    /// Measured, not guessed: at llv 5 Keccakf's recursive1 needed 9539 hashing blocks against a
+    /// capacity of 9361 while its band used only 8215. Level 6 moves one compression per opening out
+    /// of the hashing (1688 of them, since 52328 selval gates / (2^5 - 1) = 1688 openings = 211
+    /// queries x 8 trees) and doubles the gates that buy it. It does NOT change the compressor's own
+    /// FRI schedule or query count -- both are invariant to llv at this geometry.
+    #[test]
+    fn only_the_compressor_keeps_the_extra_merkle_level() {
+        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3"), Some(6));
+        // The recursion pair keeps the family value; only the compressor departs from it.
+        for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
+            assert_eq!(recursive_last_level_verification(t, "blake3"), Some(5), "{t:?} takes the family value");
+        }
+        for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
+            assert_eq!(recursive_last_level_verification(t, "Poseidon1"), None, "{t:?}");
+            assert_eq!(recursive_last_level_verification(t, "Poseidon2"), None, "{t:?}");
+        }
+    }
+
+    /// Degree 5 needs 2^2 + 1; degree 8 needs 2^3 + 1. Raising blake3 back to 3 would cost prover
+    /// time and memory for degree the air never uses, and lowering poseidon would break the query
+    /// count the recursive grinding bits pin into the committed verifiers.
+    #[test]
+    fn blowup_follows_the_family_constraint_degree() {
+        for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
+            assert_eq!(recursive_blowup(t, "blake3"), 2, "blake3 {t:?} is built at degree 5");
+        }
+        // The compressor is the one template free to go lower: it matches nothing, where recursive1
+        // and recursive2 must be the same air. 1 -> maxDeg 3, which costs stage2 columns and buys a
+        // domain half the size; see recursive_blowup's table.
+        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 1);
+        assert_eq!(
+            proofman_common::hash_family::max_constraint_degree_for_blowup(recursive_blowup(
+                RecursiveTemplate::Compressor,
+                "blake3"
+            )),
+            3,
+            "blowup 1 must derive maxDeg 3, not leave the packer's default of 5"
+        );
+        for h in ["Poseidon1", "Poseidon2"] {
+            assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, h), 2);
+            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive1, h), 3, "{h} aggregator is degree 8");
+            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive2, h), 3, "{h} aggregator is degree 8");
+        }
+    }
 }

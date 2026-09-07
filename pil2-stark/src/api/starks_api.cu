@@ -34,6 +34,16 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <algorithm>
 #include <map>
 #include "stream_commit.cuh"
+#include "recursion_trace/gate_bands/gate_bands.hpp"
+
+// gate_bands_gpu.cu
+extern "C" void uploadGateBandConstantsGPU(uint64_t family);
+extern "C" uint64_t gateBandScratchWordsGPU(uint64_t family);
+extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
+                                   const uint64_t *d_bands, uint64_t nBands, uint64_t aux,
+                                   uint64_t family, uint64_t *d_scratch, void *stream);
+extern "C" void widenCompactWitnessGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
+                                       const uint64_t *d_compact, uint64_t mapCols, void *stream);
 
 // Process-global handle for stream_commit_pause: the gpu-mops borrower calls
 // it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
@@ -380,9 +390,9 @@ void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint6
             }
         }
     }
-    // Silence here used to mean "the table never landed" -- the air had not been set
-    // up yet (register before load_device_setups), or it carries no indexed
-    // descriptor. Either way the later unpack aborts; say so at the actual cause.
+    // Nothing uploaded means the air was not set up yet (register before load_device_setups) or it
+    // carries no indexed descriptor. Either way the later unpack aborts, so say so at the actual
+    // cause rather than letting it fail silently here.
     if (uploaded == 0) {
         zklog.warning("register_instruction_table: air (" + std::to_string(airgroupId) + "," +
                       std::to_string(airId) + ") matched no indexed AirInstanceInfo; the table was "
@@ -718,7 +728,7 @@ void free_device_buffers_gpu(void *d_buffers_)
 }
 
 
-void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info) {
+void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info, uint64_t *execData, uint64_t execWords) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
@@ -732,12 +742,87 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         d_buffers->air_instances[key][proofType].resize(d_buffers->n_gpus, nullptr);
     }
 
+    // Circom setups carry the hash gates' row bands past their exec map. Uploaded here, with
+    // the setup, so a proof that finds an AirInstanceInfo finds its bands too.
+    gate_bands::BandsView bandView;
+    if (execData != nullptr) {
+        bandView = gate_bands::band_section(execData, execWords);
+        const std::string air = "air (" + std::to_string(airgroupId) + "," + std::to_string(airId) + ")";
+        if (bandView.status == gate_bands::BandSection::Malformed) {
+            zklog.error("load_device_setup: " + air + " has a gate-band section that does not describe "
+                        "its exec buffer; the proving key is corrupt");
+            exitProcess();
+        }
+        if (bandView.status == gate_bands::BandSection::UnsupportedExecFormat) {
+            zklog.error("load_device_setup: " + air + " has exec file format version " +
+                        std::to_string(bandView.version) + ", but this build reads version " +
+                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) +
+                        "; regenerate the proving key with a matching setup");
+            exitProcess();
+        }
+        if (bandView.status == gate_bands::BandSection::UnsupportedVersion) {
+            zklog.error("load_device_setup: " + air + " has gate-band section format version " +
+                        std::to_string(bandView.version) + ", but this build understands version " +
+                        std::to_string(gate_bands::GATE_BAND_FORMAT_VERSION) +
+                        "; the proving key and this build disagree on the exec format -- "
+                        "regenerate the proving key with a matching setup");
+            exitProcess();
+        }
+    }
+    const uint64_t *hostBands = bandView.bands;
+    const uint64_t nBands = bandView.n;
+    // The exec map's width. Narrower than cm1 exactly when an expander owns the rest of the
+    // columns, which is what lets the host hand over a compact trace.
+    uint64_t execMapCols = 0;
+    if (execData != nullptr) {
+        const exec_layout::Header h = exec_layout::header(execData, execWords);
+        if (h.valid) execMapCols = h.mapCols;
+    }
+    if (nBands > 0) {
+        // Checked once here rather than per thread in the kernel.
+        uint64_t nRows = 1ULL << setupCtx->starkInfo.starkStruct.nBits;
+        uint64_t bad = gate_bands::first_bad_band(hostBands, nBands, nRows);
+        if (bad != nBands) {
+            zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                        ") band " + std::to_string(bad) + " is row " + std::to_string(hostBands[bad * 3]) +
+                        " kind " + std::to_string(hostBands[bad * 3 + 1]) +
+                        ", which this build cannot expand into a trace of " + std::to_string(nRows) + " rows");
+            exitProcess();
+        }
+    }
+
+    // A band list is one hash family: each back-end skips kinds it does not own, so a mixed list
+    // would leave the other family's bands unwritten rather than failing. Decided once, at setup.
+    const gate_bands::Family family = gate_bands::family_of_bands(hostBands, nBands);
+    if (family == gate_bands::Family::Mixed) {
+        zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                    ") has gate bands of two different hash families; no expander owns them all");
+        exitProcess();
+    }
+    // LANES and the band width both have to have travelled for a BLAKE3 air: the kernel can recover
+    // neither, and a wrong value silently writes the whole band into the wrong columns. Checked once,
+    // at setup.
+    if (family == gate_bands::Family::Blake3 && ((bandView.aux & 0xFFFFFFFFull) == 0 || (bandView.aux >> 32) == 0)) {
+        zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," + std::to_string(airId) +
+                    ") has BLAKE3 gate bands but its exec file carries no LANES or no band width");
+        exitProcess();
+    }
+
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         if (d_buffers->air_instances[key][proofType][i] != nullptr) {
             delete d_buffers->air_instances[key][proofType][i];
         }
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
+        // The exec map's width, so the proof path knows the host trace's row stride. See
+        // AirInstanceInfo::witness_map_cols.
+        d_buffers->air_instances[key][proofType][i]->set_witness_map(
+            execMapCols, 1ULL << setupCtx->starkInfo.starkStruct.nBits,
+            setupCtx->starkInfo.mapSectionsN["cm1"]);
+        if (nBands > 0) {
+            uploadGateBandConstantsGPU((uint64_t)family);
+            d_buffers->air_instances[key][proofType][i]->set_gate_bands(hostBands, nBands, bandView.aux, (uint64_t)family);
+        }
     }
 }
 
@@ -1252,7 +1337,45 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     sd.witnessResident = false;
 
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer);
+    // When the exec map is narrower than cm1 the host hands over a COMPACT N x mapCols trace and the
+    // columns it omits -- the expander's, which getCommitedPols could only zero -- never cross PCIe.
+    // Every Rust caller that can reach this function fills compactly under the same condition, since
+    // both sides read mapCols out of the same exec header. See widenCompactWitnessKernel.
+    const uint64_t mapCols = air_instance_info->witness_map_cols;
+    const bool compactWitness = mapCols > 0 && mapCols < nCols && air_instance_info->d_witness_compact != nullptr;
+    // Getting the witness onto the device happens BEFORE genProof_gpu opens STARK_GPU_PROOF, so it
+    // is a timer of its own rather than a category: a category here would be divided by a window
+    // that does not contain it, which is what made that table total 102% with OTHER pinned at zero.
+    TimerStartGPU(timer, STARK_GPU_WITNESS);
+    if (compactWitness) {
+        CHECKCUDAERR(cudaMemsetAsync((uint8_t*)(d_aux_trace + offsetStage1Extended), 0, sizeTrace, stream));
+        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)air_instance_info->d_witness_compact,
+                                 N * mapCols * sizeof(Goldilocks::Element), streamId, timer, false);
+        widenCompactWitnessGPU((uint64_t*)(d_aux_trace + offsetStage1Extended), nCols, N,
+                               air_instance_info->d_witness_compact, mapCols, stream);
+    } else {
+        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer, false);
+    }
+
+    // Stream-owned scratch; see StreamData::d_gate_band_scratch. Once per stream, and only for a
+    // family that asks for one.
+    const uint64_t gateBandScratchWords = gateBandScratchWordsGPU(air_instance_info->gate_band_family);
+    if (gateBandScratchWords > 0 && sd.d_gate_band_scratch == nullptr) {
+        cudaSetDevice(gpuId);
+        CHECKCUDAERR(cudaMalloc(&sd.d_gate_band_scratch, gateBandScratchWords * sizeof(uint64_t)));
+    }
+
+    // The host copied up the boundary cells; the interiors get rebuilt here. Stream-ordered
+    // behind the copy. Airs whose setup registered no bands skip it.
+    //
+    // Part of STARK_GPU_WITNESS above: like the copy, it runs before the proof window opens.
+    expandGateBandsGPU((uint64_t*)(d_aux_trace + offsetStage1Extended), nCols,
+                       1ULL << setupCtx->starkInfo.starkStruct.nBits,
+                       air_instance_info->d_gate_bands, air_instance_info->n_gate_bands,
+                       air_instance_info->gate_band_aux,
+                       air_instance_info->gate_band_family,
+                       sd.d_gate_band_scratch, stream);
+    TimerStopGPU(timer, STARK_GPU_WITNESS);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
     // Stage publics into the per-stream pinned region for an async copy (no stream

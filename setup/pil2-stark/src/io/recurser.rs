@@ -58,7 +58,7 @@ pub fn pil2circom(
 // ── gen_circom ───────────────────────────────────────────────────────────────
 
 /// Options controlling recursive/final circom generation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GenCircomOptions {
     pub airgroup_id: Option<u64>,
     pub has_compressor: bool,
@@ -66,6 +66,9 @@ pub struct GenCircomOptions {
     /// Selects the final-circuit template; the template path conveys this too,
     /// so this flag is informational and is not forwarded as a CLI flag.
     pub is_final: bool,
+    /// Proofs a `recursive2` circuit aggregates; other templates pass 0. See
+    /// `CircomGenOptions::agg_arity`, which this is forwarded into.
+    pub agg_arity: usize,
 }
 
 /// All inputs for a single `gen_circom` call.
@@ -98,6 +101,7 @@ pub fn gen_circom(input: &GenCircomInput<'_>) -> Result<String> {
         has_compressor: input.options.has_compressor,
         has_recursion: input.options.has_recursion,
         is_final: input.options.is_final,
+        agg_arity: input.options.agg_arity,
     };
     let rust_input = GenCircomCircuitInput {
         template_name: input.template_name,

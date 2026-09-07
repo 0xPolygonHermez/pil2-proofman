@@ -52,6 +52,18 @@ pub struct CompressedFinalConfig<'a> {
 ///
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
+    // The compressed final exists to feed the BN128 wrap, so a family without a snark stage has no
+    // use for it -- and the geometry below is the poseidon one, which would silently give such a
+    // family fewer grinding bits than its own policy asks for. Guarded here rather than at the two
+    // callers: `setup-compressed-final` and recursive_setup's --compressed-final both land here.
+    if !proofman_common::hash_family::supports_snark(config.hash) {
+        anyhow::bail!(
+            "{} has no SNARK stage, so a compressed final would be a dead artifact built at the \
+             poseidon security parameters. Use --hash Poseidon1 or Poseidon2 if you need one.",
+            config.hash
+        );
+    }
+
     let template = "vadcop_final_compressed";
     let verifier_name = "vadcop_final_stark.verifier.circom";
     let build_dir = PathBuf::from(config.build_dir);
@@ -90,8 +102,15 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         // Build per-airgroup, per-air VKs as String vecs matching GenCircomCircuitInput format.
         let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys.to_vec();
 
-        let rust_opts =
-            CircomGenOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: false };
+        // Aggregates nothing: the template never reads `agg_arity`, and `gen_recursive2`
+        // rejects 0 outright, so it cannot pass for one.
+        let rust_opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: false,
+            agg_arity: 0,
+        };
         let rust_input = GenCircomCircuitInput {
             template_name: "src/vadcop/templates/final_compressed.circom.ejs",
             stark_infos: std::slice::from_ref(config.stark_info),
@@ -158,7 +177,11 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         max_constraint_degree: None,
         hash_id: config.hash.to_string(),
         merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        min_n_bits: None,
     };
+    let _span = tracing::info_span!("stage", t = "vadcop_final_compressed").entered();
     let plonk_result: PlonkResult = plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts)
         .context("plonk2pil failed in compressed final setup")?;
 
@@ -199,10 +222,12 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let plonk_n_fixed = plonk_result.fixed_pols.len();
 
     // Compressed final stark struct settings
+    // arity, llv and final_degree are this circuit's own geometry, deliberately not the family's;
+    // blowup and grinding are the family's, taken from the table so a policy change reaches here.
     let compressed_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(4),
+        blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
         folding_factor: Some(3),
-        pow_bits: Some(22),
+        pow_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
         merkle_tree_arity: Some(2),
         last_level_verification: Some(6),
         final_degree: Some(10),
@@ -320,7 +345,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             const_path.to_str().unwrap(),
             starkinfo_path.to_str().unwrap(),
             verkey_json_path.to_str().unwrap(),
-        );
+        )?;
 
         let mut verkey_bin = Vec::with_capacity(32);
         for &val in root.iter() {
@@ -352,4 +377,45 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     witness_tracker.await_all()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Poseidon is the only family that reaches this circuit, so deriving blowup and grinding from
+    /// the family table must reproduce exactly what it was hardcoded to and shipped with.
+    #[test]
+    fn the_derived_settings_match_the_shipped_geometry() {
+        for fam in ["Poseidon1", "Poseidon2"] {
+            assert_eq!(proofman_common::hash_family::final_blowup_factor(fam), 4, "{fam} blowup");
+            assert_eq!(proofman_common::hash_family::final_grinding_bits(fam), 22, "{fam} grinding");
+        }
+    }
+
+    /// The guard has to fire before any of the setup runs, so a family without a snark stage cannot
+    /// reach the poseidon geometry below it. Dummy paths: nothing should be touched.
+    #[test]
+    fn a_family_without_a_snark_stage_is_refused_before_anything_is_built() {
+        let root = ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
+        let empty = Value::Null;
+        let config = CompressedFinalConfig {
+            build_dir: "/nonexistent/compressed-final-guard",
+            hash: "blake3",
+            name: "n",
+            const_root: &root,
+            verification_keys: &[],
+            stark_info: &empty,
+            verifier_info: &empty,
+            circom_exec: "",
+            circuits_gl_path: "",
+            recurser_circuits_path: "",
+            std_pil_path: "",
+            recurser_pil_path: "",
+            circom_helpers_dir: "",
+        };
+        let err = gen_compressed_final_setup(&config, &WitnessTracker::new()).unwrap_err().to_string();
+        assert!(err.contains("no SNARK stage"), "unexpected error: {err}");
+        assert!(!Path::new("/nonexistent/compressed-final-guard").exists(), "guard ran too late");
+    }
 }

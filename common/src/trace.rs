@@ -179,11 +179,20 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         Ok(Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true })
     }
 
+    /// Split the trace into exactly `n` chunks for parallel writing.
+    ///
+    /// The asserts are real, not `debug_assert!`, for two reasons. They match the copy the
+    /// `trace_row!` macro generates -- the one production traces actually use -- which this had
+    /// silently drifted from. And the precondition is load-bearing: `NUM_ROWS` is a power of two, so
+    /// a non-power-of-two `n` truncates `chunk_size` and yields MORE than `n` chunks (asking for 3
+    /// of 16 rows gives four chunks of 5, 5, 5, 1). Callers `enumerate()` and index by chunk, so
+    /// that is a silently wrong partition, not a slow one. The cost is three integer ops per call,
+    /// against setting up a whole parallel iteration.
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
-        debug_assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
-        debug_assert!(n <= NUM_ROWS, "n must be less than or equal to NUM_ROWS");
+        assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
+        assert!(n <= NUM_ROWS, "n must be less than or equal to NUM_ROWS");
         let chunk_size = NUM_ROWS / n;
-        debug_assert!(chunk_size > 0, "Chunk size must be greater than zero");
+        assert!(chunk_size > 0, "Chunk size must be greater than zero");
         self.buffer.par_chunks_mut(chunk_size)
     }
 
@@ -430,15 +439,18 @@ mod tests {
         });
     }
 
+    /// `expected` pins OUR message, not rayon's. With a `debug_assert!` this passed in debug and
+    /// silently returned four chunks in release; with rayon's own panic it would pass for the wrong
+    /// reason on the too-large case (chunk_size 0).
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "n must be a power of two")]
     fn par_iter_mut_chunks_panics_non_power_of_two() {
         let mut t = SampleTrace::new_zeroes();
-        let _ = t.par_iter_mut_chunks(3); // not power of two
+        let _ = t.par_iter_mut_chunks(3); // 16 / 3 = 5, which would give FOUR chunks, not three
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "n must be less than or equal to NUM_ROWS")]
     fn par_iter_mut_chunks_panics_too_large() {
         let mut t = SampleTrace::new_zeroes();
         let _ = t.par_iter_mut_chunks(32); // greater than NUM_ROWS

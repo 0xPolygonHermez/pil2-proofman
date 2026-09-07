@@ -3,12 +3,15 @@
 //! Given only an R1CS file this computes — without compiling anything — how many
 //! witness *cells* the verifier circuit actually uses, broken down per component
 //! (PLONK, Poseidon Sponge, Poseidon Compression, CMul, FFT4, EvPol4,
-//! TreeSelector, SelectVal1).
+//! TreeSelector, SelectValueArity4).
 //!
 //! A **cell** is a single value placed into the witness (`s_map`). The per-unit
 //! cell costs below are read directly off the placement loops in compressor.rs /
-//! aggregation.rs, so they match what the setup actually writes. The cell count
-//! is the real footprint and is independent of how the rows are laid out.
+//! aggregation.rs, so they match what the setup actually writes.
+//!
+//! The hash gates map only their boundary; each row band's interior is recomputed at
+//! trace-fill time (see gate_bands.hpp) and is not an `s_map` placement. So this counts the
+//! witness footprint, not the trace's -- the AIR still has those columns.
 
 use proofman_common::hash_family::GateRole;
 
@@ -22,10 +25,9 @@ pub const PLONK_CELLS: usize = 3;
 /// Cells a single instance of `role` writes into `s_map`, read off the placement
 /// loops in the setup files.
 ///
-/// Poseidon (compressor.rs:147-213): the `0..16` loop writes 11 cells each
-/// (input, round0-4, round26-29, output) = 176; the `0..11` loop writes im1 (11)
-/// plus im2 (11) = 22, so the Sponge body = 198. The Compression variant additionally
-/// writes fb and sb (`s_map[16]`/`s_map[17]`), giving 200.
+/// Poseidon: boundary only -- input (16) and output (16) = 32 for the Sponge, plus two key bits
+/// for the Compression variant, giving 34. The round snapshots that fill the rest of the band
+/// belong to the trace expander, not the map.
 ///
 /// `GateRole::TreeSelector` is NOT fixed-width: it covers TreeSelector4 (17 signals,
 /// Poseidon2) and TreeSelector8 (30 signals, Poseidon1). Its cell count must be read from
@@ -33,13 +35,24 @@ pub const PLONK_CELLS: usize = 3;
 /// function returns `None` for it and callers must resolve it from the r1cs.
 pub fn cells_per_gate(role: GateRole) -> Option<usize> {
     match role {
-        GateRole::PoseidonSponge => Some(198),
-        GateRole::PoseidonCompression => Some(200),
-        GateRole::CMul => Some(9),        // signals.len() == 9
-        GateRole::EvPol4 => Some(21),     // take(21)
-        GateRole::Fft4 => Some(24),       // take(24)
-        GateRole::TreeSelector => None,   // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
-        GateRole::SelectVal1 => Some(22), // take(22)
+        GateRole::PoseidonSponge => Some(32),
+        GateRole::PoseidonCompression => Some(34),
+        GateRole::CMul => Some(9),             // signals.len() == 9
+        GateRole::EvPol4 => Some(21),          // 21 of the gate's 27; blake3 binds six more
+        GateRole::Fft4 => Some(24),            // take(24)
+        GateRole::TreeSelector => None,        // 17 (TreeSelector4) or 30 (TreeSelector8) — resolve from r1cs
+        GateRole::SelectValArity4 => Some(22), // take(22)
+        // 2*4 values + 1 key + 4 selected = 13 signals, but no AIR places this gate
+        // yet (the arity-2 families have no plonk2pil setup), so the row width is not
+        // decided. None keeps the estimate honest rather than guessing.
+        GateRole::SelectValArity2 => None,
+        // Boundary only, per the blake3 recursion AIR design (spec 3.2): the 56-row block's
+        // interior belongs to the trace expander, as poseidon's chain slot does.
+        // Node: 8 inputs + key + 4 packed outputs. Compress: 16 inputs + blockLen + counterLo
+        // + 16 u32 outputs; `flags` is a fixed column and `raw` is the gate kind, so neither
+        // takes a cell.
+        GateRole::Blake3Node => Some(13),
+        GateRole::Blake3Compress => Some(34),
     }
 }
 
@@ -116,7 +129,8 @@ fn estimate_with_plonk_count(r1cs: &R1csFile, n_plonk: usize) -> CellEstimate {
         mk_gate("FFT4", GateRole::Fft4),
         mk_gate("EvPol4", GateRole::EvPol4),
         mk_gate("TreeSelector", GateRole::TreeSelector),
-        mk_gate("SelectVal1", GateRole::SelectVal1),
+        mk_gate("SelectValueArity4", GateRole::SelectValArity4),
+        mk_gate("SelectValueArity2", GateRole::SelectValArity2),
     ];
 
     let total_cells = components.iter().map(|c| c.cells).sum();
@@ -224,8 +238,8 @@ mod tests {
 
     #[test]
     fn cells_per_gate_matches_placement_widths() {
-        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), Some(198));
-        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), Some(200));
+        assert_eq!(cells_per_gate(GateRole::PoseidonSponge), Some(32));
+        assert_eq!(cells_per_gate(GateRole::PoseidonCompression), Some(34));
         assert_eq!(cells_per_gate(GateRole::CMul), Some(9));
         assert_eq!(cells_per_gate(GateRole::Fft4), Some(24));
         // TreeSelector is width-variable (TreeSelector4=17 / TreeSelector8=30) — resolved
