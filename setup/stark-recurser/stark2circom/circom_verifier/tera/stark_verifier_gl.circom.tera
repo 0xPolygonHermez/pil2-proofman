@@ -1309,7 +1309,6 @@ template {{ verifier_name }}() {
     // ── Final check: Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }})(r_shift) = p(r_shift) —
     signal finalAt{{ r.i }}[{{ r.t }}][3];
     for (var q = 0; q < {{ r.t }}; q++) {
-        // finalAt{{ r.i }}[q] <== EvalPolBase({{ final_pol_size }})(finalPol, gpt{{ r.i }}[q]);
         finalAt{{ r.i }}[q] <== EvalPol({{ final_pol_size }})(finalPol, [gpt{{ r.i }}[q], 0, 0]);
         for (var e = 0; e < 3; e++) {
             enabled * (finalAt{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
