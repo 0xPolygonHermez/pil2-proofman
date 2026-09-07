@@ -1019,12 +1019,13 @@ static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *
     CHECKCUDAERR(cudaEventRecord(sd.customFixedDone, sd.customStream));
 }
 
-// Non-aliased airs only: unpack + extend + merkelize the fixed pols on the stream's low-priority
-// fixedStream, forked after the previous proof's work, so the rebuild overlaps this proof's witness upload
-// instead of running inline. Aliased airs (constPolsAliasTree) keep the inline order: their LDE
-// destroys the small-domain pols that stages 1 and 2 still read. The caller waits fixedPolsDone
-// before genProof_gpu (stage 1 reads the small domain) and passes fixedTreePending so genProof_gpu
-// skips both steps and waits fixedTreeDone only where Q first reads the extended pols.
+// Unpack + extend + merkelize the fixed pols on the stream's low-priority fixedStream, forked
+// after the previous proof's work, so the rebuild overlaps this proof's witness upload instead of
+// running inline. Every air with constants takes this path -- the const tree and the small-domain
+// pols are distinct regions, so the LDE cannot destroy what stages 1 and 2 still read. The caller
+// waits fixedPolsDone before genProof_gpu (stage 1 reads the small domain) and passes
+// fixedTreePending so genProof_gpu skips both steps and waits fixedTreeDone only where Q first
+// reads the extended pols.
 static void prebuildFixedTree(SetupCtx *setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree,
                               StreamData &sd, TimerGPU &timer) {
     StarkInfo &si = setupCtx->starkInfo;
@@ -1178,7 +1179,6 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
-    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
 
     const bool pipeline = d_buffers->pipelineMode;
@@ -1188,11 +1188,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // per-air.
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
-    // constPolsAliasTree airs cannot reuse: their pols sit in the tree's node area, which the
-    // previous proof's merkelize overwrote.
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "")
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
@@ -1229,19 +1226,21 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
         uint64_t offsetConstTree = itConstTree->second;
         d_const_tree = d_aux_trace + offsetConstTree;
 
-        // calculateFixedExtended airs merkelize inside genProof_gpu instead, on the same
-        // flag -- either way ("const", true) holds this slot's tree on exit.
-        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
-            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
+        // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
+        // device (calculateFixedExtended). Reaching here without that flag means the tree slot
+        // would stay uninitialised, which used to be masked by a silent file upload.
+        if (!setupCtx->starkInfo.calculateFixedExtended) {
+            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " has no on-device const-tree rebuild (calculateFixedExtended is false) and"
+                        " no preallocated tree -- nothing would initialise (\"const\", true)");
+            exitProcess();
         }
     }
     sd.constTreeResident = true;
 
-    // Fixed pols: non-aliased airs rebuild on the lane now (overlapping the witness upload below);
-    // aliased ones inside genProof_gpu, in order.
+    // Fixed pols rebuild on the lane, overlapping the witness upload below.
     bool fixedPrebuilt = false;
-    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended &&
-        !setupCtx->starkInfo.constPolsAliasTree) {
+    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
         prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
         fixedPrebuilt = true;
     }
@@ -1344,7 +1343,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -1396,8 +1395,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "")
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
 
     sd.pSetupCtx = pSetupCtx_;
     sd.airgroupId = airgroupId;
@@ -1788,7 +1786,6 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
         : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
-    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
@@ -1798,8 +1795,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
                                              setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], true,
-                                             string(recurser_id))
-                           && !setupCtx->starkInfo.constPolsAliasTree;
+                                             string(recurser_id));
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
@@ -1852,20 +1848,21 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         uint64_t offsetConstTree = itConstTree->second;
         d_const_tree = d_aux_trace + offsetConstTree;
 
-        // calculateFixedExtended airs rebuild the tree inside genProof_gpu (same flag, same reuse
-        // gate); the rest still upload the consttree file. Either way ("const", true) holds this
-        // slot's tree on exit.
-        if (!reuse_const_tree && !setupCtx->starkInfo.calculateFixedExtended) {
-            load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
+        // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
+        // device (calculateFixedExtended). Reaching here without that flag means the tree slot
+        // would stay uninitialised, which used to be masked by a silent file upload.
+        if (!setupCtx->starkInfo.calculateFixedExtended) {
+            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " has no on-device const-tree rebuild (calculateFixedExtended is false) and"
+                        " no preallocated tree -- nothing would initialise (\"const\", true)");
+            exitProcess();
         }
     }
     sd.constTreeResident = true;
 
-    // Fixed pols: non-aliased airs rebuild on the lane now (overlapping the witness upload below);
-    // aliased ones inside genProof_gpu, in order.
+    // Fixed pols rebuild on the lane, overlapping the witness upload below.
     bool fixedPrebuilt = false;
-    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended &&
-        !setupCtx->starkInfo.constPolsAliasTree) {
+    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
         prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
         fixedPrebuilt = true;
     }
@@ -1921,7 +1918,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (d_buffers->pipelineMode && !sd.recursive) {
         // Depth-2 in-flight on the shared stream: snapshot the completion into the ring
         // (the per-stream sd fields will be overwritten by the next launch) and let the
@@ -2338,8 +2335,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
         uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
         // Claims the slot but not constTreeResident: this never touches the const tree.
-        if (!sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")
-            || setupCtx->starkInfo.constPolsAliasTree) {
+        if (!sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")) {
             unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
             CHECKCUDAERR(cudaGetLastError());
         }
@@ -3266,9 +3262,8 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     // air sharing this slot is just as warm, since that is what gen_*_proof keys reuse on.
     const AirInstanceInfo *wantAir = requestedAirInstance(d_buffers, airgroupId, airId, proofType);
     // Must match adoptFixedSlot's key exactly, or this steers to a stream that then cannot
-    // reuse anyway. An aliased air never reuses, so it is never warm by slot.
-    const bool slotUsable = wantAir != nullptr && wantAir->setupCtx != nullptr
-                            && !wantAir->setupCtx->starkInfo.constPolsAliasTree;
+    // reuse anyway.
+    const bool slotUsable = wantAir != nullptr && wantAir->setupCtx != nullptr;
     const uint64_t wantSlot = slotUsable ? wantAir->const_pols_offset : UINT64_MAX;
     const uint64_t wantAux = slotUsable
         ? wantAir->setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)] : 0;

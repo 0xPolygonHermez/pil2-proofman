@@ -143,8 +143,6 @@ pub fn stark_info_new_c(
     verify: bool,
     gpu: bool,
     preallocate: bool,
-    // Table airs: proved at most once, so the const pols need not survive the proof.
-    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -157,7 +155,6 @@ pub fn stark_info_new_c(
             verify,
             gpu,
             preallocate,
-            single_use,
         )
     }
 }
