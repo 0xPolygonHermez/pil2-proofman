@@ -474,7 +474,7 @@ struct StreamData{
     uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
     // Where the unpacked pols land in the aux trace. Part of the key because two airs can
     // share a slot yet lay out ("const", false) differently -- a preallocated const tree
-    // moves it, and constPolsAliasTree moves it into the tree's node area.
+    // moves it.
     uint64_t constAuxOffset = 0;
     bool constAggBuffer = false;
     string constRecurserId;
@@ -893,16 +893,6 @@ void copy_to_device_in_chunks(
     uint8_t* pinnedBuffer,
     uint64_t pinnedBufferSize,
     cudaStream_t stream);
-
-
-void load_and_copy_to_device_in_chunks(
-    DeviceCommitBuffers* d_buffers,
-    const char* bufferPath,
-    void* dst,
-    uint64_t total_size,
-    uint64_t streamId,
-    uint64_t header_skip_bytes = 0
-    );
 
 #endif
 

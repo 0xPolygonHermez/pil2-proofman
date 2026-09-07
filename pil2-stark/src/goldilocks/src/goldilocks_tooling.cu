@@ -178,43 +178,4 @@ void copy_to_device_in_chunks(
 
 }
 
-void load_and_copy_to_device_in_chunks(
-    DeviceCommitBuffers* d_buffers,
-    const char* bufferPath,
-    void* dst,
-    uint64_t total_size,
-    uint64_t streamId,
-    uint64_t header_skip_bytes
-    ){
-
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-
-    cudaSetDevice(gpuId);
-
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
-
-    uint64_t block_size = d_buffers->pinned_size;
-
-    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    // Ping-pong through the pinned halves gated on each half's copy retirement
-    // event; a cudaStreamSynchronize here would drain every queued kernel of the
-    // previous proof and idle the GPU for the whole file read of the next chunk.
-    Goldilocks::Element *half[2] = { d_buffers->pinned_buffer[gpuLocalId],
-                                     d_buffers->pinned_buffer_extra[gpuLocalId] };
-    cudaEvent_t *ev = d_buffers->pinned_copy_done[gpuLocalId];
-    uint64_t nBlocks = (total_size + block_size - 1) / block_size;
-    for (uint64_t i = 0; i < nBlocks; ++i) {
-        int h = (int)(i & 1);
-        uint64_t len = std::min(block_size, total_size - i * block_size);
-        CHECKCUDAERR(cudaEventSynchronize(ev[h]));
-        loadFileParallel_block(half[h], bufferPath, block_size, true, i, header_skip_bytes);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)dst + i * block_size, half[h], len,
-                                     cudaMemcpyHostToDevice, stream));
-        CHECKCUDAERR(cudaEventRecord(ev[h], stream));
-    }
-    // Pinned halves are shared beyond this call (mutex releases on return).
-    CHECKCUDAERR(cudaEventSynchronize(ev[0]));
-    CHECKCUDAERR(cudaEventSynchronize(ev[1]));
-}
 #endif // __GOLDILOCKS_ENV__
