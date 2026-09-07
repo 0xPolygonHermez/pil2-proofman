@@ -85,7 +85,7 @@ fn run(fx: &Fixture, section: &[u64]) -> bool {
     transcript.put(&fx.seed);
 
     let mut claims_ok = true;
-    let ok = stir_verify::<Poseidon2_16, Poseidon2_16, Poseidon2_16, Poseidon2_8>(
+    let ok = stir_verify::<Poseidon2_16, Poseidon2_16, Transcript<Goldilocks, Poseidon2_16>, Poseidon2_8>(
         &mut transcript,
         &parsed,
         &fx.params,

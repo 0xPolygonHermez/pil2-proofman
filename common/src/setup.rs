@@ -26,7 +26,7 @@ use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
     get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
-    calculate_words_per_row_c,
+    calculate_words_per_row_c, load_device_setup_c,
 };
 
 use crate::{GlobalInfoAir, ProofmanError};
@@ -112,8 +112,160 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
+/// Magic and layout version of the `.exec` file, mirroring `EXEC_MAGIC` / `EXEC_FORMAT_VERSION`
+/// in stark-recurser's plonk2pil, which writes them, and `exec_layout.hpp`, which also reads them.
+const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
+const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+const EXEC_FORMAT_VERSION: u64 = 2;
+const EXEC_HEADER_WORDS: usize = 4;
+
+/// Dimensions from a loaded `.exec` buffer's header.
+pub struct ExecHeader {
+    pub n_adds: u64,
+    pub map_rows: u64,
+    pub map_cols: u64,
+}
+
+/// Reads the header of a buffer [`load_exec_file`] returned, which has already validated it.
+///
+/// Go through this rather than indexing the buffer: the header has grown once already, and the
+/// call sites that hard-coded `exec[0]` for `n_adds` all became silently wrong when it did.
+pub fn exec_header(exec: &[u64]) -> ExecHeader {
+    debug_assert!(
+        exec.len() >= EXEC_HEADER_WORDS && exec[0] == (EXEC_MAGIC | EXEC_FORMAT_VERSION),
+        "exec buffer was not produced by load_exec_file"
+    );
+    ExecHeader { n_adds: exec[1], map_rows: exec[2], map_cols: exec[3] }
+}
+
+/// Reads a whole `.exec` file into memory and validates its header.
+///
+/// The layout is `exec_layout.hpp`'s: magic and version, `n_adds`, then the map's row and column
+/// extent, then the additions, the map as u32 pairs, and a gate-band section. This reads to the
+/// end of the file rather than to the map's length, so the band section comes along.
+pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u64>> {
+    let mut file = File::open(exec_filename)?;
+
+    let file_bytes = file.metadata()?.len();
+    if file_bytes % 8 != 0 {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {file_bytes} bytes, not a multiple of 8"
+        )));
+    }
+    let total_elements = usize::try_from(file_bytes / 8)
+        .map_err(|_| ProofmanError::InvalidSetup(format!("exec file {exec_filename}: size overflow")))?;
+    if total_elements < EXEC_HEADER_WORDS {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {total_elements} words, too short to hold a header"
+        )));
+    }
+
+    let mut header = [0u64; EXEC_HEADER_WORDS];
+    for word in header.iter_mut() {
+        let mut bytes = [0u8; 8];
+        file.read_exact(&mut bytes)?;
+        *word = u64::from_le_bytes(bytes);
+    }
+
+    if header[0] & EXEC_MAGIC_MASK != EXEC_MAGIC {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} does not carry an exec header; it predates the current \
+             layout -- regenerate the proving key with a matching setup"
+        )));
+    }
+    let version = header[0] & !EXEC_MAGIC_MASK;
+    if version != EXEC_FORMAT_VERSION {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is format version {version}, but this build reads version \
+             {EXEC_FORMAT_VERSION} -- regenerate the proving key with a matching setup"
+        )));
+    }
+
+    let (n_adds, map_rows, map_cols) = (header[1], header[2], header[3]);
+    if map_cols > n_cols {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} maps {map_cols} columns into a trace {n_cols} wide; the \
+             proving key's exec file and stark info disagree"
+        )));
+    }
+
+    // The map is u32 pairs, so its words are half its entries rounded up.
+    let prefix_elements: usize = (|| -> Option<usize> {
+        let adds_terms = n_adds.checked_mul(4)?;
+        let map_words = map_rows.checked_mul(map_cols)?.checked_add(1)? / 2;
+        usize::try_from((EXEC_HEADER_WORDS as u64).checked_add(adds_terms)?.checked_add(map_words)?).ok()
+    })()
+    .ok_or_else(|| {
+        ProofmanError::InvalidSetup(format!(
+            "exec header for {exec_filename}: size overflow (n_adds={n_adds}, map_rows={map_rows}, \
+             map_cols={map_cols})"
+        ))
+    })?;
+
+    if total_elements < prefix_elements {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {total_elements} words, shorter than its own header claims \
+             ({prefix_elements})"
+        )));
+    }
+
+    // Header already consumed; read the remaining u64s in one go.
+    let mut exec_data: Vec<u64> = vec![0; total_elements];
+    exec_data[..EXEC_HEADER_WORDS].copy_from_slice(&header);
+    let body_bytes = (total_elements - EXEC_HEADER_WORDS) * 8;
+    let body_slice =
+        unsafe { std::slice::from_raw_parts_mut(exec_data[EXEC_HEADER_WORDS..].as_mut_ptr() as *mut u8, body_bytes) };
+    file.read_exact(body_slice)?;
+    Ok(exec_data)
+}
+
 #[allow(clippy::too_many_arguments)]
 impl<F: PrimeField64> Setup<F> {
+    /// Uploads this setup to every GPU, gate-band section included.
+    ///
+    /// Go through this (or [`Setup::load_device_as`]) rather than `load_device_setup_c`: the GPU
+    /// expander rebuilds the hash gates' trace interiors from those bands, and a setup uploaded
+    /// without them proves a trace with holes in it.
+    pub fn load_device(
+        &self,
+        airgroup_id: u64,
+        air_id: u64,
+        d_buffers: *mut std::os::raw::c_void,
+        packed_info: *mut std::os::raw::c_void,
+    ) {
+        let exec = self.exec_data.as_ref().map(|e| e.as_slice());
+        self.load_device_as(self.setup_type.into(), airgroup_id, air_id, d_buffers, packed_info, exec);
+    }
+
+    /// [`Setup::load_device`] with the registration key and the exec buffer spelled out, for
+    /// `prove_air`: it proves one AIR under the proof type named in the proof file, which can
+    /// differ from this setup's own, and it loads the exec file itself.
+    pub fn load_device_as(
+        &self,
+        proof_type: &str,
+        airgroup_id: u64,
+        air_id: u64,
+        d_buffers: *mut std::os::raw::c_void,
+        packed_info: *mut std::os::raw::c_void,
+        exec: Option<&[u64]>,
+    ) {
+        let (exec_ptr, exec_words) = match exec {
+            Some(exec) => (exec.as_ptr() as *mut u64, exec.len() as u64),
+            None => (std::ptr::null_mut(), 0),
+        };
+        load_device_setup_c(
+            airgroup_id,
+            air_id,
+            proof_type,
+            (&self.p_setup).into(),
+            d_buffers,
+            self.verkey.as_ptr() as *mut u8,
+            packed_info,
+            exec_ptr,
+            exec_words,
+        );
+    }
+
     pub fn new(
         setup_path: &Path,
         airgroup_id: usize,
@@ -339,35 +491,10 @@ impl<F: PrimeField64> Setup<F> {
                     Some(*get_witness_symbol)
                 };
 
-                // Pre-load the entire .exec file into memory. Header is the first two u64s
-                // (n_adds, n_smap); the rest is read sequentially. Pre-loading gives RAM-speed
-                // access during every `get_committed_pols_c` call — no on-demand page faults.
+                // Pre-loaded so every `get_committed_pols_c` reads it at RAM speed.
                 let exec_filename = setup_path.display().to_string() + ".exec";
-                let mut file = File::open(&exec_filename)?;
-                let mut bytes = [0u8; 8];
-                file.read_exact(&mut bytes)?;
-                let n_adds = u64::from_le_bytes(bytes);
-                file.read_exact(&mut bytes)?;
-                let n_smap = u64::from_le_bytes(bytes);
-                let exec_data_size_elements: usize = (|| -> Option<usize> {
-                    let adds_terms = n_adds.checked_mul(4)?;
-                    let smap_terms = n_smap.checked_mul(n_cols)?;
-                    let elements = 2u64.checked_add(adds_terms)?.checked_add(smap_terms)?;
-                    usize::try_from(elements).ok()
-                })()
-                .ok_or_else(|| {
-                    ProofmanError::InvalidSetup(format!(
-                        "exec header for {exec_filename}: size overflow (n_adds={n_adds}, n_smap={n_smap}, n_cols={n_cols})"
-                    ))
-                })?;
-                // Header already consumed; read the remaining (size - 2) u64s.
-                let mut exec_data: Vec<u64> = vec![0; exec_data_size_elements];
-                exec_data[0] = n_adds;
-                exec_data[1] = n_smap;
-                let body_bytes = (exec_data_size_elements - 2) * 8;
-                let body_slice =
-                    unsafe { std::slice::from_raw_parts_mut(exec_data[2..].as_mut_ptr() as *mut u8, body_bytes) };
-                file.read_exact(body_slice)?;
+                let exec_data = load_exec_file(&exec_filename, n_cols)?;
+                let n_adds = exec_header(&exec_data).n_adds;
 
                 (
                     Some(library),

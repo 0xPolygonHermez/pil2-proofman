@@ -91,6 +91,65 @@ struct AirInstanceInfo {
     uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
     uint64_t  num_entries = 0;
 
+    // Row bands the hash gates leave interior-blank, expanded on device after the trace copy
+    // (see expandGateBandsGPU). A property of the circuit, so uploaded once with the setup.
+    uint64_t *d_gate_bands = nullptr;   // n_gate_bands * 3 words: {row, kind, payload}
+    uint64_t  n_gate_bands = 0;
+    // The band section's aux word: setup parameters no kernel can recover from the trace (BLAKE3
+    // packs LANES and the band width here; Poseidon writes 0).
+    uint64_t  gate_band_aux = 0;
+    // gate_bands::Family, kept untyped so this header does not depend on starkpil.
+    uint64_t  gate_band_family = 0;
+    // Dense BLAKE3 lookup counters, 2^17 + 2^16 words. The AIR holds these as two trace COLUMNS, so
+    // counting straight into the trace makes every atomicAdd take a cache line of its own, shared with
+    // witness cells other threads are writing. Accumulating here keeps the whole working set
+    // contiguous and L2-resident and free of that false sharing; a trivial kernel scatters it into the
+    // columns afterwards. The buffer itself lives on StreamData: this struct is per (air,
+    // proofType, GPU), so one hung off it would be shared by every stream proving that air.
+
+    /// Row stride of the HOST trace buffer, i.e. the exec map's width.
+    ///
+    /// `getCommitedPols` can only place what the circom witness carries, so it fills these columns and
+    /// leaves the rest zero for the expander to rebuild -- which means copying the full width ships
+    /// zeros the expander overwrites two kernels later. When this is narrower than the air's cm1 the
+    /// host hands over a COMPACT buffer and the copy widens it on arrival. 0 means "not known", and
+    /// the full-width path is used.
+    uint64_t witness_map_cols = 0;
+
+    /// Landing buffer for the compact host trace, `N * witness_map_cols` words. The copy has to be one
+    /// contiguous run to get PCIe bandwidth: a 2D copy straight into the strided columns is slower than
+    /// shipping the full width, because the rows are only `mapCols * 8` bytes -- too small for the DMA
+    /// engine. So the transfer lands here and a kernel widens it on device, where the strided writes
+    /// are cheap.
+    uint64_t *d_witness_compact = nullptr;
+
+    /// Allocate the landing buffer. Idempotent; must not run while work using it is in flight.
+    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols) {
+        witness_map_cols = mapCols;
+        if (d_witness_compact != nullptr) {
+            CHECKCUDAERR(cudaFree(d_witness_compact));
+            d_witness_compact = nullptr;
+        }
+        if (mapCols > 0 && mapCols < nCols) {
+            CHECKCUDAERR(cudaMalloc(&d_witness_compact, nRows * mapCols * sizeof(uint64_t)));
+        }
+    }
+
+    // Caller must have selected the target GPU. Replaces whatever was there.
+    void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t aux, uint64_t family) {
+        if (d_gate_bands != nullptr) {
+            CHECKCUDAERR(cudaFree(d_gate_bands));
+            d_gate_bands = nullptr;
+        }
+        n_gate_bands = nBands;
+        gate_band_aux = aux;
+        gate_band_family = family;
+        if (nBands > 0) {
+            CHECKCUDAERR(cudaMalloc(&d_gate_bands, nBands * 3 * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_gate_bands, bands, nBands * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+    }
+
     // Upload (replacing any previous) the program-specific instruction table. Caller must
     // have selected the target GPU. Safe to call repeatedly ACROSS programs, but never
     // while work using d_instr_table is in flight on this GPU -- the cudaFree below would
@@ -324,6 +383,14 @@ struct AirInstanceInfo {
         if (d_instr_table != nullptr) {
             CHECKCUDAERR(cudaFree(d_instr_table));
         }
+
+        if (d_gate_bands != nullptr) {
+            CHECKCUDAERR(cudaFree(d_gate_bands));
+        }
+
+        if (d_witness_compact != nullptr) {
+            CHECKCUDAERR(cudaFree(d_witness_compact));
+        }
     }
 };
 
@@ -350,6 +417,10 @@ struct StreamData{
     // async copy (no per-copy stream sync); reused only on event-gated stream
     // reselect. Used by commit_witness_gpu only.
     Goldilocks::Element *pinned_aux_values;
+    // Dense scratch for whichever gate-band family needs one, gateBandScratchWordsGPU() words. Per
+    // STREAM: the expander's memset/fill/scatter are ordered only within one. Allocated on this
+    // stream's first commit of an air whose family asks for it.
+    uint64_t *d_gate_band_scratch = nullptr;
 
     //runtime data
     // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
@@ -536,6 +607,10 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_aux_values);
+        if (d_gate_band_scratch != nullptr) {
+            cudaFree(d_gate_band_scratch);
+            d_gate_band_scratch = nullptr;
+        }
     }
 };
 
@@ -692,7 +767,8 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer);
+    TimerGPU &timer,
+    bool categorize = true);
 
 void copy_to_device_in_chunks(
     const uint8_t* src,

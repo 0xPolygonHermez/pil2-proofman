@@ -20,6 +20,7 @@ use serde_json::Value;
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+
 use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
@@ -179,7 +180,15 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     }
 
     // Generate final circom
-    let gen_circom_opts = GenCircomOptions { is_final: true, ..Default::default() };
+    // One proof per airgroup, not an aggregation fan-in: the template never reads
+    // `agg_arity`, and `gen_recursive2` rejects 0 outright.
+    let gen_circom_opts = GenCircomOptions {
+        airgroup_id: None,
+        has_compressor: false,
+        has_recursion: false,
+        is_final: true,
+        agg_arity: 0,
+    };
 
     let gen_input = GenCircomInput {
         template_name: "src/vadcop/templates/final.circom.ejs",
@@ -246,12 +255,36 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("FinalVadcop".to_string()),
-        max_constraint_degree: None,
+        // Follow the blowup instead of taking the packer's default of 5. The extra degree is paid
+        // back out of stage2: `std_sum` packs maxDeg-1 bus terms behind each im pol, so 5 -> 8 takes
+        // stage2 from 114 columns to 66. Derived from the same family-scoped blowup the stark struct
+        // uses, so the two cannot disagree about what the quotient can carry.
+        max_constraint_degree: Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
+            proofman_common::hash_family::final_blowup_factor(config.hash),
+        )),
         hash_id: config.hash.to_string(),
         merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        // A floor: a smaller pilout pads up to the pinned size the committed verifier encodes.
+        min_n_bits: proofman_common::hash_family::final_n_bits(config.hash),
     };
+    let _span = tracing::info_span!("stage", t = "vadcop_final").entered();
     let plonk_result: PlonkResult =
         plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
+
+    // A floor pads up, never down; overshooting the pin has to be loud.
+    if let Some(pinned) = plonk_opts.min_n_bits {
+        if plonk_result.n_bits_natural > pinned {
+            bail!(
+                "vadcop_final compiles to 2^{} rows but is pinned to 2^{}: this pilout aggregates \
+                 more airgroups than the pinned size holds. Raise `hash_family::final_n_bits` and \
+                 regenerate the committed verifier, which encodes the size.",
+                plonk_result.n_bits_natural,
+                pinned
+            );
+        }
+    }
 
     // Write fixed pols binary
     let fixed_bin_path = build_path.join("vadcop_final.fixed.bin");
@@ -291,14 +324,21 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        initial_blowup_factor: Some(4),
+        initial_blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
         initial_folding_factor: Some(4),
-        // Pinned to the committed vadcop_final verifier's schedule (domains 20,16,12,8,5):
-        // the final polynomial's log-degree bound is domain 5 minus the blowup.
-        final_degree: Some(1),
-        grinding_bits: Some(22),
-        // None, not 2: at arity 2 a fixed 2 keeps 4 nodes where every other tree keeps 16.
-        last_level_verification: None,
+        // Per family: poseidon's 22 is what its committed verifiers encode, blake3 affords 24.
+        grinding_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
+        // The terminal the FRI walk stops at, as the final polynomial's log-degree bound: the
+        // family's terminal domain (log2) minus the blowup — poseidon's 5 − 4 = 1 is what its
+        // committed vadcop_final verifier encodes. For a family whose steps are solved rather than
+        // folded uniformly this is the ceiling the solver works under, not the degree it lands on.
+        final_degree: Some(
+            proofman_common::hash_family::fri_terminal_degree(config.hash)
+                - proofman_common::hash_family::final_blowup_factor(config.hash),
+        ),
+        // Paid by the recursivef that verifies this proof, not here, so it takes the family value
+        // every recursion layer takes: 5 for blake3, the size-based default for poseidon.
+        last_level_verification: proofman_common::hash_family::recursive_last_level_verification(config.hash),
         ..Default::default()
     };
     let final_stark_struct =
@@ -409,7 +449,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             const_path.to_str().unwrap(),
             starkinfo_path.to_str().unwrap(),
             verkey_json_path.to_str().unwrap(),
-        );
+        )?;
 
         let mut verkey_bin = Vec::with_capacity(32);
         for &val in root.iter() {

@@ -6,6 +6,10 @@
 
 use proofman_common::hash_family::{sponge_rate, transcript_out_size, transcript_pending_size, DIGEST_SIZE};
 
+/// Goldilocks words in one BLAKE3 block: 64 bytes at 8 bytes each. The transcript's absorb
+/// rate, since a streaming BLAKE3 compresses once per filled block.
+const BLAKE3_ABSORB_WORDS: u64 = 8;
+
 /// Hash invocations, split by what the verifier is doing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HashCounts {
@@ -89,7 +93,7 @@ pub fn blake3_compressions(bytes: u64) -> u64 {
 /// per permutation (`linear_hash_seq`); Blake3 hashes the bytes in one call.
 pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
     match family {
-        "Blake3" => blake3_compressions(width * 8),
+        "blake3" => blake3_compressions(width * 8),
         // sponge_rate is 0 at arity 1 and underflows at 0; the trees support 2..=4.
         _ if arity < 2 => 0,
         _ => width.div_ceil(sponge_rate(arity)),
@@ -146,11 +150,16 @@ pub struct TranscriptSim {
 }
 
 impl TranscriptSim {
-    pub fn new(arity: u64) -> Self {
+    /// The family is required because the absorb rate is not the same for all of them. A
+    /// sponge buffers `transcript_pending_size` elements and permutes; BLAKE3 does not --
+    /// `Blake3Transcript::put` streams into a hasher that compresses one 64-byte block,
+    /// which is eight Goldilocks words. Squeezing needs no adjustment:
+    /// `transcript_out_size(2)` is already 8, the XOF block width.
+    pub fn new(family: &str, arity: u64) -> Self {
         Self {
             pending: 0,
             out: 0,
-            pending_size: transcript_pending_size(arity),
+            pending_size: if family == "blake3" { BLAKE3_ABSORB_WORDS } else { transcript_pending_size(arity) },
             out_size: transcript_out_size(arity),
             hashes: 0,
         }
@@ -420,7 +429,7 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
         }
     }
 
-    counts.transcript = transcript_hashes(geom);
+    counts.transcript = transcript_hashes(geom, family);
     // `starkVerify` runs the permutation unconditionally; powBits only picks the threshold.
     // STIR grinds once per query message.
     counts.grinding = geom.stir_rounds.len().max(1) as u64;
@@ -435,13 +444,13 @@ const FIELD_EXTENSION: u64 = 3;
 /// that the same calls in another order would not.
 ///
 /// This is the standalone path (`challengesVadcop == false`), which a proof of a single air takes.
-fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
-    let mut t = TranscriptSim::new(geom.transcript_arity);
+fn transcript_hashes(geom: &VerifierGeometry, family: &str) -> u64 {
+    let mut t = TranscriptSim::new(family, geom.transcript_arity);
     // A hashed commit absorbs a digest of the values rather than the values, and computing that
     // digest costs a sponge of its own (`transcriptHash.getState`).
     let put_values = |t: &mut TranscriptSim, n: u64| {
         if geom.hash_commits {
-            let mut inner = TranscriptSim::new(geom.transcript_arity);
+            let mut inner = TranscriptSim::new(family, geom.transcript_arity);
             inner.put(n);
             inner.get_state();
             t.hashes += inner.hashes;
@@ -475,7 +484,7 @@ fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
     // Query indices come from transcripts of their own, each seeded with a challenge and a nonce
     // (FRI once, STIR once per round).
     let query_transcript = |t_i: u64, bits: u64| -> u64 {
-        let mut queries = TranscriptSim::new(geom.transcript_arity);
+        let mut queries = TranscriptSim::new(family, geom.transcript_arity);
         queries.put(FIELD_EXTENSION);
         queries.put(1);
         queries.get_permutations(t_i, bits);
@@ -499,9 +508,10 @@ fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
         t.get_field();
         query_hashes += query_transcript(geom.n_queries, geom.step_n_bits.first().copied().unwrap_or(0));
     } else {
-        // STIR: T₀ root → r^fold_0; per round i = 1..M−1: T_i root → r_out →
-        // β → r^fold_i, r_comb → the round's query challenge; then the final polynomial and the
-        // last query challenge. Every round derives its queries from its own transcript.
+        // STIR: T₀ root → r^fold_0; per round i = 1..M−1: T_i root → r_out → β → r^fold_i,
+        // r_comb → the round's query challenge → the Âns and shake hints (2(t_{i-1}+1)
+        // extension elements, padding included) → ρ; then the final polynomial and the last
+        // query challenge. Every round derives its queries from its own transcript.
         t.put(DIGEST_SIZE);
         t.get_field(); // r^fold_0
         for (i, r) in geom.stir_rounds.iter().enumerate() {
@@ -516,10 +526,33 @@ fn transcript_hashes(geom: &VerifierGeometry) -> u64 {
             }
             t.get_field(); // the round's query challenge
             query_hashes += query_transcript(r.n_queries, r.log_domain_size);
+            if i + 1 < geom.stir_rounds.len() {
+                put_values(&mut t, 2 * (r.n_queries + 1) * FIELD_EXTENSION); // Âns and shake hints
+                t.get_field(); // ρ, the shake check's point
+            }
         }
     }
 
     t.hashes + query_hashes
+}
+
+/// Blocks the recursive1 verifying this air needs, against what the pinned recursion holds: one
+/// verifier compression is one block-lane of the aggregator air.
+#[derive(Debug, Clone, Copy)]
+pub struct Blake3RecursionFit {
+    pub blocks: usize,
+    pub capacity: usize,
+    pub needs_compressor: bool,
+}
+
+/// `blocks` is a LOWER bound (per-flags bucketing rounds up, and a plonk band can size the air
+/// instead), so `needs_compressor` is sound when set and soft when clear.
+pub fn blake3_recursion_fit(counts: &HashCounts, lanes: usize) -> Blake3RecursionFit {
+    use pil2_stark_recurser::plonk2pil::setups::blake3::blake3_max_blocks;
+
+    let blocks = (counts.total() as usize).div_ceil(lanes.max(1));
+    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    Blake3RecursionFit { blocks, capacity, needs_compressor: blocks > capacity }
 }
 
 #[cfg(test)]
@@ -558,8 +591,8 @@ mod tests {
     /// A Blake3 leaf hashes `width * 8` bytes in one call.
     #[test]
     fn a_blake3_leaf_hashes_the_whole_row() {
-        assert_eq!(leaf_hashes("Blake3", 2, 8), 1); // 64 bytes
-        assert_eq!(leaf_hashes("Blake3", 2, 128), 16); // 1024 bytes
+        assert_eq!(leaf_hashes("blake3", 2, 8), 1); // 64 bytes
+        assert_eq!(leaf_hashes("blake3", 2, 128), 16); // 1024 bytes
     }
 
     /// `ceil(log_arity(height))`, less the levels the verifier reads from the proof instead.
@@ -604,11 +637,11 @@ mod tests {
     /// something is squeezed out of it.
     #[test]
     fn the_transcript_permutes_when_its_buffer_fills() {
-        let mut t = TranscriptSim::new(4);
+        let mut t = TranscriptSim::new("Poseidon1", 4);
         t.put(12);
         assert_eq!(t.hashes, 1);
 
-        let mut t = TranscriptSim::new(4);
+        let mut t = TranscriptSim::new("Poseidon1", 4);
         t.put(5);
         assert_eq!(t.hashes, 0, "a partial buffer has not permuted yet");
         t.get_state();
@@ -619,13 +652,13 @@ mod tests {
     /// though the previous permutation left a full FIFO.
     #[test]
     fn an_absorb_invalidates_the_squeezed_output() {
-        let mut t = TranscriptSim::new(4);
+        let mut t = TranscriptSim::new("Poseidon1", 4);
         t.put(12); // permutes, FIFO now full
         assert_eq!(t.hashes, 1);
         t.get_field(); // 3 of 16 outputs, no new permutation needed
         assert_eq!(t.hashes, 1);
 
-        let mut t = TranscriptSim::new(4);
+        let mut t = TranscriptSim::new("Poseidon1", 4);
         t.put(12);
         t.put(1); // invalidates the FIFO
         t.get_field();
@@ -636,7 +669,7 @@ mod tests {
     /// permutations, not one.
     #[test]
     fn squeezing_past_the_fifo_permutes_again() {
-        let mut t = TranscriptSim::new(4);
+        let mut t = TranscriptSim::new("Poseidon1", 4);
         t.put(12);
         for _ in 0..5 {
             t.get_field(); // 15 elements
@@ -724,14 +757,19 @@ mod tests {
             stage_air_values: vec![0, 0],
             final_pol_size: 1 << 5,
         };
-        let counts = verifier_hashes(&geom, "Blake3");
+        let counts = verifier_hashes(&geom, "blake3");
 
         assert_eq!(counts.leaf, 6042, "114 queries x 53 compressions");
         assert_eq!(counts.merkle, 9132, "4 trees x 114 x 20 levels + 4 root reductions");
         assert_eq!(counts.fri, 8568, "6 folding trees");
-        assert_eq!(counts.transcript, 440, "replayed absorb/squeeze sequence");
+        // Pinned to the in-circuit verifier: the compressor's Blake3 custom-gate
+        // applications, counted out of the r1cs across seven ZisK airs, land within 8
+        // hashes of this model (worst case 0.027%, ArithEq). That is the algorithm the
+        // proof was generated with, since the circom verifier accepts proofs the native
+        // prover produced.
+        assert_eq!(counts.transcript, 228, "replayed absorb/squeeze sequence");
         assert_eq!(counts.grinding, 1);
-        assert_eq!(counts.total(), 24183, "what the native verifier reported");
+        assert_eq!(counts.total(), 23971);
     }
 
     /// The same air under Poseidon: identical widths and steps, arity 4 instead of 2. Also checked
@@ -776,12 +814,48 @@ mod tests {
     #[test]
     fn the_family_changes_the_count_not_just_the_price() {
         let poseidon = verifier_hashes(&minimal_geometry(), "Poseidon1");
-        let blake3_arity = merkle_tree_arity("Blake3");
+        let blake3_arity = merkle_tree_arity("blake3");
         let blake3 = verifier_hashes(
             &VerifierGeometry { arity: blake3_arity, transcript_arity: blake3_arity, ..minimal_geometry() },
-            "Blake3",
+            "blake3",
         );
 
         assert_eq!(blake3.merkle, poseidon.merkle * 2, "binary paths are twice as long");
+    }
+
+    /// At 4 lanes the 9361-block capacity settles the question at 37444 compressions.
+    #[test]
+    fn the_threshold_is_the_pinned_airs_block_capacity() {
+        let fit = |total: u64, lanes| blake3_recursion_fit(&HashCounts { leaf: total, ..Default::default() }, lanes);
+
+        assert_eq!(fit(37_444, 4).capacity, 9361);
+        assert_eq!(fit(37_444, 4).blocks, 9361);
+        assert!(!fit(37_444, 4).needs_compressor);
+        assert!(fit(37_445, 4).needs_compressor);
+        // Fewer lanes pack fewer compressions per block, so the same air can flip.
+        assert!(fit(37_444, 1).needs_compressor);
+    }
+
+    /// Same boundary `needs_compressor` tests, off the recurser's constants so a layout change moves both.
+    #[test]
+    fn the_block_boundary_is_the_n_bits_boundary() {
+        use pil2_stark_recurser::plonk2pil::setups::blake3::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
+
+        let n_bits = |blocks: usize| (blocks * BLAKE3_CLOCKS + CLOCK_WRAP_ROWS).next_power_of_two().trailing_zeros();
+        let capacity = blake3_recursion_fit(&HashCounts::default(), 4).capacity;
+
+        assert_eq!(n_bits(capacity), 19);
+        assert_eq!(n_bits(capacity + 1), 20);
+    }
+
+    /// Recorded ground truth: the hashes example fits, ZisK's Keccakf (11283 hashing blocks) does not.
+    #[test]
+    fn the_recorded_airs_land_on_the_right_side() {
+        let hashes_example = HashCounts { leaf: 6042, merkle: 9132, fri: 8568, transcript: 440, grinding: 1 };
+        let fit = blake3_recursion_fit(&hashes_example, 4);
+        assert_eq!(fit.blocks, 6046);
+        assert!(!fit.needs_compressor);
+
+        assert!(blake3_recursion_fit(&HashCounts { leaf: 11_283 * 4, ..Default::default() }, 4).needs_compressor);
     }
 }

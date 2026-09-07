@@ -13,6 +13,15 @@ pub fn write_verifier_rust_file(
     vadcop_final_proof: bool,
     hash_id: &str,
 ) -> Result<()> {
+    if !hash_family::supports_native_rust_verifier(hash_id) {
+        tracing::warn!(
+            "Skipping the native Rust verifier for {path}: the {hash_id} family has no \
+             proofman_fields::Hash implementation, so no verifier can be emitted for it. The proving \
+             key is complete for proving and for C++ verification; only this artifact is absent."
+        );
+        return Ok(());
+    }
+
     println!("> Writing rust verifier file");
 
     let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;
@@ -32,7 +41,8 @@ fn prepare_verifier_rust(
     let merkle_arity = stark_info.stark_struct.merkle_tree_arity;
     let transcript_arity = stark_info.stark_struct.transcript_arity;
     let merkle_hash_type = hash_family::rust_hash_type(hash_id, merkle_arity as u64);
-    let transcript_hash_type = hash_family::rust_hash_type(hash_id, transcript_arity as u64);
+    // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
+    let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
     let mut numbers_q = Vec::new();
     let q_result =
@@ -40,26 +50,15 @@ fn prepare_verifier_rust(
     let verify_q_rust = q_result.verify_rust;
     let verify_q_helpers = q_result.verify_rust_helpers;
 
-    let mut numbers_fri = Vec::new();
-    let fri_result = get_parser_args(
-        stark_info,
-        &verifier_info.query_verifier.code,
-        &mut numbers_fri,
-        false,
-        true,
-        None,
-        "query_verify",
-    )?;
-    let verify_fri_rust = fri_result.verify_rust;
-    let verify_fri_helpers = fri_result.verify_rust_helpers;
-
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("use alloc::vec;".to_string());
-    lines.push("use alloc::vec::Vec;".to_string());
     lines.push("use alloc::string::ToString;".to_string());
     let mut hash_imports: Vec<&str> = Vec::new();
-    for ht in [merkle_hash_type, transcript_hash_type, grinding_type] {
+    for ht in [merkle_hash_type, grinding_type]
+        .into_iter()
+        .chain(hash_family::rust_transcript_imports(hash_id, transcript_arity as u64))
+    {
         if !hash_imports.contains(&ht) {
             hash_imports.push(ht);
         }
@@ -70,7 +69,7 @@ fn prepare_verifier_rust(
     if is_stir {
         lines.push("use crate::{stark_verify_stir, Boundary, StirParams, StirVerifierInfo};".to_string());
     } else {
-        lines.push("use crate::{stark_verify, Boundary, VerifierInfo};".to_string());
+        lines.push("use crate::{stark_verify, Boundary, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
     if vadcop_final_proof {
         lines.push("use crate::VadcopFinalProof;".to_string());
@@ -93,21 +92,8 @@ fn prepare_verifier_rust(
     lines.push(String::new());
     lines.push(String::new());
 
-    // query_verify helper functions (if chunked)
-    for line in &verify_fri_helpers {
-        lines.push(line.clone());
-    }
-
-    // query_verify function
-    lines.push("#[rustfmt::skip]".to_string());
-    lines.push("#[allow(clippy::all)]".to_string());
-    lines.push("fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {".to_string());
-    for line in &verify_fri_rust {
-        lines.push(line.clone());
-    }
-    lines.push("}\n".to_string());
-
     // The shared STARK geometry, identical for both low-degree tests.
+
     let mut num_vals: Vec<String> = Vec::new();
     for i in 0..stark_info.n_stages + 1 {
         let key = format!("cm{}", i + 1);
@@ -132,6 +118,38 @@ fn prepare_verifier_rust(
             b.name, offset_min, offset_max
         ));
     }
+
+    // The FRI query polynomial is structural, so the verifier evaluates it from
+    // the evaluation map instead of an unrolled per-air function.
+    let mut group_strs: Vec<String> = Vec::new();
+    let mut next_eval = 0usize;
+    for (o, opening) in stark_info.opening_points.iter().enumerate() {
+        let mut ref_strs: Vec<String> = Vec::new();
+        for (i, ev) in stark_info.ev_map.iter().enumerate() {
+            if ev.prime != *opening {
+                continue;
+            }
+            let (bucket, offset, dim) = match ev.ev_type.as_str() {
+                "const" => (0u64, ev.id, 1u64),
+                "cm" => {
+                    let pol = &stark_info.cm_pols_map[ev.id as usize];
+                    (pol.stage, pol.stage_pos, pol.dim)
+                }
+                "custom" => (stark_info.n_stages + 1 + ev.commit_id, ev.id, 1u64),
+                other => panic!("Unknown evMap type: {other}"),
+            };
+            // The runtime indexes `evals` with a running counter.
+            assert_eq!(i, next_eval, "evMap is not ordered by opening point");
+            next_eval += 1;
+            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim})"));
+        }
+        // Opening points from hint expressions have no evaluations.
+        if ref_strs.is_empty() {
+            continue;
+        }
+        group_strs.push(format!("FriEvalGroup {{ opening: {o}, refs: vec![{}] }}", ref_strs.join(", ")));
+    }
+    let fri_ev_groups_str = format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
 
     // Find q_index: the evMap index of the cm polynomial at stage nStages+1, stageId 0
     let q_index = stark_info.cm_pols_map.iter().position(|p| p.stage == stark_info.n_stages + 1 && p.stage_id == 0);
@@ -170,6 +188,7 @@ fn prepare_verifier_rust(
             lines
                 .push(format!("        last_level_verification: {},", stark_info.stark_struct.last_level_verification));
             lines.push(format!("        pow_bits: {},", fri.grinding_bits_queries));
+            lines.push(fri_ev_groups_str.clone());
 
             lines.push(format!("        num_vals: vec![{}],", num_vals.join(", ")));
             lines.push(format!("        opening_points: vec![{}],", opening_points_str.join(", ")));
@@ -223,20 +242,19 @@ fn prepare_verifier_rust(
     }
 
     // verify function. Generics: leaf, compression, transcript, grinding hashes.
-    let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_hash_type}, {grinding_type}");
-    let verify_fn = if is_stir { "stark_verify_stir" } else { "stark_verify" };
+    let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_type}, {grinding_type}");
     if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
-            "    {verify_fn}::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)"
+            "    stark_verify::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
         ));
         lines.push("}\n".to_string());
         lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     } else {
         lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     }
 

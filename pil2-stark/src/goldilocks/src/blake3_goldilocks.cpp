@@ -28,12 +28,6 @@ void Blake3Goldilocks::permute(Goldilocks::Element (&output)[8], const Goldilock
     for (int i = 0; i < 8; ++i) output[i].fe = out8[i];
 }
 
-void Blake3Goldilocks::permuteTranscript(Goldilocks::Element *output, const Goldilocks::Element *input, uint64_t width)
-{
-    blake3core::permute_xof(reinterpret_cast<const uint64_t *>(input), (uint32_t)width,
-                            reinterpret_cast<uint64_t *>(output));
-}
-
 void Blake3Goldilocks::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input,
                                   uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                   int num_threads, uint64_t dim)

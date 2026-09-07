@@ -13,6 +13,7 @@ pub struct SetupRecursiveTestOptions {
     pub circom_name: String,
     pub setup_type: String,
     pub hash: String,
+    pub blake3_lanes: Option<usize>,
 }
 
 /// Resolve the per-hash-family circom fixture.
@@ -69,5 +70,6 @@ pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> 
         &recurser_pil_path,
         &circom_helpers_dir,
         &witness_tracker,
+        opts.blake3_lanes,
     )
 }

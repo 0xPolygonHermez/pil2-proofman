@@ -95,6 +95,12 @@ fn build_tera_context(
              (no hash/poseidon1/merklehash_gpu.circom / linearhash_gpu.circom exist)"
         );
     }
+    if split_linear_hash && opts.hash == "blake3" {
+        bail!(
+            "gen_stark_verifier_gl: blake3 + splitLinearHash is not supported \
+             (no hash/blake3/merklehash_gpu.circom / linearhash_gpu.circom exist)"
+        );
+    }
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0);
 
@@ -328,7 +334,9 @@ fn build_tera_context(
 
     // Select the transcript hash family: a Poseidon2 proof verifies with the
     // Poseidon2 sponge, otherwise (Poseidon1 recursion) with the Poseidon1 sponge.
-    let transcript_poseidon2 = opts.hash == "Poseidon2";
+    // Every transcript in the circuit must use the proof's hash family: the Poseidon families
+    // squeeze their sponge, blake3 its BLAKE3 chunk chain.
+    let transcript_family = opts.hash.as_str();
 
     // ── STIR rounds info ──────────────────────────────────────────────────────
     // One entry per committed tree T_i, i = 0..M−1 (holding g_i on L_i, grouped in cosets of
@@ -358,9 +366,8 @@ fn build_tera_context(
             let exp_bits = 64 - (n_g_max + 1u64).leading_zeros() as u64;
             // Per-round query derivation: a fresh transcript over {c_i, nonce_i}, exactly the
             // C++ deriveShiftQueries. The nonce is always absorbed, grinding checked separately.
-            let mut t_q = Transcript::new(arity, Some(format!("stirQueries{i}")));
+            let mut t_q = Transcript::new(Some(format!("stirQueries{i}")), transcript_family);
             t_q.set_drain_in_update_state(true);
-            t_q.set_poseidon2(transcript_poseidon2);
             t_q.put("challengeStirQueries", 3);
             t_q.put_single("nonce");
             t_q.get_permutations("queries", t as usize, log_l as usize);
@@ -614,9 +621,8 @@ fn build_tera_context(
     let calculate_fri_queries_code = if is_stir {
         String::new()
     } else {
-        let mut t_fri = Transcript::new(arity, Some("friQueries".into()));
+        let mut t_fri = Transcript::new(Some("friQueries".into()), transcript_family);
         t_fri.set_drain_in_update_state(true);
-        t_fri.set_poseidon2(transcript_poseidon2);
         t_fri.put("challengeFRIQueries", 3);
         if pow_bits > 0 {
             t_fri.put_single("nonce");
@@ -625,9 +631,8 @@ fn build_tera_context(
         t_fri.get_code()
     };
 
-    let mut t = Transcript::new(arity, None);
+    let mut t = Transcript::new(None, transcript_family);
     t.set_drain_in_update_state(true);
-    t.set_poseidon2(transcript_poseidon2);
     let mut transcript_publics_code = String::new();
     let mut transcript_evals_code = String::new();
     let mut transcript_last_pol_fri_code = String::new();
@@ -638,9 +643,8 @@ fn build_tera_context(
             if !hash_commits {
                 t.put("publics", n_publics as usize);
             } else {
-                let mut t_pub = Transcript::new(arity, Some("publics".into()));
+                let mut t_pub = Transcript::new(Some("publics".into()), transcript_family);
                 t_pub.set_drain_in_update_state(true);
-                t_pub.set_poseidon2(transcript_poseidon2);
                 t_pub.put("publics", n_publics as usize);
                 t_pub.get_state("publicsHash");
                 transcript_publics_code = t_pub.get_code();
@@ -677,9 +681,8 @@ fn build_tera_context(
     let transcript_code_stage: String;
     if hash_commits {
         transcript_code_stage = t.get_code();
-        let mut t_evals = Transcript::new(arity, Some("evals".into()));
+        let mut t_evals = Transcript::new(Some("evals".into()), transcript_family);
         t_evals.set_drain_in_update_state(true);
-        t_evals.set_poseidon2(transcript_poseidon2);
         for i in 0..ev_map_len {
             t_evals.put(&format!("evals[{i}]"), 3);
         }
@@ -727,9 +730,8 @@ fn build_tera_context(
             }
         } else {
             transcript_code_fri_mid = t.get_code();
-            let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
+            let mut t_fp = Transcript::new(Some("lastPolFRI".into()), transcript_family);
             t_fp.set_drain_in_update_state(true);
-            t_fp.set_poseidon2(transcript_poseidon2);
             for j in 0..final_pol_size {
                 t_fp.put(&format!("finalPol[{j}]"), 3);
             }
@@ -754,9 +756,8 @@ fn build_tera_context(
             } else {
                 // Split 2: capture FRI code up to the last folding challenge.
                 transcript_code_fri_mid = t.get_code();
-                let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
+                let mut t_fp = Transcript::new(Some("lastPolFRI".into()), transcript_family);
                 t_fp.set_drain_in_update_state(true);
-                t_fp.set_poseidon2(transcript_poseidon2);
                 for j in 0..final_pol_size {
                     t_fp.put(&format!("finalPol[{j}]"), 3);
                 }
@@ -1021,6 +1022,30 @@ mod tests {
         })
     }
 
+    /// blake3 + hashCommits drives the three `get_state` side transcripts, the only callers of the
+    /// fresh-XOF assert. Nothing else in this module reaches them, and a stale XOF there would emit
+    /// a circuit reading XOF[4..8] where the prover reads XOF[0..4].
+    #[test]
+    fn blake3_hash_commits_side_transcripts_read_a_fresh_xof() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["starkStruct"]["hashCommits"] = json!(true);
+        si["starkStruct"]["merkleTreeArity"] = json!(2);
+        si["nPublics"] = json!(3);
+        si["evMap"] = json!([{"type": "cm", "id": 0, "prime": 0}]);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        // Each digest must be words 0..4 of its own finalize; anything else is the stale-XOF bug.
+        for (sig, tag) in [("publicsHash", "publics"), ("evalsHash", "evals"), ("lastPolFRIHash", "lastPolFRI")] {
+            let want = format!("{sig} <== [b3fin_{tag}_");
+            let line = out.lines().find(|l| l.contains(&want)).unwrap_or_else(|| panic!("no {sig} line in:\n{out}"));
+            for i in 0..4 {
+                assert!(line.contains(&format!("[{i}]")), "{sig} does not read XOF[{i}]: {line}");
+            }
+            assert!(!line.contains("[4]") && !line.contains("[5]"), "{sig} reads past the digest: {line}");
+        }
+    }
+
     #[test]
     fn names_without_airgroup_id() {
         let si = minimal_stark_info(2, 10, 8);
@@ -1078,6 +1103,53 @@ mod tests {
         assert!(out.contains("include \"tree/treeselector8.circom\";"));
         assert!(!out.contains("hash/poseidon2/"));
         assert!(!out.contains("treeselector4"));
+    }
+
+    #[test]
+    fn header_includes_blake3_when_hash_is_blake3() {
+        let si = minimal_stark_info(2, 10, 8);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"hash/blake3/merklehash.circom\";"));
+        assert!(out.contains("include \"hash/blake3/pow.circom\";"));
+        // TreeSelector selects by FRI fold bits, not Merkle arity, so blake3
+        // reuses the arity-4 selector rather than needing an arity-2 one.
+        assert!(out.contains("include \"tree/treeselector4.circom\";"));
+        assert!(!out.contains("hash/poseidon1/"));
+        assert!(!out.contains("hash/poseidon2/"));
+    }
+
+    /// blake3's transcript is a genuine BLAKE3 over the absorbed stream, with
+    /// challenges from its XOF -- not a sponge of any width.
+    #[test]
+    fn blake3_transcript_emits_a_real_blake3_chain() {
+        let si = minimal_stark_info(2, 10, 8);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        // blake3 emits a real BLAKE3 chunk chain, not a sponge: absorb blocks
+        // plus a root-a-copy finalize at each squeeze point.
+        assert!(out.contains("Blake3AbsorbBlock("), "got:\n{out}");
+        assert!(out.contains("Blake3FinalizeChunk("), "got:\n{out}");
+        // Absorption must dominate; a squeeze per absorb would mean the old
+        // rate-4 sponge shape had crept back in.
+        let absorbs = out.matches("Blake3AbsorbBlock(").count();
+        let finals = out.matches("Blake3FinalizeChunk(").count() + out.matches("Blake3FinalizeParent(").count();
+        assert!(absorbs > finals * 4, "absorbs={absorbs} finals={finals}");
+        // The sponge forms must be gone entirely.
+        assert!(!out.contains("Blake3Sponge"), "got:\n{out}");
+        assert!(!out.contains("Poseidon2(4,"), "got:\n{out}");
+    }
+
+    #[test]
+    fn blake3_rejects_split_linear_hash() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["starkStruct"]["splitLinearHash"] = json!(true);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
+        let err = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap_err().to_string();
+        assert!(err.contains("blake3 + splitLinearHash is not supported"), "got: {err}");
     }
 
     #[test]

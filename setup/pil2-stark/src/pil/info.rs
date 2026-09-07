@@ -61,7 +61,7 @@ pub fn pil_info(
     let max_deg = (1usize << (stark_struct.n_bits_ext - stark_struct.n_bits)) + 1;
 
     // Calculate intermediate polynomials
-    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, max_deg, q_dim);
+    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, max_deg, q_dim, &symbols);
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 

@@ -84,6 +84,25 @@ struct SetupArgs {
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
 
+    /// Proofs each recursive2 circuit aggregates. Must be 2 or 3. Defaults per hash family --
+    /// 2 for blake3, 3 for poseidon -- see hash_family::default_aggregation_arity.
+    #[arg(long)]
+    agg_arity: Option<usize>,
+
+    /// Pin every recursive air to 2^N rows instead of letting each size itself to its own gate
+    /// count. The recursion fixpoint needs recursive1 and recursive2 to be the same size anyway,
+    /// so the derived sizes are only ever a lower bound on what the pipeline can use. Setup fails,
+    /// naming the air and both sizes, if any air needs more than N -- a pinned size that does not
+    /// fit is a wrong answer, not something to silently round up.
+    #[arg(long, env = "RECURSIVE_N_BITS")]
+    recursive_n_bits: Option<usize>,
+
+    /// Build the `vadcop_final_compressed` stage. Defaults per hash family: on for poseidon, off
+    /// for blake3, where it measured a 2% smaller proof for a whole extra recursion layer. A key
+    /// built without it can gain it later with `setup-compressed-final`.
+    #[arg(long)]
+    compressed_final: Option<bool>,
+
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end
     /// of setup. No-op if nvcc is not on PATH.
     #[arg(long, default_value_t = false)]
@@ -150,6 +169,10 @@ struct StatsArgs {
     /// Show intermediate polynomial details per stage
     #[arg(short = 'm', long)]
     impols: bool,
+
+    /// Lanes the blake3 recursion is built at; only affects needsCompressor.
+    #[arg(long)]
+    blake3_lanes: Option<usize>,
 }
 
 #[derive(Parser)]
@@ -220,6 +243,9 @@ struct SetupRecursiveTestArgs {
 
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
+
+    #[arg(long)]
+    blake3_lanes: Option<usize>,
 
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end.
     /// No-op if nvcc is not on PATH.
@@ -297,7 +323,18 @@ struct GenExpsArgs {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    // The shared formatter, not a plain `fmt()`: it is the one the proofman entry points install, it
+    // renders the span scope, and `initialize_logger` no-ops if a dispatcher is already set -- so
+    // installing a different one here silently gave this binary a different log format from every
+    // other, which is what hid the per-air spans.
+    // RUST_LOG still selects the level, as it did under `fmt::init()`: this binary has no verbosity
+    // flag, and the shared initializer takes a mode rather than reading the environment.
+    let verbose = match std::env::var("RUST_LOG").unwrap_or_default().to_ascii_lowercase() {
+        v if v.contains("trace") => proofman_common::VerboseMode::Trace,
+        v if v.contains("debug") => proofman_common::VerboseMode::Debug,
+        _ => proofman_common::VerboseMode::Info,
+    };
+    proofman_common::initialize_logger(verbose, None);
 
     let builder = rayon::ThreadPoolBuilder::new().stack_size(64 * 1024 * 1024); // 64 MB per thread
     builder.build_global().ok();
@@ -328,6 +365,19 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
 
+            let agg_arity =
+                args.agg_arity.unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(&args.hash));
+            let compressed_final = args
+                .compressed_final
+                .unwrap_or_else(|| proofman_common::hash_family::compressed_final_by_default(&args.hash));
+            if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
+                anyhow::bail!(
+                    "unsupported --agg-arity {}; valid values: {:?}",
+                    agg_arity,
+                    proofman_common::global_info::VALID_AGGREGATION_ARITIES
+                );
+            }
+
             let opts = SetupOptions {
                 airout_path: args.airout,
                 build_dir: args.build_dir,
@@ -338,6 +388,9 @@ fn main() -> anyhow::Result<()> {
                 setup_jobs,
                 stats_output_path: args.output,
                 hash: args.hash,
+                agg_arity,
+                recursive_n_bits: args.recursive_n_bits,
+                compressed_final,
                 gen_exps: args.gen_exps,
                 exps_arch: args.exps_arch,
                 exps_cap: args.exps_cap,
@@ -374,6 +427,9 @@ fn main() -> anyhow::Result<()> {
                 airgroups: args.airgroups,
                 airs: args.airs,
                 im_pols_stages: args.impols,
+                blake3_lanes: args
+                    .blake3_lanes
+                    .unwrap_or(pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES),
             };
             // Expression trees in large AIRs (e.g. ZisK) can be thousands of levels deep,
             // which overflows the default 8 MB main-thread stack. Run on a thread with the
@@ -431,12 +487,19 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
             let build_dir = args.build_dir.clone();
+            if let Some(l) = args.blake3_lanes {
+                if !(1..=8).contains(&l) {
+                    anyhow::bail!("--blake3-lanes must be in 1..8 (the air's boundary depth caps it), got {l}");
+                }
+                tracing::info!("  blake3_lanes: {l}");
+            }
             let opts = SetupRecursiveTestOptions {
                 build_dir: args.build_dir,
                 circom_path: args.circom_path,
                 circom_name: args.circom_name,
                 setup_type: args.r#type,
                 hash: args.hash,
+                blake3_lanes: args.blake3_lanes,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)?;
 

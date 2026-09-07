@@ -26,8 +26,6 @@ public:
 
     static void permute(Goldilocks::Element (&output)[8], const Goldilocks::Element (&input)[8]);
 
-    static void permuteTranscript(Goldilocks::Element *output, const Goldilocks::Element *input, uint64_t width);
-
     static void merkletree(Goldilocks::Element *tree, Goldilocks::Element *input,
                            uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                            int num_threads = 0, uint64_t dim = 1);

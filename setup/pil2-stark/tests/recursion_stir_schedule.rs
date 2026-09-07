@@ -9,7 +9,7 @@ use pil2_stark_setup::types::security::pcs::LowDegreeTest as Solved;
 use pil2_stark_setup::types::stark_struct::{generate_stark_struct, LowDegreeTest};
 
 fn solved_stir(template: RecursiveTemplate, n_bits: usize) -> (Vec<usize>, Vec<u64>) {
-    let stark_struct = generate_stark_struct(&recursive_stark_settings(template), n_bits, "Poseidon2");
+    let stark_struct = generate_stark_struct(&recursive_stark_settings(template, "Poseidon2"), n_bits, "Poseidon2");
     let LowDegreeTest::Stir(stir) = &stark_struct.low_degree_test else {
         panic!("{template:?} must select STIR, got {:?}", stark_struct.low_degree_test.kind());
     };

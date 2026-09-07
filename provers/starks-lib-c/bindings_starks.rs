@@ -477,7 +477,6 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void
     );
     
-    pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
     
     pub fn get_committed_pols(
         circomWitness: *mut ::std::os::raw::c_void,
@@ -489,6 +488,14 @@ extern "C" {
         nPublics: u64,
         nCols: u64,
     );
+    
+    pub fn expand_gate_bands(
+        witness: *mut ::std::os::raw::c_void,
+        execData: *mut u64,
+        nCols: u64,
+        execWords: u64,
+        N: u64,
+    ) -> u64;
     
     pub fn gen_recursive_proof_final(
         pSetupCtx: *mut ::std::os::raw::c_void,
@@ -661,6 +668,8 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
         packedInfo_: *mut ::std::os::raw::c_void,
+        execData: *mut u64,
+        execWords: u64,
     );
     
     pub fn gen_device_streams(

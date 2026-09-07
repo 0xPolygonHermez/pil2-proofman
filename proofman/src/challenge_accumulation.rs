@@ -70,7 +70,9 @@ where
 
         let mut hash = new_transcript::<F>(&pctx.global_info.hash);
         hash.put(&values_to_hash);
-        let contribution = hash.get_state();
+        // The chain width, not the digest width: see TranscriptDyn::get_chain_state. For a
+        // sponge these are the same; for BLAKE3 the chain is a whole XOF block.
+        let contribution = hash.get_chain_state();
 
         if pctx.global_info.curve != CurveType::None {
             for (i, v) in contribution.iter().enumerate().take(10) {

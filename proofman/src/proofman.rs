@@ -9,7 +9,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c, load_device_setup_c};
+use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
@@ -73,7 +73,7 @@ use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
-    load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    load_device_const_pols,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -702,11 +702,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // trips (or silently under-fills) the pool-integrity check in `reset()` below.
         for rx in [&self.compressor_witness_rx, &self.rec1_witness_rx, &self.rec2_witness_rx] {
             while let Ok(mut w) = rx.try_recv() {
-                let compressor = w.proof_type == ProofType::Compressor;
-                drop(
-                    self.memory_handler_recursive_witness
-                        .adopt_witness(std::mem::take(&mut w.circom_witness), compressor),
-                );
+                drop(self.memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
             }
         }
 
@@ -937,8 +933,9 @@ where
 
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
-            let setup_vadcop_final_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final_compressed);
+            if let Some(setup_vadcop_final_compressed) = setups_aggregation.setup_vadcop_final_compressed.as_ref() {
+                calculate_fixed_tree(setup_vadcop_final_compressed);
+            }
         }
 
         Ok(())
@@ -2136,15 +2133,7 @@ where
         }
         let proof_type: &str = setup.setup_type.into();
         let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
-        load_device_setup_c(
-            0,
-            0,
-            proof_type,
-            (&setup.p_setup).into(),
-            d_buffers_ptr,
-            setup.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
+        setup.load_device(0, 0, d_buffers_ptr, std::ptr::null_mut());
         load_device_const_pols_c(
             0,
             0,
@@ -2279,11 +2268,27 @@ where
         self._generate_proof(phase_inputs, proof_options, phase)
     }
 
+    /// Error unless the loaded proving key was built with the `vadcop_final_compressed` stage.
+    pub fn ensure_compressed_final_supported(&self) -> ProofmanResult<()> {
+        if !self.pctx.global_info.has_compressed_final {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "Proving key {:?} (hash {}) was built without the vadcop_final_compressed stage, \
+                 so a compressed final proof cannot be generated. Rebuild the key with \
+                 --compressed-final, add the stage with `setup-compressed-final`, or ask for an \
+                 uncompressed vadcop final proof.",
+                self.get_proving_key_path(),
+                self.pctx.global_info.hash,
+            )));
+        }
+        Ok(())
+    }
+
     pub fn generate_vadcop_final_proof_compressed(
         &self,
         vadcop_final_proof: &VadcopFinalProof,
     ) -> ProofmanResult<VadcopFinalProof> {
         let _computing = self.acquire_computing("generate_vadcop_final_proof_compressed");
+        self.ensure_compressed_final_supported()?;
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
@@ -2377,9 +2382,7 @@ where
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
             setups_vadcop.max_witness_size,
-            setups_vadcop.max_witness_size_compressor,
             setups_vadcop.max_trace_size,
-            setups_vadcop.max_trace_size_compressor,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -2583,6 +2586,12 @@ where
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_proof");
+
+        // Fail before the inner proofs, not after them: the compressed stage is the last thing a
+        // full run does, so an unsupported request would otherwise burn the whole proof first.
+        if options.compressed {
+            self.ensure_compressed_final_supported()?;
+        }
 
         if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !self.pctx.is_setup_partition_init() {
@@ -2937,7 +2946,7 @@ where
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
-                let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+                let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
                 if n_recursive2_proofs.has_remaining || n_proofs == 0 {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
@@ -3070,25 +3079,23 @@ where
                                 recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                             recursive2_airgroup_proofs.push(proof);
 
-                            if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                                let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                                Some((p1, p2, p3))
+                            let arity = pctx_clone.global_info.aggregation_arity;
+                            if recursive2_airgroup_proofs.len() >= arity {
+                                let chunk: Vec<_> =
+                                    (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
+                                Some(chunk)
                             } else {
                                 None
                             }
                         };
 
                         match recursive2_proof {
-                            Some((p1, p2, p3)) => {
+                            Some(chunk) => {
                                 match gen_witness_aggregation(
                                     &pctx_clone,
                                     &memory_handler_recursive_witness,
                                     &setups_clone,
-                                    &p1,
-                                    &p2,
-                                    &p3,
+                                    &chunk.iter().collect::<Vec<_>>(),
                                 ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
@@ -3174,10 +3181,7 @@ where
                                     // Witness channels live on `self`, so a failed send means the
                                     // pipeline is torn down mid-run. Return the witness buffer to its
                                     // pool (else it leaks in the SendError), and surface it.
-                                    drop(
-                                        memory_handler_recursive_witness
-                                            .adopt_witness(returned.circom_witness, compressor),
-                                    );
+                                    drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
@@ -3494,10 +3498,10 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which normally returns the witness buffer to its
                             // pool) is not reached on this error path, so return it here — adopt-then-drop.
-                            drop(memory_handler_recursive_witness.adopt_witness(
-                                std::mem::take(&mut witness.circom_witness),
-                                witness.proof_type == ProofType::Compressor,
-                            ));
+                            drop(
+                                memory_handler_recursive_witness
+                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                            );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
@@ -3894,6 +3898,9 @@ where
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         let _computing = self.acquire_computing("receive_aggregated_proofs");
+        if options.compressed {
+            self.ensure_compressed_final_supported()?;
+        }
         self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
     }
 
@@ -4049,7 +4056,8 @@ where
                         continue;
                     }
                     total_proofs_received[airgroup_id] = n_agg_proofs;
-                    let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
+                    let n_agg_proofs_to_be_done =
+                        total_recursive_proofs(n_agg_proofs, self.pctx.global_info.aggregation_arity);
                     if n_agg_proofs_to_be_done.has_remaining {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
@@ -4237,18 +4245,15 @@ where
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
 
-                    if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                        let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                    let arity = pctx_clone.global_info.aggregation_arity;
+                    if recursive2_airgroup_proofs.len() >= arity {
+                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
 
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
+                            &chunk.iter().collect::<Vec<_>>(),
                         );
 
                         let witness = match w {
@@ -4308,10 +4313,9 @@ where
                     Err(e) => {
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
                         // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
-                        drop(memory_handler_recursive_witness.adopt_witness(
-                            std::mem::take(&mut witness.circom_witness),
-                            witness.proof_type == ProofType::Compressor,
-                        ));
+                        drop(
+                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                        );
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
@@ -4477,7 +4481,7 @@ where
 
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
-            let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+            let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
             if n_recursive2_proofs.has_remaining {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
@@ -4506,10 +4510,9 @@ where
                 while let Ok(mut witness) = rec2_witness_rx_clone.recv() {
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Return the received witness buffer to its pool before bailing.
-                        drop(memory_handler_recursive_witness.adopt_witness(
-                            std::mem::take(&mut witness.circom_witness),
-                            witness.proof_type == ProofType::Compressor,
-                        ));
+                        drop(
+                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                        );
                         break;
                     }
                     let id = {
@@ -4526,10 +4529,10 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which returns the buffer to its pool) is not
                             // reached here; return it so the recursive-witness pool doesn't shrink.
-                            drop(memory_handler_recursive_witness.adopt_witness(
-                                std::mem::take(&mut witness.circom_witness),
-                                witness.proof_type == ProofType::Compressor,
-                            ));
+                            drop(
+                                memory_handler_recursive_witness
+                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
+                            );
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
@@ -4592,17 +4595,14 @@ where
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
 
-                    if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                        let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                        let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                    let arity = pctx_clone.global_info.aggregation_arity;
+                    if recursive2_airgroup_proofs.len() >= arity {
+                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
+                            &chunk.iter().collect::<Vec<_>>(),
                         );
                         let witness = match w {
                             Ok(witness) => witness,
@@ -4616,7 +4616,7 @@ where
                             // Every rec2 worker has exited, so the pipeline is torn down mid-run.
                             // Return the witness buffer to its pool (else it leaks inside the
                             // SendError and the pool comes back short) before surfacing the failure.
-                            drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness, false));
+                            drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
                             cancellation_info_clone.write_recover().cancel(None);
                             break;
                         }
@@ -5205,6 +5205,7 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
+
         // Components must pack exactly the airs the device will unpack: it gates every packed
         // read path on `packedTrace && is_packed`, so a global flag alone would corrupt the trace.
         if options.packed {

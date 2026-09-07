@@ -9,7 +9,8 @@
 #include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
-#include "exec_file.hpp"
+#include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
+#include "recursion_trace/exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
@@ -864,7 +865,9 @@ void free_device_buffers_cpu(void *d_buffers_) {
     delete d_buffers;
 }
 
-void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_) {
+void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_, uint64_t *execData, uint64_t execWords) {
+    (void)execData;
+    (void)execWords;  // the CPU backend expands gate bands on the host trace, before the proof
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
 
@@ -939,12 +942,56 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 
 
 
-void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
-    readExecFile(exec_data, string(exec_file), nCommitedPols);
-}
-
 void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
+}
+
+uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommitedPols, uint64_t execWords, uint64_t N) {
+    gate_bands::ExpandResult res =
+        gate_bands::expand_gate_bands((Goldilocks::Element *)witness, execData, nCommitedPols, execWords, N);
+    if (res.status == gate_bands::ExpandStatus::Ok) return res.nBands;
+
+    const std::string where = "band " + std::to_string(res.badBand) + " (row " + std::to_string(res.row) +
+                              ", kind " + std::to_string(res.kind) + ")";
+    switch (res.status) {
+        case gate_bands::ExpandStatus::MalformedSection:
+            zklog.error("expand_gate_bands: the exec file's gate-band section does not describe a "
+                        "buffer of " + std::to_string(execWords) + " words; the proving key is corrupt");
+            break;
+        case gate_bands::ExpandStatus::UnsupportedExecFormat:
+            zklog.error("expand_gate_bands: the exec file's format version is not the version " +
+                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) + " this build reads; "
+                        "regenerate the proving key with a matching setup");
+            break;
+        case gate_bands::ExpandStatus::UnsupportedVersion:
+            zklog.error("expand_gate_bands: gate-band section is format version " +
+                        std::to_string(res.version) + ", but this build understands version " +
+                        std::to_string(gate_bands::GATE_BAND_FORMAT_VERSION) +
+                        "; the proving key and this build disagree on the exec format -- "
+                        "regenerate the proving key with a matching setup");
+            break;
+        case gate_bands::ExpandStatus::UnexpandableBand:
+            zklog.error("expand_gate_bands: " + where + " cannot be expanded into a trace of " +
+                        std::to_string(N) + " rows; the proving key and the prover disagree");
+            break;
+        case gate_bands::ExpandStatus::OutputMismatch:
+            zklog.error("expand_gate_bands: " + where + " does not hash its own input to the output "
+                        "already in the trace; the witness gate and the trace expander disagree");
+            break;
+        case gate_bands::ExpandStatus::TableTooLargeForTrace:
+            zklog.error("expand_gate_bands: a BLAKE3 air of " + std::to_string(N) + " rows cannot "
+                        "hold the 2^17-row XOR/ROTR table, so its lookup counts have nowhere to go; "
+                        "circuits/blake3.pil rejects this at setup, so the proving key and this "
+                        "build disagree");
+            break;
+        case gate_bands::ExpandStatus::MixedFamilies:
+            zklog.error("expand_gate_bands: this air's gate bands name two different hash families, "
+                        "so no expander owns them all; the proving key was built from mismatched setups");
+            break;
+        case gate_bands::ExpandStatus::Ok: break;
+    }
+    exitProcess();
+    return 0;
 }
 
 void *load_zkey(char* zkeyFile) {

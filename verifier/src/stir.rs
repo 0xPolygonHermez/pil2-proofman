@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use num_traits::Float;
 
 use proofman_fields::{
-    partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, Transcript,
+    partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
 
 use crate::verifier::Boundary;
@@ -319,7 +319,7 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
         *p += 1;
     }
 
-    let mut read_hints = |proof: &[u64], p: &mut usize| -> Vec<Vec<E3>> {
+    let read_hints = |proof: &[u64], p: &mut usize| -> Vec<Vec<E3>> {
         let mut hints = Vec::with_capacity(m - 1);
         for i in 1..m {
             let n_g_max = 1 + params.num_queries[i - 1] as usize;
@@ -519,14 +519,14 @@ fn check_grinding<GrindingHash: Hash<Goldilocks>>(challenge: &E3, nonce: u64, bi
 
 /// Re-derive iteration i's shift queries as uniform indices of Lᵢ₋₁ — the prover's
 /// `sampleShiftQueries`, with the grinding checked instead of searched.
-fn derive_shift_queries<TranscriptHash, GrindingHash>(
-    transcript: &mut Transcript<Goldilocks, TranscriptHash>,
+fn derive_shift_queries<TranscriptT, GrindingHash>(
+    transcript: &mut TranscriptT,
     params: &StirParams,
     i: usize,
     nonce: u64,
 ) -> Option<Vec<u64>>
 where
-    TranscriptHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
     let mut c = e3_zero();
@@ -535,7 +535,7 @@ where
         v_error!("Invalid grinding in STIR iteration {}", i);
         return None;
     }
-    let mut transcript_queries: Transcript<Goldilocks, TranscriptHash> = Transcript::new();
+    let mut transcript_queries: TranscriptT = TranscriptT::new_transcript();
     transcript_queries.put(&c.value);
     transcript_queries.put(&[Goldilocks::new(nonce)]);
     Some(transcript_queries.get_permutations(params.num_queries[i - 1], params.log_domain_sizes[i - 1]))
@@ -623,8 +623,8 @@ fn fold_coset(log_l: u64, log_k: u64, r: E3, m: u64, coset: &[Goldilocks]) -> E3
 /// query order) with a uniform index of L_0 and the value T_0's leaf claims for that point;
 /// returning false rejects. The STARK verifier records the claims and checks them against the
 /// recomputed DEEP polynomial afterwards; a self-contained test can compare directly.
-pub fn stir_verify<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
-    transcript: &mut Transcript<Goldilocks, TranscriptHash>,
+pub fn stir_verify<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+    transcript: &mut TranscriptT,
     section: &StirSection,
     params: &StirParams,
     check_f0: &mut dyn FnMut(usize, u64, E3) -> bool,
@@ -632,7 +632,7 @@ pub fn stir_verify<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
 where
     LeafHash: Hash<Goldilocks>,
     CompressionHash: Hash<Goldilocks>,
-    TranscriptHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
     if !params.validate() {
@@ -694,7 +694,7 @@ where
         let mut r_comb = e3_zero();
         transcript.get_field(&mut r_comb.value);
         let Some(raw) =
-            derive_shift_queries::<TranscriptHash, GrindingHash>(transcript, params, i, section.nonces[i - 1])
+            derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, i, section.nonces[i - 1])
         else {
             return false;
         };
@@ -761,7 +761,7 @@ where
             transcript.put(&coeff.value);
         }
     } else {
-        let mut transcript_final_pol: Transcript<Goldilocks, TranscriptHash> = Transcript::new();
+        let mut transcript_final_pol: TranscriptT = TranscriptT::new_transcript();
         for coeff in &section.final_pol {
             transcript_final_pol.put(&coeff.value);
         }
@@ -769,7 +769,7 @@ where
         transcript.put(&hash[0..4]);
     }
 
-    let Some(raw) = derive_shift_queries::<TranscriptHash, GrindingHash>(transcript, params, m, section.nonces[m - 1])
+    let Some(raw) = derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, m, section.nonces[m - 1])
     else {
         return false;
     };
@@ -803,7 +803,7 @@ where
 /// and the two function pointers are the generated straight-line evaluators (they are
 /// LDT-agnostic — identical to the ones a FRI verifier of the same circuit would bake in).
 #[allow(clippy::type_complexity)]
-pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
+pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
@@ -823,7 +823,7 @@ pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptHash, GrindingHash
 where
     LeafHash: Hash<Goldilocks>,
     CompressionHash: Hash<Goldilocks>,
-    TranscriptHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
     if proof.is_empty() || vk.len() < 4 {
@@ -984,14 +984,14 @@ where
     // ---- Transcript replay: the shared prefix, kept in sync with `stark_verify` ---------------
     let mut challenges = vec![e3_zero(); verifier_info.n_challenges_total as usize];
 
-    let mut transcript: Transcript<Goldilocks, TranscriptHash> = Transcript::<Goldilocks, TranscriptHash>::new();
+    let mut transcript: TranscriptT = TranscriptT::new_transcript();
     transcript.put(&root_c);
     if n_publics > 0 {
         if !params.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics: Transcript<Goldilocks, TranscriptHash> =
-                Transcript::<Goldilocks, TranscriptHash>::new();
+            let mut transcript_publics: TranscriptT =
+                TranscriptT::new_transcript();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash[0..4]);
@@ -1012,8 +1012,8 @@ where
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals: Transcript<Goldilocks, TranscriptHash> =
-            Transcript::<Goldilocks, TranscriptHash>::new();
+        let mut transcript_evals: TranscriptT =
+            TranscriptT::new_transcript();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }
@@ -1035,7 +1035,7 @@ where
             f0_claims[q] = claim;
             true
         };
-        if !stir_verify::<LeafHash, CompressionHash, TranscriptHash, GrindingHash>(
+        if !stir_verify::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
             &mut transcript,
             &section,
             params,

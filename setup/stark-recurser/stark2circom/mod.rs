@@ -13,6 +13,11 @@
 /// GL Poseidon2 transcript builder — shared by `pil2circom` and `gencircom`.
 pub(crate) mod transcript;
 
+/// Compiles and runs the emitted BLAKE3 circom against the reference `blake3`
+/// crate. Skips when circom or a C++ toolchain is unavailable.
+#[cfg(test)]
+mod blake3_equiv_tests;
+
 /// Circuit-level template generators (port of `gencircom.js`).
 pub mod circuit_templates;
 

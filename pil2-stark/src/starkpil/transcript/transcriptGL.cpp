@@ -36,8 +36,9 @@ void TranscriptGL::_updateState()
         }
         break;
     case HashFamily::Blake3:
-        Blake3Goldilocks::permuteTranscript(out, inputs, transcriptOutSize);
-        break;
+        zklog.error("TranscriptGL::_updateState: unreachable for blake3");
+        exitProcess();
+        exit(-1);
     }
     out_cursor = transcriptOutSize;
     std::memset(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element));
@@ -47,6 +48,16 @@ void TranscriptGL::_updateState()
 
 void TranscriptGL::_add1(Goldilocks::Element input)
 {
+    if (get_hash_family() == HashFamily::Blake3)
+    {
+        const uint64_t w = Goldilocks::toU64(input);
+        b3.absorb(&w, 1);
+        b3_xof_valid = false;   // the stream changed; old XOF material is stale
+        b3_offset = 0;
+        b3_ob = 0;
+        return;
+    }
+
     pending[pending_cursor] = input;
     pending_cursor++;
     out_cursor = 0;
@@ -66,6 +77,15 @@ void TranscriptGL::getField(uint64_t* output)
 }
 
 void TranscriptGL::getState(Goldilocks::Element* output) {
+    if (get_hash_family() == HashFamily::Blake3)
+    {
+        // The BLAKE3 digest so far; does not consume, as the sponge does not.
+        uint64_t xof[8];
+        b3.finalize_xof(0, xof);
+        for (uint32_t i = 0; i < transcriptStateSize; ++i)
+            output[i] = Goldilocks::fromU64(xof[i]);
+        return;
+    }
     if(pending_cursor > 0) {
         _updateState();
     }
@@ -73,6 +93,19 @@ void TranscriptGL::getState(Goldilocks::Element* output) {
 }
 
 void TranscriptGL::getState(Goldilocks::Element* output, uint64_t nOutputs) {
+    if (get_hash_family() == HashFamily::Blake3)
+    {
+        if (nOutputs > 8) {
+            zklog.error("TranscriptGL::getState: blake3 yields at most 8 words per XOF block");
+            exitProcess();
+            exit(-1);
+        }
+        uint64_t xof[8];
+        b3.finalize_xof(0, xof);
+        for (uint64_t i = 0; i < nOutputs; ++i)
+            output[i] = Goldilocks::fromU64(xof[i]);
+        return;
+    }
     if(pending_cursor > 0) {
         _updateState();
     }
@@ -81,6 +114,25 @@ void TranscriptGL::getState(Goldilocks::Element* output, uint64_t nOutputs) {
 
 Goldilocks::Element TranscriptGL::getFields1()
 {
+    if (get_hash_family() == HashFamily::Blake3)
+    {
+        // A refill advances only the output-block counter; the root is unchanged.
+        if (!b3_xof_valid)
+        {
+            b3_ob = 0;
+            b3.finalize_xof(b3_ob, b3_xof);
+            b3_offset = 0;
+            b3_xof_valid = true;
+        }
+        else if (b3_offset == 8)
+        {
+            ++b3_ob;
+            b3.finalize_xof(b3_ob, b3_xof);
+            b3_offset = 0;
+        }
+        return Goldilocks::fromU64(b3_xof[b3_offset++]);
+    }
+
     if (out_cursor == 0)
     {
         _updateState();

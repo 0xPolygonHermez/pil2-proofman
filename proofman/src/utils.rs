@@ -13,7 +13,6 @@ use proofman_common::{
     format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
 use proofman_starks_lib_c::load_device_const_pols_c;
-use proofman_starks_lib_c::load_device_setup_c;
 use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
@@ -737,17 +736,20 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
         }
     }
 
-    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-    if needs_const_pols_gpu_regeneration(setup_vadcop_final_compressed)? {
-        needs_const_regen = true;
-        tracing::debug!("Vadcop final compressed const pols regeneration needed");
-    }
-    if needs_const_tree_regeneration(setup_vadcop_final_compressed)? {
-        needs_tree_regen = true;
-        tracing::debug!("Vadcop final compressed tree regeneration needed");
-        if setup_vadcop_final_compressed.gpu {
+    // Skipped entirely when the key carries no compressed final: there are no const pols or tree
+    // for a stage that was never generated.
+    if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
+        if needs_const_pols_gpu_regeneration(setup_vadcop_final_compressed)? {
             needs_const_regen = true;
-            tracing::debug!("Vadcop final compressed const pols regeneration also needed due to tree regeneration");
+            tracing::debug!("Vadcop final compressed const pols regeneration needed");
+        }
+        if needs_const_tree_regeneration(setup_vadcop_final_compressed)? {
+            needs_tree_regen = true;
+            tracing::debug!("Vadcop final compressed tree regeneration needed");
+            if setup_vadcop_final_compressed.gpu {
+                needs_const_regen = true;
+                tracing::debug!("Vadcop final compressed const pols regeneration also needed due to tree regeneration");
+            }
         }
     }
 
@@ -783,8 +785,9 @@ pub fn check_const_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Se
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     check_const_pols_gpu(setup_vadcop_final)?;
 
-    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-    check_const_pols_gpu(setup_vadcop_final_compressed)?;
+    if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
+        check_const_pols_gpu(setup_vadcop_final_compressed)?;
+    }
     Ok(())
 }
 
@@ -829,8 +832,9 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     check_const_tree(setup_vadcop_final, &d_buffers)?;
 
-    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final_compressed, &d_buffers)?;
+    if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
+        check_const_tree(setup_vadcop_final_compressed, &d_buffers)?;
+    }
 
     Ok(())
 }
@@ -877,15 +881,7 @@ pub fn load_device_setups<F: PrimeField64>(
             }
             let packed_info_air =
                 packed_info.get(&(airgroup_id, air_id)).cloned().unwrap_or_else(|| PackedInfo::new(false, 0, vec![]));
-            load_device_setup_c(
-                airgroup_id as u64,
-                air_id as u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers,
-                setup.verkey.as_ptr() as *mut u8,
-                packed_info_air.as_ffi().get_ptr(),
-            );
+            setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, packed_info_air.as_ffi().get_ptr());
         }
     }
 
@@ -898,15 +894,7 @@ pub fn load_device_setups<F: PrimeField64>(
                     if setup.gpu {
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                     }
-                    load_device_setup_c(
-                        airgroup_id as u64,
-                        air_id as u64,
-                        proof_type,
-                        (&setup.p_setup).into(),
-                        d_buffers,
-                        setup.verkey.as_ptr() as *mut u8,
-                        std::ptr::null_mut(),
-                    );
+                    setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, std::ptr::null_mut());
                 }
             }
         }
@@ -918,15 +906,7 @@ pub fn load_device_setups<F: PrimeField64>(
                 if setup.gpu {
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 }
-                load_device_setup_c(
-                    airgroup_id as u64,
-                    air_id as u64,
-                    proof_type,
-                    (&setup.p_setup).into(),
-                    d_buffers,
-                    setup.verkey.as_ptr() as *mut u8,
-                    std::ptr::null_mut(),
-                );
+                setup.load_device(airgroup_id as u64, air_id as u64, d_buffers, std::ptr::null_mut());
             }
         }
 
@@ -937,15 +917,7 @@ pub fn load_device_setups<F: PrimeField64>(
             if setup.gpu {
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
             }
-            load_device_setup_c(
-                airgroup_id as u64,
-                0_u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers,
-                setup.verkey.as_ptr() as *mut u8,
-                std::ptr::null_mut(),
-            );
+            setup.load_device(airgroup_id as u64, 0, d_buffers, std::ptr::null_mut());
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
@@ -953,30 +925,16 @@ pub fn load_device_setups<F: PrimeField64>(
         if setup_vadcop_final.gpu {
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
+        setup_vadcop_final.load_device(0, 0, d_buffers, std::ptr::null_mut());
 
-        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-        let proof_type: &str = setup_vadcop_final_compressed.setup_type.into();
-        if setup_vadcop_final_compressed.gpu {
-            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        // Nothing to load when the key carries no compressed final.
+        if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
+            let proof_type: &str = setup_vadcop_final_compressed.setup_type.into();
+            if setup_vadcop_final_compressed.gpu {
+                tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+            }
+            setup_vadcop_final_compressed.load_device(0, 0, d_buffers, std::ptr::null_mut());
         }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final_compressed.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
     }
     Ok(())
 }
@@ -1172,21 +1130,24 @@ pub fn load_device_const_pols<F: PrimeField64>(
             );
         }
 
-        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-        if setup_vadcop_final_compressed.gpu {
-            // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
-            let group = FixedGroup { owner: (0, 1), load_tree: setup_vadcop_final_compressed.preallocate };
-            load_const_pols_slot(
-                d_buffers,
-                setup_vadcop_final_compressed,
-                group,
-                0,
-                0,
-                verify_constraints,
-                only_first_gpu,
-                &mut final_slots,
-                &mut offset_aggregation,
-            );
+        // `else` is not needed: an absent stage claims no slot, and the aggregation offset it
+        // would have advanced simply stays where vadcop_final left it.
+        if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
+            if setup_vadcop_final_compressed.gpu {
+                // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
+                let group = FixedGroup { owner: (0, 1), load_tree: setup_vadcop_final_compressed.preallocate };
+                load_const_pols_slot(
+                    d_buffers,
+                    setup_vadcop_final_compressed,
+                    group,
+                    0,
+                    0,
+                    verify_constraints,
+                    only_first_gpu,
+                    &mut final_slots,
+                    &mut offset_aggregation,
+                );
+            }
         }
     }
     Ok(offset_aggregation)

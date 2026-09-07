@@ -1529,7 +1529,12 @@ pub fn optimize_opts(ir: &Ir, hoist: bool, powers: bool) -> (Ir, OptStats) {
                 } else if *bslots == 0 {
                     cost_ratio < 0.5
                 } else {
-                    cost_ratio < 0.8
+                    // Price the slot increase by how much it GROWS, not by whether it happened: one
+                    // more slot on forty is not the same risk as forty more. A flat threshold rejects
+                    // a fold that is measurably faster but adds a single slot. Reduces to 0.8 once
+                    // the slots double, which is the regime the flat value was calibrated in.
+                    let growth = slots as f64 / (*bslots).max(1) as f64 - 1.0;
+                    cost_ratio < 1.0 - 0.2 * growth.clamp(0.0, 1.0)
                 }
             }
         };
