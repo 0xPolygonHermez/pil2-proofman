@@ -664,17 +664,34 @@ pub fn gen_recursive_setup(
         } else {
             format!("the compressor proof of air '{}'", config.air_name)
         };
+        // The schedule this circuit pays for is the VERIFIED proof's (config.stark_info), which
+        // the schedule log line of this circuit's own pil_info -- never reached, we bail first --
+        // would not have shown anyway.
+        let verified_schedule = config
+            .stark_info
+            .get("starkStruct")
+            .and_then(|ss| serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss.clone()).ok())
+            .map(|ss| ss.low_degree_test.describe())
+            .unwrap_or_else(|| "unreadable starkStruct".to_string());
+        let knob = if template == RecursiveTemplate::Recursive2 {
+            "that is the recursion tree's own schedule: tune it with the starkstructs \"recursion\" entry \
+             (lowDegreeTest FRI, more grindingBits, a smaller initialFoldingFactor)"
+        } else {
+            "give the compressor a cheaper schedule (fewer round-1 queries through grinding, a smaller \
+             folding factor, or FRI)"
+        };
         bail!(
             "{} for air '{}' verifies {} and packs to 2^{} rows (n_used = {}), above the 2^{} every \
              recursion circuit must share. The verified proof's low-degree test is too expensive in-circuit \
-             for the recursion domain: give the verified circuit a cheaper schedule (fewer round-1 queries \
-             through grinding, a smaller folding factor, or FRI), or raise the family's recursive_bits_threshold.",
+             for the recursion domain -- it runs {} -- so {}, or raise the family's recursive_bits_threshold.",
             template_str,
             config.air_name,
             wraps,
             plonk_result.n_bits,
             plonk_result.n_used,
-            recursive_bits_threshold
+            recursive_bits_threshold,
+            verified_schedule,
+            knob
         );
     }
 
@@ -749,6 +766,12 @@ pub fn gen_recursive_setup(
             // We still need to write the JSON and binary files for this air's
             // directory (the const tree needs a starkinfo.json on disk).
             let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
+            tracing::info!(
+                "Air '{}' {} low-degree test (reused): {}",
+                config.air_name,
+                template_str,
+                stark_info_loaded.stark_struct.low_degree_test.describe()
+            );
 
             // The reused setup assumes every air's circuit has the same shape; a mismatch
             // would otherwise surface as a bare exit inside the C++ const-tree loader.
