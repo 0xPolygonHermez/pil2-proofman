@@ -706,7 +706,8 @@ static void unpack_cm1_cpu(DeviceCommitBuffersCPU *d_buffers, uint64_t airgroupI
     }
     d_buffers->unpack_cpu_indexed(src, table, dst, nRows, nCols, pInfo->num_packed_words,
                                   pInfo->words_per_entry, pInfo->unpack_info, pInfo->col_source,
-                                  pInfo->index_bits, d_buffers->getInstructionTableEntries(airgroupId, airId),
+                                  pInfo->col_lane, pInfo->index_bits, pInfo->lanes,
+                                  d_buffers->getInstructionTableEntries(airgroupId, airId),
                                   airgroupId, airId);
 }
 
@@ -903,7 +904,9 @@ void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     PackedInfo *packedInfo = (PackedInfo *)packedInfo_;
     if (packedInfo != nullptr) {
-        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info, packedInfo->col_source, packedInfo->index_bits, packedInfo->words_per_entry);
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words,
+                                    packedInfo->unpack_info, packedInfo->col_source, packedInfo->col_lane,
+                                    packedInfo->index_bits, packedInfo->words_per_entry, packedInfo->lanes);
     }
 }
 
