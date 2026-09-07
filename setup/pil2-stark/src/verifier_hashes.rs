@@ -358,6 +358,25 @@ fn transcript_hashes(geom: &VerifierGeometry, family: &str) -> u64 {
     t.hashes + queries.hashes
 }
 
+/// Blocks the recursive1 verifying this air needs, against what the pinned recursion holds: one
+/// verifier compression is one block-lane of the aggregator air.
+#[derive(Debug, Clone, Copy)]
+pub struct Blake3RecursionFit {
+    pub blocks: usize,
+    pub capacity: usize,
+    pub needs_compressor: bool,
+}
+
+/// `blocks` is a LOWER bound (per-flags bucketing rounds up, and a plonk band can size the air
+/// instead), so `needs_compressor` is sound when set and soft when clear.
+pub fn blake3_recursion_fit(counts: &HashCounts, lanes: usize) -> Blake3RecursionFit {
+    use pil2_stark_recurser::plonk2pil::setups::blake3::blake3_max_blocks;
+
+    let blocks = (counts.total() as usize).div_ceil(lanes.max(1));
+    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    Blake3RecursionFit { blocks, capacity, needs_compressor: blocks > capacity }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,5 +641,41 @@ mod tests {
         );
 
         assert_eq!(blake3.merkle, poseidon.merkle * 2, "binary paths are twice as long");
+    }
+
+    /// At 4 lanes the 9361-block capacity settles the question at 37444 compressions.
+    #[test]
+    fn the_threshold_is_the_pinned_airs_block_capacity() {
+        let fit = |total: u64, lanes| blake3_recursion_fit(&HashCounts { leaf: total, ..Default::default() }, lanes);
+
+        assert_eq!(fit(37_444, 4).capacity, 9361);
+        assert_eq!(fit(37_444, 4).blocks, 9361);
+        assert!(!fit(37_444, 4).needs_compressor);
+        assert!(fit(37_445, 4).needs_compressor);
+        // Fewer lanes pack fewer compressions per block, so the same air can flip.
+        assert!(fit(37_444, 1).needs_compressor);
+    }
+
+    /// Same boundary `needs_compressor` tests, off the recurser's constants so a layout change moves both.
+    #[test]
+    fn the_block_boundary_is_the_n_bits_boundary() {
+        use pil2_stark_recurser::plonk2pil::setups::blake3::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
+
+        let n_bits = |blocks: usize| (blocks * BLAKE3_CLOCKS + CLOCK_WRAP_ROWS).next_power_of_two().trailing_zeros();
+        let capacity = blake3_recursion_fit(&HashCounts::default(), 4).capacity;
+
+        assert_eq!(n_bits(capacity), 19);
+        assert_eq!(n_bits(capacity + 1), 20);
+    }
+
+    /// Recorded ground truth: the hashes example fits, ZisK's Keccakf (11283 hashing blocks) does not.
+    #[test]
+    fn the_recorded_airs_land_on_the_right_side() {
+        let hashes_example = HashCounts { leaf: 6042, merkle: 9132, fri: 8568, transcript: 440, grinding: 1 };
+        let fit = blake3_recursion_fit(&hashes_example, 4);
+        assert_eq!(fit.blocks, 6046);
+        assert!(!fit.needs_compressor);
+
+        assert!(blake3_recursion_fit(&HashCounts { leaf: 11_283 * 4, ..Default::default() }, 4).needs_compressor);
     }
 }

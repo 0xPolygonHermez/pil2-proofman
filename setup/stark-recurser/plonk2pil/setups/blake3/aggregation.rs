@@ -29,7 +29,7 @@
 
 use super::{
     blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, BandLayout, PilTemplateParams, AGGREGATOR_LAYOUT,
-    BLAKE3_CLOCKS, CLOCK_WRAP_ROWS,
+    BLAKE3_CLOCKS, CLOCK_WRAP_ROWS, DEFAULT_LANES,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use crate::plonk2pil::r1cs::to_plonk::{
@@ -260,7 +260,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
 
     let mut cgi = get_custom_gates_info(r1cs);
-    let lanes = options.blake3_lanes.unwrap_or(4);
+    let lanes = options.blake3_lanes.unwrap_or(DEFAULT_LANES);
     assert!((1..=8).contains(&lanes), "LANES must be in 1..8 (the air's boundary depth caps it), got {lanes}");
 
     // Blake3Compress carries `(flags, isParent)` as TEMPLATE PARAMETERS, so circom mints one gate id

@@ -121,6 +121,9 @@ pub fn blake3_capacity(n: usize, lanes: usize) -> usize {
     blake3_max_blocks(n) * lanes
 }
 
+/// Lanes the aggregator is built at unless overridden.
+pub const DEFAULT_LANES: usize = 4;
+
 /// Deepest backward prime any clock selector uses; the wrap window that many rows must stay padding.
 /// Mirrors the single `CLK_0` anchor in blake3/aggregator.pil.
 pub const CLOCK_WRAP_ROWS: usize = BLAKE3_CLOCKS - 1;

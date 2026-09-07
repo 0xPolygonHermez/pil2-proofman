@@ -26,6 +26,8 @@ pub struct StatsOptions {
     pub airs: Vec<String>,
     /// Whether to show intermediate polynomial details per stage.
     pub im_pols_stages: bool,
+    /// Lanes the blake3 recursion is built at: compressions per block.
+    pub blake3_lanes: usize,
 }
 
 /// Run the stats pipeline and write the output file.
@@ -92,12 +94,19 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             );
             let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
 
+            // Only blake3 sizes its recursion by hashing blocks, so only there can hashes answer this.
+            let fit = (family == "blake3").then(|| {
+                let f = crate::verifier_hashes::blake3_recursion_fit(&counts, opts.blake3_lanes);
+                (f, if f.needs_compressor { "yes" } else { "no" })
+            });
+
             summary_lines.push(format!(
-                "{} | {} | {} | verifierHashes: {}",
+                "{} | {} | {} | verifierHashes: {}{}",
                 airgroup_name,
                 air_name,
                 pil_result.summary,
-                counts.total()
+                counts.total(),
+                fit.map(|(_, n)| format!(" | needsCompressor: {n}")).unwrap_or_default(),
             ));
 
             stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
@@ -117,6 +126,13 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                 geom.last_level_verification,
                 geom.pow_bits,
             ));
+            if let Some((f, n)) = fit {
+                stats_lines.push(format!(
+                    "    needsCompressor: {n:>3} ({} of {} hashing blocks at LANES={}; hashing only, a \
+                     plonk-dominated band can still size the air)",
+                    f.blocks, f.capacity, opts.blake3_lanes,
+                ));
+            }
 
             let (base_field, extended_field) = &pil_result.im_pols_info;
             if !base_field.is_empty() {
