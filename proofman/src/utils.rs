@@ -12,7 +12,9 @@ use colored::*;
 use proofman_common::{
     format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
-use proofman_starks_lib_c::{load_device_const_pols_c, reserve_custom_commit_slot_c};
+use proofman_starks_lib_c::{
+    configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, reserve_custom_commit_slot_c,
+};
 use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
@@ -1088,23 +1090,49 @@ pub fn load_device_const_pols<F: PrimeField64>(
             }
         }
 
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
-                let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-                if setup.gpu {
-                    let group = fixed_group_or_own(Some(sctx_recursive1), setup, airgroup_id, air_id);
-                    load_const_pols_slot(
-                        d_buffers,
-                        setup,
-                        group,
-                        airgroup_id,
-                        air_id,
-                        verify_constraints,
-                        only_first_gpu,
-                        &mut recursive1_slots,
-                        &mut offset_aggregation,
-                    );
+        // Recursive1: a slot cache instead of resident slots (SetupCtx::const_slot_cache_slots). The
+        // packed sets stay on the host (pinned) and the loader carves the cache region here, in the
+        // same position the resident slots occupied, so the sizing stays in lockstep.
+        let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+        if sctx_recursive1.const_slot_cache_slots > 0 {
+            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+                    if setup.gpu {
+                        load_host_const_pols_c(
+                            airgroup_id as u64,
+                            air_id as u64,
+                            setup.setup_type.into(),
+                            &setup.const_pols_path,
+                            setup.const_pols_size_packed as u64,
+                            d_buffers,
+                            only_first_gpu,
+                        );
+                    }
+                }
+            }
+            let slot_elems = sctx_recursive1.max_const_pols_size_packed as u64;
+            let slots = sctx_recursive1.const_slot_cache_slots as u32;
+            configure_const_slot_cache_c(d_buffers, offset_aggregation, slot_elems, slots);
+            offset_aggregation += slots as u64 * slot_elems;
+        } else {
+            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+                    if setup.gpu {
+                        let group = fixed_group_or_own(Some(sctx_recursive1), setup, airgroup_id, air_id);
+                        load_const_pols_slot(
+                            d_buffers,
+                            setup,
+                            group,
+                            airgroup_id,
+                            air_id,
+                            verify_constraints,
+                            only_first_gpu,
+                            &mut recursive1_slots,
+                            &mut offset_aggregation,
+                        );
+                    }
                 }
             }
         }

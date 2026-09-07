@@ -3013,20 +3013,31 @@ where
         let scheduler: Option<Arc<crate::SharedScheduler<F>>> = if self.pctx.gpu {
             let mut sched = crate::RecursiveScheduler::<F>::new(self.pctx.get_device_buffers_ptr());
             if self.pctx.phase_b {
-                // Phase-A-only airs dispatch first so the halves open as early as possible; among
-                // them, the ones with a compressor first (their chain is the longest).
+                // Dispatch ranks: phase-A-only airs first so the halves open as early as possible (with
+                // a compressor first among them: the longest chain), then the other airs with a
+                // compressor (basic, CPU witness, compressor, recursive1, recursive2: the chain that
+                // ends the block if it starts late), then the rest by backlog.
                 let half = self.pctx.phase_b_half as u64;
-                let big: std::collections::HashMap<(usize, usize), u8> = self
+                let ranks: std::collections::HashMap<(usize, usize), u8> = self
                     .pctx
                     .global_info
                     .airs
                     .iter()
                     .enumerate()
                     .flat_map(|(ag, group)| (0..group.len()).map(move |air| (ag, air)))
-                    .filter(|&(ag, air)| self.sctx.get_setup(ag, air).map(|s| s.prover_buffer_size > half).unwrap_or(false))
-                    .map(|(ag, air)| ((ag, air), if self.pctx.global_info.get_air_has_compressor(ag, air) { 0 } else { 1 }))
+                    .filter_map(|(ag, air)| {
+                        let phase_a_only =
+                            self.sctx.get_setup(ag, air).map(|s| s.prover_buffer_size > half).unwrap_or(false);
+                        let has_compressor = self.pctx.global_info.get_air_has_compressor(ag, air);
+                        match (phase_a_only, has_compressor) {
+                            (true, true) => Some(((ag, air), 0)),
+                            (true, false) => Some(((ag, air), 1)),
+                            (false, true) => Some(((ag, air), 2)),
+                            (false, false) => None,
+                        }
+                    })
                     .collect();
-                sched.set_big_keys(big);
+                sched.set_big_keys(ranks);
             }
             Some(Arc::new(crate::SharedScheduler::new(sched)))
         } else {

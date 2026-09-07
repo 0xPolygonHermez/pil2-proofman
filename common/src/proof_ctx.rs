@@ -23,6 +23,7 @@ use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
     get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c,
+    get_post_alloc_headroom_bytes_c,
     get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
@@ -64,6 +65,9 @@ pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 /// GPU memory (in MB) left unallocated for consumers outside our arena.
 const GPU_MEMORY_RESERVE_MB: u64 = 1536;
+/// Extra free memory (MB) kept when the layout adds the phase-A recursion alias stream: its CUDA
+/// graphs and per-stream device buffers (measured ~0.3 GB at 712 tx, rounded up).
+const PHASE_A_ALIAS_HEADROOM_MB: u64 = 512;
 
 /// Unified-buffer floor (bytes) for final-snark runs: the snark prover borrows the buffer
 /// whole and carves ~27.97 GiB (2^24 plonk key), regardless of what the streams need.
@@ -1149,18 +1153,32 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         // Phase B splits the single basic stream in two halves that host recursion and every basic
-        // that fits them (the big ones ran in phase A). The stream is grown to the mops floor -- the
-        // pre-const area below the consts that the pad would otherwise fill, so this is memory-neutral
-        // on the device -- which makes the halves as large as the card allows: the more airs fit a
-        // half, the shorter phase A. The halves must hold the recursive1/recursive2 class.
+        // that fits them (the big ones ran in phase A). The stream is grown into all the slack the
+        // post-allocation headroom leaves (at least to the mops floor, the pre-const area the pad would
+        // otherwise fill), which makes the halves as large as the card allows: the more airs fit a
+        // half, the shorter phase A. The halves must hold the recursive1/recursive2 class. The budget
+        // already excludes GPU_MEMORY_RESERVE_MB, so only the difference to the C++ headroom is kept.
         let mut layout = layout;
         let mut phase_b_half: usize = 0;
         if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
             let floor_area = (get_mops_floor_bytes_c() / 8) as usize;
+            let mut headroom_extra =
+                (get_post_alloc_headroom_bytes_c().saturating_sub(GPU_MEMORY_RESERVE_MB * 1024 * 1024) / 8) as usize;
             let current = layout.basic[0].size;
-            let target = current
-                .max(floor_area.saturating_sub(prefetch_region_area as usize))
-                .min(current + layout.unused);
+            let grow_to = |headroom_extra: usize| {
+                current
+                    .max(floor_area.saturating_sub(prefetch_region_area as usize))
+                    .max((current + layout.unused).saturating_sub(headroom_extra))
+                    .min(current + layout.unused)
+            };
+            let mut target = grow_to(headroom_extra);
+            // The phase-A recursion alias (below) is a fourth device stream, and every stream brings
+            // its own CUDA graphs and small device buffers (~0.3 GB measured at 712 tx); when the
+            // stream will hold it, keep that much more free.
+            if target >= sctx.max_prover_buffer_size + max_prover_recursive2_buffer_size {
+                headroom_extra += (PHASE_A_ALIAS_HEADROOM_MB * 1024 * 1024 / 8) as usize;
+                target = grow_to(headroom_extra);
+            }
             let half = target / 2;
             if half >= max_prover_recursive2_buffer_size {
                 layout.unused -= target - current;
@@ -1191,10 +1209,27 @@ impl<F: PrimeField64> ProofCtx<F> {
             && n_recursive_streams_per_gpu == 0
             && phase_b_half > 0
             && !std::env::var("PROOFMAN_NO_PHASE_B").map(|v| v == "1").unwrap_or(false);
+        // Phase-A recursion alias: when the stream also holds the recursive class beside the largest
+        // basic, a third recursive-class stream runs recursion there during phase A (see
+        // DeviceCommitBuffers::phaseAAliasOffset). Otherwise recursion interleaves on the basic
+        // stream in phase A as before.
+        let mut phase_a_alias_offset: usize = 0;
         if self.phase_b {
             configure_phase_b_c(d_buffers.get_ptr());
             n_recursive_streams_per_gpu = 2;
             self.phase_b_half = phase_b_half;
+            let largest_basic = sctx.max_prover_buffer_size;
+            if layout.basic[0].size >= largest_basic + max_prover_recursive2_buffer_size {
+                phase_a_alias_offset = largest_basic;
+                n_recursive_streams_per_gpu = 3;
+            } else {
+                tracing::info!(
+                    "Phase A alias not available: the stream ({}) does not hold the recursive class ({}) beside the largest basic ({})",
+                    format_bytes(layout.basic[0].size as f64 * 8.0),
+                    format_bytes(max_prover_recursive2_buffer_size as f64 * 8.0),
+                    format_bytes(largest_basic as f64 * 8.0)
+                );
+            }
         }
         // The recursive-class streams' capacity: the halves under phase B, else the recursive class.
         let recursive_stream_size = if self.phase_b { phase_b_half } else { max_prover_recursive2_buffer_size };
@@ -1211,6 +1246,11 @@ impl<F: PrimeField64> ProofCtx<F> {
                 2 if self.phase_b => format!(
                     "2 phase-B streams over the basic stream's halves ({} each, recursion + basics that fit)",
                     format_bytes(phase_b_half as f64 * 8.0)
+                ),
+                3 if self.phase_b => format!(
+                    "2 phase-B streams over the basic stream's halves ({} each, recursion + basics that fit) + a phase-A recursion alias past the largest basic ({} free)",
+                    format_bytes(phase_b_half as f64 * 8.0),
+                    format_bytes((layout.basic[0].size - phase_a_alias_offset) as f64 * 8.0)
                 ),
                 n => format!("{n} dedicated streams per GPU for recursive proofs"),
             };
@@ -1274,6 +1314,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             total_const_area_aggregation,
             unified_buffer_pad_area,
             prefetch_region_area,
+            phase_a_alias_offset as u64,
         );
 
         self.d_buffers = d_buffers;

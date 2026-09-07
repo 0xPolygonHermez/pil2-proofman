@@ -1506,6 +1506,8 @@ pub fn alloc_device_large_buffers_c(
     const_pols_aggregation_area: u64,
     unified_buffer_pad_area: u64,
     prefetch_region_area: u64,
+    // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
+    phase_a_alias_offset: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1515,6 +1517,7 @@ pub fn alloc_device_large_buffers_c(
             const_pols_aggregation_area,
             unified_buffer_pad_area,
             prefetch_region_area,
+            phase_a_alias_offset,
         );
     }
 }
@@ -1535,6 +1538,38 @@ pub fn get_prefetch_witness_slots_c() -> u32 {
 
 pub fn get_mops_floor_bytes_c() -> u64 {
     unsafe { get_mops_floor_bytes() }
+}
+
+pub fn get_post_alloc_headroom_bytes_c() -> u64 {
+    unsafe { get_post_alloc_headroom_bytes() }
+}
+
+pub fn configure_const_slot_cache_c(d_buffers: *mut ::std::os::raw::c_void, base_offset: u64, slot_elems: u64, n_slots: u32) {
+    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+}
+
+pub fn load_host_const_pols_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    const_filename: &str,
+    const_size: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let const_filename_name = CString::new(const_filename).unwrap();
+    unsafe {
+        load_host_const_pols(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut c_char,
+            const_filename_name.as_ptr() as *mut c_char,
+            const_size,
+            d_buffers,
+            only_first_gpu,
+        )
+    }
 }
 
 pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {

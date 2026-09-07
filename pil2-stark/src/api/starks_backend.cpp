@@ -63,7 +63,7 @@ void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *p
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea);
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
 void get_instances_ready_gpu(void *d_buffers, int64_t* instances_ready);
 void reset_device_streams_gpu(void *d_buffers_);
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size);
@@ -83,6 +83,9 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
 uint32_t get_prefetch_witness_slots_gpu();
 uint64_t get_mops_floor_bytes_gpu();
+uint64_t get_post_alloc_headroom_bytes_gpu();
+void configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
+void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
 void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
 void configure_phase_b_gpu(void *d_buffers_);
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
@@ -160,6 +163,9 @@ StarksBackend cpu_backend = []() {
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
     backend.get_mops_floor_bytes = nullptr;               // default: 0 (no floor)
+    backend.get_post_alloc_headroom_bytes = nullptr;      // default: 0
+    backend.configure_const_slot_cache = nullptr;         // default: no-op
+    backend.load_host_const_pols = nullptr;               // default: no-op
     backend.set_pipeline_mode = nullptr;                  // default: no-op
     backend.configure_phase_b = nullptr;
     backend.set_phase_b = nullptr;
@@ -233,6 +239,9 @@ StarksBackend gpu_backend = []() {
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
     backend.get_mops_floor_bytes = get_mops_floor_bytes_gpu;
+    backend.get_post_alloc_headroom_bytes = get_post_alloc_headroom_bytes_gpu;
+    backend.configure_const_slot_cache = configure_const_slot_cache_gpu;
+    backend.load_host_const_pols = load_host_const_pols_gpu;
     backend.set_pipeline_mode = set_pipeline_mode_gpu;
     backend.configure_phase_b = configure_phase_b_gpu;
     backend.set_phase_b = set_phase_b_gpu;
@@ -452,9 +461,9 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_rec
     return backend->gen_device_streams ? backend->gen_device_streams(d_buffers_, n_streams, n_recursive_streams, auxTraceSizes, maxSizeProverBufferAggregation, maxProofSize, merkleTreeArity) : 1;
 }
 
-void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation, unifiedBufferPadArea, prefetchRegionArea);
+    if (backend->alloc_device_large_buffers) backend->alloc_device_large_buffers(d_buffers_, auxTraceRecursiveArea, totalConstPols, totalConstPolsAggregation, unifiedBufferPadArea, prefetchRegionArea, phaseAAliasOffset);
 }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {
@@ -552,6 +561,21 @@ uint32_t get_prefetch_witness_slots() {
 uint64_t get_mops_floor_bytes() {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_mops_floor_bytes ? backend->get_mops_floor_bytes() : 0;
+}
+
+uint64_t get_post_alloc_headroom_bytes() {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_post_alloc_headroom_bytes ? backend->get_post_alloc_headroom_bytes() : 0;
+}
+
+void configure_const_slot_cache(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->configure_const_slot_cache) backend->configure_const_slot_cache(d_buffers_, baseOffset, slotElems, nSlots);
+}
+
+void load_host_const_pols(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->load_host_const_pols) backend->load_host_const_pols(airgroupId, airId, proofType, constFilename, constSize, d_buffers_, onlyFirstGPU);
 }
 
 void set_pipeline_mode(void *d_buffers_, bool enable) {

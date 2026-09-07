@@ -710,11 +710,15 @@ extern "C" {
         totalConstPolsAggregation: u64,
         unifiedBufferPadArea: u64,
         prefetchRegionArea: u64,
+        phaseAAliasOffset: u64,
     );
 
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
     pub fn get_prefetch_witness_slots() -> u32;
     pub fn get_mops_floor_bytes() -> u64;
+    pub fn get_post_alloc_headroom_bytes() -> u64;
+    pub fn configure_const_slot_cache(d_buffers_: *mut ::std::os::raw::c_void, baseOffset: u64, slotElems: u64, nSlots: u32);
+    pub fn load_host_const_pols(airgroupId: u64, airId: u64, proofType: *mut ::std::os::raw::c_char, constFilename: *mut ::std::os::raw::c_char, constSize: u64, d_buffers_: *mut ::std::os::raw::c_void, onlyFirstGPU: bool);
     pub fn set_pipeline_mode(d_buffers_: *mut ::std::os::raw::c_void, enable: bool);
     pub fn configure_phase_b(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn set_phase_b(d_buffers_: *mut ::std::os::raw::c_void, state: u32) -> i64;

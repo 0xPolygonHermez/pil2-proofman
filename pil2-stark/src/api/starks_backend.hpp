@@ -60,7 +60,7 @@ struct StarksBackend {
     void (*load_device_const_pols)(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void (*load_device_setup)(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
     uint64_t (*gen_device_streams)(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea);
+    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
     void (*get_instances_ready)(void *d_buffers, int64_t* instances_ready);
     void (*reset_device_streams)(void *d_buffers_);
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
@@ -80,6 +80,9 @@ struct StarksBackend {
     void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
     uint32_t (*get_prefetch_witness_slots)();
     uint64_t (*get_mops_floor_bytes)();
+    uint64_t (*get_post_alloc_headroom_bytes)();
+    void (*configure_const_slot_cache)(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
+    void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
     void (*set_pipeline_mode)(void *d_buffers_, bool enable);
     void (*configure_phase_b)(void *d_buffers_);
     int64_t (*set_phase_b)(void *d_buffers_, uint32_t state);

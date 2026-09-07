@@ -13,6 +13,8 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
+#include <map>
+#include <vector>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
@@ -58,6 +60,9 @@ struct AirInstanceInfo {
 
     uint64_t const_pols_offset;
     uint64_t const_tree_offset;
+    // The packed const pols are not resident: they live in host pinned memory and take a slot of
+    // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
+    bool constCached = false;
 
     bool stored_tree = false;
 
@@ -623,6 +628,12 @@ struct StreamData{
         constTreeResident = false;
     }
 
+    // Const-cache slots the proofs in flight on this stream read, by pinned-staging parity (the
+    // ring half the launch rode; 0 on ring-less streams). A parity is reused only once the proof it
+    // belonged to completed (ring depth 2, or the legacy sync-and-collect), so overwriting the pin
+    // there releases the slot exactly when it may be recycled. -1 = none.
+    int32_t constSlotPin[2] = {-1, -1};
+
     // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
     // apply -- even to a different air sharing them. A change also drops constTreeResident.
     bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
@@ -734,6 +745,33 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
+    // ---- Recursive1 const slot cache. The 44 recursive1 setups each have a 100 MiB packed const
+    // set, read once per proof (unpacked into the aux trace, tree rebuilt on device); a block uses
+    // ~20 of them. Instead of one resident slot per setup, the aggregation const buffer holds
+    // `nSlots` slots (RECURSIVE1_CONST_SLOTS on the Rust side, which sizes the region), each tagged
+    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes an
+    // unpinned slot (least recently used), uploads the set from the host pinned copy on its own
+    // stream ahead of the unpack, and tags it. Slots read by proofs in flight are pinned by their
+    // stream (StreamData::constSlotPin), so a live set is never recycled. `ready[s]` is recorded
+    // after the upload: a hit on another stream waits on it. One cache per GPU, tags shared under
+    // constCacheMutex. hits/misses are per job, logged at reset.
+    struct ConstSlotCache {
+        static constexpr uint32_t MAX_SLOTS = 32;
+        uint32_t nSlots = 0;
+        uint64_t base = 0;        // element offset in d_constPolsAggregation
+        uint64_t slotElems = 0;
+        int64_t tag[MAX_SLOTS];   // (airgroup << 32 | air) of the set held, -1 = free
+        uint64_t lastUse[MAX_SLOTS];
+        cudaEvent_t ready[MAX_SLOTS] = {};
+        uint64_t useClock = 0;
+        uint64_t hits = 0, misses = 0;
+        bool armed() const { return nSlots > 0; }
+        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; } }
+    };
+    std::vector<ConstSlotCache> constCache;   // per GPU (local index)
+    std::mutex constCacheMutex;
+    struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
+    std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
@@ -793,6 +831,15 @@ struct DeviceCommitBuffers
     bool phaseBAliased = false;
     std::atomic<uint32_t> phaseBState{0};
     std::atomic<bool> phaseBClosing{false};
+    // Phase-A recursion alias: a third recursive-class stream (localStreamId 2) over the basic
+    // stream's tail, from the largest basic's buffer size to the end of the stream, eligible in
+    // phase A only. A Main uses [0, 14.09 GB) of the stream; recursion runs beside it in the rest,
+    // instead of serially between the basics. Its range overlaps the second half, so it is closed
+    // and fenced with the basic stream before phase B opens and its const identity dropped after.
+    // 0 = no alias (the stream was not grown far enough to hold the recursive class beside the
+    // largest basic).
+    uint64_t phaseAAliasOffset = 0;   // elements
+    bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
     // Prefetch region
     gl64_t *prefetchRegionBase = nullptr;   // first GPU only

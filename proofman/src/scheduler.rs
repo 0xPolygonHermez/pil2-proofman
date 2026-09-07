@@ -112,11 +112,12 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     /// they load nothing, and a big resident table draining first would starve ready
     /// compressors on the shared non-recursive streams.
     resident_keys: HashSet<Key>,
-    /// Basic AIRs that only fit the whole basic stream (phase A), with their dispatch rank: 0 for
-    /// an air whose compressor also gates phase B (basic, then a CPU witness, then the compressor
-    /// proof: the longest chain), 1 for the rest. While any is ready, only the lowest rank present
-    /// is eligible, whatever the backlog or warmth says: phase B, where basics and recursion
-    /// overlap, cannot open until every one of them has run.
+    /// Basic AIRs with a dispatch rank: 0 = only fits the whole basic stream (phase A) and has a
+    /// compressor, 1 = phase-A-only, 2 = has a compressor (its chain is the longest: basic, CPU
+    /// witness, compressor, recursive1, recursive2). Unranked airs go by backlog. While any ranked
+    /// air is ready, only the lowest rank present is eligible, whatever the backlog or warmth says:
+    /// phase B cannot open until the phase-A-only airs have run, and a late compressor chain ends the
+    /// block late.
     big_keys: HashMap<(usize, usize), u8>,
     /// physical stream -> key it currently holds resident (mirrors the CUDA side across
     /// `reset(false)`). Shared across basic and recursive. Ordered, not hashed: pass 1 scans it to

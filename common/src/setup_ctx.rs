@@ -338,6 +338,8 @@ pub struct SetupRepository<F: PrimeField64> {
     global_bin: Option<*mut c_void>,
     global_info_file: String,
     max_n_bits_ext: usize,
+    max_const_pols_size_packed: usize,
+    const_slot_cache_slots: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
@@ -386,6 +388,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut total_custom_commits_reserved_words = 0;
         let mut max_witness_size = 0;
         let mut max_compact_trace_size = 0;
+        let mut max_const_pols_size_packed = 0;
+        let mut n_const_slots = 0;
 
         // Airs in the order load_device_const_pols walks them, and the slot each verkey maps
         // to. `preallocate` is OR-ed over a group: members share one tree, so preloading it
@@ -473,7 +477,9 @@ impl<F: PrimeField64> SetupRepository<F> {
                 None => FixedGroup { owner: air, load_tree: setup.preallocate },
             };
             fixed_groups.insert(air, group);
+            max_const_pols_size_packed = max_const_pols_size_packed.max(setup.const_pols_size_packed);
             if sized_slots.insert(group.owner) {
+                n_const_slots += 1;
                 total_const_pols_size += setup.const_pols_size_packed;
                 // Custom commits ride the same buffer; the slot is filled later, when
                 // register_custom_commits supplies the file path.
@@ -502,6 +508,24 @@ impl<F: PrimeField64> SetupRepository<F> {
 
         prover_buffer_sizes.sort_by(|(ka, sa), (kb, sb)| sb.cmp(sa).then(ka.cmp(kb)));
 
+        // Recursive1 const pols are not resident per setup: the loader carves a slot cache of
+        // RECURSIVE1_CONST_SLOTS (or fewer when there are fewer setups) slots of the largest packed
+        // set, filled at launch from host pinned copies (see DeviceCommitBuffers::constCache). The
+        // custom commits and preallocated trees of this repository would need resident slots; the
+        // recursion setups have none, which is asserted here rather than assumed.
+        let const_slot_cache_slots = if gpu && *setup_type == ProofType::Recursive1 && n_const_slots > 0 {
+            assert!(
+                total_custom_commits_reserved_words == 0 && total_const_tree_size == 0,
+                "recursive1 setups with custom commits or preallocated const trees cannot use the const slot cache"
+            );
+            RECURSIVE1_CONST_SLOTS.min(n_const_slots)
+        } else {
+            0
+        };
+        if const_slot_cache_slots > 0 {
+            total_const_pols_size = const_slot_cache_slots * max_const_pols_size_packed;
+        }
+
         Ok(Self {
             setups,
             fixed_groups,
@@ -519,6 +543,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_witness_size,
             max_compact_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
+            max_const_pols_size_packed,
+            const_slot_cache_slots,
         })
     }
 }
@@ -542,8 +568,16 @@ pub struct SetupCtx<F: PrimeField64> {
     /// Included in `total_const_pols_size`, and tracked separately because it stays resident even
     /// in no-const-buf mode: nothing stages custom commits per switch.
     pub total_custom_commits_reserved_words: usize,
+    /// Largest packed const-pols set of the repository (elements): the slot size of the const cache.
+    pub max_const_pols_size_packed: usize,
+    /// Slots of the const slot cache this repository uses (recursive1 on GPU), 0 = resident slots.
+    pub const_slot_cache_slots: usize,
     setup_type: ProofType,
 }
+
+/// Slots of the recursive1 const slot cache: a block uses ~20 distinct recursive1 setups, so 20
+/// makes the second use of an air within a block a hit while freeing (44 - 20) x 100 MiB.
+pub const RECURSIVE1_CONST_SLOTS: usize = 20;
 
 impl<F: PrimeField64> SetupCtx<F> {
     pub fn new(
@@ -568,6 +602,8 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_witness_size = setup_repository.max_witness_size;
         let max_compact_trace_size = setup_repository.max_compact_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
+        let max_const_pols_size_packed = setup_repository.max_const_pols_size_packed;
+        let const_slot_cache_slots = setup_repository.const_slot_cache_slots;
         Ok(SetupCtx {
             setup_repository,
             max_const_tree_size,
@@ -582,6 +618,8 @@ impl<F: PrimeField64> SetupCtx<F> {
             total_const_pols_size,
             total_const_tree_size,
             total_custom_commits_reserved_words,
+            max_const_pols_size_packed,
+            const_slot_cache_slots,
             setup_type: *setup_type,
         })
     }
