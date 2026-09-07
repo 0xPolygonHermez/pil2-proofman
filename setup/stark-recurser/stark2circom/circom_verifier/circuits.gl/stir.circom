@@ -230,8 +230,8 @@ template StirCosetEval1(n, logK) {
     }
 }
 
-// StirCosetEval1 for F_p³ coefficients: the Horner passes run in EvalPol (EvPol4 gates) at the
-// base point y = c^{2^k}, the scaling and the DFT act coordinate-wise.
+// StirCosetEval1 for F_p³ coefficients: the Horner passes run coordinate-wise in EvalPolBase at the
+// base point y = c^{2^k} (plain constraints, not EvPol4 gates), as do the scaling and the DFT.
 template StirCosetEval3(n, logK) {
     var K = 1 << logK;
     var nmax = (n + K - 1) \ K;
@@ -252,7 +252,7 @@ template StirCosetEval3(n, logK) {
                 if (idx < n) { sub[j][m][e] <== coefs[idx][e]; } else { sub[j][m][e] <== 0; }
             }
         }
-        res[j] <== EvalPol(nmax)(sub[j], [cp[logK], 0, 0]);
+        res[j] <== EvalPolBase(nmax)(sub[j], cp[logK]);
     }
     signal cj[K];
     signal sc[K][3];

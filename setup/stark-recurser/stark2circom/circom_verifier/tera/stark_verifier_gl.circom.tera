@@ -1200,12 +1200,9 @@ template {{ verifier_name }}() {
     signal xD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
     signal vD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal den{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal {binary} denZero{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
     signal vP{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal vPinv{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal num{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal dzG{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
-    signal numAdj{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal numS{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal quot{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal fx{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
@@ -1221,23 +1218,18 @@ template {{ verifier_name }}() {
             vD{{ r.i }}[q][j][0] <== (xm{{ r.i }}[q][j] - rOut[{{ prev.i }}][0]) * uAt{{ r.i }}[q][j];
             vD{{ r.i }}[q][j][1] <== (- rOut[{{ prev.i }}][1]) * uAt{{ r.i }}[q][j];
             vD{{ r.i }}[q][j][2] <== (- rOut[{{ prev.i }}][2]) * uAt{{ r.i }}[q][j];
-            // Degree correction Σ_{i=0}^{|G|} y^i = (y^{|G|+1} − 1)/(y − 1), y = r_comb·x, equal to
-            // |G|+1 when y = 1 (stir_math.hpp geometricSum). Branch-free: the denominator is
-            // bumped by 1 exactly when it vanishes, and the numerator swapped for |G|+1.
+            // Degree correction Σ_{i=0}^{|G|} y^i = (y^{|G|+1} − 1)/(y − 1), y = r_comb·x. The y = 1
+            // branch of stir_math.hpp geometricSum cannot occur here: r_comb has a nonzero extension
+            // limb (constrained next to its quotient data) and x ∈ F_p*, so y − 1 ≠ 0 always.
             for (var e = 0; e < 3; e++) {
                 den{{ r.i }}[q][j][e] <== rComb[{{ prev.i }}][e] * xm{{ r.i }}[q][j] - (e == 0 ? 1 : 0);
                 num{{ r.i }}[q][j][e] <== zPow{{ r.i }}[q][e] * wE{{ r.i }}[j] - (e == 0 ? 1 : 0);
             }
-            denZero{{ r.i }}[q][j] <== StirIsZero3()(den{{ r.i }}[q][j]);
-            dzG{{ r.i }}[q][j] <== denZero{{ r.i }}[q][j] * (nG{{ prev.i }} + 1);
-            for (var e = 0; e < 3; e++) {
-                numAdj{{ r.i }}[q][j][e] <== num{{ r.i }}[q][j][e] * (1 - denZero{{ r.i }}[q][j]) + (e == 0 ? dzG{{ r.i }}[q][j] : 0);
-            }
             // One inversion for V_G(x)·(y − 1): f(x) = (g(x) − Ans(x)) · x^d·num / ((x − r_out)·U(x)·(y − 1)).
-            vP{{ r.i }}[q][j] <== CMul()(vD{{ r.i }}[q][j], [den{{ r.i }}[q][j][0] + denZero{{ r.i }}[q][j], den{{ r.i }}[q][j][1], den{{ r.i }}[q][j][2]]);
+            vP{{ r.i }}[q][j] <== CMul()(vD{{ r.i }}[q][j], den{{ r.i }}[q][j]);
             vPinv{{ r.i }}[q][j] <== CInv()(vP{{ r.i }}[q][j]);
             for (var e = 0; e < 3; e++) {
-                numS{{ r.i }}[q][j][e] <== numAdj{{ r.i }}[q][j][e] * xD{{ r.i }}[q][j];
+                numS{{ r.i }}[q][j][e] <== num{{ r.i }}[q][j][e] * xD{{ r.i }}[q][j];
             }
             quot{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAt{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAt{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAt{{ r.i }}[q][j][2]], vPinv{{ r.i }}[q][j]);
             fx{{ r.i }}[q][j] <== CMul()(quot{{ r.i }}[q][j], numS{{ r.i }}[q][j]);
@@ -1254,6 +1246,11 @@ template {{ verifier_name }}() {
     // (The C++ re-squeezes with probability 2^{-128}; such a proof is not recursable.)
     signal {binary} rOutBase{{ r.i }} <== StirIsZero3()([0, rOut[{{ r.i }}][1], rOut[{{ r.i }}][2]]);
     enabled * rOutBase{{ r.i }} === 0;
+    // r_comb likewise: with a nonzero extension limb, y = r_comb·x has y − 1 ≠ 0 at every x ∈ L ⊂ F_p*
+    // (y = 1 would need r_comb[1]·x = r_comb[2]·x = 0), so the degree-correction geometric sum of the
+    // next round needs no y = 1 branch. Same 2^{-128} completeness loss as r_out; the C++ keeps the branch.
+    signal {binary} rCombBase{{ r.i }} <== StirIsZero3()([0, rComb[{{ r.i }}][1], rComb[{{ r.i }}][2]]);
+    enabled * rCombBase{{ r.i }} === 0;
 
     // Repeated shift queries are dropped from G (sampling is with replacement): two queries
     // collide iff they fold to the same point of L^{2^k}, which is injective in the leaf index.
@@ -1289,7 +1286,7 @@ template {{ verifier_name }}() {
     signal ansAtG{{ r.i }}[{{ r.t }}][3];
     signal enFresh{{ r.i }}[{{ r.t }}];
     for (var q = 0; q < {{ r.t }}; q++) {
-        ansAtG{{ r.i }}[q] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, [gpt{{ r.i }}[q], 0, 0]);
+        ansAtG{{ r.i }}[q] <== EvalPolBase({{ r.n_g_max }})(ansCoeffs{{ r.i }}, gpt{{ r.i }}[q]);
         enFresh{{ r.i }}[q] <== enabled * fresh{{ r.i }}[q];
         for (var e = 0; e < 3; e++) {
             enFresh{{ r.i }}[q] * (ansAtG{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
@@ -1301,7 +1298,7 @@ template {{ verifier_name }}() {
     // degree bound is structural.
     signal finalAt{{ r.i }}[{{ r.t }}][3];
     for (var q = 0; q < {{ r.t }}; q++) {
-        finalAt{{ r.i }}[q] <== EvalPol({{ final_pol_size }})(finalPol, [gpt{{ r.i }}[q], 0, 0]);
+        finalAt{{ r.i }}[q] <== EvalPolBase({{ final_pol_size }})(finalPol, gpt{{ r.i }}[q]);
         for (var e = 0; e < 3; e++) {
             enabled * (finalAt{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
         }
