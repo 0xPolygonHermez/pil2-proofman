@@ -17,7 +17,7 @@ use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::bctree;
 use crate::proving_key::recursive::compile_pil;
 use crate::commands::recursive_setup::resolve_path_env;
-use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+use crate::types::stark_struct::generate_stark_struct;
 
 /// Run the recursive test setup from a user-provided circom file.
 ///

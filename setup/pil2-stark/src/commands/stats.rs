@@ -112,7 +112,11 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             let ldt = if stark_struct.low_degree_test.kind().is_fri() { "FRI" } else { "STIR" };
             summary_lines.push(format!(
                 "{} | {} | {} | {} | verifierHashes: {}{}",
-                airgroup_name, air_name, ldt, pil_result.summary, verifier_hashes,
+                airgroup_name,
+                air_name,
+                ldt,
+                pil_result.summary,
+                verifier_hashes,
                 fit.map(|(_, n)| format!(" | needsCompressor: {n}")).unwrap_or_default(),
             ));
 

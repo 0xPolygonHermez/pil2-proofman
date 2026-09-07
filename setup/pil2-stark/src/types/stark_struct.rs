@@ -334,9 +334,16 @@ pub fn generate_fri_schedule(
 /// A FRI schedule given as its committed domain sizes (log2, strictly decreasing, the first one
 /// `log_domain_size`), for schedules that are solved for rather than folded uniformly — blake3's
 /// `optimal_fri_steps`. FRI keeps the rate constant, so every degree bound is `domain − log_inv_rate`.
-pub fn fri_schedule_from_domain_sizes(log_domain_sizes: Vec<usize>, log_inv_rate: usize, grinding_bits: usize) -> FriStruct {
+pub fn fri_schedule_from_domain_sizes(
+    log_domain_sizes: Vec<usize>,
+    log_inv_rate: usize,
+    grinding_bits: usize,
+) -> FriStruct {
     assert!(log_domain_sizes.windows(2).all(|w| w[0] > w[1]), "FRI domains must strictly shrink: {log_domain_sizes:?}");
-    assert!(log_domain_sizes.first().is_some_and(|&l| l > log_inv_rate), "the first FRI domain must hold the degree bound");
+    assert!(
+        log_domain_sizes.first().is_some_and(|&l| l > log_inv_rate),
+        "the first FRI domain must hold the degree bound"
+    );
     let folding_factors = log_domain_sizes.windows(2).map(|w| w[0] - w[1]).collect();
     let log_degrees = log_domain_sizes.iter().map(|l| l - log_inv_rate).collect();
     FriStruct { folding_factors, log_degrees, log_domain_sizes, num_queries: 0, grinding_bits_queries: grinding_bits }

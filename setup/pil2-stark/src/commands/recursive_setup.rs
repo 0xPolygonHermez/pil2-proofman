@@ -38,9 +38,9 @@ pub(crate) fn run_recursive_setup(
     // Poseidon2 transcripts and Merkle verifiers (and the generated native Rust verifiers likewise).
     // Anything else would fail deep inside circom with an unrelated-looking
     // "template Poseidon does not exist".
-    if !matches!(opts.hash.as_str(), "Poseidon1" | "Poseidon2") {
+    if !matches!(opts.hash.as_str(), "Poseidon1" | "Poseidon2" | "blake3") {
         anyhow::bail!(
-            "Recursive setup requires --hash Poseidon1 or Poseidon2 (got {:?}): the recursion circuits have no \
+            "Recursive setup requires --hash Poseidon1, Poseidon2, or blake3 (got {:?}): the recursion circuits have no \
              in-circuit {} verifier",
             opts.hash,
             opts.hash

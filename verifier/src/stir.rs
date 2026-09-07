@@ -25,7 +25,8 @@ use alloc::vec::Vec;
 use num_traits::Float;
 
 use proofman_fields::{
-    partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, TranscriptLike,
+    partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
+    TranscriptLike,
 };
 
 use crate::verifier::Boundary;
@@ -693,8 +694,7 @@ where
         transcript.get_field(&mut r_fold_next.value);
         let mut r_comb = e3_zero();
         transcript.get_field(&mut r_comb.value);
-        let Some(raw) =
-            derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, i, section.nonces[i - 1])
+        let Some(raw) = derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, i, section.nonces[i - 1])
         else {
             return false;
         };
@@ -990,8 +990,7 @@ where
         if !params.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics: TranscriptT =
-                TranscriptT::new_transcript();
+            let mut transcript_publics: TranscriptT = TranscriptT::new_transcript();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash[0..4]);
@@ -1012,8 +1011,7 @@ where
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals: TranscriptT =
-            TranscriptT::new_transcript();
+        let mut transcript_evals: TranscriptT = TranscriptT::new_transcript();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }

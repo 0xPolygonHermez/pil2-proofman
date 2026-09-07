@@ -149,7 +149,8 @@ fn prepare_verifier_rust(
         }
         group_strs.push(format!("FriEvalGroup {{ opening: {o}, refs: vec![{}] }}", ref_strs.join(", ")));
     }
-    let fri_ev_groups_str = format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
+    let fri_ev_groups_str =
+        format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
 
     // Find q_index: the evMap index of the cm polynomial at stage nStages+1, stageId 0
     let q_index = stark_info.cm_pols_map.iter().position(|p| p.stage == stark_info.n_stages + 1 && p.stage_id == 0);
