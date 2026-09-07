@@ -150,11 +150,13 @@ public:
     std::vector<std::vector<Goldilocks::Element>> betas;
     std::vector<uint64_t> nonces;
     std::vector<Goldilocks::Element> finalPol;
-    // Coefficients of Âns_i for the quotient rounds i = 1..M−1, zero-padded to s + t_{i−1}
-    // (duplicate shift queries shrink |G_i|, so the true degree can be lower). Pure hints for
-    // the recursion circuit, which constrains them itself; the native verifier recomputes Âns
-    // and ignores these.
+    // Coefficients of Âns_i and of its shake polynomial Sh_i for the quotient rounds i = 1..M−1,
+    // each zero-padded to s + t_{i−1} (duplicate shift queries shrink |G_i|, so the true degrees
+    // can be lower). The verifier takes Âns_i from here and checks it against G_i at one random
+    // point with Sh_i (step 2(f) in stir.hpp); both are absorbed into the transcript, padding
+    // included, before that point is squeezed.
     std::vector<std::vector<Goldilocks::Element>> ansCoeffs;
+    std::vector<std::vector<Goldilocks::Element>> shakeCoeffs;
 
     StirProof() {}
 
@@ -176,9 +178,11 @@ public:
         }
         betas.assign(M - 1, std::vector<Goldilocks::Element>(numOodSamples * FIELD_EXTENSION, Goldilocks::zero()));
         ansCoeffs.clear();
+        shakeCoeffs.clear();
         for (uint64_t i = 1; i < M; i++)
         {
             ansCoeffs.emplace_back((numOodSamples + numQueries[i - 1]) * FIELD_EXTENSION, Goldilocks::zero());
+            shakeCoeffs.emplace_back((numOodSamples + numQueries[i - 1]) * FIELD_EXTENSION, Goldilocks::zero());
         }
         nonces.assign(M, 0);
         finalPol.assign((uint64_t(1) << logFinalDegree) * FIELD_EXTENSION, Goldilocks::zero());
@@ -451,10 +455,15 @@ public:
                 pointer[p++] = stir.nonces[i];
             }
 
-            // Âns coefficient hints for the recursion circuit (zero-padded, see StirProof).
+            // Âns and shake-polynomial coefficients (zero-padded, see StirProof).
             for(uint64_t i = 0; i + 1 < M; ++i) {
                 for(uint64_t l = 0; l < stir.ansCoeffs[i].size(); l++) {
                     pointer[p++] = Goldilocks::toU64(stir.ansCoeffs[i][l]);
+                }
+            }
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                for(uint64_t l = 0; l < stir.shakeCoeffs[i].size(); l++) {
+                    pointer[p++] = Goldilocks::toU64(stir.shakeCoeffs[i][l]);
                 }
             }
 
@@ -715,6 +724,13 @@ public:
                 j["ansCoeffs"][i] = json::array();
                 for(uint64_t l = 0; l < stir.ansCoeffs[i].size(); l++) {
                     j["ansCoeffs"][i][l] = Goldilocks::toString(stir.ansCoeffs[i][l]);
+                }
+            }
+            j["shakeCoeffs"] = json::array();
+            for(uint64_t i = 0; i + 1 < M; ++i) {
+                j["shakeCoeffs"][i] = json::array();
+                for(uint64_t l = 0; l < stir.shakeCoeffs[i].size(); l++) {
+                    j["shakeCoeffs"][i][l] = Goldilocks::toString(stir.shakeCoeffs[i][l]);
                 }
             }
 

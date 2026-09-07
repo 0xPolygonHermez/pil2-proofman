@@ -80,11 +80,12 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
     for (uint64_t i = 0; i < M; ++i) {
         proof.nonces[i] = std::stoull(jproof["nonces"][i].get<std::string>());
     }
-    if (jproof.contains("ansCoeffs")) {
-        for (uint64_t i = 0; i + 1 < M; ++i) {
-            for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++) {
-                proof.ansCoeffs[i][l] = Goldilocks::fromString(jproof["ansCoeffs"][i][l]);
-            }
+    for (uint64_t i = 0; i + 1 < M; ++i) {
+        for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++) {
+            proof.ansCoeffs[i][l] = Goldilocks::fromString(jproof["ansCoeffs"][i][l]);
+        }
+        for (uint64_t l = 0; l < proof.shakeCoeffs[i].size(); l++) {
+            proof.shakeCoeffs[i][l] = Goldilocks::fromString(jproof["shakeCoeffs"][i][l]);
         }
     }
     return proof;

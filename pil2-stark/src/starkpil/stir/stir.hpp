@@ -15,6 +15,15 @@
 //   both:  G_i := {r_out^{i,·}} ∪ {r_shift^{i,·}},
 //          Ans_i(r_out) := β,  Ans_i(r_shift) := Fold(f_{i−1}, k_{i-1}, r^fold_{i−1})(r_shift),
 //          f_i := DegCor(d_i, r_comb^i, Quotient(g_i, G_i, Ans_i, Fill_i), d_i − |G_i|)   [2(e)]
+//   P:  Âns_i (the interpolant of Ans_i on G_i) and its shake polynomial
+//          Sh_i := Σ_{(a,y)∈G_i} (Âns_i − y) / (X − a),   both as coefficients             [2(f)]
+//   V:  ρ_i ← F;  checks Sh_i(ρ_i) = Σ_{(a,y)∈G_i} (Âns_i(ρ_i) − y) / (ρ_i − a)
+//
+// Step 2(f) is the paper's shake-polynomial trick: the verifier needs Âns_i, and checking a
+// sent Âns_i against G_i at one random point costs O(|G_i|) instead of the O(|G_i|²) of
+// interpolating (or of evaluating at every point of G_i) — the difference matters in the
+// recursion circuit, where this is the single largest STIR cost. Both hints are absorbed,
+// zero padding included, before ρ_i is squeezed.
 //
 // and the final step: P sends p := ĝ_M = Fold(f_{M−1}, k_{M-1}, r^fold_{M−1})^ in the clear, V samples
 // r_shift^{M,1..t_{M−1}} ← L_{M−1}^{k_{M−1}} and checks Fold(f_{M−1}, k_{M−1}, r^fold_{M−1})(r_shift) = p(r_shift).
@@ -271,12 +280,22 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
 
         // 2(e)  f_i := DegCor(d_i, r_comb^i, Quotient(g_i, G_i, Ans_i, Fill_i), d_i − |G_i|) on L_i,
         //       with Ans_i(r_shift) = Fold(f_{i−1}, k_{i-1}, r^fold_{i−1})(r_shift) taken from the fold.
-        //       The Âns_i coefficients also travel in the proof (zero-padded) as hints for the
-        //       recursion circuit; the native verifier recomputes them.
-        std::vector<Goldilocks::Element> ansCoeffs;
-        prover.degreeCorrect(rOut, beta, shiftIndices, rComb, &ansCoeffs);
+        // 2(f)  Âns_i and its shake polynomial Sh_i go in the proof, zero-padded to s + t_{i−1}
+        //       coefficients (duplicate shift queries shrink |G_i|), are absorbed padding included,
+        //       and ρ_i is squeezed: the verifier checks Âns_i against G_i at ρ_i alone. The prover
+        //       has no use for ρ_i beyond keeping the sponge in step.
+        std::vector<Goldilocks::Element> ansCoeffs, shakeCoeffs;
+        prover.degreeCorrect(rOut, beta, shiftIndices, rComb, &ansCoeffs, &shakeCoeffs);
         assert(ansCoeffs.size() <= proof.ansCoeffs[i - 1].size());
+        assert(shakeCoeffs.size() <= proof.shakeCoeffs[i - 1].size());
+        std::fill(proof.ansCoeffs[i - 1].begin(), proof.ansCoeffs[i - 1].end(), Goldilocks::zero());
+        std::fill(proof.shakeCoeffs[i - 1].begin(), proof.shakeCoeffs[i - 1].end(), Goldilocks::zero());
         std::memcpy(proof.ansCoeffs[i - 1].data(), ansCoeffs.data(), ansCoeffs.size() * sizeof(Goldilocks::Element));
+        std::memcpy(proof.shakeCoeffs[i - 1].data(), shakeCoeffs.data(), shakeCoeffs.size() * sizeof(Goldilocks::Element));
+        transcript.put(proof.ansCoeffs[i - 1].data(), proof.ansCoeffs[i - 1].size());
+        transcript.put(proof.shakeCoeffs[i - 1].data(), proof.shakeCoeffs[i - 1].size());
+        E3 rho;
+        getChallenge(transcript, rho);
 
         Goldilocks3::copy(rFold, rFoldNext);
     }
@@ -345,6 +364,7 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
     if (M < 1 || params.numQueries.size() != M || params.grindingBitsQueries.size() != M) return fail("inconsistent parameters");
     if (proof.trees.size() != M || proof.nonces.size() != M) return fail("proof does not match the parameters");
     if (proof.betas.size() != M - 1) return fail("wrong number of out-of-domain answers");
+    if (proof.ansCoeffs.size() != M - 1 || proof.shakeCoeffs.size() != M - 1) return fail("wrong number of Âns/shake hints");
 
     Parameters math{shift(), params.logFoldingFactors, params.logDegrees, params.logDomainSizes};
     math.validate();
@@ -476,8 +496,8 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
         if (!deriveShiftQueries(i, raw)) return fail("invalid grinding in iteration " + std::to_string(i));
 
         // 2(e)  build (G_i, Ans_i): the out-of-domain claims, plus the fold values the verifier
-        //       recomputes itself from T_{i−1}. No equality is checked here — the binding is what
-        //       the quotient does to the next iteration's opened values.
+        //       recomputes itself from T_{i−1}. No equality is checked on them — the binding is
+        //       what the quotient does to the next iteration's opened values.
         ctx[i].reset(rComb);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
@@ -493,7 +513,25 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
             ctx[i].add(pt, v);
         }
         if (ctx[i].size() >= math.d(i)) return fail("|G| is not below d_i in iteration " + std::to_string(i));
-        ctx[i].build();
+
+        // 2(f)  Âns_i and Sh_i from the proof. Beyond |G_i| both must be zero-padded (a longer Âns_i
+        //       is not the interpolant, and a longer Sh_i would only add slack to the degree bound
+        //       of the check below); then ρ_i is squeezed with both absorbed, and Âns_i is checked
+        //       to interpolate G_i at ρ_i alone.
+        const uint64_t nG = ctx[i].size();
+        const std::vector<Goldilocks::Element> &ans = proof.ansCoeffs[i - 1];
+        const std::vector<Goldilocks::Element> &sh = proof.shakeCoeffs[i - 1];
+        if (ans.size() < nG * FIELD_EXTENSION || sh.size() != ans.size()) return fail("malformed Âns/shake hints in iteration " + std::to_string(i));
+        for (uint64_t l = nG * FIELD_EXTENSION; l < ans.size(); l++)
+        {
+            if (!Goldilocks::isZero(ans[l]) || !Goldilocks::isZero(sh[l])) return fail("Âns/shake hint of iteration " + std::to_string(i) + " is not zero-padded beyond |G|");
+        }
+        ctx[i].setAns(ans.data());
+        put(ans);
+        put(sh);
+        E3 rho;
+        getChallenge(transcript, rho);
+        if (!ctx[i].checkShake(sh.data(), nG, rho)) return fail("Âns does not interpolate G in iteration " + std::to_string(i));
 
         Goldilocks3::copy(rFold, rFoldNext);
     }

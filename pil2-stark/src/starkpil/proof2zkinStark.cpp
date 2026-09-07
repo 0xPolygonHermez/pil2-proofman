@@ -218,6 +218,13 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
                 j["ansCoeffs"][i][l] = std::to_string(pointer[p++]);
             }
         }
+        j["shakeCoeffs"] = json::array();
+        for(uint64_t i = 0; i + 1 < M; ++i) {
+            j["shakeCoeffs"][i] = json::array();
+            for(uint64_t l = 0; l < (stir.numOodSamples + stir.numQueries[i]) * FIELD_EXTENSION; l++) {
+                j["shakeCoeffs"][i][l] = std::to_string(pointer[p++]);
+            }
+        }
 
         return j;
     }

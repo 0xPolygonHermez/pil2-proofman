@@ -11,10 +11,11 @@
 // the STIR counterpart of FRI's s1_vals consistency check.
 //
 // Two deliberate mirrors of the C++ verifier:
-//  - Âns is recomputed by Newton interpolation from (G_i, Ans_i); the `ansCoeffs` hints on the
-//    wire exist for the recursion circuit only and are skipped here.
+//  - Âns_i is taken from the proof (`ansCoeffs`) and checked to interpolate G_i at one random
+//    point ρ_i through the shake polynomial `shakeCoeffs` (step 2(f) in stir.hpp) — never
+//    interpolated here. Both hints are absorbed, zero padding included, before ρ_i is squeezed.
 //  - r_out is re-squeezed while it lands in L_i, exactly as the prover drew it. (The recursion
-//    circuit instead constrains a single squeeze — a proof whose r_out needed a re-squeeze
+//    circuit instead assumes a single squeeze — a proof whose r_out needed a re-squeeze
 //    verifies here but is not recursable; completeness loss 2^-128 per sample.)
 
 use alloc::vec;
@@ -164,7 +165,7 @@ pub fn stir_section_size_words(params: &StirParams) -> usize {
     size += (1usize << params.log_degrees[m]) * 3; // p, in coefficients
     size += m; // one nonce per query message
     for i in 1..m {
-        size += (1 + params.num_queries[i - 1] as usize) * 3; // Âns hints, zero-padded
+        size += 2 * (1 + params.num_queries[i - 1] as usize) * 3; // Âns and shake coefficients, zero-padded
     }
     size
 }
@@ -225,11 +226,14 @@ pub struct StirSection {
     pub final_pol: Vec<E3>,
     /// One grinding nonce per query message.
     pub nonces: Vec<u64>,
+    /// ans_coeffs[i−1]: the coefficients of Âns_i, i = 1..M−1, zero-padded to s + t_{i−1}.
+    pub ans_coeffs: Vec<Vec<E3>>,
+    /// shake_coeffs[i−1]: the coefficients of the shake polynomial Sh_i, same padding.
+    pub shake_coeffs: Vec<Vec<E3>>,
 }
 
 /// Walk the STIR section out of `proof` starting at `*p`, which the caller has length-checked
-/// against `stir_section_size_words`. The Âns coefficient hints at the end are recursion-circuit
-/// material and are skipped: this verifier recomputes Âns itself.
+/// against `stir_section_size_words`.
 pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> StirSection {
     let m = params.m();
     let n_sibs_per_level = ((params.arity - 1) * 4) as usize;
@@ -315,12 +319,25 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
         *p += 1;
     }
 
-    // Âns hints: on the wire for the recursion circuit, unused here.
-    for i in 1..m {
-        *p += (1 + params.num_queries[i - 1] as usize) * 3;
-    }
+    let mut read_hints = |proof: &[u64], p: &mut usize| -> Vec<Vec<E3>> {
+        let mut hints = Vec::with_capacity(m - 1);
+        for i in 1..m {
+            let n_g_max = 1 + params.num_queries[i - 1] as usize;
+            let mut coeffs = Vec::with_capacity(n_g_max);
+            for _ in 0..n_g_max {
+                coeffs.push(CubicExtensionField {
+                    value: [Goldilocks::new(proof[*p]), Goldilocks::new(proof[*p + 1]), Goldilocks::new(proof[*p + 2])],
+                });
+                *p += 3;
+            }
+            hints.push(coeffs);
+        }
+        hints
+    };
+    let ans_coeffs = read_hints(proof, p);
+    let shake_coeffs = read_hints(proof, p);
 
-    StirSection { roots, cosets, siblings, last_levels, betas, final_pol, nonces }
+    StirSection { roots, cosets, siblings, last_levels, betas, final_pol, nonces, ans_coeffs, shake_coeffs }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -347,6 +364,7 @@ fn geometric_sum(y: E3, e: u64) -> E3 {
 
 /// The coefficients of Âns, the unique polynomial of degree < |S| with Âns(a) = Ans(a) for all
 /// a ∈ S (Newton interpolation, O(|S|²)). The points are distinct: `QuotientContext::add` dedups.
+#[cfg(test)]
 fn interpolate(points: &[E3], values: &[E3]) -> Vec<E3> {
     let n = points.len();
     let mut coeffs = vec![e3_zero(); n];
@@ -417,8 +435,34 @@ impl QuotientContext {
         self.values.push(val);
     }
 
+    #[cfg(test)]
     fn build(&mut self) {
         self.ans_coeffs = interpolate(&self.points, &self.values);
+    }
+
+    /// Âns from the prover's hint: its first |G| coefficients. The caller checks the padding
+    /// beyond |G| and, through `check_shake`, that the hint interpolates G.
+    fn set_ans(&mut self, coeffs: &[E3]) {
+        self.ans_coeffs = coeffs[..self.size()].to_vec();
+    }
+
+    /// The shake check (stir_math.hpp `checkShake`): with the prover's Âns and Sh, at the random ρ
+    ///   Sh(ρ) = Σ_{(a,y)∈G} (Âns(ρ) − y) / (ρ − a).
+    /// Sh = Σ (Âns − y)/(X − a) is a polynomial exactly when Âns(a) = y on all of G; otherwise the
+    /// right-hand side is a proper rational function no polynomial agrees with on more than
+    /// |G| + deg Sh points. Fails rather than dividing by zero when ρ ∈ G.
+    fn check_shake(&self, shake: &[E3], rho: E3) -> bool {
+        let ans_rho = eval_pol_e3(&self.ans_coeffs, rho);
+        let lhs = eval_pol_e3(shake, rho);
+        let mut rhs = e3_zero();
+        for (a, y) in self.points.iter().zip(&self.values) {
+            let den = rho - *a;
+            if den == e3_zero() {
+                return false;
+            }
+            rhs = rhs + (ans_rho - *y) * den.inverse();
+        }
+        lhs == rhs
     }
 
     ///   fᵢ(x) = ( (gᵢ(x) − Âns(x)) / ∏_{a∈G}(x − a) ) · Σ_{j=0}^{|G|} (r_comb·x)ʲ.
@@ -679,7 +723,31 @@ where
             v_error!("|G| is not below d_i in STIR iteration {}", i);
             return false;
         }
-        cur.build();
+
+        // 2(f)  Âns_i and Sh_i from the proof: zero-padded beyond |G_i| (a longer Âns_i is not the
+        //       interpolant), absorbed padding included, then ρ_i is squeezed and Âns_i is checked to
+        //       interpolate G_i at ρ_i alone.
+        let n_g = cur.size();
+        let ans = &section.ans_coeffs[i - 1];
+        let sh = &section.shake_coeffs[i - 1];
+        if ans.len() < n_g || sh.len() != ans.len() {
+            v_error!("malformed Âns/shake hints in STIR iteration {}", i);
+            return false;
+        }
+        if ans[n_g..].iter().chain(sh[n_g..].iter()).any(|c| *c != e3_zero()) {
+            v_error!("Âns/shake hint of STIR iteration {} is not zero-padded beyond |G|", i);
+            return false;
+        }
+        cur.set_ans(ans);
+        for c in ans.iter().chain(sh.iter()) {
+            transcript.put(&c.value);
+        }
+        let mut rho = e3_zero();
+        transcript.get_field(&mut rho.value);
+        if !cur.check_shake(sh, rho) {
+            v_error!("Âns does not interpolate G in STIR iteration {}", i);
+            return false;
+        }
 
         r_fold = r_fold_next;
     }
@@ -1185,6 +1253,41 @@ mod tests {
         let denom = (x - e(1, 0, 0)) * (x - e(5, 0, 0));
         let expected = (gx - ans) * denom.inverse() * geometric_sum(ctx.r_comb * x, 2);
         assert_eq!(ctx.apply(gx, x), expected);
+    }
+
+    /// The shake polynomial of a small G, built by hand as Σ (Âns − y)/(X − a): the check must
+    /// accept it and reject any other Âns, at a point that is not in G.
+    #[test]
+    fn shake_check_accepts_the_interpolant_and_rejects_others() {
+        let mut ctx = QuotientContext::new();
+        ctx.reset(e(3, 1, 4));
+        ctx.add(e(1, 0, 0), e(2, 0, 0));
+        ctx.add(e(5, 0, 0), e(7, 0, 0));
+        ctx.add(e(9, 2, 0), e(4, 4, 1));
+        ctx.build();
+        let ans = ctx.ans_coeffs.clone();
+        // (Âns − y)/(X − a) by synthetic division, summed over G.
+        let n = ans.len();
+        let mut shake = vec![e3_zero(); n - 1];
+        for (a, y) in ctx.points.iter().zip(&ctx.values) {
+            let mut acc = ans[n - 1];
+            for j in (0..n - 1).rev() {
+                shake[j] = shake[j] + acc;
+                acc = acc * *a + ans[j];
+            }
+            assert_eq!(acc, *y, "Âns must interpolate G");
+        }
+        let rho = e(123, 456, 789);
+        assert!(ctx.check_shake(&shake, rho));
+        // Zero padding beyond deg Sh is harmless…
+        let mut padded = shake.clone();
+        padded.push(e3_zero());
+        assert!(ctx.check_shake(&padded, rho));
+        // …a different Âns is not.
+        let mut other = ctx.ans_coeffs.clone();
+        other[0] = other[0] + e(1, 0, 0);
+        ctx.set_ans(&other);
+        assert!(!ctx.check_shake(&shake, rho));
     }
 
     #[test]

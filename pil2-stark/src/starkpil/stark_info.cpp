@@ -419,8 +419,8 @@ uint64_t StarkInfo::stirProofSectionSize() const {
     size += (M - 1) * starkStruct.stir.numOodSamples * FIELD_EXTENSION;         // β
     size += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION;  // p, in coefficients
     size += M;                                                                  // one nonce per query message
-    for (uint64_t i = 1; i < M; ++i) {                                          // Âns hints, zero-padded
-        size += (starkStruct.stir.numOodSamples + starkStruct.stir.numQueries[i - 1]) * FIELD_EXTENSION;
+    for (uint64_t i = 1; i < M; ++i) {                                          // Âns and shake coefficients, zero-padded
+        size += 2 * (starkStruct.stir.numOodSamples + starkStruct.stir.numQueries[i - 1]) * FIELD_EXTENSION;
     }
     return size;
 }
@@ -535,8 +535,8 @@ uint64_t StarkInfo::getPinnedProofSize() {
         pinnedProofSize += (M - 1) * starkStruct.stir.numOodSamples * FIELD_EXTENSION; // out-of-domain answers
         pinnedProofSize += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION; // p, in coefficients
         pinnedProofSize += M; // one nonce per query message
-        for (uint64_t i = 1; i < M; ++i) { // Âns hints, zero-padded
-            pinnedProofSize += (starkStruct.stir.numOodSamples + starkStruct.stir.numQueries[i - 1]) * FIELD_EXTENSION;
+        for (uint64_t i = 1; i < M; ++i) { // Âns and shake coefficients, zero-padded
+            pinnedProofSize += 2 * (starkStruct.stir.numOodSamples + starkStruct.stir.numQueries[i - 1]) * FIELD_EXTENSION;
         }
     } else {
         uint64_t finalPolDegree = 1 << starkStruct.logDomainSizes[starkStruct.logDomainSizes.size() - 1];

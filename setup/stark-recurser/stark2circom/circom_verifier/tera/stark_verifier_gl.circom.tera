@@ -67,7 +67,9 @@ template {{ transcript_name }}() {
 {% endfor %}{% if stir_m > 1 %}    signal input betas[{{ stir_m - 1 }}][3];
 {% endif %}    signal input finalPol[{{ final_pol_size }}][3]; // Coefficients of a polynomial of degree lower than 2^{{ final_log_degree }}
     signal input nonces[{{ stir_m }}];
-{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4]; // Root of a polynomial of degree lower than 2^{{ step.log_degree }}, evaluated over 2^{{ step.prev_bits }} points
+{% for r in stir_rounds %}{% if r.has_quotient %}    signal input ansCoeffs{{ r.i }}[{{ r.n_g_max }}][3];
+    signal input shakeCoeffs{{ r.i }}[{{ r.n_g_max }}][3];
+{% endif %}{% endfor %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4]; // Root of a polynomial of degree lower than 2^{{ step.log_degree }}, evaluated over 2^{{ step.prev_bits }} points
 {% endif %}{% endfor %}    signal input finalPol[{{ final_pol_size }}][3]; // Evaluations over 2^{{ n_last_bits }} points of a polynomial of degree lower than 2^{{ final_log_degree }}
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}{% endif %}    signal input {binary} enable;
@@ -77,11 +79,13 @@ template {{ transcript_name }}() {
     signal output challengeOut[3];
     signal output challengesDeep[2][3];
 {% if is_stir %}    
-    // The STIR challenge schedule: r^fold_i, and per quotient round the
-    // out-of-domain point r_out and the degree-correction combiner r_comb.
+    // The STIR challenge schedule: r^fold_i, and per quotient round the out-of-domain point
+    // r_out, the degree-correction combiner r_comb and, once the Âns and shake hints are
+    // absorbed, the shake check's random point ρ.
     signal output rFold[{{ stir_m }}][3];
 {% if stir_m > 1 %}    signal output rOut[{{ stir_m - 1 }}][3];
     signal output rComb[{{ stir_m - 1 }}][3];
+    signal output rho[{{ stir_m - 1 }}][3];
 {% endif %}
     signal challengesQueries[{{ stir_m }}][3];
     signal output {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
@@ -709,8 +713,10 @@ template {{ verifier_name }}() {
     // One grinding nonce per query message.
     signal input nonces[{{ stir_m }}];
 
-    // Hinted coefficients of Ans_i, zero-padded to t_i + 1.
+    // Per quotient round, the coefficients of Âns_i and of its shake polynomial
+    // Sh_i = Σ_{(a,y)∈G_i} (Âns_i − y)/(X − a), both zero-padded to t_i + 1.
 {% for r in stir_rounds %}{% if r.has_quotient %}    signal input ansCoeffs{{ r.i }}[{{ r.n_g_max }}][3];
+{% endif %}{% endfor %}{% for r in stir_rounds %}{% if r.has_quotient %}    signal input shakeCoeffs{{ r.i }}[{{ r.n_g_max }}][3];
 {% endif %}{% endfor %}{% else %}    // Contains the root of the DEEP polynomial and of every folded oracle.
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root[4]; // Root of a polynomial of degree lower than 2^{{ step.log_degree }}, evaluated over 2^{{ step.prev_bits }} points
 {% endif %}{% endfor %}
@@ -743,10 +749,12 @@ template {{ verifier_name }}() {
     signal challengesDeep[2][3];
 
 {% if is_stir %}    // The STIR challenge schedule: one folding challenge per iteration, and per quotient
-    // round the out-of-domain point r_out and the degree-correction combiner r_comb.
+    // round the out-of-domain point r_out, the degree-correction combiner r_comb and the shake
+    // check's random point ρ.
     signal rFold[{{ stir_m }}][3];
 {% if stir_m > 1 %}    signal rOut[{{ stir_m - 1 }}][3];
     signal rComb[{{ stir_m - 1 }}][3];
+    signal rho[{{ stir_m - 1 }}][3];
 {% endif %}
     // Round-1 queries into L₀ — where the stage trees and T₀ are opened.
     signal {binary} queriesL0[{{ n_queries }}][{{ step0_bits }}];
@@ -762,7 +770,7 @@ template {{ verifier_name }}() {
     // Check that the verifier's challenges are well derived from the prover messages via the Fiat-Shamir heuristic
     ///////////
 
-{% if is_stir %}    ({{ challenge_names_joined }},rFold{% if stir_m > 1 %},rOut,rComb{% endif %},queriesL0{% for r in stir_rounds %}{% if not r.is_first %},queriesL{{ r.i }}{% endif %}{% endfor %}) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals,{{ si_roots_joined }}{% if stir_m > 1 %},betas{% endif %},finalPol,nonces,enabled);
+{% if is_stir %}    ({{ challenge_names_joined }},rFold{% if stir_m > 1 %},rOut,rComb,rho{% endif %},queriesL0{% for r in stir_rounds %}{% if not r.is_first %},queriesL{{ r.i }}{% endif %}{% endfor %}) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals,{{ si_roots_joined }}{% if stir_m > 1 %},betas{% endif %},finalPol,nonces{% for r in stir_rounds %}{% if r.has_quotient %},ansCoeffs{{ r.i }},shakeCoeffs{{ r.i }}{% endif %}{% endfor %},enabled);
 {% else %}{% if pow_bits > 0 %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
 {% else %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
 {% endif %}{% endif %}
@@ -1251,8 +1259,8 @@ template {{ verifier_name }}() {
     // fresh[q] = no earlier query hit the same point.
     signal {binary} fresh{{ r.i }}[{{ r.t }}] <== StirFresh({{ r.t }})(gpt{{ r.i }});
 
-    // |G| = 1 + Σ fresh, and the Ans hint has exactly |G| live coefficients: the zero-padded
-    // tail is pinned to zero so a padded hint cannot smuggle extra degrees of freedom.
+    // |G| = 1 + Σ fresh. Âns has exactly |G| live coefficients and Sh at most |G| − 1: the
+    // zero-padded tails are pinned so a padded hint cannot smuggle extra degrees of freedom.
     var nGAcc{{ r.i }} = 1;
     for (var q = 0; q < {{ r.t }}; q++) { nGAcc{{ r.i }} += fresh{{ r.i }}[q]; }
     signal nG{{ r.i }} <== nGAcc{{ r.i }};
@@ -1269,23 +1277,33 @@ template {{ verifier_name }}() {
         ansUsed{{ r.i }}[m] <== StirLessThan({{ r.exp_bits }})(m, nG{{ r.i }});
         for (var e = 0; e < 3; e++) {
             (1 - ansUsed{{ r.i }}[m]) * ansCoeffs{{ r.i }}[m][e] === 0;
+            (1 - ansUsed{{ r.i }}[m]) * shakeCoeffs{{ r.i }}[m][e] === 0;
         }
     }
 
-    // The hint must interpolate G: Ans(r_out) = β, and Ans(gpt) = Fold(f)(gpt) at every
-    // fresh shift point.
-    signal ansAtROut{{ r.i }}[3] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, rOut[{{ r.i }}]);
-    for (var e = 0; e < 3; e++) {
-        enabled * (ansAtROut{{ r.i }}[e] - betas[{{ r.i }}][e]) === 0;
-    }
-    signal ansAtG{{ r.i }}[{{ r.t }}][3];
-    signal enFresh{{ r.i }}[{{ r.t }}];
+    // The shake check (step 2(f) in stir.hpp). Âns interpolates G exactly when
+    //   Sh(X) = Σ_{(a,y)∈G} (Âns(X) − y) / (X − a)
+    // is a polynomial, so with the prover's Sh it is enough to test that identity at the random ρ
+    // squeezed after both hints were absorbed: two EvalPols and |G| inversions, in place of one
+    // EvalPol per point of G. A repeated shift query contributes nothing (its fresh flag is 0). ρ ∈ G
+    // has probability 2^{-190} and makes a CInv fail rather than the check pass.
+    signal ansAtRho{{ r.i }}[3] <== EvalPol({{ r.n_g_max }})(ansCoeffs{{ r.i }}, rho[{{ r.i }}]);
+    signal shakeAtRho{{ r.i }}[3] <== EvalPol({{ r.n_g_max }})(shakeCoeffs{{ r.i }}, rho[{{ r.i }}]);
+    signal invRhoOut{{ r.i }}[3] <== CInv()([rho[{{ r.i }}][0] - rOut[{{ r.i }}][0], rho[{{ r.i }}][1] - rOut[{{ r.i }}][1], rho[{{ r.i }}][2] - rOut[{{ r.i }}][2]]);
+    signal termOut{{ r.i }}[3] <== CMul()([ansAtRho{{ r.i }}[0] - betas[{{ r.i }}][0], ansAtRho{{ r.i }}[1] - betas[{{ r.i }}][1], ansAtRho{{ r.i }}[2] - betas[{{ r.i }}][2]], invRhoOut{{ r.i }});
+    signal invRhoG{{ r.i }}[{{ r.t }}][3];
+    signal termG{{ r.i }}[{{ r.t }}][3];
+    signal shakeAcc{{ r.i }}[{{ r.t + 1 }}][3];
+    shakeAcc{{ r.i }}[0] <== termOut{{ r.i }};
     for (var q = 0; q < {{ r.t }}; q++) {
-        ansAtG{{ r.i }}[q] <== EvalPolBase({{ r.n_g_max }})(ansCoeffs{{ r.i }}, gpt{{ r.i }}[q]);
-        enFresh{{ r.i }}[q] <== enabled * fresh{{ r.i }}[q];
+        invRhoG{{ r.i }}[q] <== CInv()([rho[{{ r.i }}][0] - gpt{{ r.i }}[q], rho[{{ r.i }}][1], rho[{{ r.i }}][2]]);
+        termG{{ r.i }}[q] <== CMul()([ansAtRho{{ r.i }}[0] - foldVals{{ r.i }}[q][0], ansAtRho{{ r.i }}[1] - foldVals{{ r.i }}[q][1], ansAtRho{{ r.i }}[2] - foldVals{{ r.i }}[q][2]], invRhoG{{ r.i }}[q]);
         for (var e = 0; e < 3; e++) {
-            enFresh{{ r.i }}[q] * (ansAtG{{ r.i }}[q][e] - foldVals{{ r.i }}[q][e]) === 0;
+            shakeAcc{{ r.i }}[q + 1][e] <== shakeAcc{{ r.i }}[q][e] + fresh{{ r.i }}[q] * termG{{ r.i }}[q][e];
         }
+    }
+    for (var e = 0; e < 3; e++) {
+        enabled * (shakeAtRho{{ r.i }}[e] - shakeAcc{{ r.i }}[{{ r.t }}][e]) === 0;
     }
 {% endif %}{% if r.is_last %}
     // ── Final check: Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }})(r_shift) = p(r_shift) —

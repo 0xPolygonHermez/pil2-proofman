@@ -703,9 +703,10 @@ fn build_tera_context(
     let mut transcript_code_fri_mid = String::new();
     if is_stir {
         // STIR (stir.hpp verify): T₀ root → r_fold_0; per iteration i = 1..M−1: T_i root →
-        // r_out (a single squeeze — the circuit rejects the 2^{-128} re-squeeze case) → β_i →
-        // r_fold_i, r_comb_i → the round's query challenge c_i. The grinding nonce is not
-        // absorbed here: each c_i seeds its own query transcript (calculateStirQueries).
+        // r_out (a single squeeze — the circuit assumes the 2^{-128} re-squeeze case away) → β_i →
+        // r_fold_i, r_comb_i → the round's query challenge c_i → the Âns_i and shake hints, zero
+        // padding included → ρ_i (step 2(f), the shake check's random point). The grinding nonce
+        // is not absorbed here: each c_i seeds its own query transcript (calculateStirQueries).
         t.put("s1_root", 4);
         t.get_field("rFold[0]");
         for i in 1..stir_m {
@@ -715,6 +716,10 @@ fn build_tera_context(
             t.get_field(&format!("rFold[{i}]"));
             t.get_field(&format!("rComb[{}]", i - 1));
             t.get_field(&format!("challengesQueries[{}]", i - 1));
+            let n_g_max = 1 + stir_num_queries[i - 1] as usize;
+            t.put_2d(&format!("ansCoeffs{}", i - 1), n_g_max, 3);
+            t.put_2d(&format!("shakeCoeffs{}", i - 1), n_g_max, 3);
+            t.get_field(&format!("rho[{}]", i - 1));
         }
         if !hash_commits {
             for j in 0..final_pol_size {
@@ -1144,6 +1149,8 @@ mod tests {
         assert!(!out.contains("template calculateFRIQueries"), "FRI query template must not render");
         assert!(!out.contains("VerifyFinalPol"), "STIR's degree bound is structural — no IFFT check");
         assert!(out.contains("signal input ansCoeffs0["), "missing the Âns hint input");
+        assert!(out.contains("signal input shakeCoeffs0["), "missing the shake polynomial input");
+        assert!(out.contains("rho[0] <== ["), "the shake check's random point must be squeezed");
         assert!(out.contains("signal input nonces[2];"), "one nonce per query message");
         assert!(out.contains("StirFoldCoset("), "missing the fold");
         assert!(out.contains("EvalPol(4)(finalPol"), "final polynomial evaluated from d_M = 4 coefficients");

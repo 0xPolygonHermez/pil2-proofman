@@ -123,6 +123,41 @@ TEST_F(StirProverTest, honest_proof_verifies)
     ASSERT_EQ(proof.finalPol.size(), (uint64_t(1) << params.logDegrees[params.M()]) * FIELD_EXTENSION);
 }
 
+// Âns_i is protocol material, not a mere hint: the verifier takes it from the proof and checks at
+// a random point, through the shake polynomial, that it interpolates G_i. So a tampered Âns_i, a
+// tampered Sh_i, or a hint that is not zero-padded beyond |G_i| must all be rejected.
+TEST_F(StirProverTest, tampered_ans_or_shake_polynomial_is_rejected)
+{
+    StirParams params = testParams();
+    std::vector<FE> f0;
+    honestF0(f0, params, 0x5EED);
+    Proof proof = Stir::makeProof(params);
+    std::string why;
+    ASSERT_TRUE(roundTrip(params, f0, proof, why)) << why;
+
+    auto verifies = [&](const Proof &p) {
+        TranscriptGL t = freshTranscript(params);
+        auto checkF0 = [&](uint64_t, uint64_t idx, const E3 &committed) {
+            return stir::equal(committed, (const E3 &)f0[idx * FIELD_EXTENSION]);
+        };
+        std::string w;
+        return Stir::verify(p, params, t, checkF0, powOk, &w);
+    };
+    ASSERT_TRUE(verifies(proof));
+
+    Proof badAns = proof;
+    badAns.ansCoeffs[0][0] = Goldilocks::add(badAns.ansCoeffs[0][0], Goldilocks::one());
+    EXPECT_FALSE(verifies(badAns));
+
+    Proof badShake = proof;
+    badShake.shakeCoeffs[0][0] = Goldilocks::add(badShake.shakeCoeffs[0][0], Goldilocks::one());
+    EXPECT_FALSE(verifies(badShake));
+
+    Proof badPadding = proof;
+    badPadding.shakeCoeffs[0].back() = Goldilocks::one();   // Sh has ≤ |G| − 1 coefficients, this one is padding
+    EXPECT_FALSE(verifies(badPadding));
+}
+
 TEST_F(StirProverTest, honest_proof_verifies_with_hashed_final_pol_and_last_levels)
 {
     StirParams params = testParams(/*hashCommits=*/true, /*lastLevelVerification=*/2);
@@ -298,6 +333,13 @@ void dumpRustFixture(const std::string &path, const StirParams &params, const st
         for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++)
         {
             section.push_back(Goldilocks::toU64(proof.ansCoeffs[i][l]));
+        }
+    }
+    for (uint64_t i = 0; i + 1 < M; i++)
+    {
+        for (uint64_t l = 0; l < proof.shakeCoeffs[i].size(); l++)
+        {
+            section.push_back(Goldilocks::toU64(proof.shakeCoeffs[i][l]));
         }
     }
 

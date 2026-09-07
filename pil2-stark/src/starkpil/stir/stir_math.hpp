@@ -341,6 +341,76 @@ struct QuotientContext
 
     void build() { interpolate(ansCoeffs, points.data(), values.data(), size()); }
 
+    // Âns from the prover's hint instead of interpolating: its first |G| coefficients. The caller
+    // checks the zero padding beyond |G| and, through `checkShake`, that the hint interpolates G.
+    void setAns(const FE *coeffs) { ansCoeffs.assign(coeffs, coeffs + size() * FIELD_EXTENSION); }
+
+    // The shake polynomial of (G, Ans, Âns):
+    //   Sh(X) = Σ_{(a,y)∈G} (Âns(X) − y) / (X − a),
+    // a polynomial (of degree ≤ |G| − 2) exactly when Âns(a) = y on all of G, each term then being
+    // an exact division. The prover sends it next to Âns so the verifier can check that Âns
+    // interpolates G at a single random point (`checkShake`) rather than at every point of G.
+    // |G| − 1 coefficients; empty when |G| = 1.
+    void shake(std::vector<FE> &out) const
+    {
+        const uint64_t n = size();
+        out.assign(n > 0 ? (n - 1) * FIELD_EXTENSION : 0, Goldilocks::zero());
+        std::vector<FE> q((n > 0 ? n - 1 : 0) * FIELD_EXTENSION);
+        for (uint64_t i = 0; i < n; i++)
+        {
+            // (Âns(X) − y_i) / (X − a_i) by synthetic division from the top coefficient down:
+            // q_{n−2} = p_{n−1}, q_{j−1} = p_j + a_i·q_j, and the remainder p_0 + a_i·q_0 = Âns(a_i).
+            const E3 &a = (const E3 &)points[i * FIELD_EXTENSION];
+            E3 acc;
+            Goldilocks3::copy(acc, (const E3 &)ansCoeffs[(n - 1) * FIELD_EXTENSION]);
+            for (int64_t j = int64_t(n) - 2; j >= 0; j--)
+            {
+                Goldilocks3::copy((E3 &)q[j * FIELD_EXTENSION], acc);
+                E3 t;
+                Goldilocks3::mul(t, acc, a);
+                Goldilocks3::add(acc, t, (const E3 &)ansCoeffs[j * FIELD_EXTENSION]);
+            }
+            assert(equal(acc, (const E3 &)values[i * FIELD_EXTENSION]) && "Âns must interpolate G");
+            for (uint64_t j = 0; j + 1 < n; j++)
+            {
+                Goldilocks3::add((E3 &)out[j * FIELD_EXTENSION], (const E3 &)out[j * FIELD_EXTENSION], (const E3 &)q[j * FIELD_EXTENSION]);
+            }
+        }
+    }
+
+    // The verifier's side of `shake`: with Âns (set by `setAns`) and Sh from the prover, checks at
+    // the random ρ that
+    //   Sh(ρ) = Σ_{(a,y)∈G} (Âns(ρ) − y) / (ρ − a).
+    // If Âns(a) ≠ y at some a ∈ G the right-hand side is a proper rational function of ρ, which no
+    // polynomial agrees with on more than |G| + deg Sh points — so a hint that does not
+    // interpolate G passes with probability ≤ (|G| + deg Sh) / |F|. `shakeCoeffs` holds nShake
+    // coefficients (the wire's zero-padded form is fine). Fails rather than dividing by zero if
+    // ρ ∈ G.
+    bool checkShake(const FE *shakeCoeffs, uint64_t nShake, const E3 &rho) const
+    {
+        const uint64_t n = size();
+        E3 ansRho, lhs;
+        evalPoly(ansRho, ansCoeffs.data(), n, rho);
+        evalPoly(lhs, shakeCoeffs, nShake, rho);
+        std::vector<FE> den(n * FIELD_EXTENSION);
+        for (uint64_t i = 0; i < n; i++)
+        {
+            Goldilocks3::sub((E3 &)den[i * FIELD_EXTENSION], rho, (const E3 &)points[i * FIELD_EXTENSION]);
+            if (isZero((const E3 &)den[i * FIELD_EXTENSION])) return false;
+        }
+        batchInverse(den.data(), n);
+        E3 rhs;
+        Goldilocks3::zero(rhs);
+        for (uint64_t i = 0; i < n; i++)
+        {
+            E3 num, term;
+            Goldilocks3::sub(num, ansRho, (const E3 &)values[i * FIELD_EXTENSION]);
+            Goldilocks3::mul(term, num, (const E3 &)den[i * FIELD_EXTENSION]);
+            Goldilocks3::add(rhs, rhs, term);
+        }
+        return equal(lhs, rhs);
+    }
+
     //   f_i(x) = ( (g_i(x) − Âns(x)) · denomInv ) · Σ_{j=0}^{|G|} (r_comb·x)^j,
     // where denomInv = 1 / ∏_{a∈G}(x − a). The exponent range is d_i − (d_i − |G|) = |G|.
     void applyWithInverseDenominator(E3 &out, const E3 &gx, const E3 &x, const E3 &denomInv) const
@@ -514,9 +584,10 @@ public:
     // `shiftIndices` index L_i^{k_i}; duplicates (sampling with replacement) are removed, G being a
     // set. Points of G are returned in `pointsOut`/`valuesOut` in the order used, so the caller
     // can record them.
-    // `ansCoeffsOut`, when given, receives the monomial coefficients of Âns (|G| of them, the
-    // deduped size) — the recursion circuit takes them as hints it then constrains.
-    void degreeCorrect(const std::vector<E3> &rOut, const std::vector<E3> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb, std::vector<FE> *ansCoeffsOut = nullptr)
+    // `ansCoeffsOut` / `shakeCoeffsOut`, when given, receive the monomial coefficients of Âns (|G|
+    // of them, the deduped size) and of its shake polynomial (|G| − 1): the verifier takes both
+    // as hints and checks them at one random point (QuotientContext::shake / checkShake).
+    void degreeCorrect(const std::vector<E3> &rOut, const std::vector<E3> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb, std::vector<FE> *ansCoeffsOut = nullptr, std::vector<FE> *shakeCoeffsOut = nullptr)
     {
         assert(i + 1 < p.M());
         assert(rOut.size() == beta.size());
@@ -535,6 +606,7 @@ public:
         assert(ctx.size() < p.d(i + 1) && "|G| must be below d_{i+1} for the quotient to have positive degree bound");
         ctx.build();
         if (ansCoeffsOut != nullptr) *ansCoeffsOut = ctx.ansCoeffs;
+        if (shakeCoeffsOut != nullptr) ctx.shake(*shakeCoeffsOut);
 
         Domain Lnext = p.L(i + 1);
         f.assign(Lnext.size() * FIELD_EXTENSION, Goldilocks::zero());

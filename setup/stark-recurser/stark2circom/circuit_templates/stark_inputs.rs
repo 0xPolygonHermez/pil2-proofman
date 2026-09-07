@@ -196,7 +196,7 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
     if is_stir {
         // The STIR proof section, in the exact order Proofs::proof2pointer writes it:
         // T_i roots, per tree {cosets, siblings, last level}, β, p's coefficients, the
-        // per-round nonces, and the zero-padded Âns hints.
+        // per-round nonces, and the zero-padded Âns and shake-polynomial coefficients.
         let m = stir_folding.len();
         for i in 0..m {
             out.push_str(&root_signal(&format!("s{}_root", i + 1)));
@@ -224,6 +224,10 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
         for (i, &t) in stir_num_queries.iter().enumerate().take(m.saturating_sub(1)) {
             let n_g_max = 1 + t;
             out.push_str(&format!("    signal input {prefix_}ansCoeffs{i}[{n_g_max}][3];\n"));
+        }
+        for (i, &t) in stir_num_queries.iter().enumerate().take(m.saturating_sub(1)) {
+            let n_g_max = 1 + t;
+            out.push_str(&format!("    signal input {prefix_}shakeCoeffs{i}[{n_g_max}][3];\n"));
         }
     } else {
         // FRI step roots and vals/siblings for steps 1..
@@ -429,6 +433,7 @@ pub fn assign_stark_inputs(
         out.push_str(&format!("    {component_name}.nonces <== {prefix_}nonces;\n"));
         for i in 0..m.saturating_sub(1) {
             out.push_str(&format!("    {component_name}.ansCoeffs{i} <== {prefix_}ansCoeffs{i};\n"));
+            out.push_str(&format!("    {component_name}.shakeCoeffs{i} <== {prefix_}shakeCoeffs{i};\n"));
         }
     } else {
         // FRI step roots

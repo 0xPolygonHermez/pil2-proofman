@@ -105,7 +105,7 @@ fn run(fx: &Fixture, section: &[u64]) -> bool {
 }
 
 /// Word offsets of the section's tail parts, mirroring `stir_section_size_words`.
-fn offsets(params: &StirParams) -> (usize, usize, usize, usize) {
+fn offsets(params: &StirParams) -> (usize, usize, usize, usize, usize) {
     let m = params.m();
     let n_sibs_per_level = ((params.arity - 1) * 4) as usize;
     let num_nodes_level = if params.last_level_verification == 0 {
@@ -125,35 +125,32 @@ fn offsets(params: &StirParams) -> (usize, usize, usize, usize) {
     let final_pol = betas + (m - 1) * 3;
     let nonces = final_pol + (1usize << params.log_degrees[m]) * 3;
     let ans_coeffs = nonces + m;
-    (betas, final_pol, nonces, ans_coeffs)
+    let hint_words: usize = (1..m).map(|i| (1 + params.num_queries[i - 1] as usize) * 3).sum();
+    let shake_coeffs = ans_coeffs + hint_words;
+    (betas, final_pol, nonces, ans_coeffs, shake_coeffs)
 }
 
 fn check_fixture(name: &str) {
     let fx = load(name);
     assert!(run(&fx, &fx.section), "{name}: honest proof must verify");
 
-    let (betas_off, final_pol_off, nonces_off, ans_off) = offsets(&fx.params);
+    let (betas_off, final_pol_off, nonces_off, ans_off, shake_off) = offsets(&fx.params);
 
-    // A flipped bit anywhere that matters must be rejected.
+    // A flipped bit anywhere that matters must be rejected — including the Âns and shake
+    // coefficients, which the verifier takes as Âns_i and checks at a random point.
     let tampers: &[(&str, usize)] = &[
         ("root of T_0", 0),
         ("opened coset value", fx.params.m() * 4),
         ("out-of-domain answer β", betas_off),
         ("final polynomial coefficient", final_pol_off),
         ("grinding nonce", nonces_off),
+        ("Âns coefficient", ans_off),
+        ("shake polynomial coefficient", shake_off),
     ];
     for &(what, off) in tampers {
         let mut section = fx.section.clone();
         section[off] = section[off].wrapping_add(1) % 0xFFFFFFFF00000001;
         assert!(!run(&fx, &section), "{name}: tampered {what} must be rejected");
-    }
-
-    // The Âns coefficient hints are recursion-circuit material: the native verifier recomputes
-    // Âns itself and ignores them, exactly like the C++ verifier.
-    if fx.params.m() > 1 {
-        let mut section = fx.section.clone();
-        section[ans_off] = section[ans_off].wrapping_add(1) % 0xFFFFFFFF00000001;
-        assert!(run(&fx, &section), "{name}: the Âns hints are not read by the native verifier");
     }
 }
 
