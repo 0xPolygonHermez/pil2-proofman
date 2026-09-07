@@ -331,9 +331,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             // The only optional setup of the family: keys built without the compressed-final
             // stage (blake3's default) legitimately have none.
             ProofType::VadcopFinalCompressed => self.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
-                ProofmanError::InvalidSetup(
-                    "Proving key was built without the vadcop_final_compressed stage".into(),
-                )
+                ProofmanError::InvalidSetup("Proving key was built without the vadcop_final_compressed stage".into())
             }),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }

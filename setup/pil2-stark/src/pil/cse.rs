@@ -261,7 +261,7 @@ mod tests {
                 code.push(op(&pop, tmp(dest_id), vec![pa, pb]));
             } else {
                 let pick = |k: usize, defined: &Vec<usize>| -> CodeRef {
-                    if defined.is_empty() || k % 3 == 0 {
+                    if defined.is_empty() || k.is_multiple_of(3) {
                         eval(k % 6)
                     } else {
                         tmp(defined[k % defined.len().min(5)])

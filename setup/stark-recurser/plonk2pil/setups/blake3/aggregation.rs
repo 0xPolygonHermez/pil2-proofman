@@ -1260,6 +1260,8 @@ mod audit_geometry {
                     }
                 }
                 // 2. No row carries two selectors, and no selector touches a boundary row.
+                // r indexes the per-circuit selector vectors, not sels itself.
+                #[allow(clippy::needless_range_loop)]
                 for r in 0..air_blocks * CLOCKS {
                     let on: Vec<usize> = (0..6).filter(|&c| sels[c][r]).collect();
                     assert!(
