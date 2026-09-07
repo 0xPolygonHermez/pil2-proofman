@@ -8,6 +8,7 @@
 #include <utility>
 
 
+#include "unpack_indexed_row.hpp"
 #include "hash_family.hpp"
 #include "poseidon_goldilocks.hpp"
 #include "poseidon2_goldilocks.hpp"
@@ -44,32 +45,12 @@ struct PackedInfoCPU {
     std::vector<uint64_t> unpack_info;
     // Indexed variant descriptor (empty col_source when the air is not indexed).
     std::vector<uint8_t> col_source; // per column: 0 = row stream, 1 = table stream
+    std::vector<uint8_t> col_lane;   // per column: lane whose index selects its entry
     uint64_t index_bits = 0;
     uint64_t words_per_entry = 0;
+    uint64_t lanes = 0;              // indices per row; 0/1 is the single-lane shape
     bool indexed() const { return !col_source.empty(); }
 };
-
-// Read `nbits` from a packed stream at cursor (word,idx,off), advancing it.
-// Mirrors the GPU idx_read_bits bit-walk exactly.
-static inline uint64_t cpu_idx_read_bits(
-    const uint64_t* base, uint64_t words, uint64_t &word, uint64_t &idx, uint64_t &off, uint64_t nbits)
-{
-    uint64_t val;
-    uint64_t bits_left = 64 - off;
-    if (nbits <= bits_left) {
-        uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
-        val = (word >> off) & mask;
-        off += nbits;
-        if (off == 64 && idx + 1 < words) { word = base[++idx]; off = 0; }
-    } else {
-        uint64_t low = word >> off;
-        word = base[++idx];
-        uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
-        val = (high << bits_left) | low;
-        off = nbits - bits_left;
-    }
-    return val;
-}
 
 struct DeviceCommitBuffersCPU
 {
@@ -86,12 +67,29 @@ struct DeviceCommitBuffersCPU
 
     void addPackedInfoCPU(uint64_t airgroupId, uint64_t airId, uint64_t nCols, bool is_packed,
                           uint64_t num_packed_words, uint64_t* unpack_info_, uint8_t* col_source_,
-                          uint64_t index_bits, uint64_t words_per_entry) {
+                          uint8_t* col_lane_, uint64_t index_bits, uint64_t words_per_entry,
+                          uint64_t lanes) {
         if (!is_packed) return;
         std::vector<uint64_t> unpack_vec(unpack_info_, unpack_info_ + nCols);
-        std::vector<uint8_t> col_source_vec;
-        if (col_source_ != nullptr) col_source_vec.assign(col_source_, col_source_ + nCols);
-        PackedInfoCPU pInfo = {is_packed, num_packed_words, unpack_vec, col_source_vec, index_bits, words_per_entry};
+        std::vector<uint8_t> col_source_vec, col_lane_vec;
+        if (col_source_ != nullptr) {
+            col_source_vec.assign(col_source_, col_source_ + nCols);
+            // Lane-less is the single-lane shape. Above one lane the map is load-bearing:
+            // without it every column would decode from lane 0's entry, a wrong trace with
+            // no other symptom, so refuse it the way the GPU slot path does.
+            if (col_lane_ != nullptr) {
+                col_lane_vec.assign(col_lane_, col_lane_ + nCols);
+            } else if (lanes > 1) {
+                zklog.error("addPackedInfoCPU: air (" + std::to_string(airgroupId) + "," +
+                            std::to_string(airId) + ") packs " + std::to_string(lanes) +
+                            " lanes per row but carries no col_lane map");
+                exitProcess();
+            } else {
+                col_lane_vec.assign(nCols, 0);
+            }
+        }
+        PackedInfoCPU pInfo = {is_packed,     num_packed_words, unpack_vec, col_source_vec,
+                               col_lane_vec,  index_bits,       words_per_entry, lanes};
         packedInfo[std::make_pair(airgroupId, airId)] = pInfo;
     }
 
@@ -124,8 +122,9 @@ struct DeviceCommitBuffersCPU
         return nullptr;
     }
 
-    // Indexed cm1 unpack (row-major dst, matching unpack_cpu): compact rows + shared
-    // instruction table reconstruct the full nCols output per row.
+    // Indexed cm1 unpack (row-major dst, matching unpack_cpu). The per-row walk lives in
+    // unpack_indexed_row.hpp, shared with its unit test; this adds the fatal report an
+    // out-of-range index deserves on the host (a kernel cannot abort).
     void unpack_cpu_indexed(
         const uint64_t* src,
         const uint64_t* table,
@@ -136,32 +135,25 @@ struct DeviceCommitBuffersCPU
         uint64_t words_per_entry,
         const std::vector<uint64_t> &unpack_info,
         const std::vector<uint8_t> &col_source,
+        const std::vector<uint8_t> &col_lane,
         uint64_t index_bits,
+        uint64_t lanes,
         uint64_t num_entries,
         uint64_t airgroupId,
         uint64_t airId
     ) {
         for (uint64_t row = 0; row < nRows; row++) {
-            const uint64_t* rbase = &src[row * words_per_row];
-            uint64_t rword = rbase[0], ridx = 0, roff = 0;
-            uint64_t index = cpu_idx_read_bits(rbase, words_per_row, rword, ridx, roff, index_bits);
-            if (index >= num_entries) {
+            uint64_t bad_lane = 0, bad_index = 0;
+            if (!unpackIndexedRow(&src[row * words_per_row], words_per_row, table, words_per_entry,
+                                  num_entries, index_bits, lanes, unpack_info.data(),
+                                  col_source.data(), col_lane.data(), nCols, &dst[row * nCols],
+                                  &bad_lane, &bad_index)) {
                 zklog.error("unpack_cpu_indexed: air (" + std::to_string(airgroupId) + "," +
-                            std::to_string(airId) + ") row " + std::to_string(row) +
-                            " has instruction index " + std::to_string(index) +
-                            " but the table only has " + std::to_string(num_entries) + " entries");
+                            std::to_string(airId) + ") row " + std::to_string(row) + " lane " +
+                            std::to_string(bad_lane) + " has instruction index " +
+                            std::to_string(bad_index) + " but the table only has " +
+                            std::to_string(num_entries) + " entries");
                 exitProcess();
-            }
-
-            const uint64_t* tbase = &table[index * words_per_entry];
-            uint64_t tword = tbase[0], tidx = 0, toff = 0;
-
-            uint64_t* unpacked_row = &dst[row * nCols];
-            for (uint64_t c = 0; c < nCols; c++) {
-                uint64_t nbits = unpack_info[c];
-                unpacked_row[c] = col_source[c]
-                    ? cpu_idx_read_bits(tbase, words_per_entry, tword, tidx, toff, nbits)
-                    : cpu_idx_read_bits(rbase, words_per_row, rword, ridx, roff, nbits);
             }
         }
     }

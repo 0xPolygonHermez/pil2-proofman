@@ -94,61 +94,79 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
     }
 }
 
-// Indexed counterpart of scUnpackRangeKernel: two cursors (compact row, shared
-// instruction table), each output column sourced per colSource. Mirrors
+// Indexed counterpart of scUnpackRangeKernel: a compact row plus a shared instruction
+// table, each column sourced per colSource and read from the entry ITS LANE's index
+// selects, per colLane. Mirrors unpackIndexedRow (unpack_indexed_row.hpp) and
 // unpack_indexed (starks_gpu.cu), so a slot root equals the prover's cm1 root.
-// Columns before c0 still have to be walked -- both cursors are sequential.
+//
+// One sequential pass per stream: the row pass reads the runtime columns, then lane l's
+// pass reads the columns tagged for lane l. Columns before c0 are still walked -- the
+// cursors are sequential -- but not written.
 __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ src,
                                                   const uint64_t *__restrict__ table,
                                                   const uint64_t *__restrict__ widths,
                                                   const uint8_t *__restrict__ colSource,
+                                                  const uint8_t *__restrict__ colLane,
                                                   uint64_t *__restrict__ dst,
                                                   uint64_t nCols, uint64_t nRows,
                                                   uint64_t wordsPerRow, uint64_t wordsPerEntry,
                                                   uint64_t numEntries, uint64_t indexBits,
-                                                  uint32_t c0, uint32_t cc)
+                                                  uint64_t lanes, uint32_t c0, uint32_t cc)
 {
-    // Per-column metadata is uniform across rows, so stage it once per block the way
-    // the prover's unpack does with its widths. One shared word carries BOTH the width
-    // and the source flag (nbits in the low 32 bits, source in bit 32) -- nbits <= 64,
-    // so they fit, and the inner loops take one shared read instead of two global ones.
-    // nCols <= SC_MAX_COLS, so at most 512 B per block. Note this is a tidiness/latency
-    // measure, not a throughput lever: the kernel runs at ~83% of DRAM roofline, so its
-    // cost is the row traffic below, not this metadata.
+    // Per-column metadata is uniform across rows, so stage it once per block. One shared
+    // word carries width | source<<32 | lane<<33 (nbits <= 64, lanes <= 255), keeping the
+    // loops at one shared read instead of three global ones; at most 512 B per block. A
+    // single-lane descriptor carries no lane map, so lane 0 stands in. Hygiene, not a
+    // throughput lever: this kernel runs at ~83% of DRAM roofline.
     extern __shared__ uint64_t scInfo[];
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x)
-        scInfo[i] = widths[i] | ((uint64_t)(colSource[i] != 0) << 32);
+        scInfo[i] = widths[i] | ((uint64_t)(colSource[i] != 0) << 32) |
+                    ((uint64_t)(colLane != nullptr ? colLane[i] : 0) << 33);
     __syncthreads();
 
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
 
     const uint64_t *rbase = src + row * wordsPerRow;
-    uint64_t rword = rbase[0], ridx = 0, roff = 0;
-    uint64_t index = scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, indexBits);
-    // A witness bug can put an out-of-range index here. The CPU unpack reports
-    // it and aborts; a kernel cannot, so fall back to entry 0 to stay in bounds
-    // -- the root then simply fails verification instead of reading past the table.
-    if (index >= numEntries) index = 0;
+    const uint64_t cEnd = ((uint64_t)c0 + cc < nCols) ? (uint64_t)c0 + cc : nCols;
+    // 0 is the unlaned shape, same as 1. Normalized here, not just at the launch, so the
+    // header offset below cannot collapse to 0 and skip every table pass.
+    const uint64_t nLanes = lanes ? lanes : 1;
 
-    const uint64_t *tbase = table + index * wordsPerEntry;
-    uint64_t tword = tbase[0], tidx = 0, toff = 0;
-
-    // Both cursors are sequential, so the columns this chunk does not write still have
-    // to be walked -- but only to reposition, so their values are never materialized.
-    for (uint64_t c = 0; c < (uint64_t)c0 && c < nCols; c++) {
-        uint64_t info = scInfo[c];
-        if (info >> 32) scStepBits<false>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
-        else            scStepBits<false>(rbase, wordsPerRow,   rword, ridx, roff, info & 0xFFFFFFFFull);
+    // Runtime pass: the untagged columns, from just past the header of `nLanes` indices.
+    {
+        const uint64_t hdrBits = nLanes * indexBits;
+        uint64_t ridx = hdrBits / 64, roff = hdrBits % 64;
+        uint64_t rword = (ridx < wordsPerRow) ? rbase[ridx] : 0;
+        for (uint64_t c = 0; c < cEnd; c++) {
+            const uint64_t info = scInfo[c];
+            if ((info >> 32) & 1ull) continue;
+            const uint64_t val = scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
+            if (c >= c0) dst[(c - c0) * nRows + row] = val;
+        }
     }
-    for (uint64_t c = c0; c < nCols && c < (uint64_t)c0 + cc; c++) {
-        uint64_t info = scInfo[c];
-        uint64_t nbits = info & 0xFFFFFFFFull;
-        // Warp-uniform: colSource depends only on c, so this never diverges.
-        uint64_t val = (info >> 32)
-            ? scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, nbits)
-            : scStepBits<true>(rbase, wordsPerRow,   rword, ridx, roff, nbits);
-        dst[(uint64_t)(c - c0) * nRows + row] = val;
+
+    // One pass per lane; each lane's index sits at a known header offset. The extra passes
+    // are shared reads and warp-uniform compares over nCols, with no extra row traffic.
+    for (uint64_t l = 0; l < nLanes; l++) {
+        const uint64_t hBits = l * indexBits;
+        uint64_t hidx = hBits / 64, hoff = hBits % 64;
+        uint64_t hword = rbase[hidx];
+        uint64_t index = scStepBits<true>(rbase, wordsPerRow, hword, hidx, hoff, indexBits);
+        // A witness bug can put an out-of-range index here. The CPU unpack reports it and
+        // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the root
+        // then simply fails verification instead of reading past the table.
+        if (index >= numEntries) index = 0;
+
+        const uint64_t *tbase = table + index * wordsPerEntry;
+        uint64_t tword = tbase[0], tidx = 0, toff = 0;
+        for (uint64_t c = 0; c < cEnd; c++) {
+            const uint64_t info = scInfo[c];
+            // Warp-uniform: source and lane depend only on c, so this never diverges.
+            if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
+            const uint64_t val = scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
+            if (c >= c0) dst[(c - c0) * nRows + row] = val;
+        }
     }
 }
 
@@ -383,8 +401,8 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
-                           const uint8_t *dColSource, const uint64_t *dTable,
-                           StreamCommitHash hash)
+                           const uint8_t *dColSource, const uint8_t *dColLane,
+                           const uint64_t *dTable, StreamCommitHash hash)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -393,6 +411,11 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     if (indexed && (dTable == nullptr || dims.wordsPerEntry == 0 || dims.numEntries == 0 ||
                     dims.indexBits == 0 || dims.indexBits > 64))
         return -4;
+    // A lane-packed row without its lane map would read every column from lane 0's entry:
+    // a wrong trace with no other symptom, so refuse it here.
+    if (indexed && dims.lanes > 1 && dColLane == nullptr) return -5;
+    // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
+    if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
 
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
@@ -439,9 +462,9 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                                      : dims.nCols - (uint64_t)k * chunkCols);
         if (indexed) {
             scUnpackRangeIndexedKernel<<<ublk, SC_TPB, dims.nCols * sizeof(uint64_t), stream>>>(
-                d_packed, dTable, d_widths, dColSource, (uint64_t *)d_rate,
+                d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
-                dims.indexBits, (uint32_t)(k * chunkCols), cc);
+                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc);
         } else {
             scUnpackRangeKernel<<<ublk, SC_TPB, 0, stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
                                                              dims.nCols, N, dims.wordsPerRow,

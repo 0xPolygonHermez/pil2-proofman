@@ -26,10 +26,13 @@ pub trait TraceRow: Copy + Default + Send {
 /// plus its index setter. Defaulted (`false` / no-op) so full row types satisfy it for free;
 /// the generated indexed row overrides both. Lets a generic filler compile out the
 /// instruction-derived columns (`if !R::IS_INDEXED`) and set the index uniformly.
+///
+/// A row packs one instruction per lane, so the index is set per lane: a filler walking
+/// `lane` over a row's steps passes the same `lane` here. Single-lane rows use lane 0.
 pub trait IndexedFill {
     const IS_INDEXED: bool = false;
     #[inline(always)]
-    fn set_row_index(&mut self, _index: u32) {}
+    fn set_row_index(&mut self, _lane: usize, _index: u32) {}
 }
 
 #[derive(Default)]
