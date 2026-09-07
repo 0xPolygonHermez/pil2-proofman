@@ -49,14 +49,16 @@ struct StreamCommitDims {
     uint64_t nCols;        // witness columns (<= SC_MAX_COLS)
     uint64_t wordsPerRow;  // packed 64-bit words per row
 
-    // Indexed (compact) witness. Each row is a leading instruction-index header
-    // (indexBits wide) followed by the runtime columns; the columns flagged in
+    // Indexed (compact) witness. Each row is a header of `lanes` instruction indices
+    // (indexBits wide each) followed by the runtime columns; the columns flagged in
     // dColSource are read instead from a shared instruction table of numEntries
     // entries, wordsPerEntry words each. Left zero for a plain packed witness --
     // dColSource == nullptr at the call is what actually selects the plain path.
     uint64_t indexBits = 0;
     uint64_t wordsPerEntry = 0;
     uint64_t numEntries = 0;
+    // Execution steps a row packs; 0 or 1 is the single-lane shape.
+    uint64_t lanes = 0;
 };
 
 // Returns required slot size in gl64 elements for the given dims and family.
@@ -75,11 +77,12 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // Synchronous on return: the root is valid, and both the slot and the caller's
 // packed-witness buffer are free for reuse -- callers need no event handling.
 //
-// dColSource / dTable are DEVICE pointers and select the indexed unpack: per
-// column 0 = read from the row stream, 1 = read from the instruction table.
-// Both must be non-null together, resident on the current device, and stay
-// alive for the call; they are borrowed, never freed here. Pass nullptr for
-// both (the default) to commit a plain packed witness.
+// dColSource / dColLane / dTable are DEVICE pointers and select the indexed
+// unpack: dColSource is 0 = row stream, 1 = instruction table, and dColLane
+// names the lane whose index selects that entry. dColSource and dTable must be
+// non-null together, dColLane whenever dims.lanes > 1; all are borrowed, must be
+// resident on the current device and stay alive for the call. Pass nullptr for
+// all three (the default) to commit a plain packed witness.
 //
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], arity mismatch with the slot layout contract, or an
@@ -88,6 +91,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource = nullptr,
+                           const uint8_t *dColLane = nullptr,
                            const uint64_t *dTable = nullptr,
                            StreamCommitHash hash = StreamCommitHash::Poseidon1);
 

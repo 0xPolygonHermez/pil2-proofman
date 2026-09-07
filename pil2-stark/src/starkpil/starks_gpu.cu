@@ -125,9 +125,15 @@ __device__ __forceinline__ uint64_t idx_read_bits(
     return val;
 }
 
-// Indexed unpack: each compact row holds a leading instruction index plus the runtime
-// columns; the instruction-derived columns live once in `table`. Two bit cursors (row,
-// table); each output column c is sourced per d_col_source[c]. Bit-identical to unpack().
+// Indexed unpack: each compact row holds a header of `lanes` instruction indices plus the
+// runtime columns; the instruction-derived columns live once in `table`, one entry per
+// instruction. Column c is sourced per d_col_source[c] and, when tagged, read from the
+// entry ITS LANE's index selects (d_col_lane[c]). Bit-identical to unpack().
+//
+// One sequential pass per stream: the row pass reads the runtime columns, then lane l's
+// pass reads the columns tagged for lane l. Mirrors scUnpackRangeIndexedKernel
+// (stream_commit.cu) and unpackIndexedRow (unpack_indexed_row.hpp); all three must agree
+// or a slot root stops matching cm1.
 __global__ void unpack_indexed(
     const uint64_t* src,             // compact rows: words_per_row each
     const uint64_t* table,           // instruction table: words_per_entry each
@@ -138,20 +144,21 @@ __global__ void unpack_indexed(
     uint64_t words_per_entry,
     const uint64_t* d_unpack_info,   // nbits per output column
     const uint8_t*  d_col_source,    // 0 = from row stream, 1 = from table stream
-    uint64_t index_bits,             // width of the leading index header in the row
+    const uint8_t*  d_col_lane,      // lane whose index selects the entry (null = lane 0)
+    uint64_t index_bits,             // width of ONE index in the row's header
+    uint64_t lanes,                  // indices per row; 0/1 is the single-lane shape
     uint64_t num_entries,            // instruction-table entry count (index bound)
     Layout layout
 ) {
-    // One shared word per column carries BOTH the width and the source flag
-    // (nbits in the low 32 bits, source in bit 32) -- nbits <= 64, so they fit.
-    // Folding them keeps the inner loop at a single shared read instead of also
-    // taking a dependent global load for d_col_source, and keeps the shared
-    // footprint identical to the plain unpack, so unpack_trace's sharedMemSize
-    // (nCols * 8) covers both kernels unchanged. This kernel is DRAM-bound (the
-    // strided row reads dominate), so treat it as hygiene, not a throughput win.
+    // One shared word per column carries width | source<<32 | lane<<33 (nbits <= 64,
+    // lanes <= 255), so the loops take one shared read instead of dependent global loads
+    // and the footprint stays nCols * 8 -- unpack_trace's sharedMemSize covers both
+    // kernels unchanged. A single-lane descriptor carries no lane map, so lane 0 stands
+    // in. This kernel is DRAM-bound (strided row reads dominate): hygiene, not a win.
     extern __shared__ uint64_t shared_unpack_info[];
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
-        shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32);
+        shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32) |
+                                ((uint64_t)(d_col_lane != nullptr ? d_col_lane[i] : 0) << 33);
     }
     __syncthreads();
 
@@ -159,24 +166,41 @@ __global__ void unpack_indexed(
     if (row >= nRows) return;
 
     const uint64_t* rbase = src + row * words_per_row;
-    uint64_t rword = rbase[0], ridx = 0, roff = 0;
-    uint64_t index = idx_read_bits(rbase, words_per_row, rword, ridx, roff, index_bits);
-    // A witness bug can put an out-of-range index here. The CPU unpack reports it and
-    // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
-    // then simply fails instead of reading past the table.
-    if (index >= num_entries) index = 0;
+    const uint64_t nLanes = lanes ? lanes : 1;
 
-    const uint64_t* tbase = table + index * words_per_entry;
-    uint64_t tword = tbase[0], tidx = 0, toff = 0;
+    // Runtime pass: the untagged columns, from just past the header of `nLanes` indices.
+    {
+        const uint64_t hdr_bits = nLanes * index_bits;
+        uint64_t ridx = hdr_bits / 64, roff = hdr_bits % 64;
+        uint64_t rword = (ridx < words_per_row) ? rbase[ridx] : 0;
+        for (uint64_t c = 0; c < nCols; c++) {
+            const uint64_t info = shared_unpack_info[c];
+            if ((info >> 32) & 1ull) continue;
+            dst[getBufferOffset(row, c, nRows, nCols, layout)] =
+                idx_read_bits(rbase, words_per_row, rword, ridx, roff, info & 0xFFFFFFFFull);
+        }
+    }
 
-    for (uint64_t c = 0; c < nCols; c++) {
-        uint64_t info = shared_unpack_info[c];
-        uint64_t nbits = info & 0xFFFFFFFFull;
-        // Warp-uniform: col_source depends only on c, so this never diverges.
-        uint64_t val = (info >> 32)
-            ? idx_read_bits(tbase, words_per_entry, tword, tidx, toff, nbits)
-            : idx_read_bits(rbase, words_per_row, rword, ridx, roff, nbits);
-        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
+    // One pass per lane; each lane's index sits at a known header offset.
+    for (uint64_t l = 0; l < nLanes; l++) {
+        const uint64_t h_bits = l * index_bits;
+        uint64_t hidx = h_bits / 64, hoff = h_bits % 64;
+        uint64_t hword = rbase[hidx];
+        uint64_t index = idx_read_bits(rbase, words_per_row, hword, hidx, hoff, index_bits);
+        // A witness bug can put an out-of-range index here. The CPU unpack reports it and
+        // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
+        // then simply fails instead of reading past the table.
+        if (index >= num_entries) index = 0;
+
+        const uint64_t* tbase = table + index * words_per_entry;
+        uint64_t tword = tbase[0], tidx = 0, toff = 0;
+        for (uint64_t c = 0; c < nCols; c++) {
+            const uint64_t info = shared_unpack_info[c];
+            // Warp-uniform: source and lane depend only on c, so this never diverges.
+            if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
+            dst[getBufferOffset(row, c, nRows, nCols, layout)] =
+                idx_read_bits(tbase, words_per_entry, tword, tidx, toff, info & 0xFFFFFFFFull);
+        }
     }
 }
 
@@ -235,6 +259,15 @@ void unpack_trace(
                         "table is registered; call register_instruction_table first");
             exitProcess();
         }
+        // Without the lane map every column would decode from lane 0's entry: a wrong
+        // trace with no other symptom.
+        if (air_instance_info->lanes > 1 && air_instance_info->d_col_lane == nullptr) {
+            zklog.error("unpack_trace: air (" + std::to_string(air_instance_info->airgroupId) + "," +
+                        std::to_string(air_instance_info->airId) + ") packs " +
+                        std::to_string(air_instance_info->lanes) + " lanes per row but carries no "
+                        "col_lane map");
+            exitProcess();
+        }
         // Indexed cm1 unpack: compact rows + shared instruction table reconstruct the full
         // nCols output. Same storage layout as the plain path.
         unpack_indexed<<<blocks, threads, sharedMemSize, stream>>>(
@@ -247,7 +280,9 @@ void unpack_trace(
             air_instance_info->words_per_entry,
             air_instance_info->unpack_info,
             air_instance_info->d_col_source,
+            air_instance_info->d_col_lane,
             air_instance_info->index_bits,
+            air_instance_info->lanes,
             air_instance_info->num_entries,
             layout
         );
