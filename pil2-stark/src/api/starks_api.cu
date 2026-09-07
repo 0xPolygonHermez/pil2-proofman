@@ -3147,6 +3147,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // at setup from PackedInfo; d_instr_table arrives per program via
     // register_instruction_table). Both live outside gpuMemoryBuffer[0].
     const uint8_t *dColSource = nullptr;
+    const uint8_t *dColLane = nullptr;
     const uint64_t *dTable = nullptr;
     AirInstanceInfo *aii = nullptr;
     auto it = d_buffers->air_instances.find({airgroupId, airId});
@@ -3165,10 +3166,12 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             return -16;
         }
         dColSource = aii->d_col_source;
+        dColLane = aii->d_col_lane;
         dTable = aii->d_instr_table;
         dims.indexBits = aii->index_bits;
         dims.wordsPerEntry = aii->words_per_entry;
         dims.numEntries = aii->num_entries;
+        dims.lanes = aii->lanes;
     }
 
     const StreamCommitHash scHash = (scFamily == HashFamily::Blake3)
@@ -3185,7 +3188,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                            sizeof(Goldilocks::Element);
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
-                                    dColSource, dTable, scHash);
+                                    dColSource, dColLane, dTable, scHash);
     streamCommitReleaseRegion(d_buffers);
     return rc;
 }

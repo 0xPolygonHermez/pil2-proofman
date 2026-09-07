@@ -162,7 +162,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     for (int r = 0; r < reps; r++) {
         auto t0 = std::chrono::steady_clock::now();
         int64_t rc = streamCommitPacked(d_slot, dims, MAIN_WIDTHS, hPacked.data(),
-                                        rootCmp.data(), s, nullptr, nullptr, hash);
+                                        rootCmp.data(), s, nullptr, nullptr, nullptr, hash);
         auto t1 = std::chrono::steady_clock::now();
         ASSERT_EQ(rc, 0);
         if (r) total_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -257,7 +257,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
         StreamCommitDims d{nBits, nBitsExt, nCols, MAIN_WORDS};
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
         ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hFull.data(), rootRef.data(), s,
-                                     nullptr, nullptr, hash), 0);
+                                     nullptr, nullptr, nullptr, hash), 0);
         CHECKCUDAERR(cudaFree(slot));
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
@@ -268,7 +268,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
         CHECKCUDAERR(cudaMemcpy(dT, table.data(), table.size() * 8, cudaMemcpyHostToDevice));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
-        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, dT, hash), 0);
+        ASSERT_EQ(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr, dT, hash), 0);
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
     }
 
@@ -282,7 +282,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
         StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
-        EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr), 0);
+        EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr, nullptr), 0);
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
     }
     CHECKCUDAERR(cudaStreamDestroy(s));
@@ -323,4 +323,154 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_shape)
 TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_small)
 {
     runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Blake3);
+}
+
+// Lane-packed indexed witness: a row packs `lanes` steps, so its header carries one index
+// PER LANE and every instruction-derived column names the lane whose entry it comes from
+// (COL_LANE). Same property as the single-lane case -- committing the compact trace + table
+// must reproduce the FULL trace's root bit for bit -- which here can only hold if each
+// lane's columns are read from its own entry.
+static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t nEntries,
+                                        StreamCommitHash hash = StreamCommitHash::Poseidon1)
+{
+    const uint64_t nBitsExt = nBits + 1;
+    const uint32_t CAP = 4;
+    const uint64_t N = 1ull << nBits;
+    const uint64_t INDEX_BITS = 32;
+
+    // Fields of a lane-packed row: {width, sub-columns per lane, instruction-derived},
+    // shaped like Main and expanded lane-major as the pil-helpers emit.
+    const uint64_t FIELDS[][3] = {
+        {32, 2, 0}, {1, 1, 0}, {32, 1, 1}, {64, 1, 1}, {8, 1, 1}, {38, 1, 0}, {1, 1, 1},
+    };
+    const uint64_t N_FIELDS = sizeof(FIELDS) / sizeof(FIELDS[0]);
+
+    std::vector<uint64_t> widths, rowW, tabW, entryCol;
+    std::vector<uint8_t> colSource, colLane;
+    for (uint64_t l = 0; l < lanes; l++) rowW.push_back(INDEX_BITS);
+    for (uint64_t f = 0; f < N_FIELDS; f++) {
+        const uint64_t width = FIELDS[f][0], sub = FIELDS[f][1];
+        const bool instr = FIELDS[f][2] != 0;
+        const uint64_t entryBase = tabW.size();
+        for (uint64_t l = 0; l < lanes; l++) {
+            for (uint64_t s = 0; s < sub; s++) {
+                widths.push_back(width);
+                colSource.push_back(instr ? 1 : 0);
+                colLane.push_back(static_cast<uint8_t>(l));
+                entryCol.push_back(instr ? entryBase + s : 0);
+                if (!instr) rowW.push_back(width);
+            }
+        }
+        // One entry holds a single lane's worth of the field.
+        if (instr)
+            for (uint64_t s = 0; s < sub; s++) tabW.push_back(width);
+    }
+
+    const uint64_t nCols = widths.size();
+    ASSERT_LE(nCols, SC_MAX_COLS);
+    auto wordsFor = [](const std::vector<uint64_t> &w) {
+        uint64_t b = 0; for (uint64_t x : w) b += x; return (b + 63) / 64;
+    };
+    const uint64_t rowWords = wordsFor(rowW), entWords = wordsFor(tabW), fullWords = wordsFor(widths);
+    cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
+
+    // Instruction table, then BOTH encodings of the same trace.
+    std::vector<uint64_t> table(nEntries * entWords);
+    std::vector<std::vector<uint64_t>> entryVals(nEntries, std::vector<uint64_t>(tabW.size()));
+    uint64_t x = 0x9E3779B97F4A7C15ull;
+    auto next = [&]() { x ^= x << 13; x ^= x >> 7; x ^= x << 17; return x; };
+    for (uint64_t e = 0; e < nEntries; e++) {
+        for (size_t i = 0; i < tabW.size(); i++) entryVals[e][i] = next();
+        packRow(entryVals[e].data(), tabW.size(), tabW.data(), entWords, &table[e * entWords]);
+    }
+
+    std::vector<uint64_t> hCompact(N * rowWords), hFull(N * fullWords);
+    {
+        std::vector<uint64_t> compactVals(rowW.size()), fullVals(nCols), idx(lanes);
+        for (uint64_t r = 0; r < N; r++) {
+            // A different entry per lane: pointing every lane at the same one would pass
+            // even with a single shared table cursor.
+            for (uint64_t l = 0; l < lanes; l++) {
+                idx[l] = (r * 7 + l * 13 + 1) % nEntries;
+                compactVals[l] = idx[l];
+            }
+            size_t ri = lanes;
+            for (uint64_t c = 0; c < nCols; c++) {
+                if (colSource[c]) {
+                    // Mask exactly as packRow would, so the full encoding carries the same
+                    // value the table entry decodes to.
+                    const uint64_t nb = widths[c];
+                    const uint64_t m = (nb == 64) ? ~0ULL : ((1ULL << nb) - 1ULL);
+                    fullVals[c] = entryVals[idx[colLane[c]]][entryCol[c]] & m;
+                } else {
+                    const uint64_t v = next();
+                    compactVals[ri++] = v;
+                    fullVals[c] = v;
+                }
+            }
+            packRow(compactVals.data(), rowW.size(), rowW.data(), rowWords, &hCompact[r * rowWords]);
+            packRow(fullVals.data(), nCols, widths.data(), fullWords, &hFull[r * fullWords]);
+        }
+    }
+
+    // Reference: commit the FULL packed trace through the plain slot path.
+    std::vector<uint64_t> rootRef(CAP), rootIdx(CAP);
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, fullWords};
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, widths.data(), hFull.data(), rootRef.data(), s,
+                                     nullptr, nullptr, nullptr, hash), 0);
+        CHECKCUDAERR(cudaFree(slot));
+    }
+    // Under test: commit the COMPACT trace + table through the indexed slot path.
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        uint8_t *dCS, *dCL;
+        CHECKCUDAERR(cudaMalloc(&dCS, nCols)); CHECKCUDAERR(cudaMalloc(&dCL, nCols));
+        CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dCL, colLane.data(), nCols, cudaMemcpyHostToDevice));
+        uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
+        CHECKCUDAERR(cudaMemcpy(dT, table.data(), table.size() * 8, cudaMemcpyHostToDevice));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        ASSERT_EQ(streamCommitPacked(slot, d, widths.data(), hCompact.data(), rootIdx.data(), s,
+                                     dCS, dCL, dT, hash), 0);
+        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
+        CHECKCUDAERR(cudaFree(dCL)); CHECKCUDAERR(cudaFree(dT));
+    }
+
+    printf("[stream-commit] indexed lanes=%lu nCols=%lu: %lu words/row vs %lu full, %lu-entry table of %lu words\n",
+           lanes, nCols, rowWords, fullWords, nEntries, entWords);
+    for (uint32_t i = 0; i < CAP; i++)
+        ASSERT_EQ(rootRef[i], rootIdx[i]) << "lane-packed indexed root element " << i << " differs";
+
+    // A lane-packed descriptor without its lane map must be rejected: decoding every
+    // column from lane 0's entry would be a wrong trace with no other symptom.
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
+        uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        EXPECT_LT(streamCommitPacked(slot, d, widths.data(), hCompact.data(), rootIdx.data(), s,
+                                     dCS, nullptr, dT, hash), 0);
+        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
+    }
+    CHECKCUDAERR(cudaStreamDestroy(s));
+}
+
+// 4 lanes is the Main shape; 32 columns spans several chunks, so per-chunk repositioning
+// is exercised on every lane's pass, not just chunk 0.
+TEST(GOLDILOCKS_TEST, stream_commit_indexed_lanes_small)
+{
+    runStreamCommitIndexedLanes(16, 4, 11);
+}
+
+// Fewer entries than lanes: several lanes land on the same entry.
+TEST(GOLDILOCKS_TEST, stream_commit_indexed_lanes_repeated_entries)
+{
+    runStreamCommitIndexedLanes(16, 4, 3);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_indexed_lanes_blake3)
+{
+    runStreamCommitIndexedLanes(16, 4, 11, StreamCommitHash::Blake3);
 }

@@ -97,7 +97,9 @@ struct AirInstanceInfo {
     // path -- when it is set, d_instr_table must have been registered before the first
     // unpack, and unpack_trace aborts rather than silently falling back to the plain walk.
     uint8_t  *d_col_source = nullptr;   // per column: 0 = row stream, 1 = table stream
-    uint64_t  index_bits = 0;           // width of the leading index header in a compact row
+    uint8_t  *d_col_lane = nullptr;     // per column: lane whose index selects its entry
+    uint64_t  index_bits = 0;           // width of ONE index in a compact row's header
+    uint64_t  lanes = 0;                // indices per row; 0/1 is the single-lane shape
     uint64_t  words_per_entry = 0;      // u64 words per instruction-table entry
     uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
     uint64_t  num_entries = 0;
@@ -318,8 +320,17 @@ struct AirInstanceInfo {
             if (packedInfo->col_source != nullptr) {
                 index_bits = packedInfo->index_bits;
                 words_per_entry = packedInfo->words_per_entry;
+                lanes = packedInfo->lanes;
                 CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                // Left null for a lane-less (single-lane) descriptor: the kernels then read
+                // lane 0. Uploading an all-zero map instead would make a lane-packed air
+                // with a missing map decode every column from lane 0 AND disarm the refusals
+                // downstream, which check for a null map.
+                if (packedInfo->col_lane != nullptr) {
+                    CHECKCUDAERR(cudaMalloc(&d_col_lane, nCols * sizeof(uint8_t)));
+                    CHECKCUDAERR(cudaMemcpy(d_col_lane, packedInfo->col_lane, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                }
             }
         }
     }
@@ -372,6 +383,10 @@ struct AirInstanceInfo {
 
         if (d_col_source != nullptr) {
             CHECKCUDAERR(cudaFree(d_col_source));
+        }
+
+        if (d_col_lane != nullptr) {
+            CHECKCUDAERR(cudaFree(d_col_lane));
         }
 
         if (d_instr_table != nullptr) {

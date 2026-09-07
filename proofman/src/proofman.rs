@@ -5868,9 +5868,9 @@ where
     /// no slot token is free, or the C side rejects the shape.
     ///
     /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
-    /// (col_source / index_bits / words_per_entry) and its uploaded instruction
-    /// table from the first GPU's AirInstanceInfo, and drives the indexed slot
-    /// unpack -- hence airgroup_id/air_id are passed through.
+    /// (col_source / col_lane / index_bits / lanes / words_per_entry) and its uploaded
+    /// instruction table from the first GPU's AirInstanceInfo, and drives the indexed
+    /// slot unpack -- hence airgroup_id/air_id are passed through.
     #[allow(clippy::too_many_arguments)]
     fn try_slot_commit(
         pctx: &ProofCtx<F>,
