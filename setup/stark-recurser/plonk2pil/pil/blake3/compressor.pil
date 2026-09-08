@@ -50,7 +50,7 @@ require "circuits/plonk.pil";
 // more fixed columns and the whole tier machinery. See the module comment in
 // setups/blake3/aggregation.rs.
 // ============================================================================
-airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelValRows, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
+airtemplate Compressor (const int N, const int nPublics, const int nPublicsStart, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelValRows, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
     const int BAND = 27;
 
     col witness a[BAND];
@@ -165,6 +165,13 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nCMulRows, 
     col fixed TREESELECTOR4    = [[0:air.CLOCKS]:treeAt,   [0:LANES, 1:INTERIOR, 0:LANES]:nTreeBlocks,   0...];
     col fixed SELECTVAL_ARITY2 = [[0:air.CLOCKS]:selValAt, [0:LANES, 1:INTERIOR, 0:LANES]:nSelValBlocks, 0...];
     col fixed PLONK            = [[0:air.CLOCKS]:plonkAt,  [0:LANES, 1:INTERIOR, 0:LANES]:nPlonkBlocks,  0...];
+
+    if (nPublics > 0) {
+        col fixed PUBLICS_ROW = [0:nPublicsStart, 1, 0...];
+        for (int i = 0; i < nPublics; i++) {
+            (i / BAND)'PUBLICS_ROW * (a[i % BAND] - publics[i]) === 0;
+        }
+    }
 
     // ── Plonk: BAND/3 = 9 gates a row, one shared coefficient set ───────────────
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];

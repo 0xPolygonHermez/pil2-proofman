@@ -139,6 +139,7 @@ pub struct PilTemplateParams<'a> {
     pub namespace_name: &'a str,
     pub n_bits: usize,
     pub n_publics: u32,
+    pub n_publics_start: usize,
     pub max_constraint_degree: usize,
     pub n_plonk_rows: usize,
     pub n_cmul_rows: usize,
@@ -162,7 +163,7 @@ pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
          set_max_constraint_degree({md});\n\n\
          public publics[{np}];\n\n\
          airgroup {ns}  {{\n    \
-         {tn} (N: 2**{nb}, nPlonkRows: {npl}, nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, \
+         {tn} (N: 2**{nb}, nPublics: {np}, nPublicsStart: {nps}, nPlonkRows: {npl}, nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, \
          nTreeSelector4: {nts}, nSelValRows: {nsv}, nNodeBlocks: {nnb}, \
          nChunkBlocks: {ncb}, nParentBlocks: {npb}, LANES: {nl}) alias {ns};\n\
          }}",
@@ -171,6 +172,7 @@ pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
         ns = p.namespace_name,
         nb = p.n_bits,
         np = p.n_publics,
+        nps = p.n_publics_start,
         md = p.max_constraint_degree,
         npl = p.n_plonk_rows,
         ncm = p.n_cmul_rows,

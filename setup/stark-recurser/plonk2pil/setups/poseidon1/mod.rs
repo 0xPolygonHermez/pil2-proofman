@@ -27,7 +27,7 @@ pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
          set_max_constraint_degree({md});\n\n\
          public publics[{np}];\n\n\
          airgroup {ns}  {{\n    \
-         {tn} (N: 2**{nb}, nPlonkRows: {npl}, nPoseidon1Compression: {np1c}, nPoseidon1Sponge: {np1s}, \
+         {tn} (N: 2**{nb}, nPublics: {np}, nPlonkRows: {npl}, nPoseidon1Compression: {np1c}, nPoseidon1Sponge: {np1s}, \
          nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, nTreeSelector8: {nts}, \
          nSelectValArity4: {nsv}) alias {ns};\n\
          }}",
