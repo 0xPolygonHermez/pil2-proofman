@@ -2049,29 +2049,16 @@ namespace PlonkGPU
         }
     }
 
-    // GPU MSM from device-resident Montgomery-form scalars (mont=true)
+    // GPU MSM from device-resident Montgomery-form scalars (mont=true).
+    //
+    // The MSM call and the standard-to-extended Jacobian conversion now live in
+    // bn128/src/msm/msm_bn128.hpp so other consumers can reach them; this stays
+    // as the prover's binding of its own PTau buffer.
     template <typename Engine>
     typename Engine::G1Point PlonkProverGPU<Engine>::multiExponentiationGPU_devptr(
         void* dScalars, size_t npoints)
     {
-        G1Point value;
-
-        struct JacobianPoint {
-            typename Engine::F1Element X;
-            typename Engine::F1Element Y;
-            typename Engine::F1Element Z;
-        };
-        JacobianPoint gpuResult;
-
-        msm_bn128_gpu_dev_ptr(&gpuResult, d_ptau, dScalars, npoints, true);
-
-        // Convert from standard Jacobian to Extended Jacobian
-        value.x = gpuResult.X;
-        value.y = gpuResult.Y;
-        E.f1.square(value.zz, gpuResult.Z);
-        E.f1.mul(value.zzz, value.zz, gpuResult.Z);
-
-        return value;
+        return MsmBn128::msmDevPtr(E, d_ptau, dScalars, npoints);
     }
 
 }

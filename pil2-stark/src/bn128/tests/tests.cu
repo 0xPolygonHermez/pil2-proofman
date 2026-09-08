@@ -10,6 +10,8 @@
 #include "point.cuh"
 #include "alt_bn128.hpp"
 #include "fft.hpp"
+#include "../src/ntt/ntt_bn128.hpp"
+#include "../src/msm/msm_bn128.hpp"
 #include "cuda_utils.cuh"
 #include "fr.hpp"
 
@@ -1873,4 +1875,181 @@ int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
+}
+
+// ==============================================================================
+// LDE and multi-column parity: GPU against the CPU NTT_AltBn128
+//
+// These pin the semantics that A4 turns on. sppark exposes NTT::LDE(), which
+// distributes generator powers and so evaluates over a *coset*; the CPU
+// extendPol zero-pads and evaluates over the larger subgroup. Wrapping the
+// wrong one produces plausible-looking but incorrect extensions, so the two are
+// exposed separately and the plain path is checked against the CPU here.
+// ==============================================================================
+
+TEST(BN128_LDE, lde_gpu_vs_cpu_extendPol) {
+    RawFr field;
+    const uint32_t lg_n = 8;
+    const uint32_t lg_blowup = 1;
+    const uint64_t n = 1ULL << lg_n;
+    const uint64_t ext_n = n << lg_blowup;
+
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+
+    std::vector<RawFr::Element> input(n);
+    for (uint64_t i = 0; i < n; i++) field.fromUI(input[i], i * 7 + 1);
+
+    // CPU: extendPol over one column.
+    NTT_AltBn128 ntt(E, n);
+    std::vector<RawFr::Element> cpu_out(ext_n);
+    ntt.extendPol(cpu_out.data(), input.data(), ext_n, n, 1);
+
+    // GPU: the same extension, buffer sized to the extended domain.
+    std::vector<RawFr::Element> gpu_out(ext_n);
+    for (uint64_t i = 0; i < n; i++) field.copy(gpu_out[i], input[i]);
+    NTT_BN128_GPU::lde(reinterpret_cast<BN128GPUScalarField::Element*>(gpu_out.data()), lg_n, lg_blowup);
+
+    for (uint64_t i = 0; i < ext_n; i++) {
+        ASSERT_TRUE(field.eq(cpu_out[i], gpu_out[i])) << "LDE mismatch at " << i;
+    }
+}
+
+TEST(BN128_LDE, coset_lde_differs_from_plain) {
+    RawFr field;
+    const uint32_t lg_n = 6;
+    const uint32_t lg_blowup = 1;
+    const uint64_t n = 1ULL << lg_n;
+    const uint64_t ext_n = n << lg_blowup;
+
+    std::vector<RawFr::Element> input(n);
+    for (uint64_t i = 0; i < n; i++) field.fromUI(input[i], i + 3);
+
+    std::vector<RawFr::Element> plain(ext_n), coset(ext_n);
+    for (uint64_t i = 0; i < n; i++) { field.copy(plain[i], input[i]); field.copy(coset[i], input[i]); }
+
+    NTT_BN128_GPU::lde(reinterpret_cast<BN128GPUScalarField::Element*>(plain.data()), lg_n, lg_blowup);
+    NTT_BN128_GPU::lde_coset(reinterpret_cast<BN128GPUScalarField::Element*>(coset.data()), lg_n, lg_blowup);
+
+    // If these ever agree, the two entry points have collapsed into one and the
+    // distinction this test exists to protect has been lost.
+    bool any_diff = false;
+    for (uint64_t i = 0; i < ext_n && !any_diff; i++) any_diff = !field.eq(plain[i], coset[i]);
+    ASSERT_TRUE(any_diff) << "plain and coset LDE produced identical output";
+}
+
+TEST(BN128_NTT_MULTICOL, ntt_multicol_gpu_vs_cpu) {
+    RawFr field;
+    const uint32_t lg_n = 6;
+    const uint64_t n = 1ULL << lg_n;
+    const uint32_t ncols = 4;
+
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+
+    std::vector<RawFr::Element> src(n * ncols);
+    for (uint64_t i = 0; i < n * ncols; i++) field.fromUI(src[i], i * 5 + 2);
+
+    NTT_AltBn128 ntt(E, n);
+    std::vector<RawFr::Element> cpu_out(n * ncols);
+    ntt.NTT(cpu_out.data(), src.data(), n, ncols);
+
+    std::vector<RawFr::Element> gpu_out(src);
+    NTT_BN128_GPU::ntt_multicol(reinterpret_cast<BN128GPUScalarField::Element*>(gpu_out.data()), lg_n, ncols);
+
+    for (uint64_t i = 0; i < n * ncols; i++) {
+        ASSERT_TRUE(field.eq(cpu_out[i], gpu_out[i])) << "multicol NTT mismatch at " << i;
+    }
+}
+
+TEST(BN128_LDE, lde_multicol_gpu_vs_cpu) {
+    RawFr field;
+    const uint32_t lg_n = 6;
+    const uint32_t lg_blowup = 1;
+    const uint64_t n = 1ULL << lg_n;
+    const uint64_t ext_n = n << lg_blowup;
+    const uint32_t ncols = 3;
+
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+
+    std::vector<RawFr::Element> input(n * ncols);
+    for (uint64_t i = 0; i < n * ncols; i++) field.fromUI(input[i], i * 11 + 5);
+
+    NTT_AltBn128 ntt(E, n);
+    std::vector<RawFr::Element> cpu_out(ext_n * ncols);
+    ntt.extendPol(cpu_out.data(), input.data(), ext_n, n, ncols);
+
+    std::vector<RawFr::Element> gpu_out(ext_n * ncols);
+    for (uint64_t i = 0; i < n * ncols; i++) field.copy(gpu_out[i], input[i]);
+    NTT_BN128_GPU::lde_multicol(reinterpret_cast<BN128GPUScalarField::Element*>(gpu_out.data()),
+                                lg_n, lg_blowup, ncols);
+
+    for (uint64_t i = 0; i < ext_n * ncols; i++) {
+        ASSERT_TRUE(field.eq(cpu_out[i], gpu_out[i])) << "multicol LDE mismatch at " << i;
+    }
+}
+
+// ==============================================================================
+// MSM parity: ffiasm on the host against sppark on the GPU.
+//
+// The existing BN128_MSM_DEV_PTR test compares the GPU against itself (device
+// pointers vs host pointers). This compares the two *implementations*, which is
+// what the hoisted MsmBn128 header now lets any consumer do -- previously the
+// GPU path and its Jacobian conversion were private to plonk_prover_gpu.
+// ==============================================================================
+
+TEST(BN128_MSM, msm_cpu_vs_gpu) {
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+    AltBn128::G1PointAffine& G = AltBn128::G1.oneAffine();
+
+    const size_t npoints = 8;
+    const size_t scalarSize = 32;
+
+    std::vector<AltBn128::G1PointAffine> cpuPoints(npoints);
+    std::vector<PointAffineGPU> gpuPoints(npoints);
+
+    // Points G, 2G, 4G, ... shared by both paths.
+    AltBn128::G1Point P;
+    AltBn128::G1.copy(P, G);
+    for (size_t i = 0; i < npoints; i++) {
+        AltBn128::G1.copy(cpuPoints[i], P);
+        memcpy(&gpuPoints[i].x, &cpuPoints[i].x, sizeof(AltBn128::F1Element));
+        memcpy(&gpuPoints[i].y, &cpuPoints[i].y, sizeof(AltBn128::F1Element));
+        AltBn128::G1.dbl(P, P);
+    }
+
+    // Scalars as little-endian raw bytes: what both ffiasm and sppark read.
+    std::vector<uint8_t> scalars(npoints * scalarSize, 0);
+    std::vector<BN128GPUScalarField::Element> gpuScalars(npoints);
+    for (size_t i = 0; i < npoints; i++) {
+        AltBn128::FrElement s;
+        AltBn128::Fr.fromUI(s, (uint64_t)(i * 977 + 13));
+        uint8_t be[scalarSize];
+        AltBn128::Fr.toRprBE(s, be, scalarSize);
+        for (size_t j = 0; j < scalarSize; j++) scalars[i * scalarSize + j] = be[scalarSize - 1 - j];
+        memcpy(&gpuScalars[i], &scalars[i * scalarSize], scalarSize);
+    }
+
+    // CPU: ffiasm ParallelMultiexp through the shared header.
+    AltBn128::G1Point cpuResult =
+        MsmBn128::msmHost(E, cpuPoints.data(), scalars.data(), (unsigned int)scalarSize, (unsigned int)npoints);
+
+    // GPU: sppark, then the same standard-to-extended Jacobian conversion the
+    // header performs for the device-pointer path.
+    PointJacobianGPU gpuJac;
+    memset(&gpuJac, 0, sizeof(gpuJac));
+    MSM_BN128_GPU::msm(gpuJac, gpuPoints.data(), gpuScalars.data(), npoints, false);
+
+    AltBn128::G1Point gpuResult;
+    memcpy(&gpuResult.x, &gpuJac.X, sizeof(AltBn128::F1Element));
+    memcpy(&gpuResult.y, &gpuJac.Y, sizeof(AltBn128::F1Element));
+    AltBn128::F1Element gz;
+    memcpy(&gz, &gpuJac.Z, sizeof(AltBn128::F1Element));
+    E.f1.square(gpuResult.zz, gz);
+    E.f1.mul(gpuResult.zzz, gpuResult.zz, gz);
+
+    AltBn128::G1PointAffine cpuAffine, gpuAffine;
+    AltBn128::G1.copy(cpuAffine, cpuResult);
+    AltBn128::G1.copy(gpuAffine, gpuResult);
+
+    ASSERT_TRUE(AltBn128::F1.eq(cpuAffine.x, gpuAffine.x)) << "MSM x differs between CPU and GPU";
+    ASSERT_TRUE(AltBn128::F1.eq(cpuAffine.y, gpuAffine.y)) << "MSM y differs between CPU and GPU";
 }
