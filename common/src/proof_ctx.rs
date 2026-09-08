@@ -213,9 +213,10 @@ impl Default for ProofmanOptions {
             // Instances beyond it are recomputed in the proofs phase. 32 kept every witness of the
             // small blocks (31 instances at 60tx, -0.5% over the 15-block suite) at 14 GB of pinned
             // host memory on the pre-1.3.0 blake3 key, but a key with 1.66 GB Main traces puts 16
-            // buffers at 26.5 GB, and with the ASM services' ~23 GB of shared memory that killed a
-            // 62 GB box (OOM). 8 fits every setup seen so far; `-x` raises it where memory allows.
-            max_witness_stored: 8,
+            // buffers at 26.5 GB: that still fits a 62 GB box, yet with the ASM services' ~23 GB of
+            // shared memory on top it was OOM-killed there (`-x 8` for that combination). `-x`
+            // overrides either way.
+            max_witness_stored: 16,
             are_threads_per_witness_set: false,
             packed: false,
             gpu: false,
