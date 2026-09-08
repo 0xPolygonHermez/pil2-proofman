@@ -138,16 +138,6 @@ void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
     }
 }
 
-void get_instances_ready_gpu(void *d_buffers_, int64_t* instances_ready) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
-        // Resident witness = status 3 AND witnessResident. Reads only scalars: reading the
-        // std::string proofType here would race concurrent writes on other streams.
-        StreamData &sd = d_buffers->streamsData[i];
-        instances_ready[i] = (sd.status == 3 && sd.witnessResident) ? sd.instanceId : -1;
-    }
-}
-
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     int32_t numa_node = (numa_nodes != nullptr && node_rank < node_size) ? numa_nodes[node_rank] : -1;
@@ -701,7 +691,7 @@ void reset_device_streams_gpu(void *d_buffers_) {
         StreamData &sd = d_buffers->streamsData[i];
         std::lock_guard<std::mutex> lg(sd.mutex_stream_selection);
         sd.invalidateContext();
-        sd.instanceId = -1;   // full teardown: no resident witness
+        sd.instanceId = -1;   // full teardown: drop the instance association
         sd.reset(true);
         // Completion ring: a job cancelled with proofs in flight leaves finished slots here, and
         // the next job's first harvest would write them into a dead host buffer and fire
@@ -1323,7 +1313,7 @@ static uint32_t stageWitnessSlotLocked(DeviceCommitBuffers *d_buffers, uint64_t 
     return slot;
 }
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -1332,27 +1322,11 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // Count this thread as inside device work so a concurrent teardown waits for it before freeing.
     InFlightScope in_flight(d_buffers);
     uint32_t streamId;
-    if (skipRecalculation) {
-        // Validate the witness is still resident under the mutex; the stream may have
-        // been reused since the snapshot. No fallback — the host trace may be recycled.
-        streamId = streamId_;
-        StreamData &sd = d_buffers->streamsData[streamId];
-        std::lock_guard<std::mutex> lock(sd.mutex_stream_selection);
-        bool resident = sd.status == 3 && sd.witnessResident && sd.instanceId == (int64_t)instanceId &&
-                        sd.airgroupId == airgroupId && sd.airId == airId;
-        if (!resident) {
-            zklog.error("gen_proof: instance " + std::to_string(instanceId) +
-                        " witness no longer resident on stream " + std::to_string(streamId) +
-                        " (status " + std::to_string(sd.status) + ", instanceId " +
-                        std::to_string(sd.instanceId) + ", proofType " + sd.proofType + ")");
-            return UINT64_MAX;
-        }
-        reserveStreamLocked(d_buffers, streamId); // mutex held by lock_guard above
-    } else if (streamId_ == UINT64_MAX) {
+    if (streamId_ == UINT64_MAX) {
         // No reservation supplied (one-off / non-scheduler caller): select internally.
         streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
     } else {
-        // Recompute path: the scheduler already reserved this stream (status=1).
+        // The scheduler already reserved this stream (status=1).
         streamId = (uint32_t)streamId_;
     }
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
@@ -1393,7 +1367,6 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     sd.airId = airId;
     sd.instanceId = instanceId;
     sd.proofType = "basic";
-    sd.witnessResident = false;
 
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
@@ -1446,44 +1419,42 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
         }
     }
 
-    if (!skipRecalculation) {
-        uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
-        uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
-        // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
-        // first version is in production); other GPUs use the legacy upload.
-        if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
-            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-            // Find the slot holding this instance's staged witness.
-            int slot = -1;
-            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
-                if (d_buffers->prefetchInstanceId[s] == (int64_t)instanceId &&
-                    d_buffers->prefetchTraceBytes[s] == total_size) { slot = (int)s; break; }
-            }
-            if (slot >= 0) {
-                // Hit: the trace already uploaded to the zone on the copy stream while the
-                // previous proof computed. No host sync -- the proof stream waits on the
-                // copy's event.
-                CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[slot], 0));
-            } else {
-                // Miss: nothing staged for this instance. Stage host -> slot here,
-                // host-synced so the caller may recycle the buffer at once.
-                slot = (int)stageWitnessSlotLocked(d_buffers, instanceId, params->trace, total_size);
-                CHECKCUDAERR(cudaEventSynchronize(d_buffers->prefetchReady[slot]));
-            }
-            d_buffers->prefetchInstanceId[slot] = -1;
-            d_buffers->prefetchTraceBytes[slot] = 0;
-            // Land the staged trace into cm1ext with one D2D on the proof stream, then mark
-            // the slot recyclable for the next staging.
-            gl64_t *slotBase = d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride;
-            CHECKCUDAERR(cudaMemcpyAsync(dst, slotBase, total_size,
-                                         cudaMemcpyDeviceToDevice, stream));
-            CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchDrained[slot], stream));
-            // Host-buffer release gate: the copy stream's tail is at/after this trace's H2D,
-            // so the event fires when the HOST buffer is free -- not when the proof runs.
-            CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, d_buffers->prefetchStream));
-        } else {
-            copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
+    uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
+    // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
+    // first version is in production); other GPUs use the legacy upload.
+    if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
+        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
+        // Find the slot holding this instance's staged witness.
+        int slot = -1;
+        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+            if (d_buffers->prefetchInstanceId[s] == (int64_t)instanceId &&
+                d_buffers->prefetchTraceBytes[s] == total_size) { slot = (int)s; break; }
         }
+        if (slot >= 0) {
+            // Hit: the trace already uploaded to the zone on the copy stream while the
+            // previous proof computed. No host sync -- the proof stream waits on the
+            // copy's event.
+            CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[slot], 0));
+        } else {
+            // Miss: nothing staged for this instance. Stage host -> slot here,
+            // host-synced so the caller may recycle the buffer at once.
+            slot = (int)stageWitnessSlotLocked(d_buffers, instanceId, params->trace, total_size);
+            CHECKCUDAERR(cudaEventSynchronize(d_buffers->prefetchReady[slot]));
+        }
+        d_buffers->prefetchInstanceId[slot] = -1;
+        d_buffers->prefetchTraceBytes[slot] = 0;
+        // Land the staged trace into cm1ext with one D2D on the proof stream, then mark
+        // the slot recyclable for the next staging.
+        gl64_t *slotBase = d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride;
+        CHECKCUDAERR(cudaMemcpyAsync(dst, slotBase, total_size,
+                                        cudaMemcpyDeviceToDevice, stream));
+        CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchDrained[slot], stream));
+        // Host-buffer release gate: the copy stream's tail is at/after this trace's H2D,
+        // so the event fires when the HOST buffer is free -- not when the proof runs.
+        CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, d_buffers->prefetchStream));
+    } else {
+        copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
     
     size_t totalCopySize = 0;
@@ -1502,10 +1473,10 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
     // Parity slot: proof N+1's CPU staging must not overwrite the region proof N's
     // still-pending async H2D reads (launchSeq increments at ring push, below). Every ring launch
-    // follows the parity, the resident-witness one included: forcing it to slot 0 put it on the
-    // same half as the next proof whenever launchSeq was odd, and that proof's D2H then overwrote
-    // its proof bytes before the harvester read them (a valid proof of another instance delivered
-    // under the resident instance's id -- recursive1 VerifyEvaluations failure, ~1 job in 100).
+    // must follow the parity: forcing one to slot 0 puts it on the same half as the next proof
+    // whenever launchSeq is odd, and that proof's D2H then overwrites its proof bytes before the
+    // harvester reads them -- a valid proof of another instance delivered under this one's id
+    // (recursive1 VerifyEvaluations failure, ~1 job in 100 when this was last got wrong).
     const uint32_t pinnedSlot = pipeline ? (uint32_t)(d_buffers->streamsData[streamId].launchSeq & 1) : 0;
     Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values
         + (uint64_t)pinnedSlot * PINNED_AUX_VALUES_MAX;
@@ -1535,7 +1506,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -1594,7 +1565,6 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     sd.airId = airId;
     sd.proofType = "basic";
     sd.instanceId = instanceId;
-    sd.witnessResident = false;
 
     proofman_sumcheck_set_context(instanceId, airgroupId, airId);
 
@@ -1746,8 +1716,8 @@ static void collectStreamResult(DeviceCommitBuffers *d_buffers, uint64_t streamI
     } else if (sd.proofBuffer != nullptr) {
         get_proof(d_buffers, streamId);
     }
-    // reset() leaves instanceId/proofType untouched, so a committed witness stays resident;
-    // get_instances_ready's proofType gate keeps finished proof streams out of the scan.
+    // reset() leaves instanceId/proofType untouched: proofType drives stream-affinity reuse
+    // in selectStream, so a finished stream keeps advertising the air it last ran.
     sd.reset(false);
 }
 
@@ -1818,9 +1788,9 @@ void dump_pipeline_state_gpu(void *d_buffers_) {
         cudaError_t ev = cudaEventQuery(sd.end_event);
         uint32_t cnt, head;
         { std::lock_guard<std::mutex> plk(sd.pipeMutex); cnt = sd.pipeCount; head = sd.pipeHead; }
-        fprintf(stderr, "[pipeline] stream %lu gpu %u recursive=%d status=%u end_event=%s inst=%ld type=%s witnessResident=%d ring count=%u head=%u\n",
+        fprintf(stderr, "[pipeline] stream %lu gpu %u recursive=%d status=%u end_event=%s inst=%ld type=%s ring count=%u head=%u\n",
                 i, sd.gpuId, (int)sd.recursive, sd.status.load(), ev == cudaSuccess ? "done" : cudaGetErrorName(ev),
-                (long)sd.instanceId, sd.proofType.c_str(), (int)sd.witnessResident, cnt, head);
+                (long)sd.instanceId, sd.proofType.c_str(), cnt, head);
         for (uint32_t k = 0; k < cnt; k++) {
             StreamData::PipelineSlot &ps = sd.pipeSlots[(head + k) % 2];
             cudaError_t d = ps.done ? cudaEventQuery(ps.done) : cudaErrorInvalidValue;
@@ -2006,7 +1976,6 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     sd.airId = airId;
     sd.instanceId = instanceId;
     sd.proofType = string(proofType);
-    sd.witnessResident = false;
 
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     // When the exec map is narrower than cm1 the host hands over a COMPACT N x mapCols trace and the
@@ -2117,7 +2086,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
     if (d_buffers->pipelineMode && !sd.recursive) {
         // Depth-2 in-flight on the shared stream: snapshot the completion into the ring
         // (the per-stream sd fields will be overwritten by the next launch) and let the
@@ -2169,7 +2138,6 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     sd.airgroupId = airgroupId;
     sd.airId = airId;
     sd.proofType = string(proofType);
-    sd.witnessResident = false;
     uint64_t constPolsOffset = air_instance_info->const_pols_offset;
     std::string constKey;
     if (air_instance_info->constCached) {
@@ -2456,10 +2424,6 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     sd.airgroupId = airgroupId;
     sd.airId = airId;
     sd.proofType = "witness";
-    // A stream sized for the contributions footprint can be too small for this air's proof, and a
-    // resident witness pins gen_proof here (skip_recalculation). Only claim residency if the proof fits;
-    // otherwise the instance takes the normal recompute path and re-uploads its trace.
-    sd.witnessResident = sd.auxTraceCapacity >= setupCtx->starkInfo.mapTotalN;
 
     proofman_sumcheck_set_context(instanceId, airgroupId, airId);
 

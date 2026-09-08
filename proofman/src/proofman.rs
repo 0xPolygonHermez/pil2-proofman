@@ -19,7 +19,6 @@ use proofman_starks_lib_c::{
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
-use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -502,8 +501,6 @@ pub struct ProofMan<F: PrimeField64> {
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
-    /// Device streams per node — what the C side indexes. Not `n_streams`, which counts workers.
-    n_device_streams: usize,
     memory_handler: Arc<MemoryHandler<F>>,
     memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -1926,7 +1923,6 @@ where
                 &self.const_pols,
                 &self.const_tree,
                 None,
-                None,
                 true,
             )?;
             if self.pctx.gpu {
@@ -2338,7 +2334,6 @@ where
             sctx,
             setups_vadcop,
             n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
             n_aggregation_workers_per_gpu,
             n_gpus,
             recurser_const_offset,
@@ -2373,11 +2368,9 @@ where
             false => 1,
         };
 
-        // Workers are not device streams: without a pool they share the basic ones. Anything the C
-        // side indexes by stream needs `n_device_streams`.
+        // Workers are not device streams: without a pool they share the basic ones.
         let n_streams = ((n_streams_per_gpu + n_aggregation_workers_per_gpu) * n_proof_threads) as usize;
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
-        let n_device_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
@@ -2474,7 +2467,6 @@ where
             recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
-            n_device_streams,
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
@@ -3325,69 +3317,13 @@ where
 
         // Pipeline: the next proof is enqueued on the stream while the current one still
         // runs (no host sync at reserve; completions come off the harvest ring). Proofs phase
-        // only, and enabled BEFORE the resident-witness (table air) launches below so they ride
-        // the ring too. PROOFMAN_NO_PIPELINE=1 disables it.
+        // only. PROOFMAN_NO_PIPELINE=1 disables it.
         let pipeline_enabled = prefetch_dequeue_ahead
             && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
         if pipeline_enabled {
             set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
         }
 
-        // Resident-witness launches (skipRecalculation) are DISABLED: the path relaunched the table
-        // air committed last in contributions without recomputing it, for ~18 ms per job, and was
-        // behind two cluster-only failures (the C1c deadlock and the pinned-half race). Every
-        // instance takes the recompute path; the C++ side of the path is removed in R1.
-        let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_device_streams];
-
-        instance_ids_in_streams.par_iter().enumerate().for_each(|(stream_id, instance_id)| {
-            if *instance_id < 0 {
-                return;
-            }
-            if self.cancellation_info.read_recover().token.is_cancelled() {
-                return;
-            }
-            // Commit to the callback on a successful launch; on failure or panic the guard settles
-            // it. Arm with the instance id, which is what the basic proof's completion reports.
-            let pending = proofs_pending.arm(*instance_id as u64, ProofType::Basic as usize);
-            let proof_stream_id = match Self::gen_proof(
-                &self.proofs,
-                &self.pctx,
-                &self.sctx,
-                *instance_id as usize,
-                &self.aux_trace,
-                &self.const_pols,
-                &self.const_tree,
-                Some(stream_id),
-                None, // resident/pinned witness: skip path, no reserved stream
-                false,
-            ) {
-                Ok(sid) => {
-                    pending.commit();
-                    Some(sid)
-                }
-                Err(e) => {
-                    self.cancellation_info.write_recover().cancel(Some(e));
-                    None
-                }
-            };
-
-            let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
-            if is_shared_buffer {
-                // Trace H2D is async: wait on the proof's stream before recycling
-                // the shared buffer, else a concurrent take() overwrites it mid-copy.
-                if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
-                    wait_trace_h2d_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
-                }
-                if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
-                    self.cancellation_info.write_recover().cancel(Some(e));
-                }
-            }
-        });
-
-        let mut my_instances_calculated = vec![false; instances.len()];
-        for instance_id in instance_ids_in_streams.iter().filter(|&&id| id >= 0) {
-            my_instances_calculated[*instance_id as usize] = true;
-        }
 
         // Per-AIR per-proof cost proxy for LPT ordering; computed once (not in the
         // comparator). PROOFMAN_CLUSTER_SCHEDULE=0 falls back to tier-only order.
@@ -3622,7 +3558,6 @@ where
                                 &aux_trace_clone,
                                 &const_pols_clone,
                                 &const_tree_clone,
-                                None,
                                 reserved,
                                 false,
                             ) {
@@ -3874,10 +3809,6 @@ where
 
         let mut instances_to_be_calculated = Vec::with_capacity(my_instances.len());
         for &instance_id in my_instances.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
-
             // Committed to the async callback; if the send panics the guard settles it. The basic
             // proof's completion reports its instance id.
             let pending = proofs_pending.arm(instance_id as u64, ProofType::Basic as usize);
@@ -5393,7 +5324,6 @@ where
         aux_trace: &[F],
         const_pols: &[F],
         const_tree: &[F],
-        stream_id_: Option<usize>,
         reserved_stream: Option<usize>,
         // true: no global challenge -- the transcript is seeded from this AIR's own
         // verkey + publics (see genProof's `recursive` branch).
@@ -5429,14 +5359,9 @@ where
             None => String::new(),
         };
 
-        // stream_id_ Some -> resident witness (skip recompute, pinned to that stream). Else
-        // recompute; reserved_stream Some -> scheduler-reserved stream; None -> u64::MAX
-        // (CPU path — gen_proof_cpu ignores it; on GPU the scheduler always reserves).
-        let (skip_recalculation, stream_id): (bool, u64) = match (stream_id_, reserved_stream) {
-            (Some(s), _) => (true, s as u64),
-            (None, Some(s)) => (false, s as u64),
-            (None, None) => (false, u64::MAX),
-        };
+        // reserved_stream Some -> scheduler-reserved stream; None -> u64::MAX (CPU path —
+        // gen_proof_cpu ignores it; on GPU the scheduler always reserves).
+        let stream_id: u64 = reserved_stream.map_or(u64::MAX, |s| s as u64);
 
         let proof = create_buffer_fast(setup.proof_size as usize);
         *proofs[instance_id].write().unwrap() =
@@ -5454,19 +5379,12 @@ where
             air_id as u64,
             instance_id as u64,
             pctx.get_device_buffers_ptr(),
-            skip_recalculation,
             stream_id,
             const_pols_path,
             const_pols_tree_path,
             &custom_commits_fixed_path,
             self_contained,
         );
-
-        if proof_stream_id == u64::MAX {
-            return Err(ProofmanError::ProofmanError(format!(
-                "instance {instance_id} witness no longer resident on stream {stream_id}; stream was reused since the snapshot"
-            )));
-        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");
@@ -5482,7 +5400,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -5576,17 +5494,16 @@ where
         let prefetch_region_area: u64 =
             (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
 
-        let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx
-            .set_device_buffers(
-                &sctx,
-                &setups_vadcop,
-                options.aggregation,
-                options.gpu,
-                options.max_number_streams,
-                options.max_number_recursive_streams,
-                options.final_snark,
-                prefetch_region_area,
-            )?;
+        let (n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx.set_device_buffers(
+            &sctx,
+            &setups_vadcop,
+            options.aggregation,
+            options.gpu,
+            options.max_number_streams,
+            options.max_number_recursive_streams,
+            options.final_snark,
+            prefetch_region_area,
+        )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
@@ -5690,16 +5607,7 @@ where
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((
-            pctx,
-            sctx,
-            setups_vadcop,
-            n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
-            n_aggregation_workers_per_gpu,
-            n_gpus,
-            aggregation_const_end,
-        ))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus, aggregation_const_end))
     }
 
     #[allow(dead_code)]

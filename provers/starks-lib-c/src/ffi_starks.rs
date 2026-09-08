@@ -968,7 +968,6 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
-    skip_recalculation: bool,
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
@@ -1000,7 +999,6 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
-            skip_recalculation,
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
@@ -1598,13 +1596,6 @@ pub fn prefetch_witness_c(
     trace: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn get_instances_ready_c(d_buffers: *mut ::std::os::raw::c_void, instances_ready: *mut i64) {
-    unsafe {
-        get_instances_ready(d_buffers, instances_ready);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

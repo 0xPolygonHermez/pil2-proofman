@@ -101,8 +101,7 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     d_buffers: usize,
     /// Ready recursive/compressor witnesses, bucketed by key.
     queues: HashMap<Key, VecDeque<Proof<F>>>,
-    /// Ready "stored" basic instances (recompute path), bucketed by `(airgroup, air)`.
-    /// Resident-in-GPU basics (skip_recalculation, pinned) never enter here.
+    /// Ready basic instances, bucketed by `(airgroup, air)`.
     basic_queue: HashMap<(usize, usize), VecDeque<usize>>,
     // Last key handed out by pop_basic_prefetch. Preferred by the next peek/pop so instances of
     // the same air dispatch back-to-back: the stream-warm signal lags the dequeue-ahead depth,

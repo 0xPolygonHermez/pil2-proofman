@@ -456,11 +456,6 @@ struct StreamData{
     // const-reuse check; empty for normal recursion. Cleared by invalidateContext().
     string recurserId;
 
-    // Scalar "resident witness" marker read locklessly by get_instances_ready (reading
-    // proofType there would race concurrent std::string writes). Set by commit_witness,
-    // cleared by every proof path and invalidateContext; survives reset() like proofType.
-    bool witnessResident;
-
     //callback inputs
     void *root;
     void *pSetupCtx;
@@ -569,7 +564,6 @@ struct StreamData{
         root = nullptr;
         pSetupCtx = nullptr;
         recurserId = "";
-        witnessResident = false;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
@@ -622,7 +616,6 @@ struct StreamData{
         airId = UINT64_MAX;
         proofType = "";
         recurserId = "";
-        witnessResident = false;
         constPolsOffset = UINT64_MAX;
         constRecurserId = "";
         constTreeResident = false;

@@ -419,7 +419,6 @@ extern "C" {
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
-        skipRecalculation: bool,
         streamId: u64,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
@@ -732,11 +731,6 @@ extern "C" {
         trace: *mut ::std::os::raw::c_void,
     ) -> i64;
     
-    pub fn get_instances_ready(
-        d_buffers_: *mut ::std::os::raw::c_void,
-        instances_ready: *mut i64,
-    );
-
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
     );

@@ -1063,8 +1063,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         final_snark: bool,
         // Witness prefetch-region area (elements), carved inside the unified buffer (0 = none).
         prefetch_region_area: u64,
-        // -> (basic streams/GPU, recursive streams/GPU, aggregation workers/GPU, GPUs)
-    ) -> ProofmanResult<(u64, u64, u64, u64)> {
+        // -> (basic streams/GPU, aggregation workers/GPU, GPUs)
+    ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
             self.mpi_ctx.node_n_processes as u32,
@@ -1335,7 +1335,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         self.d_buffers = d_buffers;
 
-        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, layout.aggregation_workers as u64, n_gpus))
+        Ok((n_streams_per_gpu as u64, layout.aggregation_workers as u64, n_gpus))
     }
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {

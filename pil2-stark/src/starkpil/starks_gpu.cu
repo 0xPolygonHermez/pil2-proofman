@@ -329,12 +329,12 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
     x[k] = gl64_t(shift.fe) * w_k;
 }
 
-void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript,  bool skipRecalculation, TimerGPU &timer, cudaStream_t stream)
+void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
     
-        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, skipRecalculation, timer, stream);
+        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, timer, stream);
     }
     else
     {
@@ -342,7 +342,7 @@ void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **trees
     }
 }
 
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream)
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
 {
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     std::string section = "cm" + to_string(step);
@@ -358,21 +358,19 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     // regions this runs in); a setter here would be skipped on replay.
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
 
-    if(!skipRecalculation) {
-        NTTGoldilocksGPU ntt;
+    NTTGoldilocksGPU ntt;
 
-        if (nCols > 0)
-        {
-            // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
-            PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
-            // pNodes is free scratch until the merkelize below fills it; its capacity lets the
-            // LDE stage a wider column chunk.
-            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
-            PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-        }
+    if (nCols > 0)
+    {
+        // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
+        PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
+        // pNodes is free scratch until the merkelize below fills it; its capacity lets the
+        // LDE stage a wider column chunk.
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+        PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
+        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
     }
 
     if (nCols > 0)
