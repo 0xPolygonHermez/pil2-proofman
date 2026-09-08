@@ -191,7 +191,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &ProofType::RecursiveF,
             false,
             false,
-            false,
             gpu,
             None,
         )?;
@@ -448,7 +447,6 @@ pub fn check_setup_snark<F: PrimeField64>(
         &ProofType::RecursiveF,
         false,
         false,
-        false,
         gpu,
         None,
     )?;
@@ -492,7 +490,6 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         0,
         &GlobalInfoAir::new("RecursiveF".to_string()),
         &ProofType::RecursiveF,
-        false,
         false,
         false,
         gpu,
