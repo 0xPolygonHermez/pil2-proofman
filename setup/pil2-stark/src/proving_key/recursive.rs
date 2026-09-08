@@ -180,15 +180,18 @@ pub enum RecursiveTemplate {
 /// `finalDegree`). An explicit `starkStruct` override only ever raises the query count, see
 /// `gen_recursive_setup`.
 ///
-/// STIR is the default low-degree test of compressor, recursive1 and recursive2, for every
-/// family. The vadcop-final layers stay FRI: their proofs are checked by the committed native Rust
+/// FRI is the default low-degree test of compressor, recursive1 and recursive2, for every
+/// family: the STIR schedules tried so far put blake3's recursive2 past the 2^19 every recursion
+/// circuit shares (the quotient machinery outweighs the queries it saves), so STIR is opt-in
+/// through `lowDegreeTest: "STIR"` in the recursion entry until a parameter set fits. The
+/// vadcop-final layers are FRI regardless: their proofs are checked by the committed native Rust
 /// verifiers, which are FRI builds.
 pub fn recursive_stark_settings(
     template: RecursiveTemplate,
     hash: &str,
     user: &crate::types::stark_struct::StarkSettings,
 ) -> crate::types::stark_struct::StarkSettings {
-    let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir);
+    let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri);
     let blowup = recursive_blowup(template, hash);
     // finalDegree is the final polynomial's log-degree bound, for both tests.
     //

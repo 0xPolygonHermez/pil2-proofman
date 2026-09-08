@@ -49,12 +49,12 @@ pub(crate) fn run_recursive_setup(
 
     let build_dir = &opts.build_dir;
 
-    // The tree's own low-degree test: STIR unless the starkstructs "recursion" entry says
+    // The tree's own low-degree test: FRI unless the starkstructs "recursion" entry says
     // otherwise. Every recursion circuit below is built from it.
     let recursion_settings = settings_map.recursion_settings()?;
     tracing::info!(
         "Recursion tree low-degree test: {:?}{}",
-        recursion_settings.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir),
+        recursion_settings.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri),
         if recursion_settings.low_degree_test.is_some() { " (from starkstructs \"recursion\")" } else { " (default)" }
     );
 

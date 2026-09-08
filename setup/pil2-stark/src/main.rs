@@ -247,7 +247,7 @@ struct SetupRecursiveTestArgs {
     #[arg(long)]
     blake3_lanes: Option<usize>,
 
-    /// starkstructs.json whose "recursion" entry picks the tree's low-degree test (default STIR)
+    /// starkstructs.json whose "recursion" entry picks the tree's low-degree test (default FRI)
     #[arg(short = 's', long)]
     starkstructs: Option<String>,
 

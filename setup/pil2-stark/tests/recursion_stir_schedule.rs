@@ -1,5 +1,5 @@
-// The recursion tree's low-degree test is STIR: check that the settings every recursion circuit
-// is built from (`recursive_stark_settings`) produce a STIR schedule the security solver accepts
+// With the recursion entry set to STIR, check that the settings every recursion circuit is built
+// from (`recursive_stark_settings`) produce a STIR schedule the security solver accepts
 // at the sizes the layers actually have — recursive1/recursive2 at 2^17, the compressor at the
 // larger trace sizes a big air's verifier packs into. `Stir::new` asserts the |Gᵢ| < dᵢ invariant,
 // so constructing the solved test *is* the validity check.
@@ -10,8 +10,12 @@ use pil2_stark_setup::types::stark_struct::{
     generate_stark_struct, LowDegreeTest, LowDegreeTestKind, StarkSettings, StarkStructsConfig,
 };
 
+fn stir_entry() -> StarkSettings {
+    StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() }
+}
+
 fn solved_stir(template: RecursiveTemplate, n_bits: usize) -> (Vec<usize>, Vec<u64>) {
-    let settings = recursive_stark_settings(template, "Poseidon2", &StarkSettings::default());
+    let settings = recursive_stark_settings(template, "Poseidon2", &stir_entry());
     let stark_struct = generate_stark_struct(&settings, n_bits, "Poseidon2");
     let LowDegreeTest::Stir(stir) = &stark_struct.low_degree_test else {
         panic!("{template:?} must select STIR, got {:?}", stark_struct.low_degree_test.kind());
@@ -59,8 +63,15 @@ fn raising_t0_respects_the_first_quotient_round() {
 
 #[test]
 fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
-    // No entry: STIR, with the family's own grinding and terminal degree.
-    let stir = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &StarkSettings::default());
+    // No entry: FRI, with the family's own grinding and terminal degree (7 − blowup 2 = 5).
+    let dflt = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &StarkSettings::default());
+    assert_eq!(dflt.low_degree_test, Some(LowDegreeTestKind::Fri));
+    assert_eq!(dflt.grinding_bits, Some(24));
+    assert_eq!(dflt.final_degree, Some(5));
+
+    // `{"recursion": {"lowDegreeTest": "STIR"}}` opts the tree into STIR; the family constant is
+    // then the degree bound d_M itself.
+    let stir = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &stir_entry());
     assert_eq!(stir.low_degree_test, Some(LowDegreeTestKind::Stir));
     assert_eq!(stir.grinding_bits, Some(24));
     assert_eq!(stir.final_degree, Some(7));
@@ -100,7 +111,7 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
 
     // The STIR-only knobs ride along when asked for.
     let cfg = StarkStructsConfig::from_json_str(
-        r#"{ "recursion": { "initialFoldingFactor": 2, "grindingBitsQueries": [28, 26, 24, 22, 20, 18] } }"#,
+        r#"{ "recursion": { "lowDegreeTest": "STIR", "initialFoldingFactor": 2, "grindingBitsQueries": [28, 26, 24, 22, 20, 18] } }"#,
     )
     .unwrap();
     let tuned = recursive_stark_settings(RecursiveTemplate::Recursive2, "blake3", &cfg.recursion_settings().unwrap());
