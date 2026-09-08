@@ -1,0 +1,374 @@
+{
+ "protocol": "pil-fflonk",
+ "curve": "bn128",
+ "nPublics": 3,
+ "maxQDegree": 0,
+ "power": 8,
+ "powerW": 12,
+ "f": [
+  {
+   "index": 0,
+   "degree": 1541,
+   "openingPoints": [
+    0
+   ],
+   "pols": [
+    "Connection.S3",
+    "Connection.S2",
+    "Connection.S1",
+    "Fibonacci.LLAST",
+    "Fibonacci.L1",
+    "Global.L1"
+   ],
+   "stages": [
+    {
+     "stage": 0,
+     "pols": [
+      {
+       "name": "Connection.S3",
+       "degree": 256
+      },
+      {
+       "name": "Connection.S2",
+       "degree": 256
+      },
+      {
+       "name": "Connection.S1",
+       "degree": 256
+      },
+      {
+       "name": "Fibonacci.LLAST",
+       "degree": 256
+      },
+      {
+       "name": "Fibonacci.L1",
+       "degree": 256
+      },
+      {
+       "name": "Global.L1",
+       "degree": 256
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 1,
+   "degree": 770,
+   "openingPoints": [
+    0,
+    1
+   ],
+   "pols": [
+    "Plookup.B",
+    "Plookup.A",
+    "Plookup.SEL"
+   ],
+   "stages": [
+    {
+     "stage": 0,
+     "pols": [
+      {
+       "name": "Plookup.B",
+       "degree": 256
+      },
+      {
+       "name": "Plookup.A",
+       "degree": 256
+      },
+      {
+       "name": "Plookup.SEL",
+       "degree": 256
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 2,
+   "degree": 1039,
+   "openingPoints": [
+    0,
+    1
+   ],
+   "pols": [
+    "Plookup.b",
+    "Plookup.cc",
+    "Fibonacci.l2",
+    "Fibonacci.l1"
+   ],
+   "stages": [
+    {
+     "stage": 1,
+     "pols": [
+      {
+       "name": "Plookup.b",
+       "degree": 259
+      },
+      {
+       "name": "Plookup.cc",
+       "degree": 259
+      },
+      {
+       "name": "Fibonacci.l2",
+       "degree": 259
+      },
+      {
+       "name": "Fibonacci.l1",
+       "degree": 259
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 3,
+   "degree": 776,
+   "openingPoints": [
+    0
+   ],
+   "pols": [
+    "Plookup.a",
+    "Plookup.sel",
+    "Permutation.selD"
+   ],
+   "stages": [
+    {
+     "stage": 1,
+     "pols": [
+      {
+       "name": "Plookup.a",
+       "degree": 258
+      },
+      {
+       "name": "Plookup.sel",
+       "degree": 258
+      },
+      {
+       "name": "Permutation.selD",
+       "degree": 258
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 4,
+   "degree": 776,
+   "openingPoints": [
+    0
+   ],
+   "pols": [
+    "Permutation.selC",
+    "Permutation.d",
+    "Permutation.c"
+   ],
+   "stages": [
+    {
+     "stage": 1,
+     "pols": [
+      {
+       "name": "Permutation.selC",
+       "degree": 258
+      },
+      {
+       "name": "Permutation.d",
+       "degree": 258
+      },
+      {
+       "name": "Permutation.c",
+       "degree": 258
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 5,
+   "degree": 776,
+   "openingPoints": [
+    0
+   ],
+   "pols": [
+    "Connection.c",
+    "Connection.b",
+    "Connection.a"
+   ],
+   "stages": [
+    {
+     "stage": 1,
+     "pols": [
+      {
+       "name": "Connection.c",
+       "degree": 258
+      },
+      {
+       "name": "Connection.b",
+       "degree": 258
+      },
+      {
+       "name": "Connection.a",
+       "degree": 258
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 6,
+   "degree": 519,
+   "openingPoints": [
+    0,
+    1
+   ],
+   "pols": [
+    "Plookup.H2_0",
+    "Plookup.H1_0"
+   ],
+   "stages": [
+    {
+     "stage": 2,
+     "pols": [
+      {
+       "name": "Plookup.H2_0",
+       "degree": 259
+      },
+      {
+       "name": "Plookup.H1_0",
+       "degree": 259
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 7,
+   "degree": 1039,
+   "openingPoints": [
+    0,
+    1
+   ],
+   "pols": [
+    "Im28",
+    "Connection.Z0",
+    "Permutation.Z0",
+    "Plookup.Z0"
+   ],
+   "stages": [
+    {
+     "stage": 3,
+     "pols": [
+      {
+       "name": "Im28",
+       "degree": 259
+      },
+      {
+       "name": "Connection.Z0",
+       "degree": 259
+      },
+      {
+       "name": "Permutation.Z0",
+       "degree": 259
+      },
+      {
+       "name": "Plookup.Z0",
+       "degree": 259
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "index": 8,
+   "degree": 780,
+   "openingPoints": [
+    0
+   ],
+   "pols": [
+    "Q"
+   ],
+   "stages": [
+    {
+     "stage": 4,
+     "pols": [
+      {
+       "name": "Q",
+       "degree": 780
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "w": "3478517300119284901893091970156912948790432420133812234316178878452092729974",
+ "X_2": [
+  [
+   "21831381940315734285607113342023901060522397560371972897001948545212302161822",
+   "17231025384763736816414546592865244497437017442647097510447326538965263639101"
+  ],
+  [
+   "2388026358213174446665280700919698872609886601280537296205114254867301080648",
+   "11507326595632554467052522095592665270651932854513688777769618397986436103170"
+  ],
+  [
+   "1",
+   "0"
+  ]
+ ],
+ "w1": "1",
+ "w2": "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+ "w2_1d2": "6837567842312086091520287814181175430087169027974246751610506942214842701774",
+ "w3": "4407920970296243842393367215006156084916469457145843978461",
+ "w3_1d3": "7893008526474614989282376550582713669440542763891908783290097886313069160279",
+ "w4": "21888242871839275217838484774961031246007050428528088939761107053157389710902",
+ "w4_1d4": "3161067157621608152362653341354432744960400845131437947728257924963983317266",
+ "w6": "4407920970296243842393367215006156084916469457145843978462",
+ "w1_1d1": "3478517300119284901893091970156912948790432420133812234316178878452092729974",
+ "f0": [
+  "13670340619389575973532278510163400231690216690368938387851759304712128961698",
+  "7011517446220040486904710922771833565280330288451750559303576192469542112826",
+  "1"
+ ],
+ "f1": [
+  "15940924245195807686934555975775366255429860084153148505199676706569894429036",
+  "1160094044816815284956091097230088787853732921225717802025735199704023944253",
+  "1"
+ ],
+ "polsMap": {
+  "cm": {
+   "0": "Fibonacci.l1",
+   "1": "Fibonacci.l2",
+   "2": "Connection.a",
+   "3": "Connection.b",
+   "4": "Connection.c",
+   "5": "Permutation.a",
+   "6": "Permutation.b",
+   "7": "Permutation.c",
+   "8": "Permutation.d",
+   "9": "Permutation.selC",
+   "10": "Permutation.selD",
+   "11": "Plookup.sel",
+   "12": "Plookup.a",
+   "13": "Plookup.b",
+   "14": "Plookup.cc",
+   "15": "Plookup.H1_0",
+   "16": "Plookup.H2_0",
+   "17": "Plookup.Z0",
+   "18": "Permutation.Z0",
+   "19": "Connection.Z0",
+   "20": "Im28",
+   "21": "Q"
+  },
+  "const": {
+   "0": "Global.L1",
+   "1": "Fibonacci.L1",
+   "2": "Fibonacci.LLAST",
+   "3": "Connection.S1",
+   "4": "Connection.S2",
+   "5": "Connection.S3",
+   "6": "Plookup.SEL",
+   "7": "Plookup.A",
+   "8": "Plookup.B"
+  }
+ }
+}

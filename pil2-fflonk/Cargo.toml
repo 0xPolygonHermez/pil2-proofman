@@ -1,0 +1,24 @@
+[package]
+name = "pil2-fflonk"
+description = "PIL2-FFLONK: a SHPLONK/KZG prover over BN254 for PIL2 AIRs"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+# The C++ prover lives under cpp/ and is built by its own Makefile. Disable
+# automatic target discovery so Cargo does not scan that tree.
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+anyhow = { workspace = true }
+
+[dev-dependencies]
