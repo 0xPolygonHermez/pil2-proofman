@@ -267,6 +267,10 @@ pub fn print_summary<F: PrimeField64>(
 }
 
 pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
+    if !setup.needs_const_tree_file() {
+        return Ok(false);
+    }
+
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -326,6 +330,10 @@ pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> Proof
 }
 
 pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
+    if !setup.needs_const_tree_file() {
+        return Ok(());
+    }
+
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 

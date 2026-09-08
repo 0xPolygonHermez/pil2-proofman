@@ -558,6 +558,13 @@ impl<F: PrimeField64> Setup<F> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
 
+    /// GPU airs merkelize const pols on device; only CPU, BN128/RecursiveF and the
+    /// `PROOFMAN_CONST_TREE_RESIDENT` opt-in ever read the tree file back.
+    pub fn needs_const_tree_file(&self) -> bool {
+        let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
+        !self.gpu || !goldilocks || self.preallocate
+    }
+
     pub fn get_circom_witness_size(&self) -> usize {
         let base_size = self.size_witness.unwrap_or(0) as usize;
         let exec_offset = self.n_adds.unwrap_or(0) as usize;
