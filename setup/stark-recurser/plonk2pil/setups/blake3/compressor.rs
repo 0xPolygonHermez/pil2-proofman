@@ -631,12 +631,12 @@ mod tests {
         assert_eq!(d.band_rows(), 10 + 10 + 14 + 3 + 4 + 100);
     }
 
-    /// Plonk rows come from gate slots, not constraints: six gates a row.
+    /// Plonk rows come from gate slots, not constraints: nine gates a row here.
     #[test]
     fn the_band_floor_uses_the_compressor_bands_plonk_packing() {
         // The number that decides the floor; the aggregator's constant is not read here.
         assert_eq!(COMPRESSOR_LAYOUT.plonk_gates_per_row, 9);
-        assert_eq!(PLONK_GATES_PER_ROW, 6, "the aggregator's packing, for contrast");
+        assert_eq!(PLONK_GATES_PER_ROW, 7, "the aggregator's packing, for contrast");
     }
 
     /// The band floor is ALL SIX circuits of the connection band, not plonk alone. Every one of them

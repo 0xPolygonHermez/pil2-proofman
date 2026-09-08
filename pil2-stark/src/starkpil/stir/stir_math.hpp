@@ -39,6 +39,11 @@ namespace stir
 using FE = Goldilocks::Element;   // base field element
 using E3 = Goldilocks3::Element;  // extension field element, FE[3]
 
+// A run of E3 values that has to live in a std::vector is boxed: libc++ (clang, macOS) rejects
+// std::vector<T[3]> -- a raw array is not a valid element type -- where libstdc++ lets it through.
+// `.v` is the E3 itself, so nothing about the arithmetic changes.
+struct E3Box { E3 v; };
+
 // A smooth coset L = shift·⟨ω_n⟩, |L| = 2^logSize.
 struct Domain
 {
@@ -587,7 +592,7 @@ public:
     // `ansCoeffsOut` / `shakeCoeffsOut`, when given, receive the monomial coefficients of Âns (|G|
     // of them, the deduped size) and of its shake polynomial (|G| − 1): the verifier takes both
     // as hints and checks them at one random point (QuotientContext::shake / checkShake).
-    void degreeCorrect(const std::vector<E3> &rOut, const std::vector<E3> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb, std::vector<FE> *ansCoeffsOut = nullptr, std::vector<FE> *shakeCoeffsOut = nullptr)
+    void degreeCorrect(const std::vector<E3Box> &rOut, const std::vector<E3Box> &beta, const std::vector<uint64_t> &shiftIndices, const E3 &rComb, std::vector<FE> *ansCoeffsOut = nullptr, std::vector<FE> *shakeCoeffsOut = nullptr)
     {
         assert(i + 1 < p.M());
         assert(rOut.size() == beta.size());
@@ -595,7 +600,7 @@ public:
 
         QuotientContext ctx;
         ctx.reset(rComb);
-        for (uint64_t m = 0; m < rOut.size(); m++) ctx.add(rOut[m], beta[m]);
+        for (uint64_t m = 0; m < rOut.size(); m++) ctx.add(rOut[m].v, beta[m].v);
         for (uint64_t idx : shiftIndices)
         {
             assert(idx < LiK.size());

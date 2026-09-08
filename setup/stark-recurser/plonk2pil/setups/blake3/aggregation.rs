@@ -4,9 +4,10 @@
 //! custom gates, then a dedicated plonk band. See `blake3/aggregator.pil`.
 //!
 //! **Plonk placement is deliberately simple.** The air declares a single coefficient set (`C[5]`,
-//! `q0`) shared by all six `plonk` calls, and it adds no piggyback to the custom-gate rows. So the
-//! six gates of a row are interchangeable but must share their coefficients, and planning reduces
-//! to: group the constraints by coefficient key, and let each group of at most six fill one row.
+//! `q0`) shared by all seven `plonk` calls, and it adds no piggyback to the custom-gate rows. So the
+//! seven gates of a row are interchangeable but must share their coefficients, and planning reduces
+//! to: group the constraints by coefficient key, and let each group of at most seven fill one row.
+//! (The table below was measured at the earlier six-gate, 18-column band.)
 //! Poseidon needs a tier system because it has two coefficient sets per row and piggybacks on
 //! poseidon/cmul/evpol rows; none of that applies here.
 //!
@@ -29,7 +30,7 @@
 
 use super::{
     blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, BandLayout, PilTemplateParams, AGGREGATOR_LAYOUT,
-    BLAKE3_CLOCKS, CLOCK_WRAP_ROWS, DEFAULT_LANES,
+    BAND_COLS, BLAKE3_CLOCKS, CLOCK_WRAP_ROWS, DEFAULT_LANES,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use crate::plonk2pil::r1cs::to_plonk::{
@@ -45,8 +46,8 @@ fn rand_hex() -> String {
     format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
 }
 
-/// Plonk gates on one row of the `a[0..17]` band: six, at three wires each.
-pub const PLONK_GATES_PER_ROW: usize = 6;
+/// Plonk gates on one row of the `a[0..21)` band: seven, at three wires each.
+pub const PLONK_GATES_PER_ROW: usize = BAND_COLS / 3;
 
 /// `coefs[5][3] + x[3] + out[3] + s[3] + acc[3]`; the last six are the Estrin intermediates, which
 /// every family's gate publishes and only this air binds.
@@ -68,16 +69,16 @@ pub struct PlonkPlan {
 ///
 /// A block's first `lanes` rows carry the lanes' inputs and its last `lanes` rows their outputs, so
 /// `PLONK` is 0 there and 1 on the `56 - 2*lanes` rows between. At LANES=4 that is 48 rows per
-/// block, or 288 plonk gates.
+/// block, or 336 plonk gates at seven a row.
 pub fn plonk_rows_inside_blocks(blocks: usize, lanes: usize, clocks: usize) -> usize {
     blocks * clocks.saturating_sub(2 * lanes)
 }
 
-/// Group the constraints by coefficient key and lay them out six to a row.
+/// Group the constraints by coefficient key and lay them out `gates_per_row` to a row.
 ///
 /// Grouping is what the single coefficient set forces: two constraints may share a row only if all
-/// five of their coefficients agree, which is exactly `ckey`. A key with 13 constraints takes three
-/// rows, the last one two-thirds empty -- that waste is the price of one `q` instead of two, and it
+/// five of their coefficients agree, which is exactly `ckey`. A key with 15 constraints takes three
+/// rows, the last one six-sevenths empty -- that waste is the price of one `q` instead of two, and it
 /// is visible in `rows_needed` rather than hidden.
 pub fn plan_plonk_rows(
     constraints: &[PlonkConstraint],
@@ -569,7 +570,8 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         assert_eq!(cgu.signals.len(), EVPOL4_SIGNALS);
         let r = alloc.take();
         // 27 signals: one row where the band is at least that wide, otherwise the first `band` on the
-        // gate row and the rest on the next -- which is what the PIL reads through primes.
+        // gate row and the rest on the next -- which is what the PIL reads through primes. On the
+        // 21-column band that split is coefs + x + out on the gate row, s + acc on the next.
         for (j, sig) in cgu.signals.iter().enumerate() {
             s_map[j % layout.band][r + j / layout.band] = *sig as u32;
         }
@@ -644,7 +646,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     }
 
     // ── Plonk constraints ─────────────────────────────────────────────────────
-    // One coefficient set per row, so a row holds up to six constraints that share `ckey`. A row
+    // One coefficient set per row, so a row holds up to seven constraints that share `ckey`. A row
     // that ends partly filled has its LAST constraint duplicated into the free gates: every gate's
     // constraint fires wherever PLONK is 1, so an untouched gate would read signal 0 in all three
     // wires and fail. Duplication is what poseidon's `partial`/`half` slots do too.
@@ -849,19 +851,19 @@ mod tests {
         assert_eq!(blake3_capacity(1, 8), 0);
     }
 
-    /// Pinned against what the air actually compiles to. `proofman-setup setup --hash blake3` reports
-    /// `Stage1: 256` at LANES 4, and the C++ expander asserts the same figure in
+    /// Pinned against what the air compiles to. At the 18-column band `proofman-setup setup --hash
+    /// blake3` reported `Stage1: 256` at LANES 4 and the C++ expander asserted the same figure in
     /// test_gate_bands_cpu.cpp -- the two sides index the same trace, so a disagreement is a wrong
-    /// stride.
+    /// stride. The 21-column band adds exactly the three `a` columns: 259.
     ///
-    /// A pinned number is only a pin if it came from the thing it claims to pin. 256 is the
-    /// compiler's, read off the generated air; `18 + 59*4 + 2` is what `stage1_cols` must reproduce
+    /// A pinned number is only a pin if it came from the thing it claims to pin. 256 was the
+    /// compiler's, read off the generated air; `21 + 59*4 + 2` is what `stage1_cols` must reproduce
     /// from its parts. Asserting the formula against itself would pass with either wrong.
     #[test]
     fn stage1_cols_matches_the_compiled_air() {
-        assert_eq!(stage1_cols(4, BAND_COLS), 256, "the air reports Stage1: 256 at LANES 4");
-        assert_eq!(stage1_cols(1, BAND_COLS), 79);
-        assert_eq!(stage1_cols(8, BAND_COLS), 492);
+        assert_eq!(stage1_cols(4, BAND_COLS), 259, "the air reports Stage1: 259 at LANES 4 (256 + 3)");
+        assert_eq!(stage1_cols(1, BAND_COLS), 82);
+        assert_eq!(stage1_cols(8, BAND_COLS), 495);
         // The compressor's wider band, for the same lanes: nine more columns.
         assert_eq!(stage1_cols(4, COMPRESSOR_BAND_COLS), 265);
         assert_eq!(stage1_cols(3, COMPRESSOR_BAND_COLS), 206);
@@ -885,28 +887,31 @@ mod tests {
         [wires[0], wires[1], wires[2], coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4]]
     }
 
-    /// Constraints coalesce six to a row only when all five coefficients agree.
+    /// Constraints coalesce seven to a row only when all five coefficients agree.
     #[test]
     fn only_same_coefficient_constraints_share_a_row() {
-        let same: Vec<_> = (0..6).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
+        let per_row = AGGREGATOR_LAYOUT.plonk_gates_per_row as u64;
+        assert_eq!(per_row, 7, "21 columns at three wires a gate");
+        let same: Vec<_> = (0..per_row).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
         assert_eq!(plan_plonk_rows(&same, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 1);
 
         // one more of the same key spills to a second row
-        let seven: Vec<_> = (0..7).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
-        assert_eq!(plan_plonk_rows(&seven, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 2);
+        let eight: Vec<_> = (0..per_row + 1).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
+        assert_eq!(plan_plonk_rows(&eight, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 2);
 
-        // six DIFFERENT keys cannot share: one row each, because the air has a single q0
-        let distinct: Vec<_> = (0..6).map(|i| constraint([i, 2, 3, 4, 5], [0, 1, 2])).collect();
+        // seven DIFFERENT keys cannot share: one row each, because the air has a single q0
+        let distinct: Vec<_> = (0..per_row).map(|i| constraint([i, 2, 3, 4, 5], [0, 1, 2])).collect();
         assert_eq!(
             plan_plonk_rows(&distinct, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed,
-            6
+            7
         );
     }
 
     /// Interior rows are spent before any dedicated row is added.
     #[test]
     fn block_interiors_are_spent_before_dedicated_rows() {
-        let many: Vec<_> = (0..300u64).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
+        // 350 constraints at seven a row: 50 rows.
+        let many: Vec<_> = (0..350u64).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
         assert_eq!(many.len().div_ceil(AGGREGATOR_LAYOUT.plonk_gates_per_row), 50);
 
         // one block at LANES=4 offers 48 interior rows
@@ -953,6 +958,10 @@ mod tests {
             let _ = (signals, rows);
         }
         assert_eq!(EVPOL4_SIGNALS.div_ceil(BAND_COLS), 2, "EvPol4 still fits two rows");
+        // The PIL binds evPol4's rows by hand, so the split the packer produces is pinned: the
+        // gate row holds coefs + x + out (21 signals, the whole band), the next row s + acc.
+        assert_eq!(BAND_COLS, 5 * 3 + 3 + 3, "gate row = coefs[5][3] + x + out");
+        assert_eq!(EVPOL4_SIGNALS - BAND_COLS, 6, "next row = s + acc");
         assert_eq!(24_usize.div_ceil(BAND_COLS), 2, "FFT4 does not fit one row");
         assert_eq!(17_usize.div_ceil(BAND_COLS), 1, "TreeSelector4 fits one row");
         assert_eq!(13_usize.div_ceil(BAND_COLS), 1, "SelectValueArity2 fits one row");
@@ -1021,6 +1030,18 @@ mod tests {
         // fft4 wastes nothing; the other five leave a tail. 108 rows of 433k.
         assert_eq!(p.tail_waste, 4 + 24 + 14 + 33 + 33);
         assert!(p.blocks < 9033, "the band fits well inside the blocks the hashing already needs");
+    }
+
+    /// The three constants that describe the plonk packing have to agree, or the PIL's seven
+    /// `plonk` calls and the packer's row plan describe different gates.
+    #[test]
+    fn the_band_is_a_whole_number_of_plonk_gates() {
+        assert_eq!(BAND_COLS, 21);
+        assert_eq!(BAND_COLS % 3, 0);
+        assert_eq!(AGGREGATOR_LAYOUT.plonk_gates_per_row, PLONK_GATES_PER_ROW);
+        assert_eq!(PLONK_GATES_PER_ROW, 7);
+        // cmul packing did not change: two 9-cell gates need 18 of the 21 columns.
+        assert_eq!(AGGREGATOR_LAYOUT.cmul_per_row, 2);
     }
 
     #[test]

@@ -252,21 +252,21 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
 
         // 2(b)  r_out^{i,1..s} ← F \ L_i. A squeezed element lies in L_i with probability
         //       |L_i| / |F| ≈ 2^{−170}; we still honour the definition by re-squeezing.
-        std::vector<E3> rOut(params.numOodSamples);
+        std::vector<E3Box> rOut(params.numOodSamples);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
             do
             {
-                getChallenge(transcript, rOut[j]);
-            } while (math.L(i).contains(rOut[j]));
+                getChallenge(transcript, rOut[j].v);
+            } while (math.L(i).contains(rOut[j].v));
         }
 
         // 2(c)  β_{i,j} := ĝ_i(r_out^{i,j}).
-        std::vector<E3> beta(params.numOodSamples);
+        std::vector<E3Box> beta(params.numOodSamples);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
-            prover.outOfDomainAnswer(beta[j], rOut[j]);
-            std::memcpy(&proof.betas[i - 1][j * FIELD_EXTENSION], &beta[j][0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            prover.outOfDomainAnswer(beta[j].v, rOut[j].v);
+            std::memcpy(&proof.betas[i - 1][j * FIELD_EXTENSION], &beta[j].v[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
         }
         transcript.put(&proof.betas[i - 1][0], proof.betas[i - 1].size());
 
@@ -475,13 +475,13 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
         put(proof.trees[i].root);
 
         // 2(b)  r_out^{i,1..s} ← F \ L_i, drawn exactly as the prover drew them.
-        std::vector<E3> rOut(params.numOodSamples);
+        std::vector<E3Box> rOut(params.numOodSamples);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
             do
             {
-                getChallenge(transcript, rOut[j]);
-            } while (math.L(i).contains(rOut[j]));
+                getChallenge(transcript, rOut[j].v);
+            } while (math.L(i).contains(rOut[j].v));
         }
 
         // 2(c)  the prover's β_{i,·}.
@@ -501,7 +501,7 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
         ctx[i].reset(rComb);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
-            ctx[i].add(rOut[j], (const E3 &)proof.betas[i - 1][j * FIELD_EXTENSION]);
+            ctx[i].add(rOut[j].v, (const E3 &)proof.betas[i - 1][j * FIELD_EXTENSION]);
         }
         const Domain LprevK = math.L(i - 1).power(params.logFoldingFactors[i - 1]);
         for (uint64_t q = 0; q < raw.size(); q++)

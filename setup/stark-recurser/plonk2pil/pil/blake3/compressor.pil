@@ -14,7 +14,7 @@ require "circuits/plonk.pil";
 // BLAKE3 COMPRESSOR
 //
 // Same permutation and the same six band circuits as blake3/aggregator.pil, on a
-// 27-column band instead of 18. Its own file rather than a width parameter on the
+// 27-column band instead of the aggregator's 21 (18 before STIR). Its own file rather than a width parameter on the
 // aggregator, because 27 changes the LAYOUT and not just the widths: every gate
 // fits ONE row, so fft4 and evPol4 stop reading their outputs off the next row
 // through primes, and no selector needs the [1,0] pair pattern.
@@ -37,7 +37,8 @@ require "circuits/plonk.pil";
 //   band                           1,056,594 -> 698,902 rows
 //
 // which is what moves that air from 2^21 to 2^20. The price is 9 more `a`
-// columns, 9 more `S`, and C from 5 to 9 -- fixed 42 -> 55.
+// columns and 9 more `S` than the original 18-wide aggregator (6 more than today's 21), and C
+// from 5 to 9 -- fixed 42 -> 55 (45 -> 55 against the 21-wide aggregator).
 //
 // C is 9 wide because of fft4 alone: it needs nine constants, and on the
 // aggregator it reads C[0..5] plus C[0..4] of the next row, which its [1,0]

@@ -28,7 +28,7 @@ enum GateBandKind : uint64_t {
     // 56-row blocks hosting LANES permutations. Neither LANES nor the band width is per band --
     // both are the air's, and both arrive packed in the band section's aux word: LANES in the low
     // 32 bits, the a[]/S[] band width in the high 32. The band is there because it is not a
-    // constant (18 on the aggregator, 27 on the compressor) and it fixes where every lane column
+    // constant (21 on the aggregator, 27 on the compressor) and it fixes where every lane column
     // starts.
     GB_BLAKE3_NODE = 9,
     GB_BLAKE3_COMPRESS_CHUNK = 10,

@@ -37,7 +37,7 @@ namespace blake3 {
 constexpr int CLOCKS = 56;
 constexpr int ROUNDS = 7;
 constexpr int G_PER_ROUND = 8;
-constexpr int BAND_COLS = 18;
+constexpr int BAND_COLS = 21;  // the aggregator's; informational, see `layout`
 constexpr int COLS_PER_LANE = 59;
 
 constexpr uint64_t TABLE_SIZE = 1ull << 17;  // (a:8, b:8, rot:1)
@@ -85,8 +85,8 @@ struct Layout {
     uint64_t dinv, vbTopHi, outBytes, mul_table, mul_range;
 };
 
-// `band` is the width of the shared a[]/S[] band, which is NOT a constant: the aggregator air is 18
-// columns wide and the compressor 27. It arrives in the aux word beside LANES, because taking it
+// `band` is the width of the shared a[]/S[] band, which is NOT a constant: the aggregator air is 21
+// columns wide (18 before STIR) and the compressor 27. It arrives in the aux word beside LANES, because taking it
 // from BAND_COLS here put every lane column 9 too low on the compressor -- the air then read its
 // `outBytes` bytes as `vbTopHi` bits and failed booleanity.
 B3_HD inline Layout layout(uint64_t lanes, uint64_t band) {
