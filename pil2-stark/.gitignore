@@ -13,3 +13,9 @@ src/goldilocks/testscpu
 src/goldilocks/testsgpu
 src/goldilocks/benchscpu
 src/goldilocks/benchsgpu
+src/bn128/build/
+src/bn128/build_gpu/
+src/bn128/testscpu
+src/bn128/testsgpu
+src/bn128/benchscpu
+src/bn128/benchsgpu
