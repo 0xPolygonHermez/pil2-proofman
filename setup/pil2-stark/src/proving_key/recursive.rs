@@ -188,18 +188,31 @@ pub fn recursive_stark_settings(
     hash: &str,
     user: &crate::types::stark_struct::StarkSettings,
 ) -> crate::types::stark_struct::StarkSettings {
+    let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir);
+    let blowup = recursive_blowup(template, hash);
+    // finalDegree is the final polynomial's log-degree bound, for both tests.
+    //
+    // FRI: the family's `fri_terminal_degree` is the log2 of the last committed DOMAIN -- the
+    // `finalPol` the verifier evaluates at every query, which is what the constant was sized
+    // on -- so the degree bound is that minus the (constant) log rate.
+    //
+    // STIR: the constant is taken as the degree bound d_M itself. Every quotient round needs
+    // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
+    // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
+    // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
+    // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
+    let default_final_degree = || {
+        let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
+        match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => terminal.saturating_sub(blowup),
+            crate::types::stark_struct::LowDegreeTestKind::Stir => terminal,
+        }
+    };
     crate::types::stark_struct::StarkSettings {
-        low_degree_test: Some(user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Stir)),
-        initial_blowup_factor: Some(recursive_blowup(template, hash)),
+        low_degree_test: Some(low_degree_test),
+        initial_blowup_factor: Some(blowup),
         initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(3)),
-        // finalDegree is the final polynomial's log-degree bound. Every quotient round needs
-        // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
-        // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
-        // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
-        // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
-        final_degree: Some(
-            user.final_degree.unwrap_or_else(|| proofman_common::hash_family::fri_terminal_degree(hash)),
-        ),
+        final_degree: Some(user.final_degree.unwrap_or_else(default_final_degree)),
         // The uniform per-round grinding seed; the solver derives every tᵢ from it.
         grinding_bits: Some(
             user.grinding_bits.unwrap_or_else(|| proofman_common::hash_family::recursive_grinding_bits(hash)),

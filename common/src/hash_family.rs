@@ -73,7 +73,7 @@ pub fn compression_block_elements(family: &str) -> usize {
     }
 }
 
-/// The FRI layer degree the recursion stops folding at, as log2.
+/// The FRI layer the recursion stops folding at, as the log2 of its committed DOMAIN.
 ///
 /// Everything below the terminal is sent in the clear, and the verifier evaluates it at every query
 /// -- which is `2^terminal` extension multiplications a query, arithmetic rather than hashing. Above

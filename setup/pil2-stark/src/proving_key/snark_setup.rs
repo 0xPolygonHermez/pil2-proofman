@@ -231,6 +231,7 @@ pub fn gen_snark_setup(
         // circuit, checked against a 16-node (arity^2) published last level.
         last_level_verification: Some(2),
         grinding_bits: Some(19),
+        final_degree: Some(0),
         ..Default::default()
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);

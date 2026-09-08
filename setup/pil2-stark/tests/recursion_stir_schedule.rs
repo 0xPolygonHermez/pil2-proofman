@@ -66,18 +66,37 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     assert_eq!(stir.final_degree, Some(7));
 
     // `{"recursion": {"lowDegreeTest": "FRI"}}` flips the test and nothing else, so the blake3
-    // tree comes out on the solved FRI schedule it was originally sized on.
+    // tree comes out on the solved FRI schedule it was originally sized on. For FRI the family's
+    // terminal is a domain size, so the degree bound is that minus the blowup (7 − 2 = 5).
     let cfg = StarkStructsConfig::from_json_str(r#"{ "recursion": { "lowDegreeTest": "FRI" } }"#).unwrap();
     let user = cfg.recursion_settings().unwrap();
     let fri = recursive_stark_settings(RecursiveTemplate::Recursive1, "blake3", &user);
     assert_eq!(fri.low_degree_test, Some(LowDegreeTestKind::Fri));
     assert_eq!(fri.initial_blowup_factor, stir.initial_blowup_factor);
     assert_eq!(fri.grinding_bits, stir.grinding_bits);
-    assert_eq!(fri.final_degree, stir.final_degree);
+    assert_eq!(fri.final_degree, Some(5));
     assert_eq!(fri.last_level_verification, stir.last_level_verification);
     let ss = generate_stark_struct(&fri, 19, "blake3");
     assert_eq!(ss.low_degree_test.kind(), LowDegreeTestKind::Fri);
     assert_eq!(ss.n_bits_ext, 21);
+    // The measured optimum the blake3 recursion was sized on: 21 > 17 > 13 > 10 > 7, a 2^7
+    // terminal domain. A degree bound of 7 would stop at 2^9 and overflow recursive2's 2^19.
+    let sched = ss.low_degree_test.expect_fri("test");
+    assert_eq!(sched.log_domain_sizes, vec![21, 17, 13, 10, 7]);
+    assert_eq!(sched.folding_factors, vec![4, 4, 3, 3]);
+    assert_eq!(*sched.log_degrees.last().unwrap(), 5);
+
+    // The compressor folds the same terminal domain at its own blowup (7 − 1 = 6).
+    let comp = recursive_stark_settings(RecursiveTemplate::Compressor, "blake3", &user);
+    assert_eq!(comp.final_degree, Some(6));
+    let comp_ss = generate_stark_struct(&comp, 19, "blake3");
+    assert_eq!(*comp_ss.low_degree_test.expect_fri("test").log_domain_sizes.last().unwrap(), 7);
+
+    // Poseidon: a 2^5 terminal domain at blowup 3 is a degree bound of 2.
+    let pos = recursive_stark_settings(RecursiveTemplate::Recursive2, "Poseidon2", &user);
+    assert_eq!(pos.final_degree, Some(2));
+    let pos_ss = generate_stark_struct(&pos, 17, "Poseidon2");
+    assert_eq!(*pos_ss.low_degree_test.expect_fri("test").log_domain_sizes.last().unwrap(), 5);
 
     // The STIR-only knobs ride along when asked for.
     let cfg = StarkStructsConfig::from_json_str(
