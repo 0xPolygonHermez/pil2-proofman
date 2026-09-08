@@ -73,7 +73,7 @@ void ExpressionsInfo::load(json j, bool global, bool verifier)
         expressionsCode.push_back(qExpInfo);
 
         ExpInfo queryExpInfo;
-        queryExpInfo.expId = starkInfo.friExpId;
+        queryExpInfo.expId = starkInfo.deepExpId;
         queryExpInfo.stage = starkInfo.nStages + 2;
         queryExpInfo.line = "";
         queryExpInfo.tmpUsed = j["queryVerifier"]["tmpUsed"];
@@ -708,7 +708,7 @@ void ExpressionsInfo::prepareExpressionsBin() {
             }
         }
 
-        if(expCode.expId == starkInfo.cExpId || expCode.expId == starkInfo.friExpId || expr) {
+        if(expCode.expId == starkInfo.cExpId || expCode.expId == starkInfo.deepExpId || expr) {
             expCode.code[expCode.code.size() - 1].dest.type = opType::tmp;
             expCode.code[expCode.code.size() - 1].dest.id = expCode.tmpUsed++;
         }

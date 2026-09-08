@@ -60,7 +60,7 @@ struct SetupArgs {
     #[arg(short = 'r', long)]
     recursive: bool,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     stark_structs: Option<String>,
 
@@ -128,8 +128,23 @@ struct SetupArgs {
 #[derive(Parser)]
 struct StatsArgs {
     /// Path to compiled .pilout file
-    #[arg(short = 'a', long)]
+    #[arg(
+        short = 'a',
+        long,
+        required_unless_present = "proving_key",
+        conflicts_with = "proving_key",
+        default_value = ""
+    )]
     airout: String,
+
+    /// A built proving key to read as-built circuit stats from (uses the key's own hash
+    /// family and the solved query counts, and can include the recursion circuits).
+    #[arg(short = 'k', long)]
+    proving_key: Option<String>,
+
+    /// Include the recursion circuits (compressor/recursive/final) of the proving key.
+    #[arg(long, requires = "proving_key")]
+    aggregation: bool,
 
     /// Hash family the setup will use; determines tree/transcript geometry.
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
@@ -139,7 +154,7 @@ struct StatsArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     starkstructs: Option<String>,
 
@@ -231,6 +246,10 @@ struct SetupRecursiveTestArgs {
 
     #[arg(long)]
     blake3_lanes: Option<usize>,
+
+    /// starkstructs.json whose "recursion" entry picks the tree's low-degree test (default FRI)
+    #[arg(short = 's', long)]
+    starkstructs: Option<String>,
 
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end.
     /// No-op if nvcc is not on PATH.
@@ -403,6 +422,8 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
             let opts = StatsOptions {
+                proving_key_path: args.proving_key,
+                aggregation: args.aggregation,
                 airout_path: args.airout,
                 hash: args.hash,
                 output_path: args.output,
@@ -483,6 +504,7 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
                 hash: args.hash,
                 blake3_lanes: args.blake3_lanes,
+                starkstructs: args.starkstructs,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)?;
 

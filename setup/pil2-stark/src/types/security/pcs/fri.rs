@@ -697,8 +697,8 @@ mod tests {
             for n_bits in [10usize, 17, 20, 24] {
                 for blowup in 1usize..=4 {
                     let settings = StarkSettings {
-                        blowup_factor: Some(blowup),
-                        folding_factor: Some(3),
+                        initial_blowup_factor: Some(blowup),
+                        initial_folding_factor: Some(3),
                         final_degree: Some(5),
                         ..Default::default()
                     };
@@ -711,7 +711,7 @@ mod tests {
                         batching: Batching::Powers,
                         batch_size: 100,
                         log_folding_factors: crate::output::stark_info::compute_log_folding_factors(&ss),
-                        max_grinding_bits_query: ss.pow_bits as u64,
+                        max_grinding_bits_query: ss.low_degree_test.expect_fri("test").grinding_bits_queries as u64,
                         use_max_grinding_bits_query: true,
                         tree_arity: ss.merkle_tree_arity as u64,
                         hash_size_bits: 256,

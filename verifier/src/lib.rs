@@ -6,6 +6,7 @@ extern crate alloc;
 mod log;
 
 mod proof;
+mod stir;
 mod verifier;
 
 pub mod poseidon1 {
@@ -33,6 +34,7 @@ pub mod blake3 {
 }
 
 pub use proof::*;
+pub use stir::*;
 pub use verifier::*;
 
 pub trait Verifier: Sync {

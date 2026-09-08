@@ -31,6 +31,7 @@ public:
 
     MerkleTreeType **treesGL;
     MerkleTreeType **treesFRI;
+    uint64_t nTreesFRI;
 
 public:
     Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree, bool allocateTrees, bool allocateNodes) : setupCtx(setupCtx_)                    
@@ -62,10 +63,14 @@ public:
             }
         }
 
-        treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
-        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
-            uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
-            uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
+        // FRI's folded-oracle trees. STIR's prover owns its oracles, so it needs none here.
+        nTreesFRI = setupCtx.starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::FRI
+                        ? setupCtx.starkInfo.numLowDegreeTestTrees()
+                        : 0;
+        treesFRI = new MerkleTreeType*[nTreesFRI];
+        for(uint64_t step = 0; step < nTreesFRI; ++step) {
+            uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1];
+            uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) / nGroups;
 
             treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, allocateTrees, allocateNodes);
         }
@@ -78,7 +83,7 @@ public:
         }
         delete[] treesGL;
 
-        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.steps.size() - 1; i++)
+        for (uint64_t i = 0; i < nTreesFRI; i++)
         {
             delete treesFRI[i];
         }
@@ -93,7 +98,7 @@ public:
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
-    void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateDeepPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints, NTT_Goldilocks &ntt);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof, std::vector<int64_t> &openingPoints);
@@ -417,7 +422,7 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, Expre
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
+void Starks<ElementType>::calculateDeepPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
 uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -441,9 +446,9 @@ uint64_t xiChallengeIndex = 0;
 
     expressionsCtx.setXi(xis);
 
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
+    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.deepExpId);
 
-    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
+    for(uint64_t step = 0; step < nTreesFRI; ++step) { 
         Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];
         treesFRI[step]->setSource(src);
 

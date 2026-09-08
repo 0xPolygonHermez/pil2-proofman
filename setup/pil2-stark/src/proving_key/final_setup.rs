@@ -324,13 +324,18 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Final stark struct settings
     let final_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
-        folding_factor: Some(4),
+        initial_blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
+        initial_folding_factor: Some(4),
         // Per family: poseidon's 22 is what its committed verifiers encode, blake3 affords 24.
-        pow_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
-        // The terminal the FRI walk stops at. For a family whose steps are solved rather than folded
-        // uniformly this is the ceiling the solver works under, not the degree it lands on.
-        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
+        grinding_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
+        // The terminal the FRI walk stops at, as the final polynomial's log-degree bound: the
+        // family's terminal domain (log2) minus the blowup — poseidon's 5 − 4 = 1 is what its
+        // committed vadcop_final verifier encodes. For a family whose steps are solved rather than
+        // folded uniformly this is the ceiling the solver works under, not the degree it lands on.
+        final_degree: Some(
+            proofman_common::hash_family::fri_terminal_degree(config.hash)
+                - proofman_common::hash_family::final_blowup_factor(config.hash),
+        ),
         // Paid by the recursivef that verifies this proof, not here, so it takes the family value
         // every recursion layer takes: 5 for blake3, the size-based default for poseidon.
         last_level_verification: proofman_common::hash_family::recursive_last_level_verification(config.hash),
@@ -357,38 +362,25 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&final_stark_struct);
     let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << final_stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (final_stark_struct.n_bits_ext - final_stark_struct.n_bits)) as f64,
-        batch_size: ev_map_len.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: final_stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: final_stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(&final_stark_struct, ev_map_len.max(1) as u64);
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &final_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         "vadcop_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit 'vadcop_final' low-degree test: {}",
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;

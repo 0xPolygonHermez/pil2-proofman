@@ -10,8 +10,17 @@ pub mod compressor;
 /// Rows in one BLAKE3 block: 7 rounds x 8 G evaluations.
 pub const BLAKE3_CLOCKS: usize = 56;
 
-/// The `a[]` plonk/connection band. Also the `S[]` width.
-pub const BAND_COLS: usize = 18;
+/// The `a[]` plonk/connection band of the AGGREGATOR. Also its `S[]` width.
+///
+/// 21 = seven three-wire plonk gates. It was 18 -- the width of Blake3Compress's input row, six
+/// gates -- until STIR sized recursive2: a STIR verifier moves work from hashes into plonk gates
+/// (the quotient rounds evaluate Âns at every query and build O(t²) point tables), and the band
+/// lives in the block interiors, so fewer hashing blocks also means less band. The three extra
+/// columns buy 17% more plonk per row for +3 stage-1 columns (two more leaf compressions per
+/// query for the parent verifier, about 1.3% of a recursive proof's hashes). Every other gate
+/// keeps its 18-column placement: cmul still packs two (18 cells), fft4 (24) and evPol4 (27) still
+/// take two rows -- only evPol4's row split moves, see blake3/aggregator.pil.
+pub const BAND_COLS: usize = 21;
 
 /// How a band of a given width packs the six circuits.
 ///
@@ -37,13 +46,14 @@ pub struct BandLayout {
     pub template_name: &'static str,
 }
 
-/// `blake3/aggregator.pil`: the pinned recursion geometry. 18 columns, the width of
-/// Blake3Compress's input row, which is also exactly six three-wire plonk gates.
+/// `blake3/aggregator.pil`: the pinned recursion geometry. 21 columns, seven three-wire plonk
+/// gates a row (see `BAND_COLS` for why it grew from 18). Blake3Compress's 18-cell input row
+/// occupies a[0..18) of a boundary row; a[18..21) stays unmapped there.
 pub const AGGREGATOR_LAYOUT: BandLayout = BandLayout {
     band: BAND_COLS,
     c_cols: 5,
     cmul_per_row: 2,
-    plonk_gates_per_row: 6,
+    plonk_gates_per_row: BAND_COLS / 3,
     selval_per_row: 1,
     evpol4_rows: 2,
     fft4_rows: 2,
@@ -95,7 +105,7 @@ pub const TABLE_MUL_COLS: usize = 2;
 /// reads their values off the gate id rather than placing their signals.
 pub mod compress_signal {
     pub const COUNT: usize = 34;
-    /// The input row is exactly the band's width: in[16] then blockLen then counterLo.
+    /// The input row: in[16] then blockLen then counterLo, at a[0..18) of the band.
     pub const IN_CELLS: usize = 18;
     /// The output row: out[0..16] as u32, leaving a[16..18] free.
     pub const OUT_CELLS: usize = 16;

@@ -1,4 +1,4 @@
-// Equivalence tests for the DEEP/FRI polynomial kernels (starkpil/fri_expression.cuh).
+// Equivalence tests for the DEEP polynomial kernels (starkpil/deep_expression.cuh).
 //
 // The oracle is a host implementation written straight from the mathematical
 // definition; it was cross-checked bit-for-bit against the Horner kernel these
@@ -7,7 +7,7 @@
 #include <vector>
 #include <random>
 #include "cuda_utils.cuh"
-#include "../../starkpil/fri_expression.cuh"
+#include "../../starkpil/deep_expression.cuh"
 
 namespace {
 

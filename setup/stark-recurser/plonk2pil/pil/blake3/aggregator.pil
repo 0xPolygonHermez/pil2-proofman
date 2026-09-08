@@ -13,19 +13,30 @@ require "circuits/plonk.pil";
 // ============================================================================
 // BLAKE3 AGGREGATOR
 //
-// Recursive-proof aggregation AIR over the BLAKE3 hash family. a[0..17] is the
-// plonk/custom-gate band and the connection band S[18]; the BLAKE3 permutation
+// Recursive-proof aggregation AIR over the BLAKE3 hash family. a[0..21) is the
+// plonk/custom-gate band and the connection band S[21]; the BLAKE3 permutation
 // owns its own columns, 51 per lane, declared by blake3Lanes.
+//
+// The band is 21 wide -- seven plonk gates a row -- where it used to be 18, the
+// width of Blake3Compress's input row. STIR is why: its verifier trades hashes for
+// plonk gates (Âns evaluated at every query, O(t²) point tables per round), and the
+// band rides the hashing blocks' interiors, so recursive2 verifying two STIR proofs
+// ran out of band before it ran out of blocks. Three columns buy 17% more plonk a
+// row; the other five band circuits keep their 18-column placement, except that
+// evPol4's second row shrinks (see below). See setups/blake3/mod.rs BAND_COLS.
 //
 // BLAKE3 is a 56-row gate (7 rounds x 8 G), not a 1-row one, so the geometry is
 // a BLOCK: 56 consecutive rows hosting LANES independent permutations in
 // parallel column groups. Within a block,
 //
-//   clock          | a[0..17]                        | lane columns
+//   clock          | a[0..21)                        | lane columns
 //   ---------------+---------------------------------+---------------------
 //   l              | lane l's input: a[0..8], a[8]=k | round 0 G l
 //   LANES..55-LANES| the band: any one of the six    | rounds 0..6
 //   56-LANES+l     | lane l's output: a[0..4]        | round 6 G
+//
+// (Compress blocks use a[0..18) on their input row and a[0..16) on their output
+// row; a[18..21) is unmapped on every boundary row, a singleton in the connection.)
 //
 // The middle rows are the point: at LANES=4 that is 48 free rows a block, and all
 // six band circuits ride them instead of needing rows of their own.
@@ -34,10 +45,13 @@ require "circuits/plonk.pil";
 // carry round 0's identity message schedule.
 // ============================================================================
 airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelValRows, const int nNodeBlocks, const int nChunkBlocks, const int nParentBlocks, const int LANES) {
-    col witness a[18];
+    // Must match setups/blake3/mod.rs BAND_COLS: the packer's s_map is exactly this wide.
+    const int BAND = 21;
+
+    col witness a[BAND];
 
     #pragma fixed_external
-    col fixed S[18];
+    col fixed S[BAND];
 
     #pragma fixed_external
     col fixed C[5];
@@ -116,7 +130,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     // ── Custom-gate selectors ───────────────────────────────────────────────────
     // EvPol4 and FFT4 are the only two-row circuits, and get the [1,0] pattern.
     /*
-        The six band circuits below all bind the same eighteen columns a[0..17] and are told apart
+        The six band circuits below all bind the same BAND columns a[0..21) and are told apart
         only by which selector is 1 on the row, so ANY row can host ANY one of them. Every BLAKE3
         block leaves its interior free -- the first LANES rows carry the lanes' inputs and the last
         LANES their outputs -- so the interior is `air.CLOCKS - 2*LANES` rows, 48 at LANES=4, and
@@ -164,14 +178,12 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     col fixed SELECTVAL_ARITY2 = [[0:air.CLOCKS]:selValAt, [0:LANES, 1:INTERIOR,          0:LANES]:nSelValBlocks, 0...];
     col fixed PLONK            = [[0:air.CLOCKS]:plonkAt,  [0:LANES, 1:INTERIOR,          0:LANES]:nPlonkBlocks,  0...];
 
+    // ── Plonk: BAND/3 = 7 gates a row, one shared coefficient set ───────────────
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
 
-    plonk([a[0], a[1], a[2]], q0, PLONK);
-    plonk([a[3], a[4], a[5]], q0, PLONK);
-    plonk([a[6], a[7], a[8]], q0, PLONK);
-    plonk([a[9], a[10], a[11]], q0, PLONK);
-    plonk([a[12], a[13], a[14]], q0, PLONK);
-    plonk([a[15], a[16], a[17]], q0, PLONK);
+    for (int g = 0; g < BAND / 3; g++) {
+        plonk([a[3*g], a[3*g + 1], a[3*g + 2]], q0, PLONK);
+    }
 
     // ── BLAKE3 ──────────────────────────────────────────────────────────────────
     // The boundary columns are declared BEFORE the call and handed in: blake3Lanes binds them
@@ -213,7 +225,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     blake3Tables(N, BLAKE3_TABLE_ID, RANGE_CHECKER_ID);
 
     // ── Remaining custom-gate circuits ──────────────────────────────────────────
-    // CMul: 2 per row (a[0..8], a[9..17])
+    // CMul: 2 per row (a[0..9), a[9..18)); a[18..21) is free on a cmul row.
     const expr inA1[3] = [a[0], a[1], a[2]];
     const expr inB1[3] = [a[3], a[4], a[5]];
     const expr res[3] = [a[6], a[7], a[8]];
@@ -236,10 +248,12 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     coefs[3] = [a[3], a[4], a[5]];
     coefs[4] = [a[0], a[1], a[2]];
     const expr x[3] = [a[15], a[16], a[17]];
-    // Row 0 is coefs + x, exactly the band's width, so out and the two intermediates land on row 1.
-    const expr resEVPOL[3] = [a[0]', a[1]', a[2]'];
-    const expr sEVPOL[3]   = [a[3]', a[4]', a[5]'];
-    const expr accEVPOL[3] = [a[6]', a[7]', a[8]'];
+    // The packer lays the 27 signals out `band` to a row in circom order -- coefs[5][3], x, out,
+    // s, acc -- so on the 21-column band row 0 is coefs + x + out, exactly the band's width, and
+    // the two Estrin intermediates land on row 1. (At 18 columns out was the first triple of row 1.)
+    const expr resEVPOL[3] = [a[18], a[19], a[20]];
+    const expr sEVPOL[3]   = [a[0]', a[1]', a[2]'];
+    const expr accEVPOL[3] = [a[3]', a[4]', a[5]'];
     evpol4Estrin(coefs, x, sEVPOL, accEVPOL, resEVPOL, EVPOL4);
 
     const expr treevals[4][3];
@@ -259,10 +273,11 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nCMulRows, 
     const expr selected[4] = [a[9], a[10], a[11], a[12]];
     selectValueArity2(selectvals, selectvals_key, selected, SELECTVAL_ARITY2);
 
-    const expr A[18];
-    for (int i = 0; i < 18; i++) {
+    const expr A[BAND];
+    for (int i = 0; i < BAND; i++) {
         A[i] = a[i];
     }
-    // PROD, not SUM: folding these 36 terms into the blake3 gsum measured stage2 129 cols vs 117.
+    // PROD, not SUM: folding the 36 terms of the 18-column band into the blake3 gsum measured
+    // stage2 129 cols vs 117; at 21 columns there are 42 terms.
     connection(1, A, S, PIOP_BUS_PROD);
 }
