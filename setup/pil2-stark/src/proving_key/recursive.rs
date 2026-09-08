@@ -606,6 +606,15 @@ pub fn gen_recursive_setup(
                         min_queries
                     );
                     plonk_result = run_circom_and_plonk(&adjusted_si)?;
+                    // The schedule logged at the air's own setup is now stale: say what was built.
+                    let built = adjusted_si
+                        .get("starkStruct")
+                        .and_then(|ss| {
+                            serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss.clone()).ok()
+                        })
+                        .map(|ss| ss.low_degree_test.describe())
+                        .unwrap_or_else(|| "unreadable starkStruct".to_string());
+                    tracing::info!("Air '{}' low-degree test (after A2): {}", config.air_name, built);
                 }
             }
         }
