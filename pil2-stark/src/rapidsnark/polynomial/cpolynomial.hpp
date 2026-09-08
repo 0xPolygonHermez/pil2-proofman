@@ -25,8 +25,6 @@ public:
     u_int64_t getDegree() const;
 
     Polynomial<Engine> * getPolynomial(FrElement *reservedBuffer) const;
-
-    typename Engine::G1Point multiExponentiation(G1PointAffine *PTau) const;
 };
 
 #include "cpolynomial.c.hpp"

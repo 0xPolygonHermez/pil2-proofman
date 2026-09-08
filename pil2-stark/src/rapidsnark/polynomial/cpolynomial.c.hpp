@@ -47,8 +47,14 @@ Polynomial<Engine> *CPolynomial<Engine>::getPolynomial(FrElement *reservedBuffer
         degrees[i] = polynomials[i] == NULL ? 0 : polynomials[i]->getDegree();
     }
 
+    // getDegree() already returns the combined degree (component j's coefficient
+    // i sits at index i * n + j), so maxDegree + 1 is exactly the span needed.
+    // Rounding up to a power of two from log2(maxDegree - 1) under-allocated
+    // whenever maxDegree was itself a power of two -- leaving the top
+    // coefficient outside the recorded length, so the fixDegree() below
+    // under-reported the degree -- and was undefined for maxDegree <= 1.
     u_int64_t maxDegree = this->getDegree();
-    u_int64_t lengthBuffer = std::pow(2, ((u_int64_t)log2(maxDegree - 1)) + 1);
+    u_int64_t lengthBuffer = maxDegree + 1;
     Polynomial<Engine> *polynomial = new Polynomial<Engine>(E, reservedBuffer, lengthBuffer);
 
     #pragma omp parallel for
@@ -63,15 +69,6 @@ Polynomial<Engine> *CPolynomial<Engine>::getPolynomial(FrElement *reservedBuffer
     polynomial->fixDegree();
 
     return polynomial;
-}
-
-template<typename Engine>
-typename Engine::G1Point CPolynomial<Engine>::multiExponentiation(G1PointAffine *PTau) const {
-//    LOG_TRACE("> Computing C2 multi exponentiation");
-//    u_int64_t lengths[3] = {polynomials["Z"]->getDegree() + 1,
-//                            polynomials["T1"]->getDegree() + 1,
-//                            polynomials["T2"]->getDegree() + 1};
-//    G1Point C2 = multiExponentiation(polynomials["C2"], 3, lengths);
 }
 
 #endif
