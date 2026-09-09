@@ -353,13 +353,14 @@ fn run_pipeline(
 ) -> Result<GenSummary> {
     let autotune = cfg.chunk.is_none();
 
-    // Build IR for every candidate (catches unhandled operands here). Each entry
-    // is (candidate, Ok(ir) | Err(skip-reason)).
-    let built: Vec<(&Candidate, std::result::Result<ir::Ir, String>)> = candidates
+    // Build the Q IR for every candidate (catches unhandled operands here) plus its generic
+    // (non-Q) expression IRs. Each entry is (candidate, Ok((q ir, x items)) | Err(skip-reason)).
+    type Built<'a> = (&'a Candidate, std::result::Result<(ir::Ir, Vec<(i64, ir::Ir, u64)>), String>);
+    let mut built: Vec<Built> = candidates
         .par_iter()
         .map(|c| {
             let r = match ir::build_ir(&c.stark_info, &c.expr_info) {
-                Ok(ir) => optimize_checked(ir, c, cfg),
+                Ok(ir) => optimize_checked(ir, c, cfg).map(|ir| (ir, build_x_items(c, cfg))),
                 Err(e) if e.downcast_ref::<UnhandledOperand>().is_some() => Err("unhandled operand".to_string()),
                 Err(e) => Err(format!("build_ir error: {e}")),
             };
@@ -367,14 +368,43 @@ fn run_pipeline(
         })
         .collect();
 
-    // Phase 2: autotune the no-spill chunk size per AIR (parallel). Maps sym -> Some(chunk) | None(spills).
-    let chunk_map: std::collections::HashMap<String, Option<usize>> = if autotune {
+    // Heaviest AIRs first: phase 2's wall time is the longest per-AIR chain (Main's probes started
+    // 230 s late in one run, waiting for a free worker behind small AIRs), and the printed summary
+    // is sorted again below.
+    built.sort_by_cached_key(|(_, r)| {
+        std::cmp::Reverse(r.as_ref().map_or(0, |(ir, xitems)| {
+            ir.instrs.len() + ir.tab.len() + xitems.iter().map(|(_, e, _)| e.instrs.len()).sum::<usize>()
+        }))
+    });
+
+    // Phase 2 (autotune on), per AIR in parallel: the chunk-independent TUs -- the per-launch table
+    // (see `emit::emit_pow_tu`) and the generic-expression kernels -- compiled once, alongside the
+    // probes rather than inside or after them, and the no-spill chunk autotune.
+    // Maps sym -> Ok(chunk) | Err(skip reason).
+    let chunk_map: std::collections::HashMap<String, std::result::Result<usize, String>> = if autotune {
         built
             .par_iter()
             .filter_map(|(c, r)| {
-                r.as_ref()
-                    .ok()
-                    .map(|ir| autotune::tune_chunk(tc, ir, &c.sym, c.n_ops, work).map(|ck| (c.sym.clone(), ck)))
+                let (ir, xitems) = r.as_ref().ok()?;
+                let ((pow, exprs), tuned) = rayon::join(
+                    || {
+                        rayon::join(
+                            || build_pow_tu(tc, work, &c.sym, ir),
+                            || build_exprs_tus(tc, work, &c.sym, xitems, &c.expr_info.quotient_pairs()),
+                        )
+                    },
+                    || autotune::tune_chunk(tc, ir, &c.sym, c.n_ops, work),
+                );
+                if let Err(e) = exprs {
+                    return Some(Err(e));
+                }
+                let verdict = match (pow, tuned) {
+                    (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
+                    (Ok(Some(why)), _) => Err(why),
+                    (Ok(None), Ok(Some(ck))) => Ok(ck),
+                    (Ok(None), Ok(None)) => Err(format!("{} ops: still spills at CHUNK_MIN", c.n_ops)),
+                };
+                Some(Ok((c.sym.clone(), verdict)))
             })
             .collect::<Result<std::collections::HashMap<_, _>>>()?
     } else {
@@ -387,18 +417,22 @@ fn run_pipeline(
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut max_scratch: u64 = 0;
     for (c, r) in &built {
-        let ir = match r {
-            Ok(ir) => ir,
+        let (ir, xitems) = match r {
+            Ok(b) => b,
             Err(why) => {
                 skipped.push((c.name.clone(), why.clone()));
                 continue;
             }
         };
         let chunk = if autotune {
-            match chunk_map.get(&c.sym).copied().flatten() {
-                Some(ck) => ck,
+            match chunk_map.get(&c.sym) {
+                Some(Ok(ck)) => *ck,
+                Some(Err(why)) => {
+                    skipped.push((c.name.clone(), why.clone()));
+                    continue;
+                }
                 None => {
-                    skipped.push((c.name.clone(), format!("{} ops: still spills at CHUNK_MIN", c.n_ops)));
+                    skipped.push((c.name.clone(), "no autotune verdict".to_string()));
                     continue;
                 }
             }
@@ -419,54 +453,16 @@ fn run_pipeline(
         for (fname, text) in emit::emit_air(ir, &plan, &c.sym) {
             std::fs::write(work.join(&fname), text)?;
         }
-        // Generic (non-Q) expression kernels: cover every trace-domain
-        // expression the interpreter might be asked for (hint fields, im
-        // columns, ...). Small straight-line kernels only; anything odd
-        // (zerofier use, non-canonical output shape, oversized) is skipped
-        // and stays on the interpreter.
-        {
-            const EXPR_CAP: usize = 512;
-            let mut items: Vec<(i64, ir::Ir, u64)> = Vec::new();
-            for ec in &c.expr_info.expressions_code {
-                if ec.exp_id == c.cexp || ec.code.is_empty() || ec.code.len() > EXPR_CAP {
-                    continue;
-                }
-                let Ok(eir) = ir::build_ir_expr(&c.stark_info, &c.expr_info, ec.exp_id, false) else {
-                    continue;
-                };
-                if eir.uses_zi() {
-                    continue;
-                }
-                let Some(od) = eir.out_dim() else { continue };
-                if od != 1 && od != 3 {
-                    continue;
-                }
-                // Optimize the standalone expression too (inner-chain fold with the
-                // powers kept in registers, CSE, scheduling; no hoisting: no table).
-                // Equivalence-gated exactly like Q; on mismatch the original is kept.
-                let eir = if cfg.optimize && std::env::var("EXPS_X_OPT").ok().is_none_or(|v| v != "0") {
-                    let (mut o, _st) = opt::optimize_opts(&eir, false, true);
-                    if check::equivalent(&eir, &o, 3).is_ok() {
-                        o.pow_in_regs = true;
-                        o
-                    } else {
-                        eprintln!(
-                            "[exps-codegen] {} x{}: OPTIMIZED IR MISMATCH; keeping the setup's expression",
-                            c.name, ec.exp_id
-                        );
-                        eir
-                    }
-                } else {
-                    eir
-                };
-                items.push((ec.exp_id, eir, od));
+        // With autotune on, the table and generic-expression TUs were emitted and compiled in
+        // phase 2; otherwise they are written here and compiled with everything else in phase 3b.
+        if !autotune {
+            for (fname, text) in emit::emit_pow_tu(&c.sym, ir) {
+                std::fs::write(work.join(fname), text)?;
             }
-            if !items.is_empty() {
-                let pairs = c.expr_info.quotient_pairs();
-                std::fs::write(
-                    work.join(format!("gen_{}_cexprs.cu", c.sym)),
-                    emit::emit_exprs_tu(&c.sym, &items, &pairs),
-                )?;
+            if !xitems.is_empty() {
+                for (fname, text) in emit::emit_exprs_tus(&c.sym, xitems, &c.expr_info.quotient_pairs()) {
+                    std::fs::write(work.join(fname), text)?;
+                }
             }
         }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;
@@ -533,6 +529,7 @@ fn run_pipeline(
         })?;
     }
 
+    generated.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(GenSummary { placed: placed.len(), generated, skipped, max_scratch_bytes: max_scratch * 8 })
 }
 
@@ -547,26 +544,119 @@ fn link_one(tc: &Toolchain, work: &Path, sym: &str, dest: &Path) -> Result<()> {
     }
 }
 
-/// `gen_<sym>.<ext>` + `gen_<sym>_c*.<ext>` present in `work`.
+/// The generic (non-Q) expression kernels of one AIR: every trace-domain expression the
+/// interpreter might be asked for (hint fields, im columns, ...). Small straight-line kernels
+/// only; anything odd (zerofier use, non-canonical output shape, oversized) is left out and
+/// stays on the interpreter. Returns (expId, ir, out_dim) per covered expression.
+fn build_x_items(c: &Candidate, cfg: &GenConfig) -> Vec<(i64, ir::Ir, u64)> {
+    const EXPR_CAP: usize = 512;
+    let mut items: Vec<(i64, ir::Ir, u64)> = Vec::new();
+    for ec in &c.expr_info.expressions_code {
+        if ec.exp_id == c.cexp || ec.code.is_empty() || ec.code.len() > EXPR_CAP {
+            continue;
+        }
+        let Ok(eir) = ir::build_ir_expr(&c.stark_info, &c.expr_info, ec.exp_id, false) else {
+            continue;
+        };
+        if eir.uses_zi() {
+            continue;
+        }
+        let Some(od) = eir.out_dim() else { continue };
+        if od != 1 && od != 3 {
+            continue;
+        }
+        // Optimize the standalone expression too (inner-chain fold with the powers kept in
+        // registers, CSE, scheduling; no hoisting: no table). Equivalence-gated exactly like Q;
+        // on mismatch the original is kept.
+        let eir = if cfg.optimize && std::env::var("EXPS_X_OPT").ok().is_none_or(|v| v != "0") {
+            let (mut o, _st) = opt::optimize_opts(&eir, false, true);
+            if check::equivalent(&eir, &o, 3).is_ok() {
+                o.pow_in_regs = true;
+                o
+            } else {
+                eprintln!(
+                    "[exps-codegen] {} x{}: OPTIMIZED IR MISMATCH; keeping the setup's expression",
+                    c.name, ec.exp_id
+                );
+                eir
+            }
+        } else {
+            eir
+        };
+        items.push((ec.exp_id, eir, od));
+    }
+    items
+}
+
+/// Emit the generic-expression TUs of one AIR into `work` and compile them (parallel). A failed
+/// compile is a generator bug and fails the run, as it did when phase 3b compiled these.
+fn build_exprs_tus(
+    tc: &Toolchain,
+    work: &Path,
+    sym: &str,
+    xitems: &[(i64, ir::Ir, u64)],
+    pairs: &[(i64, i64)],
+) -> Result<()> {
+    if xitems.is_empty() {
+        return Ok(());
+    }
+    let mut cus: Vec<PathBuf> = Vec::new();
+    for (fname, text) in emit::emit_exprs_tus(sym, xitems, pairs) {
+        let cu = work.join(fname);
+        std::fs::write(&cu, text)?;
+        cus.push(cu);
+    }
+    cus.par_iter().try_for_each(|cu| -> Result<()> {
+        match tc.compile_tu(cu, &cu.with_extension("o"), Some(work))? {
+            (true, _) => Ok(()),
+            (false, log) => anyhow::bail!("nvcc failed for {}: {log}", cu.display()),
+        }
+    })
+}
+
+/// Emit the per-launch table TU of one AIR (if it has one) into `work` and compile it.
+/// `Ok(None)` = compiled or not needed; `Ok(Some(why))` = nvcc rejected it (skip the AIR).
+fn build_pow_tu(tc: &Toolchain, work: &Path, sym: &str, ir: &ir::Ir) -> Result<Option<String>> {
+    let files = emit::emit_pow_tu(sym, ir);
+    let mut cus: Vec<PathBuf> = Vec::with_capacity(files.len());
+    for (fname, text) in &files {
+        let cu = work.join(fname);
+        std::fs::write(&cu, text)?;
+        cus.push(cu);
+    }
+    let results: Vec<(bool, String)> =
+        cus.par_iter().map(|cu| tc.compile_tu(cu, &cu.with_extension("o"), Some(work))).collect::<Result<Vec<_>>>()?;
+    match results.iter().find(|(ok, _)| !ok) {
+        None => Ok(None),
+        Some((_, log)) => {
+            let last = log.trim().lines().last().unwrap_or("").to_string();
+            eprintln!("  [pow] {sym} table TU COMPILE FAILED: {last}");
+            Ok(Some(format!("table TU compile failed: {last}")))
+        }
+    }
+}
+
+/// `gen_<sym>.<ext>` + `gen_<sym>_pow*.<ext>` (table kernel and its slices) + `gen_<sym>_c*.<ext>`
+/// present in `work`.
 fn collect_artifacts(work: &Path, sym: &str, ext: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let main = work.join(format!("gen_{sym}.{ext}"));
     if main.exists() {
         out.push(main);
     }
-    let prefix = format!("gen_{sym}_c");
+    let prefixes = [format!("gen_{sym}_pow"), format!("gen_{sym}_c")];
     if let Ok(entries) = std::fs::read_dir(work) {
-        let mut chunks: Vec<PathBuf> = entries
+        let mut rest: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
             .filter(|p| {
-                p.file_name()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|s| s.starts_with(&prefix) && s.ends_with(&format!(".{ext}")))
+                p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                    prefixes.iter().any(|pre| s.starts_with(pre.as_str())) && s.ends_with(&format!(".{ext}"))
+                })
             })
             .collect();
-        chunks.sort();
-        out.extend(chunks);
+        rest.sort();
+        out.extend(rest);
     }
     out
 }
