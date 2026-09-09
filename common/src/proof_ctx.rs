@@ -209,7 +209,7 @@ impl Default for ProofmanOptions {
             max_number_streams: 20,
             max_number_recursive_streams: 10,
             number_threads_pools_witness: 4,
-            max_witness_stored: 16,
+            max_witness_stored: 8,
             are_threads_per_witness_set: false,
             packed: false,
             gpu: false,
