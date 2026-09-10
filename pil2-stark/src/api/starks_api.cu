@@ -567,6 +567,11 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->pinned_copy_done[i][0], cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->pinned_copy_done[i][1], cudaEventDisableTiming));
+        // Both pinned halves start out free. cudaEventSynchronize on a never-recorded event is
+        // documented to return immediately, but record them once here so the first
+        // copy_to_device_in_chunks waits on an explicit "released" state, not on that default.
+        CHECKCUDAERR(cudaEventRecord(d_buffers->pinned_copy_done[i][0], 0));
+        CHECKCUDAERR(cudaEventRecord(d_buffers->pinned_copy_done[i][1], 0));
 
         // Verify we used exactly the amount we calculated 
         if (offset + unifiedBufferPadArea != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
