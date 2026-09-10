@@ -2,10 +2,12 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{exec_header, load_exec_file, AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
+use proofman_common::{
+    load_exec_file, AirInstance, BufferPool, GetWitnessTraceFunc, ProofCtx, ProofmanResult, SetupCtx, TraceInfo,
+};
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
-use proofman_starks_lib_c::{expand_gate_bands_c, get_committed_pols_c};
+use proofman_starks_lib_c::expand_gate_bands_c;
 
 use std::fs::File;
 use std::io::Read;
@@ -20,11 +22,6 @@ impl Compressor {
         Arc::new(Self {})
     }
 }
-
-type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64);
-
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
@@ -94,37 +91,32 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 init_circom_circuit(dat_filename_ptr)
             };
 
-            let size_witness = unsafe {
-                let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0").unwrap();
-                get_size_witness()
-            };
-
-            let witness_size = size_witness + exec_header(&exec_file_data).n_adds;
-
-            let witness: Vec<F> = vec![F::ZERO; witness_size as usize];
-
-            unsafe {
-                let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0").unwrap();
-                get_witness(proof.as_ptr() as *mut u64, circom_circuit, witness.as_ptr() as *mut c_void, 1);
-            }
-
             let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
             let trace = vec![F::ZERO; n_cols as usize * (1 << setup.stark_info.stark_struct.n_bits) as usize];
+            let n_rows: u64 = 1 << setup.stark_info.stark_struct.n_bits;
 
-            get_committed_pols_c(
-                witness.as_ptr() as *mut u8,
-                exec_file_data.as_mut_ptr(),
-                trace.as_ptr() as *mut u8,
-                publics.as_ptr() as *mut u8,
-                size_witness,
-                1 << (setup.stark_info.stark_struct.n_bits),
-                setup.stark_info.n_publics,
-                // Full width, NOT recursion_trace_stride: expand_gate_bands_c below runs on the
-                // host unconditionally and rebuilds the interiors in place, so it needs the real
-                // layout. This fixture hands the finished trace to the ordinary prove path, which
-                // never reaches gen_recursive_proof_gpu's compact reader.
-                n_cols,
-            );
+            let res = unsafe {
+                let get_witness_trace: Symbol<GetWitnessTraceFunc> = library.get(b"getWitnessTrace\0").unwrap();
+                let nmutex = std::cmp::min(8, rayon::current_num_threads()) as u64;
+                get_witness_trace(
+                    proof.as_ptr() as *mut u64,
+                    circom_circuit,
+                    exec_file_data.as_mut_ptr(),
+                    trace.as_ptr() as *mut c_void,
+                    publics.as_ptr() as *mut c_void,
+                    n_rows,
+                    setup.stark_info.n_publics,
+                    // Full width, NOT recursion_trace_stride: expand_gate_bands_c below runs on the
+                    // host unconditionally and rebuilds the interiors in place, so it needs the real
+                    // layout. This fixture hands the finished trace to the ordinary prove path, which
+                    // never reaches gen_recursive_proof_gpu's compact reader.
+                    n_cols,
+                    nmutex,
+                    std::ptr::null_mut(), // no signalValues pool here: self-allocate
+                )
+            };
+            // Otherwise a failed solve yields an all-zero trace and an opaque error later.
+            assert_eq!(res, 0, "getWitnessTrace failed for the compressor witness");
             // The hash gates map only their boundary; fill the rest from it. No-op on an exec
             // file without a band section.
             expand_gate_bands_c(

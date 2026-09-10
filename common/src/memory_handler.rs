@@ -14,28 +14,27 @@ use proofman_starks_lib_c::{register_host_memory_c, unregister_host_memory_c};
 /// wakes it immediately, so this bounds cancel responsiveness, not pickup latency.
 const MAX_POOL_WAIT_BACKOFF: Duration = Duration::from_millis(1);
 
-/// Wait charged to the buffer it was incurred for, keyed by that buffer's data pointer.
-///
-/// Keyed by buffer rather than by thread because the block can happen on any worker the witness
-/// components spin up, while the buffer it waited for always ends up in one known instance's trace.
+/// Pool waits keyed by buffer pointer, not by thread: the block can happen on any worker a witness
+/// component spawns, but the buffer always reaches one known instance.
 static PENDING_WAITS: LazyLock<Mutex<HashMap<usize, Duration>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn charge_wait_to_buffer<F>(buffer: &[F], waited: Duration) {
-    let key = buffer.as_ptr() as usize;
-    let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
-    *map.entry(key).or_insert(Duration::ZERO) += waited;
-}
-
-/// Drop a buffer's unread wait. Called on release so the ledger only ever holds in-flight
-/// buffers: an entry nobody reads back (a table instance, an untimed path) would otherwise
-/// accumulate for the life of the process.
+/// Called on release, so an entry nobody reads back cannot accumulate for the process's life.
 fn forget_buffer_wait<F>(buffer: &[F]) {
     let key = buffer.as_ptr() as usize;
     PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
 }
 
-/// How long the buffer now backing `ptr` waited to be acquired, clearing the entry. `ZERO` when it
-/// never blocked (or the pointer is not a pooled buffer).
+/// Carry a wait onto a buffer that outlives the one it was incurred for, so a span that took
+/// several pooled buffers reports their total.
+pub fn charge_buffer_wait(ptr: *const u8, waited: Duration) {
+    if waited.is_zero() {
+        return;
+    }
+    let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
+    *map.entry(ptr as usize).or_insert(Duration::ZERO) += waited;
+}
+
+/// How long this buffer waited to be acquired, clearing the entry. `ZERO` if it never blocked.
 pub fn take_buffer_wait(ptr: *const u8) -> Duration {
     let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
     map.remove(&(ptr as usize)).unwrap_or(Duration::ZERO)
@@ -127,7 +126,7 @@ fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
 /// Single fixed-size buffer pool over a bounded channel (internal to `MemoryHandlerRecursive`).
 /// `take()` waits on the channel with a backoff timeout so the abort path (`cancelled`) can wake it.
 struct Pool<F: PrimeField64 + Send + Sync + 'static> {
-    /// Names this pool in the wait diagnostics, so a blocked acquisition can be matched to it.
+    /// Names this pool in the wait diagnostics.
     name: &'static str,
     sender: Sender<Vec<F>>,
     receiver: Receiver<Vec<F>>,
@@ -142,8 +141,7 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
     /// Data pointers of the pool's OWN buffers — only these are re-pooled on release (a cancel-escape
     /// buffer is freed instead), so the pool stays at exactly N pinned buffers and `release` never blocks.
     original_ptrs: HashSet<usize>,
-    /// Time callers have spent blocked here, and how many acquisitions blocked. Without this the
-    /// wait is invisible: it is charged to whichever timer wraps the caller.
+    /// Blocked time and count. Unmeasured, it is charged to whichever timer wraps the caller.
     wait_ns: AtomicU64,
     wait_count: AtomicUsize,
     /// Buffers the last `reset` found missing. While non-zero a waiter gets a fresh buffer instead of
@@ -177,13 +175,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
     }
 
-    /// Total blocked time and how many acquisitions blocked.
     fn wait_stats(&self) -> (Duration, usize) {
         (Duration::from_nanos(self.wait_ns.load(Ordering::Relaxed)), self.wait_count.load(Ordering::Relaxed))
     }
 
-    /// Report total blocked time. The sum of the callers' reported waits must equal this; if it
-    /// falls short, some blocking is not reaching a span and the per-span numbers are understated.
+    /// The callers' reported waits must sum to this; short means blocking is not reaching a span.
     fn log_wait(&self) {
         let (waited, blocked) = self.wait_stats();
         if blocked > 0 {
@@ -197,12 +193,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
     }
 
-    /// Charge a blocked acquisition to this pool's total and to the buffer it was waiting for, so
-    /// the caller that ends up with that buffer can subtract the wait from its own span.
+    /// Charge to the pool total and to the buffer, so the caller holding it can subtract the wait.
     fn charge_wait<T>(&self, buffer: &[T], waited: Duration) {
         self.wait_ns.fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
         self.wait_count.fetch_add(1, Ordering::Relaxed);
-        charge_wait_to_buffer(buffer, waited);
+        charge_buffer_wait(buffer.as_ptr() as *const u8, waited);
     }
 
     fn take(&self) -> Vec<F> {
@@ -519,37 +514,44 @@ impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for MemoryHandler<F>
 /// two need. That is only cheap while the two sizes are close: every buffer pays the larger one, so
 /// at `n` buffers the merge costs `n` times the difference, not one buffer's worth.
 pub struct MemoryHandlerRecursive<F: PrimeField64 + Send + Sync + 'static> {
-    witness: Pool<F>,
     trace: Pool<F>,
+    signal_values: Option<SignalValuesPool>,
+    witness_threads: usize,
     cancelled: Arc<AtomicBool>,
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
-    /// Sizes are the largest any proof kind needs. Counts are the SUM of the two kinds, not the max:
-    /// a compressor and a recursive proof can be in flight together, and a pool one buffer short
-    /// parks whichever asks second until the other finishes.
-    pub fn new(
+    /// `buffer_size_trace` is the largest any proof kind needs, and `n_buffers` covers every
+    /// recursive kind including the compressor: they share one pool, so a compressor and a
+    /// recursive proof in flight together just take two of the same buffers.
+    pub fn new(n_buffers: usize, buffer_size_trace: usize) -> Self {
+        Self::new_with_signal_pool(n_buffers, buffer_size_trace, None, 8)
+    }
+
+    pub fn new_with_signal_pool(
         n_buffers: usize,
-        n_buffers_compressor: usize,
-        buffer_size_witness: usize,
         buffer_size_trace: usize,
+        signal_pool: Option<(usize, usize)>,
+        witness_threads: usize,
     ) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let n = n_buffers + n_buffers_compressor;
-        let witness = Pool::new("recursive-witness", n, buffer_size_witness, false, cancelled.clone());
+        // One pool for every recursive kind, the compressor included. Traces are H2D sources so it
+        // is pinned; signalValues is CPU-only scratch.
+        let n = n_buffers.max(1);
         let trace = Pool::new("recursive-trace", n, buffer_size_trace, true, cancelled.clone());
 
-        let total = witness.total_bytes() + trace.total_bytes();
-        // The breakdown, not just the sum: the total alone cannot tell a pool that is too WIDE from
-        // one that has too MANY, and those have completely different fixes.
         tracing::info!(
-            "MemoryHandlerRecursive::Total memory for recursive traces: {} = {n} x (witness {} + trace {})",
-            crate::format_bytes(total as f64),
-            crate::format_bytes((buffer_size_witness * std::mem::size_of::<F>()) as f64),
+            "MemoryHandlerRecursive::Total memory for recursive traces: {} = {n} x trace {}",
+            crate::format_bytes(trace.total_bytes() as f64),
             crate::format_bytes((buffer_size_trace * std::mem::size_of::<F>()) as f64),
         );
 
-        Self { witness, trace, cancelled }
+        let signal_values = signal_pool.map(|(cap, n)| SignalValuesPool::new(cap, n, cancelled.clone()));
+
+        let witness_threads = witness_threads.max(1);
+        tracing::info!("MemoryHandlerRecursive::circom solve threads per recursive witness: {}", witness_threads);
+
+        Self { trace, signal_values, witness_threads, cancelled }
     }
 
     /// Unblock any thread parked in a pooled `take()`. Called on the abort path so a failed proof
@@ -558,14 +560,32 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
-    /// Reset every pool and report the first failure — never `?` out early. A short witness pool
-    /// must not stop the compressor pools from being recovered, and above all must not skip clearing
+    pub fn witness_threads(&self) -> usize {
+        self.witness_threads
+    }
+
+    pub fn take_buffer_signal_values(&self, needed: usize) -> Vec<u64> {
+        match &self.signal_values {
+            Some(pool) => pool.take(needed),
+            None => Vec::new(),
+        }
+    }
+    pub fn release_buffer_signal_values(&self, buffer: Vec<u64>) {
+        if let Some(pool) = &self.signal_values {
+            if !buffer.is_empty() {
+                pool.release(buffer);
+            }
+        }
+    }
+
+    /// Reset both trace pools and report the first failure — never `?` out early. A short trace pool
+    /// must not stop the compressor pool from being recovered, and above all must not skip clearing
     /// `cancelled`: left set, it turns the next run's `take()` into an unbounded fresh allocator
     /// handing out unpinned buffers. Each pool's own reset is non-destructive, so continuing past a
     /// failure cannot lose anything.
     pub fn reset(&self) -> ProofmanResult<()> {
-        let results = [("witness", self.witness.reset()), ("trace", self.trace.reset())];
-        // Re-arm AFTER every pool reset: the pools share this flag and each Pool::reset reads it
+        let results = [("trace", self.trace.reset())];
+        // Re-arm AFTER both pool resets: the pools share this flag and each Pool::reset reads it
         // (cancelled-aware outcome), so clearing earlier would re-enable the hard checks mid-teardown.
         self.cancelled.store(false, Ordering::SeqCst);
 
@@ -582,17 +602,12 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         }
     }
 
-    /// Same as [`MemoryHandler::log_wait_summary`], across all four recursive pools.
+    /// Same as [`MemoryHandler::log_wait_summary`], across the recursive pools.
     pub fn log_wait_summary(&self) {
-        self.witness.log_wait();
         self.trace.log_wait();
-    }
-
-    pub fn take_buffer_witness(&self) -> Vec<F> {
-        self.witness.take()
-    }
-    pub fn release_buffer_witness(&self, buffer: Vec<F>) -> ProofmanResult<()> {
-        self.witness.release(buffer)
+        if let Some(pool) = &self.signal_values {
+            pool.log_wait();
+        }
     }
 
     pub fn take_buffer_trace(&self) -> Vec<F> {
@@ -608,23 +623,23 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         BufferLease { handler: self, buffer: Some(self.trace.take()), pool: RecursivePool::Trace }
     }
 
-    /// Adopt an already-taken witness buffer (a `Proof`'s `circom_witness`) into a release-on-drop
-    /// lease so it returns to its pool on every exit path instead of leaking on cancel/error. `adopt`,
-    /// not `take`: the buffer already left the pool. `compressor` selects the compressor witness pool.
-    pub fn adopt_witness(&self, buffer: Vec<F>) -> BufferLease<'_, F> {
-        BufferLease { handler: self, buffer: Some(buffer), pool: RecursivePool::Witness }
+    /// Adopt an already-taken trace buffer (a `Proof`'s `trace`, taken from the pool when its witness
+    /// was generated) into a release-on-drop lease so it returns to its pool on every exit path
+    /// instead of leaking on cancel/error. `adopt`, not `take`: the buffer already left the pool.
+    /// `compressor` selects the compressor trace pool.
+    pub fn adopt_trace(&self, buffer: Vec<F>) -> BufferLease<'_, F> {
+        BufferLease { handler: self, buffer: Some(buffer), pool: RecursivePool::Trace }
     }
 }
 
-/// Which recursive pool a [`BufferLease`] returns its buffer to on drop.
+/// Which of the two recursive trace pools a [`BufferLease`] returns its buffer to on drop.
 #[derive(Clone, Copy)]
 enum RecursivePool {
-    Witness,
     Trace,
 }
 
 /// A recursive-proof buffer that returns itself to its pool when dropped (success, early `?`, or
-/// panic) so it can't leak and shrink the pool. Obtain via `take_trace_lease` or `adopt_witness`;
+/// panic) so it can't leak and shrink the pool. Obtain via `take_trace_lease` or `adopt_trace`;
 /// derefs to `Vec<F>`. On GPU a trace is an async H2D source, so the caller must gate reuse on the
 /// stream's commit event *before* the lease drops at scope exit.
 pub struct BufferLease<'a, F: PrimeField64 + Send + Sync + 'static> {
@@ -652,9 +667,108 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for BufferLease<'_, F> {
             // Return the buffer to its pool. A destructor can't propagate a Result, but release can't
             // fail here (size matches, and the send never blocks — see Pool::release), so it's fine.
             let _ = match self.pool {
-                RecursivePool::Witness => self.handler.release_buffer_witness(buffer),
                 RecursivePool::Trace => self.handler.release_buffer_trace(buffer),
             };
+        }
+    }
+}
+
+/// Pool of reusable `signalValues` (u64) buffers handed into getWitnessTrace so
+/// Circom_CalcWit reuses them instead of allocating tens-to-hundreds of MB per
+/// proof. Buffers are NOT zeroed on reuse: the circom solve is write-before-read
+/// (only signalValues[0]=1, reset inside the ctor), validated end-to-end.
+///
+/// One size for every buffer, over a bounded channel (its depth caps concurrency;
+/// `recv` blocks when empty). `cap` covers the largest circuit, so no proof allocates its own; the
+/// oversize path below exists only for a circuit registered after the pool was sized.
+///
+/// Every blocking wait is cancel-aware, like the trace `Pool`.
+pub struct SignalValuesPool {
+    tx: Sender<Vec<u64>>,
+    rx: Receiver<Vec<u64>>,
+    cap: usize,
+    /// Shared with the owning `MemoryHandlerRecursive` and its trace pools.
+    cancelled: Arc<AtomicBool>,
+    /// It replaced the witness pools, which did block, so leaving it unmeasured moves the blind spot.
+    wait_ns: AtomicU64,
+    wait_count: AtomicUsize,
+}
+
+impl SignalValuesPool {
+    /// `cap` is in u64 elements (= getTotalSignalNo()).
+    pub fn new(cap: usize, n: usize, cancelled: Arc<AtomicBool>) -> Self {
+        let n = n.max(1);
+        let (tx, rx) = bounded(n);
+        for _ in 0..n {
+            tx.send(vec![0u64; cap]).unwrap();
+        }
+        tracing::info!(
+            "SignalValuesPool: {n} x {} = {}",
+            crate::format_bytes((cap * 8) as f64),
+            crate::format_bytes((cap * n * 8) as f64),
+        );
+        Self { tx, rx, cap, cancelled, wait_ns: AtomicU64::new(0), wait_count: AtomicUsize::new(0) }
+    }
+
+    /// Blocking receive that yields to `cancelled`, mirroring `Pool::take`: on the abort
+    /// path it hands back a fresh buffer instead of parking on one nobody will return.
+    fn recv_cancellable(&self) -> Vec<u64> {
+        if let Ok(buffer) = self.rx.try_recv() {
+            return buffer;
+        }
+        let start = Instant::now();
+        let buffer = loop {
+            match self.rx.recv_timeout(Duration::from_micros(100)) {
+                Ok(buffer) => break buffer,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if self.cancelled.load(Ordering::SeqCst) {
+                        break vec![0u64; self.cap];
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    panic!("SignalValuesPool channel closed");
+                }
+            }
+        };
+        self.wait_ns.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.wait_count.fetch_add(1, Ordering::Relaxed);
+        buffer
+    }
+
+    /// Blocked time here, reported like the trace pools'.
+    pub fn log_wait(&self) {
+        let blocked = self.wait_count.load(Ordering::Relaxed);
+        if blocked > 0 {
+            tracing::debug!(
+                "Pool 'signal-values': {} acquisitions blocked, {:.3}s total",
+                blocked,
+                Duration::from_nanos(self.wait_ns.load(Ordering::Relaxed)).as_secs_f64()
+            );
+        }
+    }
+
+    /// Empty when `needed` exceeds `cap`, which the caller turns into a null pointer so the C++
+    /// solve allocates its own. `cap` is the largest circuit of the key, so this only fires for a
+    /// recurser registered after the pool was sized.
+    pub fn take(&self, needed: usize) -> Vec<u64> {
+        if needed > self.cap {
+            tracing::debug!(
+                "SignalValuesPool: request of {} elements exceeds the pooled buffer ({}); \
+                 falling back to a self-allocated signalValues buffer",
+                needed,
+                self.cap
+            );
+            return Vec::new();
+        }
+        self.recv_cancellable()
+    }
+
+    /// Pool only full-size buffers. The caller releases unconditionally, so this also gets the
+    /// empty Vec that stood in for a self-allocating circuit; neither it nor the fresh buffers
+    /// `take` mints on the abort path came from a slot, so dropping them keeps the count right.
+    pub fn release(&self, buffer: Vec<u64>) {
+        if buffer.len() >= self.cap {
+            let _ = self.tx.try_send(buffer);
         }
     }
 }
@@ -668,24 +782,20 @@ mod tests {
     // so they pass on both backends (CPU register is a no-op; GPU pinning is transparent to accounting).
     type F = Goldilocks;
 
-    fn handler(n: usize, n_comp: usize, size: usize, size_trace: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(n, n_comp, size, size_trace)
+    fn handler(n: usize, size: usize) -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new(n, size)
     }
 
     #[test]
     fn clean_round_trip_then_reset_succeeds() {
-        let h = handler(2, 1, 8, 4);
-        // Take every buffer out of each pool, then release them all back.
-        // Both pools hold n + n_comp: one per proof that can be in flight, whichever kind it is.
-        // Taking all three of each proves the compressor's share is really there.
-        let w: Vec<_> = (0..3).map(|_| h.take_buffer_witness()).collect();
-        let t: Vec<_> = (0..3).map(|_| h.take_buffer_trace()).collect();
-        for b in w {
-            h.release_buffer_witness(b).unwrap();
-        }
-        for b in t {
-            h.release_buffer_trace(b).unwrap();
-        }
+        let h = handler(3, 8);
+        // One pool holding n + n_comp: take all three out, then release them all back.
+        let t0 = h.take_buffer_trace();
+        let t1 = h.take_buffer_trace();
+        let t2 = h.take_buffer_trace();
+        h.release_buffer_trace(t0).unwrap();
+        h.release_buffer_trace(t1).unwrap();
+        h.release_buffer_trace(t2).unwrap();
         // This is the gap-2 invariant: a clean round trip leaves full pools, so the
         // reset wired into ProofMan::reset() passes.
         h.reset().unwrap();
@@ -695,32 +805,32 @@ mod tests {
 
     #[test]
     fn reset_detects_a_leaked_buffer() {
-        let h = handler(2, 0, 8, 0);
+        let h = handler(2, 8);
         // Simulate a leak: a worker took a buffer and never released it (e.g. an early `?` on a
         // non-cancelled path). reset() must surface the short pool rather than paper over it.
-        let _leaked = h.take_buffer_witness();
+        let _leaked = h.take_buffer_trace();
         assert!(h.reset().is_err());
     }
 
     #[test]
     fn a_short_pool_hands_out_unpooled_buffers_instead_of_parking() {
-        let h = handler(1, 0, 8, 0);
-        std::mem::forget(h.take_buffer_witness()); // stranded: never released, address never reused
+        let h = handler(1, 8);
+        std::mem::forget(h.take_buffer_trace()); // stranded: never released, address never reused
         assert!(h.reset().is_err(), "the loss is reported");
         // Nothing is left to release, so without the recorded deficit this would park forever.
-        let fresh = h.take_buffer_witness();
+        let fresh = h.take_buffer_trace();
         assert_eq!(fresh.len(), 8);
-        h.release_buffer_witness(fresh).unwrap(); // unpooled: dropped, never pooled
-                                                  // A clean reset (the escapee's slot still missing) keeps reporting it.
+        h.release_buffer_trace(fresh).unwrap(); // unpooled: dropped, never pooled
+                                                // A clean reset (the escapee's slot still missing) keeps reporting it.
         assert!(h.reset().is_err());
     }
 
     #[test]
     fn release_rejects_wrong_size_buffer() {
-        let h = handler(1, 0, 8, 0);
-        let _good = h.take_buffer_witness();
+        let h = handler(1, 8);
+        let _good = h.take_buffer_trace();
         // Release a buffer of the wrong length; the size check rejects it.
-        assert!(h.release_buffer_witness(vec![F::ZERO; 7]).is_err());
+        assert!(h.release_buffer_trace(vec![F::ZERO; 7]).is_err());
     }
 
     #[test]
@@ -728,49 +838,46 @@ mod tests {
         // reset() reports a short pool, but must not DESTROY what came back: dropping the drained
         // buffers would turn "short by one" into "empty", and would free pages that
         // `registered_buffers` still points at, so Pool::drop would unregister freed memory.
-        let h = handler(3, 0, 8, 0);
-        let leaked = h.take_buffer_witness(); // never released
+        let h = handler(3, 8);
+        let leaked = h.take_buffer_trace(); // never released
         assert!(h.reset().is_err(), "a missing buffer must still be reported");
 
         // The other two are still pooled and usable, and a third take does not block.
-        let a = h.take_buffer_witness();
-        let b = h.take_buffer_witness();
+        let a = h.take_buffer_trace();
+        let b = h.take_buffer_trace();
         assert_eq!((a.len(), b.len()), (8, 8));
-        h.release_buffer_witness(a).unwrap();
-        h.release_buffer_witness(b).unwrap();
+        h.release_buffer_trace(a).unwrap();
+        h.release_buffer_trace(b).unwrap();
         // Returning the escapee makes the pool whole again — impossible if reset() had dropped the rest.
-        h.release_buffer_witness(leaked).unwrap();
+        h.release_buffer_trace(leaked).unwrap();
         h.reset().expect("pool is whole once the escapee comes back");
     }
 
     #[test]
-    fn reset_covers_every_pool_even_when_an_earlier_one_fails() {
-        // The trace pool must be recovered (and `cancelled` cleared) even when the witness pool is
-        // short — an early `?` used to skip both.
-        let h = handler(1, 0, 8, 4);
-        let leaked = h.take_buffer_witness();
-
-        assert!(h.reset().is_err(), "the short witness pool is reported");
-        // Trace pool was still visited and is whole: taking from it must not block.
-        let t = h.take_buffer_trace();
-        assert_eq!(t.len(), 4);
-        h.release_buffer_trace(t).unwrap();
-        h.release_buffer_witness(leaked).unwrap();
-        h.reset().expect("all pools whole");
+    fn the_pool_holds_both_kinds_counts_summed() {
+        // Counts are the SUM, not the max: a compressor and a recursive proof can be in flight
+        // together, and a pool one buffer short parks whichever asks second until the other finishes.
+        let h = handler(2, 8);
+        let a = h.take_buffer_trace();
+        let b = h.take_buffer_trace();
+        assert_eq!((a.len(), b.len()), (8, 8));
+        h.release_buffer_trace(a).unwrap();
+        h.release_buffer_trace(b).unwrap();
+        h.reset().expect("pool whole");
     }
 
     #[test]
     fn a_failed_reset_still_clears_the_cancelled_flag() {
         // Left set, `cancelled` makes take() an unbounded fresh allocator handing out unpinned
         // buffers. That must not survive a reset that reported an error.
-        let h = handler(1, 1, 8, 4);
+        let h = handler(2, 8);
         h.cancel();
-        let escapee = h.take_buffer_witness(); // the pool's only buffer
+        let escapee = h.take_buffer_trace(); // the pool's only buffer
         let _ = h.reset(); // cancelled path: warns rather than errors
-        h.release_buffer_witness(escapee).unwrap();
+        h.release_buffer_trace(escapee).unwrap();
         // Flag cleared, so the pool is authoritative again: it holds its one original buffer.
-        let original = h.take_buffer_witness();
-        h.release_buffer_witness(original).unwrap();
+        let original = h.take_buffer_trace();
+        h.release_buffer_trace(original).unwrap();
         h.reset().expect("pool whole and no longer in cancelled mode");
     }
 
@@ -780,40 +887,114 @@ mod tests {
         // cancelled `take()` is unregistered, so pooling it would put an unpinned buffer in a pinned
         // pool — and would also push the channel past capacity. It must be dropped instead, while
         // the originals still come back.
-        let h = handler(1, 0, 8, 0);
-        let original = h.take_buffer_witness();
+        let h = handler(1, 8);
+        let original = h.take_buffer_trace();
         h.cancel();
-        let fresh = h.take_buffer_witness();
+        let fresh = h.take_buffer_trace();
         // Release both, fresh first, so a mistakenly-pooled fresh buffer would occupy the one slot.
-        h.release_buffer_witness(fresh).unwrap();
-        h.release_buffer_witness(original).unwrap();
+        h.release_buffer_trace(fresh).unwrap();
+        h.release_buffer_trace(original).unwrap();
         h.reset().unwrap();
         // The pool is whole again and hands out its own buffer, not the escapee.
-        assert_eq!(h.take_buffer_witness().len(), 8);
+        assert_eq!(h.take_buffer_trace().len(), 8);
     }
 
     #[test]
-    fn adopt_witness_returns_the_buffer_to_the_right_pool() {
-        // Teardown recovery relies on this: an adopted witness goes back to the WITNESS pool, not
-        // the trace one, or reset() finds one short and the other over.
-        let h = handler(1, 1, 8, 4);
-        let a = h.take_buffer_witness();
-        let b = h.take_buffer_witness();
-        drop(h.adopt_witness(a));
-        drop(h.adopt_witness(b));
-        h.reset().expect("witness pool whole after adopt-then-drop");
+    fn adopt_trace_returns_the_buffer_on_drop() {
+        // Teardown recovery relies on this: an adopted buffer must come back when the lease drops,
+        // or the pool silently shrinks on every cancelled proof.
+        let h = handler(2, 8);
+        let a = h.take_buffer_trace();
+        let b = h.take_buffer_trace();
+        drop(h.adopt_trace(a));
+        drop(h.adopt_trace(b));
+        h.reset().expect("pool whole after adopt-then-drop");
     }
 
     #[test]
     fn cancel_unblocks_take_and_skips_reset_checks() {
-        let h = handler(1, 0, 8, 0);
+        let h = handler(1, 8);
         // Empty the pool, then cancel. A subsequent take must return a fresh buffer
         // instead of blocking forever, and reset must not flag the (now short) pool.
-        let _taken = h.take_buffer_witness();
+        let _taken = h.take_buffer_trace();
         h.cancel();
-        let fresh = h.take_buffer_witness(); // would hang pre-cancel on an empty pool
+        let fresh = h.take_buffer_trace(); // would hang pre-cancel on an empty pool
         assert_eq!(fresh.len(), 8);
         h.reset().unwrap(); // cancelled path skips integrity checks
+    }
+
+    // ---- signalValues pool ----
+
+    fn signal_handler(cap: usize, n: usize) -> MemoryHandlerRecursive<F> {
+        MemoryHandlerRecursive::new_with_signal_pool(1, 8, Some((cap, n)), 4)
+    }
+
+    #[test]
+    fn signal_pool_hands_out_one_size() {
+        let h = signal_handler(64, 2);
+        // Every buffer is `cap`, however little the caller asked for.
+        let light = h.take_buffer_signal_values(16);
+        assert_eq!(light.len(), 64);
+        let heavy = h.take_buffer_signal_values(64);
+        assert_eq!(heavy.len(), 64);
+        h.release_buffer_signal_values(light);
+        h.release_buffer_signal_values(heavy);
+        // Round-trip is repeatable: both went back into the one channel.
+        assert_eq!(h.take_buffer_signal_values(64).len(), 64);
+    }
+
+    #[test]
+    fn signal_pool_request_larger_than_pool_yields_empty_buffer() {
+        let h = signal_handler(64, 2);
+        // The circuit the sizing left out (or a late-registered recurser): must not be handed
+        // the too-short pooled buffer. Empty => null => C++ self-allocates.
+        assert!(h.take_buffer_signal_values(65).is_empty());
+        assert_eq!(h.take_buffer_signal_values(64).len(), 64);
+    }
+
+    #[test]
+    fn signal_pool_absent_yields_empty_buffer() {
+        // No pool configured => empty Vec (the null sentinel); releasing it is a no-op.
+        let h = handler(1, 8);
+        let buf = h.take_buffer_signal_values(1024);
+        assert!(buf.is_empty());
+        h.release_buffer_signal_values(buf);
+    }
+
+    #[test]
+    fn signal_pool_never_pools_the_self_allocating_stand_in() {
+        // The caller releases unconditionally, so the empty Vec that stood in for an oversized
+        // circuit comes back here. Pooling it would hand the next solve a zero-length buffer.
+        let h = signal_handler(64, 1);
+        let stand_in = h.take_buffer_signal_values(65);
+        assert!(stand_in.is_empty());
+        h.release_buffer_signal_values(stand_in);
+        assert_eq!(h.take_buffer_signal_values(64).len(), 64, "the empty stand-in reached the solve");
+    }
+
+    #[test]
+    fn signal_pool_take_never_returns_a_short_buffer_after_an_abort() {
+        // With the pool drained, `cancel` makes take() mint a fresh buffer, so live buffers
+        // outnumber the channel and one release is dropped. A later request must still get a
+        // buffer it can safely write `needed` elements into.
+        let h = signal_handler(64, 1);
+        let held = h.take_buffer_signal_values(64);
+        h.cancel();
+        let fresh = h.take_buffer_signal_values(16);
+        h.release_buffer_signal_values(held);
+        h.release_buffer_signal_values(fresh);
+        h.reset().unwrap(); // re-arms `cancelled`, as the distributed worker does
+        assert!(h.take_buffer_signal_values(64).len() >= 64, "handed the solve a short buffer");
+    }
+
+    #[test]
+    fn signal_pool_cancel_unblocks_take() {
+        let h = signal_handler(64, 1);
+        // Drain the pool, then cancel: a further take must return a fresh full-size buffer
+        // rather than parking forever.
+        let _held = h.take_buffer_signal_values(64);
+        h.cancel();
+        assert_eq!(h.take_buffer_signal_values(16).len(), 64);
     }
 
     /// A blocked acquisition must be attributed to the pool, not left inside whichever timer wraps

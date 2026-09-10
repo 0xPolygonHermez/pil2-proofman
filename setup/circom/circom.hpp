@@ -33,6 +33,16 @@ struct IOFieldDefPair {
     IOFieldDef* defs;
 };
 
+// Top bit marks an adds_ext reference; the rest is the index.
+#define SIGNAL_MAP_ADD_FLAG 0x80000000u
+
+// The exec map with witness2SignalList applied, so a trace cell costs one random load instead
+// of two. Dense, mapRows*mapCols, row-major; 0 means empty. Built by prepareSignalMap.
+struct SignalMap {
+  u32* sig = NULL;
+  bool ok = false;
+};
+
 struct Circom_Circuit {
   //  const char *P;
   HashSignalInfo* InputHashMap;
@@ -40,6 +50,7 @@ struct Circom_Circuit {
   //u64* circuitConstants;  
   std::map<u32,IOFieldDefPair> templateInsId2IOSignalInfo;
   IOFieldDefPair* busInsId2FieldInfo;
+  SignalMap signal_map;
 };
 
 struct Circom_Component {
