@@ -2524,7 +2524,7 @@ where
     /// witness library can produce them, so this is a no-op until one is registered.
     pub fn ensure_custom_commits_fixed(&self) -> ProofmanResult<()> {
         let pending = self.pctx.custom_commits_pending();
-        if pending.is_empty() || !self.wcm.has_components() {
+        if pending.is_empty() || !self.wcm.has_witness_lib_components() {
             return Ok(());
         }
         tracing::info!("Generating custom commits fixed: {}", pending.join(", "));
