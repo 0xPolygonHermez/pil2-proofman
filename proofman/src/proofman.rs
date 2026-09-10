@@ -19,7 +19,7 @@ use proofman_starks_lib_c::{
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
-use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
+use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -28,6 +28,80 @@ use std::sync::{LazyLock, Mutex, RwLock};
 
 /// Releases an admission slot on drop. A witness thread that panics would otherwise leak one, and a
 /// leaked slot permanently blocks its air once the cap is reached — the admission loop then spins.
+/// Cancellation re-check interval. Was 1ms: a dispatcher spinning a core while the pool drained.
+const TOKEN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Ceiling on the shared recursive trace pool (compressor included). Each buffer is the largest
+/// recursive trace -- 216 MB on the blake3 zisk key -- and pinned, so depth is expensive; it only
+/// needs to keep the streams fed while the next witnesses are solved.
+const MAX_RECURSIVE_TRACE_BUFFERS: usize = 10;
+
+/// Counting semaphore for the CPU thread budget. Acquisition is all-or-nothing: taking tokens one
+/// at a time deadlocks two concurrent acquirers, each holding a partial set and waiting for more.
+struct ThreadBudget {
+    available: Mutex<usize>,
+    ready: std::sync::Condvar,
+    capacity: usize,
+}
+
+impl ThreadBudget {
+    fn new(capacity: usize) -> Self {
+        Self { available: Mutex::new(capacity), ready: std::sync::Condvar::new(), capacity }
+    }
+
+    /// Reserve `n`, or fewer if cancelled. Clamped: a request over capacity would wait forever.
+    fn acquire(self: &Arc<Self>, n: usize, cancellation: &RwLock<CancellationInfo>) -> ThreadTokens {
+        let want = n.min(self.capacity);
+        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
+        while *available < want {
+            if cancellation.read_recover().token.is_cancelled() {
+                return ThreadTokens { budget: self.clone(), held: 0 };
+            }
+            let (guard, _) = self.ready.wait_timeout(available, TOKEN_POLL_INTERVAL).unwrap_or_else(|e| e.into_inner());
+            available = guard;
+        }
+        *available -= want;
+        ThreadTokens { budget: self.clone(), held: want }
+    }
+
+    fn give_back(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
+        *available = (*available + n).min(self.capacity);
+        self.ready.notify_all();
+    }
+
+    /// Restore the full budget after a cancelled run leaked reservations.
+    fn reset(&self) {
+        *self.available.lock().unwrap_or_else(|e| e.into_inner()) = self.capacity;
+        self.ready.notify_all();
+    }
+}
+
+/// Tokens returned on drop, so a panic or an early return cannot shrink the budget.
+struct ThreadTokens {
+    budget: Arc<ThreadBudget>,
+    held: usize,
+}
+
+impl ThreadTokens {
+    /// Hand back up to `n` now; the remainder goes back on drop.
+    fn release(&mut self, n: usize) {
+        let n = n.min(self.held);
+        self.held -= n;
+        self.budget.give_back(n);
+    }
+}
+
+impl Drop for ThreadTokens {
+    fn drop(&mut self) {
+        self.budget.give_back(self.held);
+        self.held = 0;
+    }
+}
+
 struct SlotGuard {
     in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>>,
     key: (usize, usize),
@@ -520,8 +594,7 @@ pub struct ProofMan<F: PrimeField64> {
     const_scratch: SharedScratch<F>,
     max_num_threads: usize,
     num_threads_per_witness: usize,
-    tx_threads: Sender<()>,
-    rx_threads: Receiver<()>,
+    thread_budget: Arc<ThreadBudget>,
     witness_tx: Sender<usize>,
     witness_rx: Receiver<usize>,
     witness_tx_priority: Sender<usize>,
@@ -689,20 +762,19 @@ impl<F: PrimeField64> ProofMan<F> {
         }
 
         // Drain all relevant channels to ensure they are empty
-        while self.rx_threads.try_recv().is_ok() {}
         while self.witness_rx.try_recv().is_ok() {}
         while self.witness_rx_priority.try_recv().is_ok() {}
         while self.contributions_rx.try_recv().is_ok() {}
         while self.proofs_rx.try_recv().is_ok() {}
 
-        // The three witness channels carry `Proof`s whose `circom_witness` came out of the recursive
+        // The three witness channels carry `Proof`s whose `trace` came out of the recursive
         // witness pools, so they must be drained by RETURNING those buffers, not by dropping them.
         // A cancel leaves undelivered witnesses here, and dropping them shrinks the pools for the
         // rest of the process — the compressor pool first, since it is the smallest — which then
         // trips (or silently under-fills) the pool-integrity check in `reset()` below.
         for rx in [&self.compressor_witness_rx, &self.rec1_witness_rx, &self.rec2_witness_rx] {
             while let Ok(mut w) = rx.try_recv() {
-                drop(self.memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
+                drop(self.memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut w.trace)));
             }
         }
 
@@ -713,9 +785,7 @@ impl<F: PrimeField64> ProofMan<F> {
             inner_vec.clear();
         }
 
-        for _ in 0..self.max_num_threads {
-            self.tx_threads.send(()).ok();
-        }
+        self.thread_budget.reset();
 
         self.total_outer_agg_proofs.reset();
 
@@ -2349,13 +2419,18 @@ where
         // witness — only > 1 when --packed enables parallel witness generation.
         let max_witness_stored = if options.packed { n_gpus as usize * options.max_witness_stored } else { 1 };
 
-        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs. Recursive work is
-        // lighter than basic, so it is provisioned smaller (half basic depth / 1 compressor per GPU).
-        let (max_witness_stored_recursive, max_witness_stored_recursive_compressor) = if options.gpu {
-            let n_gpus = n_gpus as usize;
-            (((n_gpus * options.max_witness_stored) / 2).max(1), n_gpus * 2)
+        // Recursive pool: trace buffers for in-flight recursive proofs. With solve+scatter
+        // fused, one buffer covers a proof's whole witness→prove span (no separate witness
+        // pool), so queued and proving work share this depth — see `generate_witness`.
+        // Recursive trace buffers, compressor included -- they share one pool, so one count. The
+        // depth only has to keep the streams fed while the next witnesses are solved, and the old
+        // formula (max_witness_stored/2 per GPU, plus 2 per GPU for compressors) put 18 pinned
+        // 216 MB buffers behind 2 streams on one GPU. Capped instead.
+        let max_witness_stored_recursive = if options.gpu {
+            ((n_gpus as usize * options.max_witness_stored) / 2 + n_gpus as usize * 2)
+                .clamp(1, MAX_RECURSIVE_TRACE_BUFFERS)
         } else {
-            (1, 1)
+            2
         };
 
         let (max_witness_trace_size, max_witness_trace_size_packed) =
@@ -2373,11 +2448,37 @@ where
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
-        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
+        // signalValues pool: one size for every buffer, one per concurrent recursive witness
+        // (at most `n_streams`, one per worker). The single biggest circuit does not fit and
+        // self-allocates -- see `signal_pool_cap`. Reuse needs no zeroing (write-before-read).
+        let signal_pool = {
+            let cap = setups_vadcop.signal_pool_cap();
+            if cap == 0 {
+                None
+            } else {
+                Some((cap, n_streams.max(1)))
+            }
+        };
+        // Threads per recursive witness: 8, regardless of how many streams run concurrently.
+        //
+        // Capped at 8. Lifting it DOES speed the witness up -- it also drives the scatter, which is
+        // row-parallel and memory-latency bound (~20 ns/cell, two dependent loads) -- but it makes
+        // the pipeline slower, because the extra threads deschedule the ones driving the GPU.
+        // Measured on 1x RTX 5090, 24 cores, 2 streams (PIL2_CIRCOM_TIMERS, 482 warm calls):
+        //   threads   witness total   wall clock/proof
+        //         8        48.13 ms         52.5 s
+        //        12        41.00 ms         54.3 s
+        //        24        35.45 ms         55.4 s
+        // The GPU is the constraint here (99% utilisation), so witness time is not on the critical
+        // path and buying it with cores is a net loss. Re-measure wall clock, not just the phase
+        // timers, before raising this.
+        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
+        let recursive_witness_threads = max_num_threads.clamp(1, 8);
+        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
-            max_witness_stored_recursive_compressor,
-            setups_vadcop.max_witness_size,
             setups_vadcop.max_compact_trace_size,
+            signal_pool,
+            recursive_witness_threads,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -2403,8 +2504,6 @@ where
                 Arc::new(vec![F::ZERO; sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size)]),
             )
         };
-
-        let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
@@ -2438,12 +2537,7 @@ where
 
         let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..MAX_INSTANCES).map(|_| [F::default(); 4]).collect());
 
-        // define managment channels and counters
-        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
-
-        for _ in 0..max_num_threads {
-            tx_threads.send(()).unwrap();
-        }
+        let thread_budget = Arc::new(ThreadBudget::new(max_num_threads));
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
@@ -2483,8 +2577,7 @@ where
             const_tree,
             roots_contributions,
             values_contributions,
-            tx_threads,
-            rx_threads,
+            thread_budget,
             witness_tx,
             witness_rx,
             witness_tx_priority,
@@ -3037,7 +3130,7 @@ where
 
         // Recover whatever is still queued when the phase ends. Runs after `_recursives_guard` has
         // joined every producer and consumer — draining earlier would race a worker that pushes right
-        // after — and the queued witnesses hold pooled `circom_witness` buffers, so dropping the
+        // after — and the queued witnesses hold pooled `trace` buffers, so dropping the
         // scheduler with work in it shrinks the recursive witness pools (the compressor pool first:
         // it is the smallest) and the next `reset()` finds them short. Settling their ledger units
         // keeps the epoch's accounting truthful for the release diagnostic.
@@ -3297,11 +3390,14 @@ where
                             };
                             match sent {
                                 Ok(()) => child.commit(),
-                                Err(crossbeam_channel::SendError(returned)) => {
+                                Err(crossbeam_channel::SendError(mut returned)) => {
                                     // Witness channels live on `self`, so a failed send means the
                                     // pipeline is torn down mid-run. Return the witness buffer to its
                                     // pool (else it leaks in the SendError), and surface it.
-                                    drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
+                                    drop(
+                                        memory_handler_recursive_witness
+                                            .adopt_trace(std::mem::take(&mut returned.trace)),
+                                    );
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
@@ -3657,7 +3753,7 @@ where
                             proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
                         }
                         // The pick above may already have handed us a witness. Dropping it here would
-                        // lose its pooled `circom_witness` for the rest of the process — the teardown
+                        // lose its pooled `trace` for the rest of the process — the teardown
                         // drain can't recover it, since it is no longer in the scheduler's queues.
                         // Same recovery as that drain: pool the buffer, settle the unit armed at hand-off.
                         if let Some(w) = gpu_witness.take() {
@@ -3714,10 +3810,7 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which normally returns the witness buffer to its
                             // pool) is not reached on this error path, so return it here — adopt-then-drop.
-                            drop(
-                                memory_handler_recursive_witness
-                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
-                            );
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
@@ -3905,7 +3998,7 @@ where
         self.check_cancel(true)?;
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
-        // The per-instance witness timers include any wait for a buffer; report it separately.
+        // Anchors the per-span waits: they must sum to these totals.
         self.memory_handler.log_wait_summary();
         self.memory_handler_recursive_witness.log_wait_summary();
 
@@ -4497,9 +4590,7 @@ where
                     Err(e) => {
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
                         // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
-                        drop(
-                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
-                        );
+                        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
@@ -4694,9 +4785,7 @@ where
                 while let Ok(mut witness) = rec2_witness_rx_clone.recv() {
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Return the received witness buffer to its pool before bailing.
-                        drop(
-                            memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut witness.circom_witness)),
-                        );
+                        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                         break;
                     }
                     let id = {
@@ -4713,10 +4802,7 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which returns the buffer to its pool) is not
                             // reached here; return it so the recursive-witness pool doesn't shrink.
-                            drop(
-                                memory_handler_recursive_witness
-                                    .adopt_witness(std::mem::take(&mut witness.circom_witness)),
-                            );
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
@@ -4796,11 +4882,11 @@ where
                                 break;
                             }
                         };
-                        if let Err(crossbeam_channel::SendError(returned)) = rec2_witness_tx_clone.send(witness) {
+                        if let Err(crossbeam_channel::SendError(mut returned)) = rec2_witness_tx_clone.send(witness) {
                             // Every rec2 worker has exited, so the pipeline is torn down mid-run.
                             // Return the witness buffer to its pool (else it leaks inside the
                             // SendError and the pool comes back short) before surfacing the failure.
-                            drop(memory_handler_recursive_witness.adopt_witness(returned.circom_witness));
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut returned.trace)));
                             cancellation_info_clone.write_recover().cancel(None);
                             break;
                         }
@@ -4883,8 +4969,7 @@ where
         stats: bool,
     ) -> (Arc<Mutex<Option<std::thread::JoinHandle<()>>>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
         let witness_done_clone = witness_done.clone();
-        let tx_threads_clone = self.tx_threads.clone();
-        let rx_threads_clone = self.rx_threads.clone();
+        let thread_budget_clone = self.thread_budget.clone();
         let pctx_clone = self.pctx.clone();
         let wcm_clone = self.wcm.clone();
         let memory_handler_clone = memory_handler.clone();
@@ -4990,22 +5075,11 @@ where
                     *in_flight.lock().unwrap().entry((airgroup_id, air_id)).or_insert(0) += 1;
                     let slot = SlotGuard { in_flight: in_flight.clone(), key: (airgroup_id, air_id) };
 
-                    let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
                     let wcm = wcm_clone.clone();
                     let memory_handler_clone = memory_handler_clone.clone();
 
                     let witness_done_clone = witness_done_clone.clone();
-                    for _ in 0..n_threads_witness {
-                        loop {
-                            if cancellation_info_clone.read_recover().token.is_cancelled() {
-                                break;
-                            }
-                            match rx_threads_clone.recv_timeout(std::time::Duration::from_millis(1)) {
-                                Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                            }
-                        }
-                    }
+                    let tokens = thread_budget_clone.acquire(n_threads_witness, &cancellation_info_clone);
 
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
@@ -5021,11 +5095,10 @@ where
                         {
                             cancellation_info_clone.write_recover().cancel(Some(e));
                         }
-                        Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
+                        drop(tokens);
                         // Free the slot before the counter so admission can refill immediately.
                         drop(slot);
-                        // The buffer this instance ended up with carries however long its
-                        // acquisition blocked, whichever worker did the blocking.
+                        // The buffer carries its own wait, whichever worker blocked for it.
                         let waited =
                             proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
                         timer_stop_and_log_debug_net!(
@@ -5094,17 +5167,7 @@ where
                     false => self.max_num_threads,
                 };
 
-                for _ in 0..threads_to_use_collect {
-                    loop {
-                        if self.cancellation_info.read_recover().token.is_cancelled() {
-                            break;
-                        }
-                        match self.rx_threads.recv_timeout(std::time::Duration::from_millis(1)) {
-                            Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                        }
-                    }
-                }
+                let mut tokens = self.thread_budget.acquire(threads_to_use_collect, &self.cancellation_info);
 
                 if self.cancellation_info.read_recover().token.is_cancelled() {
                     break;
@@ -5119,7 +5182,6 @@ where
 
                 let pctx_clone = self.pctx.clone();
                 let wcm_clone = self.wcm.clone();
-                let tx_threads_clone = self.tx_threads.clone();
                 let memory_handler_clone = memory_handler.clone();
                 let witness_done_clone = witness_done.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
@@ -5135,8 +5197,7 @@ where
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
-                    // Whichever span took the buffer owns its wait; the lookup clears it, so the
-                    // second span below sees zero rather than double-counting.
+                    // The lookup clears it, so the second span sees zero rather than double-counting.
                     let preparing_waited =
                         proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
                     timer_stop_and_log_debug_net!(
@@ -5147,7 +5208,7 @@ where
                         airgroup_id,
                         air_id
                     );
-                    Self::try_send_threads(&tx_threads_clone, threads_to_return, &cancellation_info_clone);
+                    tokens.release(threads_to_return);
 
                     timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
@@ -5169,7 +5230,7 @@ where
                         airgroup_id,
                         air_id
                     );
-                    Self::try_send_threads(&tx_threads_clone, threads_to_use_witness, &cancellation_info_clone);
+                    tokens.release(threads_to_use_witness);
                     timer_stop_and_log_debug_net!(
                         GENERATING_WC,
                         preparing_waited + computing_waited,
@@ -5208,24 +5269,6 @@ where
         }
 
         Ok(())
-    }
-
-    fn try_send_threads(tx: &Sender<()>, n_threads: usize, cancellation_info: &RwLock<CancellationInfo>) {
-        for _ in 0..n_threads {
-            if cancellation_info.read_recover().token.is_cancelled() {
-                break;
-            }
-
-            match tx.try_send(()) {
-                Ok(_) => (),
-                Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    std::thread::sleep(std::time::Duration::from_micros(10));
-                }
-                Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                    break;
-                }
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5964,5 +6007,69 @@ where
             air_id
         );
         Ok(stream_id)
+    }
+}
+
+#[cfg(test)]
+mod thread_budget_tests {
+    use super::*;
+
+    /// Six acquirers wanting 8 from a 24-token budget. Taking tokens one at a time deadlocks here:
+    /// each ends up holding a partial set and waiting for the rest, and none reaches its release.
+    #[test]
+    fn concurrent_multi_token_acquirers_cannot_deadlock() {
+        let budget = Arc::new(ThreadBudget::new(24));
+        let cancellation = Arc::new(RwLock::new(CancellationInfo::default()));
+        let done = Arc::new(AtomicU64::new(0));
+
+        let workers: Vec<_> = (0..6)
+            .map(|_| {
+                let (budget, cancellation, done) = (budget.clone(), cancellation.clone(), done.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        let tokens = budget.acquire(8, &cancellation);
+                        assert_eq!(tokens.held, 8, "acquire must be all-or-nothing");
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        drop(tokens);
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+
+        // Generous, but finite: a deadlock here hangs the suite rather than failing it, so bound it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while done.load(Ordering::Relaxed) < 120 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(done.load(Ordering::Relaxed), 120, "acquirers made no progress: deadlocked");
+        for w in workers {
+            w.join().unwrap();
+        }
+        assert_eq!(*budget.available.lock().unwrap(), 24, "every token must come back");
+    }
+
+    /// A request larger than the whole budget is clamped, not left waiting for tokens that can
+    /// never exist.
+    #[test]
+    fn an_oversized_request_is_clamped_to_capacity() {
+        let budget = Arc::new(ThreadBudget::new(4));
+        let cancellation = Arc::new(RwLock::new(CancellationInfo::default()));
+        let tokens = budget.acquire(8, &cancellation);
+        assert_eq!(tokens.held, 4);
+        drop(tokens);
+        assert_eq!(*budget.available.lock().unwrap(), 4);
+    }
+
+    /// A partial early release returns exactly that many; the rest goes back on drop.
+    #[test]
+    fn a_partial_release_returns_the_rest_on_drop() {
+        let budget = Arc::new(ThreadBudget::new(10));
+        let cancellation = Arc::new(RwLock::new(CancellationInfo::default()));
+        let mut tokens = budget.acquire(6, &cancellation);
+        tokens.release(4);
+        assert_eq!(*budget.available.lock().unwrap(), 8);
+        drop(tokens);
+        assert_eq!(*budget.available.lock().unwrap(), 10);
     }
 }

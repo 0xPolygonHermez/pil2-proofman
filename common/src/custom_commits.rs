@@ -159,7 +159,7 @@ mod format_tests {
         let wpr = 3u64;
         let mut body = vec![0u8; 32];
         body.extend_from_slice(&wpr.to_le_bytes());
-        body.extend(std::iter::repeat(0u8).take(((W + N * wpr) * 8) as usize));
+        body.extend(std::iter::repeat_n(0u8, ((W + N * wpr) * 8) as usize));
         assert_eq!(body.len() as u64, custom_commit_packed_file_size_bytes(N, W, wpr));
         fs::write(&p, &body).unwrap();
         assert_eq!(custom_commit_words_per_row(&p, N, NE, W, ARITY).unwrap(), wpr);
@@ -170,7 +170,7 @@ mod format_tests {
         let p = tmp("short");
         let mut body = vec![0u8; 32];
         body.extend_from_slice(&2u64.to_le_bytes()); // words_per_row = 2
-        body.extend(std::iter::repeat(0u8).take(64)); // far short of (W + N*2)*8
+        body.extend(std::iter::repeat_n(0u8, 64)); // far short of (W + N*2)*8
         fs::write(&p, &body).unwrap();
         assert!(custom_commit_words_per_row(&p, N, NE, W, ARITY).is_err());
     }
@@ -180,7 +180,7 @@ mod format_tests {
         let p = tmp("wpr");
         let mut body = vec![0u8; 32];
         body.extend_from_slice(&(W + 1).to_le_bytes()); // wpr can never exceed nCols
-        body.extend(std::iter::repeat(0u8).take(((W + N * (W + 1)) * 8) as usize));
+        body.extend(std::iter::repeat_n(0u8, ((W + N * (W + 1)) * 8) as usize));
         assert_eq!(body.len() as u64, custom_commit_packed_file_size_bytes(N, W, W + 1));
         fs::write(&p, &body).unwrap();
         assert!(custom_commit_words_per_row(&p, N, NE, W, ARITY).is_err());
