@@ -1,4 +1,11 @@
 #include "main.hpp"
+#include "exec_layout.hpp"
+#include "goldilocks_base_field.hpp"
+#include <vector>
+#include <thread>
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
 
 #define handle_error(msg) \
            do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -28,7 +35,7 @@ Circom_Circuit* loadCircuit(std::string const &datFileName) {
     memcpy((void *)(circuit->InputHashMap), (void *)bdata, dsize);
 
     circuit->witness2SignalList = new u64[get_size_of_witness()];
-    uint inisize = dsize;    
+    uint inisize = dsize;
     dsize = get_size_of_witness()*sizeof(u64);
     memcpy((void *)(circuit->witness2SignalList), (void *)(bdata+inisize), dsize);
 
@@ -283,6 +290,7 @@ void freeCircuit(Circom_Circuit *circuit)
 {
   delete[] circuit->InputHashMap;
   delete[] circuit->witness2SignalList;
+  delete[] circuit->signal_map.sig;
   // delete[] circuit->circuitConstants;
   
   // Free templateInsId2IOSignalInfo map entries
@@ -311,6 +319,12 @@ void freeCircuit(Circom_Circuit *circuit)
 
 extern "C" __attribute__((visibility("default"))) uint64_t getSizeWitness()  {
   return get_size_of_witness();
+}
+
+// Total number of signals — the size of the signalValues buffer (>= sizeWitness).
+// Exposed so the Rust side can pre-allocate pooled signalValues buffers.
+extern "C" __attribute__((visibility("default"))) uint64_t getTotalSignalNo()  {
+  return get_total_signal_no();
 }
 
 extern "C" __attribute__((visibility("default"))) void *initCircuit(char* datFile)  {
@@ -376,25 +390,183 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessFinal(void *
     return 0;
 }
 
-extern "C" __attribute__((visibility("default"))) int64_t getWitness(uint64_t *proof, void* circuit_, void* pWitness, uint64_t nMutexes) {
+// Folds witness2SignalList into the exec map so the scatter does one random load per cell
+// instead of two. Idempotent per circuit; on failure getWitnessTrace reads the exec map directly.
+extern "C" __attribute__((visibility("default"))) int64_t prepareSignalMap(
+    void* circuit_, uint64_t *exec_data, uint64_t execWords)
+{
     Circom_Circuit *circuit = (Circom_Circuit *)circuit_;
-    Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
+    SignalMap &map = circuit->signal_map;
+    if (map.ok) return 0;
 
+    const exec_layout::Header h = exec_layout::header(exec_data, execWords);
+    if (!h.valid || h.mapRows == 0 || h.mapCols == 0) return -1;
+    const uint64_t entries = h.mapRows * h.mapCols;
+    const uint64_t sizeWitness = get_size_of_witness();
+    const char *p_sMap = reinterpret_cast<const char *>(&exec_data[exec_layout::map_at(h)]);
+
+    u32 *sig = new u32[entries];
+    for (uint64_t i = 0; i < entries; i++) {
+        uint32_t v;
+        memcpy(&v, p_sMap + i * sizeof(uint32_t), sizeof(uint32_t));
+        if (v == 0) { sig[i] = 0; continue; }
+        if (v < sizeWitness) {
+            const u64 sg = circuit->witness2SignalList[v];
+            if (sg >= SIGNAL_MAP_ADD_FLAG) {
+                std::cerr << "prepareSignalMap: signal " << sg << " does not fit 31 bits" << std::endl;
+                delete[] sig;
+                return -1;
+            }
+            sig[i] = (u32)sg;
+        } else if (v - sizeWitness < h.nAdds) {
+            sig[i] = SIGNAL_MAP_ADD_FLAG | (u32)(v - sizeWitness);
+        } else {
+            std::cerr << "prepareSignalMap: entry " << v << " is past sizeWitness + nAdds" << std::endl;
+            delete[] sig;
+            return -1;
+        }
+    }
+    map.sig = sig;
+    map.ok = true;
+    return 0;
+}
+
+extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
+    uint64_t *proof, void* circuit_, uint64_t *exec_data, void* pTrace, void* pPublics,
+    uint64_t N, uint64_t nPublics, uint64_t nCommitedPols, uint64_t nMutexes, void* pSignalValues)
+{
+    Circom_Circuit *circuit = (Circom_Circuit *)circuit_;
+
+    // Per-phase timing, off unless PIL2_CIRCOM_TIMERS is set: one stderr line per call. The Rust
+    // side can only see the whole call (CIRCOM_WITNESS), and the phases inside it have very
+    // different costs and fixes -- the solve is circom's, the scatter is ours.
+    const bool phase_timing = std::getenv("PIL2_CIRCOM_TIMERS") != nullptr;
+    auto tick = [] { return std::chrono::steady_clock::now(); };
+    auto span_ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    const auto t_enter = tick();
+
+    // pSignalValues: optional caller-owned pool buffer (>= get_total_signal_no() u64s).
+    // When null, Circom_CalcWit allocates its own. Reused buffers need no zeroing.
+    Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes, (uint64_t*)pSignalValues);
+    const auto t_ctor = tick();
     memcpy(&ctx->signalValues[get_main_input_signal_start()], proof, get_main_input_signal_no() * sizeof(uint64_t));
     ctx->runCircuit();
-
+    const auto t_solve = tick();
     if (ctx->errorOccurred) {
-        std::cerr << "getWitness: witness generation failed (assert failed)" << std::endl;
+        std::cerr << "getWitnessTrace: witness generation failed (assert failed)" << std::endl;
         delete ctx;
         return -1;
     }
 
-    uint64_t *witness = (uint64_t *)pWitness;
     uint64_t sizeWitness = get_size_of_witness();
-    for (uint64_t i = 0; i < sizeWitness; i++) {
-        ctx->getWitness(i, witness[i]);
+    // cw(k): the value old code stored in circomWitness[k], read straight from
+    // signalValues instead of via a materialized witness buffer.
+    auto cw = [&](uint64_t k) -> uint64_t { return ctx->signalValues[circuit->witness2SignalList[k]]; };
+
+    // Layout owned by exec_layout.hpp: [magic|version, nAdds, mapRows, mapCols], additions,
+    // then the map as u32 entries packed two per word. Mirrors getCommitedPols in
+    // starkpil/recursion_trace/exec_file.hpp, which this call replaces.
+    const exec_layout::Header h = exec_layout::header(exec_data, exec_layout::HEADER_WORDS);
+    const uint64_t *p_adds = &exec_data[exec_layout::HEADER_WORDS];
+    // Entries are u32 pairs inside the u64 buffer, read through a byte pointer because aliasing
+    // a uint64_t array as uint32_t is undefined. Compiles to the same load.
+    const char *p_sMap = reinterpret_cast<const char *>(&exec_data[exec_layout::map_at(h)]);
+
+    // The loader rejects a map wider than the trace but cannot check the height, not knowing
+    // nBits. Clamp both so a bad key cannot walk off either buffer.
+    const uint64_t mapRows = h.mapRows < N ? h.mapRows : N;
+    const uint64_t mapCols = h.mapCols < nCommitedPols ? h.mapCols : nCommitedPols;
+
+    Goldilocks::Element *trace   = (Goldilocks::Element *)pTrace;
+    Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
+
+    for (uint64_t i = 0; i < nPublics; ++i) {
+        publics[i] = Goldilocks::fromU64(cw(1 + i));
     }
 
+    // nAdds extension: the linear-combination signals the old code wrote at
+    // circomWitness[sizeWitness + i]. Kept in a small scratch instead of extending the whole
+    // witness. Serial: an addition may read a signal an earlier one produced.
+    std::vector<uint64_t> adds_ext(h.nAdds);
+    auto cw_ext = [&](uint64_t k) -> uint64_t {
+        return (k < sizeWitness) ? cw(k) : adds_ext[k - sizeWitness];
+    };
+    for (uint64_t i = 0; i < h.nAdds; i++) {
+        Goldilocks::Element c = Goldilocks::fromU64(cw_ext(p_adds[i * 4])) * Goldilocks::fromU64(p_adds[i * 4 + 2]);
+        Goldilocks::Element d = Goldilocks::fromU64(cw_ext(p_adds[i * 4 + 1])) * Goldilocks::fromU64(p_adds[i * 4 + 3]);
+        adds_ext[i] = Goldilocks::toU64(c + d);
+    }
+    const auto t_adds = tick();
+
+    // Parallelized over contiguous ROW blocks -- never over j, which would put several threads on
+    // the same 64-byte trace line. Everything read here is immutable, so the blocks need no
+    // synchronization.
+    // With a prepared map the entries already hold signal indices, so a cell costs one random
+    // load instead of chasing witness2SignalList first. Same values either way.
+    const uint32_t *sig = circuit->signal_map.ok ? circuit->signal_map.sig : nullptr;
+    const uint64_t *adds = adds_ext.data();
+    const u64 *signalValues = ctx->signalValues;
+
+    auto scatter_rows = [&](uint64_t lo, uint64_t hi) {
+        for (uint64_t i = lo; i < hi; i++) {
+            Goldilocks::Element *row = &trace[i * nCommitedPols];
+            const uint64_t mapped = i < mapRows ? mapCols : 0;
+            if (sig != nullptr) {
+                const uint32_t *srow = sig + i * h.mapCols;
+                for (uint64_t j = 0; j < mapped; j++) {
+                    const uint32_t s = srow[j];
+                    row[j] = s == 0 ? Goldilocks::zero()
+                           : Goldilocks::fromU64((s & SIGNAL_MAP_ADD_FLAG) ? adds[s & ~SIGNAL_MAP_ADD_FLAG]
+                                                                           : signalValues[s]);
+                }
+            } else {
+                for (uint64_t j = 0; j < mapped; j++) {
+                    uint32_t idx;
+                    memcpy(&idx, p_sMap + (i * h.mapCols + j) * sizeof(uint32_t), sizeof(uint32_t));
+                    row[j] = idx != 0 ? Goldilocks::fromU64(cw_ext(idx)) : Goldilocks::zero();
+                }
+            }
+            // Element is a bare uint64_t whose zero is all-zero bits.
+            memset(row + mapped, 0, (nCommitedPols - mapped) * sizeof(Goldilocks::Element));
+        }
+    };
+
+    uint64_t nThreads = (nMutexes > 0) ? nMutexes : 1;
+    if (nThreads > N) nThreads = (N > 0) ? N : 1;
+    if (nThreads <= 1) {
+        scatter_rows(0, N);
+    } else {
+        // Contiguous row-block per thread (last block absorbs the remainder); run block 0 on the
+        // calling thread, then join the spawned workers.
+        uint64_t block = (N + nThreads - 1) / nThreads;
+        std::vector<std::thread> workers;
+        workers.reserve(nThreads - 1);
+        for (uint64_t t = 1; t < nThreads; t++) {
+            uint64_t lo = t * block;
+            if (lo >= N) break;
+            uint64_t hi = std::min(lo + block, N);
+            workers.emplace_back(scatter_rows, lo, hi);
+        }
+        scatter_rows(0, std::min(block, N));
+        for (auto &w : workers) w.join();
+    }
+    const auto t_scatter = tick();
+
     delete ctx;
-    return 0; // success
+    const auto t_dtor = tick();
+
+    if (phase_timing) {
+        // pooled: whether the caller handed us a signalValues buffer, so a self-allocating circuit
+        // is visible as such rather than looking like a slow ctor.
+        fprintf(stderr,
+                "CIRCOM_PHASES N=%llu cols=%llu nAdds=%llu threads=%llu pooled=%d "
+                "ctor=%.2f solve=%.2f adds=%.2f scatter=%.2f dtor=%.2f total=%.2f\n",
+                (unsigned long long)N, (unsigned long long)nCommitedPols, (unsigned long long)h.nAdds,
+                (unsigned long long)nThreads, pSignalValues != nullptr,
+                span_ms(t_enter, t_ctor), span_ms(t_ctor, t_solve), span_ms(t_solve, t_adds),
+                span_ms(t_adds, t_scatter), span_ms(t_scatter, t_dtor), span_ms(t_enter, t_dtor));
+    }
+    return 0;
 }

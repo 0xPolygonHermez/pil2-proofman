@@ -48,16 +48,17 @@ pub fn is_preload_fixed(
 
 /// Columns the recursion's HOST trace buffer needs for one air.
 ///
-/// On GPU it only stages the exec map's width for `widenCompactWitnessGPU` to widen device-side; on
-/// CPU the fill is the air's full cm1 width. Must agree with `recursion_trace_stride`, which decides
-/// the fill from the same exec header -- sizing narrow while the fill goes wide overruns the buffer.
+/// On GPU it only stages the exec map's width for `widenCompactWitnessGPU` to widen device-side. On
+/// CPU it is the air's full width: since the solve and the scatter are fused, `generate_witness`
+/// takes a pooled buffer before the prover buffer is in scope, so the fill can no longer go straight
+/// into the prover's own cm1 slot. Must agree with `recursion_trace_stride`, which decides the fill
+/// from the same exec header -- sizing narrow while the fill goes wide overruns the buffer.
 ///
 /// One function because three call sites decide this, and the one that did it inline sized the whole
 /// pool at the air's full width while the other two were compact.
 pub fn recursion_staging_cols<F: PrimeField64>(setup: &Setup<F>, gpu: bool) -> u64 {
     let cm1 = setup.stark_info.map_sections_n["cm1"];
     if !gpu {
-        // `recursion_trace_stride` fills n_cols on CPU, so the pool must hold n_cols.
         return cm1;
     }
     setup.exec_data.as_deref().map(|e| exec_header(e).map_cols).filter(|&m| m > 0 && m < cm1).unwrap_or(cm1)
@@ -69,7 +70,6 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
-    pub max_witness_size: usize,
     pub max_compact_trace_size: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
@@ -232,18 +232,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
-            // Every recursive proof kind draws its circom witness from ONE pool, so this has to hold
-            // the largest of them -- the compressor's above all, which is roughly twice a
-            // recursive1's. Leaving it out does not under-provision the pool, it hands `getWitness` a
-            // buffer half the size it writes: a silent heap overflow on every compressor proof, whose
-            // only symptom is some unrelated neighbour's proof coming out wrong.
-            let max_witness_size = sctx_compressor
-                .max_witness_size
-                .max(sctx_recursive1.max_witness_size)
-                .max(sctx_recursive2.max_witness_size)
-                .max(setup_vadcop_final.get_circom_witness_size())
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.get_circom_witness_size()));
-
             // Largest compact (staging-width) trace over every recursive proof kind, compressor
             // included: they share one host pool (see MemoryHandlerRecursive::trace), and it is also
             // the witness tail each recursive-capable stream class reserves past mapTotalN.
@@ -270,7 +258,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
-                max_witness_size,
                 max_compact_trace_size,
                 total_const_pols_size,
                 total_const_tree_size,
@@ -293,10 +280,36 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
-                max_witness_size: 0,
                 max_compact_trace_size: 0,
             })
         }
+    }
+
+    /// Size of every pooled signalValues buffer (in u64 elements): the largest `total_signal_no`
+    /// across the recursive/compressor/final setups, so every circuit takes a pooled buffer and
+    /// none allocates its own.
+    ///
+    /// Sizing from the second largest would spare `n_streams x (largest - second)` of host memory
+    /// -- 328 MB per stream on the blake3 key, where the sole compressor (Keccakf) is 3.1x the next
+    /// -- and it is not worth it: that made the compressor allocate and first-touch 485 MB per
+    /// proof, measured at +37.6 ms on its witness (204.1 vs 166.5 ms, n=36 each). 0 if no setup
+    /// exposes a `total_signal_no`, and the pool then stays off.
+    pub fn signal_pool_cap(&self) -> usize {
+        let mut sizes: Vec<usize> = Vec::new();
+        for sctx in [self.sctx_compressor.as_ref(), self.sctx_recursive1.as_ref(), self.sctx_recursive2.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            sizes.extend(sctx.total_signal_nos());
+        }
+        for setup in
+            [self.setup_vadcop_final.as_ref(), self.setup_vadcop_final_compressed.as_ref()].into_iter().flatten()
+        {
+            if let Some(n) = setup.total_signal_no {
+                sizes.push(n as usize);
+            }
+        }
+        sizes.into_iter().max().unwrap_or(0)
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> ProofmanResult<&Setup<F>> {
@@ -324,7 +337,6 @@ pub struct SetupRepository<F: PrimeField64> {
     prover_buffer_sizes: Vec<((usize, usize), usize)>,
     max_prover_contributions_size: usize,
     max_pinned_proof_size: usize,
-    max_witness_size: usize,
     max_compact_trace_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
@@ -380,7 +392,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
         let mut total_custom_commits_reserved_words = 0;
-        let mut max_witness_size = 0;
         let mut max_compact_trace_size = 0;
         let mut max_const_pols_size_packed = 0;
         let mut n_const_slots = 0;
@@ -439,8 +450,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                     max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
-                    max_witness_size = max_witness_size.max(setup.get_circom_witness_size());
-
                     // Basic airs never land a compact witness (no exec map; their trace goes straight
                     // into cm1), so their repository reports 0 rather than a meaningless full width.
                     if setup_type != &ProofType::Basic {
@@ -532,7 +541,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             total_const_pols_size,
             total_const_tree_size,
             total_custom_commits_reserved_words,
-            max_witness_size,
             max_compact_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
             max_const_pols_size_packed,
@@ -552,7 +560,6 @@ pub struct SetupCtx<F: PrimeField64> {
     /// Per-air prover buffer size, largest first. See `SetupRepository::prover_buffer_sizes`.
     pub prover_buffer_sizes: Vec<((usize, usize), usize)>,
     pub max_pinned_proof_size: usize,
-    pub max_witness_size: usize,
     pub max_compact_trace_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
@@ -589,7 +596,6 @@ impl<F: PrimeField64> SetupCtx<F> {
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
         let total_custom_commits_reserved_words = setup_repository.total_custom_commits_reserved_words;
-        let max_witness_size = setup_repository.max_witness_size;
         let max_compact_trace_size = setup_repository.max_compact_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
         let max_const_pols_size_packed = setup_repository.max_const_pols_size_packed;
@@ -601,7 +607,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_prover_contributions_size,
             max_prover_buffer_size,
             prover_buffer_sizes,
-            max_witness_size,
             max_compact_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
@@ -645,6 +650,12 @@ impl<F: PrimeField64> SetupCtx<F> {
 
     pub fn get_setups_list(&self) -> Vec<(usize, usize)> {
         self.setup_repository.setups.keys().cloned().collect()
+    }
+
+    /// `total_signal_no` (circom signalValues length, u64 elements) for every setup
+    /// in this repository. Used to size the signalValues buffer pool.
+    pub fn total_signal_nos(&self) -> Vec<usize> {
+        self.setup_repository.setups.values().filter_map(|s| s.total_signal_no.map(|n| n as usize)).collect()
     }
 
     pub fn get_global_bin(&self) -> *mut c_void {
