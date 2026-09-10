@@ -3088,13 +3088,10 @@ where
                 }
                 if self.pctx.global_info.get_air_has_compressor(ag, air) {
                     let compressor_big =
-                        self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
-                            true,
-                            |s| {
-                                let n = 1u64 << s.stark_info.stark_struct.n_bits;
-                                s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
-                            },
-                        );
+                        self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).is_none_or(|s| {
+                            let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                            s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
+                        });
                     expected += compressor_big as i64;
                 }
             }
@@ -3150,7 +3147,7 @@ where
                                     .sctx_compressor
                                     .as_ref()
                                     .and_then(|c| c.get_setup(ag, air).ok())
-                                    .map_or(true, |s| {
+                                    .is_none_or(|s| {
                                         let n = 1u64 << s.stark_info.stark_struct.n_bits;
                                         s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n
                                             > pctx_clone.phase_b_half as u64
