@@ -120,8 +120,13 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, None);
-        let (trace, publics) =
-            generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof, recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu))?;
+        let (trace, publics) = generate_witness::<F>(
+            setup,
+            memory_handler_recursive_witness,
+            proof.global_idx.unwrap(),
+            &updated_proof,
+            recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        )?;
         timer_stop_and_log_debug_net!(
             GENERATE_COMPRESSOR_WITNESS,
             proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
@@ -168,8 +173,13 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, Some(&recursive2_setup.verkey));
         }
 
-        let (trace, publics) =
-            generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof, recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu))?;
+        let (trace, publics) = generate_witness::<F>(
+            setup,
+            memory_handler_recursive_witness,
+            proof.global_idx.unwrap(),
+            &updated_proof,
+            recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        )?;
         timer_stop_and_log_debug_net!(
             GENERATE_RECURSIVE1_WITNESS,
             proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
@@ -232,8 +242,13 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     }
 
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, Some(&setup_recursive2.verkey));
-    let (trace, publics) =
-        generate_witness::<F>(setup_recursive2, memory_handler_recursive_witness, 0, &updated_proof_recursive2, recursion_trace_stride(setup_exec_slice(setup_recursive2), setup_recursive2.n_cols, pctx.gpu))?;
+    let (trace, publics) = generate_witness::<F>(
+        setup_recursive2,
+        memory_handler_recursive_witness,
+        0,
+        &updated_proof_recursive2,
+        recursion_trace_stride(setup_exec_slice(setup_recursive2), setup_recursive2.n_cols, pctx.gpu),
+    )?;
 
     timer_stop_and_log_debug_net!(
         GENERATE_WITNESS_AGGREGATION,
@@ -670,8 +685,13 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     }
 
     timer_start_debug!(GENERATE_VADCOP_FINAL_PROOF_WITNESS);
-    let (trace_vadcop_final, publics_vadcop_final) =
-        generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &updated_proof, recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu))?;
+    let (trace_vadcop_final, publics_vadcop_final) = generate_witness::<F>(
+        setup,
+        memory_handler_recursive_witness,
+        0,
+        &updated_proof,
+        recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+    )?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_PROOF_WITNESS);
     let mut witness_final_proof = Proof::new_witness(
         ProofType::VadcopFinal,
@@ -687,9 +707,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Ok(p) => p,
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
-            drop(
-                memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)),
-            );
+            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)));
             return Err(e);
         }
     };
@@ -756,8 +774,13 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     }));
 
     timer_start_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
-    let (trace_vadcop_final_compressed, publics_vadcop_final_compressed) =
-        generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &vadcop_final_proof[1..], recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu))?;
+    let (trace_vadcop_final_compressed, publics_vadcop_final_compressed) = generate_witness::<F>(
+        setup,
+        memory_handler_recursive_witness,
+        0,
+        &vadcop_final_proof[1..],
+        recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+    )?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
     let mut witness_final_proof = Proof::new_witness(
         ProofType::VadcopFinalCompressed,
@@ -773,9 +796,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         Ok(p) => p,
         Err(e) => {
             // generate_recursive_proof (which pools the witness) isn't reached; return it here instead of leaking.
-            drop(
-                memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)),
-            );
+            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness_final_proof.trace)));
             return Err(e);
         }
     };

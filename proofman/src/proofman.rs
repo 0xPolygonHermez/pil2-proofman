@@ -3394,7 +3394,10 @@ where
                                     // Witness channels live on `self`, so a failed send means the
                                     // pipeline is torn down mid-run. Return the witness buffer to its
                                     // pool (else it leaks in the SendError), and surface it.
-                                    drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut returned.trace)));
+                                    drop(
+                                        memory_handler_recursive_witness
+                                            .adopt_trace(std::mem::take(&mut returned.trace)),
+                                    );
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
@@ -3807,10 +3810,7 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which normally returns the witness buffer to its
                             // pool) is not reached on this error path, so return it here — adopt-then-drop.
-                            drop(
-                                memory_handler_recursive_witness
-                                    .adopt_trace(std::mem::take(&mut witness.trace)),
-                            );
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }
@@ -4590,9 +4590,7 @@ where
                     Err(e) => {
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
                         // here; return it (adopt-then-drop) or the pool comes back short and wedges the next job.
-                        drop(
-                            memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)),
-                        );
+                        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
@@ -4787,9 +4785,7 @@ where
                 while let Ok(mut witness) = rec2_witness_rx_clone.recv() {
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Return the received witness buffer to its pool before bailing.
-                        drop(
-                            memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)),
-                        );
+                        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                         break;
                     }
                     let id = {
@@ -4806,10 +4802,7 @@ where
                         Err(e) => {
                             // generate_recursive_proof (which returns the buffer to its pool) is not
                             // reached here; return it so the recursive-witness pool doesn't shrink.
-                            drop(
-                                memory_handler_recursive_witness
-                                    .adopt_trace(std::mem::take(&mut witness.trace)),
-                            );
+                            drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut witness.trace)));
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
                         }

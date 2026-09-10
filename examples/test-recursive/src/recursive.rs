@@ -91,8 +91,8 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                 init_circom_circuit(dat_filename_ptr)
             };
 
-            let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
-            let trace = vec![F::ZERO; n_cols as usize * (1 << setup.stark_info.stark_struct.n_bits) as usize];
+            let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
+            let mut trace = vec![F::ZERO; n_cols as usize * (1 << setup.stark_info.stark_struct.n_bits) as usize];
             let n_rows: u64 = 1 << setup.stark_info.stark_struct.n_bits;
 
             let res = unsafe {
@@ -102,8 +102,8 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
                     proof.as_ptr() as *mut u64,
                     circom_circuit,
                     exec_file_data.as_mut_ptr(),
-                    trace.as_ptr() as *mut c_void,
-                    publics.as_ptr() as *mut c_void,
+                    trace.as_mut_ptr() as *mut c_void,
+                    publics.as_mut_ptr() as *mut c_void,
                     n_rows,
                     setup.stark_info.n_publics,
                     // Full width, NOT recursion_trace_stride: expand_gate_bands_c below runs on the
@@ -120,7 +120,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             // The hash gates map only their boundary; fill the rest from it. No-op on an exec
             // file without a band section.
             expand_gate_bands_c(
-                trace.as_ptr() as *mut u8,
+                trace.as_mut_ptr() as *mut u8,
                 exec_file_data.as_mut_ptr(),
                 n_cols,
                 exec_words,

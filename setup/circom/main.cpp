@@ -568,7 +568,13 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
     auto scatter_rows = [&](uint64_t lo, uint64_t hi) {
         for (uint64_t i = lo; i < hi; i++) {
             Goldilocks::Element *row = &trace[i * nCommitedPols];
-            const uint64_t mapped = i < mapRows ? mapCols : 0;
+            // Zeroed here (Element is a bare uint64_t) so no past-the-end `sig` row pointer
+            // is ever formed beyond the map.
+            if (i >= mapRows) {
+                memset(row, 0, nCommitedPols * sizeof(Goldilocks::Element));
+                continue;
+            }
+            const uint64_t mapped = mapCols;
             if (sig != nullptr) {
                 const uint32_t *srow = sig + i * h.mapCols;
                 for (uint64_t j = 0; j < mapped; j++) {
@@ -584,7 +590,6 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
                     row[j] = idx != 0 ? Goldilocks::fromU64(cw_ext(idx)) : Goldilocks::zero();
                 }
             }
-            // Element is a bare uint64_t whose zero is all-zero bits.
             memset(row + mapped, 0, (nCommitedPols - mapped) * sizeof(Goldilocks::Element));
         }
     };

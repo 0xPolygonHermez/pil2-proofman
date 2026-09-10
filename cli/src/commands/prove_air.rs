@@ -3,8 +3,7 @@ use clap::Parser;
 use regex::Regex;
 use proofman_common::{
     calculate_fixed_tree, init_gpu_setup, initialize_logger, load_exec_file, GetWitnessTraceFunc, ProofmanOptions,
-    SetupCtx,
-    SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
+    SetupCtx, SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;

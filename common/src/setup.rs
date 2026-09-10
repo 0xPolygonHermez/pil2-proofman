@@ -22,8 +22,7 @@ pub type GetWitnessTraceFunc = unsafe extern "C" fn(
 ) -> i64;
 
 pub type GetTotalSignalNoFunc = unsafe extern "C" fn() -> u64;
-pub type PrepareSignalMapFunc =
-    unsafe extern "C" fn(circuit: *mut c_void, exec_data: *mut u64, exec_words: u64) -> i64;
+pub type PrepareSignalMapFunc = unsafe extern "C" fn(circuit: *mut c_void, exec_data: *mut u64, exec_words: u64) -> i64;
 
 #[derive(Debug)]
 pub struct CircomState {
@@ -510,7 +509,6 @@ impl<F: PrimeField64> Setup<F> {
                 // Pre-loaded so every `getWitnessTrace` scatter reads it at RAM speed.
                 let exec_filename = setup_path.display().to_string() + ".exec";
                 let mut exec_data = load_exec_file(&exec_filename, n_cols)?;
-                let n_adds = exec_header(&exec_data).n_adds;
 
                 // Best-effort: getWitnessTrace reads the exec map directly if this is absent,
                 // as it is in an older proving key's library.
