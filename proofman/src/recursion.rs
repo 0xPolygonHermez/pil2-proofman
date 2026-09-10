@@ -967,8 +967,8 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         memory_handler_recursive_witness,
         0,
         &zkin,
-        // Full width: the recurser aggregator expands its gate bands host-side.
-        setup.n_cols,
+        // Compact on GPU: the device reads mapCols out of this same exec header and widens.
+        recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, setup.gpu),
     ) {
         Ok(witness) => witness,
         Err(e) => {
@@ -1231,6 +1231,35 @@ fn generate_witness<F: PrimeField64>(
     // witnesses run concurrently.
     let nmutex = memory_handler_recursive_witness.witness_threads();
 
+    // Taken before the signalValues buffer, so no pooled buffer is held across a fallible step:
+    // `Pool::reset` reports one lost to an early `?` return as leaked. Held until
+    // `generate_recursive_proof` finishes its H2D copy — queued and proving work share this pool.
+    timer_start_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
+    let mut trace: Vec<F> = memory_handler_recursive_witness.take_buffer_trace();
+    timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
+
+    // `getWitnessTrace` scatters `n_committed_pols * n_rows` elements with no bound of its own, so
+    // a short buffer is overrun silently, into whatever the allocator put next.
+    //
+    // `max_compact_trace_size` covers only the recursion airs known at construction, so a recurser
+    // (registered later) never fits and allocates its own — unpinned, hence the warning, but rare.
+    // `SignalValuesPool::take` falls back the same way.
+    let needed = (n_committed_pols * n_rows) as usize;
+    if trace.len() < needed {
+        tracing::warn!(
+            "{:?} [{}:{}] needs a {needed}-element trace but the pool hands out {}; \
+             allocating an unpooled one (see SetupsVadcop::max_compact_trace_size)",
+            setup.setup_type,
+            setup.airgroup_id,
+            setup.air_id,
+            trace.len(),
+        );
+        if let Err(e) = memory_handler_recursive_witness.release_buffer_trace(trace) {
+            tracing::warn!("Failed to return trace buffer to pool: {e}");
+        }
+        trace = vec![F::ZERO; needed];
+    }
+
     // Pooled signalValues buffer (reused across proofs, no zeroing — write-before-read).
     let total_signal_no = setup.total_signal_no.unwrap_or(0) as usize;
     let mut signal_values = memory_handler_recursive_witness.take_buffer_signal_values(total_signal_no);
@@ -1240,35 +1269,9 @@ fn generate_witness<F: PrimeField64>(
 
     // Released before the caller can read the ledger, so carry its wait onto the trace.
     let signal_values_wait = proofman_common::take_buffer_wait(signal_values.as_ptr() as *const u8);
-
-    // Taken last, after every fallible lookup above: a pooled buffer must not be held
-    // across an early `?` return, or `Pool::reset` reports it as leaked. It is the proof's
-    // trace, held until `generate_recursive_proof` finishes its H2D copy — so queued and
-    // proving work now share this one pool (pre-fusion they had one each).
-    timer_start_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
-    let mut trace: Vec<F> = memory_handler_recursive_witness.take_buffer_trace();
-    timer_stop_and_log_debug!(POOL_WAIT_WITNESS, "POOL_WAIT_WITNESS_{:?}", setup.setup_type);
     proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
-    let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    // `getWitnessTrace` scatters `n_committed_pols * n_rows` elements with no bound of its own: a
-    // buffer sized for a smaller circuit is overrun silently, and the damage lands on whatever the
-    // allocator put next -- another proof's buffer, most often, which then fails somewhere with
-    // nothing pointing back here. The pools are sized for the largest recursive circuit, so this
-    // only ever fires if that sizing and this call site have drifted apart.
-    let needed = (n_committed_pols * n_rows) as usize;
-    if trace.len() < needed {
-        let got = trace.len();
-        let released = memory_handler_recursive_witness.release_buffer_trace(trace);
-        if let Err(e) = released {
-            tracing::warn!("Failed to return trace buffer to pool: {e}");
-        }
-        return Err(ProofmanError::ProofmanError(format!(
-            "{:?} [{}:{}] needs a {needed}-element trace but the pool hands out {} \
-             (see SetupsVadcop::max_compact_trace_size)",
-            setup.setup_type, setup.airgroup_id, setup.air_id, got,
-        )));
-    }
+    let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
     timer_start_debug!(CIRCOM_WITNESS, "CIRCOM_WITNESS_{:?}", setup.setup_type);
     let res: i64 = unsafe {

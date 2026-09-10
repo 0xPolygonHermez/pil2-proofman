@@ -15,6 +15,8 @@
 
 u64 fnv1a(std::string s);
 
+extern "C" void freeComponentCache();
+
 class Circom_CalcWit {
 
   bool *inputSignalAssigned;

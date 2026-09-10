@@ -20,6 +20,18 @@ extern void run(Circom_CalcWit* ctx);
 static std::mutex componentCacheMutex;
 static Circom_Component *componentCache = nullptr;
 
+// The cache is a per-.so static: without this it lives to process exit. Called when Setup drops.
+extern "C" __attribute__((visibility("default"))) void freeComponentCache() {
+    Circom_Component *cached;
+    {
+        std::lock_guard<std::mutex> lk(componentCacheMutex);
+        cached = componentCache;
+        componentCache = nullptr;
+    }
+    // Outside the lock: the free walks the whole array.
+    delete[] cached;
+}
+
 
 std::string int_to_hex( u64 i )
 {

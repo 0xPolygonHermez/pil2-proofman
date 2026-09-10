@@ -391,6 +391,30 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessFinal(void *
     return 0;
 }
 
+// Raw witness, for a circuit with no exec map: stark-recurser's equivalence tests link this.
+extern "C" __attribute__((visibility("default"))) int64_t getWitness(uint64_t *proof, void* circuit_, void* pWitness, uint64_t nMutexes) {
+    Circom_Circuit *circuit = (Circom_Circuit *)circuit_;
+    Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
+
+    memcpy(&ctx->signalValues[get_main_input_signal_start()], proof, get_main_input_signal_no() * sizeof(uint64_t));
+    ctx->runCircuit();
+
+    if (ctx->errorOccurred) {
+        std::cerr << "getWitness: witness generation failed (assert failed)" << std::endl;
+        delete ctx;
+        return -1;
+    }
+
+    uint64_t *witness = (uint64_t *)pWitness;
+    uint64_t sizeWitness = get_size_of_witness();
+    for (uint64_t i = 0; i < sizeWitness; i++) {
+        ctx->getWitness(i, witness[i]);
+    }
+
+    delete ctx;
+    return 0; // success
+}
+
 // Folds witness2SignalList into the exec map so the scatter does one random load per cell
 // instead of two. Idempotent per circuit; on failure getWitnessTrace reads the exec map directly.
 extern "C" __attribute__((visibility("default"))) int64_t prepareSignalMap(
@@ -568,8 +592,7 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
     auto scatter_rows = [&](uint64_t lo, uint64_t hi) {
         for (uint64_t i = lo; i < hi; i++) {
             Goldilocks::Element *row = &trace[i * nCommitedPols];
-            // Zeroed here (Element is a bare uint64_t) so no past-the-end `sig` row pointer
-            // is ever formed beyond the map.
+            // Zeroed here so no past-the-end `sig` row pointer is ever formed.
             if (i >= mapRows) {
                 memset(row, 0, nCommitedPols * sizeof(Goldilocks::Element));
                 continue;

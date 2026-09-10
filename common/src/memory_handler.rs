@@ -271,22 +271,21 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     fn release(&self, buffer: Vec<F>) -> ProofmanResult<()> {
         // Every take charges this buffer's wait; whoever wanted it has read it by now.
         forget_buffer_wait(&buffer);
-        if buffer.len() != self.buffer_size {
+        let pooled = self.original_ptrs.contains(&(buffer.as_ptr() as usize));
+        // An original must come back exactly as it left; a foreign one (cancel-escape, or the
+        // larger trace a late-registered setup had to allocate) only has to reach the pool's size.
+        if buffer.len() < self.buffer_size || (pooled && buffer.len() != self.buffer_size) {
             return Err(ProofmanError::ProofmanError(format!(
                 "Pool::release: wrong size {} (expected {})",
                 buffer.len(),
                 self.buffer_size
             )));
         }
-        // Only the pool's own buffers go back to the channel; a fresh cancel-escape buffer is freed
-        // here instead (pooling it would put an unpinned buffer in a pinned pool). Since exactly the
-        // n_buffers originals are ever pooled, releasing one always finds room — this send can't block.
-        // Dropping the fresh buffer is also what keeps a REGISTERED buffer from being freed while its
-        // cudaHostRegister is live: only originals (the registered ones) are ever recycled.
-        if self.original_ptrs.contains(&(buffer.as_ptr() as usize)) {
+        // Only originals go back: pooling a foreign buffer would put an unpinned buffer in a pinned
+        // pool, and would free a page `registered_buffers` still points at. This send can't block.
+        if pooled {
             self.sender.send(buffer).expect("Pool channel closed");
         }
-        // else: a fresh cancel-escape buffer — let it drop (freed); never pooled.
         Ok(())
     }
 
@@ -730,8 +729,11 @@ impl SignalValuesPool {
                 }
             }
         };
-        self.wait_ns.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let waited = start.elapsed();
+        self.wait_ns.fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
         self.wait_count.fetch_add(1, Ordering::Relaxed);
+        // Also charged to the buffer, so the caller can subtract it from its witness span.
+        charge_buffer_wait(buffer.as_ptr() as *const u8, waited);
         buffer
     }
 
@@ -831,6 +833,18 @@ mod tests {
         let _good = h.take_buffer_trace();
         // Release a buffer of the wrong length; the size check rejects it.
         assert!(h.release_buffer_trace(vec![F::ZERO; 7]).is_err());
+    }
+
+    /// What a setup registered after the pool was sized (a recurser) hands back.
+    #[test]
+    fn release_accepts_an_oversized_unpooled_buffer() {
+        let h = handler(1, 8);
+        let pooled = h.take_buffer_trace();
+        h.release_buffer_trace(vec![F::ZERO; 32]).expect("an oversized unpooled trace releases cleanly");
+        h.release_buffer_trace(pooled).unwrap();
+        h.reset().expect("pool intact"); // the oversized one was dropped, not pooled
+
+        assert_eq!(h.take_buffer_trace().len(), 8);
     }
 
     #[test]

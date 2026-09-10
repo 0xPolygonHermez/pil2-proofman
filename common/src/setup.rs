@@ -52,6 +52,7 @@ pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+pub type FreeComponentCacheFunc = unsafe extern "C" fn();
 
 #[derive(Debug)]
 #[repr(C)]
@@ -113,12 +114,20 @@ pub struct Setup<F: PrimeField64> {
 impl<F: PrimeField64> Drop for Setup<F> {
     fn drop(&mut self) {
         let mut state = self.circom_state.write().unwrap();
-        if let Some(circom_circuit) = state.circuit.take() {
-            if let Some(circom_library) = &state.library {
+        let circuit = state.circuit.take();
+        if let Some(circom_library) = &state.library {
+            if let Some(circom_circuit) = circuit {
                 unsafe {
                     let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
                         circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
                     free_circom_circuit(circom_circuit);
+                }
+            }
+            // Best-effort: absent from an older proving key's library.
+            unsafe {
+                if let Ok(free_component_cache) = circom_library.get::<FreeComponentCacheFunc>(b"freeComponentCache\0")
+                {
+                    free_component_cache();
                 }
             }
         }
