@@ -78,6 +78,14 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.components_std.write().unwrap().push(component);
     }
 
+    /// Whether a witness library has registered any component through `register_component`.
+    /// Deliberately ignores `components_std` (the std library registers those on its own): the
+    /// callers gate work only the external witness library can do, such as producing the
+    /// custom-commit fixed files.
+    pub fn has_witness_lib_components(&self) -> bool {
+        !self.components.read().unwrap().is_empty()
+    }
+
     pub fn gen_custom_commits_fixed(&self) -> ProofmanResult<()> {
         for component in self.components.read().unwrap().iter() {
             component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone())?;

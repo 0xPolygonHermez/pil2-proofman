@@ -6,7 +6,7 @@
 //! exports. The template whitespace is deliberate — the emitted `.cu` is what
 //! nvcc compiles, so treat these strings as code, not free-form text.
 
-use crate::ir::{ChunkPlan, Instr, Ir, Operand};
+use crate::ir::{plan_chunks_ops, ChunkPlan, Instr, Ir, Operand};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
@@ -291,41 +291,111 @@ fn c_abi_exports(sym: &str, n_slots: u64, ir: &Ir) -> String {
     launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, stream);
 }}
 extern "C" unsigned long long exps_min_scratch() {{ return {n_slots} * {GEN_BLK}ull + {}ull; }}"#,
-        ir.table_words()
+        pow_region_words(ir, sym)
     )
 }
 
-/// Straight-line body of the hoisted-invariants program for thread 0 of the
-/// table kernel: the ops of `ir.tab` followed by the exports into `pw[]` after
-/// the powers. Reuses the chunk emitter, so operand loads and field ops are
-/// the exact same code the per-row kernels would have run.
-fn tab_body(ir: &Ir) -> String {
+/// Ops per slice of the table program. cicc's cost is superlinear in the size of one straight-line
+/// function: Main b22/e10704's 4206 table ops in one function took 166 s of cicc (+76 s ptxas)
+/// while a chunk TU of 8 kernels x ~500 ops takes 5.6 s. So the program is cut the way the Q program
+/// is (`plan_chunks_ops` on the tab ops): one kernel per slice, temps crossing a cut parked in table
+/// words after the exports, and each slice in its own TU so they compile in parallel.
+const TAB_SLICE: usize = 512;
+
+/// Slice plan of the table program; `None` when it fits one slice.
+fn tab_plan(ir: &Ir, sym: &str) -> Option<ChunkPlan> {
+    if ir.tab.len() <= TAB_SLICE {
+        return None;
+    }
+    match plan_chunks_ops(&ir.tab, TAB_SLICE, &format!("{sym} table program")) {
+        Ok(p) if p.n_chunks > 1 => Some(p),
+        Ok(_) => None,
+        Err(e) => {
+            eprintln!("[exps-codegen] {sym}: table program not sliced ({e}); compiling it whole");
+            None
+        }
+    }
+}
+
+/// Words carved off the head of scratch per launch: the powers, the exports, and the table
+/// program's cross-slice temps.
+pub fn pow_region_words(ir: &Ir, sym: &str) -> u64 {
+    ir.table_words() + tab_plan(ir, sym).map_or(0, |p| p.total_slots)
+}
+
+/// Straight-line body of one slice of the hoisted-invariants program (thread 0 of a table
+/// kernel): loads of the temps entering the slice (`live_in`: tmp, dim, table word), the ops with
+/// their exports into `pw[]`, then the temps leaving it (`live_out`). Reuses the chunk emitter, so
+/// operand loads and field ops are the exact same code the per-row kernels would have run.
+fn tab_body(ir: &Ir, ops: &[Instr], live_in: &[(u64, u64, u64)], live_out: &[(u64, u64, u64)], last: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
-    let declared: HashSet<u64> = HashSet::new();
-    for instr in &ir.tab {
+    let base = ir.pow_words();
+    let mut declared: HashSet<u64> = HashSet::new();
+    for &(t, dim, w) in live_in {
+        if dim == 1 {
+            lines.push(format!("    gl64_t t{t} = pw[{w}];"));
+        } else {
+            lines.push(format!("    g3 t{t}; t{t}.a = pw[{w}]; t{t}.b = pw[{}]; t{t}.c = pw[{}];", w + 1, w + 2));
+        }
+        declared.insert(t);
+    }
+    // Exported temps are stored the moment they are produced, not in a block at the end: with
+    // thousands of tab ops on one thread, deferring every export kept every exported value live
+    // to the end of the program and ptxas spilled them (Main b22/e10704: 16 KB of stack per
+    // thread, which the driver reserves for every thread the device can hold -- ~5.6 GB on an
+    // RTX 5090 -- so the first real launch failed for want of VRAM and Q fell to the interpreter).
+    let mut exports: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    for &(tmp, idx, dim) in &ir.tab_out {
+        exports.entry(tmp).or_default().push((base + idx, dim));
+    }
+    let store = |tmp: u64, w: u64, dim: u64| -> String {
+        if dim == 1 {
+            format!("    pw[{w}] = t{tmp};")
+        } else {
+            format!("    pw[{w}] = t{tmp}.a; pw[{}] = t{tmp}.b; pw[{}] = t{tmp}.c;", w + 1, w + 2)
+        }
+    };
+    for instr in ops {
         let (l, _) = emit_op(instr, ir, &declared);
         lines.extend(l.into_iter().map(|x| format!("  {x}")));
-    }
-    let base = ir.pow_words();
-    for &(tmp, idx, dim) in &ir.tab_out {
-        let w = base + idx;
-        if dim == 1 {
-            lines.push(format!("    pw[{w}] = t{tmp};"));
-        } else {
-            lines.push(format!("    pw[{w}] = t{tmp}.a; pw[{}] = t{tmp}.b; pw[{}] = t{tmp}.c;", w + 1, w + 2));
+        if let Some(tmp) = instr.dst_id.filter(|_| instr.dst_is_tmp) {
+            declared.insert(tmp);
+            if let Some(outs) = exports.get(&tmp) {
+                for &(w, dim) in outs {
+                    lines.push(store(tmp, w, dim));
+                }
+            }
         }
+    }
+    if last {
+        // Exports whose temp is not produced by any tab op (defensive: keeps the old behaviour for them).
+        let produced: HashSet<u64> = ir.tab.iter().filter_map(|i| i.dst_id.filter(|_| i.dst_is_tmp)).collect();
+        for &(tmp, idx, dim) in &ir.tab_out {
+            if !produced.contains(&tmp) {
+                lines.push(store(tmp, base + idx, dim));
+            }
+        }
+    }
+    for &(t, dim, w) in live_out {
+        lines.push(store(t, w, dim));
     }
     lines.join("\n")
 }
 
-/// Kernel filling the challenge-powers table `pw[3*j..3*j+3] = ch[base..]^j`
-/// for j in 0..n, plus the launcher prologue that carves the table off the
-/// head of scratch and runs it. No kernel (and a prologue that just aliases
-/// `pw` to scratch) when the IR has neither powers nor a table.
-/// One block: thread t starts at `v^t` and strides by `v^blockDim`.
-fn pow_kernel(sym: &str, ir: &Ir) -> (String, String) {
+/// The per-launch table TUs: `gen_<sym>_pow.cu` holds the kernel filling the challenge-powers
+/// table `pw[3*j..3*j+3] = ch[base..]^j` for j in 0..n (one block: thread t starts at `v^t` and
+/// strides by `v^blockDim`) followed by the first slice of the hoisted-invariants program on
+/// thread 0, plus the C-ABI host wrapper `run_<sym>_pow` the launcher calls, which also runs the
+/// remaining slices (`gen_<sym>_pow_s<i>.cu`, one thread each) in order. Empty when the IR has
+/// neither powers nor a table.
+///
+/// Their own TUs, compiled once per AIR, because the text does not depend on the chunk size while
+/// for a hoisting-heavy AIR it is by far the slowest to compile (Main b22/e10704: 245 s in one
+/// function, against ~11 s for a chunk TU). Inside the launcher TU it was rebuilt at every
+/// autotune probe and serialized the whole run.
+pub fn emit_pow_tu(sym: &str, ir: &Ir) -> Vec<(String, String)> {
     if ir.pow.is_empty() && ir.tab.is_empty() {
-        return (String::new(), "  const gl64_t* pw = scratch;".to_string());
+        return Vec::new();
     }
     // One fill loop per challenge region, laid out end to end in `pow_offset` order.
     let regions: String = ir
@@ -349,41 +419,124 @@ fn pow_kernel(sym: &str, ir: &Ir) -> (String, String) {
             )
         })
         .collect::<Vec<_>>()
-        .join(
-            "
-",
-        );
-    let tab = tab_body(ir);
-    let kernel = format!(
-        r#"__global__ void gen_{sym}_pow(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw) {{
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
+        .join("\n");
+    let ptrs = r#"  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
-  [[maybe_unused]] const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; [[maybe_unused]] const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
+  [[maybe_unused]] const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; [[maybe_unused]] const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;"#;
+
+    // Slice bodies: one (the whole program) without a plan, else one per plan chunk with the
+    // cross-slice temps parked right after the exports.
+    let plan = tab_plan(ir, sym);
+    let n_slices = plan.as_ref().map_or(1, |p| p.n_chunks);
+    let x0 = ir.table_words();
+    let bodies: Vec<String> = (0..n_slices)
+        .map(|i| match &plan {
+            None => tab_body(ir, &ir.tab, &[], &[], true),
+            Some(p) => {
+                let (lo, hi) = p.range(i);
+                let ops = &ir.tab[lo..hi];
+                let used: HashSet<u64> =
+                    ops.iter().flat_map(|ins| [&ins.a, &ins.b]).filter_map(|o| o.as_tmp().map(|(t, _)| t)).collect();
+                let word = |t: u64| (t, p.dim_of[&t], x0 + p.slot_index(t));
+                let mut live_in: Vec<(u64, u64, u64)> = used
+                    .iter()
+                    .copied()
+                    .filter(|t| p.cut_temps.contains(t) && p.chunk_of(p.def_idx[t]) < i)
+                    .map(word)
+                    .collect();
+                live_in.sort_unstable();
+                let mut live_out: Vec<(u64, u64, u64)> =
+                    p.cut_temps.iter().copied().filter(|t| p.chunk_of(p.def_idx[t]) == i).map(word).collect();
+                live_out.sort_unstable();
+                tab_body(ir, ops, &live_in, &live_out, i + 1 == n_slices)
+            }
+        })
+        .collect();
+
+    let head = |what: &str| {
+        format!(
+            r#"// AUTO-GENERATED {what} for {sym}
+#include "gen_common.cuh"
+#define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))"#
+        )
+    };
+    let mut files: Vec<(String, String)> = Vec::with_capacity(n_slices);
+    let decls: String = (1..n_slices)
+        .map(|i| {
+            format!("extern \"C\" void run_{sym}_pow_s{i}(cudaStream_t stream, StepsParams* d_params, gl64_t* pw);\n")
+        })
+        .collect();
+    let calls: String = (1..n_slices).map(|i| format!("\n  run_{sym}_pow_s{i}(stream, d_params, pw);")).collect();
+    files.push((
+        format!("gen_{sym}_pow.cu"),
+        format!(
+            r#"{}
+{decls}__global__ void gen_{sym}_pow(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw) {{
+{ptrs}
   g3 one; one.a=gl64_t(uint64_t(1)); one.b=gl64_t(uint64_t(0)); one.c=gl64_t(uint64_t(0));
 {regions}
   __syncthreads();
-  // row-invariant program: once per launch, after the powers it may read
+  // row-invariant program (slice 0 of {n_slices}): once per launch, after the powers it may read
   if (threadIdx.x == 0) {{
-{tab}
+{}
   }}
-}}"#
-    );
+}}
+extern "C" void run_{sym}_pow(cudaStream_t stream, StepsParams* d_params, gl64_t* pw) {{
+  gen_{sym}_pow<<<1,256,0,stream>>>(d_params, pw);{calls}
+}}
+#undef OFF
+"#,
+            head("per-launch table kernel"),
+            bodies[0],
+        ),
+    ));
+    for (i, body) in bodies.iter().enumerate().skip(1) {
+        files.push((
+            format!("gen_{sym}_pow_s{i}.cu"),
+            format!(
+                r#"{}
+__global__ void gen_{sym}_pow_s{i}(const StepsParams* __restrict__ P, gl64_t* __restrict__ pw) {{
+{ptrs}
+  // row-invariant program, slice {i} of {n_slices}: one thread, after slice {}
+{body}
+}}
+extern "C" void run_{sym}_pow_s{i}(cudaStream_t stream, StepsParams* d_params, gl64_t* pw) {{
+  gen_{sym}_pow_s{i}<<<1,1,0,stream>>>(d_params, pw);
+}}
+#undef OFF
+"#,
+                head(&format!("table program slice {i}")),
+                i - 1,
+            ),
+        ));
+    }
+    files
+}
+
+/// Launcher-side glue for the table kernel: the file-scope extern decl of its host wrapper and
+/// the prologue that carves the table region off the head of scratch and runs it -- or, when the
+/// IR has no table, an empty decl and a prologue that just aliases `pw` to scratch.
+fn pow_glue(sym: &str, ir: &Ir) -> (String, String) {
+    if ir.pow.is_empty() && ir.tab.is_empty() {
+        return (String::new(), "  const gl64_t* pw = scratch;".to_string());
+    }
+    let decl = format!("extern \"C\" void run_{sym}_pow(cudaStream_t stream, StepsParams* d_params, gl64_t* pw);");
     let prologue = format!(
         r#"  const gl64_t* pw = scratch; scratch += {pe}ull; scratchElems -= {pe}ull;
-  gen_{sym}_pow<<<1,256,0,stream>>>(d_params, (gl64_t*)pw);"#,
-        pe = ir.table_words()
+  run_{sym}_pow(stream, d_params, (gl64_t*)pw);"#,
+        pe = pow_region_words(ir, sym)
     );
-    (kernel, prologue)
+    (decl, prologue)
 }
 
 /// Small-expression path: kernel + launcher + C-ABI exports in ONE self-contained TU.
 fn single_kernel_tu(sym: &str, kernel: &str, launcher_body: &str, ir: &Ir) -> String {
-    let (pk, prologue) = pow_kernel(sym, ir);
+    let (pow_decl, prologue) = pow_glue(sym, ir);
     format!(
         r#"// AUTO-GENERATED Q kernel for {sym} (single kernel, no scratch)
 #include "gen_common.cuh"
 #define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
-{pk}
+{pow_decl}
 {kernel}
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
@@ -395,7 +548,7 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
 {}
 "#,
         c_abi_exports(sym, 0, ir),
-        guard = scratch_guard(sym, ir.table_words(), 0),
+        guard = scratch_guard(sym, pow_region_words(ir, sym), 0),
     )
 }
 
@@ -439,12 +592,12 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
             format!("    run_{sym}_c{i}(grid, BLK, stream, d_params, q, scratch, pw, NExt, base, off_cm1, off_cm2, off_cm3, off_zi);")
         })
         .collect();
-    let (pk, prologue) = pow_kernel(sym, ir);
+    let (pow_decl, prologue) = pow_glue(sym, ir);
     format!(
         r#"// AUTO-GENERATED Q launcher for {sym} (cross-boundary temps={total_slots}, {n_chunks} chunks)
 #include "gen_common.cuh"
 {}
-{pk}
+{pow_decl}
 // adaptive grid: shrink so total_slots*grid*BLK <= scratchElems (per-wave scratch fits the tmp region);
 // each chunk kernel computes WAVE=gridDim*blockDim at runtime, so any grid is correct.
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
@@ -469,7 +622,7 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
         decls.join("\n"),
         calls.join("\n"),
         c_abi_exports(sym, total_slots, ir),
-        guard = scratch_guard(sym, ir.table_words(), total_slots),
+        guard = scratch_guard(sym, pow_region_words(ir, sym), total_slots),
     )
 }
 
@@ -610,8 +763,84 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 // combine into the second kernel's store — no scratch, no pair kernels.
 // ---------------------------------------------------------------------------
 
-/// Emit the `gen_<sym>_cexprs.cu` TU covering `items` = (expId, ir, out_dim).
-pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i64, i64)]) -> String {
+/// Kernels per generic-expression TU. One TU per AIR made Main's 833 tiny kernels a single 95 s
+/// nvcc job on the critical path (after the last autotune); parts compile in parallel during
+/// phase 2. Not smaller: every TU pays ~4.4 s of header (64 per TU doubled the cexprs CPU time,
+/// 1454 -> 2719 core-seconds, once the run was CPU-bound).
+pub const EXPRS_PER_TU: usize = 128;
+
+/// Emit the generic-expression TUs for `items` = (expId, ir, out_dim): `gen_<sym>_cexprs.cu`
+/// alone when they fit one part, else `gen_<sym>_cexprs_p<k>.cu` per part (kernels + part-local
+/// dispatch) and `gen_<sym>_cexprs.cu` as the C-ABI dispatch chaining the parts.
+pub fn emit_exprs_tus(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i64, i64)]) -> Vec<(String, String)> {
+    let dispatch = format!("gen_{sym}_cexprs.cu");
+    if items.len() <= EXPRS_PER_TU {
+        return vec![(dispatch, exprs_part(sym, items, items, pairs, None))];
+    }
+    let parts: Vec<&[(i64, crate::ir::Ir, u64)]> = items.chunks(EXPRS_PER_TU).collect();
+    let mut files: Vec<(String, String)> = parts
+        .iter()
+        .enumerate()
+        .map(|(k, part)| (format!("gen_{sym}_cexprs_p{k}.cu"), exprs_part(sym, part, items, pairs, Some(k))))
+        .collect();
+    let n = parts.len();
+    let decls: String = (0..n)
+        .map(|k| {
+            format!(
+                r#"extern "C" int exps_expr_covered_p{k}(unsigned long long);
+extern "C" int exps_launch_expr_p{k}(unsigned long long, StepsParams*, gl64_t*, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned int, cudaStream_t);
+extern "C" int exps_launch_expr_pair_p{k}(unsigned long long, unsigned long long, StepsParams*, gl64_t*, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned int, cudaStream_t);
+"#
+            )
+        })
+        .collect();
+    let chain = |call: &dyn Fn(usize) -> String| -> String {
+        (0..n).map(|k| format!("  if ({}) return 1;\n", call(k))).collect()
+    };
+    let covered = chain(&|k| format!("exps_expr_covered_p{k}(expId)"));
+    let launch = chain(&|k| {
+        format!("exps_launch_expr_p{k}(expId,P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr,stream)")
+    });
+    let pair = chain(&|k| {
+        format!("exps_launch_expr_pair_p{k}(numId,denId,P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,stagePos,stageCols,destDim,destExpr,stream)")
+    });
+    files.push((
+        dispatch,
+        format!(
+            r#"// AUTO-GENERATED generic expression dispatch for {sym} ({} expressions in {n} parts)
+#include "gen_common.cuh"
+{decls}extern "C" int exps_expr_covered(unsigned long long expId) {{
+{covered}  return 0;
+}}
+extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t* dest,
+    unsigned long long N, unsigned long long destDomain,
+    unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
+    unsigned long long mode, unsigned long long scalar,
+    unsigned long long stagePos, unsigned long long stageCols,
+    unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+{launch}  return 0;
+}}
+extern "C" int exps_launch_expr_pair(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+{pair}  return 0;
+}}
+"#,
+            items.len()
+        ),
+    ));
+    files
+}
+
+/// One generic-expression TU: the kernels of `items` (+ the pair kernels whose numerator is among
+/// them; `all_items` resolves the denominators) and the dispatch functions -- the public C-ABI
+/// names when `part` is None, `_p<k>`-suffixed part-local ones otherwise.
+fn exprs_part(
+    sym: &str,
+    items: &[(i64, crate::ir::Ir, u64)],
+    all_items: &[(i64, crate::ir::Ir, u64)],
+    pairs: &[(i64, i64)],
+    part: Option<usize>,
+) -> String {
+    let sfx = part.map_or(String::new(), |k| format!("_p{k}"));
     let mut kernels: Vec<String> = Vec::new();
     let mut cases_launch: Vec<String> = Vec::new();
     let mut cases_covered: Vec<String> = Vec::new();
@@ -689,10 +918,14 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i
         cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
         cases_covered.push(format!("    case {exp_id}ull: return 1;"));
     }
-    let item_by_id: HashMap<i64, (&crate::ir::Ir, u64)> = items.iter().map(|(id, ir, dim)| (*id, (ir, *dim))).collect();
+    let item_by_id: HashMap<i64, (&crate::ir::Ir, u64)> =
+        all_items.iter().map(|(id, ir, dim)| (*id, (ir, *dim))).collect();
     let mut pair_kernels = Vec::new();
     let mut pair_cases = Vec::new();
     for &(num_id, den_id) in pairs {
+        if !items.iter().any(|(id, _, _)| *id == num_id) {
+            continue; // emitted by the part holding the numerator
+        }
         let (Some(&(num_ir, num_dim)), Some(&(den_ir, den_dim))) = (item_by_id.get(&num_id), item_by_id.get(&den_id))
         else {
             continue;
@@ -767,13 +1000,13 @@ pub fn emit_exprs_tu(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i
 #define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
 {}
 {}
-extern "C" int exps_expr_covered(unsigned long long expId) {{
+extern "C" int exps_expr_covered{sfx}(unsigned long long expId) {{
   switch (expId) {{
 {}
     default: return 0;
   }}
 }}
-extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t* dest,
+extern "C" int exps_launch_expr{sfx}(unsigned long long expId, StepsParams* P, gl64_t* dest,
     unsigned long long N, unsigned long long destDomain,
     unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
     unsigned long long mode, unsigned long long scalar,
@@ -788,7 +1021,7 @@ extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t
     default: return 0;
   }}
 }}
-extern "C" int exps_launch_expr_pair(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+extern "C" int exps_launch_expr_pair{sfx}(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
   uint64_t grid=(N+{GEN_BLK}ull-1)/{GEN_BLK}ull; if(grid>{EXPR_GRID_CAP}ull)grid={EXPR_GRID_CAP}ull; if(grid<1ull)grid=1ull;
 {}
   return 0;

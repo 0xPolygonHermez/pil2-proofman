@@ -423,14 +423,19 @@ fn adaptive_bounds(
 /// Build the liveness/chunk/coloring plan for `ir` at the given chunk size.
 /// `sym` is only used in the SSA-violation error message.
 pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<ChunkPlan> {
-    let n_ops = ir.instrs.len();
+    plan_chunks_ops(&ir.instrs, chunk_req, sym)
+}
+
+/// [`plan_chunks`] over an explicit op sequence (the Q program, or the table program).
+pub fn plan_chunks_ops(instrs: &[Instr], chunk_req: usize, sym: &str) -> anyhow::Result<ChunkPlan> {
+    let n_ops = instrs.len();
 
     // tmp liveness. SSA is assumed (each temp written once); fail loud otherwise,
     // since the chunk coloring would silently be wrong.
     let mut def_idx: HashMap<u64, usize> = HashMap::new();
     let mut last_use: HashMap<u64, usize> = HashMap::new();
     let mut dim_of: HashMap<u64, u64> = HashMap::new();
-    for (i, instr) in ir.instrs.iter().enumerate() {
+    for (i, instr) in instrs.iter().enumerate() {
         if instr.dst_is_tmp {
             let id = instr.dst_id.expect("tmp dest without id");
             if def_idx.contains_key(&id) {
@@ -464,7 +469,7 @@ pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<Chunk
     let chunk_of = |op_idx: usize| chunk_of_bounds(&bounds, op_idx);
 
     let mut out_dim = 3u64;
-    for instr in &ir.instrs {
+    for instr in instrs {
         if !instr.dst_is_tmp {
             out_dim = instr.ddim;
         }

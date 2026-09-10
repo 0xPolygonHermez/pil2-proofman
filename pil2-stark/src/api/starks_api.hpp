@@ -34,7 +34,7 @@ extern "C" {
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use);
+    void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate);
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
@@ -92,7 +92,7 @@ extern "C" {
     void calculate_witness_expr(void *pSetupCtx, void * stepsParams);
     
     uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
-    void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
+    void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile, uint64_t wordsPerRow);
     void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 
     uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
@@ -119,7 +119,7 @@ extern "C" {
 
     // Gen proof && Recursive Proof
     // =================================================================================
-    uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained);
+    uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained);
     uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_);
     void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
     // Fills the interior cells get_committed_pols leaves unmapped, from the boundary cells it
@@ -195,11 +195,12 @@ extern "C" {
     void free_device_buffers(void *d_buffers);
     void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void free_device_buffers_recursivef(void *d_buffers);
+    void upload_custom_commit_packed(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_);
+    void reserve_custom_commit_slot(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU);
     void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo, uint64_t *execData, uint64_t execWords);
     uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea);
-    void get_instances_ready(void *d_buffers, int64_t* instances_ready);
+    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
     void reset_device_streams(void *d_buffers_);
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
@@ -215,6 +216,18 @@ extern "C" {
     uint64_t get_stream_commit_floor(void *d_buffers_);
     uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
     void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+    void set_pipeline_mode(void *d_buffers_, bool enable);
+    void configure_phase_b(void *d_buffers_);
+    int64_t set_phase_b(void *d_buffers_, uint32_t state);
+    void harvest_pipeline(void *d_buffers_);
+    void dump_pipeline_state(void *d_buffers_);
+    uint32_t get_prefetch_witness_slots();
+    uint64_t get_mops_floor_bytes();
+    uint64_t get_post_alloc_headroom_bytes();
+    void configure_const_slot_cache(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
+    void load_host_const_pols(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
+    int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *trace);
     int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
     void stream_commit_pause();
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);

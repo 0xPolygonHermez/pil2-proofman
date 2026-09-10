@@ -1,6 +1,8 @@
 #ifndef MERKLETREEGL
 #define MERKLETREEGL
 
+#include <cstdio>
+#include <cstdlib>
 #include "goldilocks_base_field.hpp"
 #include "starks_api_internal.hpp"
 #include "poseidon_goldilocks.hpp"
@@ -26,8 +28,11 @@ public:
     uint64_t height;
     uint64_t width;
 
-    Goldilocks::Element *source;
-    Goldilocks::Element *nodes;
+    // Set by the owner before use (setSource/setNodes or the allocating ctor). Left null so a
+    // consumer that runs before its setter -- e.g. host code skipped by a CUDA-graph replay --
+    // fails loudly instead of reading through a recycled heap value.
+    Goldilocks::Element *source = nullptr;
+    Goldilocks::Element *nodes = nullptr;
 
     uint64_t arity;
     uint64_t last_level_verification;
@@ -71,6 +76,10 @@ public:
     void merkelize();
     void *get_nodes_ptr()
     {
+        if (nodes == nullptr) {
+            fprintf(stderr, "MerkleTreeGL::get_nodes_ptr: nodes not set\n");
+            std::abort();
+        }
         return nodes;
     }
 

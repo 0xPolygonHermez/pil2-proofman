@@ -205,8 +205,7 @@ impl ProveAirCmd {
             ))));
         };
 
-        let sctx: SetupCtx<Goldilocks> =
-            SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], &[], self.gpu)?;
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], self.gpu)?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
@@ -280,7 +279,7 @@ impl ProveAirCmd {
         if load_tree {
             setups_vadcop.total_const_tree_size = setup.const_tree_size;
         }
-        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0)?;
 
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();

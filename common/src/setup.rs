@@ -29,7 +29,7 @@ use proofman_starks_lib_c::{
     calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -73,6 +73,7 @@ pub struct Setup<F: PrimeField64> {
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
+    pub custom_commits_reserved_words: usize,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
@@ -274,8 +275,6 @@ impl<F: PrimeField64> Setup<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
-        // Table air: proved at most once, so its const pols need not survive the proof.
-        single_use: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
@@ -363,7 +362,6 @@ impl<F: PrimeField64> Setup<F> {
                 false,
                 gpu,
                 preallocate_const,
-                single_use && gpu,
             );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
@@ -509,6 +507,20 @@ impl<F: PrimeField64> Setup<F> {
                 (None, None, None, None, None, None, None)
             };
 
+        // Worst case (words_per_row == n_cols): the real value is in the commit file, which is
+        // registered long after the const buffer is sized.
+        let custom_commits_reserved_words = match gpu {
+            true => custom_commit_reserved_words(
+                stark_info.stark_struct.n_bits as u32,
+                &stark_info
+                    .custom_commits
+                    .iter()
+                    .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
+                    .collect::<Vec<_>>(),
+            ),
+            false => 0,
+        };
+
         Ok(Self {
             air_id,
             airgroup_id,
@@ -516,6 +528,7 @@ impl<F: PrimeField64> Setup<F> {
             p_setup: SetupC { p_stark_info, p_expressions_bin },
             const_pols_size,
             const_pols_size_packed,
+            custom_commits_reserved_words,
             const_tree_size,
             verkey,
             verkey_file,
@@ -543,6 +556,13 @@ impl<F: PrimeField64> Setup<F> {
 
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
+    }
+
+    /// GPU airs merkelize const pols on device; only CPU, BN128/RecursiveF and the
+    /// `PROOFMAN_CONST_TREE_RESIDENT` opt-in ever read the tree file back.
+    pub fn needs_const_tree_file(&self) -> bool {
+        let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
+        !self.gpu || !goldilocks || self.preallocate
     }
 
     pub fn get_circom_witness_size(&self) -> usize {

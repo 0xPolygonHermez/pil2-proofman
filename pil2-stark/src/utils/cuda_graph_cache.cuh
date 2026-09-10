@@ -97,9 +97,15 @@ public:
         if (it == cache_.end()) return false;
         cudaError_t err = cudaGraphLaunch(it->second, stream);
         if (err != cudaSuccess) {
+            // Never re-capture after a lost graph: the body's host state may already have been
+            // skipped by earlier replays in this proof (a re-capture would bake it). The key runs
+            // its body from now on; loud because this should not happen at steady state.
+            fprintf(stderr, "[cudaGraph] launch failed key=%llx: %s -- key blacklisted\n",
+                    (unsigned long long)key, cudaGetErrorString(err));
             clearCudaError();
             cudaGraphExecDestroy(it->second);
             cache_.erase(it);
+            blacklist_.insert(key);
             return false;
         }
         return true;
@@ -138,8 +144,11 @@ public:
         cudaGraph_t graph = nullptr;
         cudaError_t err = cudaStreamEndCapture(stream, &graph);
         if (err != cudaSuccess || graph == nullptr) {
+            fprintf(stderr, "[cudaGraph] endCapture failed key=%llx: %s -- key blacklisted\n",
+                    (unsigned long long)pending_key_, cudaGetErrorString(err));
             clearCudaError();
             if (graph) cudaGraphDestroy(graph);
+            blacklist_.insert(pending_key_);
             return false;
         }
 
@@ -157,16 +166,22 @@ public:
         err = cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0);
 #endif
         if (err != cudaSuccess) {
+            fprintf(stderr, "[cudaGraph] instantiate failed key=%llx: %s -- key blacklisted\n",
+                    (unsigned long long)pending_key_, cudaGetErrorString(err));
             clearCudaError();
             cudaGraphDestroy(graph);
+            blacklist_.insert(pending_key_);
             return false;
         }
 
         err = cudaGraphLaunch(exec, stream);
         if (err != cudaSuccess) {
+            fprintf(stderr, "[cudaGraph] first launch failed key=%llx: %s -- key blacklisted\n",
+                    (unsigned long long)pending_key_, cudaGetErrorString(err));
             clearCudaError();
             cudaGraphExecDestroy(exec);
             cudaGraphDestroy(graph);
+            blacklist_.insert(pending_key_);
             return false;
         }
 

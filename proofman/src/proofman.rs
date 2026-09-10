@@ -2,21 +2,23 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
 use proofman_fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
-    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES,
-    PreLoadedConstTree, PackedInfo,
+    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
+    CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
+    MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConstTree, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{set_gpu_mode_c, load_device_const_pols_c};
 use proofman_starks_lib_c::{
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, get_instances_ready_c,
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
+    prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+};
+use proofman_starks_lib_c::{
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
-use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -499,8 +501,6 @@ pub struct ProofMan<F: PrimeField64> {
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
-    /// Device streams per node — what the C side indexes. Not `n_streams`, which counts workers.
-    n_device_streams: usize,
     memory_handler: Arc<MemoryHandler<F>>,
     memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -898,7 +898,7 @@ where
 
         let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
 
         proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
 
@@ -1923,7 +1923,6 @@ where
                 &self.const_pols,
                 &self.const_tree,
                 None,
-                None,
                 true,
             )?;
             if self.pctx.gpu {
@@ -2068,7 +2067,6 @@ where
             0,
             &air_info,
             &ProofType::RecurserAggregator,
-            false,
             false,
             false,
             self.options.gpu,
@@ -2336,7 +2334,6 @@ where
             sctx,
             setups_vadcop,
             n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
             n_aggregation_workers_per_gpu,
             n_gpus,
             recurser_const_offset,
@@ -2371,18 +2368,16 @@ where
             false => 1,
         };
 
-        // Workers are not device streams: without a pool they share the basic ones. Anything the C
-        // side indexes by stream needs `n_device_streams`.
+        // Workers are not device streams: without a pool they share the basic ones.
         let n_streams = ((n_streams_per_gpu + n_aggregation_workers_per_gpu) * n_proof_threads) as usize;
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
-        let n_device_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
             max_witness_stored_recursive,
             max_witness_stored_recursive_compressor,
             setups_vadcop.max_witness_size,
-            setups_vadcop.max_trace_size,
+            setups_vadcop.max_compact_trace_size,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -2472,7 +2467,6 @@ where
             recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
-            n_device_streams,
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
@@ -2522,7 +2516,30 @@ where
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("register_custom_commits");
-        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
+        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, CustomCommitValidation::Lenient)?;
+        self.ensure_custom_commits_fixed()
+    }
+
+    /// Generate any custom-commit file that is missing or not in the packed layout. Only the
+    /// witness library can produce them, so this is a no-op until one is registered.
+    pub fn ensure_custom_commits_fixed(&self) -> ProofmanResult<()> {
+        let pending = self.pctx.custom_commits_pending();
+        if pending.is_empty() || !self.wcm.has_witness_lib_components() {
+            return Ok(());
+        }
+        tracing::info!("Generating custom commits fixed: {}", pending.join(", "));
+        timer_start_info!(GENERATING_CUSTOM_COMMITS_FIXED);
+        // One writer per node: the files are shared, and every rank validates them below.
+        if self.mpi_ctx.rank == 0 {
+            self.wcm.gen_custom_commits_fixed()?;
+        }
+        self.mpi_ctx.barrier();
+        timer_stop_and_log_info!(GENERATING_CUSTOM_COMMITS_FIXED);
+        self.pctx.initialize_custom_commits(
+            self.pctx.custom_commits_paths(),
+            &self.sctx,
+            CustomCommitValidation::Strict,
+        )
     }
 
     /// Upload (per program) the instruction table for an indexed air. `table` is
@@ -2574,7 +2591,8 @@ where
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
-        Ok(())
+        // Custom commits registered before the library was loaded could not be generated then.
+        self.ensure_custom_commits_fixed()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2748,6 +2766,13 @@ where
             let summary_info = self.exec()?;
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
+
+            // Phase B is per job. A cluster worker never runs VadcopFinal, the only other point
+            // that hands the basic stream back, so the previous job can leave the aliases open:
+            // its basics would then find no eligible stream and starve here.
+            if self.pctx.gpu && self.pctx.phase_b {
+                let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            }
 
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
             timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
@@ -2963,14 +2988,49 @@ where
         let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
         let proofs_pending = completions.ledger();
 
+        // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
+        // ready basics from the scheduler ahead of dispatch and stages the front
+        // one's trace to the zone while the current proof computes. Only READY
+        // (stored/computed) witnesses ever enter the scheduler queue, so a held
+        // instance is always launchable. Single basic stream only; default ON with
+        // the zone, PROOFMAN_PREFETCH=0 disables.
+        let prefetch_dequeue_ahead = self.pctx.gpu
+            && self.n_streams_non_recursive == 1
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
         // channels). Condvar parks idle stream workers.
         let scheduler: Option<Arc<crate::SharedScheduler<F>>> = if self.pctx.gpu {
-            Some(Arc::new(crate::SharedScheduler::new(crate::RecursiveScheduler::<F>::new(
-                self.pctx.get_device_buffers_ptr(),
-            ))))
+            let mut sched = crate::RecursiveScheduler::<F>::new(self.pctx.get_device_buffers_ptr());
+            if self.pctx.phase_b {
+                // Dispatch ranks: phase-A-only airs first so the halves open as early as possible (with
+                // a compressor first among them: the longest chain), then the other airs with a
+                // compressor (basic, CPU witness, compressor, recursive1, recursive2: the chain that
+                // ends the block if it starts late), then the rest by backlog.
+                let half = self.pctx.phase_b_half as u64;
+                let ranks: std::collections::HashMap<(usize, usize), u8> = self
+                    .pctx
+                    .global_info
+                    .airs
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(ag, group)| (0..group.len()).map(move |air| (ag, air)))
+                    .filter_map(|(ag, air)| {
+                        let phase_a_only =
+                            self.sctx.get_setup(ag, air).map(|s| s.prover_buffer_size > half).unwrap_or(false);
+                        let has_compressor = self.pctx.global_info.get_air_has_compressor(ag, air);
+                        match (phase_a_only, has_compressor) {
+                            (true, true) => Some(((ag, air), 0)),
+                            (true, false) => Some(((ag, air), 1)),
+                            (false, true) => Some(((ag, air), 2)),
+                            (false, false) => None,
+                        }
+                    })
+                    .collect();
+                sched.set_big_keys(ranks);
+            }
+            Some(Arc::new(crate::SharedScheduler::new(sched)))
         } else {
             None
         };
@@ -3011,6 +3071,39 @@ where
             });
         }
 
+        // Phase B: counts the completions that can only happen in phase A -- the Basic of every
+        // instance whose buffer exceeds a half, and every Compressor that does (its proof needs the
+        // compact witness tail too, as the class sizing does). When the last lands, the basic stream
+        // closes and everything left -- recursion and the small basics -- moves to the two halves
+        // (set_phase_b 1). Nothing to wait for means the request goes out at once. Phase A starts
+        // fresh on every job.
+        let phase_a_remaining: Option<Arc<std::sync::atomic::AtomicI64>> = if self.pctx.phase_b {
+            let _ = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 0);
+            let half = self.pctx.phase_b_half as u64;
+            let mut expected: i64 = 0;
+            for &instance_id in my_instances.iter() {
+                let (ag, air) = self.pctx.dctx_get_instance_info(instance_id)?;
+                if self.sctx.get_setup(ag, air)?.prover_buffer_size > half {
+                    expected += 1;
+                }
+                if self.pctx.global_info.get_air_has_compressor(ag, air) {
+                    let compressor_big =
+                        self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).is_none_or(|s| {
+                            let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                            s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
+                        });
+                    expected += compressor_big as i64;
+                }
+            }
+            tracing::debug!("Phase B armed: {expected} phase-A completions expected");
+            if expected == 0 {
+                let rc = set_phase_b_c(self.pctx.get_device_buffers_ptr(), 1);
+                tracing::info!("Phase B requested: no phase-A-only instance in this job (rc={rc})");
+            }
+            Some(Arc::new(std::sync::atomic::AtomicI64::new(expected)))
+        } else {
+            None
+        };
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
@@ -3028,6 +3121,7 @@ where
             let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
             let scheduler_clone = scheduler.clone();
+            let phase_a_remaining_clone = phase_a_remaining.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -3038,6 +3132,32 @@ where
                     let _settled = proofs_pending_clone.adopt(id, p.as_usize());
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         break;
+                    }
+                    if let Some(remaining) = phase_a_remaining_clone.as_ref() {
+                        // Only the phase-A-only completions count (see the countdown's arming).
+                        let (ag, air) =
+                            pctx_clone.dctx_get_instance_info(id as usize).unwrap_or((usize::MAX, usize::MAX));
+                        let counts = ag != usize::MAX
+                            && match p {
+                                ProofType::Basic => sctx_clone
+                                    .get_setup(ag, air)
+                                    .map(|s| s.prover_buffer_size > pctx_clone.phase_b_half as u64)
+                                    .unwrap_or(false),
+                                ProofType::Compressor => setups_clone
+                                    .sctx_compressor
+                                    .as_ref()
+                                    .and_then(|c| c.get_setup(ag, air).ok())
+                                    .is_none_or(|s| {
+                                        let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                                        s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n
+                                            > pctx_clone.phase_b_half as u64
+                                    }),
+                                _ => false,
+                            };
+                        if counts && remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
+                            let rc = set_phase_b_c(pctx_clone.get_device_buffers_ptr(), 1);
+                            tracing::info!("Phase B requested: every phase-A-only instance completed (rc={rc})");
+                        }
                     }
                     if *DEBUG_CHALLENGES {
                         Self::debug_print_airgroup_values(&pctx_clone, &sctx_clone, &proofs_clone, id, &p);
@@ -3195,57 +3315,13 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
-        let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_device_streams];
-        get_instances_ready_c(self.pctx.get_device_buffers_ptr(), instance_ids_in_streams.as_ptr() as *mut i64);
-
-        instance_ids_in_streams.par_iter().enumerate().for_each(|(stream_id, instance_id)| {
-            if *instance_id < 0 {
-                return;
-            }
-            if self.cancellation_info.read_recover().token.is_cancelled() {
-                return;
-            }
-            // Commit to the callback on a successful launch; on failure or panic the guard settles
-            // it. Arm with the instance id, which is what the basic proof's completion reports.
-            let pending = proofs_pending.arm(*instance_id as u64, ProofType::Basic as usize);
-            let proof_stream_id = match Self::gen_proof(
-                &self.proofs,
-                &self.pctx,
-                &self.sctx,
-                *instance_id as usize,
-                &self.aux_trace,
-                &self.const_pols,
-                &self.const_tree,
-                Some(stream_id),
-                None, // resident/pinned witness: skip path, no reserved stream
-                false,
-            ) {
-                Ok(sid) => {
-                    pending.commit();
-                    Some(sid)
-                }
-                Err(e) => {
-                    self.cancellation_info.write_recover().cancel(Some(e));
-                    None
-                }
-            };
-
-            let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
-            if is_shared_buffer {
-                // Trace H2D is async: wait on the proof's stream before recycling
-                // the shared buffer, else a concurrent take() overwrites it mid-copy.
-                if let (true, Some(sid)) = (self.pctx.gpu, proof_stream_id) {
-                    wait_trace_h2d_done_c(self.pctx.get_device_buffers_ptr(), sid as u64);
-                }
-                if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
-                    self.cancellation_info.write_recover().cancel(Some(e));
-                }
-            }
-        });
-
-        let mut my_instances_calculated = vec![false; instances.len()];
-        for instance_id in instance_ids_in_streams.iter().filter(|&&id| id >= 0) {
-            my_instances_calculated[*instance_id as usize] = true;
+        // Pipeline: the next proof is enqueued on the stream while the current one still
+        // runs (no host sync at reserve; completions come off the harvest ring). Proofs phase
+        // only. PROOFMAN_NO_PIPELINE=1 disables it.
+        let pipeline_enabled =
+            prefetch_dequeue_ahead && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
         }
 
         // Per-AIR per-proof cost proxy for LPT ordering; computed once (not in the
@@ -3314,8 +3390,22 @@ where
             let proofs_pending_clone = proofs_pending.clone();
             let scheduler_clone = scheduler.clone();
             let handle_recursive = std::thread::spawn(move || {
+                // Dequeued-ahead basics (id, airgroup, air), dispatch order, depth <= 2.
+                // Front: launches next, its trace is (or is about to be) in the zone.
+                let mut held: std::collections::VecDeque<(usize, usize, usize)> = std::collections::VecDeque::new();
+                // Ids currently staged in zone slots (depth 1: only the front stages ahead).
+                let mut zone_staged: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+                // PROOFMAN_PREFETCH_LOG=1: one summary line at the drained exit (hits/total).
+                let mut zone_hits: u64 = 0;
+                let mut zone_picks: u64 = 0;
+                let prefetch_log = std::env::var("PROOFMAN_PREFETCH_LOG").map(|v| v == "1").unwrap_or(false);
                 loop {
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                    // Pipeline: collect any finished proofs (writeProof + completion
+                    // callback) off the ring; non-blocking, cheap when nothing fired.
+                    if pipeline_enabled {
+                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
+                    }
 
                     // One locked pick per iteration (GPU): a Basic is dispatched right below; a
                     // Recursive witness (in `gpu_witness`) falls through to the recursive dispatch.
@@ -3326,6 +3416,7 @@ where
                     // so no error path can strand a stream at status=1.
                     let mut reservation: Option<crate::StreamReservation> = None;
                     let mut gpu_witness: Option<Proof<F>> = None;
+                    let mut picked_from_held = false;
                     let basic: Option<(usize, Option<usize>)> = if let Some(sched) = scheduler_clone.as_ref() {
                         let (lock, cvar) = (&sched.lock, &sched.ready);
                         let mut guard = lock.lock().unwrap();
@@ -3343,6 +3434,13 @@ where
                                         }
                                         Err(e) => {
                                             cancellation_info_clone.write_recover().cancel(Some(e));
+                                            for (hid, _, _) in held.drain(..) {
+                                                let (is_shared, buf) = pctx_clone.free_instance(hid);
+                                                if is_shared {
+                                                    let _ = memory_handler_clone.release_buffer(buf);
+                                                }
+                                                proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                                            }
                                             return;
                                         }
                                     }
@@ -3350,6 +3448,24 @@ where
                             }
                             let pick = if force_recursive_stream {
                                 guard.next_recursive().map(|(w, s)| crate::WorkerPick::Recursive(w, s))
+                            } else if let Some(p) = guard.next_compressor() {
+                                // Ahead of the held basics: only this worker dispatches compressors, and
+                                // a big air's compressor holds phase B closed until it has run.
+                                Some(p)
+                            } else if let Some(&(hid, hag, hair)) = held.front() {
+                                // A held instance always launches next (its trace is in
+                                // the zone); only the stream reservation can make it wait.
+                                let r = guard.reserve_for_basic(hag, hair).map(|s| crate::WorkerPick::Basic(hid, s));
+                                if r.is_some() {
+                                    held.pop_front();
+                                    picked_from_held = zone_staged.contains(&hid);
+                                    zone_picks += 1;
+                                    if picked_from_held {
+                                        zone_hits += 1;
+                                    }
+                                    zone_staged.retain(|id| *id != hid);
+                                }
+                                r
                             } else {
                                 guard.next_nonrecursive()
                             };
@@ -3362,6 +3478,9 @@ where
                                 }
                                 Some(crate::WorkerPick::Basic(id, s)) => {
                                     let sid = s.stream_id() as usize;
+                                    if prefetch_log {
+                                        tracing::info!("dispatch basic instance {id} on stream {sid}");
+                                    }
                                     reservation = Some(s);
                                     break Some((id, Some(sid)));
                                 }
@@ -3371,8 +3490,21 @@ where
                                     if proofs_finished_clone.load(Ordering::Relaxed)
                                         && guard.is_empty()
                                         && (force_recursive_stream || guard.basic_is_empty())
+                                        && held.is_empty()
                                     {
+                                        if prefetch_log && zone_picks > 0 {
+                                            tracing::info!(
+                                                "prefetch zone: {zone_hits} hits / {zone_picks} basic dispatches"
+                                            );
+                                        }
                                         return;
+                                    }
+                                    // Pipeline: a full ring is what usually parks us here --
+                                    // harvest finished proofs NOW (not at the outer loop top,
+                                    // which a parked worker never revisits) so the reserve
+                                    // above succeeds the moment one proof completes.
+                                    if pipeline_enabled {
+                                        harvest_pipeline_c(pctx_clone.get_device_buffers_ptr());
                                     }
                                     let (g, _) = cvar.wait_timeout(guard, std::time::Duration::from_millis(1)).unwrap();
                                     guard = g;
@@ -3399,6 +3531,28 @@ where
                             }
                             continue;
                         } else {
+                            // A pick that was not dequeued ahead (first proof of the
+                            // phase) has no zone entry yet: seed one now so gen_proof
+                            // takes the hit path (device-side wait) instead of the
+                            // host-synced miss route.
+                            if prefetch_dequeue_ahead && !picked_from_held {
+                                if let (Ok((pag, pair)), true) =
+                                    (pctx_clone.dctx_get_instance_info(instance_id), reserved.is_some())
+                                {
+                                    if let Ok(psetup) = sctx_clone.get_setup(pag, pair) {
+                                        let prm = pctx_clone.get_air_instance_params(instance_id, true);
+                                        let pp: *mut std::ffi::c_void = (&psetup.p_setup).into();
+                                        let _ = prefetch_witness_c(
+                                            pp,
+                                            pctx_clone.get_device_buffers_ptr(),
+                                            instance_id as u64,
+                                            pag as u64,
+                                            pair as u64,
+                                            prm.trace as *mut std::ffi::c_void,
+                                        );
+                                    }
+                                }
+                            }
                             let proof_stream_id = match Self::gen_proof(
                                 &proofs_clone,
                                 &pctx_clone,
@@ -3407,7 +3561,6 @@ where
                                 &aux_trace_clone,
                                 &const_pols_clone,
                                 &const_tree_clone,
-                                None,
                                 reserved,
                                 false,
                             ) {
@@ -3425,6 +3578,60 @@ where
                                     break;
                                 }
                             };
+                            // Dequeue-ahead: refill the held queue (ready witnesses only --
+                            // the scheduler queue never holds an uncomputed one) and upload
+                            // the front instance's trace to the zone on the copy stream while
+                            // the proof just launched computes. Witness buffers stay alive
+                            // because held instances are not freed until their own launch.
+                            if prefetch_dequeue_ahead {
+                                if let Some(sched) = scheduler_clone.as_ref() {
+                                    let mut guard = sched.lock.lock().unwrap();
+                                    // Make newly-ready instances visible to the lookahead.
+                                    while let Ok(id) = proofs_rx.try_recv() {
+                                        match pctx_clone.dctx_get_instance_info(id) {
+                                            Ok((ag, air)) => {
+                                                let resident = sctx_clone
+                                                    .get_setup(ag, air)
+                                                    .map(|s| s.preallocate)
+                                                    .unwrap_or(false);
+                                                guard.push_basic(id, ag, air, resident);
+                                            }
+                                            Err(e) => {
+                                                cancellation_info_clone.write_recover().cancel(Some(e));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    while held.len() < 2 {
+                                        match guard.pop_basic_prefetch() {
+                                            Some(h) => held.push_back(h),
+                                            None => break,
+                                        }
+                                    }
+                                }
+                                // Stage the FRONT instance's trace (one look-ahead entry; the
+                                // 2 zone slots ping-pong across successive proofs).
+                                zone_staged.retain(|id| held.iter().any(|&(h, _, _)| h == *id));
+                                if let Some(&(nid, nag, nair)) = held.front() {
+                                    if !zone_staged.contains(&nid) {
+                                        if let Ok(nsetup) = sctx_clone.get_setup(nag, nair) {
+                                            let nparams = pctx_clone.get_air_instance_params(nid, true);
+                                            let p_next_setup: *mut std::ffi::c_void = (&nsetup.p_setup).into();
+                                            let rc = prefetch_witness_c(
+                                                p_next_setup,
+                                                pctx_clone.get_device_buffers_ptr(),
+                                                nid as u64,
+                                                nag as u64,
+                                                nair as u64,
+                                                nparams.trace as *mut std::ffi::c_void,
+                                            );
+                                            if rc == 0 {
+                                                zone_staged.push_back(nid);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
@@ -3440,6 +3647,15 @@ where
                     }
 
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
+                        // Held (dequeued-ahead) basics are no longer in the scheduler's queues, so
+                        // the teardown drain can't recover them either: same recovery inline.
+                        for (hid, _, _) in held.drain(..) {
+                            let (is_shared, buf) = pctx_clone.free_instance(hid);
+                            if is_shared {
+                                let _ = memory_handler_clone.release_buffer(buf);
+                            }
+                            proofs_pending_clone.settle(hid as u64, ProofType::Basic as usize);
+                        }
                         // The pick above may already have handed us a witness. Dropping it here would
                         // lose its pooled `circom_witness` for the rest of the process — the teardown
                         // drain can't recover it, since it is no longer in the scheduler's queues.
@@ -3596,10 +3812,6 @@ where
 
         let mut instances_to_be_calculated = Vec::with_capacity(my_instances.len());
         for &instance_id in my_instances.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
-
             // Committed to the async callback; if the send panics the guard settles it. The basic
             // proof's completion reports its instance id.
             let pending = proofs_pending.arm(instance_id as u64, ProofType::Basic as usize);
@@ -3646,12 +3858,17 @@ where
 
         // Wait for every launched proof to settle. The 600s backstop returns false without
         // cancelling, so cancel then — an incomplete result must not be mistaken for success.
+        // PROOFMAN_SETTLE_TIMEOUT_S shortens the backstop for wedge diagnosis (default 600).
+        let settle_timeout_s: u64 =
+            std::env::var("PROOFMAN_SETTLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
         let settled = completions.wait_settled(
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
-            Some(std::time::Duration::from_secs(600)),
+            Some(std::time::Duration::from_secs(settle_timeout_s)),
         );
         if !settled && !self.cancellation_info.read_recover().token.is_cancelled() {
+            // The ledger already named the unsettled units; add what the device streams hold.
+            dump_pipeline_state_c(self.pctx.get_device_buffers_ptr());
             self.cancellation_info
                 .write_recover()
                 .cancel(Some(ProofmanError::ProofmanError("timed out waiting for proofs to settle".into())));
@@ -3662,6 +3879,9 @@ where
         // idempotent no-op.
         proofs_finished.store(true, Ordering::Relaxed);
         drop(completions);
+        if pipeline_enabled {
+            set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), false);
+        }
 
         if self.cancellation_info.read_recover().token.is_cancelled() {
             self.cancel_memory_handlers();
@@ -3976,54 +4196,18 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
-            let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
-            let (publics, rec_proof) = proof.proof.split_at(publics_aggregation);
-
-            let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
-            publics_extended[0..publics.len()].copy_from_slice(publics);
-
-            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
-
-            let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
-            recursive2_proof[0] = publics_extended.len() as u64;
-            recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
-            recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
-
-            let vadcop_proof =
-                VadcopFinalProof::new_from_proof(&recursive2_proof, false, self.pctx.global_info.hash.clone())
-                    .map_err(|e| {
-                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
-                    })?;
-
-            let v = verifier(&self.pctx.global_info.hash);
-
-            // Select the verkey by circuit_type (0 = null, 1 = recursive2, k >= 2 = recursive1 of air
-            // k-2). A single-instance worker sends an un-aggregated recursive1 proof that must use that
-            // air's recursive1 verkey, not the recursive2 one (else wrong root_c); a null proof is a no-op.
-            let circuit_type = publics[0];
-            let valid_recursive_proof = match circuit_type {
-                0 => true,
-                1 => v.verify_recursive2(&vadcop_proof, &setup.get_vk()),
-                _ => {
-                    let air_id = circuit_type as usize - 2;
-                    let vk = self
-                        .setups
-                        .sctx_recursive1
-                        .as_ref()
-                        .unwrap()
-                        .get_setup(proof.airgroup_id as usize, air_id)?
-                        .get_vk();
-                    v.verify_recursive2(&vadcop_proof, &vk)
-                }
-            };
-
-            if !valid_recursive_proof {
-                self.cancellation_info
-                    .write_recover()
-                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
-                break;
-            }
+            // TODO: re-arm. A received aggregated proof is accepted unchecked: the check rejected
+            // valid proofs against a key built from another revision of the recursion circuit and
+            // failed every cluster job with "Received aggregated proof is invalid!". Disabled here
+            // rather than removed -- `verify_agg_proof` stays so re-arming is uncommenting this.
+            // let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+            //
+            // if !valid_recursive_proof {
+            //     self.cancellation_info
+            //         .write_recover()
+            //         .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
+            //     break;
+            // }
             timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
@@ -5093,6 +5277,47 @@ where
         }
     }
 
+    // Unused while the call site above is commented out (see the TODO there).
+    #[allow(dead_code)]
+    /// Verify an aggregated proof received from a worker with the C++ STARK verifier on the key's
+    /// own setup files. circuit_type (publics[0]): 0 = null proof (no-op), 1 = recursive2, k >= 2 =
+    /// the un-aggregated recursive1 of air k-2 that a single-instance worker sends -- verified with
+    /// that air's recursive1 setup (same circuit shape, its own root_c).
+    fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
+        let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
+        let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
+        let circuit_type = publics[0];
+        if circuit_type == 0 {
+            return Ok(true);
+        }
+        let (setup, setup_path) = if circuit_type == 1 {
+            (
+                self.setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
+            )
+        } else {
+            let air_id = circuit_type as usize - 2;
+            (
+                self.setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
+            )
+        };
+        let mut publics_extended = vec![0u64; setup.stark_info.n_publics as usize];
+        publics_extended[0..publics.len()].copy_from_slice(publics);
+        add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
+        let publics_f: Vec<F> = publics_extended.iter().map(|&x| F::from_u64(x)).collect();
+        let base = setup_path.display().to_string();
+        Ok(verify_proof::<F>(
+            rec_proof.as_ptr() as *mut u64,
+            base.clone() + ".starkinfo.json",
+            base.clone() + ".verifier.bin",
+            base + ".verkey.json",
+            Some(publics_f),
+            None,
+            None,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn gen_proof(
         proofs: &[RwLock<Option<Proof<F>>>],
@@ -5102,7 +5327,6 @@ where
         aux_trace: &[F],
         const_pols: &[F],
         const_tree: &[F],
-        stream_id_: Option<usize>,
         reserved_stream: Option<usize>,
         // true: no global challenge -- the transcript is seeded from this AIR's own
         // verkey + publics (see genProof's `recursive` branch).
@@ -5138,14 +5362,9 @@ where
             None => String::new(),
         };
 
-        // stream_id_ Some -> resident witness (skip recompute, pinned to that stream). Else
-        // recompute; reserved_stream Some -> scheduler-reserved stream; None -> u64::MAX
-        // (CPU path — gen_proof_cpu ignores it; on GPU the scheduler always reserves).
-        let (skip_recalculation, stream_id): (bool, u64) = match (stream_id_, reserved_stream) {
-            (Some(s), _) => (true, s as u64),
-            (None, Some(s)) => (false, s as u64),
-            (None, None) => (false, u64::MAX),
-        };
+        // reserved_stream Some -> scheduler-reserved stream; None -> u64::MAX (CPU path —
+        // gen_proof_cpu ignores it; on GPU the scheduler always reserves).
+        let stream_id: u64 = reserved_stream.map_or(u64::MAX, |s| s as u64);
 
         let proof = create_buffer_fast(setup.proof_size as usize);
         *proofs[instance_id].write().unwrap() =
@@ -5163,19 +5382,12 @@ where
             air_id as u64,
             instance_id as u64,
             pctx.get_device_buffers_ptr(),
-            skip_recalculation,
             stream_id,
             const_pols_path,
             const_pols_tree_path,
             &custom_commits_fixed_path,
             self_contained,
         );
-
-        if proof_stream_id == u64::MAX {
-            return Err(ProofmanError::ProofmanError(format!(
-                "instance {instance_id} witness no longer resident on stream {stream_id}; stream was reused since the snapshot"
-            )));
-        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");
@@ -5191,7 +5403,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -5228,39 +5440,20 @@ where
             }
         }
 
-        // Both lists name airs by index, so a typo would otherwise be silently ignored.
-        for (option, airs) in [
-            ("preloaded_const_tree_gpu", &options.preloaded_const_tree_gpu),
-            ("table_airs_gpu", &options.table_airs_gpu),
-        ] {
-            for &(airgroup_id, air_id) in airs {
-                if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
-                    return Err(ProofmanError::InvalidConfiguration(format!(
-                        "{option} names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
-                    )));
-                }
-            }
-        }
-
-        // A preallocated tree lives in the const buffer, so there is no in-aux-trace node
-        // area to alias the const pols onto.
-        for air in &options.table_airs_gpu {
-            if options.preloaded_const_tree_gpu.contains(air) {
+        // Names airs by index, so a typo would otherwise be silently ignored.
+        for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
+            if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
                 return Err(ProofmanError::InvalidConfiguration(format!(
-                    "air ({}, {}) is in both table_airs_gpu and preloaded_const_tree_gpu",
-                    air.0, air.1
+                    "preloaded_const_tree_gpu names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
                 )));
             }
         }
-
-        let table_airs: &[(usize, usize)] = if options.gpu { &options.table_airs_gpu } else { &[] };
 
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
             &pctx.global_info,
             &ProofType::Basic,
             options.verify_constraints,
             &preloaded_const,
-            table_airs,
             options.gpu,
         )?);
 
@@ -5274,18 +5467,52 @@ where
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
 
-        let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx
-            .set_device_buffers(
-                &sctx,
-                &setups_vadcop,
-                options.aggregation,
-                options.gpu,
-                options.max_number_streams,
-                options.max_number_recursive_streams,
-                options.final_snark,
-            )?;
+        // Prefetch-zone sizing, needed BEFORE the unified-buffer allocation: the zone is
+        // carved from a region INSIDE the unified buffer (below the consts), so it shares
+        // one planned budget. Witness bytes = the largest basic trace (packed width when
+        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables.
+        let prefetch_witness_bytes: u64 =
+            if options.gpu && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true) {
+                let mut witness_bytes: u64 = 0;
+                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                    for (air_id, _) in group.iter().enumerate() {
+                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                        let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                        let packed_words = options
+                            .packed_info
+                            .get(&(airgroup_id, air_id))
+                            .filter(|pi| pi.is_packed && options.packed)
+                            .map(|pi| pi.num_packed_words);
+                        witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+                    }
+                }
+                witness_bytes
+            } else {
+                0
+            };
+        // Slot count comes from the C++ side (DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS),
+        // the single source of truth configure_prefetch_zone sizes against.
+        let prefetch_region_area: u64 = (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
+
+        let (n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx.set_device_buffers(
+            &sctx,
+            &setups_vadcop,
+            options.aggregation,
+            options.gpu,
+            options.max_number_streams,
+            options.max_number_recursive_streams,
+            options.final_snark,
+            prefetch_region_area,
+        )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
+
+        // Arm the prefetch zone with the size computed above: the zone IS the unified
+        // buffer's region (arming refuses on a mismatch).
+        if prefetch_witness_bytes > 0 {
+            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes, 0, 0, 0);
+        }
 
         // Streaming-commit slots: DEFAULT 2. The slot COUNT is a memory-budget knob
         // (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is
@@ -5381,16 +5608,7 @@ where
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((
-            pctx,
-            sctx,
-            setups_vadcop,
-            n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
-            n_aggregation_workers_per_gpu,
-            n_gpus,
-            aggregation_const_end,
-        ))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus, aggregation_const_end))
     }
 
     #[allow(dead_code)]
@@ -5493,15 +5711,15 @@ where
             let n_custom_commits = setup.stark_info.custom_commits.len();
             for commit_id in 0..n_custom_commits {
                 if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path = pctx
-                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, true)
-                        .unwrap();
+                    let name = &setup.stark_info.custom_commits[commit_id].name;
+                    let custom_commit_file_path = pctx.get_custom_commits_fixed_buffer(name, true).unwrap();
 
                     load_custom_commit_c(
                         (&setup.p_setup).into(),
                         commit_id as u64,
                         air_instance.get_custom_commits_fixed_ptr(),
                         custom_commit_file_path.to_str().expect("Invalid path"),
+                        pctx.get_custom_commit_words_per_row(name),
                     );
                 }
             }

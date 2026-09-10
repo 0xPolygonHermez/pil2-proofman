@@ -55,8 +55,18 @@ public:
         return cudaStreamIsCapturing(stream, &status) == cudaSuccess && status != cudaStreamCaptureStatusNone;
     }
 
+    // Events are recorded only when their output can be seen: the timer logs at trace level,
+    // and recording below it measured ~0.8% of proof time for nothing.
+    static bool on() {
+#ifdef __GOLDILOCKS_ENV__
+        return true;
+#else
+        return CPlusPlusLogging::Logger::getInstance(CPlusPlusLogging::LOG_TYPE::CONSOLE)->getLogLevel() == CPlusPlusLogging::LOG_LEVEL_TRACE;
+#endif
+    }
+
     void start(const std::string& name) {
-        if (capturing()) return;
+        if (!on() || capturing()) return;
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
             if (!createEvent(start) || !createEvent(stop)) return;
@@ -68,7 +78,7 @@ public:
     }
 
     void stop(const std::string& name) {
-        if (capturing()) return;
+        if (!on() || capturing()) return;
         auto it = timers.find(name);
         if (it == timers.end()) {
 #ifndef __GOLDILOCKS_ENV__
@@ -83,7 +93,7 @@ public:
     }
 
     void startCategory(const std::string& name) {
-        if (capturing()) return;
+        if (!on() || capturing()) return;
         if (activeCategoryTimers.find(name) != activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
@@ -101,7 +111,7 @@ public:
     }
 
     void stopCategory(const std::string& name) {
-        if (capturing()) return;
+        if (!on() || capturing()) return;
         auto it = activeCategoryTimers.find(name);
         if (it == activeCategoryTimers.end()) {
 #ifndef __GOLDILOCKS_ENV__

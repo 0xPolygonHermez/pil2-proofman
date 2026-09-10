@@ -143,8 +143,6 @@ pub fn stark_info_new_c(
     verify: bool,
     gpu: bool,
     preallocate: bool,
-    // Table airs: proved at most once, so the const pols need not survive the proof.
-    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -157,7 +155,6 @@ pub fn stark_info_new_c(
             verify,
             gpu,
             preallocate,
-            single_use,
         )
     }
 }
@@ -666,7 +663,13 @@ pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
     unsafe { custom_commit_size(p_setup, commit_id) }
 }
 
-pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
+pub fn load_custom_commit_c(
+    setup: *mut c_void,
+    commit_id: u64,
+    buffer: *mut u8,
+    buffer_file: &str,
+    words_per_row: u64,
+) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         load_custom_commit(
@@ -674,6 +677,7 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
             commit_id,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
         );
     }
 }
@@ -964,7 +968,6 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
-    skip_recalculation: bool,
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
@@ -996,7 +999,6 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
-            skip_recalculation,
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
@@ -1498,6 +1500,9 @@ pub fn alloc_device_large_buffers_c(
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
     unified_buffer_pad_area: u64,
+    prefetch_region_area: u64,
+    // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
+    phase_a_alias_offset: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1506,15 +1511,98 @@ pub fn alloc_device_large_buffers_c(
             const_pols_area,
             const_pols_aggregation_area,
             unified_buffer_pad_area,
+            prefetch_region_area,
+            phase_a_alias_offset,
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn get_instances_ready_c(d_buffers: *mut ::std::os::raw::c_void, instances_ready: *mut i64) {
+pub fn configure_prefetch_zone_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    witness_bytes: u64,
+    fixed_tree_bytes: u64,
+    packed_const_bytes: u64,
+    rec_witness_bytes: u64,
+) {
     unsafe {
-        get_instances_ready(d_buffers, instances_ready);
+        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
     }
+}
+
+pub fn get_prefetch_witness_slots_c() -> u32 {
+    unsafe { get_prefetch_witness_slots() }
+}
+
+pub fn get_mops_floor_bytes_c() -> u64 {
+    unsafe { get_mops_floor_bytes() }
+}
+
+pub fn get_post_alloc_headroom_bytes_c() -> u64 {
+    unsafe { get_post_alloc_headroom_bytes() }
+}
+
+pub fn configure_const_slot_cache_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    base_offset: u64,
+    slot_elems: u64,
+    n_slots: u32,
+) {
+    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+}
+
+pub fn load_host_const_pols_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    const_filename: &str,
+    const_size: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let const_filename_name = CString::new(const_filename).unwrap();
+    unsafe {
+        load_host_const_pols(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut c_char,
+            const_filename_name.as_ptr() as *mut c_char,
+            const_size,
+            d_buffers,
+            only_first_gpu,
+        )
+    }
+}
+
+pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
+    unsafe { set_pipeline_mode(d_buffers, enable) }
+}
+
+pub fn configure_phase_b_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_phase_b(d_buffers) }
+}
+
+pub fn set_phase_b_c(d_buffers: *mut ::std::os::raw::c_void, state: u32) -> i64 {
+    unsafe { set_phase_b(d_buffers, state) }
+}
+
+pub fn dump_pipeline_state_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { dump_pipeline_state(d_buffers) }
+}
+
+pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { harvest_pipeline(d_buffers) }
+}
+
+pub fn prefetch_witness_c(
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    trace: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1673,6 +1761,57 @@ pub fn load_device_setup_c(
             packed_info,
             exec_data,
             exec_words,
+        );
+    }
+}
+
+/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+#[allow(clippy::too_many_arguments)]
+pub fn upload_custom_commit_packed_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    custom_file: &str,
+    words_per_row: u64,
+    p_setup_ctx: *mut c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let custom_file_name = CString::new(custom_file).unwrap();
+    unsafe {
+        upload_custom_commit_packed(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            custom_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
+            p_setup_ctx,
+            d_buffers,
+        );
+    }
+}
+
+/// Record the const-buffer slot reserved for an air's packed custom commits. Called for every air,
+/// shared slot or not, so a slot-sharing air also learns the offset.
+pub fn reserve_custom_commit_slot_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    offset: u64,
+    reserved_words: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    unsafe {
+        reserve_custom_commit_slot(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            offset,
+            reserved_words,
+            d_buffers,
+            only_first_gpu,
         );
     }
 }
