@@ -38,8 +38,10 @@ struct IOFieldDefPair {
 
 // The exec map with witness2SignalList applied, so a trace cell costs one random load instead
 // of two. Dense, mapRows*mapCols, row-major; 0 means empty. Built by prepareSignalMap.
+// `adds` does the same for the nAdds operands, 2 per addition; it has no empty encoding.
 struct SignalMap {
   u32* sig = NULL;
+  u32* adds = NULL;
   bool ok = false;
 };
 

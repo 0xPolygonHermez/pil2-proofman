@@ -291,6 +291,7 @@ void freeCircuit(Circom_Circuit *circuit)
   delete[] circuit->InputHashMap;
   delete[] circuit->witness2SignalList;
   delete[] circuit->signal_map.sig;
+  delete[] circuit->signal_map.adds;
   // delete[] circuit->circuitConstants;
   
   // Free templateInsId2IOSignalInfo map entries
@@ -405,28 +406,44 @@ extern "C" __attribute__((visibility("default"))) int64_t prepareSignalMap(
     const uint64_t sizeWitness = get_size_of_witness();
     const char *p_sMap = reinterpret_cast<const char *>(&exec_data[exec_layout::map_at(h)]);
 
-    u32 *sig = new u32[entries];
-    for (uint64_t i = 0; i < entries; i++) {
-        uint32_t v;
-        memcpy(&v, p_sMap + i * sizeof(uint32_t), sizeof(uint32_t));
-        if (v == 0) { sig[i] = 0; continue; }
+    // Resolves one witness index to a signal index, or to an adds_ext reference flagged in the
+    // top bit. Returns false on an index neither can hold.
+    bool bad = false;
+    auto resolve = [&](uint64_t v, const char *what) -> u32 {
         if (v < sizeWitness) {
             const u64 sg = circuit->witness2SignalList[v];
-            if (sg >= SIGNAL_MAP_ADD_FLAG) {
-                std::cerr << "prepareSignalMap: signal " << sg << " does not fit 31 bits" << std::endl;
-                delete[] sig;
-                return -1;
-            }
-            sig[i] = (u32)sg;
+            if (sg < SIGNAL_MAP_ADD_FLAG) return (u32)sg;
+            std::cerr << "prepareSignalMap: signal " << sg << " does not fit 31 bits" << std::endl;
         } else if (v - sizeWitness < h.nAdds) {
-            sig[i] = SIGNAL_MAP_ADD_FLAG | (u32)(v - sizeWitness);
+            return SIGNAL_MAP_ADD_FLAG | (u32)(v - sizeWitness);
         } else {
-            std::cerr << "prepareSignalMap: entry " << v << " is past sizeWitness + nAdds" << std::endl;
-            delete[] sig;
-            return -1;
+            std::cerr << "prepareSignalMap: " << what << " " << v << " is past sizeWitness + nAdds" << std::endl;
         }
+        bad = true;
+        return 0;
+    };
+
+    u32 *sig = new u32[entries];
+    for (uint64_t i = 0; i < entries && !bad; i++) {
+        uint32_t v;
+        memcpy(&v, p_sMap + i * sizeof(uint32_t), sizeof(uint32_t));
+        sig[i] = (v == 0) ? 0 : resolve(v, "entry");
+    }
+
+    const uint64_t *p_adds = &exec_data[exec_layout::HEADER_WORDS];
+    u32 *adds = new u32[h.nAdds * 2];
+    for (uint64_t i = 0; i < h.nAdds && !bad; i++) {
+        adds[i * 2]     = resolve(p_adds[i * 4],     "addition operand");
+        adds[i * 2 + 1] = resolve(p_adds[i * 4 + 1], "addition operand");
+    }
+
+    if (bad) {
+        delete[] sig;
+        delete[] adds;
+        return -1;
     }
     map.sig = sig;
+    map.adds = adds;
     map.ok = true;
     return 0;
 }
@@ -490,13 +507,52 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
     // circomWitness[sizeWitness + i]. Kept in a small scratch instead of extending the whole
     // witness. Serial: an addition may read a signal an earlier one produced.
     std::vector<uint64_t> adds_ext(h.nAdds);
+    const uint32_t *aop = circuit->signal_map.ok ? circuit->signal_map.adds : nullptr;
     auto cw_ext = [&](uint64_t k) -> uint64_t {
         return (k < sizeWitness) ? cw(k) : adds_ext[k - sizeWitness];
     };
-    for (uint64_t i = 0; i < h.nAdds; i++) {
-        Goldilocks::Element c = Goldilocks::fromU64(cw_ext(p_adds[i * 4])) * Goldilocks::fromU64(p_adds[i * 4 + 2]);
-        Goldilocks::Element d = Goldilocks::fromU64(cw_ext(p_adds[i * 4 + 1])) * Goldilocks::fromU64(p_adds[i * 4 + 3]);
+    auto op = [&](uint64_t i) -> uint64_t {
+        const uint32_t s = aop[i];
+        return (s & SIGNAL_MAP_ADD_FLAG) ? adds_ext[s & ~SIGNAL_MAP_ADD_FLAG] : ctx->signalValues[s];
+    };
+    const uint64_t nThreadsAdds = (nMutexes > 0) ? nMutexes : 1;
+    auto one_add = [&](uint64_t i) {
+        const uint64_t a = aop ? op(i * 2) : cw_ext(p_adds[i * 4]);
+        const uint64_t b = aop ? op(i * 2 + 1) : cw_ext(p_adds[i * 4 + 1]);
+        Goldilocks::Element c = Goldilocks::fromU64(a) * Goldilocks::fromU64(p_adds[i * 4 + 2]);
+        Goldilocks::Element d = Goldilocks::fromU64(b) * Goldilocks::fromU64(p_adds[i * 4 + 3]);
         adds_ext[i] = Goldilocks::toU64(c + d);
+    };
+    // An addition reading another one (top bit set on either operand) has to wait for it, and only
+    // ever references a lower index; the rest are independent, ~94% of them. Two passes over the
+    // same ascending range, so each thread's writes stay contiguous.
+    if (aop != nullptr && nThreadsAdds > 1 && h.nAdds >= (1u << 14)) {
+        const uint64_t block = (h.nAdds + nThreadsAdds - 1) / nThreadsAdds;
+        auto run_block = [&](uint64_t from, uint64_t to) {
+            for (uint64_t i = from; i < to; i++) {
+                const uint32_t s0 = aop[i * 2], s1 = aop[i * 2 + 1];
+                if ((s0 | s1) & SIGNAL_MAP_ADD_FLAG) continue;
+                Goldilocks::Element c =
+                    Goldilocks::fromU64(ctx->signalValues[s0]) * Goldilocks::fromU64(p_adds[i * 4 + 2]);
+                Goldilocks::Element d =
+                    Goldilocks::fromU64(ctx->signalValues[s1]) * Goldilocks::fromU64(p_adds[i * 4 + 3]);
+                adds_ext[i] = Goldilocks::toU64(c + d);
+            }
+        };
+        std::vector<std::thread> workers;
+        workers.reserve(nThreadsAdds - 1);
+        for (uint64_t t = 1; t < nThreadsAdds; t++) {
+            const uint64_t from = t * block;
+            if (from >= h.nAdds) break;
+            workers.emplace_back(run_block, from, std::min(h.nAdds, from + block));
+        }
+        run_block(0, std::min(h.nAdds, block));
+        for (auto &w : workers) w.join();
+        for (uint64_t i = 0; i < h.nAdds; i++) {
+            if ((aop[i * 2] | aop[i * 2 + 1]) & SIGNAL_MAP_ADD_FLAG) one_add(i);
+        }
+    } else {
+        for (uint64_t i = 0; i < h.nAdds; i++) one_add(i);
     }
     const auto t_adds = tick();
 

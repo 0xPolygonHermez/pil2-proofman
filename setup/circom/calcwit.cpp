@@ -3,6 +3,8 @@
 #include <assert.h>
 #include "calcwit.hpp"
 #include <mutex>
+#include <thread>
+#include <vector>
 
 extern void run(Circom_CalcWit* ctx);
 
@@ -79,14 +81,38 @@ Circom_CalcWit::~Circom_CalcWit() {
   // what makes the array reusable: a cached array is handed to the next witness as-is, and its
   // `_create` calls only set the members of components that have subcomponents -- a stale pointer
   // left in a leaf would be freed twice.
-  for (uint i = 0; i < get_number_of_components(); i++) {
-    Circom_Component &c = componentMemory[i];
-    delete[] c.subcomponents;         c.subcomponents = NULL;
-    delete[] c.subcomponentsParallel; c.subcomponentsParallel = NULL;
-    delete[] c.outputIsSet;           c.outputIsSet = NULL;
-    delete[] c.mutexes;               c.mutexes = NULL;
-    delete[] c.cvs;                   c.cvs = NULL;
-    delete[] c.sbct;                  c.sbct = NULL;
+  //
+  // The cost is the 144 B-stride walk, not the frees: `release_memory_component` already nulls
+  // most components during the solve. Each iteration touches only its own component.
+  const uint nComponents = get_number_of_components();
+  auto release_range = [this](uint from, uint to) {
+    for (uint i = from; i < to; i++) {
+      Circom_Component &c = componentMemory[i];
+      delete[] c.subcomponents;         c.subcomponents = NULL;
+      delete[] c.subcomponentsParallel; c.subcomponentsParallel = NULL;
+      delete[] c.outputIsSet;           c.outputIsSet = NULL;
+      delete[] c.mutexes;               c.mutexes = NULL;
+      delete[] c.cvs;                   c.cvs = NULL;
+      delete[] c.sbct;                  c.sbct = NULL;
+    }
+  };
+  // Below this the spawns cost more than the walk they split.
+  const uint PARALLEL_MIN_COMPONENTS = 1u << 15;
+  uint nThreads = maxThread > 1 ? (uint)maxThread : 1u;
+  if (nThreads > 1 && nComponents >= PARALLEL_MIN_COMPONENTS) {
+    const uint block = (nComponents + nThreads - 1) / nThreads;
+    std::vector<std::thread> workers;
+    workers.reserve(nThreads - 1);
+    for (uint t = 1; t < nThreads; t++) {
+      const uint from = t * block;
+      if (from >= nComponents) break;
+      const uint to = (from + block < nComponents) ? from + block : nComponents;
+      workers.emplace_back(release_range, from, to);
+    }
+    release_range(0, block < nComponents ? block : nComponents);
+    for (auto &w : workers) w.join();
+  } else {
+    release_range(0, nComponents);
   }
   
   // Let circom handle all component memory cleanup via release_memory_component()
