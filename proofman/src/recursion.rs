@@ -1267,9 +1267,12 @@ fn generate_witness<F: PrimeField64>(
     let signal_values_ptr =
         if signal_values.is_empty() { std::ptr::null_mut() } else { signal_values.as_mut_ptr() as *mut c_void };
 
-    // Released before the caller can read the ledger, so carry its wait onto the trace.
-    let signal_values_wait = proofman_common::take_buffer_wait(signal_values.as_ptr() as *const u8);
-    proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
+    // Released before the caller can read the ledger, so carry its wait onto the trace. An empty one
+    // never blocked, and its pointer is the shared alignment sentinel, not a buffer to key on.
+    if !signal_values.is_empty() {
+        let signal_values_wait = proofman_common::take_buffer_wait(signal_values.as_ptr() as *const u8);
+        proofman_common::charge_buffer_wait(trace.as_ptr() as *const u8, signal_values_wait);
+    }
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
