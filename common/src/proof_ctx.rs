@@ -22,9 +22,8 @@ use std::ffi::c_void;
 use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
-    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c,
-    get_post_alloc_headroom_bytes_c,
-    get_const_pols_aggregation_offset_c,
+    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
+    get_mops_floor_bytes_c, get_post_alloc_headroom_bytes_c, get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -1299,7 +1298,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + if self.phase_b { 0 } else { n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64 }
+                + if self.phase_b {
+                    0
+                } else {
+                    n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                }
                 + total_const_area_aggregation
                 + total_const_area;
             let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);

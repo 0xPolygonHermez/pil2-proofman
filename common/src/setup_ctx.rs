@@ -180,7 +180,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             // widens it into cm1; gen_recursive_proof_gpu checks the room at launch. Sized exactly
             // to that trace -- 4e44d5549 sized it at the full trace, ~1 GB more than ever lands.
             let vadcop_final_tail = (recursion_staging_cols(&setup_vadcop_final, gpu)
-                * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)) as usize;
+                * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits))
+                as usize;
             // Its OWN staging width, not vadcop_final's: the two airs have had identical geometry so
             // far, which is why pairing them never showed; it would undersize the buffer the moment
             // they diverged.
@@ -307,9 +308,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             // The only optional setup of the family: keys built without the compressed-final
             // stage (blake3's default) legitimately have none.
             ProofType::VadcopFinalCompressed => self.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
-                ProofmanError::InvalidSetup(
-                    "Proving key was built without the vadcop_final_compressed stage".into(),
-                )
+                ProofmanError::InvalidSetup("Proving key was built without the vadcop_final_compressed stage".into())
             }),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }
@@ -580,8 +579,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         preloaded_const: &[PreLoadedConstTree],
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository =
-            SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, gpu)?;
+        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, gpu)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
@@ -679,7 +677,10 @@ mod staging_tests {
                     continue;
                 }
                 let body = &body[..body.find(';').unwrap_or(body.len())];
-                assert!(!body.contains("map_sections_n"), "{decl} reads cm1 directly; it must go through recursion_staging_cols:\n{body}");
+                assert!(
+                    !body.contains("map_sections_n"),
+                    "{decl} reads cm1 directly; it must go through recursion_staging_cols:\n{body}"
+                );
                 let via_rule = body.contains("recursion_staging_cols");
                 let via_tails = body.contains("vadcop_final_tail") || body.contains("max_compact_trace_size");
                 assert!(via_rule || via_tails, "{decl} must use the shared rule:\n{body}");

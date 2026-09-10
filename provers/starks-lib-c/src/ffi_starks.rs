@@ -1524,7 +1524,9 @@ pub fn configure_prefetch_zone_c(
     packed_const_bytes: u64,
     rec_witness_bytes: u64,
 ) {
-    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes) }
+    unsafe {
+        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
+    }
 }
 
 pub fn get_prefetch_witness_slots_c() -> u32 {
@@ -1539,7 +1541,12 @@ pub fn get_post_alloc_headroom_bytes_c() -> u64 {
     unsafe { get_post_alloc_headroom_bytes() }
 }
 
-pub fn configure_const_slot_cache_c(d_buffers: *mut ::std::os::raw::c_void, base_offset: u64, slot_elems: u64, n_slots: u32) {
+pub fn configure_const_slot_cache_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    base_offset: u64,
+    slot_elems: u64,
+    n_slots: u32,
+) {
     unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
 }
 

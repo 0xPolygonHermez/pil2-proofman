@@ -10,8 +10,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c, prefetch_witness_c,
-    set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
+    prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -3087,13 +3087,14 @@ where
                     expected += 1;
                 }
                 if self.pctx.global_info.get_air_has_compressor(ag, air) {
-                    let compressor_big = self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
-                        true,
-                        |s| {
-                            let n = 1u64 << s.stark_info.stark_struct.n_bits;
-                            s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
-                        },
-                    );
+                    let compressor_big =
+                        self.setups.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
+                            true,
+                            |s| {
+                                let n = 1u64 << s.stark_info.stark_struct.n_bits;
+                                s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n > half
+                            },
+                        );
                     expected += compressor_big as i64;
                 }
             }
@@ -3137,21 +3138,23 @@ where
                     }
                     if let Some(remaining) = phase_a_remaining_clone.as_ref() {
                         // Only the phase-A-only completions count (see the countdown's arming).
-                        let (ag, air) = pctx_clone.dctx_get_instance_info(id as usize).unwrap_or((usize::MAX, usize::MAX));
+                        let (ag, air) =
+                            pctx_clone.dctx_get_instance_info(id as usize).unwrap_or((usize::MAX, usize::MAX));
                         let counts = ag != usize::MAX
                             && match p {
                                 ProofType::Basic => sctx_clone
                                     .get_setup(ag, air)
                                     .map(|s| s.prover_buffer_size > pctx_clone.phase_b_half as u64)
                                     .unwrap_or(false),
-                                ProofType::Compressor => setups_clone.sctx_compressor.as_ref().and_then(|c| c.get_setup(ag, air).ok()).map_or(
-                                    true,
-                                    |s| {
+                                ProofType::Compressor => setups_clone
+                                    .sctx_compressor
+                                    .as_ref()
+                                    .and_then(|c| c.get_setup(ag, air).ok())
+                                    .map_or(true, |s| {
                                         let n = 1u64 << s.stark_info.stark_struct.n_bits;
                                         s.prover_buffer_size + proofman_common::recursion_staging_cols(s, true) * n
                                             > pctx_clone.phase_b_half as u64
-                                    },
-                                ),
+                                    }),
                                 _ => false,
                             };
                         if counts && remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
@@ -3318,12 +3321,11 @@ where
         // Pipeline: the next proof is enqueued on the stream while the current one still
         // runs (no host sync at reserve; completions come off the harvest ring). Proofs phase
         // only. PROOFMAN_NO_PIPELINE=1 disables it.
-        let pipeline_enabled = prefetch_dequeue_ahead
-            && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
+        let pipeline_enabled =
+            prefetch_dequeue_ahead && !std::env::var("PROOFMAN_NO_PIPELINE").map(|v| v == "1").unwrap_or(false);
         if pipeline_enabled {
             set_pipeline_mode_c(self.pctx.get_device_buffers_ptr(), true);
         }
-
 
         // Per-AIR per-proof cost proxy for LPT ordering; computed once (not in the
         // comparator). PROOFMAN_CLUSTER_SCHEDULE=0 falls back to tier-only order.
@@ -3494,7 +3496,9 @@ where
                                         && held.is_empty()
                                     {
                                         if prefetch_log && zone_picks > 0 {
-                                            tracing::info!("prefetch zone: {zone_hits} hits / {zone_picks} basic dispatches");
+                                            tracing::info!(
+                                                "prefetch zone: {zone_hits} hits / {zone_picks} basic dispatches"
+                                            );
                                         }
                                         return;
                                     }
@@ -3535,7 +3539,9 @@ where
                             // takes the hit path (device-side wait) instead of the
                             // host-synced miss route.
                             if prefetch_dequeue_ahead && !picked_from_held {
-                                if let (Ok((pag, pair)), true) = (pctx_clone.dctx_get_instance_info(instance_id), reserved.is_some()) {
+                                if let (Ok((pag, pair)), true) =
+                                    (pctx_clone.dctx_get_instance_info(instance_id), reserved.is_some())
+                                {
                                     if let Ok(psetup) = sctx_clone.get_setup(pag, pair) {
                                         let prm = pctx_clone.get_air_instance_params(instance_id, true);
                                         let pp: *mut std::ffi::c_void = (&psetup.p_setup).into();
@@ -5468,31 +5474,29 @@ where
         // carved from a region INSIDE the unified buffer (below the consts), so it shares
         // one planned budget. Witness bytes = the largest basic trace (packed width when
         // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables.
-        let prefetch_witness_bytes: u64 = if options.gpu
-            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true)
-        {
-            let mut witness_bytes: u64 = 0;
-            for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
-                for (air_id, _) in group.iter().enumerate() {
-                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
-                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
-                    let packed_words = options
-                        .packed_info
-                        .get(&(airgroup_id, air_id))
-                        .filter(|pi| pi.is_packed && options.packed)
-                        .map(|pi| pi.num_packed_words);
-                    witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+        let prefetch_witness_bytes: u64 =
+            if options.gpu && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true) {
+                let mut witness_bytes: u64 = 0;
+                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                    for (air_id, _) in group.iter().enumerate() {
+                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                        let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                        let packed_words = options
+                            .packed_info
+                            .get(&(airgroup_id, air_id))
+                            .filter(|pi| pi.is_packed && options.packed)
+                            .map(|pi| pi.num_packed_words);
+                        witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+                    }
                 }
-            }
-            witness_bytes
-        } else {
-            0
-        };
+                witness_bytes
+            } else {
+                0
+            };
         // Slot count comes from the C++ side (DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS),
         // the single source of truth configure_prefetch_zone sizes against.
-        let prefetch_region_area: u64 =
-            (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
+        let prefetch_region_area: u64 = (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
 
         let (n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx.set_device_buffers(
             &sctx,
