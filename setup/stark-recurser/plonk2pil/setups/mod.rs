@@ -115,6 +115,7 @@ mod tests {
                 namespace_name: "Recursion",
                 n_bits: 19,
                 n_publics: 0,
+                n_publics_start: 0,
                 max_constraint_degree: 5,
                 n_plonk_rows: 0,
                 n_cmul_rows: 0,
