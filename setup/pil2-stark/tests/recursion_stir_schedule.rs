@@ -28,9 +28,9 @@ fn solved_stir(template: RecursiveTemplate, n_bits: usize) -> (Vec<usize>, Vec<u
 #[test]
 fn recursive1_and_recursive2_are_stir_at_2_17() {
     let (domains, t) = solved_stir(RecursiveTemplate::Recursive2, 17);
-    // Blowup 3, fold by 8, final degree 2^5: fresh half-size domains 2^20 … 2^16, four rounds.
-    assert_eq!(domains, vec![20, 19, 18, 17, 16]);
-    assert_eq!(t.len(), 4);
+    // Blowup 3, fold by 16, final degree 2^5: fresh half-size domains 2^20 … 2^17, three rounds.
+    assert_eq!(domains, vec![20, 19, 18, 17]);
+    assert_eq!(t.len(), 3);
     assert!(t.windows(2).all(|w| w[0] >= w[1]), "query counts should not grow: {t:?}");
     println!("recursive1/2 STIR at 2^17: domains {domains:?}, t = {t:?}");
 }
@@ -75,6 +75,13 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     assert_eq!(stir.low_degree_test, Some(LowDegreeTestKind::Stir));
     assert_eq!(stir.grinding_bits, Some(24));
     assert_eq!(stir.final_degree, Some(7));
+    // The fold that fits: STIR defaults to 4 where FRI keeps 3.
+    assert_eq!(stir.initial_folding_factor, Some(4));
+    assert_eq!(dflt.initial_folding_factor, Some(3));
+    let ss = generate_stark_struct(&stir, 19, "blake3");
+    let LowDegreeTest::Stir(s) = &ss.low_degree_test else { panic!("STIR") };
+    assert_eq!(s.folding_factors, vec![4, 4, 4]);
+    assert_eq!(s.log_degrees, vec![19, 15, 11, 7]);
 
     // `{"recursion": {"lowDegreeTest": "FRI"}}` flips the test and nothing else, so the blake3
     // tree comes out on the solved FRI schedule it was originally sized on. For FRI the family's

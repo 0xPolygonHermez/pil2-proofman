@@ -214,9 +214,13 @@ pub fn recursive_stark_settings(
     crate::types::stark_struct::StarkSettings {
         low_degree_test: Some(low_degree_test),
         initial_blowup_factor: Some(blowup),
-        initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(3)),
+        initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => 3,
+            crate::types::stark_struct::LowDegreeTestKind::Stir => 4,
+        })),
         final_degree: Some(user.final_degree.unwrap_or_else(default_final_degree)),
-        // The uniform per-round grinding seed; the solver derives every tᵢ from it.
+        // The round-0 grinding budget (STIR's later rounds default to 4 bits less, see
+        // `stark_struct::default_stir_grinding`); the solver derives every tᵢ from it.
         grinding_bits: Some(
             user.grinding_bits.unwrap_or_else(|| proofman_common::hash_family::recursive_grinding_bits(hash)),
         ),

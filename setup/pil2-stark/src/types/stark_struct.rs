@@ -520,8 +520,15 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
     }
 
     let initial_blowup_factor = settings.initial_blowup_factor.unwrap_or(1);
-    let initial_folding_factor = settings.initial_folding_factor.unwrap_or(3);
-    let final_degree = settings.final_degree.unwrap_or(5);
+    let is_stir = settings.low_degree_test.unwrap_or_default() == LowDegreeTestKind::Stir;
+    let initial_folding_factor = settings.initial_folding_factor.unwrap_or(if is_stir { 4 } else { 3 });
+    let final_degree = settings.final_degree.unwrap_or_else(|| {
+        if is_stir {
+            proofman_common::hash_family::fri_terminal_degree(hash)
+        } else {
+            5
+        }
+    });
 
     let (merkle_tree_arity, transcript_arity, merkle_tree_custom, hash_commits, last_level_verification, pow_bits) =
         if verification_hash_type == "BN128" {
@@ -592,7 +599,7 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
                 final_degree.min(n_bits.saturating_sub(1)),
                 pow_bits,
             );
-            // Per-round override of the uniform grinding seed; the security solver
+            // Per-round override of the default grinding schedule; the security solver
             // turns each budget into that round's query count.
             if let Some(budgets) = &settings.grinding_bits_queries {
                 assert_eq!(
@@ -919,13 +926,13 @@ mod tests {
     fn grinding_bits_queries_overrides_the_uniform_seed() {
         let settings = StarkSettings {
             low_degree_test: Some(LowDegreeTestKind::Stir),
-            grinding_bits_queries: Some(vec![26, 24, 20, 16]),
+            grinding_bits_queries: Some(vec![26, 24, 20]),
             ..Default::default()
         };
         let ss = generate_stark_struct(&settings, 17, "Poseidon2");
         let sched = ss.low_degree_test.stir().unwrap();
-        assert_eq!(sched.num_iterations(), 4, "degrees {:?}", sched.log_degrees);
-        assert_eq!(sched.grinding_bits_queries, vec![26, 24, 20, 16]);
+        assert_eq!(sched.num_iterations(), 3, "degrees {:?}", sched.log_degrees);
+        assert_eq!(sched.grinding_bits_queries, vec![26, 24, 20]);
     }
 
     #[test]
@@ -986,12 +993,13 @@ mod tests {
         let settings = StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() };
         let stir = generate_stark_struct(&settings, 17, "Poseidon2");
         let sched = stir.low_degree_test.stir().unwrap();
-        // finalDegree means the same thing in both tests: the final polynomial's
-        // log-degree bound, 5 by default — so both schedules end at d_M = 2^5.
-        assert_eq!(sched.log_degrees, vec![17, 14, 11, 8, 5]);
+        // finalDegree means the same thing in both tests: the final polynomial's log-degree
+        // bound. STIR defaults to the family's terminal (poseidon's 5) and folds by 16, so this
+        // schedule ends at d_M = 2^5 like FRI's, in three rounds.
+        assert_eq!(sched.log_degrees, vec![17, 13, 9, 5]);
         assert_eq!(stir.low_degree_test.log_domain_sizes(), sched.log_domain_sizes);
-        assert_eq!(stir.low_degree_test.log_folding_factors(), vec![3, 3, 3, 3]);
-        assert_eq!(stir.low_degree_test.commitment_trees(), vec![(15, 24), (14, 24), (13, 24), (12, 24)]);
+        assert_eq!(stir.low_degree_test.log_folding_factors(), vec![4, 4, 4]);
+        assert_eq!(stir.low_degree_test.commitment_trees(), vec![(14, 48), (13, 48), (12, 48)]);
         let json = serde_json::to_string(&stir).unwrap();
         assert!(json.contains(r#""lowDegreeTest":"STIR""#), "{json}");
         let back: StarkStruct = serde_json::from_str(&json).unwrap();
