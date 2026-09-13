@@ -24,20 +24,23 @@ class gl64_t;
 //     the 4 capacity columns (matches linearHashKernel_pos1).
 //   * blake3 (arity 2): chunks of 8 (one 64-byte block), raw chaining value
 //     carried in the 4 state columns, packed to the digest on the final
-//     block (matches blake3core::compress_chunk; nCols <= SC_MAX_COLS < 128
-//     keeps every row inside a single blake3 chunk, so the chunk counter is
-//     always 0). The 12-column working set makes a blake3 slot smaller than
-//     a Poseidon1 one for the same shape.
+//     block (matches b3_hash_row block for block). A row wider than one
+//     blake3 chunk (128 words) spans two chunks: chunk 0's chaining value is
+//     parked in 4 extra state columns and the leaf is the parent node of the
+//     two chunk values, as b3_hash_row builds it. The 12-column (16 for two
+//     chunks) working set makes a blake3 slot smaller than a Poseidon1 one
+//     for the same shape.
 //
 // All working memory lives inside one caller-provided slot (see layout in
 // streamCommitSlotElems); concurrent calls on different slots/streams are
 // independent.
 
-// Widest witness a slot commit accepts: the slot head reserves one element per
-// column for the bit widths, and this bounds that area. Not an algorithmic
-// limit -- the working set stays 16/12 columns whatever nCols is -- just the
-// size of the reserved header (a few hundred bytes against a multi-GB slot).
-static constexpr uint64_t SC_MAX_COLS = 64;
+// Widest witness a slot commit accepts. The slot head reserves one element per
+// column for the bit widths, and the blake3 absorb hashes a row as at most two
+// blake3 chunks (2 x 128 words, one parent node): wider rows would need the
+// general chaining-value stack of b3_hash_row. 256 covers the lane-packed Main
+// (245 columns); Poseidon1 has no such limit beyond the header.
+static constexpr uint64_t SC_MAX_COLS = 256;
 
 // Hash family the slot commits with. Must match the proving key's family --
 // the caller (commit_witness_streaming_gpu) derives it from get_hash_family().
