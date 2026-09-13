@@ -25,7 +25,7 @@
 static const uint64_t MAIN_WIDTHS[38] = {
     32,32,32,32,32,32,1,32,1,1,64,32,1,1,1,64,32,1,4,1,8,1,1,1,64,1,64,64,1,32,38,38,38,32,32,1,1,1};
 static const uint64_t MAIN_WORDS = 14;
-__device__ __constant__ uint64_t TEST_WIDTHS[64];
+__device__ __constant__ uint64_t TEST_WIDTHS[SC_MAX_COLS];
 
 // Host-side packer: exact inverse of the prover's unpack kernel bit walk
 // (starks_gpu.cu unpack): values written LSB-first at a running bit cursor,
@@ -98,8 +98,11 @@ static uint64_t treeNumElements(uint64_t nLeaves, uint32_t arity)
 }
 
 // Assert streamCommitPacked's root equals the production commit path's root.
+// `widths`/`wordsPerRow` default to the Main cm1 packing; wide shapes pass their own.
 static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
-                                   StreamCommitHash hash = StreamCommitHash::Poseidon1)
+                                   StreamCommitHash hash = StreamCommitHash::Poseidon1,
+                                   const uint64_t *widths = MAIN_WIDTHS,
+                                   uint64_t wordsPerRow = MAIN_WORDS)
 {
     using P16 = PoseidonGoldilocksGPU<16>;
     const bool b3 = (hash == StreamCommitHash::Blake3);
@@ -114,12 +117,13 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
     NTTGoldilocksGPU ntt;
 
-    ASSERT_LE(nCols, 38u);
-    CHECKCUDAERR(cudaMemcpyToSymbol(TEST_WIDTHS, MAIN_WIDTHS, 38*8));
+    ASSERT_LE(nCols, SC_MAX_COLS);
+    if (widths == MAIN_WIDTHS) ASSERT_LE(nCols, 38u);
+    CHECKCUDAERR(cudaMemcpyToSymbol(TEST_WIDTHS, widths, nCols * 8));
 
     // Packed witness on the host: the production caller (proofman) hands the
     // packed trace pointer straight to commit_witness_streaming.
-    std::vector<uint64_t> hPacked(N * MAIN_WORDS);
+    std::vector<uint64_t> hPacked(N * wordsPerRow);
     {
         std::vector<uint64_t> rowVals(nCols);
         uint64_t x = 0x243F6A8885A308D3ull;
@@ -128,7 +132,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
                 x ^= x << 13; x ^= x >> 7; x ^= x << 17;      // xorshift
                 rowVals[c] = x;                                // packRow masks per width
             }
-            packRow(rowVals.data(), nCols, MAIN_WIDTHS, MAIN_WORDS, &hPacked[r * MAIN_WORDS]);
+            packRow(rowVals.data(), nCols, widths, wordsPerRow, &hPacked[r * wordsPerRow]);
         }
     }
     const uint64_t treeElems = treeNumElements(NExt, arity);
@@ -136,13 +140,13 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     // Reference root: full unpack + LDE + production merkletree.
     std::vector<uint64_t> rootRef(CAP);
     {
-        uint64_t *d_packed; CHECKCUDAERR(cudaMalloc(&d_packed, N * MAIN_WORDS * 8));
+        uint64_t *d_packed; CHECKCUDAERR(cudaMalloc(&d_packed, N * wordsPerRow * 8));
         CHECKCUDAERR(cudaMemcpy(d_packed, hPacked.data(), hPacked.size() * 8, cudaMemcpyHostToDevice));
         gl64_t *d_src;  CHECKCUDAERR(cudaMalloc(&d_src, N * nCols * 8));
         gl64_t *d_ext;  CHECKCUDAERR(cudaMalloc(&d_ext, NExt * nCols * 8));
         uint64_t *d_tref; CHECKCUDAERR(cudaMalloc(&d_tref, treeElems * 8));
         const uint32_t ublk = (uint32_t)((N + TPB - 1) / TPB);
-        refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, MAIN_WORDS);
+        refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, wordsPerRow);
         ntt.ldeColMajor(d_ext, d_src, nBits, nBitsExt, nCols, s, true, nullptr);
         if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
         else    P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
@@ -153,7 +157,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     }
 
     // Production entry: one slot buffer, packed witness uploaded by the lib.
-    StreamCommitDims dims{nBits, nBitsExt, nCols, MAIN_WORDS};
+    StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
     const uint64_t slotElems = streamCommitSlotElems(dims, hash);
     gl64_t *d_slot; CHECKCUDAERR(cudaMalloc(&d_slot, slotElems * 8));
 
@@ -161,7 +165,7 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     double total_ms = 0;
     for (int r = 0; r < reps; r++) {
         auto t0 = std::chrono::steady_clock::now();
-        int64_t rc = streamCommitPacked(d_slot, dims, MAIN_WIDTHS, hPacked.data(),
+        int64_t rc = streamCommitPacked(d_slot, dims, widths, hPacked.data(),
                                         rootCmp.data(), s, nullptr, nullptr, nullptr, hash);
         auto t1 = std::chrono::steady_clock::now();
         ASSERT_EQ(rc, 0);
@@ -325,6 +329,39 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_small)
     runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Blake3);
 }
 
+// Wide rows: synthetic bit widths cycling Main-like values, packed to the
+// minimum word count. nCols beyond 128 makes a blake3 row span two chunks.
+static void runStreamCommitReducedWide(uint64_t nBits, uint64_t nCols, int reps,
+                                       StreamCommitHash hash)
+{
+    static const uint64_t PATTERN[10] = {32, 1, 64, 8, 38, 16, 1, 32, 64, 4};
+    std::vector<uint64_t> widths(nCols);
+    uint64_t bits = 0;
+    for (uint64_t c = 0; c < nCols; c++) { widths[c] = PATTERN[c % 10]; bits += widths[c]; }
+    runStreamCommitReduced(nBits, nCols, reps, hash, widths.data(), (bits + 63) / 64);
+}
+
+// blake3 rows of one chunk exactly (128 = 16 blocks, ROOT on the last block of
+// chunk 0) and of two chunks (129..256: chunk 0 parked, chunk 1 with counter 1,
+// leaf = root parent node), root compared against Blake3GoldilocksGPU::merkletree.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_two_chunks)
+{
+    const uint64_t shapes[] = {120, 128, 129, 136, 200, 245, 256};
+    for (uint64_t nCols : shapes) runStreamCommitReducedWide(14, nCols, 2, StreamCommitHash::Blake3);
+}
+
+// Lane-packed Main shape on this branch: 245 columns.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_lanes_shape)
+{
+    runStreamCommitReducedWide(20, 245, 3, StreamCommitHash::Blake3);
+}
+
+// Poseidon1 has no chunk structure; a wide row only exercises the larger header.
+TEST(GOLDILOCKS_TEST, stream_commit_reduced_wide)
+{
+    runStreamCommitReducedWide(14, 245, 2, StreamCommitHash::Poseidon1);
+}
+
 // Lane-packed indexed witness: a row packs `lanes` steps, so its header carries one index
 // PER LANE and every instruction-derived column names the lane whose entry it comes from
 // (COL_LANE). Same property as the single-lane case -- committing the compact trace + table
@@ -473,4 +510,10 @@ TEST(GOLDILOCKS_TEST, stream_commit_indexed_lanes_repeated_entries)
 TEST(GOLDILOCKS_TEST, stream_commit_indexed_lanes_blake3)
 {
     runStreamCommitIndexedLanes(16, 4, 11, StreamCommitHash::Blake3);
+}
+
+// 31 lanes x 8 columns = 248: a two-chunk blake3 row through the indexed unpack.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_lanes_two_chunks)
+{
+    runStreamCommitIndexedLanes(14, 31, 11, StreamCommitHash::Blake3);
 }
