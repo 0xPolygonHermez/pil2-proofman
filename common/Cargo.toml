@@ -30,7 +30,6 @@ num_cpus = "1.17.0"
 env = "1.0.1"
 colored.workspace = true
 tracing-subscriber.workspace = true
-crossbeam-queue = "0.3.12"
 yansi = "1.0.1"
 mpi = { workspace = true, optional = true }
 

@@ -3,7 +3,7 @@ use std::{
     sync::RwLock,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
@@ -296,6 +296,12 @@ pub struct ProofCtx<F: PrimeField64> {
     pub challenges: Values<F>,
     pub global_info: GlobalInfo,
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
+    /// Last measured witness time per instance, in nanoseconds (0 = never measured). Written by
+    /// `WitnessManager::calculate_witness`, read by the buffer pool to decide which already-committed
+    /// trace is the cheapest to throw away and recompute. Not reset between proofs: an instance only
+    /// reaches the pool's release queue after its witness ran in the current proof, so the value a
+    /// reader sees is always this proof's.
+    pub witness_cost_ns: Vec<AtomicU64>,
     pub weights: HashMap<(usize, usize), u64>,
     pub compressor_weights: HashMap<(usize, usize), u64>,
     pub recursion_weights: HashMap<(usize, usize), u64>,
@@ -357,6 +363,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
+        let witness_cost_ns: Vec<AtomicU64> = (0..MAX_INSTANCES).map(|_| AtomicU64::new(0)).collect();
 
         Ok(Self {
             mpi_ctx,
@@ -366,6 +373,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
             air_instances,
+            witness_cost_ns,
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_values: Mutex::new(HashMap::new()),
@@ -652,6 +660,27 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
+    }
+
+    /// Record how long this instance's witness took. See [`ProofCtx::witness_cost`].
+    pub fn set_witness_cost(&self, global_idx: usize, elapsed: std::time::Duration) {
+        self.witness_cost_ns[global_idx].store(elapsed.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// What recomputing this instance's witness would cost: the time it took the last time it ran,
+    /// or `None` if it never has. The trace pool uses it to pick which committed trace to evict when
+    /// it runs out of buffers, since every evicted trace is recomputed in the proofs phase.
+    pub fn witness_cost(&self, global_idx: usize) -> Option<std::time::Duration> {
+        match self.witness_cost_ns[global_idx].load(Ordering::Relaxed) {
+            0 => None,
+            ns => Some(std::time::Duration::from_nanos(ns)),
+        }
+    }
+
+    /// Trace length in field elements, 0 once the trace has been freed. Stands in for the witness
+    /// cost of an instance that was never measured: it is what the witness had to write.
+    pub fn air_instance_trace_len(&self, global_idx: usize) -> usize {
+        self.air_instances[global_idx].read().unwrap().trace.len()
     }
 
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {

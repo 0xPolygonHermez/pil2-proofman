@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use proofman_fields::PrimeField64;
 use proofman_common::{BufferPool, DebugInfo, RankInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
@@ -212,6 +213,10 @@ impl<F: PrimeField64> WitnessManager<F> {
             }
 
             if !instance_ids_filtered.is_empty() {
+                // Every witness computation funnels through here, so it is the one place that can
+                // price them for the pool's eviction order (see `ProofCtx::witness_cost`). Callers
+                // pass one instance at a time; a batch is charged its mean rather than skipped.
+                let started = Instant::now();
                 component.calculate_witness(
                     stage,
                     self.pctx.clone(),
@@ -220,6 +225,18 @@ impl<F: PrimeField64> WitnessManager<F> {
                     n_cores,
                     buffer_pool,
                 )?;
+                // The component blocks inside `take_buffer` when the pool is empty. That queueing
+                // delay says how contended the pool was, not what recomputing this witness would
+                // cost, so it comes out of the price. Peeked, not taken: the caller's own net timer
+                // still has to read it.
+                let waited: std::time::Duration = instance_ids_filtered
+                    .iter()
+                    .map(|id| proofman_common::peek_buffer_wait(self.pctx.get_air_instance_trace_ptr(*id)))
+                    .sum();
+                let each = started.elapsed().saturating_sub(waited) / instance_ids_filtered.len() as u32;
+                for id in &instance_ids_filtered {
+                    self.pctx.set_witness_cost(*id, each);
+                }
             }
         }
 

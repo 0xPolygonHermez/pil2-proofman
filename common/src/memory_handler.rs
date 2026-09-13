@@ -4,7 +4,6 @@ use std::ffi::c_void;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
 use proofman_fields::PrimeField64;
 use crate::{ProofmanError, ProofmanResult};
@@ -38,6 +37,13 @@ pub fn charge_buffer_wait(ptr: *const u8, waited: Duration) {
 pub fn take_buffer_wait(ptr: *const u8) -> Duration {
     let mut map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
     map.remove(&(ptr as usize)).unwrap_or(Duration::ZERO)
+}
+
+/// Read a buffer's charged wait without consuming it. `take_buffer_wait` is the consuming read one
+/// timer makes; this is for a second reader that must not take the entry out from under it.
+pub fn peek_buffer_wait(ptr: *const u8) -> Duration {
+    let map = PENDING_WAITS.lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&(ptr as usize)).copied().unwrap_or(Duration::ZERO)
 }
 
 /// Round a host range out to page boundaries — `cudaHostRegister` requires the
@@ -364,9 +370,110 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for Pool<F> {
     }
 }
 
+/// An instance whose contribution is already committed, so the pool may take its trace buffer back.
+/// Reclaiming one is never free: every trace dropped here is recomputed from scratch in the proofs
+/// phase, so `evict_key` is what that recomputation would cost.
+struct PendingRelease {
+    instance_id: usize,
+    remove_from_calculated: bool,
+    /// Measured witness time; zero when this instance was never measured.
+    measured: Duration,
+    /// Trace length in field elements. Only ranks the unmeasured against each other.
+    trace_len: usize,
+}
+
+impl PendingRelease {
+    /// Cheapest first, and anything unmeasured after everything measured: with no price on it,
+    /// assume it is expensive rather than evict it on a zero.
+    fn evict_key(&self) -> (bool, Duration, usize) {
+        (self.measured.is_zero(), self.measured, self.trace_len)
+    }
+}
+
+/// Instances whose trace buffer the pool is allowed to reclaim, and the order it reclaims them in.
+///
+/// The order is the whole point. Reclaiming is a choice between recomputations, and taking the
+/// oldest (what a plain FIFO does) systematically picks the Main segments computed early — the work
+/// the incremental Main advancement exists to save. Taking the most recent is worse still: the last
+/// instances to commit are the expensive ones. So take the cheapest to recompute.
+struct ReleaseQueue {
+    /// Short by construction — one entry per committed instance still holding a pooled buffer — so a
+    /// linear scan for the minimum beats maintaining a heap.
+    pending: Mutex<Vec<PendingRelease>>,
+    /// PROOFMAN_EVICT_FIFO=1 restores the previous oldest-first order, for A/B against this one.
+    fifo: bool,
+    evicted: AtomicUsize,
+    evicted_cost_ns: AtomicU64,
+}
+
+impl ReleaseQueue {
+    fn new() -> Self {
+        Self::with_order(std::env::var("PROOFMAN_EVICT_FIFO").map(|v| v == "1" || v == "true").unwrap_or(false))
+    }
+
+    fn with_order(fifo: bool) -> Self {
+        Self { pending: Mutex::new(Vec::new()), fifo, evicted: AtomicUsize::new(0), evicted_cost_ns: AtomicU64::new(0) }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<PendingRelease>> {
+        self.pending.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn push(&self, entry: PendingRelease) {
+        self.lock().push(entry);
+    }
+
+    /// The next instance to give up its buffer, or `None` if nothing is reclaimable.
+    fn pop_victim(&self) -> Option<PendingRelease> {
+        let mut pending = self.lock();
+        if pending.is_empty() {
+            return None;
+        }
+        let victim = if self.fifo {
+            pending.remove(0)
+        } else {
+            let (idx, _) = pending.iter().enumerate().min_by_key(|(_, e)| e.evict_key())?;
+            // Order carries no meaning once the minimum decides, so swap_remove is free.
+            pending.swap_remove(idx)
+        };
+        self.evicted.fetch_add(1, Ordering::Relaxed);
+        self.evicted_cost_ns.fetch_add(victim.measured.as_nanos() as u64, Ordering::Relaxed);
+        Some(victim)
+    }
+
+    /// Drop what is still reclaimable without touching the counters: this runs between the two phases
+    /// of the same proof, and the eviction tally is reported once, at the end of it.
+    fn clear(&self) {
+        self.lock().clear();
+    }
+
+    /// Start of a new proof: the tally is per proof.
+    fn reset(&self) {
+        self.clear();
+        self.evicted.store(0, Ordering::Relaxed);
+        self.evicted_cost_ns.store(0, Ordering::Relaxed);
+    }
+
+    /// What this proof paid to be short of buffers. Info, not debug: it is the figure to compare
+    /// between runs, and it only prints when the pool actually ran out.
+    fn log_summary(&self) {
+        let evicted = self.evicted.load(Ordering::Relaxed);
+        if evicted == 0 {
+            return;
+        }
+        tracing::info!(
+            "Trace pool: evicted {} committed trace(s), {}: {:.3}s of witness to recompute",
+            evicted,
+            if self.fifo { "oldest first" } else { "cheapest first" },
+            Duration::from_nanos(self.evicted_cost_ns.load(Ordering::Relaxed)).as_secs_f64(),
+        );
+    }
+}
+
 pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     pctx: Arc<ProofCtx<F>>,
-    instance_ids_to_be_released: Arc<SegQueue<(usize, bool)>>,
+    /// Committed instances whose buffer can be reclaimed, cheapest-to-recompute first.
+    release_queue: ReleaseQueue,
     /// Channel + pinning + reset/Drop mechanics for the basic-trace buffers. The instance-release
     /// side-channel below and the `pctx` coupling are the only behavior layered on the shared pool.
     pool: Pool<F>,
@@ -377,7 +484,6 @@ pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, n_buffers: usize, buffer_size: usize) -> Self {
-        let instance_ids_to_be_released = Arc::new(SegQueue::new());
         let cancelled = Arc::new(AtomicBool::new(false));
 
         // Page-lock the basic-trace pool for direct H2D (trace is an H2D source; pairs with the
@@ -388,7 +494,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
         tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
 
-        Self { pctx, instance_ids_to_be_released, pool, cancelled }
+        Self { pctx, release_queue: ReleaseQueue::new(), pool, cancelled }
     }
 
     /// Unblock any thread parked in `take_buffer`. Called on the abort path so a failed proof tears
@@ -401,7 +507,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     /// all worker threads that took buffers must already be joined (so every buffer is back), or the
     /// `try_recv` drain below races a live worker and trips the `recovered N of M` error.
     pub fn reset(&self) -> ProofmanResult<()> {
-        self.empty_queue_to_be_released();
+        self.release_queue.reset();
 
         // Buffer recovery + integrity checks live in the shared pool. Run it while `cancelled` is
         // still visible there: on the abort path it warns about a short pool rather than erroring (a
@@ -418,8 +524,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 
     /// Take a basic-trace buffer. Waits on the pool channel with a backoff timeout that paces the
-    /// two non-channel wakeup sources: the abort flag, and the soft-release SegQueue that
-    /// `to_be_released_buffer` enqueues without sending to the channel (so a bare parked `recv`
+    /// two non-channel wakeup sources: the abort flag, and the soft-release queue that
+    /// `to_be_released_buffer` fills without sending to the channel (so a bare parked `recv`
     /// would miss those). Was a 10µs sleep-poll — ~100k wakeups/s per waiter, inside
     /// CALCULATING_WITNESS, each iteration touching state shared with the releasing threads.
     pub fn take_buffer(&self) -> Vec<F> {
@@ -442,8 +548,9 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 self.pool.charge_wait(&buffer, waited);
                 return buffer;
             }
-            if let Some((iid, remove_from_calculated)) = self.instance_ids_to_be_released.pop() {
-                if remove_from_calculated {
+            if let Some(victim) = self.release_queue.pop_victim() {
+                let iid = victim.instance_id;
+                if victim.remove_from_calculated {
                     self.pctx.dctx_reset_instance_calculated(iid);
                 }
                 let (is_shared, buf) = self.pctx.free_instance_traces(iid);
@@ -473,20 +580,27 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     /// without this line a queueing delay reads as witness compute.
     pub fn log_wait_summary(&self) {
         self.pool.log_wait();
+        self.release_queue.log_summary();
     }
 
     pub fn release_buffer(&self, buffer: Vec<F>) -> ProofmanResult<()> {
         self.pool.release(buffer)
     }
 
+    /// Offer this instance's trace buffer back to the pool. Nothing is freed here: the instance keeps
+    /// its trace, and so its place in the proofs phase, until a thread that needs a buffer picks it as
+    /// the cheapest one to recompute. Prices it now, while the trace is still there to measure.
     pub fn to_be_released_buffer(&self, instance_id: usize, remove_from_calculated: bool) {
-        self.instance_ids_to_be_released.push((instance_id, remove_from_calculated));
+        self.release_queue.push(PendingRelease {
+            instance_id,
+            remove_from_calculated,
+            measured: self.pctx.witness_cost(instance_id).unwrap_or_default(),
+            trace_len: self.pctx.air_instance_trace_len(instance_id),
+        });
     }
 
     pub fn empty_queue_to_be_released(&self) {
-        while !self.instance_ids_to_be_released.is_empty() {
-            self.instance_ids_to_be_released.pop();
-        }
+        self.release_queue.clear();
     }
 }
 
@@ -779,6 +893,62 @@ impl SignalValuesPool {
 mod tests {
     use super::*;
     use proofman_fields::{Field, Goldilocks};
+
+    /// `(instance_id, witness ms, trace elements)` — `ms == 0` means never measured.
+    fn queue(fifo: bool, entries: &[(usize, u64, usize)]) -> ReleaseQueue {
+        let q = ReleaseQueue::with_order(fifo);
+        for &(instance_id, ms, trace_len) in entries {
+            q.push(PendingRelease {
+                instance_id,
+                remove_from_calculated: false,
+                measured: Duration::from_millis(ms),
+                trace_len,
+            });
+        }
+        q
+    }
+
+    fn drain(q: &ReleaseQueue) -> Vec<usize> {
+        std::iter::from_fn(|| q.pop_victim()).map(|e| e.instance_id).collect()
+    }
+
+    #[test]
+    fn evicts_the_cheapest_witness_first() {
+        // The shape that matters: an early Main committed first, cheap instances after it. FIFO would
+        // throw the Main away; every trace evicted here is recomputed in the proofs phase.
+        let q = queue(false, &[(0, 201, 640_000_000), (1, 1, 33_000_000), (2, 431, 475_000_000), (3, 59, 41_000_000)]);
+        assert_eq!(drain(&q), vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn an_unmeasured_instance_is_evicted_after_every_measured_one() {
+        // A zero is "no price", not "free": evicting on it would pick exactly the instance we know
+        // least about. It still ranks ahead of nothing, so it goes last, by trace length.
+        let q = queue(false, &[(0, 0, 475_000_000), (1, 0, 33_000_000), (2, 431, 475_000_000)]);
+        assert_eq!(drain(&q), vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn fifo_order_is_restorable() {
+        // PROOFMAN_EVICT_FIFO=1 must reproduce the previous behavior exactly, for A/B runs.
+        let q = queue(true, &[(0, 201, 640_000_000), (1, 1, 33_000_000), (2, 431, 475_000_000)]);
+        assert_eq!(drain(&q), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn the_tally_spans_both_phases_of_a_proof() {
+        let q = queue(false, &[(0, 200, 1), (1, 50, 1)]);
+        q.pop_victim().unwrap();
+        // Between contributions and proofs the queue is emptied; the tally must survive it, since it
+        // is reported once at the end of the proof.
+        q.clear();
+        assert_eq!(q.evicted.load(Ordering::Relaxed), 1);
+        assert_eq!(q.evicted_cost_ns.load(Ordering::Relaxed), Duration::from_millis(50).as_nanos() as u64);
+        assert!(q.pop_victim().is_none(), "clear drops what is still reclaimable");
+
+        q.reset();
+        assert_eq!(q.evicted.load(Ordering::Relaxed), 0, "a new proof starts from zero");
+    }
 
     // These exercise the pool's accounting (take/release/reset, leak detection, cancel), not pinning,
     // so they pass on both backends (CPU register is a no-op; GPU pinning is transparent to accounting).
