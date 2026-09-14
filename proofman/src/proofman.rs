@@ -5038,9 +5038,7 @@ where
                 // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
                 let first = |pool: &std::collections::VecDeque<usize>,
                              held: &HashMap<(usize, usize), usize>|
-                 -> Option<usize> {
-                    pool.iter().position(|&id| admissible(id, held))
-                };
+                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
                 let chosen: Option<(bool, usize)> = {
                     let held = in_flight.lock().unwrap();
                     first(&pending_priority, &held)
@@ -5048,48 +5046,51 @@ where
                         .or_else(|| first(&pending, &held).map(|pos| (false, pos)))
                 };
 
-                let instance_id = match chosen.and_then(|(is_priority, pos)| {
-                    if is_priority {
-                        pending_priority.remove(pos)
-                    } else {
-                        pending.remove(pos)
-                    }
-                }) {
-                    Some(id) => id,
-                    None => {
-                        // Nothing admissible. Exit only once no more can arrive and nothing is queued.
-                        if cancellation_info_clone.read_recover().token.is_cancelled() {
-                            break;
-                        }
-                        if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
-                            break;
-                        }
-                        // Wait on every event that can make work admissible -- an arrival on
-                        // either channel, or a freed slot -- rather than polling. Was a flat 1 ms
-                        // sleep: measured at ~8 ms per witness, 540 ms over a phase.
-                        let mut select = crossbeam_channel::Select::new();
-                        let priority_op = select.recv(&witness_rx_priority);
-                        let normal_op = select.recv(&witness_rx);
-                        let slot_op = select.recv(&slot_freed_rx);
-                        if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
-                            let index = op.index();
-                            if index == priority_op {
-                                if let Ok(id) = op.recv(&witness_rx_priority) {
-                                    pending_priority.push_back(id);
-                                }
-                            } else if index == normal_op {
-                                match op.recv(&witness_rx) {
-                                    Ok(id) if id == usize::MAX => arrivals_done = true,
-                                    Ok(id) => pending.push_back(id),
-                                    Err(_) => {}
-                                }
-                            } else if index == slot_op {
-                                let _ = op.recv(&slot_freed_rx);
+                let instance_id =
+                    match chosen.and_then(
+                        |(is_priority, pos)| {
+                            if is_priority {
+                                pending_priority.remove(pos)
+                            } else {
+                                pending.remove(pos)
                             }
+                        },
+                    ) {
+                        Some(id) => id,
+                        None => {
+                            // Nothing admissible. Exit only once no more can arrive and nothing is queued.
+                            if cancellation_info_clone.read_recover().token.is_cancelled() {
+                                break;
+                            }
+                            if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
+                                break;
+                            }
+                            // Wait on every event that can make work admissible -- an arrival on
+                            // either channel, or a freed slot -- rather than polling. Was a flat 1 ms
+                            // sleep: measured at ~8 ms per witness, 540 ms over a phase.
+                            let mut select = crossbeam_channel::Select::new();
+                            let priority_op = select.recv(&witness_rx_priority);
+                            let normal_op = select.recv(&witness_rx);
+                            let slot_op = select.recv(&slot_freed_rx);
+                            if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
+                                let index = op.index();
+                                if index == priority_op {
+                                    if let Ok(id) = op.recv(&witness_rx_priority) {
+                                        pending_priority.push_back(id);
+                                    }
+                                } else if index == normal_op {
+                                    match op.recv(&witness_rx) {
+                                        Ok(id) if id == usize::MAX => arrivals_done = true,
+                                        Ok(id) => pending.push_back(id),
+                                        Err(_) => {}
+                                    }
+                                } else if index == slot_op {
+                                    let _ = op.recv(&slot_freed_rx);
+                                }
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                };
+                    };
 
                 if let Some(witness_start_time_clone) = &witness_start_time_clone {
                     if witness_start_time_clone.read().unwrap().is_none() {
