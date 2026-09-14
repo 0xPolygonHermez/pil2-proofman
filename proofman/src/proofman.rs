@@ -2518,30 +2518,13 @@ where
             )
         };
 
+        // Measured on a 24-core host: aggregate witness CPU is flat between 2 and 6 and only
+        // degrades past 12, while per-witness latency keeps improving, so the wide end is the
+        // safer default. Prove time is insensitive to this either way.
+        const DEFAULT_THREADS_PER_WITNESS: usize = 8;
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
-            false => {
-                let num_threads_8 = max_num_threads / 8;
-                let num_threads_4 = max_num_threads / 4;
-                let num_threads_2 = max_num_threads / 2;
-
-                let total_cores_8 = 8 * num_threads_8;
-                let total_cores_4 = 4 * num_threads_4;
-                let total_cores_2 = 2 * num_threads_2;
-
-                let num_threads =
-                    if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
-                        num_threads_8
-                    } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
-                        num_threads_4
-                    } else if num_threads_2 > 0 {
-                        num_threads_2
-                    } else {
-                        1
-                    };
-
-                num_threads.min(8)
-            }
+            false => DEFAULT_THREADS_PER_WITNESS.clamp(1, max_num_threads.max(1)),
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
