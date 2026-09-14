@@ -62,9 +62,11 @@ impl WitnessSlot {
         self.move_to(WitnessState::Queued, &[WitnessState::Absent])
     }
 
-    /// The one gate every witness hook goes through.
+    /// The one gate every witness hook goes through. `Evicted` is not a source: its owner may still
+    /// be running, and a second hook taking the slot would make that owner's `release` land on the
+    /// second one's `Running`. `rearm` is the way back, and every recompute path already calls it.
     pub fn try_acquire(&self) -> bool {
-        self.move_to(WitnessState::Running, &[WitnessState::Absent, WitnessState::Queued, WitnessState::Evicted])
+        self.move_to(WitnessState::Running, &[WitnessState::Absent, WitnessState::Queued])
     }
 
     /// End of a hook. Producing nothing returns to `Absent` because the queue slot is spent; only
@@ -139,14 +141,27 @@ mod witness_slot_tests {
     }
 
     #[test]
-    fn reclaiming_a_trace_makes_the_instance_computable_again() {
+    fn reclaiming_a_trace_makes_the_instance_computable_again_once_rearmed() {
         let s = WitnessSlot::default();
         assert!(s.try_acquire());
         s.release(true);
         s.mark_evicted();
         assert_eq!(s.get(), WitnessState::Evicted);
-        // Freeing the trace is the only thing needed; no caller pairs it with a second flag.
+        assert!(!s.try_acquire(), "its owner may still be running");
+        assert!(s.rearm());
         assert!(s.try_acquire());
+    }
+
+    /// A reclaim mid-hook must not let a second hook in: the first owner's `release` would then
+    /// land on the second one's `Running` and leave that one's result untracked.
+    #[test]
+    fn an_evicted_owner_is_not_displaced_by_a_second_hook() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.mark_evicted();
+        assert!(!s.try_acquire(), "the evicted owner has not finished");
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Evicted, "the late release must not publish Done");
     }
 
     #[test]
@@ -177,6 +192,7 @@ mod witness_slot_tests {
         s.mark_evicted();
         s.release(true);
         assert_eq!(s.get(), WitnessState::Evicted);
+        assert!(s.rearm());
         assert!(s.try_acquire());
     }
 
