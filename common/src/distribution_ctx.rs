@@ -18,6 +18,11 @@ pub struct InstanceInfo {
     pub n_chunks: usize,
     pub weight: u64,            // Cost of the basic proof plus the recursion chain it triggers
     pub compressor_weight: u64, // Cost of the compressor proof it triggers, 0 if the air has none
+    /// Cost of computing this instance's witness, in whatever unit the caller measures it (zisk
+    /// hands over milliseconds measured on the cluster). It does not add to `weight`: the proof
+    /// cost is what phase 2 pays, the witness cost is what phase 1 pays, and the assignment keeps
+    /// them apart -- see `least_loaded`. 0 when unknown, and then it takes no part.
+    pub witness_cost: u64,
 }
 
 impl InstanceInfo {
@@ -28,8 +33,9 @@ impl InstanceInfo {
         shared: bool,
         weight: u64,
         compressor_weight: u64,
+        witness_cost: u64,
     ) -> Self {
-        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight }
+        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight, witness_cost }
     }
 
     /// Total cost this instance puts on its owner: basic, recursion chain and compressor
@@ -79,6 +85,7 @@ pub struct DistributionCtx {
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
     pub partition_weight: Vec<u64>,   // Weight per partition, basic + recursion + compressor (excludes tables)
     pub partition_compressor_count: Vec<u32>, // #compressor instances assigned to each partition
+    pub partition_witness: Vec<u64>,  // Witness cost per partition, the sum of its instances' (excludes tables)
 
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
@@ -87,8 +94,14 @@ pub struct DistributionCtx {
     pub process_count: Vec<usize>,             // #instances assigned to each process
     pub process_weight: Vec<u64>,              // Weight per process, basic + recursion + compressor
     pub process_compressor_count: Vec<u32>,    // #compressor instances assigned to each process
+    pub process_witness: Vec<u64>,             // Witness cost per process, the sum of its instances'
 
     pub worker_index: i32, // Index of the current worker
+
+    /// How far, as a fraction of the least loaded partition's proof cost, a partition may be above
+    /// it and still be picked for its lighter witness load. 0 keeps the assignment on proof cost
+    /// alone (the witness load then only breaks exact ties). Static: survives `reset_instances`.
+    pub witness_slack: f64,
 
     // Control
     pub assignation_done: bool, // Whether the instance assignation is done
@@ -116,11 +129,14 @@ impl std::fmt::Debug for DistributionCtx {
             .field("partition_count", &self.partition_count)
             .field("partition_weight", &self.partition_weight)
             .field("partition_compressor_count", &self.partition_compressor_count)
+            .field("partition_witness", &self.partition_witness)
+            .field("witness_slack", &self.witness_slack)
             .field("instance_process", &self.instance_process)
             .field("process_instances", &self.process_instances)
             .field("process_count", &self.process_count)
             .field("process_weight", &self.process_weight)
             .field("process_compressor_count", &self.process_compressor_count)
+            .field("process_witness", &self.process_witness)
             .field("assignation_done", &self.assignation_done);
         dbg.finish()
     }
@@ -145,13 +161,16 @@ impl DistributionCtx {
             partition_count: Vec::new(),
             partition_weight: Vec::new(),
             partition_compressor_count: Vec::new(),
+            partition_witness: Vec::new(),
             instance_process: Vec::new(),
             process_instances: Vec::new(),
             skipped_process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
             process_compressor_count: Vec::new(),
+            process_witness: Vec::new(),
             worker_index: -1,
+            witness_slack: 0.0,
             assignation_done: false,
             partition_set: false,
         }
@@ -179,6 +198,7 @@ impl DistributionCtx {
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
         self.partition_compressor_count = vec![0; n_partitions];
+        self.partition_witness = vec![0; n_partitions];
         self.partition_set = true;
         Ok(())
     }
@@ -198,11 +218,17 @@ impl DistributionCtx {
         self.process_count = vec![0; n_processes];
         self.process_weight = vec![0; n_processes];
         self.process_compressor_count = vec![0; n_processes];
+        self.process_witness = vec![0; n_processes];
         Ok(())
     }
 
     pub fn setup_worker_index(&mut self, worker_index: usize) {
         self.worker_index = worker_index as i32;
+    }
+
+    /// See [`DistributionCtx::witness_slack`]. Negative values are treated as 0.
+    pub fn set_witness_slack(&mut self, slack: f64) {
+        self.witness_slack = if slack.is_finite() && slack > 0.0 { slack } else { 0.0 };
     }
 
     /// Reset all DYNAMIC parameters for a new proof
@@ -223,6 +249,7 @@ impl DistributionCtx {
         self.partition_count.fill(0);
         self.partition_weight.fill(0);
         self.partition_compressor_count.fill(0);
+        self.partition_witness.fill(0);
 
         // Process-level
         self.instance_process.clear();
@@ -231,6 +258,7 @@ impl DistributionCtx {
         self.process_count.fill(0);
         self.process_weight.fill(0);
         self.process_compressor_count.fill(0);
+        self.process_witness.fill(0);
 
         //control
         self.assignation_done = false;
@@ -502,29 +530,47 @@ impl DistributionCtx {
         None
     }
 
-    /// Partition with the least accumulated cost, ties broken by #instances. Compressor count is
-    /// not a criterion of its own: that cost is already in the weight.
+    /// Partition with the least accumulated proof cost, ties broken by #instances. Compressor
+    /// count is not a criterion of its own: that cost is already in the weight.
+    ///
+    /// With a `witness_slack`, the partitions within that fraction of the least loaded one count
+    /// as equally loaded for the proof, and the one with the least witness load wins among them.
     #[inline]
     fn least_loaded_partition(&self) -> usize {
-        let mut best_idx = 0;
-        let mut best_key = (u64::MAX, u32::MAX);
-        for (i, &weight) in self.partition_weight.iter().enumerate() {
-            let key = (weight, self.partition_count[i]);
-            if key < best_key {
-                best_key = key;
-                best_idx = i;
-            }
-        }
-        best_idx
+        Self::least_loaded(
+            &self.partition_weight,
+            &self.partition_witness,
+            |i| self.partition_count[i] as usize,
+            self.witness_slack,
+        )
     }
 
     /// Same criterion as `least_loaded_partition`, over the processes of this worker
     #[inline]
     fn least_loaded_process(&self, counts: &[usize]) -> usize {
+        Self::least_loaded(&self.process_weight, &self.process_witness, |i| counts[i], self.witness_slack)
+    }
+
+    /// The owner an instance goes to, by `(witness load, proof cost, #instances)` among the owners
+    /// whose proof cost is at most `(1 + slack)` times the least one.
+    ///
+    /// The proof cost stays the criterion that matters: phase 2 is the long phase and it is what
+    /// `weight` measures. But the assignment ran on it alone, so the heaviest witness of a job
+    /// (a `Mem`, at 2-3x any other instance) landed wherever the proof cost was least at that
+    /// moment -- often on the worker already holding the other heavy witnesses -- and phase 1
+    /// waited for that worker while the others idled. Among owners that phase 2 cannot tell apart,
+    /// the witness load now decides. With slack 0 and no witness costs the key is `(0, weight,
+    /// count)`, exactly the old criterion.
+    fn least_loaded(weights: &[u64], witness: &[u64], count: impl Fn(usize) -> usize, slack: f64) -> usize {
+        let min_weight = weights.iter().copied().min().unwrap_or(0);
+        let limit = if slack > 0.0 { (min_weight as f64 * (1.0 + slack)).floor() as u64 } else { min_weight };
         let mut best_idx = 0;
-        let mut best_key = (u64::MAX, usize::MAX);
-        for (i, &weight) in self.process_weight.iter().enumerate() {
-            let key = (weight, counts[i]);
+        let mut best_key = (u64::MAX, u64::MAX, usize::MAX);
+        for (i, &weight) in weights.iter().enumerate() {
+            if weight > limit {
+                continue;
+            }
+            let key = (witness.get(i).copied().unwrap_or(0), weight, count(i));
             if key < best_key {
                 best_key = key;
                 best_idx = i;
@@ -542,13 +588,14 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        witness_cost: u64,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight);
+        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight, witness_cost);
         let (total_weight, has_compressor) = (instance.total_weight(), instance.has_compressor());
         self.instances.push(instance);
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
@@ -561,6 +608,7 @@ impl DistributionCtx {
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
         self.partition_weight[partition_id as usize] += total_weight;
+        self.partition_witness[partition_id as usize] += witness_cost;
         if has_compressor {
             self.partition_compressor_count[partition_id as usize] += 1;
         }
@@ -573,6 +621,7 @@ impl DistributionCtx {
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
             self.process_weight[process_id] += total_weight;
+            self.process_witness[process_id] += witness_cost;
             if has_compressor {
                 self.process_compressor_count[process_id] += 1;
             }
@@ -598,12 +647,21 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        witness_cost: u64,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
+        self.instances.push(InstanceInfo::new(
+            airgroup_id,
+            air_id,
+            false,
+            false,
+            weight,
+            compressor_weight,
+            witness_cost,
+        ));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.instance_partition.push(-1);
@@ -619,7 +677,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0, 0));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -637,7 +695,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight, 0));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight, 0, 0));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -682,6 +740,7 @@ impl DistributionCtx {
             *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
             self.partition_count[min_weight_idx] += 1;
             self.partition_weight[min_weight_idx] += self.instances[*gid].total_weight();
+            self.partition_witness[min_weight_idx] += self.instances[*gid].witness_cost;
             if self.partition_mask[min_weight_idx] {
                 // Select target process with the same criterion as the partition above
                 let min_weight_process_idx = self.least_loaded_process(&local_process_count);
@@ -691,6 +750,7 @@ impl DistributionCtx {
 
                 local_process_count[min_weight_process_idx] += 1;
                 self.process_weight[min_weight_process_idx] += self.instances[*gid].total_weight();
+                self.process_witness[min_weight_process_idx] += self.instances[*gid].witness_cost;
                 instances_assigned_process[min_weight_process_idx]
                     .entry((airgroup_id, air_id))
                     .and_modify(|c| *c += 1)
@@ -800,6 +860,7 @@ impl DistributionCtx {
                         false,
                         table.weight,
                         0,
+                        0,
                     ));
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                     self.n_instances += 1;
@@ -886,7 +947,7 @@ mod tests {
     fn compressor_air_follows_cost_not_compressor_count() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, COMPRESSOR, COMPRESSOR] {
-            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight, 0).unwrap();
         }
         dctx.assign_instances().unwrap();
 
@@ -901,7 +962,7 @@ mod tests {
     fn immediate_assignation_balances_cost_instead_of_round_robin() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, LIGHT_PLAIN, LIGHT_PLAIN] {
-            dctx.add_instance(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance(0, air_id, weight, compressor_weight, 0).unwrap();
         }
 
         assert_eq!(dctx.instance_partition, vec![0, 1, 1]);
@@ -912,7 +973,7 @@ mod tests {
     #[test]
     fn first_instance_goes_to_partition_zero() {
         let mut dctx = ctx(4);
-        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2).unwrap();
+        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, 0).unwrap();
 
         assert_eq!(dctx.instance_partition[0], 0);
         assert_eq!(dctx.instance_process[0], (0, 0));
@@ -922,10 +983,76 @@ mod tests {
     #[test]
     fn compressor_weight_counts_towards_the_partition_load() {
         let mut dctx = ctx(1);
-        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2).unwrap();
+        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2, 0).unwrap();
 
         assert_eq!(dctx.partition_weight, vec![1100]);
         assert_eq!(dctx.process_weight, vec![1100]);
         assert_eq!(dctx.partition_compressor_count, vec![1]);
+    }
+
+    /// Two partitions equally loaded for the proof, one already holding a long witness: without
+    /// slack the proof cost alone decides and the next long witness lands on partition 0 -- the
+    /// smaller index wins the tie -- with slack the witness load breaks the tie the other way.
+    #[test]
+    fn witness_load_breaks_proof_cost_ties() {
+        // (air_id, weight, compressor, witness)
+        let heavy_witness = (3, 1000, 0, 400);
+        let light_witness = (4, 1000, 0, 50);
+        let mut dctx = ctx(2);
+        dctx.add_instance(0, heavy_witness.0, heavy_witness.1, heavy_witness.2, heavy_witness.3).unwrap();
+        dctx.add_instance(0, light_witness.0, light_witness.1, light_witness.2, light_witness.3).unwrap();
+        assert_eq!(dctx.partition_weight, vec![1000, 1000]);
+        assert_eq!(dctx.partition_witness, vec![400, 50]);
+
+        dctx.add_instance(0, heavy_witness.0, heavy_witness.1, heavy_witness.2, heavy_witness.3).unwrap();
+        assert_eq!(dctx.instance_partition, vec![0, 1, 1], "the tie goes to the lighter witness load");
+        assert_eq!(dctx.partition_witness, vec![400, 450]);
+    }
+
+    /// With slack, a partition a little above the least loaded one for the proof still takes the
+    /// instance when its witness load is lighter; past the slack the proof cost rules again.
+    #[test]
+    fn slack_trades_a_little_proof_cost_for_witness_balance() {
+        let mut dctx = ctx(2);
+        dctx.set_witness_slack(0.10);
+        // Partition 0: proof 1000, witness 400. Partition 1: proof 1050, witness 0.
+        dctx.add_instance(0, 3, 1000, 0, 400).unwrap();
+        dctx.add_instance(0, 4, 1050, 0, 0).unwrap();
+        assert_eq!(dctx.instance_partition, vec![0, 1]);
+
+        // 1050 is within 10% of 1000, and partition 1's witness load is lighter: it takes the Mem.
+        dctx.add_instance(0, 5, 100, 0, 400).unwrap();
+        assert_eq!(dctx.instance_partition, vec![0, 1, 1]);
+        assert_eq!(dctx.partition_weight, vec![1000, 1150]);
+        assert_eq!(dctx.partition_witness, vec![400, 400]);
+
+        // Now partition 1 is 15% above: out of the slack, the proof cost decides.
+        dctx.add_instance(0, 6, 100, 0, 400).unwrap();
+        assert_eq!(dctx.instance_partition, vec![0, 1, 1, 0]);
+    }
+
+    /// The deferred assignment tracks the witness load too, and honours the same slack.
+    #[test]
+    fn deferred_assignation_spreads_the_witness_load() {
+        let mut dctx = ctx(2);
+        dctx.set_witness_slack(0.10);
+        // Same proof cost everywhere: the greedy alone would alternate by index, putting both
+        // long witnesses (gids 0 and 2, sorted by weight they stay in gid order) on partition 0.
+        for (air_id, witness) in [(3, 400), (4, 10), (5, 400), (6, 10)] {
+            dctx.add_instance_no_assign(0, air_id, 1000, 0, witness).unwrap();
+        }
+        dctx.assign_instances().unwrap();
+        assert_eq!(dctx.partition_witness, vec![410, 410]);
+        assert_eq!(dctx.partition_weight, vec![2000, 2000]);
+    }
+
+    #[test]
+    fn a_zero_slack_keeps_the_old_criterion_when_costs_are_unknown() {
+        let mut dctx = ctx(3);
+        for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, LIGHT_PLAIN, LIGHT_PLAIN, LIGHT_PLAIN] {
+            dctx.add_instance(0, air_id, weight, compressor_weight, 0).unwrap();
+        }
+        // 5000 | 100 | 100 -> the fourth goes to the least loaded by weight, ties by count, lowest index.
+        assert_eq!(dctx.instance_partition, vec![0, 1, 2, 1]);
     }
 }

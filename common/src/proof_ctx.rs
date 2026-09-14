@@ -299,6 +299,11 @@ pub struct ProofCtx<F: PrimeField64> {
     pub weights: HashMap<(usize, usize), u64>,
     pub compressor_weights: HashMap<(usize, usize), u64>,
     pub recursion_weights: HashMap<(usize, usize), u64>,
+    /// What computing one instance's witness costs, per air, in the units the witness library
+    /// measures it in (zisk: milliseconds). Set by the witness library, which is the only one that
+    /// knows; empty means unknown and the distribution ignores it. Behind a lock because the
+    /// library only ever holds an `Arc<ProofCtx>`.
+    pub witness_costs: RwLock<HashMap<(usize, usize), u64>>,
     pub custom_commits_values: Mutex<HashMap<String, CustomCommitEntry>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
@@ -372,6 +377,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             weights,
             compressor_weights,
             recursion_weights,
+            witness_costs: RwLock::new(HashMap::new()),
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
@@ -627,6 +633,25 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.recursion_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
     }
 
+    /// Records what computing one instance's witness costs, per air (see `witness_costs`).
+    /// Replaces any earlier table. Airs left out cost 0, i.e. do not weigh on the assignment.
+    pub fn set_witness_costs(&self, costs: impl IntoIterator<Item = ((usize, usize), u64)>) {
+        let mut table = self.witness_costs.write().unwrap();
+        table.clear();
+        table.extend(costs);
+    }
+
+    /// The witness cost of an air, 0 when it was never set
+    pub fn get_witness_cost(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        self.witness_costs.read().unwrap().get(&(airgroup_id, air_id)).copied().unwrap_or(0)
+    }
+
+    /// See `DistributionCtx::witness_slack`: how much proof cost the assignment gives up to spread
+    /// the witness load. 0 turns the witness criterion into a plain tie-break.
+    pub fn dctx_set_witness_slack(&self, slack: f64) {
+        self.dctx.write().unwrap().set_witness_slack(slack);
+    }
+
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
         let custom_commits_lock = self.custom_commits_values.lock().unwrap();
         let file_name = custom_commits_lock.get(name);
@@ -793,14 +818,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
+        let witness_cost = self.get_witness_cost(airgroup_id, air_id);
+        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight, witness_cost)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        let witness_cost = self.get_witness_cost(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, witness_cost)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -820,7 +847,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        let witness_cost = self.get_witness_cost(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, witness_cost)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
