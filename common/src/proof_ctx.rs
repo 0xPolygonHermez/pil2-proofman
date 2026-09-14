@@ -1093,18 +1093,23 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
-        // Before the clear, never after: the safe side of the race is a redundant recompute, not a
-        // `Done` over an empty trace.
+        // Mark and clear under one lock. Marking first but clearing later leaves a window in which a
+        // hook acquires the `Evicted` slot, computes, and releases `Done` -- and the clear then drops
+        // the trace it just wrote. Holding the instance lock across both makes such a hook block here
+        // and store its trace after the clear.
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
         self.dctx_mark_witness_evicted(instance_id);
-        self.air_instances[instance_id].write().unwrap().reset()
+        air_instance.reset()
     }
 
     /// Reclaim an instance's trace, marking it `Evicted`. That is not the same as computable again:
     /// only an explicit `rearm` puts it back in play, so a blanket re-announce cannot redo work the
     /// pipeline has already consumed.
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
+        // One transition, for the same reason as `free_instance`.
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
         self.dctx_mark_witness_evicted(instance_id);
-        self.air_instances[instance_id].write().unwrap().clear_traces()
+        air_instance.clear_traces()
     }
 
     pub fn set_instance_stream_id(&self, instance_id: usize, stream_id: u64) {
