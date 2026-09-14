@@ -16,7 +16,7 @@ use proofman_common::{
 };
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
-use crate::{get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_as};
+use crate::{get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_as, RCMultiplicity};
 
 pub struct StdVirtualTable<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
@@ -171,21 +171,33 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_row(uid_idx, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, global_id: usize, rows: &[u64], multiplicities: &[u64]) {
+    /// Generic over the caller's row/multiplicity width so the slices cross as-is: the
+    /// widening happens per element inside the iterator, never through an intermediate Vec.
+    pub fn inc_virtual_rows<R: RCMultiplicity, M: RCMultiplicity>(
+        &self,
+        global_id: usize,
+        rows: &[R],
+        multiplicities: &[M],
+    ) {
         debug_assert!(!rows.is_empty() && rows.len() == multiplicities.len());
-        let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows(uid_idx, rows, multiplicities);
+        let pairs = rows.iter().copied().zip(multiplicities.iter().copied()).map(|(r, m)| (r.to_u64(), m.to_u64()));
+        self.inc_virtual_pairs(global_id, pairs);
     }
 
-    pub fn inc_virtual_rows_same_mul(&self, global_id: usize, rows: &[u64], multiplicity: u64) {
-        let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_same_mul(uid_idx, rows, multiplicity);
+    pub fn inc_virtual_rows_same_mul<R: RCMultiplicity>(&self, global_id: usize, rows: &[R], multiplicity: u64) {
+        let pairs = rows.iter().copied().map(move |r| (r.to_u64(), multiplicity));
+        self.inc_virtual_pairs(global_id, pairs);
     }
 
-    pub fn inc_virtual_rows_ranged(&self, global_id: usize, start: Option<u64>, multiplicities: &[u64]) {
+    pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(
+        &self,
+        global_id: usize,
+        start: Option<u64>,
+        multiplicities: &[M],
+    ) {
         let start = start.unwrap_or(0);
         // Compute (row, multiplicity) pairs on the fly — no Vec allocation.
-        let pairs = multiplicities.iter().copied().enumerate().map(move |(i, m)| (start + i as u64, m));
+        let pairs = multiplicities.iter().copied().enumerate().map(move |(i, m)| (start + i as u64, m.to_u64()));
         self.inc_virtual_pairs(global_id, pairs);
     }
 
@@ -194,6 +206,41 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     pub fn inc_virtual_pairs(&self, global_id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_pairs(uid_idx, pairs);
+    }
+}
+
+#[cfg(test)]
+impl<F: PrimeField64> StdVirtualTable<F> {
+    /// Single-AIR virtual table holding `table_ids` (table_id, acc_height) entries.
+    /// Global ids are handed out in the order given, matching `new`.
+    pub(crate) fn for_test(num_rows: usize, num_cols: usize, table_ids: Vec<(usize, u64)>) -> Arc<Self> {
+        let global_id_by_uid = table_ids.iter().enumerate().map(|(j, &(uid, _))| (uid, j)).collect();
+        let indices_by_global_id = (0..table_ids.len()).map(|j| (0, j)).collect();
+        let air = VirtualTableAir::<F> {
+            airgroup_id: 0,
+            air_id: 0,
+            shift: num_rows.trailing_zeros() as u64,
+            mask: (num_rows - 1) as u64,
+            num_rows,
+            num_cols,
+            table_ids,
+            multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
+            table_instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+            shared_tables: false,
+            trace_buffer: Arc::new(Mutex::new(Some(vec![F::ZERO; num_cols * num_rows]))),
+            trace_buffer_pinned: None,
+        };
+        Arc::new(Self {
+            _phantom: std::marker::PhantomData,
+            global_id_by_uid,
+            indices_by_global_id,
+            virtual_table_airs: Some(vec![Arc::new(air)]),
+        })
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<u64> {
+        self.virtual_table_airs.as_ref().unwrap()[0].multiplicities.iter().map(|m| m.load(Ordering::Relaxed)).collect()
     }
 }
 
@@ -249,16 +296,6 @@ impl<F: PrimeField64> VirtualTableAir<F> {
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
         let table_offset = self.table_ids[id].1;
         self.update(table_offset, std::iter::once((row, multiplicity)));
-    }
-
-    pub fn inc_virtual_rows(&self, id: usize, rows: &[u64], multiplicities: &[u64]) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, rows.iter().copied().zip(multiplicities.iter().copied()));
-    }
-
-    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: &[u64], multiplicity: u64) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, rows.iter().copied().map(|r| (r, multiplicity)));
     }
 
     /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
@@ -374,5 +411,151 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proofman_fields::Goldilocks as F;
+
+    const ROWS: usize = 64;
+    const COLS: usize = 4;
+
+    /// Two tables at different accumulated heights, so the offset is exercised too.
+    fn table() -> Arc<StdVirtualTable<F>> {
+        StdVirtualTable::<F>::for_test(ROWS, COLS, vec![(7, 0), (9, 100)])
+    }
+
+    fn assert_wrote_something(snapshot: &[u64]) {
+        assert!(snapshot.iter().any(|&m| m != 0), "wrote nothing — the comparison would be vacuous");
+    }
+
+    #[test]
+    fn inc_virtual_rows_matches_repeated_inc_virtual_row() {
+        for global_id in 0..2 {
+            let rows: Vec<u32> = vec![0, 1, 5, 63, 64, 99, 5];
+            let muls: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7];
+
+            let reference = table();
+            for (&r, &m) in rows.iter().zip(muls.iter()) {
+                reference.inc_virtual_row(global_id, r as u64, m as u64);
+            }
+
+            let batched = table();
+            batched.inc_virtual_rows(global_id, &rows, &muls);
+
+            let expected = reference.snapshot();
+            assert_wrote_something(&expected);
+            assert_eq!(expected, batched.snapshot(), "inc_virtual_rows diverged for global_id {global_id}");
+        }
+    }
+
+    #[test]
+    fn inc_virtual_rows_same_mul_matches_repeated_inc_virtual_row() {
+        for global_id in 0..2 {
+            let rows: Vec<u32> = vec![0, 1, 5, 63, 99, 5];
+            let mul = 11u64;
+
+            let reference = table();
+            for &r in rows.iter() {
+                reference.inc_virtual_row(global_id, r as u64, mul);
+            }
+
+            let batched = table();
+            batched.inc_virtual_rows_same_mul(global_id, &rows, mul);
+
+            let expected = reference.snapshot();
+            assert_wrote_something(&expected);
+            assert_eq!(expected, batched.snapshot(), "inc_virtual_rows_same_mul diverged for global_id {global_id}");
+        }
+    }
+
+    #[test]
+    fn inc_virtual_rows_ranged_matches_repeated_inc_virtual_row() {
+        for global_id in 0..2 {
+            let start = 5u64;
+            let muls: Vec<u32> = (0..20u32).map(|i| i % 4).collect();
+
+            let reference = table();
+            for (i, &m) in muls.iter().enumerate() {
+                reference.inc_virtual_row(global_id, start + i as u64, m as u64);
+            }
+
+            let batched = table();
+            batched.inc_virtual_rows_ranged(global_id, Some(start), &muls);
+
+            let expected = reference.snapshot();
+            assert_wrote_something(&expected);
+            assert_eq!(expected, batched.snapshot(), "inc_virtual_rows_ranged diverged for global_id {global_id}");
+        }
+    }
+
+    /// `start: None` must mean row 0.
+    #[test]
+    fn inc_virtual_rows_ranged_defaults_start_to_zero() {
+        let muls: Vec<u32> = (1..9u32).collect();
+
+        let explicit = table();
+        explicit.inc_virtual_rows_ranged(0, Some(0), &muls);
+
+        let defaulted = table();
+        defaulted.inc_virtual_rows_ranged(0, None, &muls);
+
+        let expected = explicit.snapshot();
+        assert_wrote_something(&expected);
+        assert_eq!(expected, defaulted.snapshot());
+    }
+
+    /// A/B harness modelling Mem's 2^22-entry u32 histogram. Measured on this machine:
+    /// 19.5 ms/call when the multiplicities were widened into a Vec<u64> first, 12.5 ms
+    /// passing the u32 slice straight through.
+    /// `cargo test -p pil2-std-lib --lib --release bench_ranged -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_ranged() {
+        use std::time::Instant;
+
+        const ROWS: usize = 4096;
+        const COLS: usize = 1024; // ROWS * COLS = 2^22
+        const REPS: usize = 20;
+
+        // A realistic histogram: mostly small counts, ~30% of buckets untouched.
+        let muls: Vec<u32> = (0..ROWS * COLS).map(|i| ((i * 2654435761) % 10) as u32).collect();
+        let t = StdVirtualTable::<F>::for_test(ROWS, COLS, vec![(0, 0)]);
+
+        // Warm the pages so the first rep doesn't dominate.
+        t.inc_virtual_rows_ranged(0, None, &muls);
+
+        let start = Instant::now();
+        for _ in 0..REPS {
+            t.inc_virtual_rows_ranged(0, None, &muls);
+        }
+        let elapsed = start.elapsed();
+        println!("BENCH inc_virtual_rows_ranged: {:?} per call ({REPS} reps)", elapsed / REPS as u32);
+    }
+
+    /// The row/multiplicity widths must not change the result.
+    #[test]
+    fn row_and_multiplicity_widths_are_irrelevant() {
+        let rows64: Vec<u64> = vec![0, 1, 5, 63, 99];
+        let muls64: Vec<u64> = vec![1, 2, 3, 4, 5];
+
+        let wide = table();
+        wide.inc_virtual_rows(0, &rows64, &muls64);
+        let expected = wide.snapshot();
+        assert_wrote_something(&expected);
+
+        let rows16: Vec<u16> = rows64.iter().map(|&r| r as u16).collect();
+        let muls16: Vec<u16> = muls64.iter().map(|&m| m as u16).collect();
+        let narrow = table();
+        narrow.inc_virtual_rows(0, &rows16, &muls16);
+        assert_eq!(expected, narrow.snapshot(), "u16 rows/multiplicities diverged");
+
+        let rows_sz: Vec<usize> = rows64.iter().map(|&r| r as usize).collect();
+        let muls32: Vec<u32> = muls64.iter().map(|&m| m as u32).collect();
+        let mixed = table();
+        mixed.inc_virtual_rows(0, &rows_sz, &muls32);
+        assert_eq!(expected, mixed.snapshot(), "mixed usize/u32 widths diverged");
     }
 }

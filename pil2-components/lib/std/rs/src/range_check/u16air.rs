@@ -71,15 +71,6 @@ impl<F: PrimeField64> U16Air<F> {
         value as u64
     }
 
-    pub fn get_global_rows(values: &[u16]) -> Vec<u64> {
-        values.iter().map(|&v| Self::get_global_row(v)).collect()
-    }
-
-    pub fn get_global_rows_into(values: &[u16], out: &mut Vec<u64>) {
-        out.clear();
-        out.extend(values.iter().map(|&v| Self::get_global_row(v)));
-    }
-
     /// Core update function: Updates multiplicities for value/multiplicity pairs
     #[inline]
     fn update(&self, iter: impl Iterator<Item = (u16, u64)>) {
@@ -111,17 +102,6 @@ impl<F: PrimeField64> U16Air<F> {
         self.update(std::iter::once((value, multiplicity)));
     }
 
-    /// Update multiple values with corresponding multiplicities
-    pub fn update_values(&self, values: &[u16], multiplicities: &[u64]) {
-        debug_assert_eq!(values.len(), multiplicities.len());
-        self.update(values.iter().copied().zip(multiplicities.iter().copied()));
-    }
-
-    /// Update multiple values with the same multiplicity
-    pub fn update_values_same_mul(&self, values: &[u16], multiplicity: u64) {
-        self.update(values.iter().copied().map(|v| (v, multiplicity)));
-    }
-
     /// Update directly from an iterator of (value, multiplicity) pairs. Lets callers
     /// avoid materializing intermediate buffers when values come from a synthetic range
     /// or another iterator chain.
@@ -135,6 +115,31 @@ impl<F: PrimeField64> U16Air<F> {
 
     pub fn air_id(&self) -> usize {
         self.air_id
+    }
+}
+
+#[cfg(test)]
+impl<F: PrimeField64> U16Air<F> {
+    /// `num_rows` is the only thing `new` reads from the ProofCtx, so tests can skip it.
+    pub(crate) fn for_test(num_rows: usize) -> Arc<Self> {
+        let num_cols = P2_16.div_ceil(num_rows);
+        Arc::new(Self {
+            airgroup_id: 0,
+            air_id: 0,
+            shift: num_rows.trailing_zeros() as usize,
+            mask: num_rows - 1,
+            num_rows,
+            num_cols,
+            multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
+            table_instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+            shared_tables: false,
+            trace_buffer: Arc::new(Mutex::new(Some(vec![F::ZERO; num_cols * num_rows]))),
+        })
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<u64> {
+        self.multiplicities.iter().map(|m| m.load(Ordering::Relaxed)).collect()
     }
 }
 
