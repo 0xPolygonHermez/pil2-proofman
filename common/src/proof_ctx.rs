@@ -15,7 +15,7 @@ use proofman_fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     CustomCommits, PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
-    custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation,
+    custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation, WitnessState, WitnessStats,
 };
 
 use std::ffi::c_void;
@@ -306,6 +306,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub witness_stats: WitnessStats,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
     /// Airs whose rows components must write packed. Holds the same `packedTrace && is_packed`
@@ -375,6 +376,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
+            witness_stats: WitnessStats::default(),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
@@ -422,7 +424,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.witness_tx.write().unwrap() = witness_tx;
     }
 
+    /// Queue an instance for witness dispatch, at most once. The CAS is what stops a duplicate: the
+    /// default `pre_calculate_witness` re-announces every id it is handed.
     pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
+        if !self.dctx_try_queue_witness(global_id) {
+            self.witness_stats.duplicate_sends.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         if priority {
             if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
                 witness_tx_priority.send(global_id).unwrap();
@@ -431,6 +439,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
+        }
+    }
+
+    /// A witness about to be computed over a trace that already holds one: always redundant, and
+    /// only reachable if a component produced the trace outside `calculate_witness`.
+    pub fn note_witness_recomputed_over_trace(&self, global_idx: usize) {
+        let seen = self.witness_stats.recomputed_over_trace.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if seen < 8 {
+            tracing::warn!("Instance {global_idx}: recomputing a witness over a trace that already has one");
         }
     }
 
@@ -669,28 +686,66 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_first_process()
     }
 
-    pub fn dctx_reset_instances_calculated(&self) {
-        let dctx = self.dctx.read().unwrap();
-        for instance in dctx.instances_calculated.iter() {
-            instance.store(false, std::sync::atomic::Ordering::SeqCst);
+    // The state accessors below are bounds-tolerant on purpose: `air_instances` is a fixed
+    // MAX_INSTANCES vector while `witness_states` only grows with the registered instances, so an
+    // id valid for the former can be past the end of the latter. Out of range answers "not tracked":
+    // do the work, record nothing.
+
+    /// Take ownership of an instance's witness. False means another hook owns it or already
+    /// produced it: do not run the component.
+    pub fn dctx_try_acquire_witness(&self, global_idx: usize) -> bool {
+        self.dctx.read().unwrap().witness_states.get(global_idx).is_none_or(|s| s.try_acquire())
+    }
+
+    /// Hand an instance back. `produced` is the observed residency, not the hook's intent.
+    pub fn dctx_release_witness(&self, global_idx: usize, produced: bool) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.release(produced);
         }
     }
 
-    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx]
-            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
-            .is_ok()
+    /// The one place duplicate dispatches are stopped.
+    pub fn dctx_try_queue_witness(&self, global_idx: usize) -> bool {
+        self.dctx.read().unwrap().witness_states.get(global_idx).is_none_or(|s| s.try_queue())
     }
 
-    pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(false, std::sync::atomic::Ordering::SeqCst);
+    /// The trace is gone. Does not by itself make the instance computable again -- a blanket
+    /// re-announce must not pick it up -- `rearm` does.
+    pub fn dctx_mark_witness_evicted(&self, global_idx: usize) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.mark_evicted();
+        }
     }
 
+    /// Ask for this instance to be prepared, queued and computed from scratch again.
+    pub fn dctx_rearm_witness(&self, global_idx: usize) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.rearm();
+        }
+    }
+
+    /// Re-arm everything that never produced or lost its trace, and report how many. Unlike the
+    /// blanket reset it replaces, a `Done` instance whose trace is resident stays put and is reused.
+    pub fn dctx_rearm_witnesses(&self) -> usize {
+        self.dctx.read().unwrap().witness_states.iter().filter(|s| s.rearm()).count()
+    }
+
+    /// Cost proxy for picking which stored trace to reclaim first: the cheapest to redo.
+    pub fn dctx_instance_weight(&self, global_idx: usize) -> u64 {
+        self.dctx.read().unwrap().instances.get(global_idx).map_or(0, |i| i.weight)
+    }
+
+    pub fn dctx_witness_state(&self, global_idx: usize) -> WitnessState {
+        self.dctx.read().unwrap().witness_states.get(global_idx).map_or(WitnessState::Absent, |s| s.get())
+    }
+
+    pub fn dctx_count_witness_state(&self, state: WitnessState) -> usize {
+        self.dctx.read().unwrap().witness_states.iter().filter(|s| s.get() == state).count()
+    }
+
+    /// A witness exists for this instance, whether or not its trace is still resident.
     pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].load(std::sync::atomic::Ordering::SeqCst)
+        matches!(self.dctx_witness_state(global_idx), WitnessState::Running | WitnessState::Done)
     }
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
@@ -1038,10 +1093,17 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
+        // Before the clear, never after: the safe side of the race is a redundant recompute, not a
+        // `Done` over an empty trace.
+        self.dctx_mark_witness_evicted(instance_id);
         self.air_instances[instance_id].write().unwrap().reset()
     }
 
+    /// Reclaim an instance's trace, marking it `Evicted`. That is not the same as computable again:
+    /// only an explicit `rearm` puts it back in play, so a blanket re-announce cannot redo work the
+    /// pipeline has already consumed.
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
+        self.dctx_mark_witness_evicted(instance_id);
         self.air_instances[instance_id].write().unwrap().clear_traces()
     }
 
