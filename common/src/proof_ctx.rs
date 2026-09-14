@@ -661,10 +661,20 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
-        *self.air_instances[global_idx].write().unwrap() = air_instance;
+        {
+            // Carried across the replacement, never restarted.
+            let mut slot = self.air_instances[global_idx].write().unwrap();
+            let generation = slot.trace_generation.wrapping_add(1);
+            *slot = air_instance;
+            slot.trace_generation = generation;
+        }
         if let Some(proof_tx) = &*self.proof_tx.read().unwrap() {
             proof_tx.send(global_idx).unwrap();
         }
+    }
+
+    pub fn instance_trace_generation(&self, global_idx: usize) -> u64 {
+        self.air_instances[global_idx].read().unwrap().trace_generation
     }
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
@@ -1093,10 +1103,8 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
-        // Mark and clear under one lock. Marking first but clearing later leaves a window in which a
-        // hook acquires the `Evicted` slot, computes, and releases `Done` -- and the clear then drops
-        // the trace it just wrote. Holding the instance lock across both makes such a hook block here
-        // and store its trace after the clear.
+        // One lock across both: marking first and clearing later lets a hook acquire the `Evicted`
+        // slot and release `Done` over the trace this then drops.
         let mut air_instance = self.air_instances[instance_id].write().unwrap();
         self.dctx_mark_witness_evicted(instance_id);
         air_instance.reset()
@@ -1108,6 +1116,17 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         // One transition, for the same reason as `free_instance`.
         let mut air_instance = self.air_instances[instance_id].write().unwrap();
+        self.dctx_mark_witness_evicted(instance_id);
+        air_instance.clear_traces()
+    }
+
+    /// Only if the resident trace is still the one offered: a queued candidate outlives the trace it
+    /// names, and freeing on a stale entry throws away a recomputation.
+    pub fn free_instance_traces_at(&self, instance_id: usize, generation: u64) -> (bool, Vec<F>) {
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
+        if air_instance.trace_generation != generation {
+            return (false, Vec::new());
+        }
         self.dctx_mark_witness_evicted(instance_id);
         air_instance.clear_traces()
     }

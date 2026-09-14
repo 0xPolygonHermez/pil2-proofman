@@ -176,6 +176,8 @@ pub struct AirInstance<F> {
     pub is_packed: bool,
     pub stream_id: u64,
     pub reclaim_slot: Option<ReclaimSlot<F>>,
+    /// Names the resident trace, so a stale reclaim candidate cannot free its replacement.
+    pub trace_generation: u64,
 }
 
 impl<F: PrimeField64> AirInstance<F> {
@@ -205,6 +207,7 @@ impl<F: PrimeField64> AirInstance<F> {
             is_packed: trace_info.is_packed,
             stream_id: 0,
             reclaim_slot: trace_info.reclaim_slot,
+            trace_generation: 0,
         }
     }
 

@@ -369,6 +369,8 @@ struct ReleaseCandidate {
     /// Reversed so the `BinaryHeap` max-heap yields the *lowest* recompute cost first.
     cost: std::cmp::Reverse<u64>,
     instance_id: usize,
+    /// The trace queued against; the entry is only honoured while that trace is still resident.
+    generation: u64,
 }
 
 impl Ord for ReleaseCandidate {
@@ -469,8 +471,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
             }
             // Drains in one go: a candidate whose trace someone else already freed yields nothing,
             // and must not cost another backoff before the next one is tried.
-            while let Some(iid) = self.pop_release_candidate() {
-                let (is_shared, buf) = self.pctx.free_instance_traces(iid);
+            while let Some((iid, generation)) = self.pop_release_candidate() {
+                let (is_shared, buf) = self.pctx.free_instance_traces_at(iid, generation);
                 if is_shared {
                     self.pctx.witness_stats.evictions.fetch_add(1, Ordering::Relaxed);
                     self.pool.charge_wait(&buf, started.elapsed());
@@ -487,8 +489,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         }
     }
 
-    fn pop_release_candidate(&self) -> Option<usize> {
-        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).pop().map(|c| c.instance_id)
+    fn pop_release_candidate(&self) -> Option<(usize, u64)> {
+        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).pop().map(|c| (c.instance_id, c.generation))
     }
 
     /// Log how long callers spent blocked on this pool. Their own timers include that wait, so
@@ -505,7 +507,12 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     /// first. The free itself marks the instance `Evicted`; callers track nothing.
     pub fn to_be_released_buffer(&self, instance_id: usize) {
         let cost = std::cmp::Reverse(self.pctx.dctx_instance_weight(instance_id));
-        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).push(ReleaseCandidate { cost, instance_id });
+        let generation = self.pctx.instance_trace_generation(instance_id);
+        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).push(ReleaseCandidate {
+            cost,
+            instance_id,
+            generation,
+        });
     }
 
     pub fn empty_queue_to_be_released(&self) {
@@ -808,7 +815,7 @@ mod tests {
     type F = Goldilocks;
 
     fn candidate(cost: u64, instance_id: usize) -> ReleaseCandidate {
-        ReleaseCandidate { cost: std::cmp::Reverse(cost), instance_id }
+        ReleaseCandidate { cost: std::cmp::Reverse(cost), instance_id, generation: 0 }
     }
 
     #[test]
@@ -830,6 +837,19 @@ mod tests {
         }
         let order: Vec<usize> = std::iter::from_fn(|| heap.pop()).map(|c| c.instance_id).collect();
         assert_eq!(order, vec![2, 5, 7], "ties must be deterministic");
+    }
+
+    /// The heap does not deduplicate, so the generation is what stops a second entry for one
+    /// instance from freeing the trace a recompute installed after the first.
+    #[test]
+    fn a_duplicate_entry_keeps_the_generation_it_was_queued_with() {
+        let mut heap: BinaryHeap<ReleaseCandidate> = BinaryHeap::new();
+        for generation in [4u64, 5] {
+            heap.push(ReleaseCandidate { cost: std::cmp::Reverse(42), instance_id: 3, generation });
+        }
+        let seen: Vec<u64> = std::iter::from_fn(|| heap.pop()).map(|c| c.generation).collect();
+        assert_eq!(seen.len(), 2, "the heap does not deduplicate; the generation is the guard");
+        assert!(seen.contains(&4) && seen.contains(&5), "each entry keeps its own generation");
     }
 
     fn handler(n: usize, size: usize) -> MemoryHandlerRecursive<F> {
