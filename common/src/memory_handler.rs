@@ -1,10 +1,9 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::c_void;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
 use proofman_fields::PrimeField64;
 use crate::{ProofmanError, ProofmanResult};
@@ -364,11 +363,33 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for Pool<F> {
     }
 }
 
+/// Cheapest-to-recompute first. FIFO reclaimed whatever committed earliest, i.e. the heaviest airs.
+#[derive(Eq, PartialEq)]
+struct ReleaseCandidate {
+    /// Reversed so the `BinaryHeap` max-heap yields the *lowest* recompute cost first.
+    cost: std::cmp::Reverse<u64>,
+    instance_id: usize,
+    /// The trace queued against; the entry is only honoured while that trace is still resident.
+    generation: u64,
+}
+
+impl Ord for ReleaseCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cost.cmp(&other.cost).then_with(|| other.instance_id.cmp(&self.instance_id))
+    }
+}
+
+impl PartialOrd for ReleaseCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     pctx: Arc<ProofCtx<F>>,
-    instance_ids_to_be_released: Arc<SegQueue<(usize, bool)>>,
-    /// Channel + pinning + reset/Drop mechanics for the basic-trace buffers. The instance-release
-    /// side-channel below and the `pctx` coupling are the only behavior layered on the shared pool.
+    release_candidates: Mutex<BinaryHeap<ReleaseCandidate>>,
+    /// Channel + pinning + reset/Drop mechanics for the basic-trace buffers. The reclaim heap above
+    /// and the `pctx` coupling are the only behavior layered on the shared pool.
     pool: Pool<F>,
     /// Set by `cancel()` so the `take_buffer` loop can exit instead of spinning on a buffer that
     /// will never be released. Shared with `pool` so one flag drives both the drain and channel poll.
@@ -377,7 +398,6 @@ pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, n_buffers: usize, buffer_size: usize) -> Self {
-        let instance_ids_to_be_released = Arc::new(SegQueue::new());
         let cancelled = Arc::new(AtomicBool::new(false));
 
         // Page-lock the basic-trace pool for direct H2D (trace is an H2D source; pairs with the
@@ -388,7 +408,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
         tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
 
-        Self { pctx, instance_ids_to_be_released, pool, cancelled }
+        Self { pctx, release_candidates: Mutex::new(BinaryHeap::new()), pool, cancelled }
     }
 
     /// Unblock any thread parked in `take_buffer`. Called on the abort path so a failed proof tears
@@ -418,9 +438,9 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     }
 
     /// Take a basic-trace buffer. Waits on the pool channel with a backoff timeout that paces the
-    /// two non-channel wakeup sources: the abort flag, and the soft-release SegQueue that
-    /// `to_be_released_buffer` enqueues without sending to the channel (so a bare parked `recv`
-    /// would miss those). Was a 10µs sleep-poll — ~100k wakeups/s per waiter, inside
+    /// two non-channel wakeup sources: the abort flag, and the reclaim heap that
+    /// `to_be_released_buffer` fills without sending to the channel (so a bare parked `recv` would
+    /// miss those). Was a 10µs sleep-poll — ~100k wakeups/s per waiter, inside
     /// CALCULATING_WITNESS, each iteration touching state shared with the releasing threads.
     pub fn take_buffer(&self) -> Vec<F> {
         let mut backoff = std::time::Duration::from_micros(50);
@@ -442,22 +462,22 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 self.pool.charge_wait(&buffer, waited);
                 return buffer;
             }
-            if let Some((iid, remove_from_calculated)) = self.instance_ids_to_be_released.pop() {
-                if remove_from_calculated {
-                    self.pctx.dctx_reset_instance_calculated(iid);
-                }
-                let (is_shared, buf) = self.pctx.free_instance_traces(iid);
-                if is_shared {
-                    let waited = started.elapsed();
-                    self.pool.charge_wait(&buf, waited);
-                    return buf;
-                }
-                continue;
-            }
+            // Before reclaiming: a release arriving within the backoff is free, a reclaim costs a
+            // whole recomputed witness.
             if let Some(buffer) = self.pool.take_timeout(backoff) {
                 let waited = started.elapsed();
                 self.pool.charge_wait(&buffer, waited);
                 return buffer;
+            }
+            // Drains in one go: a candidate whose trace someone else already freed yields nothing,
+            // and must not cost another backoff before the next one is tried.
+            while let Some((iid, generation)) = self.pop_release_candidate() {
+                let (is_shared, buf) = self.pctx.free_instance_traces_at(iid, generation);
+                if is_shared {
+                    self.pctx.witness_stats.evictions.fetch_add(1, Ordering::Relaxed);
+                    self.pool.charge_wait(&buf, started.elapsed());
+                    return buf;
+                }
             }
             if let Some(short_by) = self.pool.short_by() {
                 let buffer = self.pool.fresh_buffer();
@@ -467,6 +487,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
             }
             backoff = (backoff * 2).min(MAX_POOL_WAIT_BACKOFF);
         }
+    }
+
+    fn pop_release_candidate(&self) -> Option<(usize, u64)> {
+        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).pop().map(|c| (c.instance_id, c.generation))
     }
 
     /// Log how long callers spent blocked on this pool. Their own timers include that wait, so
@@ -479,14 +503,20 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         self.pool.release(buffer)
     }
 
-    pub fn to_be_released_buffer(&self, instance_id: usize, remove_from_calculated: bool) {
-        self.instance_ids_to_be_released.push((instance_id, remove_from_calculated));
+    /// Offer a trace for reclamation; only a pool-starved thread frees one, cheapest to recompute
+    /// first. The free itself marks the instance `Evicted`; callers track nothing.
+    pub fn to_be_released_buffer(&self, instance_id: usize) {
+        let cost = std::cmp::Reverse(self.pctx.dctx_instance_weight(instance_id));
+        let generation = self.pctx.instance_trace_generation(instance_id);
+        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).push(ReleaseCandidate {
+            cost,
+            instance_id,
+            generation,
+        });
     }
 
     pub fn empty_queue_to_be_released(&self) {
-        while !self.instance_ids_to_be_released.is_empty() {
-            self.instance_ids_to_be_released.pop();
-        }
+        self.release_candidates.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -783,6 +813,44 @@ mod tests {
     // These exercise the pool's accounting (take/release/reset, leak detection, cancel), not pinning,
     // so they pass on both backends (CPU register is a no-op; GPU pinning is transparent to accounting).
     type F = Goldilocks;
+
+    fn candidate(cost: u64, instance_id: usize) -> ReleaseCandidate {
+        ReleaseCandidate { cost: std::cmp::Reverse(cost), instance_id, generation: 0 }
+    }
+
+    #[test]
+    fn the_cheapest_witness_to_recompute_is_reclaimed_first() {
+        // Pushed heaviest-first and oldest-first, so FIFO order would have given the opposite.
+        let mut heap: BinaryHeap<ReleaseCandidate> = BinaryHeap::new();
+        for (cost, id) in [(900u64, 0usize), (10, 1), (500, 2), (1, 3)] {
+            heap.push(candidate(cost, id));
+        }
+        let order: Vec<usize> = std::iter::from_fn(|| heap.pop()).map(|c| c.instance_id).collect();
+        assert_eq!(order, vec![3, 1, 2, 0]);
+    }
+
+    #[test]
+    fn equal_cost_reclaims_the_lowest_instance_id_first() {
+        let mut heap: BinaryHeap<ReleaseCandidate> = BinaryHeap::new();
+        for id in [7usize, 2, 5] {
+            heap.push(candidate(42, id));
+        }
+        let order: Vec<usize> = std::iter::from_fn(|| heap.pop()).map(|c| c.instance_id).collect();
+        assert_eq!(order, vec![2, 5, 7], "ties must be deterministic");
+    }
+
+    /// The heap does not deduplicate, so the generation is what stops a second entry for one
+    /// instance from freeing the trace a recompute installed after the first.
+    #[test]
+    fn a_duplicate_entry_keeps_the_generation_it_was_queued_with() {
+        let mut heap: BinaryHeap<ReleaseCandidate> = BinaryHeap::new();
+        for generation in [4u64, 5] {
+            heap.push(ReleaseCandidate { cost: std::cmp::Reverse(42), instance_id: 3, generation });
+        }
+        let seen: Vec<u64> = std::iter::from_fn(|| heap.pop()).map(|c| c.generation).collect();
+        assert_eq!(seen.len(), 2, "the heap does not deduplicate; the generation is the guard");
+        assert!(seen.contains(&4) && seen.contains(&5), "each entry keeps its own generation");
+    }
 
     fn handler(n: usize, size: usize) -> MemoryHandlerRecursive<F> {
         MemoryHandlerRecursive::new(n, size)

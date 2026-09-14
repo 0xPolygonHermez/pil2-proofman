@@ -19,7 +19,7 @@ use proofman_starks_lib_c::{
 };
 use crate::add_publics_circom;
 use proofman_verifier::verifier;
-use crossbeam_channel::{unbounded, Sender, Receiver};
+use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -30,6 +30,10 @@ use std::sync::{LazyLock, Mutex, RwLock};
 /// leaked slot permanently blocks its air once the cap is reached — the admission loop then spins.
 /// Cancellation re-check interval. Was 1ms: a dispatcher spinning a core while the pool drained.
 const TOKEN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Cancellation re-check for the admission loop. Not a latency knob: every event that can make work
+/// admissible wakes it immediately.
+const ADMISSION_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Ceiling on the shared recursive trace pool (compressor included). Each buffer is the largest
 /// recursive trace -- 216 MB on the blake3 zisk key -- and pinned, so depth is expensive; it only
@@ -105,6 +109,9 @@ impl Drop for ThreadTokens {
 struct SlotGuard {
     in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>>,
     key: (usize, usize),
+    /// A freed slot is the one thing that can make queued work admissible with nothing arriving, so
+    /// it announces itself rather than being polled for.
+    wake: Sender<()>,
 }
 
 impl Drop for SlotGuard {
@@ -113,6 +120,8 @@ impl Drop for SlotGuard {
         if let Some(n) = self.in_flight.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&self.key) {
             *n = n.saturating_sub(1);
         }
+        // Best-effort: one pending wakeup is all the loop needs, and a drop must never block.
+        let _ = self.wake.try_send(());
     }
 }
 
@@ -1244,9 +1253,12 @@ where
         offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
         let _computing = self.acquire_computing("get_instance_trace");
-        if self.pctx.dctx_is_instance_calculated(instance_id) {
+        // Residency, not "dispatched": a reclaimed instance used to answer with an empty trace.
+        if self.pctx.is_air_instance_stored(instance_id) {
             return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
+        // A query wants it built from scratch, unlike a trace the pipeline already consumed.
+        self.pctx.dctx_rearm_witness(instance_id);
 
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -1268,7 +1280,7 @@ where
 
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
-            self.memory_handler.to_be_released_buffer(instance_id, true);
+            self.memory_handler.to_be_released_buffer(instance_id);
         }
 
         Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset))
@@ -1280,9 +1292,10 @@ where
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
 
-        if self.pctx.dctx_is_instance_calculated(instance_id) {
+        if self.pctx.is_air_instance_stored(instance_id) {
             return self.pctx.get_instance_air_values(instance_id, airvalues_map);
         }
+        self.pctx.dctx_rearm_witness(instance_id);
 
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -1302,7 +1315,7 @@ where
 
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
-            self.memory_handler.to_be_released_buffer(instance_id, true);
+            self.memory_handler.to_be_released_buffer(instance_id);
         }
 
         self.pctx.get_instance_air_values(instance_id, airvalues_map)
@@ -2003,7 +2016,7 @@ where
 
             // Safe now that the stream is drained: the H2D copy of this trace is done.
             if self.pctx.is_shared_buffer(instance_id) {
-                self.memory_handler.to_be_released_buffer(instance_id, true);
+                self.memory_handler.to_be_released_buffer(instance_id);
             }
 
             let proof =
@@ -2505,30 +2518,13 @@ where
             )
         };
 
+        // Measured on a 24-core host: aggregate witness CPU is flat between 2 and 6 and only
+        // degrades past 12, while per-witness latency keeps improving, so the wide end is the
+        // safer default. Prove time is insensitive to this either way.
+        const DEFAULT_THREADS_PER_WITNESS: usize = 8;
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
-            false => {
-                let num_threads_8 = max_num_threads / 8;
-                let num_threads_4 = max_num_threads / 4;
-                let num_threads_2 = max_num_threads / 2;
-
-                let total_cores_8 = 8 * num_threads_8;
-                let total_cores_4 = 4 * num_threads_4;
-                let total_cores_2 = 2 * num_threads_2;
-
-                let num_threads =
-                    if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
-                        num_threads_8
-                    } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
-                        num_threads_4
-                    } else if num_threads_2 > 0 {
-                        num_threads_2
-                    } else {
-                        1
-                    };
-
-                num_threads.min(8)
-            }
+            false => DEFAULT_THREADS_PER_WITNESS.clamp(1, max_num_threads.max(1)),
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
@@ -2828,7 +2824,7 @@ where
                                 if pctx_clone.gpu && commit_stream_id != u64::MAX {
                                     wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), commit_stream_id);
                                 }
-                                memory_handler_clone.to_be_released_buffer(instance_id, false);
+                                memory_handler_clone.to_be_released_buffer(instance_id);
                             }
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -3048,7 +3044,19 @@ where
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
-        self.pctx.dctx_reset_instances_calculated();
+        debug_assert_eq!(
+            self.pctx.dctx_count_witness_state(proofman_common::WitnessState::Running),
+            0,
+            "witness hooks must all be joined before the proofs phase"
+        );
+        // Targeted, unlike the blanket reset it replaces: an instance whose trace is still resident
+        // stays `Done` and is reused rather than becoming indistinguishable from never computed.
+        let rearmed = self.pctx.dctx_rearm_witnesses();
+        let (duplicates, evictions, over_trace) = self.pctx.witness_stats.snapshot();
+        tracing::info!(
+            "··· Witness reuse: {evictions} traces reclaimed, {rearmed} re-armed for the proofs phase, \
+             {duplicates} duplicate dispatches refused, {over_trace} recomputed over a live trace"
+        );
         self.memory_handler.empty_queue_to_be_released();
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
@@ -4983,151 +4991,178 @@ where
         let sctx_admission = self.sctx.clone();
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
-        let witness_handler =
-            if !minimal_memory && (self.pctx.gpu || stats) {
-                // Ready instances waiting to be admitted, priority-first, and how many slots each air
-                // currently holds. Taking straight off the channels would be pure FIFO with no choice;
-                // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
-                // stream so the slots it would have taken go to work the other streams can run.
-                // Two pools, not one queue: the priority pool is always scanned first, so a priority
-                // instance outranks every normal one however late it arrives, while arrival order is kept
-                // within each pool. That is all the two channels mean now — a ranking hint, no longer a
-                // queue-jump able to take every slot.
-                let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-                let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-                let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
-                let mut arrivals_done = false;
-                Some(std::thread::spawn(move || loop {
-                    // Take everything available without committing to any of it yet.
-                    while let Ok(id) = witness_rx_priority.try_recv() {
-                        pending_priority.push_back(id);
+        let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
+            // Ready instances waiting to be admitted, priority-first, and how many slots each air
+            // currently holds. Taking straight off the channels would be pure FIFO with no choice;
+            // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
+            // stream so the slots it would have taken go to work the other streams can run.
+            // Two pools, not one queue: the priority pool is always scanned first, so a priority
+            // instance outranks every normal one however late it arrives, while arrival order is kept
+            // within each pool. That is all the two channels mean now — a ranking hint, no longer a
+            // queue-jump able to take every slot.
+            let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+            let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+            let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+            // Depth 1: a wakeup is a hint, not a count.
+            let (slot_freed_tx, slot_freed_rx): (Sender<()>, Receiver<()>) = bounded(1);
+            let mut arrivals_done = false;
+            Some(std::thread::spawn(move || loop {
+                // Take everything available without committing to any of it yet.
+                while let Ok(id) = witness_rx_priority.try_recv() {
+                    pending_priority.push_back(id);
+                }
+                while let Ok(id) = witness_rx.try_recv() {
+                    if id == usize::MAX {
+                        arrivals_done = true;
+                    } else {
+                        pending.push_back(id);
                     }
-                    while let Ok(id) = witness_rx.try_recv() {
-                        if id == usize::MAX {
-                            arrivals_done = true;
-                        } else {
-                            pending.push_back(id);
-                        }
-                    }
+                }
 
-                    // 0 = unknown (CPU, or an air the carve does not know): never held back.
-                    let eligible_of = |id: usize| -> usize {
-                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
-                        let need =
-                            sctx_admission.get_setup(key.0, key.1).map(|s| s.prover_buffer_size as usize).unwrap_or(0);
-                        crate::eligible_stream_count(need, &class_sizes)
+                // 0 = unknown (CPU, or an air the carve does not know): never held back.
+                let eligible_of = |id: usize| -> usize {
+                    let Ok(key) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
+                    let need =
+                        sctx_admission.get_setup(key.0, key.1).map(|s| s.prover_buffer_size as usize).unwrap_or(0);
+                    crate::eligible_stream_count(need, &class_sizes)
+                };
+                let admissible = |id: usize, held: &HashMap<(usize, usize), usize>| -> bool {
+                    let Ok(key) = pctx_clone.dctx_get_instance_info(id) else {
+                        return true; // unknown air: never hold back work we cannot reason about
                     };
-                    let admissible = |id: usize, held: &HashMap<(usize, usize), usize>| -> bool {
-                        let Ok(key) = pctx_clone.dctx_get_instance_info(id) else {
-                            return true; // unknown air: never hold back work we cannot reason about
-                        };
-                        let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
-                        held.get(&key).copied().unwrap_or(0) < cap
-                    };
-                    // First admissible, priority pool first. Not reordered by scarcity: that starved the
-                    // streams flexible work feeds (83% -> 71% busy). The cap alone is the lever.
-                    let chosen: Option<(bool, usize)> = {
-                        let held = in_flight.lock().unwrap();
-                        pending_priority
-                            .iter()
-                            .position(|&id| admissible(id, &held))
-                            .map(|pos| (true, pos))
-                            .or_else(|| pending.iter().position(|&id| admissible(id, &held)).map(|pos| (false, pos)))
-                    };
+                    let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
+                    held.get(&key).copied().unwrap_or(0) < cap
+                };
+                // First admissible, priority pool first. Not reordered: `weight` is the proof cost
+                // of the air, so it is equal for every instance of one, and the instances of an air
+                // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
+                let first = |pool: &std::collections::VecDeque<usize>,
+                             held: &HashMap<(usize, usize), usize>|
+                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
+                let chosen: Option<(bool, usize)> = {
+                    let held = in_flight.lock().unwrap();
+                    first(&pending_priority, &held)
+                        .map(|pos| (true, pos))
+                        .or_else(|| first(&pending, &held).map(|pos| (false, pos)))
+                };
 
-                    let instance_id = match chosen.and_then(|(is_priority, pos)| {
-                        if is_priority {
-                            pending_priority.remove(pos)
-                        } else {
-                            pending.remove(pos)
-                        }
-                    }) {
+                let instance_id =
+                    match chosen.and_then(
+                        |(is_priority, pos)| {
+                            if is_priority {
+                                pending_priority.remove(pos)
+                            } else {
+                                pending.remove(pos)
+                            }
+                        },
+                    ) {
                         Some(id) => id,
                         None => {
-                            // Nothing admissible. Exit only once no more can arrive and nothing is queued;
-                            // otherwise wait briefly for a slot to free or a new arrival.
+                            // Nothing admissible. Exit only once no more can arrive and nothing is queued.
                             if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
                             if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
                                 break;
                             }
-                            std::thread::sleep(std::time::Duration::from_millis(1));
+                            // Wait on every event that can make work admissible -- an arrival on
+                            // either channel, or a freed slot -- rather than polling. Was a flat 1 ms
+                            // sleep: measured at ~8 ms per witness, 540 ms over a phase.
+                            let mut select = crossbeam_channel::Select::new();
+                            let priority_op = select.recv(&witness_rx_priority);
+                            let normal_op = select.recv(&witness_rx);
+                            let slot_op = select.recv(&slot_freed_rx);
+                            if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
+                                let index = op.index();
+                                if index == priority_op {
+                                    if let Ok(id) = op.recv(&witness_rx_priority) {
+                                        pending_priority.push_back(id);
+                                    }
+                                } else if index == normal_op {
+                                    match op.recv(&witness_rx) {
+                                        Ok(id) if id == usize::MAX => arrivals_done = true,
+                                        Ok(id) => pending.push_back(id),
+                                        Err(_) => {}
+                                    }
+                                } else if index == slot_op {
+                                    let _ = op.recv(&slot_freed_rx);
+                                }
+                            }
                             continue;
                         }
                     };
 
-                    if let Some(witness_start_time_clone) = &witness_start_time_clone {
-                        if witness_start_time_clone.read().unwrap().is_none() {
-                            *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
-                        }
+                if let Some(witness_start_time_clone) = &witness_start_time_clone {
+                    if witness_start_time_clone.read().unwrap().is_none() {
+                        *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
                     }
+                }
 
-                    let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
-                    };
-
-                    // Held until the witness thread finishes: the span this air occupies a slot.
-                    *in_flight.lock().unwrap().entry((airgroup_id, air_id)).or_insert(0) += 1;
-                    let slot = SlotGuard { in_flight: in_flight.clone(), key: (airgroup_id, air_id) };
-
-                    let wcm = wcm_clone.clone();
-                    let memory_handler_clone = memory_handler_clone.clone();
-
-                    let witness_done_clone = witness_done_clone.clone();
-                    let tokens = thread_budget_clone.acquire(n_threads_witness, &cancellation_info_clone);
-
-                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
+                };
 
-                    let pctx_clone = pctx_clone.clone();
-                    let gpu = pctx_clone.gpu;
-                    let cancellation_info_clone = cancellation_info_clone.clone();
-                    let handle = std::thread::spawn(move || {
-                        timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                        if let Err(e) =
-                            wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
-                        {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                        }
-                        drop(tokens);
-                        // Free the slot before the counter so admission can refill immediately.
-                        drop(slot);
-                        // The buffer carries its own wait, whichever worker blocked for it.
-                        let waited =
-                            proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
-                        timer_stop_and_log_debug_net!(
-                            GENERATING_WC,
-                            waited,
-                            "GENERATING_WC_{} [{}:{}]",
-                            instance_id,
-                            airgroup_id,
-                            air_id
-                        );
-                        witness_done_clone.increment();
-                        if stats {
-                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                            if is_shared_buffer {
-                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                    cancellation_info_clone.write_recover().cancel(Some(e));
-                                }
+                // Held until the witness thread finishes: the span this air occupies a slot.
+                *in_flight.lock().unwrap().entry((airgroup_id, air_id)).or_insert(0) += 1;
+                let slot =
+                    SlotGuard { in_flight: in_flight.clone(), key: (airgroup_id, air_id), wake: slot_freed_tx.clone() };
+
+                let wcm = wcm_clone.clone();
+                let memory_handler_clone = memory_handler_clone.clone();
+
+                let witness_done_clone = witness_done_clone.clone();
+                let tokens = thread_budget_clone.acquire(n_threads_witness, &cancellation_info_clone);
+
+                if cancellation_info_clone.read_recover().token.is_cancelled() {
+                    break;
+                }
+
+                let pctx_clone = pctx_clone.clone();
+                let gpu = pctx_clone.gpu;
+                let cancellation_info_clone = cancellation_info_clone.clone();
+                let handle = std::thread::spawn(move || {
+                    timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    if let Err(e) =
+                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
+                    {
+                        cancellation_info_clone.write_recover().cancel(Some(e));
+                    }
+                    drop(tokens);
+                    // Free the slot before the counter so admission can refill immediately.
+                    drop(slot);
+                    // The buffer carries its own wait, whichever worker blocked for it.
+                    let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    timer_stop_and_log_debug_net!(
+                        GENERATING_WC,
+                        waited,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    witness_done_clone.increment();
+                    if stats {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write_recover().cancel(Some(e));
                             }
                         }
-                    });
-                    if !stats && !gpu {
-                        handle.join().unwrap();
-                    } else {
-                        witness_handles_clone.lock().unwrap().push(handle);
                     }
-                }))
-            } else {
-                None
-            };
+                });
+                if !stats && !gpu {
+                    handle.join().unwrap();
+                } else {
+                    witness_handles_clone.lock().unwrap().push(handle);
+                }
+            }))
+        } else {
+            None
+        };
         (Arc::new(Mutex::new(witness_handler)), witness_handles)
     }
 

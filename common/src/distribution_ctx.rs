@@ -1,7 +1,235 @@
 use std::collections::HashSet;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use crate::{ProofmanResult, ProofmanError};
+
+/// Lifecycle of an instance's witness within one proof. Single answer to "does this still need
+/// computing?": the dispatch-time bool it replaces could disagree with the trace it stood for.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WitnessState {
+    /// Nothing has happened to it in this proof.
+    Absent = 0,
+    /// On the witness channel, waiting for a hook to pick it up.
+    Queued = 1,
+    /// A witness hook owns it right now.
+    Running = 2,
+    /// Its witness exists.
+    Done = 3,
+    /// Was `Done`; its trace was reclaimed, so it must be recomputed before it can be proved.
+    Evicted = 4,
+}
+
+impl WitnessState {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Absent,
+            1 => Self::Queued,
+            2 => Self::Running,
+            3 => Self::Done,
+            _ => Self::Evicted,
+        }
+    }
+}
+
+/// One instance's witness lifecycle. Every transition goes through `move_to`, so the legal ones are
+/// the only ones expressible and each is a single atomic.
+#[derive(Debug, Default)]
+pub struct WitnessSlot(AtomicU8);
+
+impl WitnessSlot {
+    pub fn get(&self) -> WitnessState {
+        WitnessState::from_u8(self.0.load(Ordering::SeqCst))
+    }
+
+    fn move_to(&self, to: WitnessState, from: &[WitnessState]) -> bool {
+        let mut cur = self.0.load(Ordering::SeqCst);
+        loop {
+            if !from.contains(&WitnessState::from_u8(cur)) {
+                return false;
+            }
+            match self.0.compare_exchange_weak(cur, to as u8, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return true,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+
+    /// False means it is queued, owned, or already computed: do not enqueue it again. `Evicted` is
+    /// excluded on purpose -- it has had its witness in this phase, and a blanket re-announce would
+    /// put it back on the channel to be recomputed for nobody. `rearm` is the explicit way back.
+    pub fn try_queue(&self) -> bool {
+        self.move_to(WitnessState::Queued, &[WitnessState::Absent])
+    }
+
+    /// The one gate every witness hook goes through. `Evicted` is not a source: its owner may still
+    /// be running, and a second hook taking the slot would make that owner's `release` land on the
+    /// second one's `Running`. `rearm` is the way back, and every recompute path already calls it.
+    pub fn try_acquire(&self) -> bool {
+        self.move_to(WitnessState::Running, &[WitnessState::Absent, WitnessState::Queued])
+    }
+
+    /// End of a hook. Producing nothing returns to `Absent` because the queue slot is spent; only
+    /// from `Running`, so a trace reclaimed mid-hook is not overwritten with `Done`.
+    pub fn release(&self, produced: bool) {
+        let to = if produced { WitnessState::Done } else { WitnessState::Absent };
+        self.move_to(to, &[WitnessState::Running]);
+    }
+
+    /// The trace is gone. Covers `Running` so a buffer freed under a live hook cannot end as `Done`.
+    pub fn mark_evicted(&self) {
+        self.move_to(WitnessState::Evicted, &[WitnessState::Done, WitnessState::Running]);
+    }
+
+    /// Back to square one: this instance is wanted again and must be prepared, queued and computed
+    /// from scratch. Used by the on-demand queries and by the phase boundary.
+    pub fn rearm(&self) -> bool {
+        self.move_to(WitnessState::Absent, &[WitnessState::Evicted, WitnessState::Queued])
+    }
+}
+
+/// Witness-lifecycle diagnostics. Pure observation: nothing reads these to make a decision.
+#[derive(Debug, Default)]
+pub struct WitnessStats {
+    /// Dispatches refused because the instance was already queued or computed.
+    pub duplicate_sends: AtomicUsize,
+    /// Traces reclaimed from computed instances; each is a witness that must be redone.
+    pub evictions: AtomicUsize,
+    /// Witnesses computed over a trace that already held one.
+    pub recomputed_over_trace: AtomicUsize,
+}
+
+impl WitnessStats {
+    pub fn snapshot(&self) -> (usize, usize, usize) {
+        let load = |c: &AtomicUsize| c.load(Ordering::Relaxed);
+        (load(&self.duplicate_sends), load(&self.evictions), load(&self.recomputed_over_trace))
+    }
+}
+
+#[cfg(test)]
+mod witness_slot_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn a_second_queue_of_the_same_instance_is_refused() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(!s.try_queue(), "the duplicate must not reach the channel");
+    }
+
+    #[test]
+    fn a_queued_instance_is_still_acquirable_and_only_once() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+        assert!(!s.try_acquire());
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Done);
+        assert!(!s.try_acquire(), "a produced witness must not be computed again");
+    }
+
+    #[test]
+    fn producing_nothing_leaves_the_instance_computable_and_queueable() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+        s.release(false);
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+    }
+
+    #[test]
+    fn reclaiming_a_trace_makes_the_instance_computable_again_once_rearmed() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Evicted);
+        assert!(!s.try_acquire(), "its owner may still be running");
+        assert!(s.rearm());
+        assert!(s.try_acquire());
+    }
+
+    /// A reclaim mid-hook must not let a second hook in: the first owner's `release` would then
+    /// land on the second one's `Running` and leave that one's result untracked.
+    #[test]
+    fn an_evicted_owner_is_not_displaced_by_a_second_hook() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.mark_evicted();
+        assert!(!s.try_acquire(), "the evicted owner has not finished");
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Evicted, "the late release must not publish Done");
+    }
+
+    #[test]
+    fn an_evicted_instance_is_not_re_queued_by_a_blanket_announce() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        s.mark_evicted();
+        assert!(!s.try_queue(), "a blanket re-announce must not schedule it again");
+        assert!(s.rearm());
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+    }
+
+    #[test]
+    fn rearm_leaves_a_computed_instance_alone() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        assert!(!s.rearm());
+        assert_eq!(s.get(), WitnessState::Done);
+    }
+
+    #[test]
+    fn a_reclaim_mid_hook_beats_the_late_release() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.mark_evicted();
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Evicted);
+        assert!(s.rearm());
+        assert!(s.try_acquire());
+    }
+
+    #[test]
+    fn reclaiming_an_instance_that_never_ran_is_a_no_op() {
+        let s = WitnessSlot::default();
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Queued);
+    }
+
+    /// Both gates must elect exactly one winner under contention.
+    fn race(f: fn(&WitnessSlot) -> bool) -> usize {
+        let s = Arc::new(WitnessSlot::default());
+        let winners = Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let (s, winners) = (s.clone(), winners.clone());
+                std::thread::spawn(move || {
+                    if f(&s) {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().for_each(|h| h.join().unwrap());
+        winners.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn concurrent_gates_elect_exactly_one_winner() {
+        assert_eq!(race(WitnessSlot::try_acquire), 1);
+        assert_eq!(race(WitnessSlot::try_queue), 1);
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceChunks {
@@ -67,7 +295,7 @@ pub struct DistributionCtx {
     pub n_instances: usize,                    // Total number of instances
     pub instances: Vec<InstanceInfo>,          // Instances info
     pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
-    pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
+    pub witness_states: Vec<WitnessSlot>,      // Witness lifecycle per instance
     pub n_tables: usize,                       // Number of table instances
     pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
     pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
@@ -135,7 +363,7 @@ impl DistributionCtx {
             process_id: 0,
             n_instances: 0,
             instances: Vec::new(),
-            instances_calculated: Vec::new(),
+            witness_states: Vec::new(),
             instances_chunks: Vec::new(),
             n_tables: 0,
             aux_tables: Vec::new(),
@@ -212,7 +440,7 @@ impl DistributionCtx {
         self.n_instances = 0;
         self.instances.clear();
         self.instances_chunks.clear();
-        self.instances_calculated.clear();
+        self.witness_states.clear();
         self.n_tables = 0;
         self.aux_tables.clear();
         self.aux_table_map.clear();
@@ -552,7 +780,7 @@ impl DistributionCtx {
         let (total_weight, has_compressor) = (instance.total_weight(), instance.has_compressor());
         self.instances.push(instance);
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_calculated.push(AtomicBool::new(false));
+        self.witness_states.push(WitnessSlot::default());
         self.n_instances += 1;
         // Placed as created, without knowing the instances still to come: greedy least loaded.
         // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
@@ -605,7 +833,7 @@ impl DistributionCtx {
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_calculated.push(AtomicBool::new(false));
+        self.witness_states.push(WitnessSlot::default());
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
@@ -776,7 +1004,7 @@ impl DistributionCtx {
                 let process_id = self.least_loaded_process(&self.process_count);
                 let gid = self.instances.len();
                 self.instances.push(*table);
-                self.instances_calculated.push(AtomicBool::new(false));
+                self.witness_states.push(WitnessSlot::default());
                 self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                 self.n_instances += 1;
                 self.n_tables += 1;
@@ -802,6 +1030,7 @@ impl DistributionCtx {
                         0,
                     ));
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                    self.witness_states.push(WitnessSlot::default());
                     self.n_instances += 1;
                     self.n_tables += 1;
                     self.instance_partition.push(-2); // Mark as table
@@ -817,6 +1046,11 @@ impl DistributionCtx {
                 }
             }
         }
+        debug_assert_eq!(
+            self.witness_states.len(),
+            self.instances.len(),
+            "every instance needs a witness slot; a missing push silently truncates the tail"
+        );
         self.aux_tables.clear();
         self.assignation_done = true;
 
