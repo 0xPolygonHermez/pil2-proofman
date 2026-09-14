@@ -77,17 +77,12 @@ pub fn bucket_size_for(count: usize, sizes: &[u32]) -> Result<u32> {
     if count == 0 {
         bail!("an empty group has no bucket size");
     }
-    sizes
-        .iter()
-        .copied()
-        .filter(|&s| s > 0 && count % s as usize == 0)
-        .max()
-        .with_context(|| {
-            format!(
-                "cannot pack {count} polynomial(s): none of the available root orders {sizes:?} divides it, \
+    sizes.iter().copied().filter(|&s| s > 0 && count.is_multiple_of(s as usize)).max().with_context(|| {
+        format!(
+            "cannot pack {count} polynomial(s): none of the available root orders {sizes:?} divides it, \
                  and unequal buckets would need more than one root"
-            )
-        })
+        )
+    })
 }
 
 /// Split `count` items into equal buckets of the derived size.
@@ -102,9 +97,7 @@ pub fn plan_buckets(count: usize, preferred: u32, sizes: &[u32]) -> Result<Vec<u
         bail!("preferred bucket size must be non-zero");
     }
     if !sizes.contains(&preferred) {
-        bail!(
-            "preferred bucket size {preferred} has no root of unity; available orders are {sizes:?}"
-        );
+        bail!("preferred bucket size {preferred} has no root of unity; available orders are {sizes:?}");
     }
 
     let mut remaining = count;
@@ -141,9 +134,8 @@ pub fn normalize_opening_point(point: i64, domain_size: u64) -> Result<u32> {
     }
     let n = domain_size as i128;
     let reduced = ((point as i128 % n) + n) % n;
-    u32::try_from(reduced).map_err(|_| {
-        anyhow::anyhow!("opening point {point} reduces to {reduced}, which does not fit the shkey's u32")
-    })
+    u32::try_from(reduced)
+        .map_err(|_| anyhow::anyhow!("opening point {point} reduces to {reduced}, which does not fit the shkey's u32"))
 }
 
 /// The degree a polynomial occupies in its combined polynomial.
@@ -158,7 +150,11 @@ pub fn normalize_opening_point(point: i64, domain_size: u64) -> Result<u32> {
 ///
 /// The quotient is not covered here -- see [`quotient_degree`].
 pub fn committed_degree(domain_size: u64, stage: u32, n_opening_points: usize) -> u64 {
-    if stage == 0 { domain_size } else { domain_size + n_opening_points as u64 + 1 }
+    if stage == 0 {
+        domain_size
+    } else {
+        domain_size + n_opening_points as u64 + 1
+    }
 }
 
 /// The quotient polynomial's degree.
@@ -185,7 +181,11 @@ pub fn quotient_degree(domain_size: u64, q_deg: u64, max_pols_openings: u64) -> 
 /// for completeness, but a setup that emits one has to generate the matching
 /// omega, which pil-stark's generator never had to do.
 pub fn omega_name(n_pols: u32, point: i64) -> String {
-    if point == 0 { format!("w{n_pols}") } else { format!("w{n_pols}_{point}d{n_pols}") }
+    if point == 0 {
+        format!("w{n_pols}")
+    } else {
+        format!("w{n_pols}_{point}d{n_pols}")
+    }
 }
 
 /// Every root of unity a packing needs the setup to provide.
@@ -242,10 +242,7 @@ pub fn derive_f(candidates: &[Candidate], sizes: &[u32]) -> Result<Vec<ShPlonkPo
                 pols: names.clone(),
                 stages: vec![ShPlonkStage {
                     stage,
-                    pols: slice
-                        .iter()
-                        .map(|c| ShPlonkStagePol { name: c.name.clone(), degree: c.degree })
-                        .collect(),
+                    pols: slice.iter().map(|c| ShPlonkStagePol { name: c.name.clone(), degree: c.degree }).collect(),
                 }],
             });
             index += 1;
@@ -341,10 +338,8 @@ mod tests {
         // Compare as multisets of (stage, opening points, size, degree): the
         // grouping is determined, the order within a group is not.
         let shape = |v: &[ShPlonkPol]| {
-            let mut s: Vec<(u32, Vec<u32>, usize, u64)> = v
-                .iter()
-                .map(|f| (f.stages[0].stage, f.opening_points.clone(), f.pols.len(), f.degree))
-                .collect();
+            let mut s: Vec<(u32, Vec<u32>, usize, u64)> =
+                v.iter().map(|f| (f.stages[0].stage, f.opening_points.clone(), f.pols.len(), f.degree)).collect();
             s.sort();
             s
         };

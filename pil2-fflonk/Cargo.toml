@@ -20,5 +20,8 @@ autobenches = false
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+sha3 = "0.10"
 
 [dev-dependencies]
