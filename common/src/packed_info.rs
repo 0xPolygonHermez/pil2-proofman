@@ -63,11 +63,7 @@ impl PackedInfo {
         // The unpackers write a table column in the pass its lane names, so a column
         // tagged for a lane the row does not carry would be written by no pass at all.
         let n_lanes = lanes.max(1);
-        assert!(
-            n_lanes <= u8::MAX as u64,
-            "indexed descriptor: at most {} lanes (col_lane is a u8)",
-            u8::MAX
-        );
+        assert!(n_lanes <= u8::MAX as u64, "indexed descriptor: at most {} lanes (col_lane is a u8)", u8::MAX);
         assert!(
             col_lane.iter().all(|&l| (l as u64) < n_lanes),
             "indexed descriptor: every col_lane must be below lanes ({n_lanes})"

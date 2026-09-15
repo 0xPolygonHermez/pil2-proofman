@@ -91,16 +91,10 @@ const _: () = assert!(<LxRowPackedIndexed<Goldilocks> as IndexedFill>::IS_INDEXE
 fn lane_packed_descriptor_names_a_lane_per_column() {
     assert_eq!(LxRowPackedIndexed::<Goldilocks>::LANES, 2);
     // a(4) + op(2) + imm(4) + flag(2) = 12 output columns.
-    assert_eq!(
-        LxRowPackedIndexed::<Goldilocks>::COL_SOURCE,
-        [0u8, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0]
-    );
+    assert_eq!(LxRowPackedIndexed::<Goldilocks>::COL_SOURCE, [0u8, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0]);
     // Each field's block is lane-major: `op` contributes one column per lane, `imm` two.
     // Runtime columns never select an entry, so their lane is 0.
-    assert_eq!(
-        LxRowPackedIndexed::<Goldilocks>::COL_LANE,
-        [0u8, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0]
-    );
+    assert_eq!(LxRowPackedIndexed::<Goldilocks>::COL_LANE, [0u8, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0]);
 }
 
 #[test]
