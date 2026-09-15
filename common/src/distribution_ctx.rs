@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use crate::{ProofmanResult, ProofmanError};
 
@@ -1014,28 +1015,35 @@ impl DistributionCtx {
                     )));
                 }
                 let ref_partition = self.instance_partition[ref_gid];
-                let ref_process = self.instance_process[ref_gid].0;
-                if ref_partition < 0 || ref_process < 0 {
+                if ref_partition < 0 {
                     return Err(ProofmanError::InvalidAssignation(format!(
-                        "Table assignment reference gid {ref_gid} is not assigned to a worker/process"
+                        "Table assignment reference gid {ref_gid} is not assigned to a partition"
                     )));
                 }
-                let ref_process = ref_process as usize;
+                // -1 when ref_partition is another worker's: every worker keeps the gid and the
+                // table mapping, only the owner materializes the instance.
+                let ref_process = self.instance_process[ref_gid].0;
                 let gid = self.instances.len();
                 self.instances.push(*table);
+                self.witness_states.push(WitnessSlot::default());
                 self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                 self.n_instances += 1;
                 self.n_tables += 1;
                 self.instance_partition.push(ref_partition); // REAL partition, not -2
-                self.worker_instances.push(gid);
-                let lid = self.process_count[ref_process];
-                self.process_count[ref_process] += 1;
-                self.process_weight[ref_process] += table.weight;
-                if ref_process == self.process_id {
-                    self.process_instances.push(gid);
+                if ref_process >= 0 {
+                    let ref_process = ref_process as usize;
+                    self.worker_instances.push(gid);
+                    let lid = self.process_count[ref_process];
+                    self.process_count[ref_process] += 1;
+                    self.process_weight[ref_process] += table.weight;
+                    if ref_process == self.process_id {
+                        self.process_instances.push(gid);
+                    }
+                    self.instance_process.push((ref_process as i32, lid));
+                } else {
+                    self.instance_process.push((-1, 0_usize));
                 }
                 self.aux_table_map[table_idx] = gid as i32;
-                self.instance_process.push((ref_process as i32, lid));
                 self.assigned_table_instances.insert(gid);
             } else if table.shared {
                 let process_id = self.least_loaded_process(&self.process_count);
@@ -1107,10 +1115,15 @@ impl DistributionCtx {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
-        if self.table_assignment.insert((airgroup_id, air_id), gid).is_some() {
-            return Err(ProofmanError::InvalidAssignation(format!(
-                "Table assignment already set for airgroup_id: {airgroup_id}, air_id: {air_id}"
-            )));
+        match self.table_assignment.entry((airgroup_id, air_id)) {
+            Entry::Occupied(_) => {
+                return Err(ProofmanError::InvalidAssignation(format!(
+                    "Table assignment already set for airgroup_id: {airgroup_id}, air_id: {air_id}"
+                )))
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(gid);
+            }
         }
         Ok(())
     }
@@ -1290,11 +1303,48 @@ mod tests {
         assert_eq!(dctx.instance_partition[table_gid], rom_partition, "real partition, not -2");
         assert_eq!(dctx.instance_process[table_gid].0, rom_process, "same process as ROM");
         assert!(dctx.is_assigned_table(table_gid).expect("is_assigned_table"));
+        assert_eq!(dctx.witness_states.len(), dctx.instances.len(), "witness slots stay aligned");
         assert_eq!(
             dctx.process_weight[rom_process as usize],
             weight_before + 50,
             "table weight lands on ROM's process"
         );
+    }
+
+    #[test]
+    fn assigned_table_on_foreign_worker_is_listed_but_not_materialized() {
+        // 2 partitions, this worker owns only partition 1, so the reference lands on partition 0.
+        let mut dctx = DistributionCtx::new();
+        dctx.setup_partitions(2, vec![1]).expect("setup_partitions");
+        dctx.setup_processes(2, 0).expect("setup_processes");
+
+        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        assert_eq!(dctx.instance_process[rom].0, -1, "reference is not owned by this worker");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        let counts_before = dctx.process_count.clone();
+        let weights_before = dctx.process_weight.clone();
+        dctx.assign_instances().expect("must not abort on a foreign reference");
+
+        // Still in the global list (same gids on every worker), but not materialized here.
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid], 0, "follows the reference partition");
+        assert_eq!(dctx.instance_process[table_gid], (-1, 0), "not owned by any local process");
+        assert!(!dctx.worker_instances.contains(&table_gid));
+        assert!(!dctx.process_instances.contains(&table_gid));
+        assert_eq!(dctx.process_count, counts_before);
+        assert_eq!(dctx.process_weight, weights_before);
+    }
+
+    #[test]
+    fn duplicate_assign_table_to_keeps_the_original_gid() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let other = dctx.add_instance(7, 0, 100, 0).expect("add_instance other");
+        dctx.add_table(7, 1, 50).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
+        assert!(matches!(dctx.assign_table_to(7, 1, other), Err(ProofmanError::InvalidAssignation(_))));
+        assert_eq!(dctx.table_assignment.get(&(7, 1)), Some(&rom), "rejected assignment must not overwrite");
     }
 
     #[test]
