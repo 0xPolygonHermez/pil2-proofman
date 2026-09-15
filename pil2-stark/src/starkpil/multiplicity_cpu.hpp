@@ -137,12 +137,13 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
                 if (sel == 0) continue;
             }
             if (j.hasBus && mulEvalFormCPU(j.bus, bases, row, rowMask) != (uint64_t)j.tableId) continue;
-            const uint64_t idx = mulAddFE(mulEvalFormCPU(j.value, bases, row, rowMask), j.biasFE);
-            if (idx >= j.nTableRows) {
-                // A correct decode never lands here: the lookup constrains the value. Counting them
-                // is what tells a wrong decode apart from a scatter that simply saw nothing.
+            const uint64_t key = mulAddFE(mulEvalFormCPU(j.value, bases, row, rowMask), j.biasFE);
+            uint64_t idx;
+            // Same resolve the kernel uses, so the two backends cannot disagree about a row.
+            const MulRowMap rm{j.keyMin, j.indexLen, j.index, j.baseIn, j.baseOut, j.nDigits, j.digitMap};
+            if (!mulResolveRow(key, rm, idx) || idx >= j.nTableRows) {
                 if (oob.fetch_add(1, std::memory_order_relaxed) == 0)
-                    firstBadIdx.store(idx, std::memory_order_relaxed);
+                    firstBadIdx.store(key, std::memory_order_relaxed);
                 continue;
             }
             (*acc)[j.accBase + idx].fetch_add(sel, std::memory_order_relaxed);

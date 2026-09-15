@@ -55,6 +55,14 @@ struct MulJobDev {
     uint64_t   accBase;    // first counter of this table inside the air's accumulator
     uint64_t   nTableRows;
     uint64_t   biasFE;     // -min, in the field
+    // Direct index (see MulDecoder): when indexLen != 0 the value form yields a KEY, and the row is
+    // `index[key - keyMin]`. `index` points at host memory on the CPU backend and at that GPU's
+    // copy in a device job list.
+    uint64_t   keyMin;
+    uint64_t   indexLen;
+    const uint32_t* index;
+    uint32_t   baseIn, baseOut, nDigits;
+    uint32_t   digitMap[MUL_MAX_DIGIT_BASE];
     uint64_t   rows;       // 1 for a degree-0 term, else the air's row count
     uint64_t   hostAirId;  // the air whose virtual table holds this lookup's counters
     uint32_t   tableId;

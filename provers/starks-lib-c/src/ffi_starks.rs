@@ -1887,6 +1887,29 @@ pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
     debug_assert_eq!(table_ids.len(), biases.len());
     unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
 }
+/// Hand down a row map recovered from a table's own fixed columns.
+pub fn mul_register_table_decode_c(table_id: u64, coef: &[u64], konst: u64) {
+    unsafe { mul_register_table_decode(table_id, coef.as_ptr(), coef.len() as u64, konst) }
+}
+
+/// Hand down a key->row index built from a table's own fixed columns.
+pub fn mul_register_table_index_c(table_id: u64, key_min: u64, rows: &[u32]) {
+    unsafe { mul_register_table_index(table_id, key_min, rows.as_ptr(), rows.len() as u64) }
+}
+
+/// Hand down a digit remap: the row is a change of base of the key.
+pub fn mul_register_table_remap_c(table_id: u64, base_in: u32, base_out: u32, n_digits: u32, map: &[u32]) {
+    unsafe {
+        mul_register_table_remap(
+            table_id,
+            base_in as u64,
+            base_out as u64,
+            n_digits as u64,
+            map.as_ptr(),
+            map.len() as u64,
+        )
+    }
+}
 
 pub fn mul_migrated_tables_c() -> Vec<u64> {
     const CAP: u64 = 256;

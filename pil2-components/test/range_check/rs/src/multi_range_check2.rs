@@ -31,7 +31,6 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck2 {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-
             for i in 0..num_rows {
                 trace[i].a[0] = F::ZERO;
                 trace[i].a[1] = F::ZERO;

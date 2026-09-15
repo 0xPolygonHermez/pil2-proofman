@@ -52,7 +52,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4 {
                     } else {
                         F::from_u8(val3 as u8)
                     };
-
                 }
                 if selected2 {
                     trace[i].a5 = F::ZERO;

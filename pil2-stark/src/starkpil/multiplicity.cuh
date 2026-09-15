@@ -133,6 +133,39 @@ inline void mul_alloc_devices(const int* gpuIds, int nGpus) {
     }
 }
 
+// Each table's key->row index, mirrored per device. Allocated once alongside the accumulators and
+// never freed: it is setup-derived and outlives every proof.
+inline std::map<std::pair<uint64_t,int>, uint32_t*>& mulIndexDev() {
+    static std::map<std::pair<uint64_t,int>, uint32_t*> m;
+    return m;
+}
+
+inline void mul_alloc_indexes(int gpuId) {
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+    for (const auto& kv : mulTableIndexes()) {
+        auto key = std::make_pair(kv.first, gpuId);
+        if (mulIndexDev().count(key)) continue;
+        const size_t bytes = kv.second.rows.size() * sizeof(uint32_t);
+        if (bytes == 0) continue;
+        uint32_t* d = nullptr;
+        if (cudaMalloc(&d, bytes) != cudaSuccess) {
+            zklog.error("multiplicity: could not allocate the key index for table "
+                        + std::to_string(kv.first) + " (" + std::to_string(bytes / 1000000)
+                        + " MB) on gpu " + std::to_string(gpuId));
+            exitProcess();
+        }
+        mulCopySync(gpuId, d, kv.second.rows.data(), bytes, cudaMemcpyHostToDevice);
+        mulIndexDev()[key] = d;
+        zklog.info("Multiplicity index: table " + std::to_string(kv.first) + " mirrored on gpu "
+                   + std::to_string(gpuId) + " (" + std::to_string(bytes / 1000000) + " MB)");
+    }
+}
+
+inline const uint32_t* mulIndexFor(uint64_t tableId, int gpuId) {
+    auto it = mulIndexDev().find(std::make_pair(tableId, gpuId));
+    return it == mulIndexDev().end() ? nullptr : it->second;
+}
+
 // Out-of-range decode record, one per device: a device pointer is only valid on the device that
 // allocated it. Populated by `mul_alloc_oob` while single-threaded, then read-only, which is what
 // makes the lookup safe from the many threads that commit instances concurrently.

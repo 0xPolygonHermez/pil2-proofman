@@ -42,6 +42,9 @@ extern "C" {
                          const uint64_t *tableIds, const uint64_t *accBases, uint64_t nTables);
     // Every virtual range-check table, as (id, bias): the row a lookup addresses is value + bias.
     void mul_register_range_tables(const uint64_t *tableIds, const int64_t *biases, uint64_t n);
+    void mul_register_table_decode(uint64_t tableId, const uint64_t *coef, uint64_t nCoef, uint64_t konst);
+    void mul_register_table_index(uint64_t tableId, uint64_t keyMin, const uint32_t *rows, uint64_t len);
+    void mul_register_table_remap(uint64_t tableId, uint64_t baseIn, uint64_t baseOut, uint64_t nDigits, const uint32_t *map, uint64_t mapLen);
     // Table ids whose multiplicities the prover now owns, so Std stops counting them.
     uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap);
     // Fold the prover-owned spans into `hostAcc`, which is scoped to this call and not retained.

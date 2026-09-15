@@ -58,7 +58,6 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1 {
                     } else {
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].a[0] = F::from_u16(val);
-
                     }
                 }
 
@@ -69,7 +68,6 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1 {
                     } else {
                         let val = rng.random_range(0..=(1 << 6) - 1);
                         trace[i].a[1] = F::from_u16(val);
-
                     }
                 }
 

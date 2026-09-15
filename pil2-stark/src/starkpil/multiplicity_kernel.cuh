@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <tuple>
+#include <vector>
 #include "multiplicity_job.hpp"
 #include "multiplicity_plan.hpp"
 #include "multiplicity.cuh"   // mulCopySync: these uploads must stay off the legacy stream
@@ -44,9 +45,21 @@ inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64
                         + std::to_string(jb) + " bytes): " + cudaGetErrorString(e)
                         + " -- every lookup this air feeds would go uncounted");
         else {
+            // The host jobs carry HOST index pointers; a device job must point at this GPU's
+            // mirror, so patch the copy rather than the plan (which every GPU shares).
+            std::vector<MulJobDev> hj = plan.jobs;
+            for (auto& j : hj)
+                if (j.indexLen != 0) {
+                    j.index = mulIndexFor(j.tableId, gpuId);
+                    if (j.index == nullptr) {
+                        zklog.error("multiplicity: table " + std::to_string(j.tableId)
+                                    + " has a key index but no mirror on gpu " + std::to_string(gpuId));
+                        exitProcess();
+                    }
+                }
             // Never on the default stream: this runs on the commit path, where other threads are
             // capturing graphs and a legacy-stream copy would fail and poison the capture.
-            mulCopySync(gpuId, dj, plan.jobs.data(), jb, cudaMemcpyHostToDevice);
+            mulCopySync(gpuId, dj, hj.data(), jb, cudaMemcpyHostToDevice);
             d.jobs = dj;
         }
     }

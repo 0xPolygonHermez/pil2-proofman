@@ -30,7 +30,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-
             // Get the virtual table ID
             let id = self.std_lib.get_virtual_table_id(4)?;
 

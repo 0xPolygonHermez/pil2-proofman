@@ -10,10 +10,10 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_reset_c,
-    register_mul_vt_c,
+    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_decode_c,
+    mul_register_table_index_c, mul_register_table_remap_c, mul_reset_c, register_mul_vt_c,
 };
-use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts};
+use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
     prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
@@ -2741,11 +2741,29 @@ where
         let (ids, biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
         mul_register_range_tables_c(&ids, &biases);
 
+        // Tables whose row map can be recovered from their own fixed columns and verified there.
+        // A table that does not fit is simply not claimed, and the std keeps counting it.
+        for m in fit_virtual_table_maps(&self.pctx, &self.sctx)? {
+            mul_register_table_decode_c(m.table_id, &m.coef, m.konst);
+            // A table whose row is not affine in its tuple still gets counted when a linear key
+            // separates its rows: the coefficients above yield that key, this inverts it.
+            if let Some((key_min, index)) = m.index.as_ref() {
+                mul_register_table_index_c(m.table_id, *key_min, index);
+            }
+            if let Some((bi, bo, nd, map)) = m.remap.as_ref() {
+                mul_register_table_remap_c(m.table_id, *bi, *bo, *nd, map);
+            }
+        }
+
         for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
             register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
         }
 
-        *self.pctx.prover_owned_tables.write().unwrap() = mul_migrated_tables_c();
+        let migrated = mul_migrated_tables_c();
+        // The std reads this lazily: the virtual table airs are built before this point, so a value
+        // captured at their construction would be empty and every claimed table double-counted.
+        pil2_std_lib::set_prover_owned_tables(migrated.clone());
+        *self.pctx.prover_owned_tables.write().unwrap() = migrated;
         Ok(())
     }
 

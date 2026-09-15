@@ -202,12 +202,35 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
             for (const auto& ov : fOp->values)
                 if (ov.operand == opType::number && ov.value == dec.table_id) { feeds = true; break; }
             if (!feeds) continue;
-            if (fEx->values.size() != 1) {
-                // Range-check lookups are single-element by construction (std_range_check.pil).
-                zklog.error("multiplicity: table " + std::to_string(dec.table_id) + " has a "
-                            + std::to_string(fEx->values.size()) + "-element tuple; only "
-                            "single-element range checks are in scope");
-                exitProcess();
+            // A K-element tuple needs a fitted map; a 1-element one is the range-check case and
+            // uses `bias`. A tuple with no fitted map is nobody's to count here.
+            if (fEx->values.size() != 1 && dec.nCoef == 0) {
+                static std::set<uint32_t> warned;
+                if (warned.insert(dec.table_id).second)
+                    zklog.info("multiplicity: table " + std::to_string(dec.table_id) + " has a "
+                               + std::to_string(fEx->values.size()) + "-element tuple and no fitted "
+                               "row map; left to the std to count");
+                continue;
+            }
+            // The fit is over the TABLE's columns; a lookup may supply fewer, which is fine as long
+            // as every column it omits was found irrelevant (coefficient zero). A range check is
+            // exactly this: one value against a two-column group whose second column is not a key.
+            uint8_t nFold = dec.nCoef;
+            if (dec.nCoef != 0) {
+                if (fEx->values.size() > dec.nCoef) {
+                    zklog.error("multiplicity: table " + std::to_string(dec.table_id) + " fitted over "
+                                + std::to_string((int)dec.nCoef) + " columns but a lookup supplies "
+                                + std::to_string(fEx->values.size()) + " -- the fit is not for this table");
+                    exitProcess();
+                }
+                nFold = (uint8_t)fEx->values.size();
+                for (uint8_t e = nFold; e < dec.nCoef; ++e) {
+                    if (dec.coef[e] == 0) continue;
+                    zklog.error("multiplicity: table " + std::to_string(dec.table_id) + " needs column "
+                                + std::to_string((int)e) + " to address a row, but the lookup supplies "
+                                "only " + std::to_string((int)nFold) + " elements");
+                    exitProcess();
+                }
             }
             if (!ok) {
                 plan.fallback.push_back({hints[i], dec, rows,
@@ -222,14 +245,43 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
                 if (L.accBase.count(dec.table_id)) { hostAirId = L.airId; break; }
             if (hostAirId == UINT64_MAX) continue;
 
+            // Fold a fitted tuple map into the single linear form the kernel already evaluates:
+            // sum(coef[j] * element_j) + konst is itself linear, so no new kernel, no new job
+            // shape, and the CPU mirror follows for free. A coefficient of zero marks a column the
+            // fit found irrelevant (an output, not part of the key) and costs nothing to skip.
+            MulFormDev valueForTable = value;
+            if (dec.nCoef != 0) {
+                MulLinForm folded = mulLinConst(dec.konst);
+                bool foldOk = true;
+                for (uint8_t e = 0; e < nFold && foldOk; ++e) {
+                    if (dec.coef[e] == 0) continue;
+                    MulLinForm el = mulExtractField(setupCtx, fEx->values[e], bufferCommitSize);
+                    MulLinForm scaled{};
+                    foldOk = el.ok && mulLinScale(scaled, el, dec.coef[e])
+                          && mulLinAdd(folded, folded, scaled, false);
+                }
+                if (!foldOk || !mulFormToDev(setupCtx, folded, nRows, valueForTable)) {
+                    plan.fallback.push_back({hints[i], dec, rows,
+                                             (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
+                    continue;
+                }
+            }
+
             MulJobDev job{};
             job.hostAirId   = hostAirId;
-            job.value       = value;
+            job.value       = valueForTable;
             job.sel         = selF;
             job.bus         = busF;
             job.accBase     = dec.acc_base;
             job.nTableRows  = dec.n_rows;
-            job.biasFE      = mulBiasFE(dec.bias);
+            job.biasFE      = dec.nCoef != 0 ? 0ULL : mulBiasFE(dec.bias);
+            job.keyMin      = dec.keyMin;
+            job.indexLen    = dec.indexLen;
+            job.index       = dec.index;
+            job.baseIn      = dec.baseIn;
+            job.baseOut     = dec.baseOut;
+            job.nDigits     = dec.nDigits;
+            for (uint32_t d = 0; d < MUL_MAX_DIGIT_BASE; ++d) job.digitMap[d] = dec.digitMap[d];
             job.rows        = rows;
             job.tableId     = dec.table_id;
             job.selConstOne = selConst1 ? 1u : 0u;

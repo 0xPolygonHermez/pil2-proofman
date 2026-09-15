@@ -66,6 +66,95 @@ inline std::vector<MulOwnedReq>& mulOwnedReqs() {
     return v;
 }
 
+// A row map fitted from a table's own COL_* fixed columns and verified there, handed down by the
+// side that can read them. Recorded per table id and attached to the decoder when it materialises,
+// so registration order does not matter.
+struct MulFittedMap { uint8_t nCoef; uint64_t coef[MUL_MAX_TUPLE]; uint64_t konst; };
+
+inline std::map<uint64_t, MulFittedMap>& mulFittedMaps() {
+    static std::map<uint64_t, MulFittedMap> m;
+    return m;
+}
+
+inline void mul_register_table_decode_impl(uint64_t tableId, const uint64_t* coef, uint64_t nCoef,
+                                           uint64_t konst) {
+    if (nCoef == 0 || nCoef > MUL_MAX_TUPLE) {
+        zklog.error("multiplicity: table " + std::to_string(tableId) + " fitted with "
+                    + std::to_string(nCoef) + " coefficients; the cap is "
+                    + std::to_string(MUL_MAX_TUPLE));
+        exitProcess();
+    }
+    MulFittedMap f{};
+    f.nCoef = (uint8_t)nCoef;
+    f.konst = konst;
+    for (uint64_t i = 0; i < nCoef; ++i) f.coef[i] = coef[i];
+    mulFittedMaps()[tableId] = f;
+    // A fitted map is itself a claim on the table: without this the table would have a row map and
+    // no decoder, so nobody would count it. Bias is zero -- the fit's constant already places the
+    // row.
+    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
+                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
+        mulOwnedReqs().push_back({tableId, 0});
+    // A decoder may already exist for this table (registration order is not fixed).
+    for (auto& d : mulDecoders())
+        if (d.table_id == tableId) { d.nCoef = f.nCoef; d.konst = f.konst;
+                                     for (uint64_t i = 0; i < nCoef; ++i) d.coef[i] = coef[i]; }
+}
+
+// Key->row indexes, owned here so they outlive every plan. Keyed by table id; the host copy is what
+// the CPU scatter reads and what each device copy is made from.
+struct MulTableIndex { uint64_t keyMin; std::vector<uint32_t> rows; };
+
+inline std::map<uint64_t, MulTableIndex>& mulTableIndexes() {
+    static std::map<uint64_t, MulTableIndex> m;
+    return m;
+}
+
+inline void mul_register_table_index_impl(uint64_t tableId, uint64_t keyMin, const uint32_t* rows,
+                                          uint64_t len) {
+    MulTableIndex ix;
+    ix.keyMin = keyMin;
+    ix.rows.assign(rows, rows + len);
+    mulTableIndexes()[tableId] = std::move(ix);
+    const MulTableIndex& stored = mulTableIndexes()[tableId];
+    for (auto& d : mulDecoders())
+        if (d.table_id == tableId) {
+            d.keyMin = stored.keyMin;
+            d.indexLen = stored.rows.size();
+            d.index = stored.rows.data();
+        }
+    zklog.info("Multiplicity index: table " + std::to_string(tableId) + " key range "
+               + std::to_string(len) + " (" + std::to_string(len * sizeof(uint32_t) / 1000000)
+               + " MB), keyMin=" + std::to_string(keyMin));
+}
+
+// Digit remaps, by table id. Tiny, so carried by value into every job.
+struct MulRemap { uint32_t baseIn, baseOut, nDigits; uint32_t map[MUL_MAX_DIGIT_BASE]; };
+
+inline std::map<uint64_t, MulRemap>& mulRemaps() { static std::map<uint64_t, MulRemap> m; return m; }
+
+inline void mul_register_table_remap_impl(uint64_t tableId, uint64_t baseIn, uint64_t baseOut,
+                                          uint64_t nDigits, const uint32_t* map, uint64_t mapLen) {
+    if (baseIn == 0 || baseIn > MUL_MAX_DIGIT_BASE || mapLen > MUL_MAX_DIGIT_BASE) {
+        zklog.error("multiplicity: table " + std::to_string(tableId) + " remap base "
+                    + std::to_string(baseIn) + " exceeds the cap");
+        exitProcess();
+    }
+    MulRemap r{};
+    r.baseIn = (uint32_t)baseIn; r.baseOut = (uint32_t)baseOut; r.nDigits = (uint32_t)nDigits;
+    for (uint32_t i = 0; i < MUL_MAX_DIGIT_BASE; ++i) r.map[i] = MUL_INDEX_NONE;
+    for (uint64_t i = 0; i < mapLen; ++i) r.map[i] = map[i];
+    mulRemaps()[tableId] = r;
+    for (auto& d : mulDecoders())
+        if (d.table_id == tableId) {
+            d.baseIn = r.baseIn; d.baseOut = r.baseOut; d.nDigits = r.nDigits;
+            for (uint32_t i = 0; i < MUL_MAX_DIGIT_BASE; ++i) d.digitMap[i] = r.map[i];
+        }
+    zklog.info("Multiplicity remap: table " + std::to_string(tableId) + " base "
+               + std::to_string(baseIn) + " -> " + std::to_string(baseOut) + ", "
+               + std::to_string(nDigits) + " digits (no index needed)");
+}
+
 inline void mul_materialize_decoders() {
     for (const auto& L : mulVtLayouts()) {
         for (const auto& o : mulOwnedReqs()) {
@@ -75,6 +164,24 @@ inline void mul_materialize_decoders() {
             d.acc_base = L.accBase.at(o.table_id);
             d.n_rows   = L.tableHeight(o.table_id);
             d.bias     = o.bias;
+            auto rm = mulRemaps().find(o.table_id);
+            if (rm != mulRemaps().end()) {
+                d.baseIn = rm->second.baseIn; d.baseOut = rm->second.baseOut;
+                d.nDigits = rm->second.nDigits;
+                for (uint32_t i = 0; i < MUL_MAX_DIGIT_BASE; ++i) d.digitMap[i] = rm->second.map[i];
+            }
+            auto ix = mulTableIndexes().find(o.table_id);
+            if (ix != mulTableIndexes().end()) {
+                d.keyMin = ix->second.keyMin;
+                d.indexLen = ix->second.rows.size();
+                d.index = ix->second.rows.data();
+            }
+            auto fit = mulFittedMaps().find(o.table_id);
+            if (fit != mulFittedMaps().end()) {
+                d.nCoef = fit->second.nCoef;
+                d.konst = fit->second.konst;
+                for (uint8_t c = 0; c < d.nCoef; ++c) d.coef[c] = fit->second.coef[c];
+            }
             if (d.acc_base + d.n_rows > L.nCounters) {
                 zklog.error("multiplicity decoder " + std::to_string(o.table_id)
                             + " span exceeds its virtual table");

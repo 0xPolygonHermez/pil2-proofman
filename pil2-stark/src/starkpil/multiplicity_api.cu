@@ -27,6 +27,25 @@ void register_mul_vt(uint64_t airgroupId, uint64_t airId, uint64_t numRows, uint
 }
 
 // Tables whose multiplicities the prover owns, so Std stops counting them.
+// A fitted tuple->row map for one table, derived and verified by the caller from that table's own
+// fixed columns.
+void mul_register_table_decode(uint64_t tableId, const uint64_t *coef, uint64_t nCoef,
+                               uint64_t konst) {
+    mul_register_table_decode_impl(tableId, coef, nCoef, konst);
+}
+
+// A key->row index for one table, derived and verified by the caller from that table's own fixed
+// columns. Used when the row is not affine in the tuple but a linear key still separates the rows.
+void mul_register_table_index(uint64_t tableId, uint64_t keyMin, const uint32_t *rows, uint64_t len) {
+    mul_register_table_index_impl(tableId, keyMin, rows, len);
+}
+
+// A digit remap for one table: row = sum_i map[digit_i(key, baseIn)] * baseOut^i.
+void mul_register_table_remap(uint64_t tableId, uint64_t baseIn, uint64_t baseOut, uint64_t nDigits,
+                              const uint32_t *map, uint64_t mapLen) {
+    mul_register_table_remap_impl(tableId, baseIn, baseOut, nDigits, map, mapLen);
+}
+
 uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
     return mul_migrated_tables_impl(out, cap);
 }
@@ -58,7 +77,7 @@ void mul_alloc(void *d_buffers_) {
     std::vector<int> gpuIds(d_buffers->n_gpus);
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) gpuIds[g] = (int)d_buffers->my_gpu_ids[g];
     mul_alloc_devices(gpuIds.data(), (int)gpuIds.size());
-    for (int id : gpuIds) mul_alloc_oob(id);
+    for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_indexes(id); }
 
     // Inventory: what is left to migrate, with the height each decoder would have to cover.
     for (const auto &L : mulVtLayouts()) {

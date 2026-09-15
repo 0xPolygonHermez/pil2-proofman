@@ -803,6 +803,9 @@ extern "C" {
         nTables: u64,
     );
     pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
+    pub fn mul_register_table_decode(table_id: u64, coef: *const u64, n_coef: u64, konst: u64);
+    pub fn mul_register_table_index(table_id: u64, key_min: u64, rows: *const u32, len: u64);
+    pub fn mul_register_table_remap(table_id: u64, base_in: u64, base_out: u64, n_digits: u64, map: *const u32, map_len: u64);
 
     pub fn mul_migrated_tables(out: *mut u64, cap: u64) -> u64;
     pub fn mul_alloc(d_buffers: *mut ::std::os::raw::c_void);

@@ -87,12 +87,17 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
             if (j.hasBus && mulEvalForm(j.bus, bases, row, rowMask) != (uint64_t)j.tableId) continue;
 
             const uint64_t value = mulEvalForm(j.value, bases, row, rowMask);
-            const uint64_t idx = mulAddFE(value, j.biasFE);
-            if (idx >= j.nTableRows) { mulRecordOob(oob, j.tableId, air, idx); continue; }
+            const uint64_t key = mulAddFE(value, j.biasFE);
+            uint64_t idx;
+            const MulRowMap rm{j.keyMin, j.indexLen, j.index, j.baseIn, j.baseOut, j.nDigits, j.digitMap};
+            if (!mulResolveRow(key, rm, idx) || idx >= j.nTableRows) {
+                mulRecordOob(oob, j.tableId, air, key);
+                continue;
+            }
 
-            const uint64_t key = j.accBase + idx;
-            if (j.selConstOne) mulCombineInc(comb, __activemask(), key, gacc);
-            else               mulCombineAdd(comb, __activemask(), key, sel, gacc);
+            const uint64_t slot = j.accBase + idx;
+            if (j.selConstOne) mulCombineInc(comb, __activemask(), slot, gacc);
+            else               mulCombineAdd(comb, __activemask(), slot, sel, gacc);
         }
     }
     mulCombineFlush(comb, gacc);
