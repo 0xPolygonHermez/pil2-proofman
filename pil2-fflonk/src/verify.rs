@@ -3,18 +3,19 @@
 //! Everything a verifier derives from a proof, in dependency order:
 //!
 //! ```text
-//! previous challenge ──► xiSeed ──► xi ──► cExp(xi) ──► Q(xi)
-//!                           └─────► alpha ──► y            │
-//!                                     │                    ▼
-//!                                     └──────────► R_i(y), Z_T(y), preL
-//!                                                          │
-//!                                                          ▼
-//!                                                   pairing check
+//! publics + commitments ──► AIR challenges ──► xiSeed ──► xi ──► cExp(xi) ──► Q(xi)
+//!                                                 └─────► alpha ──► y           │
+//!                                                           │                   ▼
+//!                                                           └──► R_i(y), Z_T(y), preL
+//!                                                                              │
+//!                                                                              ▼
+//!                                                                       pairing check
 //! ```
 //!
 //! Nothing here is taken from the proof except commitments and claimed
-//! openings: every challenge is recomputed, the quotient is reconstructed from
-//! the constraint system, and the constant commitments come from the key.
+//! openings: every challenge is recomputed -- the AIR's own chain included --
+//! the quotient is reconstructed from the constraint system, and the constant
+//! commitments come from the key.
 //!
 //! The last step is not executed. [`prepare`] returns the assembled
 //! [`PairingCheck`]; running it needs a curve library, which this crate does
@@ -24,7 +25,7 @@
 use anyhow::{Context, Result};
 use num_bigint::BigUint;
 
-use crate::air;
+use crate::air::{self, ChallengeSchedule};
 use crate::linearisation::{Linearisation, linearise, resolve_evaluations};
 use crate::pairing::{PairingCheck, assemble};
 use crate::proof::ShPlonkProof;
@@ -34,19 +35,22 @@ use crate::verifier::{Challenges, non_committed_pols, recompute_challenges};
 use crate::verifier_code::{Inputs, VerifierCode};
 
 /// What the AIR contributes, as opposed to the opening scheme.
+///
+/// The challenges are no longer among these: they are derived from the proof
+/// and the public inputs, so nothing about the transcript is taken on trust.
 pub struct AirInputs<'a> {
     /// `log2` of the trace length, for the vanishing polynomial.
     pub n_bits: u32,
-    /// The AIR's challenges, in the order the protocol draws them.
-    pub challenges: &'a [BigUint],
     pub publics: &'a [BigUint],
-    /// The last challenge of the phase before the opening, which seeds `xi`.
-    pub previous_challenge: BigUint,
+    /// How many challenges each stage draws. A property of the AIR.
+    pub schedule: &'a ChallengeSchedule,
 }
 
 /// A verified derivation, with the pairing left to execute.
 #[derive(Clone, Debug)]
 pub struct Prepared {
+    /// The AIR's own challenges, derived from the commitments and publics.
+    pub air_challenges: Vec<BigUint>,
     pub challenges: Challenges,
     /// `Q(xi)`, reconstructed rather than read.
     pub quotient: BigUint,
@@ -66,20 +70,20 @@ pub fn prepare(
     code: &VerifierCode,
     air_inputs: &AirInputs,
 ) -> Result<Prepared> {
-    // Challenges first: everything downstream depends on them, and this also
-    // runs the structural and constant-commitment checks.
-    let challenges = recompute_challenges(air_inputs.previous_challenge.clone(), setup, proof)?;
+    // The AIR's chain first: it binds the publics and every stage commitment,
+    // and its last challenge is what seeds the opening.
+    let air = air::air_challenges(setup, proof, air_inputs.publics, air_inputs.schedule)?;
+    let previous = air.last().cloned().context("the AIR schedule draws no challenges")?;
+
+    // Then the opening's, which also runs the structural and
+    // constant-commitment checks.
+    let challenges = recompute_challenges(previous, setup, proof)?;
 
     // Reconstruct the quotient from the constraint system. The proof omits it
     // precisely so that it cannot be claimed.
     let evals = code.evaluations(&setup.pols_map, proof).context("reading the openings the constraints need")?;
     let c_exp = code
-        .evaluate(&Inputs {
-            evals: &evals,
-            challenges: air_inputs.challenges,
-            publics: air_inputs.publics,
-            x: &challenges.xi,
-        })
+        .evaluate(&Inputs { evals: &evals, challenges: &air, publics: air_inputs.publics, x: &challenges.xi })
         .context("evaluating the constraint expression at xi")?;
 
     let quotient = air::quotient_at(&c_exp, &air::inv_zh(proof)?, &challenges.xi, air_inputs.n_bits)?;
@@ -95,7 +99,7 @@ pub fn prepare(
     let linearisation = linearise(setup, &roots, &openings, &challenges.alpha, &challenges.y)?;
     let check = assemble(setup, proof, &linearisation, &challenges)?;
 
-    Ok(Prepared { challenges, quotient, roots, linearisation, check })
+    Ok(Prepared { air_challenges: air, challenges, quotient, roots, linearisation, check })
 }
 
 #[cfg(test)]
@@ -106,32 +110,27 @@ mod tests {
     const INFO: &str = include_str!("../tests/fixtures/pilfflonk.verifierinfo.json");
 
     fn run(r: &Reference, proof: &ShPlonkProof) -> Result<Prepared> {
+        run_with(r, proof, &r.publics)
+    }
+
+    fn run_with(r: &Reference, proof: &ShPlonkProof, publics: &[BigUint]) -> Result<Prepared> {
         let info: serde_json::Value = serde_json::from_str(INFO).unwrap();
         let code = VerifierCode::from_json(&info).unwrap();
         let n_bits = info["pilPower"].as_u64().unwrap() as u32;
 
-        prepare(
-            &r.setup,
-            proof,
-            &code,
-            &AirInputs {
-                n_bits,
-                challenges: &r.air_challenges,
-                publics: &r.publics,
-                previous_challenge: r.previous_challenge.clone(),
-            },
-        )
+        prepare(&r.setup, proof, &code, &AirInputs { n_bits, publics, schedule: &ChallengeSchedule(vec![2, 2, 1]) })
     }
 
-    /// The whole derivation against the prover's own values. Only the
-    /// previous challenge and the public inputs are given; everything else --
-    /// challenges, the quotient, every opening scalar -- is recomputed and
-    /// must agree.
+    /// The whole derivation against the prover's own values. Only the public
+    /// inputs and the AIR's shape are given; everything else -- every
+    /// challenge, the quotient, every opening scalar -- is recomputed and must
+    /// agree.
     #[test]
     fn derives_everything_the_prover_computed() {
         let r = reference::load();
         let p = run(&r, &r.proof).unwrap();
 
+        assert_eq!(p.air_challenges, r.air_challenges, "the AIR chain");
         assert_eq!(p.challenges.xi_seed, r.xi_seed);
         assert_eq!(p.challenges.xi, r.xi);
         assert_eq!(p.challenges.alpha, r.alpha);
@@ -194,32 +193,29 @@ mod tests {
         assert!(err.contains("invZh"), "{err}");
     }
 
-    /// The public inputs are part of the statement: proving a different claim
-    /// must not reuse the same proof.
+    /// The public inputs are part of the statement, so the same proof must not
+    /// verify against a different one.
+    ///
+    /// Since the publics seed the challenge chain, changing one moves `xi`, and
+    /// the proof's `invZh` -- computed for the honest `xi` -- stops being the
+    /// inverse it claims to be. The proof is rejected rather than merely
+    /// producing a different quotient, which is the stronger outcome: it fails
+    /// before any opening is considered.
     #[test]
-    fn the_public_inputs_reach_the_quotient() {
+    fn a_proof_does_not_verify_against_different_publics() {
         let r = reference::load();
         let honest = run(&r, &r.proof).unwrap();
 
         let mut publics = r.publics.clone();
         publics[0] = crate::fr::add(&publics[0], &BigUint::from(1u32));
 
-        let info: serde_json::Value = serde_json::from_str(INFO).unwrap();
-        let code = VerifierCode::from_json(&info).unwrap();
-        let other = prepare(
-            &r.setup,
-            &r.proof,
-            &code,
-            &AirInputs {
-                n_bits: info["pilPower"].as_u64().unwrap() as u32,
-                challenges: &r.air_challenges,
-                publics: &publics,
-                previous_challenge: r.previous_challenge.clone(),
-            },
-        )
-        .unwrap();
+        let err = format!("{:#}", run_with(&r, &r.proof, &publics).unwrap_err());
+        assert!(err.contains("invZh"), "{err}");
 
-        assert_ne!(other.quotient, honest.quotient);
+        // The rejection is a consequence of the chain moving, not a
+        // coincidence: every challenge differs.
+        let moved = air::air_challenges(&r.setup, &r.proof, &publics, &ChallengeSchedule(vec![2, 2, 1])).unwrap();
+        assert!(moved.iter().zip(&honest.air_challenges).all(|(a, b)| a != b));
     }
 
     /// A proof that fails a structural check never reaches the arithmetic.
