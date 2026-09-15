@@ -700,7 +700,9 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = 256;
             maxNBlocks = 512;
 
-            uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
+            // destVals is MAX_DEST_PARAMS * FIELD_EXTENSION wide, so the budget must match it or
+            // the shrink loop below under-accounts.
+            uint64_t tmpsUsed = nTmp1 + (nTmp3 + MAX_DEST_PARAMS) * FIELD_EXTENSION;
             uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
             while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
                 if (nrowsPack > 128) {
@@ -725,7 +727,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;
     } else {
-        uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        uint64_t destVals = MAX_DEST_PARAMS * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
         mapBuffHelper += destVals;
     }

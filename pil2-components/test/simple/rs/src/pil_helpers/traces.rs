@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "1e57cceb4ec0c187d7180bcbadaed82f7e75080933a2a76ff18577909069c5f9";
+pub const PILOUT_HASH: &str = "a4957282bb064cbc0be84f275d7d38948f630e65eb34e70128185f3f97af0ddd";
 
 //AIRGROUP CONSTANTS
 
@@ -28,11 +28,7 @@ pub const SIMPLE_LEFT_AIR_IDS: &[usize] = &[0];
 
 pub const SIMPLE_RIGHT_AIR_IDS: &[usize] = &[1];
 
-pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
-
-pub const U_16_AIR_AIR_IDS: &[usize] = &[3];
-
-pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[4];
+pub const VIRTUAL_TABLE_SIMPLE_0_AIR_IDS: &[usize] = &[2];
 
   
 trace_row!(SimpleLeftFixedRow<F> {
@@ -57,38 +53,16 @@ trace_row!(SimpleRightTraceRow<F> {
 
 pub type SimpleRightTrace<F> = GenericTrace<SimpleRightTraceRow<F>, 8, 0, 1>;
 
-trace_row!(U8AirFixedRow<F> {
- RANGE: [F; 2], __L1__: F,
+trace_row!(VirtualTableSimple0FixedRow<F> {
+ __ROW_INDEX__: F, COL_4_4_0: F, UID_4: F, __L1__: F,
 });
-pub type U8AirFixed<F> = GenericTrace<U8AirFixedRow<F>, 128, 0, 2>;
+pub type VirtualTableSimple0Fixed<F> = GenericTrace<VirtualTableSimple0FixedRow<F>, 16384, 0, 2>;
 
-trace_row!(U8AirTraceRow<F> {
- mul:[F; 2],
-});
-
-pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 128, 0, 2>;
-
-trace_row!(U16AirFixedRow<F> {
- RANGE: [F; 4], __L1__: F,
-});
-pub type U16AirFixed<F> = GenericTrace<U16AirFixedRow<F>, 16384, 0, 3>;
-
-trace_row!(U16AirTraceRow<F> {
- mul:[F; 4],
+trace_row!(VirtualTableSimple0TraceRow<F> {
+ multiplicity:[F; 5],
 });
 
-pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 16384, 0, 3>;
-
-trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 11], VALS: [F; 11], __L1__: F,
-});
-pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 64, 0, 4>;
-
-trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 11],
-});
-
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 4>;
+pub type VirtualTableSimple0Trace<F> = GenericTrace<VirtualTableSimple0TraceRow<F>, 16384, 0, 2>;
 
 values!(SimpleLeftAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -98,15 +72,7 @@ values!(SimpleRightAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(U8AirAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
-values!(U16AirAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
-values!(SpecifiedRangesAirGroupValues<F> {
+values!(VirtualTableSimple0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
@@ -118,7 +84,5 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 0, "SimpleLeft"),
     (0, 1, "SimpleRight"),
-    (0, 2, "U8Air"),
-    (0, 3, "U16Air"),
-    (0, 4, "SpecifiedRanges"),
+    (0, 2, "VirtualTableSimple0"),
 ];

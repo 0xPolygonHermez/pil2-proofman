@@ -3,8 +3,6 @@ require "range_check.pil"
 require "multi_range_check.pil"
 require "range_check_dynamic.pil"
 
-set_max_specified_bits(15);
-
 airtemplate RangeCheckMix(const int N = 2**6) {
     col witness a[4];
     col witness b[2];

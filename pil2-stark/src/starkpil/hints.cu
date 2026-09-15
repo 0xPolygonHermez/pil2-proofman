@@ -1,4 +1,7 @@
 #include "hints.cuh"
+#include "multiplicity.cuh"
+#include "multiplicity_kernel.cuh"
+#include "cuda_utils.cuh"
 #include "expressions_gpu.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "expressions_pack.hpp"
@@ -196,6 +199,73 @@ void calculateExprGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_
         opHintFieldsGPU(d_params, destStruct, nRows, false, GPUExpressionsCtx, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     }
 }
+
+
+// Multiplicity scatter: evaluate each range-check lookup's tuple, selector and bus id over this
+// air's trace and accumulate into the device mirror. Driven by the `gsum_debug_data` hints
+// update_piop_sum already emits, so no PIL change is needed. The plan resolves every lookup once
+// per air at setup; nothing here re-reads the hints.
+void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params,
+                         uint64_t airgroupId, uint64_t airId,
+                         uint64_t *acc, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs,
+                         DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params,
+                         Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer,
+                         cudaStream_t stream) {
+    if (acc == nullptr || mulDecoders().empty()) return;
+
+    const MulPlan &plan = mulPlanFor(setupCtx, airgroupId, airId);
+    if (plan.jobs.empty() && plan.fallback.empty()) return;
+
+    int gpuId = 0;
+    CHECKCUDAERR(cudaGetDevice(&gpuId));
+    uint64_t *oob = mulOob(gpuId);
+
+    if (!plan.jobs.empty()) {
+        const MulPlanDev dev = mulPlanDevice(plan, airgroupId, airId, gpuId);
+        if (dev.jobs != nullptr) {
+            timer.startCategory("MUL_SCATTER_KERNEL");
+            const uint64_t *bases[MUL_SRC_N] = {
+                (const uint64_t *)h_params.pConstPolsAddress, (const uint64_t *)h_params.trace,
+                (const uint64_t *)h_params.aux_trace,         (const uint64_t *)h_params.publicInputs,
+                (const uint64_t *)h_params.airValues,         (const uint64_t *)h_params.proofValues,
+                (const uint64_t *)h_params.airgroupValues,    (const uint64_t *)h_params.pCustomCommitsFixed };
+            mul_scatter_launch_rows(dev.jobs, (uint32_t)plan.jobs.size(), bases,
+                                    1ULL << setupCtx.starkInfo.starkStruct.nBits, plan.maxRows,
+                                    acc, oob, (airgroupId << 32) | airId, stream);
+            timer.stopCategory("MUL_SCATTER_KERNEL");
+        }
+    }
+
+    // Whatever the extractor could not reduce still goes through the expression interpreter.
+    // The fold waits on these events rather than on the device, which a concurrent graph capture
+    // would forbid.
+    if (plan.fallback.empty()) { mul_note_scatter(gpuId, stream); return; }
+    HintFieldOptions opts;
+    timer.startCategory("MUL_SCATTER_INTERP");
+    for (const MulFallbackJob &fb : plan.fallback) {
+        Dest dest(nullptr, fb.rows, 0, 0, fb.rows == 1);
+        dest.dest_gpu          = nullptr;   // forces the generic path, where the scatter lives
+        dest.scatter.acc       = acc;
+        dest.scatter.oob       = oob;
+        dest.scatter.dec       = fb.dec;
+        dest.scatter.air       = (airgroupId << 32) | airId;
+        dest.scatter.rows      = fb.rows;
+        dest.scatter.selConstOne = fb.selConstOne;
+        dest.scatter.hasBus      = fb.hasBus;
+
+        // Value first, then selector, then bus id -- the order scatterPolynomial__ reads.
+        // skipRedundantOne is off: a value that is the literal 1 must still occupy slot 0.
+        addHintFieldAt(setupCtx, h_params, fb.hintId, dest, "expressions", 0, opts, false);
+        if (!fb.selConstOne) addHintField(setupCtx, h_params, fb.hintId, dest, "num_reps", opts);
+        if (fb.hasBus)       addHintField(setupCtx, h_params, fb.hintId, dest, "busid", opts);
+
+        opHintFieldsGPU(d_params, dest, fb.rows, false, GPUExpressionsCtx, d_expsArgs,
+                        d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+    timer.stopCategory("MUL_SCATTER_INTERP");
+    mul_note_scatter(gpuId, stream);
+}
+
 
 void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
     if(setupCtx.expressionsBin.hints.size() == 0) {

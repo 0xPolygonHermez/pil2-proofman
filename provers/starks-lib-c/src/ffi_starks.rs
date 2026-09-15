@@ -1856,3 +1856,79 @@ pub fn load_device_const_pols_c(
         );
     }
 }
+
+// ---- Prover-side multiplicities -------------------------------------------------------------
+// Geometry is registered once; the host accumulator pointer is passed per call and never retained
+// on the C++ side, so Rust stays free to reallocate or reset its accumulator.
+pub fn register_mul_vt_c(
+    airgroup_id: u64,
+    air_id: u64,
+    num_rows: u64,
+    num_cols: u64,
+    table_ids: &[u64],
+    acc_bases: &[u64],
+) {
+    debug_assert_eq!(table_ids.len(), acc_bases.len());
+    unsafe {
+        register_mul_vt(
+            airgroup_id,
+            air_id,
+            num_rows,
+            num_cols,
+            table_ids.as_ptr(),
+            acc_bases.as_ptr(),
+            table_ids.len() as u64,
+        );
+    }
+}
+
+/// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
+pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
+    debug_assert_eq!(table_ids.len(), biases.len());
+    unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
+}
+
+pub fn mul_migrated_tables_c() -> Vec<u64> {
+    const CAP: u64 = 256;
+    let mut out = vec![0u64; CAP as usize];
+    let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), CAP) };
+    out.truncate(n as usize);
+    out
+}
+
+/// # Safety
+/// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
+/// duration of the call. The C++ side does not retain it.
+pub unsafe fn mul_fold_c(air_id: u64, host_acc: *mut u64, expected_commits: u64) {
+    unsafe { mul_fold(air_id, host_acc, expected_commits) }
+}
+
+/// # Safety
+/// `d_buffers` must be the live device-buffers pointer.
+pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
+    unsafe { mul_alloc(d_buffers) }
+}
+
+/// Whether this air feeds a table the prover counts itself.
+///
+/// # Safety
+/// `p_setup` must be live for the duration of the call.
+pub unsafe fn mul_air_has_lookups_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_lookups(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Count one instance's lookups straight from its filled witness.
+///
+/// Needed by the paths that never commit: verify-constraints calculates the witness and evaluates
+/// the constraints without merkelizing, so the commit hook that carries this on the prove path does
+/// not run there, and the tables the prover owns would be left at zero.
+///
+/// # Safety
+/// `p_setup` and `steps_params` must be live for the duration of the call; neither is retained.
+pub unsafe fn mul_scatter_c(p_setup: *mut c_void, steps_params: *mut u8, airgroup_id: u64, air_id: u64) {
+    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id) }
+}
+
+pub fn mul_reset_c() {
+    unsafe { mul_reset() }
+}

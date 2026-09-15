@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "fccae7030fd7449ee948fe480eb96e9c76561358a007505e6e7033d319bdcb6b";
+pub const PILOUT_HASH: &str = "4537a4b542a77001edfbcf71ec21f4845edf56db89dc75565442302899ae52be";
 
 //AIRGROUP CONSTANTS
 
@@ -28,7 +28,7 @@ pub const FIBONACCI_SQUARE_AIR_IDS: &[usize] = &[0];
 
 pub const MODULE_AIR_IDS: &[usize] = &[1];
 
-pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[2];
+pub const VIRTUAL_TABLE_FIBO_CPU_0_AIR_IDS: &[usize] = &[2];
 
 
 //PUBLICS
@@ -99,16 +99,16 @@ trace_row!(ModuleTraceRow<F> {
 
 pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
-trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 1], VALS: [F; 1], __L1__: F,
+trace_row!(VirtualTableFiboCPU0FixedRow<F> {
+ COL_0_0_0: F, UID_0: F, __L1__: F,
 });
-pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
+pub type VirtualTableFiboCPU0Fixed<F> = GenericTrace<VirtualTableFiboCPU0FixedRow<F>, 256, 0, 2>;
 
-trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 1],
+trace_row!(VirtualTableFiboCPU0TraceRow<F> {
+ multiplicity:[F; 1],
 });
 
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
+pub type VirtualTableFiboCPU0Trace<F> = GenericTrace<VirtualTableFiboCPU0TraceRow<F>, 256, 0, 2>;
 
 trace_row!(FibonacciSquareRomTraceRow<F> {
  line: F, flags: F,
@@ -132,7 +132,7 @@ values!(ModuleAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(SpecifiedRangesAirGroupValues<F> {
+values!(VirtualTableFiboCPU0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
@@ -144,5 +144,5 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 0, "FibonacciSquare"),
     (0, 1, "Module"),
-    (0, 2, "SpecifiedRanges"),
+    (0, 2, "VirtualTableFiboCPU0"),
 ];

@@ -32,6 +32,9 @@ pub struct VirtualTableAir<F: PrimeField64> {
     num_rows: usize,
     num_cols: usize,
     table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
+    // Parallel to `table_ids`: the prover counts this table itself, so increments are dropped here
+    // and the counts arrive through `ProofCtx::prover_counts`.
+    prover_owned: Vec<bool>,
     // Flat col-major: idx = col * num_rows + row. Single allocation.
     multiplicities: Vec<AtomicU64>,
     table_instance_id: AtomicU64,
@@ -51,6 +54,67 @@ impl<F: PrimeField64> Drop for VirtualTableAir<F> {
             unregister_host_buffer(base);
         }
     }
+}
+
+/// Geometry of one virtual-table air, as the prover needs it registered.
+pub struct VtLayout {
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    pub num_rows: u64,
+    pub num_cols: u64,
+    pub table_ids: Vec<u64>,
+    pub acc_bases: Vec<u64>,
+}
+
+/// Parse every virtual-table air's geometry. Returned rather than registered -- see
+/// `ProofCtx::prover_owned_tables`.
+pub fn collect_virtual_table_layouts<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> ProofmanResult<Vec<VtLayout>> {
+    let global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
+    if global_hint.is_empty() {
+        return Ok(Vec::new());
+    }
+    let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "airgroup_ids")?;
+    let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "air_ids")?;
+
+    let mut out = Vec::with_capacity(airgroup_ids.len());
+    for i in 0..airgroup_ids.len() {
+        let (airgroup_id, air_id) = (airgroup_ids[i], air_ids[i]);
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
+        let o = HintFieldOptions::default();
+        let table_ids = get_hint_field_constant_a_as::<usize, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "table_ids",
+            o.clone(),
+        )?;
+        let acc_heights = get_hint_field_constant_a_as::<u64, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "acc_heights",
+            o.clone(),
+        )?;
+        let num_muls =
+            get_hint_field_constant_as::<usize, F>(pctx, setup, airgroup_id, air_id, hint_id, "num_muls", o)?;
+        out.push(VtLayout {
+            airgroup_id: airgroup_id as u64,
+            air_id: air_id as u64,
+            num_rows: pctx.global_info.airs[airgroup_id][air_id].num_rows as u64,
+            num_cols: num_muls as u64,
+            table_ids: table_ids.iter().map(|id| *id as u64).collect(),
+            acc_bases: acc_heights,
+        });
+    }
+    Ok(out)
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
@@ -133,6 +197,15 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             // The reclaim slot returns this same allocation every iteration, so one pin covers every H2D.
             let trace_buffer_pinned = if pctx.gpu { register_host_buffer(&buffer) } else { None };
             let trace_buffer = Arc::new(Mutex::new(Some(buffer)));
+            // Filled by the host binary before the witness library is registered.
+            let owned = pctx.prover_owned_tables.read().unwrap();
+            let prover_owned: Vec<bool> = idxs.iter().map(|(id, _)| owned.contains(&(*id as u64))).collect();
+            drop(owned);
+            let n_owned = prover_owned.iter().filter(|o| **o).count();
+            if n_owned > 0 {
+                tracing::info!("VirtualTable air {air_id}: {n_owned}/{} tables counted by the prover", idxs.len());
+            }
+
             let virtual_table_air = VirtualTableAir::<F> {
                 airgroup_id,
                 air_id,
@@ -141,6 +214,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 num_rows,
                 num_cols: num_muls as usize,
                 table_ids: idxs,
+                prover_owned,
                 multiplicities,
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
@@ -223,6 +297,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             mask: (num_rows - 1) as u64,
             num_rows,
             num_cols,
+            prover_owned: vec![false; table_ids.len()],
             table_ids,
             multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
             table_instance_id: AtomicU64::new(0),
@@ -268,10 +343,11 @@ impl<F: PrimeField64> VirtualTableAir<F> {
     }
 
     /// Core update function: Updates multiplicities for row/multiplicity pairs
-    fn update(&self, table_offset: u64, iter: impl Iterator<Item = (u64, u64)>) {
-        if self.calculated.load(Ordering::Relaxed) {
+    fn update(&self, id: usize, iter: impl Iterator<Item = (u64, u64)>) {
+        if self.prover_owned[id] || self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        let table_offset = self.table_ids[id].1;
 
         for (row, multiplicity) in iter {
             if multiplicity == 0 {
@@ -294,14 +370,12 @@ impl<F: PrimeField64> VirtualTableAir<F> {
     }
 
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, std::iter::once((row, multiplicity)));
+        self.update(id, std::iter::once((row, multiplicity)));
     }
 
     /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
     pub fn inc_virtual_pairs(&self, id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, pairs);
+        self.update(id, pairs);
     }
 }
 
@@ -326,6 +400,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
         self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
+        // The prover-side accumulators are reset in proofman.rs: `execute` is fork-exposed
+        // (--asm spawns the microservices here) and an FFI call there kills the process silently.
 
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())
@@ -362,6 +438,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
             }
 
             self.calculated.store(true, Ordering::Relaxed);
+
+            // Before `distribute_multiplicities`, so the MPI path sees a complete accumulator.
+            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&self.air_id) {
+                for (slot, add) in self.multiplicities.iter().zip(counts.iter()) {
+                    if *add != 0 {
+                        slot.fetch_add(*add, Ordering::Relaxed);
+                    }
+                }
+            }
+
 
             // An assigned table is computed only on its single owner node; its
             // multiplicities are produced there, so there is no cross-rank reduction.

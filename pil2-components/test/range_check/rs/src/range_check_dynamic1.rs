@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_witness::{WitnessComponent, execute, define_wc_with_std};
+use proofman_witness::{WitnessComponent, execute, define_wc};
 
 use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 
@@ -9,9 +9,9 @@ use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheckDynamic1Trace;
 
-define_wc_with_std!(RangeCheckDynamic1, "RngChDy1");
+define_wc!(RangeCheckDynamic1, "RngChDy1");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1 {
     execute!(RangeCheckDynamic1Trace, 1);
 
     fn calculate_witness(
@@ -31,11 +31,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range7 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false))?;
-            let range8 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?;
-            let range16 = self.std_lib.get_range_id(0, (1 << 16) - 1, Some(false))?;
-            let range17 = self.std_lib.get_range_id(0, (1 << 17) - 1, Some(false))?;
-
             for i in 0..num_rows {
                 let range = rng.random_range(0..=3);
 
@@ -47,8 +42,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         trace[i].sel_17 = F::ZERO;
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].colu = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range7, val);
                     }
                     1 => {
                         trace[i].sel_7 = F::ZERO;
@@ -57,8 +50,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         trace[i].sel_17 = F::ZERO;
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].colu = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range8, val);
                     }
                     2 => {
                         trace[i].sel_7 = F::ZERO;
@@ -67,8 +58,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         trace[i].sel_17 = F::ZERO;
                         let val = rng.random_range(0..=(1 << 16) - 1);
                         trace[i].colu = F::from_u32(val);
-
-                        self.std_lib.range_check_one(range16, val);
                     }
                     3 => {
                         trace[i].sel_7 = F::ZERO;
@@ -77,8 +66,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         trace[i].sel_17 = F::ONE;
                         let val = rng.random_range(0..=(1 << 17) - 1);
                         trace[i].colu = F::from_u32(val);
-
-                        self.std_lib.range_check_one(range17, val);
                     }
                     _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }

@@ -141,7 +141,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // Same parity for the interpreter's exps staging (stageExpsSlot poisons captures, so a
     // replay never reads it; the hazard is the queued H2D of the previous proof).
     Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params
-        + (uint64_t)pipeSlot * ((uint64_t)PINNED_EXPS_SLOTS * 2 * sizeof(DestParamsGPU) / sizeof(Goldilocks::Element));
+        + (uint64_t)pipeSlot * ((uint64_t)PINNED_EXPS_SLOTS * MAX_DEST_PARAMS * sizeof(DestParamsGPU) / sizeof(Goldilocks::Element));
     Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args
         + (uint64_t)pipeSlot * ((uint64_t)PINNED_EXPS_SLOTS * sizeof(ExpsArguments) / sizeof(Goldilocks::Element));
     TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;

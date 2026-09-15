@@ -3,6 +3,7 @@
 #include "expressions_bin.hpp"
 #include "const_pols.hpp"
 #include "stark_info.hpp"
+#include "../multiplicity_decoders.hpp"
 #include "steps.hpp"
 #include "setup_ctx.hpp"
 
@@ -22,6 +23,26 @@ struct DestParamsGPU
     uint64_t argsOffset; 
 };
 
+
+// Params one expression evaluation can carry: a store or a multiply needs two, a range-check
+// scatter needs value + selector + bus id. Sizes destVals, the pinned staging slot and both device
+// param arrays together, so each extra param costs FIELD_EXTENSION * nrowsPack * maxNBlocks/stream.
+#define MAX_DEST_PARAMS 3
+
+// Scatter destination for lookup multiplicities. When `acc` is non-null the evaluator does not
+// store one value per row: it decodes the params into a counter index and accumulates there,
+// because a lookup is many-to-one (many trace rows hit one table row).
+struct ScatterDest {
+    uint64_t*  acc  = nullptr;
+    uint64_t*  oob  = nullptr;
+    MulDecoder dec {};
+    uint64_t   air  = 0;            // airgroupId << 32 | airId, stamped on a bad decode
+    // A degree-0 term is evaluated over one row but still launches a full block; without this
+    // bound the surplus threads decode junk and each lands an atomicAdd.
+    uint64_t   rows = 0;
+    uint8_t    selConstOne = 0;     // selector was the literal 1 -> read no param for it
+    uint8_t    hasBus = 0;          // dynamic opid: busid is a param and must equal table_id
+};
 
 struct ExpsArguments
 {
@@ -47,6 +68,8 @@ struct ExpsArguments
     uint32_t dest_nParams;
 
     bool dest_expr = false;
+
+    ScatterDest scatter;
 };
 
 
@@ -90,6 +113,8 @@ struct Dest {
     uint64_t dim = 1;
     uint64_t domainSize;
     std::vector<Params> params;
+
+    ScatterDest scatter;
 
     Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
 

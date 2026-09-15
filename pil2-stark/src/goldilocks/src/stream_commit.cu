@@ -443,11 +443,32 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
     return SC_MAX_COLS + N * dims.wordsPerRow + (uint64_t)wsCols * NExt + N;
 }
 
+void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
+                            const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
+                            uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
+                            const uint8_t *dColSource, const uint8_t *dColLane,
+                            const uint64_t *dTable)
+{
+    if (rows == 0 || cc == 0) return;
+    const uint64_t *src = dPacked + rowBegin * dims.wordsPerRow;
+    const uint32_t blk = (uint32_t)((rows + SC_TPB - 1) / SC_TPB);
+    if (dColSource != nullptr) {
+        scUnpackRangeIndexedKernel<<<blk, SC_TPB, dims.nCols * sizeof(uint64_t), stream>>>(
+            src, dTable, dWidths, dColSource, dColLane, dst, dims.nCols, rows, dims.wordsPerRow,
+            dims.wordsPerEntry, dims.numEntries, dims.indexBits, dims.lanes, c0, cc);
+    } else {
+        scUnpackRangeKernel<<<blk, SC_TPB, 0, stream>>>(src, dWidths, dst, dims.nCols, rows,
+                                                        dims.wordsPerRow, c0, cc);
+    }
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource, const uint8_t *dColLane,
-                           const uint64_t *dTable, StreamCommitHash hash)
+                           const uint64_t *dTable, StreamCommitHash hash,
+                           StreamCommitHook hook, void *hookUser)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -497,6 +518,10 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_packed + off, (const uint8_t *)hPacked + off, len,
                                      cudaMemcpyHostToDevice, stream));
     }
+
+    // Before the chunk loop: it unpacks and LDEs in place, so this is the last moment the packed
+    // witness is intact and the only one where a reader can see every column.
+    if (hook != nullptr) hook(d_packed, d_widths, dims, stream, hookUser);
 
     NTTGoldilocksGPU ntt;
     const uint32_t ublk = (uint32_t)((N + SC_TPB - 1) / SC_TPB);

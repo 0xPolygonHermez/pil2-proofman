@@ -90,12 +90,30 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], arity mismatch with the slot layout contract, or an
 // inconsistent indexed descriptor).
+// Called once, after the packed witness is on the device and before the chunk loop consumes it.
+// `dPacked` is the uploaded witness and `dWidths` the per-column bit widths, both device-resident
+// and still untouched; `dims` describes their shape. This is the only point in a slot commit where
+// the whole witness exists in one piece -- the loop below unpacks a few columns at a time and LDEs
+// them IN PLACE, so nothing after it can read cm1.
+typedef void (*StreamCommitHook)(const uint64_t *dPacked, const uint64_t *dWidths,
+                                 const StreamCommitDims &dims, cudaStream_t stream, void *user);
+
+// Unpack `cc` columns from `c0` for the rows [rowBegin, rowBegin + rows) of a packed witness into
+// `dst`, ColMajor with `rows` rows. The same bit walk the commit itself uses, exposed so a caller
+// can materialise a slice of cm1 without a full unpack -- the commit never holds one.
+void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
+                            const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
+                            uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
+                            const uint8_t *dColSource = nullptr, const uint8_t *dColLane = nullptr,
+                            const uint64_t *dTable = nullptr);
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource = nullptr,
                            const uint8_t *dColLane = nullptr,
                            const uint64_t *dTable = nullptr,
-                           StreamCommitHash hash = StreamCommitHash::Poseidon1);
+                           StreamCommitHash hash = StreamCommitHash::Poseidon1,
+                           StreamCommitHook hook = nullptr, void *hookUser = nullptr);
 
 #endif

@@ -1,4 +1,7 @@
 #include "zkglobals.hpp"
+#include "starks_backend.hpp"
+#include "multiplicity.hpp"
+#include "multiplicity_cpu.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
@@ -748,6 +751,15 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
     calculateWitnessExpr(*setupCtx, paramsUnpacked, expressionsCtx);
+
+    // Prover-side multiplicities, at the same point the GPU backend scatters: the witness is filled
+    // and untransformed, so the columns the lookups read are the ones the trace commits to. Gated on
+    // the ACTIVE backend, not __USE_CUDA__ -- the CUDA build also runs whole proofs on the CPU.
+    if (!starks_gpu_mode_active()) {
+        mul_cpu_alloc();   // idempotent; the accumulators are not allocated on a CPU run otherwise
+        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId);
+        mul_note_commit();
+    }
 
     NTT_Goldilocks ntt(N);
     ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
