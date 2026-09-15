@@ -24,7 +24,7 @@ LDFLAGS_COMMON := -z noexecstack -fopenmp
 # ----------------------
 # Sources
 # ----------------------
-SHPLONK_SRCS := shplonk.cpp
+SHPLONK_SRCS := shplonk.cpp pilfflonk_api.cpp
 SHPLONK_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SHPLONK_SRCS))
 
 # Snark-side support pulled from pil2-stark: the logger fflonk/plonk already
