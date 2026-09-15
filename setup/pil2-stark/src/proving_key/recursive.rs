@@ -66,6 +66,13 @@ pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str
     }
 }
 
+pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: &str) -> usize {
+    match template {
+        RecursiveTemplate::Compressor if hash == "blake3" => 25,
+        _ => proofman_common::hash_family::recursive_grinding_bits(hash),
+    }
+}
+
 /// Whether a recursive1 must stop and ask for a compressor, from the circuit's OWN size.
 ///
 /// Its own size and not the pinned one: `--recursive-n-bits` says how big the recursion runs, so
@@ -710,7 +717,7 @@ pub fn gen_recursive_setup(
                     // for rather than folded uniformly, this is the ceiling the solver works under
                     // rather than the exact degree it lands on.
                     final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
-                    pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(config.hash)),
+                    pow_bits: Some(recursive_grinding_bits(template, config.hash)),
                     last_level_verification: recursive_last_level_verification(template, config.hash),
                     ..Default::default()
                 }

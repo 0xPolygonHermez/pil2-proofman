@@ -222,7 +222,7 @@ pub fn gen_recursive_test_setup(
         // six-step FRI schedule where production has five, so the fixture verified a shape the
         // pipeline never builds.
         final_degree: Some(proofman_common::hash_family::fri_terminal_degree(hash)),
-        pow_bits: Some(proofman_common::hash_family::recursive_grinding_bits(hash)),
+        pow_bits: Some(crate::proving_key::recursive::recursive_grinding_bits(template, hash)),
         ..Default::default()
     };
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
