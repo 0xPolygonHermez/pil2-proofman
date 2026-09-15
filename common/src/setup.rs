@@ -2,8 +2,7 @@ use std::os::raw::{c_void, c_char};
 use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::fs;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
@@ -436,16 +435,20 @@ impl<F: PrimeField64> Setup<F> {
             } else {
                 let mut const_pols_size_packed = 0;
                 if gpu && setup_type != &ProofType::RecursiveF {
-                    let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
-                        let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
-                        if bytes.len() >= 8 {
-                            u64::from_le_bytes(bytes[..8].try_into().unwrap())
-                        } else {
-                            0
-                        }
-                    } else {
-                        calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
-                    };
+                    let mut header = [0u8; 8];
+                    let words_per_row: u64 =
+                        match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
+                            Ok(()) => u64::from_le_bytes(header),
+                            // Missing or truncated: regenerated later, size it from the source .const.
+                            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::UnexpectedEof) => {
+                                calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
+                            }
+                            Err(e) => {
+                                return Err(ProofmanError::InvalidSetup(format!(
+                                    "Failed to read GPU const pols header {const_pols_path}: {e}"
+                                )))
+                            }
+                        };
                     const_pols_size_packed =
                         (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
                 }
