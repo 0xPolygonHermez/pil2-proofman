@@ -1013,7 +1013,7 @@ fn exclusive_costs(dag: &Dag, order: &[NodeId], rc: &[u32], cost_max: u64) -> Ve
         let Kind::Op { op, a, b } = dag.nodes[n].kind else { continue };
         let mut c = cost(op, dag.nodes[a].dim, dag.nodes[b].dim);
         for ch in [a, b] {
-            if !dag.is_leaf(ch) && !(rc[ch] > 1 && ex[ch] > cost_max) {
+            if !(dag.is_leaf(ch) || rc[ch] > 1 && ex[ch] > cost_max) {
                 c += ex[ch];
             }
         }

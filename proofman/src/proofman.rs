@@ -5364,14 +5364,14 @@ where
         }
         let (setup, setup_path) = if circuit_type == 1 {
             (
-                setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
-                pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
+                self.setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
             )
         } else {
             let air_id = circuit_type as usize - 2;
             (
-                setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
-                pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
+                self.setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
+                self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
             )
         };
         let mut publics_extended = vec![0u64; setup.stark_info.n_publics as usize];
