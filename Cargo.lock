@@ -1278,6 +1278,7 @@ dependencies = [
  "anyhow",
  "num-bigint",
  "num-traits",
+ "proofman-fflonk-lib-c",
  "serde",
  "serde_json",
  "sha3",
@@ -1504,6 +1505,10 @@ dependencies = [
  "serde_json",
  "tracing",
 ]
+
+[[package]]
+name = "proofman-fflonk-lib-c"
+version = "1.3.0-alpha"
 
 [[package]]
 name = "proofman-fields"

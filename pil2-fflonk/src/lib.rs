@@ -52,4 +52,4 @@ pub use shkey::{
 pub use setup::{CURVE, PROTOCOL, ShPlonkPol, ShPlonkSetup, ShPlonkStage, ShPlonkStagePol};
 pub use shplonk_pcs::{BN254_SECURITY_BITS, ShPlonk, ShPlonkConfig};
 pub use solidity::{PROOF_LAYOUT_NOTE, ProofLayout, gen_iverifier, gen_solidity};
-pub use zkey::{FCommitment, ZKey};
+pub use zkey::{FCommitment, SECTION_CONST_POLS_COEFS, SECTION_PTAU, ZKey};

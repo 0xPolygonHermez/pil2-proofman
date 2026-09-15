@@ -26,3 +26,7 @@ num-traits = { workspace = true }
 sha3 = "0.10"
 
 [dev-dependencies]
+# Tests only: the library itself is pure Rust, and keeping this out of
+# [dependencies] means a C++ toolchain is needed to run the tests but not to
+# build the crate.
+proofman-fflonk-lib-c = { workspace = true }
