@@ -600,18 +600,16 @@ mod tests {
 
     /// The zkey and vkey are produced separately by pil-fflonk's setup, so
     /// agreeing on the packing is a real cross-check rather than a tautology.
-    /// Reads the zkey from the pil-fflonk checkout when present -- it is ~1 MB,
-    /// too large to vendor, unlike the 6 KB vkey.
+    ///
+    /// The key is vendored under `tests/fixtures/reference/`. It used to be
+    /// read from a pil-fflonk checkout and skipped when absent, which would
+    /// have turned into a silently vacuous test the moment that repository was
+    /// retired -- so it is embedded now, and a missing fixture is a failure
+    /// rather than a skip.
     #[test]
     fn real_zkey_agrees_with_the_vkey_fixture() {
-        let path = std::path::Path::new("/home/xavi/dev/pil-fflonk/config/pilfflonk.zkey");
-        if !path.exists() {
-            eprintln!("skipping: {} not present", path.display());
-            return;
-        }
-
-        let bytes = std::fs::read(path).unwrap();
-        let zkey = ZKey::from_bytes(&bytes).expect("real zkey parses");
+        let bytes: &[u8] = include_bytes!("../tests/fixtures/reference/pilfflonk.zkey");
+        let zkey = ZKey::from_bytes(bytes).expect("real zkey parses");
 
         let vkey: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/pilfflonk.vkey")).unwrap();
         let setup = ShPlonkSetup::from_vkey_json(&vkey).unwrap();
