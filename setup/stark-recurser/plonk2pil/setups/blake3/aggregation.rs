@@ -36,7 +36,7 @@ use crate::plonk2pil::r1cs::to_plonk::{
     blake3_compress_gate_uses, ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, PlonkConstraint,
 };
 use crate::plonk2pil::r1cs::types::{FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, mulp};
+use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, mulp, public_rows};
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
 
@@ -379,13 +379,17 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
             plan.blocks
         );
     }
-    let n_used = plan.blocks.max(n_blocks) * BLAKE3_CLOCKS;
+    let needed = plan.blocks.max(n_blocks);
+    let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
+    let n_public_rows = public_rows(n_publics, layout.band);
+    let n_publics_start = needed * BLAKE3_CLOCKS;
+    let n_used = n_publics_start + n_public_rows;
     // The wrap window is part of what the air must hold, not slack on top of it: the clock selectors
     // read backwards, so the last CLOCKS-1 rows cannot carry a block. Sizing from `n_used` alone
     // leaves the air one block short whenever `blocks * 56` lands just under a power of two -- 16
     // block counts below 40,000 do, each missing by exactly one, and each of them tripped the
     // capacity assert below.
-    let sized = n_used + CLOCK_WRAP_ROWS;
+    let sized = n_publics_start + CLOCK_WRAP_ROWS.max(n_public_rows);
     // ceil(log2(sized)) in usize. The u32 `log2` helper would truncate a demand past 2^32 rows into a
     // small n_bits, and the compressor's planner is allowed to hand us n_bits above its preferred cap.
     let n_bits = sized.next_power_of_two().trailing_zeros().max(1) as usize;
@@ -400,7 +404,6 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     // Against what the air actually has to hold, not just the hashing: when the band is the dominant
     // side, `n_blocks` alone fits while the band's interiors do not, and the placement would then run
     // off the end of the trace with a far less legible index panic.
-    let needed = plan.blocks.max(n_blocks);
     assert!(
         needed <= capacity,
         "{n_node} Blake3Node gates need {n_blocks} blocks of {BLAKE3_CLOCKS} rows and the band needs \
@@ -410,7 +413,6 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         BLAKE3_CLOCKS - 1
     );
 
-    let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let max_degree = options.max_constraint_degree.unwrap_or(5);
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Blake3Agg{}", rand_hex()));
 
@@ -420,6 +422,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
+        n_publics_start,
         max_constraint_degree: max_degree,
         n_plonk_rows,
         n_cmul_rows,
@@ -433,7 +436,9 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         lanes,
     });
 
-    tracing::info!("NUsed: {n_used}, nBits: {n_bits}, N: {n}, blocks: {n_blocks}, LANES: {lanes}");
+    tracing::info!(
+        "NUsed: {n_used}, nBits: {n_bits}, N: {n}, blocks: {n_blocks}, public rows: {n_public_rows}, LANES: {lanes}"
+    );
 
     let committed = stage1_cols(lanes, layout.band);
     let mut s_map: Vec<Vec<u32>> = (0..committed).map(|_| vec![0u32; n]).collect();
@@ -681,6 +686,8 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     );
 
     // ── S polynomials ─────────────────────────────────────────────────────────
+    bind_public_signals(&mut s_map, n_publics_start, n_publics, layout.band);
+
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
     verify_merge_soundness(&s_map, &copy_merge.merged_reps, layout.band);
     let sv = build_s_polynomials(layout.band, n, n_bits, n_used, &s_map);
