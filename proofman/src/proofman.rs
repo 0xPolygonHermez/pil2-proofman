@@ -4297,18 +4297,14 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            // TODO: re-arm. A received aggregated proof is accepted unchecked: the check rejected
-            // valid proofs against a key built from another revision of the recursion circuit and
-            // failed every cluster job with "Received aggregated proof is invalid!". Disabled here
-            // rather than removed -- `verify_agg_proof` stays so re-arming is uncommenting this.
-            // let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
-            //
-            // if !valid_recursive_proof {
-            //     self.cancellation_info
-            //         .write_recover()
-            //         .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
-            //     break;
-            // }
+            let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+
+            if !valid_recursive_proof {
+                self.cancellation_info
+                    .write_recover()
+                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
+                break;
+            }
             timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
@@ -5355,8 +5351,6 @@ where
         }
     }
 
-    // Unused while the call site above is commented out (see the TODO there).
-    #[allow(dead_code)]
     /// Verify an aggregated proof received from a worker with the C++ STARK verifier on the key's
     /// own setup files. circuit_type (publics[0]): 0 = null proof (no-op), 1 = recursive2, k >= 2 =
     /// the un-aggregated recursive1 of air k-2 that a single-instance worker sends -- verified with
@@ -5370,14 +5364,14 @@ where
         }
         let (setup, setup_path) = if circuit_type == 1 {
             (
-                self.setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
-                self.pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
+                setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
+                pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
             )
         } else {
             let air_id = circuit_type as usize - 2;
             (
-                self.setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
-                self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
+                setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
+                pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
             )
         };
         let mut publics_extended = vec![0u64; setup.stark_info.n_publics as usize];
