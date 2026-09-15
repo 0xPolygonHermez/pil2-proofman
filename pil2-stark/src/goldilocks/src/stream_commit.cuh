@@ -10,8 +10,8 @@ class gl64_t;
 //
 // Instead of materializing the full NExt x nCols extension and hashing rows
 // (unpack -> LDE -> merkletree), it keeps a small fixed working set of data
-// + state columns (Poseidon1: 12 + 4; blake3: 8 + 4) and loops over column
-// chunks:
+// + state columns (Poseidon1: 12 + 4; blake3: 8 + 4, or 8 + 8 when a row is
+// wider than 128 columns) and loops over column chunks:
 //   1) unpack the chunk compactly (ColMajor, stride N) at the data base
 //   2) LDE it in place (ldeColMajor equal-base aliasing)
 //   3) per extended row, fold the chunk into the carried hash state
@@ -66,8 +66,10 @@ struct StreamCommitDims {
 // Slot layout:
 //   [0, SC_MAX_COLS)              column bit widths (nCols used)
 //   [SC_MAX_COLS, +N*wordsPerRow) packed witness
-//   [.., +W*NExt)              hash working set (data | 4 state), ColMajor;
-//                              W = 16 (Poseidon1) or 12 (blake3)
+//   [.., +W*NExt)              hash working set (data | state), ColMajor;
+//                              W = 16 (Poseidon1: 12 + 4 state), 12 (blake3:
+//                              8 + 4 state) or 16 (blake3, nCols > 128: 8 + 4
+//                              state + 4 parked chunk-0 CV)
 //   [.., +N)                   LDE scratch
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
                                StreamCommitHash hash = StreamCommitHash::Poseidon1);
