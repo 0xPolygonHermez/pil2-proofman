@@ -7,6 +7,7 @@
 # exists.
 
 BUILD_DIR := ./build
+LIB_DIR   := ./lib
 STARK_SRC := ../../pil2-stark/src
 MKDIR_P   ?= mkdir -p
 
@@ -38,6 +39,11 @@ FFIASM_ASMS := fr.asm fq.asm
 FFIASM_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/ffiasm/%.cpp.o,$(FFIASM_SRCS)) \
                $(patsubst %.asm,$(BUILD_DIR)/ffiasm/%.asm.o,$(FFIASM_ASMS))
 
+# Everything that goes into the static library cargo links against. The tests
+# are deliberately excluded: they pull gtest, which has no business in a
+# library consumers link.
+LIB_OBJS := $(SHPLONK_OBJS) $(SUPPORT_OBJS) $(FFIASM_OBJS)
+
 TESTS_SRCS := $(wildcard tests/*.cpp)
 TESTS_OBJS := $(patsubst tests/%.cpp,$(BUILD_DIR)/tests/%.o,$(TESTS_SRCS))
 
@@ -47,11 +53,23 @@ DEPS := $(SHPLONK_OBJS:.o=.d) $(SUPPORT_OBJS:.o=.d) $(TESTS_OBJS:.o=.d) \
 # ----------------------
 # Targets
 # ----------------------
-.PHONY: all tests clean help
+.PHONY: all lib tests runtests clean help
 
-all: tests
+all: lib
+
+lib: $(LIB_DIR)/libpilfflonk.a
+
+# Built with `ar` rather than a shared object so the consumer links one
+# artifact, matching how pil2-stark ships libstarks.a to starks-lib-c.
+$(LIB_DIR)/libpilfflonk.a: $(LIB_OBJS)
+	$(MKDIR_P) $(LIB_DIR)
+	$(AR) rcs $@ $^
 
 tests: testscpu
+
+# Used by the cargo test wrapper, so a C++ regression fails `cargo test`.
+runtests: testscpu
+	./testscpu
 
 testscpu: $(TESTS_OBJS) $(SHPLONK_OBJS) $(SUPPORT_OBJS) $(FFIASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread $(LDFLAGS_COMMON)
@@ -84,7 +102,7 @@ $(BUILD_DIR)/ffiasm/%.asm.o: $(FFIASM_DIR)/%.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) testscpu
+	rm -rf $(BUILD_DIR) $(LIB_DIR) testscpu
 
 -include $(DEPS)
 
@@ -92,5 +110,7 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  tests (default) - Build CPU unit tests (output: ./testscpu)"
+	@echo "  lib (default)   - Build the static library (output: ./lib/libpilfflonk.a)"
+	@echo "  tests           - Build CPU unit tests (output: ./testscpu)"
+	@echo "  runtests        - Build and run the CPU unit tests"
 	@echo "  clean           - Remove build artifacts"
