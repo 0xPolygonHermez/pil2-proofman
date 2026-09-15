@@ -1,0 +1,3271 @@
+{
+"note": "Trimmed from pil-fflonk's config/pilfflonk.fflonkinfo.json: only what a verifier reads. verifierCode.i and .last are omitted -- they are row-specialised and not self-contained.",
+"verifierCode": {
+"first": [
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 0,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 0,
+"dim": 1
+},
+{
+"type": "eval",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 1,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "eval",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 2,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 94,
+"expId": 1,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 2,
+"dim": 1
+},
+{
+"type": "number",
+"value": "0",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 3,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 1,
+"dim": 1
+},
+{
+"type": "eval",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 4,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 3,
+"dim": 1
+},
+{
+"type": "eval",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 95,
+"expId": 2,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 3,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 4,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 5,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 95,
+"prime": false,
+"expId": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 6,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "eval",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 7,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 5,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 6,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 96,
+"expId": 3,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 7,
+"dim": 1
+},
+{
+"type": "number",
+"value": "0",
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 8,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 3,
+"dim": 1
+},
+{
+"type": "public",
+"id": 0,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 9,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 5,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 8,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 97,
+"expId": 4,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 9,
+"dim": 1
+},
+{
+"type": "number",
+"value": "0",
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 10,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 1,
+"dim": 1
+},
+{
+"type": "public",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 11,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 5,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 10,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 98,
+"expId": 5,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 11,
+"dim": 1
+},
+{
+"type": "number",
+"value": "0",
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 12,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 1,
+"dim": 1
+},
+{
+"type": "public",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 13,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 2,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 12,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 99,
+"expId": 6,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 13,
+"dim": 1
+},
+{
+"type": "number",
+"value": "0",
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 14,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 6,
+"dim": 1
+},
+{
+"type": "number",
+"value": "1",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 100,
+"expId": 31,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 7,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 14,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 15,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 8,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 16,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 9,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 15,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 17,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 18,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 17,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 19,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 16,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 18,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 20,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 10,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 21,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 8,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 20,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 22,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 23,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 22,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 24,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 21,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 23,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 101,
+"expId": 33,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 19,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 24,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 102,
+"expId": 23,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 11,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 103,
+"expId": 24,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 12,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 104,
+"expId": 25,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 13,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 105,
+"expId": 26,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 14,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 25,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 102,
+"prime": false,
+"expId": 23,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 26,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 25,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 103,
+"prime": false,
+"expId": 24,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 27,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 26,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 28,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 27,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 104,
+"prime": false,
+"expId": 25,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 29,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 28,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 30,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 29,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 105,
+"prime": false,
+"expId": 26,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 106,
+"expId": 27,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 30,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": true,
+"id": 107,
+"expId": 23,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 15,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": true,
+"id": 108,
+"expId": 24,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 16,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": true,
+"id": 109,
+"expId": 25,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 17,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": true,
+"id": 110,
+"expId": 26,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 18,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 31,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 107,
+"prime": true,
+"expId": 23,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 32,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 31,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 108,
+"prime": true,
+"expId": 24,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 33,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 32,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 34,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 33,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 109,
+"prime": true,
+"expId": 25,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 35,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 34,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 36,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 35,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 110,
+"prime": true,
+"expId": 26,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": true,
+"id": 111,
+"expId": 27,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 36,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 37,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 19,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 38,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 111,
+"prime": true,
+"expId": 27,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 39,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 106,
+"prime": false,
+"expId": 27,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 38,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 40,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 41,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 40,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 42,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 39,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 41,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 43,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 37,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 42,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 44,
+"dim": 1
+},
+"src": [
+{
+"type": "number",
+"value": "1",
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 112,
+"expId": 32,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 43,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 44,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 45,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 20,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 101,
+"prime": false,
+"expId": 33,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 46,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 6,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 112,
+"prime": false,
+"expId": 32,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 113,
+"expId": 34,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 45,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 46,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 47,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 21,
+"dim": 1
+},
+{
+"type": "number",
+"value": "1",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 114,
+"expId": 35,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 7,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 47,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 115,
+"expId": 16,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 22,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 116,
+"expId": 17,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 22,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 117,
+"expId": 18,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 23,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 48,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 115,
+"prime": false,
+"expId": 16,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 49,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 48,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 116,
+"prime": false,
+"expId": 17,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 50,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 49,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 51,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 50,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 117,
+"prime": false,
+"expId": 18,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 118,
+"expId": 29,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 51,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 119,
+"expId": 37,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 118,
+"prime": false,
+"expId": 29,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 120,
+"expId": 13,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 24,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 121,
+"expId": 14,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 24,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 122,
+"expId": 15,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 25,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 52,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 120,
+"prime": false,
+"expId": 13,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 53,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 52,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 121,
+"prime": false,
+"expId": 14,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 54,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 53,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 55,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 54,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 122,
+"prime": false,
+"expId": 15,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 123,
+"expId": 30,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 55,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 1,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 124,
+"expId": 36,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 123,
+"prime": false,
+"expId": 30,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 56,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 26,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 119,
+"prime": false,
+"expId": 37,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 57,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 21,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 124,
+"prime": false,
+"expId": 36,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 125,
+"expId": 38,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 56,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 57,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 58,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 27,
+"dim": 1
+},
+{
+"type": "number",
+"value": "1",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 126,
+"expId": 45,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 7,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 58,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 127,
+"expId": 7,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 28,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 128,
+"expId": 10,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 29,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 59,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 128,
+"prime": false,
+"expId": 10,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 60,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 127,
+"prime": false,
+"expId": 7,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 59,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 129,
+"expId": 40,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 60,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 130,
+"expId": 8,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 30,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 131,
+"expId": 11,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 31,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 61,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 131,
+"prime": false,
+"expId": 11,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 62,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 130,
+"prime": false,
+"expId": 8,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 61,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 63,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 62,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 132,
+"expId": 42,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 129,
+"prime": false,
+"expId": 40,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 63,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 133,
+"expId": 9,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 32,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 134,
+"expId": 12,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 33,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 64,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 134,
+"prime": false,
+"expId": 12,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 65,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 133,
+"prime": false,
+"expId": 9,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 64,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 66,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 65,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 135,
+"expId": 44,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 132,
+"prime": false,
+"expId": 42,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 66,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 67,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "x",
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 68,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 127,
+"prime": false,
+"expId": 7,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 67,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 136,
+"expId": 39,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 68,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 69,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "number",
+"value": "5266228460530200451425464971825753823072228272503274930591399474110020095489",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 70,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 69,
+"dim": 1
+},
+{
+"type": "x",
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 71,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 130,
+"prime": false,
+"expId": 8,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 70,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 72,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 71,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 137,
+"expId": 41,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 136,
+"prime": false,
+"expId": 39,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 72,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 73,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 3,
+"dim": 1
+},
+{
+"type": "number",
+"value": "7105417016332174850410570896152637638969286250121046049601916147253836355616",
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 74,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 73,
+"dim": 1
+},
+{
+"type": "x",
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 75,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 133,
+"prime": false,
+"expId": 9,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 74,
+"dim": 1
+}
+]
+},
+{
+"op": "add",
+"dest": {
+"type": "tmp",
+"id": 76,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 75,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 2,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 138,
+"expId": 43,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 137,
+"prime": false,
+"expId": 41,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 76,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 77,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 34,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 135,
+"prime": false,
+"expId": 44,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"id": 78,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 27,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 138,
+"prime": false,
+"expId": 43,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 139,
+"expId": 46,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 77,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 78,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 140,
+"expId": 19,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 35,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 141,
+"expId": 20,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 36,
+"dim": 1
+}
+]
+},
+{
+"op": "mul",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 142,
+"expId": 21,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 35,
+"dim": 1
+},
+{
+"type": "eval",
+"id": 36,
+"dim": 1
+}
+]
+},
+{
+"op": "copy",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 143,
+"expId": 22,
+"dim": 1
+},
+"src": [
+{
+"type": "eval",
+"id": 37,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 79,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 94,
+"prime": false,
+"expId": 1,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 96,
+"prime": false,
+"expId": 3,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 80,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 79,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 97,
+"prime": false,
+"expId": 4,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 81,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 80,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 98,
+"prime": false,
+"expId": 5,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 82,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 81,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 99,
+"prime": false,
+"expId": 6,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 83,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 82,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 100,
+"prime": false,
+"expId": 31,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 84,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 83,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 113,
+"prime": false,
+"expId": 34,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 85,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 84,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 114,
+"prime": false,
+"expId": 35,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 86,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 85,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 125,
+"prime": false,
+"expId": 38,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 87,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 86,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 126,
+"prime": false,
+"expId": 45,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 88,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 87,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 139,
+"prime": false,
+"expId": 46,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 89,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 140,
+"prime": false,
+"expId": 19,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 141,
+"prime": false,
+"expId": 20,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 90,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 89,
+"dim": 1
+},
+{
+"type": "challenge",
+"id": 0,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 142,
+"prime": false,
+"expId": 21,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 91,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 90,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 106,
+"prime": false,
+"expId": 27,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"id": 92,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 91,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 143,
+"prime": false,
+"expId": 22,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 106,
+"prime": false,
+"expId": 27,
+"dim": 1
+}
+]
+},
+{
+"op": "sub",
+"dest": {
+"type": "tmp",
+"id": 93,
+"dim": 1
+},
+"src": [
+{
+"type": "tmp",
+"id": 92,
+"dim": 1
+},
+{
+"type": "eval",
+"id": 19,
+"dim": 1
+}
+]
+},
+{
+"op": "muladd",
+"dest": {
+"type": "tmp",
+"prime": false,
+"id": 144,
+"expId": 47,
+"dim": 1
+},
+"src": [
+{
+"type": "challenge",
+"id": 4,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 88,
+"dim": 1
+},
+{
+"type": "tmp",
+"id": 93,
+"dim": 1
+}
+]
+}
+],
+"tmpUsed": 145
+},
+"evMap": [
+{
+"type": "cm",
+"id": 1,
+"prime": true
+},
+{
+"type": "cm",
+"id": 0,
+"prime": false
+},
+{
+"type": "const",
+"id": 2,
+"prime": false
+},
+{
+"type": "cm",
+"id": 1,
+"prime": false
+},
+{
+"type": "cm",
+"id": 0,
+"prime": true
+},
+{
+"type": "const",
+"id": 1,
+"prime": false
+},
+{
+"type": "cm",
+"id": 17,
+"prime": false
+},
+{
+"type": "const",
+"id": 0,
+"prime": false
+},
+{
+"type": "cm",
+"id": 16,
+"prime": false
+},
+{
+"type": "cm",
+"id": 15,
+"prime": false
+},
+{
+"type": "cm",
+"id": 15,
+"prime": true
+},
+{
+"type": "const",
+"id": 7,
+"prime": false
+},
+{
+"type": "const",
+"id": 8,
+"prime": false
+},
+{
+"type": "cm",
+"id": 14,
+"prime": false
+},
+{
+"type": "const",
+"id": 6,
+"prime": false
+},
+{
+"type": "const",
+"id": 7,
+"prime": true
+},
+{
+"type": "const",
+"id": 8,
+"prime": true
+},
+{
+"type": "cm",
+"id": 14,
+"prime": true
+},
+{
+"type": "const",
+"id": 6,
+"prime": true
+},
+{
+"type": "cm",
+"id": 20,
+"prime": false
+},
+{
+"type": "cm",
+"id": 17,
+"prime": true
+},
+{
+"type": "cm",
+"id": 18,
+"prime": false
+},
+{
+"type": "cm",
+"id": 8,
+"prime": false
+},
+{
+"type": "cm",
+"id": 10,
+"prime": false
+},
+{
+"type": "cm",
+"id": 7,
+"prime": false
+},
+{
+"type": "cm",
+"id": 9,
+"prime": false
+},
+{
+"type": "cm",
+"id": 18,
+"prime": true
+},
+{
+"type": "cm",
+"id": 19,
+"prime": false
+},
+{
+"type": "cm",
+"id": 2,
+"prime": false
+},
+{
+"type": "const",
+"id": 3,
+"prime": false
+},
+{
+"type": "cm",
+"id": 3,
+"prime": false
+},
+{
+"type": "const",
+"id": 4,
+"prime": false
+},
+{
+"type": "cm",
+"id": 4,
+"prime": false
+},
+{
+"type": "const",
+"id": 5,
+"prime": false
+},
+{
+"type": "cm",
+"id": 19,
+"prime": true
+},
+{
+"type": "cm",
+"id": 12,
+"prime": false
+},
+{
+"type": "cm",
+"id": 13,
+"prime": true
+},
+{
+"type": "cm",
+"id": 11,
+"prime": false
+}
+],
+"pilPower": 8,
+"cExp": 47,
+"nPublics": 3,
+"maxPolsOpenings": 3,
+"qDeg": 3,
+"qDim": 1,
+"nConstants": 9
+}
