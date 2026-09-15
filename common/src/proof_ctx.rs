@@ -772,7 +772,16 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_get_process_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        dctx.process_instances.iter().copied().filter(|id| !dctx.is_skipped_instance(*id)).collect()
+        let mut instances: Vec<usize> =
+            dctx.process_instances.iter().copied().filter(|id| !dctx.is_skipped_instance(*id)).collect();
+        instances.sort_by_key(|id| dctx.is_deferred_instance(*id));
+        instances
+    }
+
+    /// Asks for `instance_id` to be computed after this process's other instances.
+    /// See `DistributionCtx::set_deferred`.
+    pub fn dctx_set_instance_deferred(&self, instance_id: usize) {
+        self.dctx.write().unwrap().set_deferred(instance_id);
     }
 
     pub fn dctx_skip_process_instance(&self, instance_id: usize) {

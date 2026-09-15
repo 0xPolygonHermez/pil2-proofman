@@ -241,6 +241,7 @@ pub struct InstanceChunks {
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
+    pub deferred: bool,
     pub table: bool,
     pub shared: bool,
     pub n_chunks: usize,
@@ -257,7 +258,7 @@ impl InstanceInfo {
         weight: u64,
         compressor_weight: u64,
     ) -> Self {
-        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight }
+        Self { airgroup_id, air_id, deferred: false, table, shared, n_chunks: 0, weight, compressor_weight }
     }
 
     /// Total cost this instance puts on its owner: basic, recursion chain and compressor
@@ -509,6 +510,16 @@ impl DistributionCtx {
 
     pub fn is_skipped_instance(&self, instance_id: usize) -> bool {
         self.skipped_process_instances.contains(&instance_id)
+    }
+
+    /// Asks for `instance_id` to be computed after the process's other non-table instances.
+    pub fn set_deferred(&mut self, instance_id: usize) {
+        self.instances[instance_id].deferred = true;
+    }
+
+    /// Whether `instance_id` was marked by [`Self::set_deferred`].
+    pub fn is_deferred_instance(&self, instance_id: usize) -> bool {
+        self.instances[instance_id].deferred
     }
 
     /// Check if the current process is the owner of a given instance
