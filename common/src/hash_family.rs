@@ -221,9 +221,11 @@ pub fn default_grinding_bits(family: &str) -> usize {
 /// per proof verified, while the grinding itself costs the verifier a single hash -- it checks the
 /// nonce, and the 2^bits is all prover work.
 ///
-/// Poseidon's 20 is pinned by its committed native verifiers and circom fixtures, which encode the
-/// query count it buys. blake3's fixtures are not committed to a figure, so it takes the 24 its own
-/// family default asks for.
+/// Poseidon's 21 buys 72 queries: at the recursion's rate of 2^-3 a query is worth ~1.48 bits, so
+/// the solver takes `ceil((128 - 21) / 1.48)`. It sits on a step -- 22 buys nothing further, the
+/// next query comes off at 23. blake3 takes its own family default of 24.
+///
+/// Changing this changes the proof shape, and with it every proving key already built.
 pub fn recursive_grinding_bits(family: &str) -> usize {
     match family {
         "Poseidon1" | "Poseidon2" => 21,
@@ -388,6 +390,24 @@ pub fn rust_grinding_type(family: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// Recursion grinds harder than the basic airs, and blake3 harder than poseidon: a query is
+    /// expensive to verify in-circuit while the grinding costs the verifier one hash.
+    ///
+    /// Poseidon's 21 is asserted because it sets the query count, so moving it invalidates every
+    /// proving key already built.
+    #[test]
+    fn recursive_grinding_bits_exceed_the_basic_defaults() {
+        assert_eq!(super::recursive_grinding_bits("blake3"), 24);
+        assert_eq!(super::recursive_grinding_bits("Poseidon1"), 21);
+        assert_eq!(super::recursive_grinding_bits("Poseidon2"), 21);
+        for f in super::FAMILIES {
+            assert!(
+                super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
+                "{f} would grind less in recursion than in its basic airs"
+            );
+        }
+    }
+
     /// Changing the pin means regenerating every verifier in `verifier/src/<family>/`.
     #[test]
     fn the_final_air_is_pinned_only_where_a_committed_verifier_encodes_it() {
@@ -397,7 +417,7 @@ mod tests {
         }
     }
 
-    /// The final stage grinds harder than the recursion for poseidon (22 vs 20) and the same for
+    /// The final stage grinds harder than the recursion for poseidon (22 vs 21) and the same for
     /// blake3 (24), and every family grinds at least as hard as its basic airs.
     #[test]
     fn final_grinding_bits_are_pinned_per_family() {
