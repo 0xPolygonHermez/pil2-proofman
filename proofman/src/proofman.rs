@@ -5368,6 +5368,17 @@ where
     fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
         let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
+        // These words come off the wire and are read back as the proof's outputs, so pin them to
+        // one encoding: verification reduces, making `x` and `x + p` pass alike. Only the challenge
+        // slice is otherwise covered, by the caller's `as_canonical_u64` comparison.
+        if let Some(i) = publics.iter().position(|&word| word >= F::ORDER_U64) {
+            tracing::error!(
+                "Aggregated public {i} from airgroup {airgroup_id} is not canonical: {} >= {}",
+                publics[i],
+                F::ORDER_U64
+            );
+            return Ok(false);
+        }
         let circuit_type = publics[0];
         if circuit_type == 0 {
             return Ok(true);
