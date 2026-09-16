@@ -58,6 +58,8 @@ extern "C" {
 
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
+    pub fn get_n_publics(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn register_host_memory(ptr: *mut ::std::os::raw::c_void, size: u64) -> u32;

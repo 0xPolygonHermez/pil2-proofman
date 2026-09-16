@@ -226,7 +226,7 @@ pub fn default_grinding_bits(family: &str) -> usize {
 /// family default asks for.
 pub fn recursive_grinding_bits(family: &str) -> usize {
     match family {
-        "Poseidon1" | "Poseidon2" => 20,
+        "Poseidon1" | "Poseidon2" => 21,
         "blake3" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }

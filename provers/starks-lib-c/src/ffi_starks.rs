@@ -179,6 +179,10 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
 }
 
+pub fn get_n_publics_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_n_publics(p_stark_info) }
+}
+
 pub fn set_hash_family_c(family: &str) {
     let fam: u8 = match family {
         "Poseidon1" => 1,

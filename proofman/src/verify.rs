@@ -2,7 +2,8 @@ use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
     expressions_bin_free_c, expressions_bin_new_c, get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,
-    stark_info_free_c, stark_info_new_c, stark_verify_bn128_c, stark_verify_c, stark_verify_from_file_c,
+    get_n_publics_c, get_proof_size_c, stark_info_free_c, stark_info_new_c, stark_verify_bn128_c, stark_verify_c,
+    stark_verify_from_file_c,
 };
 
 use colored::*;
@@ -59,8 +60,16 @@ pub fn verify_proof_from_file<F: PrimeField64>(
     result
 }
 
+/// Verify one proof against the setup files at the given paths.
+///
+/// `proof` is the proof body only (no publics prefix); its length and `publics`' are checked
+/// against the setup before anything is handed to C++. `stark_verify` walks both through raw
+/// pointers -- `pointer2json` reads `starkInfo.proofSize` words and `starkVerify` reads
+/// `starkInfo.nPublics` field elements, neither with a bound of its own -- so a proof loaded from
+/// an untrusted file (`proofman-cli verify-stark`) or received over the network must be measured
+/// here or it reads off the end of the allocation.
 pub fn verify_proof<F: PrimeField64>(
-    p_proof: *mut u64,
+    proof: &[u64],
     stark_info_path: String,
     expressions_bin_path: String,
     verkey_path: String,
@@ -70,6 +79,28 @@ pub fn verify_proof<F: PrimeField64>(
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let proof_size = get_proof_size_c(p_stark_info) as usize;
+    let n_publics = get_n_publics_c(p_stark_info) as usize;
+    let n_publics_given = publics.as_ref().map_or(0, |p| p.len());
+    // Short is a read past the end; long only means the caller handed us a pooled or padded
+    // buffer, which the verifier ignores -- so only short is rejected.
+    let too_short = if proof.len() < proof_size {
+        Some(format!("proof has {} words but the setup's proofSize is {proof_size}", proof.len()))
+    } else if n_publics_given < n_publics {
+        Some(format!("{n_publics_given} publics were given but the setup declares {n_publics}"))
+    } else {
+        None
+    };
+    if let Some(reason) = too_short {
+        tracing::error!(
+            "··· {}",
+            format!("\u{2717} Proof does not match {stark_info_path}: {reason}").bright_red().bold()
+        );
+        expressions_bin_free_c(p_expressions_bin);
+        stark_info_free_c(p_stark_info);
+        return false;
+    }
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
     let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
@@ -92,7 +123,7 @@ pub fn verify_proof<F: PrimeField64>(
 
     let result = stark_verify_c(
         &verkey_path,
-        p_proof,
+        proof.as_ptr() as *mut u64,
         p_stark_info,
         p_expressions_bin,
         publics_ptr,
@@ -158,7 +189,7 @@ pub fn verify_basic_proof<F: PrimeField64>(
     );
 
     let is_valid_proof = verify_proof(
-        proof.as_ptr() as *mut u64,
+        proof,
         stark_info_path,
         expressions_bin_path,
         verkey_path,

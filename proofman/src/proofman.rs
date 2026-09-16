@@ -2029,7 +2029,7 @@ where
                 // global_challenge = None: the verifier reseeds from verkey + publics, matching
                 // the self-contained prover transcript.
                 let valid = verify_proof::<F>(
-                    proof.proof.as_ptr() as *mut u64,
+                    &proof.proof,
                     setup_path.display().to_string() + ".starkinfo.json",
                     setup_path.display().to_string() + ".verifier.bin",
                     setup_path.display().to_string() + ".verkey.json",
@@ -4169,7 +4169,7 @@ where
                     let proof = vadcop_final_proof.as_ref().unwrap();
                     let publics: Vec<F> = proof.public_values.iter().map(|&x| F::from_u64(x)).collect();
                     let valid_proofs = verify_proof::<F>(
-                        proof.proof.as_ptr() as *mut u64,
+                        &proof.proof,
                         base.clone() + ".starkinfo.json",
                         base.clone() + ".verifier.bin",
                         base + ".verkey.json",
@@ -5390,7 +5390,7 @@ where
         let publics_f: Vec<F> = publics_extended.iter().map(|&x| F::from_u64(x)).collect();
         let base = setup_path.display().to_string();
         Ok(verify_proof::<F>(
-            rec_proof.as_ptr() as *mut u64,
+            rec_proof,
             base.clone() + ".starkinfo.json",
             base.clone() + ".verifier.bin",
             base + ".verkey.json",
