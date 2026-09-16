@@ -12,11 +12,13 @@ use proofman_fields::PrimeField64;
 use proofman_witness::WitnessComponent;
 use proofman_common::{
     register_host_buffer, unregister_host_buffer, AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult,
-    SetupCtx, TraceInfo,
-};
+    SetupCtx, TraceInfo, Setup,};
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
-use crate::{get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_as, RCMultiplicity};
+use crate::{
+    get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_a_as_string,
+    get_hint_field_constant_as, RCMultiplicity,
+};
 
 pub struct StdVirtualTable<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
@@ -32,6 +34,9 @@ pub struct VirtualTableAir<F: PrimeField64> {
     num_rows: usize,
     num_cols: usize,
     table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
+    // Parallel to `table_ids`: the prover counts this table itself, so increments are dropped here
+    // and the counts arrive through `ProofCtx::prover_counts`.
+    prover_owned: std::sync::OnceLock<Vec<bool>>,
     // Flat col-major: idx = col * num_rows + row. Single allocation.
     multiplicities: Vec<AtomicU64>,
     table_instance_id: AtomicU64,
@@ -51,6 +56,1130 @@ impl<F: PrimeField64> Drop for VirtualTableAir<F> {
             unregister_host_buffer(base);
         }
     }
+}
+
+/// Geometry of one virtual-table air, as the prover needs it registered.
+pub struct VtLayout {
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    pub num_rows: u64,
+    pub num_cols: u64,
+    pub table_ids: Vec<u64>,
+    pub acc_bases: Vec<u64>,
+}
+
+/// Parse every virtual-table air's geometry. Returned rather than registered -- see
+/// `ProofCtx::prover_owned_tables`.
+// ---------------------------------------------------------------------------------------------
+// Fitting a table's row map from its own fixed columns.
+//
+// A virtual table row holds a tuple (its COL_* columns) and the id of the table it belongs to (its
+// UID_* column). A lookup supplies the tuple; the prover has to reach the row. When the table's
+// layout is a packing, that row is affine in the tuple, and this recovers the map from the table
+// itself -- no table ids, no conventions, nothing written down. A fit is accepted only after it
+// reproduces EVERY entry of the table, so a table whose layout is a filter simply fails and is left
+// to whoever counted it before.
+//
+// The arithmetic is Goldilocks, not integers, because that is exactly what the scatter evaluates.
+const GL_P: u128 = 0xFFFF_FFFF_0000_0001;
+
+#[inline]
+fn gl_red(a: u128) -> u64 {
+    (a % GL_P) as u64
+}
+#[inline]
+fn gl_add(a: u64, b: u64) -> u64 {
+    gl_red(a as u128 + b as u128)
+}
+#[inline]
+fn gl_sub(a: u64, b: u64) -> u64 {
+    gl_red(GL_P + a as u128 - b as u128)
+}
+#[inline]
+fn gl_mul(a: u64, b: u64) -> u64 {
+    gl_red(a as u128 * b as u128)
+}
+fn gl_pow(mut b: u64, mut e: u64) -> u64 {
+    let mut r = 1u64;
+    while e > 0 {
+        if e & 1 == 1 {
+            r = gl_mul(r, b);
+        }
+        b = gl_mul(b, b);
+        e >>= 1;
+    }
+    r
+}
+#[inline]
+fn gl_inv(a: u64) -> u64 {
+    gl_pow(a, (GL_P - 2) as u64)
+}
+
+/// Most digits a column is ever split into: base 2 over a full 64-bit value.
+const MAX_DIGITS: usize = 64;
+
+/// Digits of `v` in `base`, low first, into a stack buffer.
+///
+/// `fit_separable_on` calls this once per (sample, column) on every pass over a table of millions
+/// of rows; returning a `Vec` put ~15% of the whole fitting phase in the allocator.
+#[inline]
+fn digits_into(mut v: u64, base: u64, ndig: usize, out: &mut [usize; MAX_DIGITS]) {
+    for d in out.iter_mut().take(ndig) {
+        *d = (v % base) as usize;
+        v /= base;
+    }
+}
+
+/// Solve `target = sum(c_j * tuple_j) + k` from `samples`, then REQUIRE it on all of them.
+/// Returns (coefficients, constant). None when no affine map reproduces the table.
+fn fit_affine(samples: &[(Vec<u64>, u64)], width: usize) -> Option<(Vec<u64>, u64)> {
+    let unknowns = width + 1;
+    if samples.len() < unknowns {
+        return None;
+    }
+    // Take a spread of rows rather than the first few: the head of a table is often all zeros,
+    // which is rank-deficient and would fit anything.
+    let take = (unknowns * 8).min(samples.len());
+    let step = samples.len() / take;
+    let mut m: Vec<Vec<u64>> = Vec::with_capacity(take);
+    for i in 0..take {
+        let (t, y) = &samples[i * step];
+        let mut row: Vec<u64> = t[..width].iter().map(|v| gl_red(*v as u128)).collect();
+        row.push(1);
+        row.push(*y);
+        m.push(row);
+    }
+    // Gauss-Jordan over the field.
+    let mut piv: Vec<usize> = Vec::new();
+    let mut r = 0usize;
+    for c in 0..unknowns {
+        let Some(p) = (r..m.len()).find(|&rr| m[rr][c] != 0) else { continue };
+        m.swap(r, p);
+        let inv = gl_inv(m[r][c]);
+        for v in m[r].iter_mut() {
+            *v = gl_mul(*v, inv);
+        }
+        for rr in 0..m.len() {
+            if rr != r && m[rr][c] != 0 {
+                let f = m[rr][c];
+                for cc in 0..=unknowns {
+                    let s = gl_mul(f, m[r][cc]);
+                    m[rr][cc] = gl_sub(m[rr][cc], s);
+                }
+            }
+        }
+        piv.push(c);
+        r += 1;
+        if r == m.len() {
+            break;
+        }
+    }
+    let mut sol = vec![0u64; unknowns];
+    for (i, c) in piv.iter().enumerate() {
+        sol[*c] = m[i][unknowns];
+    }
+    // Exhaustive check. A rank-deficient sample can yield a solution that suits the sample and
+    // nothing else, so this is the whole guarantee -- never skip it.
+    let bad = samples.par_iter().any(|(t, y)| {
+        let mut acc = sol[width];
+        for (j, v) in t[..width].iter().enumerate() {
+            acc = gl_add(acc, gl_mul(sol[j], gl_red(*v as u128)));
+        }
+        acc != *y
+    });
+    if bad {
+        return None;
+    }
+    Some((sol[..width].to_vec(), sol[width]))
+}
+
+/// Tables the prover counts itself.
+///
+/// TEMPORARY. It exists only for the window where the prover has claimed a table but zisk still
+/// calls `inc_virtual_row` for it; once a wave's call sites are deleted there is nothing to
+/// suppress and this goes with them. Global rather than plumbed through `ProofCtx` because the
+/// claim is global, and read lazily because the set is filled by the host binary AFTER the virtual
+/// table airs are built -- reading it at construction (as this used to) yielded all-false and
+/// silently double-counted.
+static PROVER_OWNED_TABLES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+
+pub fn set_prover_owned_tables(tables: Vec<u64>) {
+    let _ = PROVER_OWNED_TABLES.set(tables);
+}
+
+fn prover_owned_tables() -> &'static [u64] {
+    PROVER_OWNED_TABLES.get().map(|v| v.as_slice()).unwrap_or(&[])
+}
+
+/// Counts `fit_virtual_table_maps` already has when it returns, for the caller's one-line summary.
+/// Kept separate from the per-table `VtFittedMap`s because the caller (`register_prover_multiplicities`)
+/// also knows the range-claimed tables (a different mechanism this function never examines) and needs
+/// both populations in scope to report ownership honestly.
+pub struct VtFitSummary {
+    /// Every virtual table this function looked at (non-zero height), across every virtual-table air.
+    pub considered: usize,
+    pub n_affine: usize,
+    pub n_separable: usize,
+    pub n_exact: usize,
+    /// Total bytes across every exact map, which lives GPU-resident per device.
+    pub exact_bytes: u64,
+    pub elapsed_ms: u128,
+    /// Considered tables this function did not fit -- some are range tables claimed elsewhere (see
+    /// `collect_prover_owned_ranges`), the rest are genuinely left to the std to count.
+    pub unclaimed_ids: Vec<u64>,
+}
+
+/// One fitted row map: (table_id, coefficients, constant).
+pub struct VtFittedMap {
+    pub table_id: u64,
+    pub coef: Vec<u64>,
+    pub konst: u64,
+    /// Exact-match map: `(key columns, table, slots)`. The slot count is carried, not derived from
+    /// the table's length: the packed layout has a header, so dividing by the stride gave a
+    /// non-power-of-two and the probe's `slots - 1` mask degenerated to a single bit.
+    pub map: Option<(usize, Vec<u64>, u64)>,
+    /// Separable row map: `(tuple columns used, contribution table)`. The table carries its own
+    /// per-column base, digit count and offsets in its header. See [`fit_separable_on`].
+    pub digits: Option<(Vec<u32>, Vec<u64>)>,
+}
+
+/// Marks a map whose keys are packed into one word. Must match MUL_MAP_PACKED on the C side.
+const MUL_MAP_PACKED: u64 = 0x5041_434B_4544_4B56;
+
+/// Runtime probe cap the GPU decoder enforces (`MUL_MAP_MAX_PROBE` in
+/// `pil2-stark/src/starkpil/multiplicity_decoders.hpp`). The self-checks below must use the same
+/// bound: a chain that only resolves after more probes than this would still verify here but miss
+/// silently at runtime, recording the row as out of range instead of crediting it.
+const MUL_MAP_MAX_PROBE: usize = 4096;
+
+/// Exact-match map: the universal fallback.
+///
+/// Keys are the lookup's whole tuple, compared exactly -- no shortest-prefix guess.
+/// A prefix that separates the TABLE's rows need not be the one lookups address it by: table 331's
+/// 124 rows are separated by two columns, yet every lookup decoded out of range. Using the whole
+/// tuple removes the guess entirely.
+///
+/// Duplicate tuples are kept, not rejected: two table rows holding the same tuple are
+/// interchangeable to the lookup argument, which constrains only the SUM of their multiplicities,
+/// so all counts go to the first. That is what lets 133 (189 distinct tuples over 256 rows) and
+/// 8101 be covered at all.
+fn fit_exact_map(samples: &[(Vec<u64>, u64)], width: usize) -> Option<(usize, Vec<u64>, u64, bool)> {
+    // Trailing columns that never vary are the group's padding, not part of this table's tuple: a
+    // COL_* group is widened to its widest member, so a narrower table's last columns are zero.
+    // Table 133 is a 6-element tuple in a 7-wide group, and keying on the pad made the planner
+    // demand a column no lookup supplies.
+    let mut nkey = width;
+    while nkey > 1 {
+        let c = nkey - 1;
+        let first = samples[0].0[c];
+        if samples.iter().all(|(t, _)| t[c] == first) {
+            nkey -= 1;
+        } else {
+            break;
+        }
+    }
+    let mut slots = 1usize;
+    while slots * 4 < samples.len() * 5 {
+        slots <<= 1;
+    }
+
+    // Pack the key into one word when the table's OWN values fit, which is the common case: table
+    // 125's columns span [2, 513, 255, 255, 8, 255, 80] -- 47 bits in total -- yet a slot stored
+    // seven whole words plus the row, 64 bytes for 47 bits of information. That map alone was
+    // 1073 MB, and every probe read eight words instead of two.
+    //
+    // Packing is decided from the entries, never assumed: a column holding a negative field element
+    // or a full 32-bit value simply does not fit, and that table keeps the verbatim layout. At most
+    // 63 bits, so a packed key can never collide with the empty marker.
+    //
+    // A lookup may still present a value wider than the column ever holds. The decoder range-checks
+    // each column against the stored width before packing, so such a tuple misses cleanly instead
+    // of aliasing onto another entry's key.
+    let widths: Vec<u32> = (0..nkey)
+        .map(|c| {
+            let m = samples.iter().map(|(t, _)| t[c]).max().unwrap_or(0);
+            64 - m.leading_zeros()
+        })
+        .collect();
+    if widths.iter().sum::<u32>() <= 63 {
+        let mut shift = Vec::with_capacity(nkey);
+        let mut at = 0u32;
+        for w in widths.iter() {
+            shift.push(at);
+            at += w;
+        }
+        let pack = |t: &[u64]| -> u64 {
+            (0..nkey).fold(0u64, |acc, c| acc | (t[c] << shift[c]))
+        };
+        // [MAGIC][(shift << 32) | width per key column][slots of (packed key, row)]. The shape rides
+        // in the map's own header so the scatter job carries no extra field: register pressure in
+        // that kernel caps occupancy for every air, not just the ones with a map.
+        let head = 1 + nkey;
+        let mut kv = vec![u64::MAX; head + slots * 2];
+        kv[0] = MUL_MAP_PACKED;
+        for c in 0..nkey {
+            kv[1 + c] = ((shift[c] as u64) << 32) | widths[c] as u64;
+        }
+        let mut collided = false;
+        for (t, r) in samples.iter() {
+            let k = pack(&t[..nkey]);
+            let mut i = (hash_key(&[k]) as usize) & (slots - 1);
+            loop {
+                let slot = head + i * 2;
+                if kv[slot] == u64::MAX {
+                    kv[slot] = k;
+                    kv[slot + 1] = *r;
+                    break;
+                }
+                if kv[slot] == k {
+                    collided = true; // two entries share this key
+                    break;
+                }
+                i = (i + 1) & (slots - 1);
+            }
+        }
+        // Probe every entry back with the decoder's own algorithm before handing the map over. The
+        // packed layout, the hash and the probe are duplicated on the C side, and a disagreement
+        // shows up there as a kernel that misses every lookup and spins `slots` times per row --
+        // indistinguishable from a hang. Cheap here, and it fails loudly instead.
+        for (t, r) in samples.iter() {
+            let k = pack(&t[..nkey]);
+            let mut h = k.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 32;
+            let mut i = (h as usize) & (slots - 1);
+            let mut found = None;
+            for _ in 0..slots.min(MUL_MAP_MAX_PROBE) {
+                let slot = head + i * 2;
+                if kv[slot] == u64::MAX { break; }
+                if kv[slot] == k { found = Some(kv[slot + 1]); break; }
+                i = (i + 1) & (slots - 1);
+            }
+            let ok = match found { Some(got) => got == *r || collided, None => false };
+            if !ok {
+                tracing::error!(
+                    "packed map does not probe back: key {:?} packs to {k:#x}, expected row {r}, \
+                     got {found:?} -- keeping the verbatim layout for this table",
+                    &t[..nkey]
+                );
+                return fit_exact_map_verbatim(samples, nkey, slots);
+            }
+        }
+        return Some((nkey, kv, slots as u64, collided));
+    }
+
+    fit_exact_map_verbatim(samples, nkey, slots)
+}
+
+/// The tuple stored verbatim, one word per column: what a table gets when its columns do not fit a
+/// single word, and the fallback if the packed layout ever fails to probe back.
+///
+/// This is the map of last resort -- there is nothing to fall back to if it is wrong -- so it gets
+/// the same probe-back self-check as the packed path (see `fit_exact_map`) before being trusted.
+fn fit_exact_map_verbatim(samples: &[(Vec<u64>, u64)], nkey: usize, slots: usize)
+    -> Option<(usize, Vec<u64>, u64, bool)>
+{
+    let stride = nkey + 1;
+    let mut kv = vec![u64::MAX; slots * stride];
+    let mut collided = false;
+    for (t, r) in samples.iter() {
+        let mut i = (hash_key(&t[..nkey]) as usize) & (slots - 1);
+        loop {
+            let slot = i * stride;
+            if kv[slot..slot + nkey].iter().all(|v| *v == u64::MAX) {
+                kv[slot..slot + nkey].copy_from_slice(&t[..nkey]);
+                kv[slot + nkey] = *r;
+                break;
+            }
+            if kv[slot..slot + nkey] == t[..nkey] {
+                collided = true; // two entries share this key
+                break;
+            }
+            i = (i + 1) & (slots - 1);
+        }
+    }
+    if !verify_exact_map_verbatim(samples, &kv, nkey, slots, collided) {
+        return None;
+    }
+    Some((nkey, kv, slots as u64, collided))
+}
+
+/// Probe every sample back through the verbatim map with the decoder's own algorithm, bounded by
+/// `MUL_MAP_MAX_PROBE` so this self-check agrees with what the GPU decoder actually does at
+/// runtime. There is no further fallback past this map, so a failure here means the table is left
+/// unfitted (and loudly logged) rather than silently registered wrong.
+fn verify_exact_map_verbatim(samples: &[(Vec<u64>, u64)], kv: &[u64], nkey: usize, slots: usize, collided: bool) -> bool {
+    let stride = nkey + 1;
+    for (t, r) in samples.iter() {
+        let mut i = (hash_key(&t[..nkey]) as usize) & (slots - 1);
+        let mut found = None;
+        for _ in 0..slots.min(MUL_MAP_MAX_PROBE) {
+            let slot = i * stride;
+            if kv[slot..slot + nkey].iter().all(|v| *v == u64::MAX) { break; }
+            if kv[slot..slot + nkey] == t[..nkey] { found = Some(kv[slot + nkey]); break; }
+            i = (i + 1) & (slots - 1);
+        }
+        let ok = match found { Some(got) => got == *r || collided, None => false };
+        if !ok {
+            tracing::error!(
+                "verbatim map does not probe back: key {:?}, expected row {r}, got {found:?} -- \
+                 table left unfitted",
+                &t[..nkey]
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// Recover a table's row map as a sum of per-digit contributions, restricted to ONE column.
+///
+/// Between the affine fit and the exact map lies a shape neither covers, and it is the common one.
+/// Table 126's tuple is `[packed, c0..c4]` whose packed column determines the row by DIGITS, not
+/// affinely (`19 = (2,3)_8` becomes `2*4 + 3 = 11`). This fits `row = sum_i f_i(digit_i(key))`,
+/// which covers affine columns (a digit's contribution is proportional to its place value),
+/// mixed-radix recodings, and per-value tables, without naming any of them.
+///
+/// Single-column only: fitting several columns at once needs a sample that isolates each digit's
+/// contribution from the others, which a fixed point starting from nothing cannot always find. The
+/// tables this covers (126, 127, 8001) all separate on one column, so that is as far as this goes.
+///
+/// Returns `(base, digits_per_column, columns_used, table)`; the table is
+/// `columns * digits * base` entries with `u64::MAX` marking a digit the table never holds, so a
+/// tuple outside it misses cleanly instead of landing on a wrong row.
+fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) -> Option<(u64, u32, Vec<u32>, Vec<u64>)> {
+    const INVALID: u64 = u64::MAX;
+    if samples.is_empty() || cols.is_empty() {
+        return None;
+    }
+    let width = cols.len();
+    // Per-column maxima come from the caller: recomputing them here cost a full scan of the table
+    // on each of the `width` calls the single-column loop makes.
+    let maxima: Vec<u64> = cols.iter().map(|&j| col_max[j as usize]).collect();
+
+    for base in 2u64..=64 {
+        // Digits enough for the widest column; a column needing more than 24 is not worth a rule.
+        let mut ndig = 1usize;
+        {
+            let mut p = base;
+            let top = *maxima.iter().max().unwrap_or(&0);
+            while p <= top {
+                p = match p.checked_mul(base) { Some(x) => x, None => break };
+                ndig += 1;
+            }
+        }
+        if ndig > 24 || (width * ndig * base as usize) > 1 << 20 {
+            continue;
+        }
+        debug_assert!(ndig <= MAX_DIGITS);
+
+        let idx = |c: usize, i: usize, d: usize| (c * ndig + i) * base as usize + d;
+        let mut f = vec![INVALID; width * ndig * base as usize];
+        for c in 0..width {
+            for i in 0..ndig {
+                f[idx(c, i, 0)] = 0; // a zero digit contributes nothing
+            }
+        }
+
+        // Fixed point: a sample with exactly one unknown digit contribution determines it. Repeat
+        // until nothing new is learned -- which is what lets a product-shaped table be solved
+        // without needing a sample that isolates every digit on its own. Returns true on a
+        // contradiction (no rule of this shape exists).
+        let settle = |f: &mut [u64]| -> bool {
+            let mut dig = [0usize; MAX_DIGITS];
+            loop {
+                let mut learned = 0usize;
+                for (t, r) in samples.iter() {
+                    let mut sum = 0u64;
+                    let mut unknown: Option<usize> = None;
+                    let mut many = false;
+                    for c in 0..width {
+                        digits_into(t[cols[c] as usize], base, ndig, &mut dig);
+                        for (i, d) in dig[..ndig].iter().enumerate() {
+                            let k = idx(c, i, *d);
+                            if f[k] == INVALID {
+                                if unknown.is_some() { many = true; } else { unknown = Some(k); }
+                            } else {
+                                sum = sum.wrapping_add(f[k]);
+                            }
+                        }
+                    }
+                    if many { continue; }
+                    match unknown {
+                        Some(k) => { f[k] = r.wrapping_sub(sum); learned += 1; }
+                        None => if sum != *r { return true },
+                    }
+                }
+                if learned == 0 {
+                    return false;
+                }
+            }
+        };
+        if settle(&mut f) {
+            continue;
+        }
+
+        // Verified against every entry, not just the ones it was learned from. Never subsampled:
+        // this is the whole guarantee that a rule learned from a subset of samples really describes
+        // the table.
+        let holds = samples.par_iter().all(|(t, r)| {
+            let mut dig = [0usize; MAX_DIGITS];
+            let mut sum = 0u64;
+            for c in 0..width {
+                digits_into(t[cols[c] as usize], base, ndig, &mut dig);
+                for (i, d) in dig[..ndig].iter().enumerate() {
+                    let v = f[idx(c, i, *d)];
+                    if v == INVALID { return false; }
+                    sum = sum.wrapping_add(v);
+                }
+            }
+            sum == *r
+        });
+        if !holds {
+            continue;
+        }
+
+        // Drop the columns that contribute nothing: table 126's rule needs only its packed column,
+        // so the scatter evaluates one expression per row instead of six.
+        let used: Vec<u32> = (0..width)
+            .filter(|&c| (0..ndig).any(|i| (0..base as usize).any(|d| {
+                let v = f[idx(c, i, d)];
+                v != INVALID && v != 0
+            })))
+            .map(|c| cols[c])
+            .collect();
+        if used.is_empty() {
+            continue;
+        }
+        let mut packed = Vec::with_capacity(used.len() * ndig * base as usize);
+        for &c in used.iter() {
+            let local = cols.iter().position(|&x| x == c).expect("used columns come from cols");
+            for i in 0..ndig {
+                for d in 0..base as usize {
+                    packed.push(f[idx(local, i, d)]);
+                }
+            }
+        }
+        return Some((base, ndig as u32, used, packed));
+    }
+    None
+}
+
+/// Pack a uniform-base fit into the header the C-side digit decoder reads.
+fn separable_header(base: u64, ndig: u32, used: &[u32], flat: &[u64]) -> Vec<u64> {
+    let n = used.len();
+    let stride = ndig as usize * base as usize;
+    let mut tab = vec![0u64; 3 * n];
+    for k in 0..n {
+        tab[k] = base;
+        tab[n + k] = ndig as u64;
+        tab[2 * n + k] = (3 * n + k * stride) as u64;
+    }
+    tab.extend_from_slice(flat);
+    tab
+}
+
+/// Must match mulResolveRow on the C side.
+fn hash_key(key: &[u64]) -> u64 {
+    let mut h: u64 = 0;
+    for k in key {
+        h ^= k
+            .wrapping_add(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(h << 6)
+            .wrapping_add(h >> 2);
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 32;
+    }
+    h
+}
+
+/// How many elements each table's lookups actually supply.
+///
+/// The key width is a property of the LOOKUP, not of the table's groups: a COL_* group is padded to
+/// its widest member, so taking the minimum truncates a key (125: 7 -> 5) and taking the maximum
+/// demands columns a narrower lookup never sends. Both are guesses; the assumes side states it.
+fn lookup_arity<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> HashMap<u64, usize> {
+    let mut arity: HashMap<u64, usize> = HashMap::new();
+    for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
+        for air_id in 0..airs.len() {
+            let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+            let hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "gsum_debug_data");
+            for h in hints {
+                let o = HintFieldOptions::default();
+                let Ok(ty) = get_hint_field_constant_as::<u64, F>(
+                    pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
+                else { continue };
+                if ty != 0 { continue; } // assumes side only
+                let Ok(ids) = get_hint_field_constant_a_as::<u64, F>(
+                    pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
+                else { continue };
+                let Ok(len) = get_hint_field_constant_as::<u64, F>(
+                    pctx, setup, airgroup_id, air_id, h as usize, "len_expressions", o)
+                else { continue };
+                for id in ids {
+                    // Disagreeing lookups mean no single key width; keep the smallest so the
+                    // planner's own check catches the mismatch rather than reading past a tuple.
+                    let e = arity.entry(id).or_insert(len as usize);
+                    if (len as usize) < *e { *e = len as usize; }
+                }
+            }
+        }
+    }
+    arity
+}
+
+/// The tuple a virtual table's rows actually carry, per group, named by the PIL.
+///
+/// `COL_<g>_<base>_<j>` names only the columns that SURVIVED `simplify_virtual_fixed`, and that pass
+/// both drops constant columns and DEDUPLICATES identical ones across groups. A deduplicated column
+/// keeps one name -- the first group's -- so the other groups lose theirs and their `j` sequence
+/// gains a hole. Table 125's groups 19 and 20 are 7 wide but appear as `j = [0,1,4,5,6]`; the PIL
+/// says their elements 2 and 3 are `COL_18_35_2` and `COL_18_35_3`, group 18's columns. Reading the
+/// surviving names and zero-filling the holes therefore addresses the wrong rows, which is what
+/// undercounted 125 (134.7M of 436.2M).
+///
+/// The proves-side `gsum_debug_data` hint carries `name_exprs`: the column each tuple element really
+/// reads, aliases included. It is a compile-time string array, so this costs no expression
+/// evaluation -- and unlike the surviving `COL_*` names it is the PIL's own statement of the layout.
+///
+/// Returns one entry per proves-side hint of `tid`.
+fn proves_side_tuple_names<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    setup: &Setup<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    tid: u64,
+) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    for h in get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "gsum_debug_data") {
+        let o = HintFieldOptions::default();
+        let Ok(ty) = get_hint_field_constant_as::<u64, F>(
+            pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
+        else { continue };
+        if ty != 1 { continue; } // proves side: the table's own rows
+        let Ok(ids) = get_hint_field_constant_a_as::<u64, F>(
+            pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
+        else { continue };
+        if !ids.contains(&tid) { continue; }
+        let Ok(names) = get_hint_field_constant_a_as_string::<F>(
+            pctx, setup, airgroup_id, air_id, h as usize, "name_exprs", o)
+        else { continue };
+        if !names.is_empty() {
+            out.push(names);
+        }
+    }
+    out
+}
+
+/// Recover a row map for every virtual table whose layout is a packing.
+///
+/// Walks each virtual-table AIR's `COL_*`/`UID_*` groups to recover every table's own
+/// `(tuple, row)` entries from its fixed columns, then fits each table's row map: an affine map
+/// first, then a single-column separable (digit) map (see [`fit_separable_on`]), then an exact
+/// hash map as the universal fallback.
+///
+/// Scope, deliberately: a table whose entries live in ONE `COL_*` group that covers its whole
+/// height and sits inside a single accumulator column. Tables split across groups of differing
+/// widths have no single tuple shape to fit and are skipped, as are filtered layouts, whose fit
+/// fails its exhaustive check. Skipping is always safe -- the std keeps counting whatever is not
+/// claimed here. Range tables are skipped the same way (no `COL_*` group at all); they are claimed
+/// through `collect_prover_owned_ranges` instead, a mechanism this function never examines.
+///
+/// Returns the per-table maps alongside a [`VtFitSummary`] of the counts this function already
+/// computes, so the caller can fold them into one line together with the range-claimed tables it
+/// separately knows about.
+pub fn fit_virtual_table_maps<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> ProofmanResult<(Vec<VtFittedMap>, VtFitSummary)> {
+    use std::io::{BufReader, Read};
+
+    let global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
+    if global_hint.is_empty() {
+        return Ok((Vec::new(), VtFitSummary {
+            considered: 0, n_affine: 0, n_separable: 0, n_exact: 0, exact_bytes: 0, elapsed_ms: 0,
+            unclaimed_ids: Vec::new(),
+        }));
+    }
+    let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "airgroup_ids")?;
+    let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "air_ids")?;
+
+    let arity = lookup_arity(pctx, sctx);
+    let mut out = Vec::new();
+    // Tallied for the one operator-facing summary the caller composes -- everything per-table
+    // below is debug/trace only.
+    let __t0 = std::time::Instant::now();
+    let mut considered = 0usize;
+    let mut considered_ids: Vec<u64> = Vec::new();
+    let mut n_affine = 0usize;
+    let mut n_separable = 0usize;
+    let mut n_exact = 0usize;
+    let mut exact_bytes: u64 = 0;
+    for i in 0..airgroup_ids.len() {
+        let (airgroup_id, air_id) = (airgroup_ids[i], air_ids[i]);
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
+        let o = HintFieldOptions::default();
+        let table_ids = get_hint_field_constant_a_as::<usize, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "table_ids",
+            o.clone(),
+        )?;
+        let acc_heights = get_hint_field_constant_a_as::<u64, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "acc_heights",
+            o.clone(),
+        )?;
+        let num_muls =
+            get_hint_field_constant_as::<usize, F>(pctx, setup, airgroup_id, air_id, hint_id, "num_muls", o)?;
+
+        let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
+        let n_const = setup.stark_info.n_constants as usize;
+        let Some(pol_map) = setup.stark_info.const_pols_map.as_ref() else { continue };
+
+        // COL_<g>_<base>_<k> and UID_<g>: the group is the tuple, the uid says which table a row
+        // belongs to. Parsed, not assumed -- a new group shape needs no change here.
+        let mut groups: std::collections::BTreeMap<u64, (Vec<(u64, usize)>, Option<usize>)> = Default::default();
+        for (idx, pm) in pol_map.iter().enumerate() {
+            let name = pm.name.as_str();
+            if let Some(rest) = name.strip_prefix("COL_") {
+                let parts: Vec<&str> = rest.split('_').collect();
+                if parts.len() == 3 {
+                    if let (Ok(g), Ok(k)) = (parts[0].parse::<u64>(), parts[2].parse::<u64>()) {
+                        groups.entry(g).or_default().0.push((k, idx));
+                    }
+                }
+            } else if let Some(rest) = name.strip_prefix("UID_") {
+                if let Ok(g) = rest.parse::<u64>() {
+                    groups.entry(g).or_default().1 = Some(idx);
+                }
+            }
+        }
+        for v in groups.values_mut() {
+            v.0.sort_unstable();
+        }
+        let name_to_idx: HashMap<&str, usize> =
+            pol_map.iter().enumerate().map(|(i, pm)| (pm.name.as_str(), i)).collect();
+        if groups.is_empty() {
+            continue;
+        }
+
+        // The .const is raw row-major u64 with an n_constants stride. Read the UID columns first;
+        // the tuples are only needed for the tables that survive the shape checks.
+        let path = setup.const_pols_path.replace(".const_gpu", ".const");
+        let Ok(file) = std::fs::File::open(&path) else {
+            tracing::debug!("virtual table fit: cannot open {path}; skipping");
+            continue;
+        };
+        // A group with no UID column belongs WHOLLY to one table -- there is nothing to mark per
+        // row. Table 125's rows live in three such groups (18, 19, 20), which is why only 2.49M of
+        // its 8.78M entries were ever found.
+        let uid_idx: Vec<(u64, usize)> = groups.iter().filter_map(|(g, v)| v.1.map(|u| (*g, u))).collect();
+        let mut uids: std::collections::BTreeMap<u64, Vec<u64>> =
+            uid_idx.iter().map(|(g, _)| (*g, Vec::with_capacity(num_rows))).collect();
+        // Read the whole .const once into memory and keep it for the rest of this air: every
+        // table sharing the air (the common case -- see `set_group_virtual_tables`) then gathers
+        // its own rows by direct indexing instead of each re-opening and forward-scanning the same
+        // file, which for K co-located tables was O(K x filesize) instead of O(filesize).
+        let row_bytes = n_const * 8;
+        let mut const_buf = vec![0u8; num_rows * row_bytes];
+        let complete_rows = {
+            let mut rd = BufReader::with_capacity(1 << 22, &file);
+            let mut filled = 0usize;
+            loop {
+                match rd.read(&mut const_buf[filled..]) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => filled += n,
+                }
+            }
+            filled / row_bytes
+        };
+        for r in 0..complete_rows {
+            let row = &const_buf[r * row_bytes..(r + 1) * row_bytes];
+            for (g, c) in uid_idx.iter() {
+                let b = &row[c * 8..c * 8 + 8];
+                uids.get_mut(g).unwrap().push(u64::from_le_bytes(b.try_into().unwrap()));
+            }
+        }
+
+        for (t, tid) in table_ids.iter().enumerate() {
+            let tid = *tid as u64;
+            let base = acc_heights[t];
+            let end = acc_heights.iter().copied().filter(|h| *h > base).min().unwrap_or((num_muls * num_rows) as u64);
+            let height = end - base;
+            if height == 0 {
+                continue;
+            }
+            considered += 1;
+            considered_ids.push(tid);
+            // TEMP: 127's key expressions exceed the extractor; excluded so the rest can be
+            // verified. Its generic answer is the interpreter, not another closed form.
+
+
+            // A table's entries occupy the accumulator offsets [base, base+height). Each offset is
+            // an (accumulator column, air row) pair, and the COL_* group holding a row is the one
+            // whose UID names this table there. Bind each group to the column whose air rows it
+            // covers -- derived, so no convention about group numbering is assumed.
+            let mut rows_of_table: Vec<(usize, u64, u64)> = Vec::new(); // (air_row, row_in_table, group)
+            let mut widths: Vec<usize> = Vec::new();
+
+            // The accumulator column is DERIVED, not searched: a table starts at column
+            // `base >> shift` and its groups, in ascending group order, occupy consecutive columns.
+            // Searching for "a column whose rows fall inside the span" is ambiguous whenever a table
+            // spans several columns, which is exactly where it went wrong before.
+            let shift = num_rows.trailing_zeros() as u64;
+            let c0 = base >> shift;
+            let c_end = (base + height - 1) >> shift;
+            let mut mine_by_group: Vec<(u64, Vec<usize>)> = Vec::new();
+            for (g, gi) in groups.iter() {
+                match gi.1 {
+                    Some(uid_col) => {
+                        let rows_here: Vec<usize> = uids[g]
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(r, u)| if *u == tid { Some(r) } else { None })
+                            .collect();
+                        let _ = uid_col;
+                        if !rows_here.is_empty() {
+                            mine_by_group.push((*g, rows_here));
+                        }
+                    }
+                    None => mine_by_group.push((*g, Vec::new())), // claimed below only if its column is ours
+                }
+            }
+            mine_by_group.sort_by_key(|(g, _)| *g);
+
+            // What the PIL says each of this table's groups holds. Fetched before the walk because
+            // a group's true width is the hint's element count, not what survived deduplication.
+            let hint_names = proves_side_tuple_names(pctx, setup, airgroup_id, air_id, tid);
+
+            // Walk the table's columns and the groups together.
+            let mut col = c0;
+            let mut ok = true;
+            for (g, rows_here) in mine_by_group.iter_mut() {
+                if col > c_end {
+                    break;
+                }
+                let has_uid = groups[g].1.is_some();
+                // `mine_by_group` only ever pushes a UID-bearing group when its filtered
+                // `rows_here` is non-empty, so this can never be empty here.
+                debug_assert!(!has_uid || !rows_here.is_empty());
+                if !has_uid {
+                    // Only a table that already owns a UID-bearing group may absorb UID-less ones.
+                    // Without this a range table -- which has no COL group at all and is addressed
+                    // by an affine decoder -- swallows whatever UID-less group happens to fall in
+                    // its span, and the bogus map overrides its working decoder.
+                    if widths.is_empty() {
+                        continue;
+                    }
+
+                    // A whole column of a UID-less group is ours only if this column is inside the
+                    // table's span; otherwise the group belongs to some other table.
+                    let off0 = col * num_rows as u64;
+                    if off0 < base || off0 >= end {
+                        continue;
+                    }
+                    *rows_here = (0..num_rows).collect();
+                }
+                // A UID-less group whose rows are all identical is filler inside the span, not
+                // entries -- 125's span covers two such groups of 2M identical tuples each. The
+                // column counter must still advance past them, or every later group is off by one.
+                if !has_uid && !rows_here.is_empty() {
+                    let cset: Vec<usize> = groups[g].0.iter().map(|(_, c)| *c).collect();
+                    let mut f = std::fs::File::open(&path)?;
+                    let mut first: Option<Vec<u64>> = None;
+                    let mut constant = true;
+                    for probe in [0usize, 1, num_rows / 2, num_rows - 1] {
+                        use std::io::{Read, Seek, SeekFrom};
+                        f.seek(SeekFrom::Start(probe as u64 * n_const as u64 * 8))?;
+                        let mut buf = vec![0u8; n_const * 8];
+                        if f.read_exact(&mut buf).is_err() {
+                            break;
+                        }
+                        let t: Vec<u64> = cset
+                            .iter()
+                            .map(|c| u64::from_le_bytes(buf[c * 8..c * 8 + 8].try_into().unwrap()))
+                            .collect();
+                        match &first {
+                            None => first = Some(t),
+                            Some(f0) => {
+                                if *f0 != t {
+                                    constant = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if constant {
+                        col += 1;
+                        continue;
+                    }
+                }
+                for a in rows_here.iter() {
+                    let off = col * num_rows as u64 + *a as u64;
+                    if off < base || off >= end {
+                        ok = false;
+                        break;
+                    }
+                    rows_of_table.push((*a, off - base, *g));
+                }
+                // A group's width is the LAST column index + 1, not the number of surviving
+                // columns: simplify_virtual_fixed both drops constant columns and deduplicates
+                // identical ones, so groups 19 and 20 are 7 wide but appear as j=[0,1,4,5,6].
+                // Counting them gave 5 and truncated the key. The holes are resolved from the
+                // proves-side hint below, which names the real column for every element.
+                widths.push(groups[g].0.last().map(|(j, _)| *j as usize + 1).unwrap_or(0));
+                col += 1;
+                if !ok {
+                    break;
+                }
+            }
+
+            if !ok || rows_of_table.is_empty() || widths.is_empty()
+                || rows_of_table.len() as u64 > height
+            {
+                tracing::trace!(
+                    "virtual table {tid}: SKIPPED before fitting (ok={ok} rows={} height={height} groups={})",
+                    rows_of_table.len(), widths.len()
+                );
+                continue;
+            }
+
+            // The lookup states how many elements it sends; that is the key width.
+            let Some(width) = arity.get(&tid).copied() else {
+                tracing::debug!("virtual table {tid}: no lookup found, left to the std");
+                continue;
+            };
+            if width == 0 || width > 8 {
+                continue;
+            }
+            // Bind each group to its proves-side hint: the hint whose `name_exprs` reproduces
+            // every column the group DID keep, at the same position. Groups differ in those
+            // surviving columns, so the match is unique; where two groups agree on all of them
+            // they describe the same tuple anyway. The binding is derived, never assumed from
+            // hint or group ordering.
+            let mut tuple_cols: HashMap<u64, Vec<usize>> = HashMap::new();
+            for (g, rows_here) in mine_by_group.iter() {
+                if rows_here.is_empty() {
+                    continue;
+                }
+                let matches: Vec<&Vec<String>> = hint_names
+                    .iter()
+                    .filter(|names| {
+                        groups[g].0.iter().all(|(j, idx)| {
+                            names.get(*j as usize).map(|n| n.as_str()) == Some(pol_map[*idx].name.as_str())
+                        })
+                    })
+                    .collect();
+                // Exactly one hint must describe the group. Zero means the PIL shape changed under
+                // this reader; several means the group is ambiguous. Either way, guessing here is
+                // what produced wrong rows before, so leave the table to the std.
+                let [only] = matches[..] else {
+                    tracing::trace!(
+                        "virtual table {tid}: group {g} matches {} proves-side hints, not one -- \
+                         left to the std",
+                        matches.len()
+                    );
+                    ok = false;
+                    break;
+                };
+                // Every element's real column, aliases included.
+                let cols: Option<Vec<usize>> = only.iter().map(|n| name_to_idx.get(n.as_str()).copied()).collect();
+                let Some(cols) = cols else {
+                    tracing::debug!("virtual table {tid}: group {g} names a column the setup does not hold");
+                    ok = false;
+                    break;
+                };
+                tuple_cols.insert(*g, cols);
+            }
+            if !ok {
+                continue;
+            }
+
+            // A COL_* group is shared by several tables and padded to the widest of them, so a
+            // group may carry MORE elements than this lookup sends; the key is the leading `width`
+            // of them, and the prefix fit below narrows further. Carrying FEWER is the real defect:
+            // the group cannot supply the tuple and nothing states where the missing elements sit.
+            if let Some(short) = tuple_cols.values().map(|c| c.len()).filter(|n| *n < width).min() {
+                tracing::debug!(
+                    "virtual table {tid}: lookup sends {width} elements but a group carries only \
+                     {short} -- left to the std"
+                );
+                continue;
+            }
+
+            // Tuples for this table, in accumulator order.
+            rows_of_table.sort_unstable_by_key(|(_, r, _)| *r);
+            // Direct index into the whole-air `const_buf` gathered once above -- no per-table file
+            // I/O left at all, sequential or otherwise.
+            let mut samples: Vec<(Vec<u64>, u64)> = vec![(Vec::new(), 0); rows_of_table.len()];
+            for (i, &(air_row, row_in_table, g)) in rows_of_table.iter().enumerate() {
+                if air_row >= complete_rows {
+                    ok = false;
+                    break;
+                }
+                let buf = &const_buf[air_row * row_bytes..(air_row + 1) * row_bytes];
+                let tuple: Vec<u64> = tuple_cols[&g][..width]
+                    .iter()
+                    .map(|c| u64::from_le_bytes(buf[c * 8..c * 8 + 8].try_into().unwrap()))
+                    .collect();
+                samples[i] = (tuple, row_in_table);
+            }
+            if !ok {
+                tracing::debug!("virtual table {tid}: proves-side tuple unavailable, left to the std");
+                continue;
+            }
+
+            // Shortest prefix that verifies, not the group's full width.
+            //
+            // A COL_* group is shared by several tables and padded to the widest of them, so the
+            // trailing columns of a narrower table hold another table's data. Fitting over the
+            // group width therefore fits over junk -- that is why 133 (a 6-element tuple in a
+            // 7-wide group) came back "duplicate tuples". Any fit is still verified against every
+            // entry, so a shorter prefix is accepted only when it reproduces the whole table.
+            let mut fitted = None;
+            for w in 1..=width {
+                if let Some((coef, konst)) = fit_affine(&samples, w) {
+                    let mut full = vec![0u64; width];
+                    full[..w].copy_from_slice(&coef);
+                    fitted = Some((full, konst, w));
+                    break;
+                }
+            }
+
+            // A rule that depends on ONE column (table 126's packed value) is tried next: a
+            // column-by-column digit fit, cheap relative to the exact map's hash table.
+            let col_max: Vec<u64> = (0..width)
+                .map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0))
+                .collect();
+            let mut separable = None;
+            if fitted.is_none() {
+                for c in 0..width as u32 {
+                    if let Some((base, ndig, used, flat)) = fit_separable_on(&samples, &[c], &col_max) {
+                        separable = Some((used.clone(), separable_header(base, ndig, &used, &flat)));
+                        break;
+                    }
+                }
+            }
+
+            let __exact = if fitted.is_none() && separable.is_none() {
+                fit_exact_map(&samples, width)
+            } else {
+                None
+            };
+            if let Some((coef, konst, w)) = fitted {
+                n_affine += 1;
+                tracing::debug!(
+                    "virtual table {tid}: row map fitted from its fixed columns ({} entries, \
+                     {w} of {width} columns)",
+                    samples.len()
+                );
+                out.push(VtFittedMap { table_id: tid, coef, konst, map: None, digits: None });
+            } else if let Some((used, tab)) = separable {
+                n_separable += 1;
+                tracing::debug!(
+                    "virtual table {tid}: separable row map ({} entries, columns {used:?} of \
+                     {width}, {} table entries)",
+                    samples.len(), tab.len()
+                );
+                out.push(VtFittedMap { table_id: tid, coef: Vec::new(), konst: 0, map: None, digits: Some((used, tab)) });
+            } else if let Some((nkey, kv, slots, _collided)) = __exact {
+                // Collisions are now genuine duplicate tuples -- the key is exactly what the
+                // lookup sends, so two entries sharing it are indistinguishable to the argument
+                // and merging them is sound.
+                n_exact += 1;
+                exact_bytes += kv.len() as u64 * 8;
+                tracing::debug!(
+                    "virtual table {tid}: exact map over {} entries, {} key columns, {} slots ({} MB)",
+                    samples.len(), nkey, kv.len() / (nkey + 1), kv.len() * 8 / 1_000_000
+                );
+                out.push(VtFittedMap {
+                    table_id: tid, coef: Vec::new(), konst: 0, map: Some((nkey, kv, slots)),
+                    digits: None,
+                });
+            } else {
+                let ranges: Vec<u64> = (0..width)
+                    .map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0))
+                    .collect();
+                tracing::debug!(
+                    "virtual table {tid}: NO FIT ({} entries, {width} columns) -- not affine and its \
+                     tuple does not separate its rows; column maxima {ranges:?}",
+                    samples.len()
+                );
+            }
+        }
+    }
+    // Considered tables not among the fitted ones: some are range tables (claimed via the separate
+    // `collect_prover_owned_ranges` path, which this function never examines), the rest genuinely
+    // left to the std. The caller, which has both populations in scope, tells them apart.
+    let fitted_ids: std::collections::HashSet<u64> = out.iter().map(|m| m.table_id).collect();
+    let unclaimed_ids: Vec<u64> = considered_ids.into_iter().filter(|tid| !fitted_ids.contains(tid)).collect();
+    Ok((out, VtFitSummary {
+        considered,
+        n_affine,
+        n_separable,
+        n_exact,
+        exact_bytes,
+        elapsed_ms: __t0.elapsed().as_millis(),
+        unclaimed_ids,
+    }))
+}
+
+pub fn collect_virtual_table_layouts<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> ProofmanResult<Vec<VtLayout>> {
+    let global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
+    if global_hint.is_empty() {
+        return Ok(Vec::new());
+    }
+    let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "airgroup_ids")?;
+    let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "air_ids")?;
+
+    let mut out = Vec::with_capacity(airgroup_ids.len());
+    for i in 0..airgroup_ids.len() {
+        let (airgroup_id, air_id) = (airgroup_ids[i], air_ids[i]);
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
+        let o = HintFieldOptions::default();
+        let table_ids = get_hint_field_constant_a_as::<usize, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "table_ids",
+            o.clone(),
+        )?;
+        let acc_heights = get_hint_field_constant_a_as::<u64, F>(
+            pctx,
+            setup,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "acc_heights",
+            o.clone(),
+        )?;
+        let num_muls =
+            get_hint_field_constant_as::<usize, F>(pctx, setup, airgroup_id, air_id, hint_id, "num_muls", o)?;
+        out.push(VtLayout {
+            airgroup_id: airgroup_id as u64,
+            air_id: air_id as u64,
+            num_rows: pctx.global_info.airs[airgroup_id][air_id].num_rows as u64,
+            num_cols: num_muls as u64,
+            table_ids: table_ids.iter().map(|id| *id as u64).collect(),
+            acc_bases: acc_heights,
+        });
+    }
+    Ok(out)
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
@@ -133,6 +1262,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             // The reclaim slot returns this same allocation every iteration, so one pin covers every H2D.
             let trace_buffer_pinned = if pctx.gpu { register_host_buffer(&buffer) } else { None };
             let trace_buffer = Arc::new(Mutex::new(Some(buffer)));
+            // Filled by the host binary before the witness library is registered.
+
             let virtual_table_air = VirtualTableAir::<F> {
                 airgroup_id,
                 air_id,
@@ -141,6 +1272,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 num_rows,
                 num_cols: num_muls as usize,
                 table_ids: idxs,
+                prover_owned: std::sync::OnceLock::new(),
                 multiplicities,
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
@@ -223,6 +1355,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             mask: (num_rows - 1) as u64,
             num_rows,
             num_cols,
+            prover_owned: std::sync::OnceLock::new(),
             table_ids,
             multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
             table_instance_id: AtomicU64::new(0),
@@ -267,11 +1400,25 @@ impl<F: PrimeField64> VirtualTableAir<F> {
         }
     }
 
+    /// Whether the prover counts this table itself, resolved once on first use.
+    fn is_prover_owned(&self, id: usize) -> bool {
+        self.prover_owned.get_or_init(|| {
+            let owned = prover_owned_tables();
+            let flags: Vec<bool> = self.table_ids.iter().map(|(t, _)| owned.contains(&(*t as u64))).collect();
+            let n = flags.iter().filter(|o| **o).count();
+            if n > 0 {
+                tracing::info!("VirtualTable air {}: {n}/{} tables counted by the prover", self.air_id, flags.len());
+            }
+            flags
+        })[id]
+    }
+
     /// Core update function: Updates multiplicities for row/multiplicity pairs
-    fn update(&self, table_offset: u64, iter: impl Iterator<Item = (u64, u64)>) {
-        if self.calculated.load(Ordering::Relaxed) {
+    fn update(&self, id: usize, iter: impl Iterator<Item = (u64, u64)>) {
+        if self.is_prover_owned(id) || self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        let table_offset = self.table_ids[id].1;
 
         for (row, multiplicity) in iter {
             if multiplicity == 0 {
@@ -294,14 +1441,12 @@ impl<F: PrimeField64> VirtualTableAir<F> {
     }
 
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, std::iter::once((row, multiplicity)));
+        self.update(id, std::iter::once((row, multiplicity)));
     }
 
     /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
     pub fn inc_virtual_pairs(&self, id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, pairs);
+        self.update(id, pairs);
     }
 }
 
@@ -326,6 +1471,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
         self.multiplicities.par_iter().for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
+        // The prover-side accumulators are reset in proofman.rs: `execute` is fork-exposed
+        // (--asm spawns the microservices here) and an FFI call there kills the process silently.
 
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())
@@ -362,6 +1509,15 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
             }
 
             self.calculated.store(true, Ordering::Relaxed);
+
+            // Before `distribute_multiplicities`, so the MPI path sees a complete accumulator.
+            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&self.air_id) {
+                for (slot, add) in self.multiplicities.iter().zip(counts.iter()) {
+                    if *add != 0 {
+                        slot.fetch_add(*add, Ordering::Relaxed);
+                    }
+                }
+            }
 
             // An assigned table is computed only on its single owner node; its
             // multiplicities are produced there, so there is no cross-rank reduction.
@@ -562,4 +1718,149 @@ mod tests {
         mixed.inc_virtual_rows(0, &rows_sz, &muls32);
         assert_eq!(expected, mixed.snapshot(), "mixed usize/u32 widths diverged");
     }
+
+    // -----------------------------------------------------------------------------------------
+    // Row-map fitting: fit_affine, fit_separable_on, fit_exact_map. Tables 125/127/133 all shipped
+    // real bugs in this logic before it had any direct coverage -- these are small, hand-built
+    // (tuple, row) sample sets, no proving key needed.
+
+    /// Affine rule `row = 2*t0 + 3*t1 + 7` over 12 correlated samples (more than the 3 unknowns,
+    /// so the exhaustive re-check actually exercises samples the Gauss-Jordan solve didn't use).
+    #[test]
+    fn fit_affine_recovers_affine_rule() {
+        let samples: Vec<(Vec<u64>, u64)> =
+            (0..12u64).map(|i| { let t = vec![i, (i * 3) % 7]; let r = 2 * t[0] + 3 * t[1] + 7; (t, r) }).collect();
+        let (coef, konst) = fit_affine(&samples, 2).expect("a genuinely affine table must fit");
+        assert_eq!(coef, vec![2, 3]);
+        assert_eq!(konst, 7);
+    }
+
+    /// `row = t0^2` is not affine in t0; the exhaustive check must reject any candidate solved
+    /// from a subsample.
+    #[test]
+    fn fit_affine_rejects_non_affine_table() {
+        let samples: Vec<(Vec<u64>, u64)> =
+            (0..12u64).map(|i| { let t = vec![i, (i * 3) % 7]; (t, i * i) }).collect();
+        assert!(fit_affine(&samples, 2).is_none(), "a quadratic table must not fit an affine rule");
+    }
+
+    /// An affine rule is a closed-form formula, not a lookup: it must predict the row for a tuple
+    /// far outside the training samples' own range, not just the ones it was fit from.
+    #[test]
+    fn fit_affine_generalizes_to_out_of_range_tuple() {
+        let samples: Vec<(Vec<u64>, u64)> =
+            (0..8u64).map(|i| { let t = vec![i, (i * 3) % 7]; let r = 2 * t[0] + 3 * t[1] + 7; (t, r) }).collect();
+        let (coef, konst) = fit_affine(&samples, 2).expect("affine table must fit");
+        let (t0, t1) = (1000u64, 53u64);
+        let predicted = gl_add(gl_add(gl_mul(coef[0], gl_red(t0 as u128)), gl_mul(coef[1], gl_red(t1 as u128))), konst);
+        assert_eq!(predicted, 2 * t0 + 3 * t1 + 7, "formula must generalize past the trained range");
+    }
+
+    /// Decode a `fit_separable_on` table the same way the C-side digit decoder would: per digit
+    /// of `base`, summing each digit's stored contribution.
+    fn decode_separable(base: u64, ndig: u32, flat: &[u64], v: u64) -> Option<u64> {
+        let mut sum = 0u64;
+        let mut vv = v;
+        for i in 0..ndig {
+            let d = (vv % base) as usize;
+            vv /= base;
+            let val = flat[i as usize * base as usize + d];
+            if val == u64::MAX {
+                return None;
+            }
+            sum = sum.wrapping_add(val);
+        }
+        Some(sum)
+    }
+
+    /// A genuine 2-digit (base 8) additive rule: `row = 3*(v%8) + 11*(v/8)`. Trained on a sparse
+    /// factorial design (one digit fixed at a time) so the fixed-point solver must combine
+    /// per-digit contributions from disjoint samples, then checked on a held-out combination.
+    #[test]
+    fn fit_separable_on_recovers_digit_rule_and_extrapolates() {
+        let rule = |v: u64| 3 * (v % 8) + 11 * (v / 8);
+        let mut samples: Vec<(Vec<u64>, u64)> = (0..8u64).map(|d0| (vec![d0], rule(d0))).collect();
+        samples.extend((0..8u64).map(|d1| { let v = d1 * 8; (vec![v], rule(v)) }));
+        let col_max = vec![63u64];
+
+        let (base, ndig, used, flat) =
+            fit_separable_on(&samples, &[0], &col_max).expect("a genuine digit rule must fit");
+        assert_eq!(used, vec![0]);
+
+        // v = 59 = (d0=3, d1=7) in base 8: never presented as a whole tuple during training.
+        let held_out = 59u64;
+        assert!(!samples.iter().any(|(t, _)| t[0] == held_out), "test setup: must be held out");
+        let decoded = decode_separable(base, ndig, &flat, held_out).expect("held-out combo must decode");
+        assert_eq!(decoded, rule(held_out));
+    }
+
+    /// `row = t0 * t1` cannot be written as `f(t0) + g(t1)` for any base -- the classic proof is
+    /// that its discrete mixed difference is nonzero, so it must fail to fit at every base tried.
+    #[test]
+    fn fit_separable_on_rejects_non_separable_table() {
+        let samples: Vec<(Vec<u64>, u64)> = (0..8u64)
+            .flat_map(|t0| (0..8u64).map(move |t1| (vec![t0, t1], t0 * t1)))
+            .collect();
+        let col_max = vec![7u64, 7u64];
+        assert!(
+            fit_separable_on(&samples, &[0, 1], &col_max).is_none(),
+            "a product table is not additively separable in any base"
+        );
+    }
+
+    /// Probe a packed `fit_exact_map` result the same way the GPU decoder does: pack the tuple
+    /// with the header's own per-column shifts, then walk the open-addressing chain.
+    fn probe_packed_map(kv: &[u64], nkey: usize, slots: u64, tuple: &[u64]) -> Option<u64> {
+        assert_eq!(kv[0], MUL_MAP_PACKED, "test setup: expected the packed layout");
+        let head = 1 + nkey;
+        let shifts: Vec<u32> = (0..nkey).map(|c| (kv[1 + c] >> 32) as u32).collect();
+        let k = (0..nkey).fold(0u64, |acc, c| acc | (tuple[c] << shifts[c]));
+        let slots = slots as usize;
+        let mut i = (hash_key(&[k]) as usize) & (slots - 1);
+        for _ in 0..slots.min(MUL_MAP_MAX_PROBE) {
+            let slot = head + i * 2;
+            if kv[slot] == u64::MAX {
+                return None;
+            }
+            if kv[slot] == k {
+                return Some(kv[slot + 1]);
+            }
+            i = (i + 1) & (slots - 1);
+        }
+        None
+    }
+
+    /// Five small, distinct tuples: every one of them must probe back to its own row.
+    #[test]
+    fn fit_exact_map_resolves_every_sample() {
+        let samples: Vec<(Vec<u64>, u64)> =
+            vec![(vec![1, 2], 10), (vec![3, 4], 20), (vec![5, 6], 30), (vec![7, 8], 40), (vec![9, 10], 50)];
+        let (nkey, kv, slots, collided) = fit_exact_map(&samples, 2).expect("a small exact table must fit");
+        assert!(!collided);
+        for (t, r) in samples.iter() {
+            assert_eq!(probe_packed_map(&kv, nkey, slots, t), Some(*r));
+        }
+    }
+
+    /// A tuple that was never one of the table's own entries must probe as "not found", never
+    /// alias onto another row -- the exact failure mode this whole fitting layer exists to avoid.
+    #[test]
+    fn fit_exact_map_out_of_range_key_is_not_found() {
+        let samples: Vec<(Vec<u64>, u64)> =
+            vec![(vec![1, 2], 10), (vec![3, 4], 20), (vec![5, 6], 30), (vec![7, 8], 40), (vec![9, 10], 50)];
+        let (nkey, kv, slots, _) = fit_exact_map(&samples, 2).expect("a small exact table must fit");
+        assert_eq!(probe_packed_map(&kv, nkey, slots, &[100, 200]), None);
+    }
+
+    /// Two entries sharing a tuple are indistinguishable to the lookup argument, which constrains
+    /// only their sum; all credit must land on one row (the first written), and `collided` must
+    /// say so.
+    #[test]
+    fn fit_exact_map_duplicate_tuple_credited_to_one_row() {
+        let samples: Vec<(Vec<u64>, u64)> = vec![(vec![1, 2], 10), (vec![1, 2], 99), (vec![3, 4], 20)];
+        let (nkey, kv, slots, collided) = fit_exact_map(&samples, 2).expect("must still fit with a duplicate");
+        assert!(collided);
+        assert_eq!(probe_packed_map(&kv, nkey, slots, &[1, 2]), Some(10), "credit goes to the first-written row");
+    }
 }
+
