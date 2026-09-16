@@ -18,7 +18,6 @@ use proofman_starks_lib_c::{
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
 use crate::add_publics_circom;
-use proofman_verifier::verifier;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -2030,7 +2029,7 @@ where
                 // global_challenge = None: the verifier reseeds from verkey + publics, matching
                 // the self-contained prover transcript.
                 let valid = verify_proof::<F>(
-                    proof.proof.as_ptr() as *mut u64,
+                    &proof.proof,
                     setup_path.display().to_string() + ".starkinfo.json",
                     setup_path.display().to_string() + ".verifier.bin",
                     setup_path.display().to_string() + ".verkey.json",
@@ -2521,7 +2520,7 @@ where
         // Measured on a 24-core host: aggregate witness CPU is flat between 2 and 6 and only
         // degrades past 12, while per-witness latency keeps improving, so the wide end is the
         // safer default. Prove time is insensitive to this either way.
-        const DEFAULT_THREADS_PER_WITNESS: usize = 8;
+        const DEFAULT_THREADS_PER_WITNESS: usize = 4;
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
             false => DEFAULT_THREADS_PER_WITNESS.clamp(1, max_num_threads.max(1)),
@@ -4156,17 +4155,28 @@ where
                 if self.mpi_ctx.rank == 0 {
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
 
-                    let vk = match options.compressed {
-                        true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap().get_vk(),
-                        false => self.setups.setup_vadcop_final.as_ref().unwrap().get_vk(),
+                    // Verified from the proving key, not from a committed Rust
+                    // verifier: the aggregator binds the application's publics
+                    // into q_verify, so a verifier generated for one application
+                    // rejects proofs another's correct prover produced. Same
+                    // mechanism verify_agg_proof already uses for recursive1/2.
+                    let setup = match options.compressed {
+                        true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap(),
+                        false => self.setups.setup_vadcop_final.as_ref().unwrap(),
                     };
+                    let base = setup.setup_path.display().to_string();
 
-                    let v = verifier(&self.pctx.global_info.hash);
                     let proof = vadcop_final_proof.as_ref().unwrap();
-                    let valid_proofs = match options.compressed {
-                        true => v.verify_vadcop_final_compressed(proof, &vk),
-                        false => v.verify_vadcop_final(proof, &vk),
-                    };
+                    let publics: Vec<F> = proof.public_values.iter().map(|&x| F::from_u64(x)).collect();
+                    let valid_proofs = verify_proof::<F>(
+                        &proof.proof,
+                        base.clone() + ".starkinfo.json",
+                        base.clone() + ".verifier.bin",
+                        base + ".verkey.json",
+                        Some(publics),
+                        None,
+                        None,
+                    );
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
@@ -5358,6 +5368,17 @@ where
     fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
         let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
+        // These words come off the wire and are read back as the proof's outputs, so pin them to
+        // one encoding: verification reduces, making `x` and `x + p` pass alike. Only the challenge
+        // slice is otherwise covered, by the caller's `as_canonical_u64` comparison.
+        if let Some(i) = publics.iter().position(|&word| word >= F::ORDER_U64) {
+            tracing::error!(
+                "Aggregated public {i} from airgroup {airgroup_id} is not canonical: {} >= {}",
+                publics[i],
+                F::ORDER_U64
+            );
+            return Ok(false);
+        }
         let circuit_type = publics[0];
         if circuit_type == 0 {
             return Ok(true);
@@ -5380,7 +5401,7 @@ where
         let publics_f: Vec<F> = publics_extended.iter().map(|&x| F::from_u64(x)).collect();
         let base = setup_path.display().to_string();
         Ok(verify_proof::<F>(
-            rec_proof.as_ptr() as *mut u64,
+            rec_proof,
             base.clone() + ".starkinfo.json",
             base.clone() + ".verifier.bin",
             base + ".verkey.json",

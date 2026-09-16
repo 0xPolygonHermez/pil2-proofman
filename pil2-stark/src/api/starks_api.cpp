@@ -291,6 +291,10 @@ uint64_t get_proof_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->proofSize;
 }
 
+uint64_t get_n_publics(void *pStarkInfo) {
+    return ((StarkInfo *)pStarkInfo)->nPublics;
+}
+
 uint64_t get_proof_pinned_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->getPinnedProofSize();
 }

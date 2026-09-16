@@ -36,6 +36,7 @@ extern "C" {
     // ========================================================================================
     void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate);
     uint64_t get_proof_size(void *pStarkInfo);
+    uint64_t get_n_publics(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
     void unregister_host_memory(void *ptr);
