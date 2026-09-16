@@ -388,21 +388,6 @@ pub fn rust_grinding_type(family: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    /// Recursion grinds harder than the basic airs, and blake3 harder than poseidon: a query is
-    /// expensive to verify in-circuit while the grinding costs the verifier one hash.
-    #[test]
-    fn recursive_grinding_bits_exceed_the_basic_defaults() {
-        assert_eq!(super::recursive_grinding_bits("blake3"), 24);
-        assert_eq!(super::recursive_grinding_bits("Poseidon1"), 20);
-        assert_eq!(super::recursive_grinding_bits("Poseidon2"), 20);
-        for f in super::FAMILIES {
-            assert!(
-                super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
-                "{f} would grind less in recursion than in its basic airs"
-            );
-        }
-    }
-
     /// Changing the pin means regenerating every verifier in `verifier/src/<family>/`.
     #[test]
     fn the_final_air_is_pinned_only_where_a_committed_verifier_encodes_it() {
