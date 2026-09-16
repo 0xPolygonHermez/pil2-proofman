@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_witness::{WitnessComponent, execute, define_wc_with_std};
+use proofman_witness::{WitnessComponent, execute, define_wc};
 
 use proofman_common::{AirInstance, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
 use proofman_common::BufferPool;
@@ -10,9 +10,9 @@ use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheck2Trace;
 
-define_wc_with_std!(RangeCheck2, "RngChck2");
+define_wc!(RangeCheck2, "RngChck2");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F> {
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2 {
     execute!(RangeCheck2Trace, 1);
 
     fn calculate_witness(
@@ -31,10 +31,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F> {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?;
-            let range2 = self.std_lib.get_range_id(0, (1 << 9) - 1, Some(false))?;
-            let range3 = self.std_lib.get_range_id(0, (1 << 10) - 1, Some(false))?;
-
             for i in 0..num_rows {
                 let val1 = rng.random_range(0..=(1 << 8) - 1);
                 let val2 = rng.random_range(0..=(1 << 9) - 1);
@@ -42,10 +38,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F> {
                 trace[i].b1 = F::from_u16(val1);
                 trace[i].b2 = F::from_u16(val2);
                 trace[i].b3 = F::from_u16(val3);
-
-                self.std_lib.range_check_one(range1, val1);
-                self.std_lib.range_check_one(range2, val2);
-                self.std_lib.range_check_one(range3, val3);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

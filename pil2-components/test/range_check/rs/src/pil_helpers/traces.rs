@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "73bfd9d5e3e65b5ced185b50a1ed4160b748f00e634164509a7211b1c459f7a0";
+pub const PILOUT_HASH: &str = "c89fc30b23c3fcadbf7e4a7ee7262484accec440665168c820b0dc3943c827f0";
 
 //AIRGROUP CONSTANTS
 
@@ -52,7 +52,7 @@ pub const RANGE_CHECK_1_AIR_IDS: &[usize] = &[0];
 
 pub const RANGE_CHECK_4_AIR_IDS: &[usize] = &[0];
 
-pub const U_16_AIR_AIR_IDS: &[usize] = &[1];
+pub const VIRTUAL_TABLE_RANGE_CHECK_40_AIR_IDS: &[usize] = &[1];
 
 pub const MULTI_RANGE_CHECK_1_AIR_IDS: &[usize] = &[0];
 
@@ -64,9 +64,9 @@ pub const RANGE_CHECK_DYNAMIC_2_AIR_IDS: &[usize] = &[0];
 
 pub const RANGE_CHECK_MIX_AIR_IDS: &[usize] = &[0];
 
-pub const U_8_AIR_AIR_IDS: &[usize] = &[0];
+pub const VIRTUAL_TABLE_U_8_AIR_0_AIR_IDS: &[usize] = &[0];
 
-pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[0];
+pub const VIRTUAL_TABLE_SPECIFIED_RANGES_0_AIR_IDS: &[usize] = &[0];
 
   
 trace_row!(RangeCheck3FixedRow<F> {
@@ -113,16 +113,16 @@ trace_row!(RangeCheck4TraceRow<F> {
 
 pub type RangeCheck4Trace<F> = GenericTrace<RangeCheck4TraceRow<F>, 64, 3, 0>;
 
-trace_row!(U16AirFixedRow<F> {
- RANGE: [F; 1], __L1__: F,
+trace_row!(VirtualTableRangeCheck40FixedRow<F> {
+ __ROW_INDEX__: F, __L1__: F,
 });
-pub type U16AirFixed<F> = GenericTrace<U16AirFixedRow<F>, 65536, 3, 1>;
+pub type VirtualTableRangeCheck40Fixed<F> = GenericTrace<VirtualTableRangeCheck40FixedRow<F>, 65536, 3, 1>;
 
-trace_row!(U16AirTraceRow<F> {
- mul:[F; 1],
+trace_row!(VirtualTableRangeCheck40TraceRow<F> {
+ multiplicity:[F; 1],
 });
 
-pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 65536, 3, 1>;
+pub type VirtualTableRangeCheck40Trace<F> = GenericTrace<VirtualTableRangeCheck40TraceRow<F>, 65536, 3, 1>;
 
 trace_row!(MultiRangeCheck1FixedRow<F> {
  __L1__: F,
@@ -179,27 +179,27 @@ trace_row!(RangeCheckMixTraceRow<F> {
 
 pub type RangeCheckMixTrace<F> = GenericTrace<RangeCheckMixTraceRow<F>, 64, 8, 0>;
 
-trace_row!(U8AirFixedRow<F> {
- RANGE: [F; 1], __L1__: F,
+trace_row!(VirtualTableU8Air0FixedRow<F> {
+ __ROW_INDEX__: F, __L1__: F,
 });
-pub type U8AirFixed<F> = GenericTrace<U8AirFixedRow<F>, 256, 9, 0>;
+pub type VirtualTableU8Air0Fixed<F> = GenericTrace<VirtualTableU8Air0FixedRow<F>, 256, 9, 0>;
 
-trace_row!(U8AirTraceRow<F> {
- mul:[F; 1],
-});
-
-pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 256, 9, 0>;
-
-trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 14], VALS: [F; 14], __L1__: F,
-});
-pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 32768, 10, 0>;
-
-trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 14],
+trace_row!(VirtualTableU8Air0TraceRow<F> {
+ multiplicity:[F; 1],
 });
 
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 32768, 10, 0>;
+pub type VirtualTableU8Air0Trace<F> = GenericTrace<VirtualTableU8Air0TraceRow<F>, 256, 9, 0>;
+
+trace_row!(VirtualTableSpecifiedRanges0FixedRow<F> {
+ COL_0_0_0: F, UID_0: F, COL_1_1_0: F, UID_1: F, __L1__: F,
+});
+pub type VirtualTableSpecifiedRanges0Fixed<F> = GenericTrace<VirtualTableSpecifiedRanges0FixedRow<F>, 262144, 10, 0>;
+
+trace_row!(VirtualTableSpecifiedRanges0TraceRow<F> {
+ multiplicity:[F; 2],
+});
+
+pub type VirtualTableSpecifiedRanges0Trace<F> = GenericTrace<VirtualTableSpecifiedRanges0TraceRow<F>, 262144, 10, 0>;
 
 values!(RangeCheck3AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -217,7 +217,7 @@ values!(RangeCheck4AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(U16AirAirGroupValues<F> {
+values!(VirtualTableRangeCheck40AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
@@ -241,11 +241,11 @@ values!(RangeCheckMixAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(U8AirAirGroupValues<F> {
+values!(VirtualTableU8Air0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(SpecifiedRangesAirGroupValues<F> {
+values!(VirtualTableSpecifiedRanges0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
@@ -259,12 +259,12 @@ pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (1, 0, "RangeCheck2"),
     (2, 0, "RangeCheck1"),
     (3, 0, "RangeCheck4"),
-    (3, 1, "U16Air"),
+    (3, 1, "VirtualTableRangeCheck40"),
     (4, 0, "MultiRangeCheck1"),
     (5, 0, "MultiRangeCheck2"),
     (6, 0, "RangeCheckDynamic1"),
     (7, 0, "RangeCheckDynamic2"),
     (8, 0, "RangeCheckMix"),
-    (9, 0, "U8Air"),
-    (10, 0, "SpecifiedRanges"),
+    (9, 0, "VirtualTableU8Air0"),
+    (10, 0, "VirtualTableSpecifiedRanges0"),
 ];

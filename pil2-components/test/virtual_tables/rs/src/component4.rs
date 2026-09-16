@@ -30,11 +30,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            // Get the range check IDs
-            let range1 = self.std_lib.get_range_id(5, (1 << 8) - 1, Some(true))?;
-            let range2 = self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true))?;
-            let range3 = self.std_lib.get_range_id(0, (1 << 6) - 1, Some(false))?;
-
             // Get the virtual table ID
             let id = self.std_lib.get_virtual_table_id(4)?;
 
@@ -56,11 +51,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
                 trace[i].b[0] = F::from_u64(val1);
                 trace[i].b[1] = F::from_u64(val2);
                 trace[i].b[2] = F::from_u64(val3);
-
-                // Perform the range checks
-                self.std_lib.range_check_one(range1, val1);
-                self.std_lib.range_check_one(range2, val2);
-                self.std_lib.range_check_one(range3, val3);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

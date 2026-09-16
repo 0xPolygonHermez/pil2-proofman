@@ -303,6 +303,11 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// Range tables the prover counts itself, and the counts it produced, keyed by the air hosting
+    /// the virtual table. Held here rather than read back over the FFI: the witness library and the
+    /// host binary each link their own copy of libstarks, and only the binary's is ever registered.
+    pub prover_owned_tables: RwLock<Vec<u64>>,
+    pub prover_counts: RwLock<HashMap<usize, Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
     /// this is what makes stream eligibility visible to the Rust-side schedulers.
@@ -350,6 +355,8 @@ impl<F: PrimeField64> ProofCtx<F> {
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
 
         Ok(Self {
+            prover_owned_tables: RwLock::new(Vec::new()),
+            prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
             global_info,
             public_inputs: Values::new(n_publics),
@@ -803,6 +810,16 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.instances[global_idx].table
+    }
+
+    /// Process instances excluding table airs, under a single read lock.
+    pub fn dctx_get_process_instances_no_tables(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.process_instances
+            .iter()
+            .copied()
+            .filter(|id| !dctx.is_skipped_instance(*id) && !dctx.instances[*id].table)
+            .collect()
     }
 
     /// Whether this air's witness rows must be written packed.

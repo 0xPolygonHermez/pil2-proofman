@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_witness::{define_wc_with_std, execute, WitnessComponent};
+use proofman_witness::{define_wc, execute, WitnessComponent};
 
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
@@ -9,9 +9,9 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::MultiRangeCheck1Trace;
 
-define_wc_with_std!(MultiRangeCheck1, "MtRngCh1");
+define_wc!(MultiRangeCheck1, "MtRngCh1");
 
-impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
+impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1 {
     execute!(MultiRangeCheck1Trace, 1);
 
     fn calculate_witness(
@@ -30,12 +30,6 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
-
-            let range1 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false))?;
-            let range2 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?;
-            let range3 = self.std_lib.get_range_id(0, (1 << 6) - 1, Some(false))?;
-            let range4 = self.std_lib.get_range_id(1 << 5, (1 << 8) - 1, Some(false))?;
-            let range5 = self.std_lib.get_range_id(1 << 8, (1 << 9) - 1, Some(false))?;
 
             for i in 0..num_rows {
                 let selected1 = rng.random::<bool>();
@@ -61,13 +55,9 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
                     if range_selector1 {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].a[0] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range1, val);
                     } else {
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].a[0] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range2, val);
                     }
                 }
 
@@ -75,13 +65,9 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
                     if range_selector2 {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].a[1] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range1, val);
                     } else {
                         let val = rng.random_range(0..=(1 << 6) - 1);
                         trace[i].a[1] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range3, val);
                     }
                 }
 
@@ -89,13 +75,9 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
                     if range_selector3 {
                         let val = rng.random_range((1 << 5)..=(1 << 8) - 1);
                         trace[i].a[2] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range4, val);
                     } else {
                         let val = rng.random_range((1 << 8)..=(1 << 9) - 1);
                         trace[i].a[2] = F::from_u16(val);
-
-                        self.std_lib.range_check_one(range5, val);
                     }
                 }
             }

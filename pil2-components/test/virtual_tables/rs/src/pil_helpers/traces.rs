@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "380e6935ccf5e40bbc493001d06e841b2e34fe3ab8d5e498ec53030ed40e48f2";
+pub const PILOUT_HASH: &str = "61084419485205f2c16a2178bd2cc99f459653d568320cc7e70a51dea657e963";
 
 //AIRGROUP CONSTANTS
 
@@ -42,13 +42,11 @@ pub const TABLE_7_AIR_IDS: &[usize] = &[7];
 
 pub const COMPONENT_8_AIR_IDS: &[usize] = &[8];
 
-pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[9];
+pub const VIRTUAL_TABLE_VIRTUAL_TABLES_0_AIR_IDS: &[usize] = &[9];
 
-pub const VIRTUAL_TABLE_VIRTUAL_TABLES_0_AIR_IDS: &[usize] = &[10];
+pub const VIRTUAL_TABLE_VIRTUAL_TABLES_1_AIR_IDS: &[usize] = &[10];
 
-pub const VIRTUAL_TABLE_VIRTUAL_TABLES_1_AIR_IDS: &[usize] = &[11];
-
-pub const VIRTUAL_TABLE_VIRTUAL_TABLES_2_AIR_IDS: &[usize] = &[12];
+pub const VIRTUAL_TABLE_VIRTUAL_TABLES_2_AIR_IDS: &[usize] = &[11];
 
   
 trace_row!(Component1FixedRow<F> {
@@ -150,49 +148,38 @@ trace_row!(Component8TraceRow<F> {
 
 pub type Component8Trace<F> = GenericTrace<Component8TraceRow<F>, 1024, 0, 8>;
 
-trace_row!(SpecifiedRangesFixedRow<F> {
- OPID: [F; 1], VALS: [F; 1], __L1__: F,
-});
-pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 64, 0, 9>;
-
-trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 1],
-});
-
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
-
 trace_row!(VirtualTableVirtualTables0FixedRow<F> {
- COL_0_0_0: F, COL_0_0_1: F, UID_0: F, __ROW_INDEX__: F, COL_2_4_0: F, COL_2_4_1: F, COL_2_4_2: F, COL_2_4_3: F, UID_2: F, __L1__: F,
+ COL_0_0_0: F, COL_0_0_1: F, UID_0: F, COL_1_2_0: F, COL_1_2_1: F, COL_1_2_2: F, COL_1_2_3: F, UID_1: F, __L1__: F,
 });
-pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTables0FixedRow<F>, 512, 0, 10>;
+pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTables0FixedRow<F>, 1024, 0, 9>;
 
 trace_row!(VirtualTableVirtualTables0TraceRow<F> {
- multiplicity:[F; 3],
+ multiplicity:[F; 2],
 });
 
-pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 512, 0, 10>;
+pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 1024, 0, 9>;
 
 trace_row!(VirtualTableVirtualTables1FixedRow<F> {
  __ROW_INDEX__: F, COL_4_12_0: F, COL_4_12_3: F, UID_4: F, __L1__: F,
 });
-pub type VirtualTableVirtualTables1Fixed<F> = GenericTrace<VirtualTableVirtualTables1FixedRow<F>, 8192, 0, 11>;
+pub type VirtualTableVirtualTables1Fixed<F> = GenericTrace<VirtualTableVirtualTables1FixedRow<F>, 8192, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables1TraceRow<F> {
  multiplicity:[F; 5],
 });
 
-pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 11>;
+pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables2FixedRow<F> {
  __ROW_INDEX__: F, COL_4_4_0: F, UID_4: F, __L1__: F,
 });
-pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTables2FixedRow<F>, 16384, 0, 12>;
+pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTables2FixedRow<F>, 16384, 0, 11>;
 
 trace_row!(VirtualTableVirtualTables2TraceRow<F> {
  multiplicity:[F; 5],
 });
 
-pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 16384, 0, 12>;
+pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 16384, 0, 11>;
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -230,10 +217,6 @@ values!(Component8AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(SpecifiedRangesAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
 values!(VirtualTableVirtualTables0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
@@ -261,8 +244,7 @@ pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 6, "Component7"),
     (0, 7, "Table7"),
     (0, 8, "Component8"),
-    (0, 9, "SpecifiedRanges"),
-    (0, 10, "VirtualTableVirtualTables0"),
-    (0, 11, "VirtualTableVirtualTables1"),
-    (0, 12, "VirtualTableVirtualTables2"),
+    (0, 9, "VirtualTableVirtualTables0"),
+    (0, 10, "VirtualTableVirtualTables1"),
+    (0, 11, "VirtualTableVirtualTables2"),
 ];

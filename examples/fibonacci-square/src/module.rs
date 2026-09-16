@@ -2,24 +2,21 @@ use std::sync::{Arc, RwLock};
 
 use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
 use proofman_witness::{WitnessComponent, execute};
-use pil2_std_lib::Std;
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
-pub struct Module<F: PrimeField64> {
+pub struct Module {
     fibonacci_rows: u64,
     instance_ids: RwLock<Vec<usize>>,
-    std_lib: Arc<Std<F>>,
 }
 
-impl<F: PrimeField64> Module<F> {
-    pub fn new(fibonacci_rows: u64, std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Module { fibonacci_rows, std_lib, instance_ids: RwLock::new(Vec::new()) })
+impl Module {
+    pub fn new(fibonacci_rows: u64) -> Arc<Self> {
+        Arc::new(Module { fibonacci_rows, instance_ids: RwLock::new(Vec::new()) })
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
+impl<F: PrimeField64> WitnessComponent<F> for Module {
     execute!(ModuleTrace, FibonacciSquareTrace::<F>::NUM_ROWS / ModuleTrace::<F>::NUM_ROWS);
 
     fn calculate_witness(
@@ -37,9 +34,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
             let module = F::as_canonical_u64(&publics.module);
             let mut a = F::as_canonical_u64(&publics.in1);
             let mut b = F::as_canonical_u64(&publics.in2);
-
-            //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
-            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None)?;
 
             let mut modules = Vec::new();
             for _ in 1..self.fibonacci_rows {
@@ -85,15 +79,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
 
                 let mut air_values = ModuleAirValues::<F>::new();
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
-
-                x_mods.par_iter().for_each(|x_mod| {
-                    self.std_lib.range_check_one(range, module - x_mod);
-                });
-
-                // Trivial range check for the remaining rows
-                for _ in modules_slice.len()..trace.num_rows() {
-                    self.std_lib.range_check_one(range, module);
-                }
 
                 let air_instance =
                     AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));

@@ -16,7 +16,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
-        let simple_left = SimpleLeft::new(std_lib.clone());
+        let simple_left = SimpleLeft::new();
         let simple_right = SimpleRight::new();
 
         register_std(wcm, &std_lib);

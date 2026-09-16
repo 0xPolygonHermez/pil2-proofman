@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_witness::{WitnessComponent, execute, define_wc_with_std};
+use proofman_witness::{WitnessComponent, execute, define_wc};
 
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
@@ -9,9 +9,9 @@ use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheck1Trace;
 
-define_wc_with_std!(RangeCheck1, "RngChck1");
+define_wc!(RangeCheck1, "RngChck1");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1 {
     execute!(RangeCheck1Trace, 1);
 
     fn calculate_witness(
@@ -30,11 +30,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
-
-            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?;
-            let range2 = self.std_lib.get_range_id(0, (1 << 4) - 1, Some(false))?;
-            let range3 = self.std_lib.get_range_id(60, (1 << 16) - 1, Some(false))?;
-            let range4 = self.std_lib.get_range_id(8228, 17400, Some(false))?;
 
             for i in 0..num_rows {
                 trace[i].a1 = F::ZERO;
@@ -57,9 +52,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
                     let val2 = rng.random_range(60..=(1 << 16) - 1);
                     trace[i].a1 = F::from_u16(val1);
                     trace[i].a3 = F::from_u32(val2);
-
-                    self.std_lib.range_check_one(range1, val1);
-                    self.std_lib.range_check_one(range3, val2);
                 }
 
                 if selected2 {
@@ -67,16 +59,11 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
                     let val2 = rng.random_range(8228..=17400);
                     trace[i].a2 = F::from_u8(val1);
                     trace[i].a4 = F::from_u16(val2);
-
-                    self.std_lib.range_check_one(range2, val1);
-                    self.std_lib.range_check_one(range4, val2);
                 }
 
                 if selected3 {
                     let val = rng.random_range(0..=(1 << 8) - 1);
                     trace[i].a5 = F::from_u16(val);
-
-                    self.std_lib.range_check_one(range1, val);
                 }
             }
 

@@ -13,7 +13,7 @@ witness_library!(WitnessLib, Goldilocks);
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true)?;
-        let module = Module::new(FibonacciSquareTrace::<F>::NUM_ROWS as u64, std_lib.clone());
+        let module = Module::new(FibonacciSquareTrace::<F>::NUM_ROWS as u64);
         let fibonacci = FibonacciSquare::new();
 
         register_std(wcm, &std_lib);
