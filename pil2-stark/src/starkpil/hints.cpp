@@ -431,19 +431,27 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
     return hintFieldVal.id;
 }
 
-void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, HintFieldOptions hintFieldOptions) {
+// `valueIdx` picks which of the field's values to add -- a lookup tuple is a list.
+// `skipRedundantOne` keeps the existing quirk (a literal-1 param is dropped once another is
+// present); an ordered param list must pass false, or every later element shifts down a slot.
+void addHintFieldAt(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, uint64_t valueIdx, HintFieldOptions hintFieldOptions, bool skipRedundantOne) {
     Hint hint = setupCtx.expressionsBin.hints[hintId];
-    
+
     auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
         return hintField.name == hintFieldName;
     });
-    HintFieldValue hintFieldVal = hintField->values[0];
 
     if(hintField == hint.fields.end()) {
         zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
         exitProcess();
         exit(-1);
     }
+    if(valueIdx >= hintField->values.size()) {
+        zklog.error("Hint field " + hintFieldName + " of hint " + hint.name + " has " + to_string(hintField->values.size()) + " values, index " + to_string(valueIdx) + " requested.");
+        exitProcess();
+        exit(-1);
+    }
+    HintFieldValue hintFieldVal = hintField->values[valueIdx];
 
     if(hintFieldOptions.print_expression) {
         std::string expression_line = getExpressionDebug(setupCtx, hintId, hintFieldName, hintFieldVal);
@@ -453,7 +461,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     } else if(hintFieldVal.operand == opType::const_) {
         destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::number) {
-        if(hintFieldVal.value == 1 && destStruct.params.size() > 0) {
+        if(skipRedundantOne && hintFieldVal.value == 1 && destStruct.params.size() > 0) {
             return;
         } 
         destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
@@ -474,6 +482,10 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
         exitProcess();
         exit(-1);
     }
+}
+
+void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, HintFieldOptions hintFieldOptions) {
+    addHintFieldAt(setupCtx, params, hintId, destStruct, hintFieldName, 0, hintFieldOptions, true);
 }
 
 void calculateExpr(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName,  HintFieldOptions *hintOptions) {

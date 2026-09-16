@@ -11,6 +11,11 @@
 #include <thread>
 #include <chrono>
 #include <util/gpu_t.cuh>
+#include "multiplicity.hpp"
+#include "multiplicity_decoders.hpp"
+#include "multiplicity_stream.cuh"
+#include "multiplicity.cuh"
+#include "multiplicity_plan.hpp"
 
 
 struct FinalSnarkGPU;
@@ -1647,7 +1652,7 @@ void calculate_trace_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_
 
     gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
 
-    calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, timer, stream);
+    calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, airgroupId, airId, timer, stream);
 }
 
 void verify_constraints_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void* constraintsInfo, void *d_buffers_, uint64_t streamId) {
@@ -2451,8 +2456,26 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     // has to be refreshed either way: adopted below when this path unpacks, dropped when it
     // does not. Leaving a stale claim would let a later proof of that air skip its unpack --
     // and the new slot-keyed affinity actively steers it back to this stream.
-    if (nWitnessHints == 0) sd.dropFixedSlot();
-    if(nWitnessHints > 0) {
+    // A scatter needs the same h_params/d_params staging this block builds, so run it when either
+    // witness_calc hints or an actual scatter job for THIS air is present. Gating on the air's own
+    // plan matters: a global test would force every air through the const-pol unpack below.
+    // Keyed by DEVICE, not by this air: the counters live in the air that hosts the virtual table
+    // (one air for every range table), while the instance committing here is Main, Mem, Keccakf...
+    // Looking it up by `airId` finds nothing for every air that actually feeds the table, so the
+    // scatter silently never runs and every owned table comes out zero.
+    MulAcc *mulAcc = nullptr;
+    if (!mulDecoders().empty()) {
+        for (const auto &kv : mulAccs())
+            if (kv.first.second == (int)gpuId) { mulAcc = kv.second; break; }
+    }
+    bool needMulScatter = false;
+    if (mulAcc != nullptr) {
+        const MulPlan &p = mulPlanFor(*setupCtx, airgroupId, airId);
+        needMulScatter = !p.jobs.empty() || !p.fallback.empty();
+    }
+
+    if (nWitnessHints == 0 && !needMulScatter) sd.dropFixedSlot();
+    if(nWitnessHints > 0 || needMulScatter) {
         uint64_t countId = 0;
         uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
         uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
@@ -2467,6 +2490,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
         uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
         // Claims the slot but not constTreeResident: this never touches the const tree.
+        // The scatter needs these too: a lookup tuple is often a compound expression, and
+        // evaluating one reads const pols. Skipping the unpack leaves them as whatever the
+        // previous air left in aux_trace, which decodes to arbitrary field elements.
         if (!sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")) {
             unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
             CHECKCUDAERR(cudaGetLastError());
@@ -2542,8 +2568,30 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
             calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
         };
-        cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
+        if (nWitnessHints > 0) {
+            cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
+        }
+
+        if (needMulScatter) {
+            // publics / airgroupvalues / airvalues live in aux_values and are uploaded by
+            // witnessExprBody -- which does not run when there are no witness_calc hints. Airvalue
+            // tuples read d_params->airValues, so without this they read uninitialised memory.
+            if (nWitnessHints == 0) {
+                CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values,
+                                             totalCopySize * sizeof(Goldilocks::Element),
+                                             cudaMemcpyHostToDevice, stream));
+                CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams),
+                                             cudaMemcpyHostToDevice, stream));
+            }
+            calculateMulCalcGPU(*setupCtx, h_params, d_params, airgroupId, airId, mulAcc->d_acc,
+                                air_instance_info->expressions_gpu, d_expsArgs, d_destParams,
+                                pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        }
     }
+
+    // Counted for every instance, scatter or not: the table fold waits on this to know that no
+    // instance is still queued behind it. See mul_await_commits.
+    mul_note_commit();
 
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
 
@@ -3116,10 +3164,64 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     gl64_t *slotBase = d_buffers->gpuMemoryBuffer[0] +
                        (d_buffers->streamCommitFloorBytes + slotIdx * d_buffers->streamCommitSlotBytes) /
                            sizeof(Goldilocks::Element);
+    // Counting the lookups of a slot-committed instance: the hook runs inside, between the upload
+    // and the chunk loop, which is the only window where the whole witness is readable.
+    MulStreamCtx mulCtx{};
+    StreamCommitHook hook = nullptr;
+    const int firstGpu = (int)d_buffers->my_gpu_ids[0];
+    MulAcc *mulAcc = nullptr;
+    if (aii != nullptr && !mulDecoders().empty()) {
+        for (const auto &kv : mulAccs())
+            if (kv.first.second == firstGpu) { mulAcc = kv.second; break; }
+    }
+    // If this air feeds a prover-owned table we MUST be able to count it here. Committing on a
+    // slot without the hook would produce a valid root and silently wrong multiplicities -- the
+    // worst failure mode available. Refuse the slot instead and let the caller take the legacy
+    // path, which counts.
+    bool needsCount = false;
+    if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
+        const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
+        needsCount = !p.jobs.empty() || !p.fallback.empty();
+        // The interpreter fallback cannot run here (it needs the full expression machinery and a
+        // materialised trace). Nor can any read whose base is absent on a slot: the only buffers
+        // resident are the const pols and the tile this unpacks -- publics, the value pools and the
+        // custom commits all live in the aux trace, which is exactly what the slot does without.
+        // Either means this air cannot be counted on a slot, so it must not commit on one.
+        if (needsCount && (!p.fallback.empty() || !mulPlanStreamable(p))) {
+            static std::once_flag once;
+            std::call_once(once, [&] {
+                zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
+                           + std::to_string(airId) + " cannot be counted on a slot (reads "
+                           + mulSrcMaskNames(p.srcMask) + "); taking the legacy commit path");
+            });
+            streamCommitReleaseRegion(d_buffers);
+            return -14;
+        }
+    }
+    if (needsCount && (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)) {
+        streamCommitReleaseRegion(d_buffers);
+        return -14;
+    }
+    if (mulAcc != nullptr && aii->const_pols_offset != UINT64_MAX) {
+        mulCtx.setupCtx = aii->setupCtx;
+        mulCtx.airgroupId = airgroupId;
+        mulCtx.airId = airId;
+        mulCtx.slotIdx = slotIdx;
+        mulCtx.acc = mulAcc->d_acc;
+        mulCtx.oob = mulOob(firstGpu);
+        mulCtx.dColSource = dColSource;
+        mulCtx.dColLane = dColLane;
+        mulCtx.dTable = dTable;
+        mulCtx.constPols = (const uint64_t *)(d_buffers->d_constPols[0] + aii->const_pols_offset);
+        hook = mulStreamHook;
+    }
+
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
-                                    dColSource, dColLane, dTable, scHash);
+                                    dColSource, dColLane, dTable, scHash, hook, hook ? &mulCtx : nullptr);
     streamCommitReleaseRegion(d_buffers);
+    // Counted whatever path ran, so the table fold knows no instance is still queued behind it.
+    if (rc == 0) mul_note_commit();
     return rc;
 }
 
