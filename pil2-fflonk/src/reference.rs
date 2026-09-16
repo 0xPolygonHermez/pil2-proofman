@@ -24,6 +24,9 @@ const VKEY: &str = include_str!("../tests/fixtures/pilfflonk.vkey");
 const PROOF: &str = include_str!("../tests/fixtures/pilfflonk.proof.json");
 const REFERENCE: &str = include_str!("../tests/fixtures/pilfflonk.reference.json");
 
+const DETERMINISTIC_PROOF: &str = include_str!("../tests/fixtures/pilfflonk.deterministic.proof.json");
+const DETERMINISTIC: &str = include_str!("../tests/fixtures/pilfflonk.deterministic.json");
+
 pub struct Reference {
     pub setup: ShPlonkSetup,
     pub proof: ShPlonkProof,
@@ -71,11 +74,27 @@ fn matrix(v: &Value, key: &str) -> Vec<Vec<BigUint>> {
         .collect()
 }
 
+/// The same vectors from a run with blinding zeroed.
+///
+/// Blinding adds a multiple of the vanishing polynomial to every committed
+/// polynomial, drawn afresh each run, so a real proof's commitments cannot be
+/// recomputed from the trace. Removing it makes the run reproducible, which is
+/// what lets the prover's per-stage commitments be checked at all. The proof is
+/// still valid -- it is simply no longer zero-knowledge, so [`load`] keeps a
+/// real blinded one alongside.
+pub fn load_deterministic() -> Reference {
+    build(DETERMINISTIC_PROOF, DETERMINISTIC)
+}
+
 /// Load the fixtures. Cheap enough to call per test.
 pub fn load() -> Reference {
+    build(PROOF, REFERENCE)
+}
+
+fn build(proof: &str, vectors: &str) -> Reference {
     let setup = ShPlonkSetup::from_vkey_json(&serde_json::from_str(VKEY).unwrap()).unwrap();
-    let proof = ShPlonkProof::from_json(&serde_json::from_str(PROOF).unwrap()).unwrap();
-    let v: Value = serde_json::from_str(REFERENCE).unwrap();
+    let proof = ShPlonkProof::from_json(&serde_json::from_str(proof).unwrap()).unwrap();
+    let v: Value = serde_json::from_str(vectors).unwrap();
 
     Reference {
         setup,

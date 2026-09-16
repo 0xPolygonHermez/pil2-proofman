@@ -16,6 +16,7 @@ AS  := nasm
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
 CPPFLAGS := -I. -I$(STARK_SRC)/rapidsnark -I$(STARK_SRC)/bn128/src/ffiasm \
+            -I$(STARK_SRC)/bn128/src/ntt \
             -I$(STARK_SRC)/XKCP -MMD -MP
 ASFLAGS  := -f elf64 -g -F dwarf
 
@@ -29,7 +30,8 @@ SHPLONK_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SHPLONK_SRCS))
 
 # Snark-side support pulled from pil2-stark: the logger fflonk/plonk already
 # use, and Keccak for the Fiat-Shamir transcript.
-SUPPORT_OBJS := $(BUILD_DIR)/support/logger.o \
+SUPPORT_OBJS := $(BUILD_DIR)/ntt/ntt_bn128.o \
+                $(BUILD_DIR)/support/logger.o \
                 $(BUILD_DIR)/support/keccak_wrapper.o \
                 $(BUILD_DIR)/xkcp/Keccak-more-compact.o
 
@@ -82,6 +84,10 @@ $(BUILD_DIR)/%.o: %.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/tests/%.o: tests/%.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ntt/%.o: $(STARK_SRC)/bn128/src/ntt/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 

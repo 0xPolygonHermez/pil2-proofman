@@ -30,7 +30,17 @@ They cannot be regenerated:
 | `public.json` | The public inputs for that proof. |
 | `build-repair.patch` | Repairs to pil-fflonk's build: repoints the includes at pil2-stark's vendored ffiasm/rapidsnark/XKCP, adds `-D__USE_ASSEMBLY__` and `fec.cpp`/`fnec.cpp`, and fixes a `.c`/`.hpp` include in the transcript. Without it the reference does not build at all. |
 
-Note that the patch hardcodes `PIL2_STARK := /home/xavi/dev/pil2-proofman/pil2-stark/src`.
+`deterministic.patch` zeroes every blinding draw. Blinding adds a multiple of
+the vanishing polynomial to each committed polynomial, drawn afresh per run, so
+a real proof's commitments cannot be recomputed from the trace -- which makes
+the prover's per-stage work impossible to check against. Applied on top of
+`build-repair.patch`, the prover becomes reproducible, and the proof it emits is
+`../pilfflonk.deterministic.proof.json` with vectors in
+`../pilfflonk.deterministic.json`. That proof is valid but not zero-knowledge;
+`../pilfflonk.proof.json` is a real blinded one, kept so the verifier is
+exercised on both.
+
+Note that build-repair.patch hardcodes `PIL2_STARK := /home/xavi/dev/pil2-proofman/pil2-stark/src`.
 Point it at your own checkout before applying.
 
 The proof produced from these, and the vectors logged alongside it, are the

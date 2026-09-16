@@ -218,6 +218,43 @@ mod tests {
         assert!(moved.iter().zip(&honest.air_challenges).all(|(a, b)| a != b));
     }
 
+    /// The deterministic proof verifies too.
+    ///
+    /// It is produced with blinding zeroed, so it is reproducible and its
+    /// per-stage commitments can be recomputed from the trace -- which is what
+    /// makes the prover testable. This confirms it is a genuine proof and not
+    /// merely a reproducible artefact: every challenge, the quotient and every
+    /// opening scalar reconcile, exactly as for the blinded one.
+    #[test]
+    fn the_deterministic_proof_verifies() {
+        let r = reference::load_deterministic();
+        let p = run(&r, &r.proof).unwrap();
+
+        assert_eq!(p.air_challenges, r.air_challenges);
+        assert_eq!(p.challenges.xi, r.xi);
+        assert_eq!(p.challenges.alpha, r.alpha);
+        assert_eq!(p.challenges.y, r.y);
+        assert_eq!(p.quotient, r.quotient_evaluation);
+        assert_eq!(p.linearisation.r, r.r_at_y);
+        assert_eq!(p.linearisation.z_t, r.z_t);
+    }
+
+    /// Blinding is what separates the two, and it changes the commitments
+    /// without changing what is being proved: same key, same publics, and the
+    /// verifier accepts both.
+    #[test]
+    fn blinding_changes_the_proof_but_not_its_validity() {
+        let blinded = reference::load();
+        let plain = reference::load_deterministic();
+
+        assert_eq!(blinded.publics, plain.publics, "the same statement");
+        assert_ne!(blinded.proof.polynomials["f8"], plain.proof.polynomials["f8"]);
+        assert_ne!(blinded.xi, plain.xi, "different commitments give different challenges");
+
+        assert!(run(&blinded, &blinded.proof).is_ok());
+        assert!(run(&plain, &plain.proof).is_ok());
+    }
+
     /// A proof that fails a structural check never reaches the arithmetic.
     #[test]
     fn rejects_a_malformed_proof() {

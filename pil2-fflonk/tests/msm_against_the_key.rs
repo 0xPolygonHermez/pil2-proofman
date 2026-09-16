@@ -16,6 +16,7 @@ use pil2_fflonk::ZKey;
 use proofman_fflonk_lib_c::{G1_AFFINE_BYTES, is_infinity, msm};
 
 const ZKEY: &[u8] = include_bytes!("fixtures/reference/pilfflonk.zkey");
+const VKEY: &str = include_str!("fixtures/pilfflonk.vkey");
 
 /// The key's powers of tau.
 fn ptau(zkey: &ZKey) -> &[u8] {
@@ -90,4 +91,62 @@ fn the_term_count_is_honoured() {
     let partial = msm(&ptau[..shorter * G1_AFFINE_BYTES], &f.pol[..shorter * proofman_fflonk_lib_c::FR_BYTES]).unwrap();
 
     assert_ne!(partial, full);
+}
+
+/// The stage-0 path end to end: build the combined polynomials from the key's
+/// raw coefficients, commit them, and check both against what the key records.
+///
+/// The tests above commit `FCommitment.pol`, which is already interleaved, so
+/// they say nothing about the packing. This drives `combined_for`, which does
+/// the packing itself -- getting the stride, the slot order or the length wrong
+/// all produce a different point.
+#[test]
+fn builds_and_commits_the_constant_stage() {
+    let zkey = ZKey::from_bytes(ZKEY).expect("the vendored key parses");
+    let ptau = ptau(&zkey);
+    let coefs = zkey.bulk.get(&pil2_fflonk::SECTION_CONST_POLS_COEFS).expect("constant coefficients");
+
+    let built = pil2_fflonk::combined_for(&zkey, 0, coefs).unwrap();
+    assert_eq!(built.len(), 2, "the reference key has two constant-only combined polynomials");
+
+    for c in &built {
+        let recorded = zkey
+            .f_commitments
+            .iter()
+            .find(|r| r.name == c.name)
+            .unwrap_or_else(|| panic!("{} has no recorded commitment", c.name));
+
+        // The packing matches what the setup stored ...
+        assert_eq!(pil2_fflonk::trim(&c.coefficients), recorded.pol.as_slice(), "{}", c.name);
+
+        // ... and committing it lands on the point the setup recorded.
+        let terms = c.coefficients.len() / proofman_fflonk_lib_c::FR_BYTES;
+        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &c.coefficients).unwrap();
+        assert_eq!(got.as_slice(), recorded.commit.as_slice(), "{}", c.name);
+        assert!(!is_infinity(&got), "{}", c.name);
+    }
+}
+
+/// The commitments the prover computes for the constant stage are the ones the
+/// verifier takes from its key. If these diverged, every challenge would too.
+#[test]
+fn the_computed_constant_commitments_are_the_ones_the_verifier_uses() {
+    let zkey = ZKey::from_bytes(ZKEY).expect("the vendored key parses");
+    let ptau = ptau(&zkey);
+    let coefs = zkey.bulk.get(&pil2_fflonk::SECTION_CONST_POLS_COEFS).unwrap();
+
+    let vkey: serde_json::Value = serde_json::from_str(VKEY).unwrap();
+    let setup = pil2_fflonk::ShPlonkSetup::from_vkey_json(&vkey).unwrap();
+
+    for c in pil2_fflonk::combined_for(&zkey, 0, coefs).unwrap() {
+        let terms = c.coefficients.len() / proofman_fflonk_lib_c::FR_BYTES;
+        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &c.coefficients).unwrap();
+
+        // The verification key writes the point as decimal x/y; the prover
+        // produces it in the key's own representation, so compare through the
+        // proving key, which carries both forms of the same value.
+        let recorded = zkey.f_commitments.iter().find(|r| r.name == c.name).unwrap();
+        assert_eq!(got.as_slice(), recorded.commit.as_slice(), "{}", c.name);
+        assert!(setup.f_commitments.contains_key(&c.name), "the vkey omits {}", c.name);
+    }
 }
