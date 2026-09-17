@@ -132,9 +132,13 @@ TEST(UNPACK_INDEXED_GPU, matches_the_cpu_walk_cell_for_cell)
 
         std::vector<uint64_t> got(nRows * nCols);
         CHECKCUDAERR(cudaMemcpy(got.data(), dOut, got.size() * 8, cudaMemcpyDeviceToHost));
+        // getBufferOffset is __device__ only, so index the host copy directly. ColMajor is
+        // (row,col) -> col*nRows + row; asserted rather than assumed, so a resolveLayout
+        // change fails here instead of silently comparing the wrong cells.
+        ASSERT_EQ(static_cast<int>(layout), static_cast<int>(Layout::ColMajor));
         for (uint64_t r = 0; r < nRows; r++)
             for (uint64_t c = 0; c < nCols; c++)
-                ASSERT_EQ(got[getBufferOffset(r, c, nRows, nCols, layout)], ref[r * nCols + c])
+                ASSERT_EQ(got[c * nRows + r], ref[r * nCols + c])
                     << "lanes=" << lanes << " row " << r << " col " << c;
 
         CHECKCUDAERR(cudaFree(dRows)); CHECKCUDAERR(cudaFree(dTable));
@@ -191,10 +195,10 @@ TEST(UNPACK_INDEXED_GPU, a_null_lane_map_reads_lane_zero)
 
     std::vector<uint64_t> got(nRows * nCols);
     CHECKCUDAERR(cudaMemcpy(got.data(), dOut, got.size() * 8, cudaMemcpyDeviceToHost));
+    ASSERT_EQ(static_cast<int>(layout), static_cast<int>(Layout::ColMajor));
     for (uint64_t r = 0; r < nRows; r++)
         for (uint64_t c = 0; c < nCols; c++)
-            ASSERT_EQ(got[getBufferOffset(r, c, nRows, nCols, layout)], ref[r * nCols + c])
-                << "row " << r << " col " << c;
+            ASSERT_EQ(got[c * nRows + r], ref[r * nCols + c]) << "row " << r << " col " << c;
 
     CHECKCUDAERR(cudaFree(dRows)); CHECKCUDAERR(cudaFree(dTable));
     CHECKCUDAERR(cudaFree(dInfo)); CHECKCUDAERR(cudaFree(dOut)); CHECKCUDAERR(cudaFree(dCS));
