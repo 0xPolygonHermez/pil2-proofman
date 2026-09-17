@@ -9,11 +9,10 @@
 //   - `RowNamePackedIndexed::{COL_SOURCE, COL_LANE, INDEX_BITS, LANES}`
 // It does NOT redefine `RowName` or `RowNameOps`; those come from the pristine pil-helpers.
 //
-// A row may pack several execution steps (lanes). The lane is the OUTER dimension of every
-// `@instr` column, one table entry holds one lane's instruction, and the compact row carries
-// one index per lane. `COL_LANE` tells the unpacker which lane's index selects the entry an
-// instruction-derived output column is read from; that is what lets a single row mix columns
-// coming from several different table entries.
+// A row may pack several execution steps (lanes): the lane is the OUTER dimension of every
+// `@instr` column, one entry holds one lane's instruction, and the row carries one index per
+// lane. `COL_LANE` names the lane whose index selects a tagged column's entry, which is what
+// lets one row mix columns from several entries.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -166,10 +165,9 @@ const MAX_LANES: usize = u8::MAX as usize + 1;
 /// Lane count: the outer dimension of the `@instr` columns, which all of them must share.
 /// Scalar instruction columns mean a single-lane row.
 ///
-/// An `@instr` array's outer dimension is ALWAYS the lane count: `imm: [u32; 2] @instr` is two
-/// lanes of a scalar, not one lane with a two-word immediate. Spell the latter
-/// `[[u32; 2]; 1]`. Mismatched outer dims are a compile error, but `@instr` columns that all
-/// share the same unintended one describe the wrong shape consistently, and nothing catches it.
+/// The outer dimension is ALWAYS the lane count: `[u32; 2] @instr` is two lanes of a scalar,
+/// not one lane with a two-word immediate -- spell that `[[u32; 2]; 1]`. Mismatched outer dims
+/// are a compile error; a shared unintended one is not, and nothing downstream catches it.
 fn infer_lanes(fields: &[(TraceField, bool)]) -> Result<usize> {
     let mut lanes: Option<(usize, Ident)> = None;
     for (f, _) in fields.iter().filter(|(_, instr)| *instr) {

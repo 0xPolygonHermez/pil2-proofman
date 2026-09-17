@@ -40,8 +40,7 @@ pub struct PackedInfo {
     pub lanes: u64,
 }
 
-/// `col_lane` names a lane in a `u8`, so ids 0..=255. Mirrored C++-side by
-/// `INDEXED_MAX_LANES` (unpack_indexed_row.hpp) and `SC_MAX_LANES` (stream_commit.cuh).
+/// `col_lane` names a lane in a `u8`. Mirrored C++-side by `INDEXED_MAX_LANES` and `SC_MAX_LANES`.
 pub const MAX_LANES: u64 = u8::MAX as u64 + 1;
 
 impl PackedInfo {
@@ -64,17 +63,15 @@ impl PackedInfo {
             col_lane.len(),
             "indexed descriptor: col_source and col_lane must both cover every column"
         );
-        // The unpackers write a table column in the pass its lane names, so a column
-        // tagged for a lane the row does not carry would be written by no pass at all.
+        // A column naming a lane the row does not carry is written by no pass at all.
         let n_lanes = lanes.max(1);
-        // Bounded before the header check below, which multiplies the lane count.
+        // Bounded before the header check, which multiplies it.
         assert!(n_lanes <= MAX_LANES, "indexed descriptor: at most {MAX_LANES} lanes (col_lane names one in a u8)");
         assert!(
             col_lane.iter().all(|&l| (l as u64) < n_lanes),
             "indexed descriptor: every col_lane must be below lanes ({n_lanes})"
         );
-        // The unpackers read lane l's index at bit l * index_bits of the row, so the whole
-        // header has to fit the compact row -- the CUDA ones read it unguarded.
+        // The CUDA walks read lane l's index at bit l * index_bits unguarded.
         assert!(
             n_lanes * index_bits <= self.num_packed_words * 64,
             "indexed descriptor: a {n_lanes}-lane header of {index_bits}-bit indices does not \

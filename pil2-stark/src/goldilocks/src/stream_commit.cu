@@ -93,14 +93,10 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
     }
 }
 
-// Indexed counterpart of scUnpackRangeKernel: a compact row plus a shared instruction
-// table, each column sourced per colSource and read from the entry ITS LANE's index
-// selects, per colLane. Mirrors unpackIndexedRow (unpack_indexed_row.hpp) and
-// unpack_indexed (starks_gpu.cu), so a slot root equals the prover's cm1 root.
-//
-// One sequential pass per stream: the row pass reads the runtime columns, then lane l's
-// pass reads the columns tagged for lane l. Columns before c0 are still walked -- the
-// cursors are sequential -- but not written.
+// Indexed counterpart of scUnpackRangeKernel. The walk is unpackIndexedRow
+// (unpack_indexed_row.hpp) and must stay identical to it, so a slot root equals the
+// prover's cm1 root. Chunked: columns before c0 are still walked -- the cursors are
+// sequential -- but not written.
 __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ src,
                                                   const uint64_t *__restrict__ table,
                                                   const uint64_t *__restrict__ widths,
@@ -112,11 +108,9 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
                                                   uint64_t numEntries, uint64_t indexBits,
                                                   uint64_t lanes, uint32_t c0, uint32_t cc)
 {
-    // Per-column metadata is uniform across rows, so stage it once per block. One shared
-    // word carries width | source<<32 | lane<<33 (nbits <= 64, lanes <= 255), keeping the
-    // loops at one shared read instead of three global ones; at most 512 B per block. A
-    // single-lane descriptor carries no lane map, so lane 0 stands in. Hygiene, not a
-    // throughput lever: this kernel runs at ~83% of DRAM roofline.
+    // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
+    // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
+    // <= 512 B per block. Null map = lane 0. Hygiene: this kernel is DRAM-bound.
     extern __shared__ uint64_t scInfo[];
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x)
         scInfo[i] = widths[i] | ((uint64_t)(colSource[i] != 0) << 32) |
@@ -152,9 +146,8 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         uint64_t hidx = hBits / 64, hoff = hBits % 64;
         uint64_t hword = rbase[hidx];
         uint64_t index = scStepBits<true>(rbase, wordsPerRow, hword, hidx, hoff, indexBits);
-        // A witness bug can put an out-of-range index here. The CPU unpack reports it and
-        // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the root
-        // then simply fails verification instead of reading past the table.
+        // A witness bug can land a stale index here. The CPU walk reports it; a kernel
+        // cannot, so fall back to entry 0 -- a failing root beats reading past the table.
         if (index >= numEntries) index = 0;
 
         const uint64_t *tbase = table + index * wordsPerEntry;
@@ -459,11 +452,19 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // A lane-packed row without its lane map would read every column from lane 0's entry:
     // a wrong trace with no other symptom, so refuse it here.
     if (indexed && dims.lanes > 1 && dColLane == nullptr) return -5;
-    // Past SC_MAX_LANES the tail lanes match no column, so their steps silently drop out of
-    // the trace. Bounded before the header check, which multiplies the lane count.
+    // Past SC_MAX_LANES the tail lanes match no column. Bounded before the header check.
     if (indexed && (dims.lanes ? dims.lanes : 1) > SC_MAX_LANES) return -7;
     // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
     if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
+    // A column naming a lane the row does not carry is claimed by no pass, so it keeps
+    // whatever the slot held. The map is <= 256 B, so read it back rather than trust it.
+    if (indexed && dColLane != nullptr) {
+        const uint64_t nLanes = dims.lanes ? dims.lanes : 1;
+        uint8_t hColLane[SC_MAX_COLS];
+        CHECKCUDAERR(cudaMemcpy(hColLane, dColLane, dims.nCols, cudaMemcpyDeviceToHost));
+        for (uint64_t c = 0; c < dims.nCols; c++)
+            if (hColLane[c] >= nLanes) return -8;
+    }
 
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;

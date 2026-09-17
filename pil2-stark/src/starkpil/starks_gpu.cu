@@ -125,15 +125,10 @@ __device__ __forceinline__ uint64_t idx_read_bits(
     return val;
 }
 
-// Indexed unpack: each compact row holds a header of `lanes` instruction indices plus the
-// runtime columns; the instruction-derived columns live once in `table`, one entry per
-// instruction. Column c is sourced per d_col_source[c] and, when tagged, read from the
-// entry ITS LANE's index selects (d_col_lane[c]). Bit-identical to unpack().
-//
-// One sequential pass per stream: the row pass reads the runtime columns, then lane l's
-// pass reads the columns tagged for lane l. Mirrors scUnpackRangeIndexedKernel
-// (stream_commit.cu) and unpackIndexedRow (unpack_indexed_row.hpp); all three must agree
-// or a slot root stops matching cm1.
+// Indexed unpack: a compact row of `lanes` instruction indices plus its runtime columns,
+// each tagged column read from the entry ITS LANE's index selects. Output is bit-identical
+// to unpack(). The walk is unpackIndexedRow (unpack_indexed_row.hpp); this copy and
+// scUnpackRangeIndexedKernel must agree with it or a slot root stops matching cm1.
 __global__ void unpack_indexed(
     const uint64_t* src,             // compact rows: words_per_row each
     const uint64_t* table,           // instruction table: words_per_entry each
@@ -150,11 +145,10 @@ __global__ void unpack_indexed(
     uint64_t num_entries,            // instruction-table entry count (index bound)
     Layout layout
 ) {
-    // One shared word per column carries width | source<<32 | lane<<33 (nbits <= 64,
-    // lanes <= 255), so the loops take one shared read instead of dependent global loads
-    // and the footprint stays nCols * 8 -- unpack_trace's sharedMemSize covers both
-    // kernels unchanged. A single-lane descriptor carries no lane map, so lane 0 stands
-    // in. This kernel is DRAM-bound (strided row reads dominate): hygiene, not a win.
+    // One shared word per column: width | source<<32 | lane<<33 (nbits <= 64, lanes <= 256),
+    // one shared read instead of dependent global loads. The footprint stays nCols * 8, so
+    // unpack_trace's sharedMemSize covers both kernels. Null map = lane 0. DRAM-bound
+    // (strided row reads dominate): hygiene, not a win.
     extern __shared__ uint64_t shared_unpack_info[];
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
         shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32) |
@@ -187,9 +181,8 @@ __global__ void unpack_indexed(
         uint64_t hidx = h_bits / 64, hoff = h_bits % 64;
         uint64_t hword = rbase[hidx];
         uint64_t index = idx_read_bits(rbase, words_per_row, hword, hidx, hoff, index_bits);
-        // A witness bug can put an out-of-range index here. The CPU unpack reports it and
-        // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
-        // then simply fails instead of reading past the table.
+        // A witness bug can land a stale index here. The CPU walk reports it; a kernel
+        // cannot, so fall back to entry 0 -- a failing proof beats reading past the table.
         if (index >= num_entries) index = 0;
 
         const uint64_t* tbase = table + index * words_per_entry;

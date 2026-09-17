@@ -42,8 +42,7 @@ class gl64_t;
 // (245 columns); Poseidon1 has no such limit beyond the header.
 static constexpr uint64_t SC_MAX_COLS = 256;
 
-// A lane is named by a u8 (dColLane, and bits 33-40 of the unpack kernel's metadata word),
-// so ids 0..255 -- 256 lanes -- is the ceiling.
+// A lane is named by a u8 (dColLane, and bits 33-40 of the kernel's metadata word).
 static constexpr uint64_t SC_MAX_LANES = 256;
 
 // Hash family the slot commits with. Must match the proving key's family --
@@ -88,10 +87,10 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 //
 // dColSource / dColLane / dTable are DEVICE pointers and select the indexed
 // unpack: dColSource is 0 = row stream, 1 = instruction table, and dColLane
-// names the lane whose index selects that entry. dColSource and dTable must be
-// non-null together, dColLane whenever dims.lanes > 1; all are borrowed, must be
-// resident on the current device and stay alive for the call. Pass nullptr for
-// all three (the default) to commit a plain packed witness.
+// names the lane whose index selects that entry (every entry below dims.lanes,
+// read back and checked here). dColSource and dTable must be non-null together,
+// dColLane whenever dims.lanes > 1; all are borrowed and must stay resident on
+// the current device for the call. Pass nullptr for all three for a plain witness.
 //
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot

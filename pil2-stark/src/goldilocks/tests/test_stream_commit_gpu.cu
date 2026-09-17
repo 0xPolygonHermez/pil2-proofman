@@ -330,10 +330,9 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_indexed_small)
 }
 
 // Lane-packed indexed witness: a row packs `lanes` steps, so its header carries one index
-// PER LANE and every instruction-derived column names the lane whose entry it comes from
-// (COL_LANE). Same property as the single-lane case -- committing the compact trace + table
-// must reproduce the FULL trace's root bit for bit -- which here can only hold if each
-// lane's columns are read from its own entry.
+// per lane and every tagged column names the lane whose entry it comes from (COL_LANE). Same
+// property as the single-lane case -- the compact trace + table must reproduce the FULL
+// trace's root bit for bit -- which here holds only if each lane reads its own entry.
 static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t nEntries,
                                         StreamCommitHash hash = StreamCommitHash::Poseidon1)
 {
@@ -457,6 +456,26 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
         EXPECT_LT(streamCommitPacked(slot, d, widths.data(), hCompact.data(), rootIdx.data(), s,
                                      dCS, nullptr, dT, hash), 0);
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
+    }
+
+    // A lane map naming a lane the row does not carry must be rejected too: no pass would
+    // claim that column, so it would keep whatever the slot held.
+    {
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        std::vector<uint8_t> stray(colLane);
+        for (uint64_t c = 0; c < nCols; c++) {
+            if (colSource[c]) { stray[c] = static_cast<uint8_t>(lanes); break; }
+        }
+        uint8_t *dCS, *dCL;
+        CHECKCUDAERR(cudaMalloc(&dCS, nCols)); CHECKCUDAERR(cudaMalloc(&dCL, nCols));
+        CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dCL, stray.data(), nCols, cudaMemcpyHostToDevice));
+        uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
+        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
+        EXPECT_LT(streamCommitPacked(slot, d, widths.data(), hCompact.data(), rootIdx.data(), s,
+                                     dCS, dCL, dT, hash), 0);
+        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
+        CHECKCUDAERR(cudaFree(dCL)); CHECKCUDAERR(cudaFree(dT));
     }
     CHECKCUDAERR(cudaStreamDestroy(s));
 }

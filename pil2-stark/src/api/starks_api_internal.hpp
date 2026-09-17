@@ -74,9 +74,8 @@ struct DeviceCommitBuffersCPU
         std::vector<uint8_t> col_source_vec, col_lane_vec;
         if (col_source_ != nullptr) {
             col_source_vec.assign(col_source_, col_source_ + nCols);
-            // Lane-less is the single-lane shape. Above one lane the map is load-bearing:
-            // without it every column would decode from lane 0's entry, a wrong trace with
-            // no other symptom, so refuse it the way the GPU slot path does.
+            // Lane-less is the single-lane shape. Above one lane, a missing map would decode
+            // every column from lane 0's entry, so refuse it as the GPU slot path does.
             if (col_lane_ != nullptr) {
                 col_lane_vec.assign(col_lane_, col_lane_ + nCols);
             } else if (lanes > 1) {
@@ -87,8 +86,7 @@ struct DeviceCommitBuffersCPU
             } else {
                 col_lane_vec.assign(nCols, 0);
             }
-            // PackedInfo::with_indexed asserts the same things Rust-side, but it is one
-            // optional constructor on a struct of public fields.
+            // with_indexed asserts the same Rust-side, but nothing forces a caller through it.
             uint64_t bad_col = 0;
             const char *why = indexedDescriptorError(nCols, num_packed_words, index_bits, lanes,
                                                      col_lane_vec.data(), &bad_col);
@@ -136,8 +134,7 @@ struct DeviceCommitBuffersCPU
     }
 
     // Indexed cm1 unpack (row-major dst, matching unpack_cpu). The per-row walk lives in
-    // unpack_indexed_row.hpp, shared with its unit test; this adds the fatal report an
-    // out-of-range index deserves on the host (a kernel cannot abort).
+    // unpack_indexed_row.hpp; this adds the fatal report a kernel cannot make.
     void unpack_cpu_indexed(
         const uint64_t* src,
         const uint64_t* table,

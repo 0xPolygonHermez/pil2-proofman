@@ -5,9 +5,8 @@
 
 #include "unpack_indexed_row.hpp"
 
-// Coverage for the row-level indexed unpack shared by the CPU witness path. A row holds
-// one instruction index per lane plus its runtime columns, and every instruction-derived
-// column is read from the entry its lane's index selects.
+// Coverage for the row-level indexed unpack: a row holds one index per lane plus its
+// runtime columns, and each tagged column is read from the entry its lane's index selects.
 
 namespace {
 
@@ -161,9 +160,8 @@ TEST(UNPACK_INDEXED_CPU, reports_the_lane_whose_index_is_out_of_range)
     EXPECT_EQ(badIndex, 7ull);
 }
 
-// A single-lane descriptor carries no lane map; the walk must read lane 0 rather than
-// dereference the null, which is what AirInstanceInfo relies on when it leaves d_col_lane
-// null and what both CUDA kernels already do.
+// A single-lane descriptor carries no lane map, as AirInstanceInfo leaves it and as both
+// CUDA kernels read it: lane 0 stands in rather than the null being dereferenced.
 TEST(UNPACK_INDEXED_CPU, a_null_lane_map_is_the_single_lane_shape)
 {
     Layout L(1, {{16, 1, false}, {32, 1, true}});
@@ -187,9 +185,8 @@ TEST(UNPACK_INDEXED_CPU, a_null_lane_map_is_the_single_lane_shape)
     EXPECT_EQ(noMap[1], 0xFEEDFACEull);
 }
 
-// The descriptor checks the unpackers cannot make themselves: the CUDA kernels read lane
-// l's index unguarded and can neither report nor abort, so a bad descriptor has to be
-// refused on the host before it is uploaded.
+// The checks the unpackers cannot make themselves: a kernel can neither report nor abort,
+// so a bad descriptor has to be refused on the host before it is uploaded.
 TEST(UNPACK_INDEXED_CPU, descriptor_validation_rejects_what_the_kernels_cannot_decode)
 {
     std::vector<uint8_t> lanes4(32);
@@ -203,20 +200,19 @@ TEST(UNPACK_INDEXED_CPU, descriptor_validation_rejects_what_the_kernels_cannot_d
     // No lane map at all is the single-lane shape.
     EXPECT_EQ(indexedDescriptorError(32, 10, 32, 0, nullptr, &badCol), nullptr);
 
-    // A u8 NAMES a lane, so 256 lanes (ids 0..255) is the ceiling, not 255.
+    // A u8 NAMES a lane, so 256 (ids 0..255) is the ceiling, not 255.
     std::vector<uint8_t> lanes256(256);
     for (size_t c = 0; c < lanes256.size(); c++) lanes256[c] = static_cast<uint8_t>(c);
     EXPECT_EQ(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES, lanes256.data(), &badCol), nullptr);
     EXPECT_NE(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES + 1, lanes256.data(), &badCol), nullptr);
 
-    // A header that overruns the compact row: the lane pass would read past it.
+    // A header that overruns the compact row.
     EXPECT_NE(indexedDescriptorError(32, 1, 32, 4, lanes4.data(), &badCol), nullptr);
     // An index width the bit walk cannot take.
     EXPECT_NE(indexedDescriptorError(32, 10, 0, 4, lanes4.data(), &badCol), nullptr);
     EXPECT_NE(indexedDescriptorError(32, 10, 65, 4, lanes4.data(), &badCol), nullptr);
 
-    // A column tagged for a lane the row does not carry is written by no pass at all, so it
-    // would keep whatever the destination held. The offending column is named.
+    // Written by no pass at all, so it would keep whatever the destination held.
     std::vector<uint8_t> stray = lanes4;
     stray[7] = 4;
     EXPECT_NE(indexedDescriptorError(32, 10, 32, 4, stray.data(), &badCol), nullptr);

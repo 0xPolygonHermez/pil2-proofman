@@ -25,9 +25,8 @@ indexed_trace_row!(
     }
 );
 
-// The indexed discriminator is what a generic filler branches on to compile out the
-// instruction-derived columns, so assert it where a regression is a build failure
-// rather than a test failure (same style as the constant checks in src/lib.rs).
+// A generic filler branches on the discriminator to compile out the instruction-derived
+// columns, so assert it where a regression is a build failure, not a test failure.
 const _: () = assert!(<IxRowPackedIndexed<Goldilocks> as IndexedFill>::IS_INDEXED);
 const _: () = assert!(!<IxRow<Goldilocks> as IndexedFill>::IS_INDEXED);
 const _: () = assert!(!<IxRowPacked<Goldilocks> as IndexedFill>::IS_INDEXED);
@@ -59,13 +58,9 @@ fn compiles_and_routes() {
     assert_eq!(r.get_index(0), 5);
 }
 
-// ---------------------------------------------------------------------------
-// Lane-packed rows: one row carries several execution steps, so the compact row
-// needs one instruction index per lane, and every output column has to name the
-// lane whose table entry it comes from -- COL_LANE, which the C++/CUDA unpack
-// consumes the same way it consumes COL_SOURCE. The lane is the OUTER array
-// dimension, matching how the pil-helpers generate a lane-packed row.
-// ---------------------------------------------------------------------------
+// Lane-packed rows: one row carries several execution steps, so the compact row needs one
+// index per lane and every column must name the lane whose entry it comes from -- COL_LANE,
+// consumed like COL_SOURCE. The lane is the OUTER array dimension, as the pil-helpers emit.
 
 trace_row!(
     LxRow<F> {

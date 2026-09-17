@@ -323,10 +323,8 @@ struct AirInstanceInfo {
                 lanes = packedInfo->lanes;
                 CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
-                // Left null for a lane-less (single-lane) descriptor: the kernels then read
-                // lane 0. Uploading an all-zero map instead would make a lane-packed air
-                // with a missing map decode every column from lane 0 AND disarm the refusals
-                // downstream, which check for a null map.
+                // Left null for a single-lane descriptor: the kernels then read lane 0. An
+                // all-zero map would instead disarm the null checks the refusals downstream rely on.
                 if (packedInfo->col_lane != nullptr) {
                     CHECKCUDAERR(cudaMalloc(&d_col_lane, nCols * sizeof(uint8_t)));
                     CHECKCUDAERR(cudaMemcpy(d_col_lane, packedInfo->col_lane, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));

@@ -3,14 +3,13 @@
 
 #include <cstdint>
 
-// Row-level unpack of an indexed (compact) trace, shared by the CPU witness path. Device
-// code cannot call this, so unpack_indexed (starks_gpu.cu) and scUnpackRangeIndexedKernel
-// (stream_commit.cu) keep their own copy of this walk; all three must agree or a slot root
-// stops matching cm1.
+// Row-level unpack of an indexed (compact) trace: the CPU witness path uses it directly and
+// it is the reference for the two device copies (unpack_indexed in starks_gpu.cu,
+// scUnpackRangeIndexedKernel in stream_commit.cu, neither of which can call it). All three
+// must agree or a slot root stops matching cm1.
 //
-// A row is `lanes` instruction indices (indexBits each) followed by its runtime columns.
-// An instruction-derived column comes from the entry that ITS LANE's index selects, so one
-// row mixes columns from up to `lanes` entries.
+// A row is `lanes` instruction indices (indexBits each) then its runtime columns; a tagged
+// column comes from the entry ITS LANE's index selects, so one row mixes up to `lanes` entries.
 //
 // One sequential pass per stream, not one interleaved pass: the row pass reads the untagged
 // columns, then lane l's pass reads the columns tagged for lane l. One cursor per pass
@@ -61,9 +60,8 @@ static inline uint64_t indexedReadBits(IndexedBitCursor &c, uint64_t nbits)
 /// A lane is named by a u8, so ids 0..255 -- 256 lanes -- is the ceiling.
 static constexpr uint64_t INDEXED_MAX_LANES = 256;
 
-/// Descriptor soundness, checked on the host before any unpack runs: the kernels read lane
-/// l's index at bit l * indexBits unguarded and can neither report nor abort. Returns the
-/// reason, or nullptr when the descriptor is usable; `badCol` receives the offending column.
+/// Descriptor soundness, checked on the host before any unpack runs: the kernels can neither
+/// report nor abort. Returns the reason, or nullptr; `badCol` names the offending column.
 static inline const char *indexedDescriptorError(uint64_t nCols, uint64_t wordsPerRow,
                                                  uint64_t indexBits, uint64_t lanes,
                                                  const uint8_t *colLane, uint64_t *badCol)
@@ -75,8 +73,7 @@ static inline const char *indexedDescriptorError(uint64_t nCols, uint64_t wordsP
     if (nLanes > INDEXED_MAX_LANES) return "more lanes than a u8 col_lane entry can name";
     if (nLanes * indexBits > wordsPerRow * 64) return "the index header does not fit the compact row";
 
-    // A column tagged for a lane the row does not carry is written by no pass at all, so it
-    // keeps whatever the destination held -- a wrong trace with no other symptom.
+    // A column tagged for a lane the row does not carry is written by no pass at all.
     if (colLane != nullptr) {
         for (uint64_t c = 0; c < nCols; c++) {
             if (colLane[c] >= nLanes) {

@@ -941,9 +941,8 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         exitProcess();
     }
 
-    // Checked on the host copy, before the descriptor is uploaded to every GPU and taken on
-    // trust by kernels that can neither report nor abort. PackedInfo::with_indexed asserts the
-    // same things Rust-side, but it is one optional constructor on a struct of public fields.
+    // Checked on the host copy, before upload to every GPU. PackedInfo::with_indexed asserts
+    // the same Rust-side, but it is one optional constructor on a struct of public fields.
     if (packedInfo != nullptr && packedInfo->col_source != nullptr) {
         const uint64_t nCols = setupCtx->starkInfo.mapSectionsN.at("cm1");
         uint64_t bad_col = 0;
