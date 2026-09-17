@@ -82,6 +82,21 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
         Err(e) => return e.to_compile_error().into(),
     };
 
+    // The row trait declares no accessors for GENERIC array columns, so a generic `@instr`
+    // array would reach the descriptor with no way to write its table entry -- the columns
+    // would unpack to whatever the unwritten entry holds. Refuse it where it is spelled.
+    for (f, instr) in &inp.fields {
+        if *instr && is_array(&f.ty) && contains_generic(&f.ty) {
+            return syn::Error::new_spanned(
+                &f.name,
+                "indexed_trace_row!: `@instr` on a generic array column -- the row trait \
+                 declares no accessors for generic arrays, so nothing could fill the table entry",
+            )
+            .to_compile_error()
+            .into();
+        }
+    }
+
     let name = &inp.name;
     let generic = &inp.generic;
     let trait_name = format_ident!("{}Ops", name);
