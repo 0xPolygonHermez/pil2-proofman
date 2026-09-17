@@ -5,7 +5,7 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConstTree, PackedInfo,
+    SetupsVadcop, VerboseMode, WitnessPriority, MAX_INSTANCES, PreLoadedConstTree, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -1485,7 +1485,7 @@ where
         transcript.put(&dummy_element);
 
         let instances = self.pctx.dctx_get_instances();
-        let my_instances = self.pctx.dctx_get_process_instances();
+        let my_instances = self.pctx.dctx_witness_schedule(&self.pctx.dctx_get_process_instances());
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for &instance_id in my_instances.iter() {
@@ -3903,6 +3903,8 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
+        // Exempt from `witness_schedule`: `my_instances` is already ordered by `schedule_key` for
+        // const-tree clustering, and rescheduling it would override that competing order.
         let mut instances_to_be_calculated = Vec::with_capacity(my_instances.len());
         for &instance_id in my_instances.iter() {
             // Committed to the async callback; if the send panics the guard settles it. The basic
@@ -4990,9 +4992,10 @@ where
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
-            // One pool of ready-but-not-yet-admitted instances, ordered by declared band (arrival
+            // One pool of ready-but-not-yet-admitted instances per band, in band order (arrival
             // order within a band); pooling is what lets `witness_slot_cap` hold an air back.
-            let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+            // Bucketed once on arrival so admission never re-reads a band under `in_flight`.
+            let mut pending: [std::collections::VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
             let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
             // Depth 1: a wakeup is a hint, not a count.
             let (slot_freed_tx, slot_freed_rx): (Sender<()>, Receiver<()>) = bounded(1);
@@ -5003,7 +5006,7 @@ where
                     if id == usize::MAX {
                         arrivals_done = true;
                     } else {
-                        pending.push_back(id);
+                        pending[pctx_clone.dctx_instance_priority(id).index()].push_back(id);
                     }
                 }
 
@@ -5021,23 +5024,19 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
-                let chosen: Option<usize> = {
+                let chosen: Option<(usize, usize)> = {
                     let held = in_flight.lock().unwrap();
-                    crate::next_admission(
-                        &pending,
-                        |id| admissible(id, &held),
-                        |id| pctx_clone.dctx_instance_priority(id),
-                    )
+                    crate::next_admission(&pending, |id| admissible(id, &held))
                 };
 
-                let instance_id = match chosen.and_then(|pos| pending.remove(pos)) {
+                let instance_id = match chosen.and_then(|(band, pos)| pending[band].remove(pos)) {
                     Some(id) => id,
                     None => {
                         // Nothing admissible. Exit only once no more can arrive and nothing is queued.
                         if cancellation_info_clone.read_recover().token.is_cancelled() {
                             break;
                         }
-                        if arrivals_done && pending.is_empty() {
+                        if arrivals_done && pending.iter().all(|p| p.is_empty()) {
                             break;
                         }
                         // Wait on every event that can make work admissible -- an arrival on
@@ -5051,7 +5050,7 @@ where
                             if index == normal_op {
                                 match op.recv(&witness_rx) {
                                     Ok(id) if id == usize::MAX => arrivals_done = true,
-                                    Ok(id) => pending.push_back(id),
+                                    Ok(id) => pending[pctx_clone.dctx_instance_priority(id).index()].push_back(id),
                                     Err(_) => {}
                                 }
                             } else if index == slot_op {
@@ -5268,14 +5267,17 @@ where
             &self.cancellation_info,
         );
 
-        // A short wait alone doesn't say which instance is missing; check for one never announced.
+        // A short wait says only "one is missing"; name it. Also reached on cancellation, so the
+        // wording must hold when the real error is elsewhere.
         if witness_done.value() < expected {
-            let never_ready = self.pctx.dctx_instances_not_ready(instances);
-            if !never_ready.is_empty() {
+            const SHOWN: usize = 16;
+            for (state, ids) in self.pctx.dctx_instances_not_done(instances) {
                 tracing::error!(
-                    "{} instance(s) were never announced ready and so were never dispatched: {:?}",
-                    never_ready.len(),
-                    never_ready
+                    "{} instance(s) still {:?} when the witness phase gave up: {:?}{}",
+                    ids.len(),
+                    state,
+                    &ids[..ids.len().min(SHOWN)],
+                    if ids.len() > SHOWN { format!(" (+{} more)", ids.len() - SHOWN) } else { String::new() }
                 );
             }
         }

@@ -775,13 +775,22 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.dctx.read().unwrap().instance_priority(instance_id)
     }
 
-    /// Of `instances`, the ones never announced ready (a stall diagnostic; named ids beat a bare count).
-    pub fn dctx_instances_not_ready(&self, instances: &[usize]) -> Vec<usize> {
-        let dctx = self.dctx.read().unwrap();
-        instances
-            .iter()
-            .copied()
-            .filter(|&id| dctx.witness_states.get(id).is_some_and(|s| s.get() == WitnessState::Absent))
+    /// Stall diagnostic: of `instances`, those never `Done`, grouped by state -- `Absent` never
+    /// announced, `Queued` never dispatched, `Running` wedged in a hook, `Evicted` not recomputed.
+    /// Poison-tolerant: it runs only after a failure and must not replace the real error.
+    pub fn dctx_instances_not_done(&self, instances: &[usize]) -> Vec<(WitnessState, Vec<usize>)> {
+        let dctx = self.dctx.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let states = [WitnessState::Absent, WitnessState::Queued, WitnessState::Running, WitnessState::Evicted];
+        states
+            .into_iter()
+            .filter_map(|want| {
+                let ids: Vec<usize> = instances
+                    .iter()
+                    .copied()
+                    .filter(|&id| dctx.witness_states.get(id).is_some_and(|s| s.get() == want))
+                    .collect();
+                (!ids.is_empty()).then_some((want, ids))
+            })
             .collect()
     }
 
@@ -917,12 +926,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_assigned_table(instance_id)
     }
 
-    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here
-    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here.
+    /// `priority` is required, not defaulted: a silent `Normal` here demotes an air with no error.
+    pub fn dctx_add_instance_no_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, WitnessPriority::default())
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
@@ -1596,7 +1612,7 @@ mod announce_tests {
         assert_eq!(slot.get(), WitnessState::Queued);
     }
 
-    /// `dctx_instances_not_ready` reports exactly the instances still `Absent`.
+    /// `dctx_instances_not_done` reports an instance nobody ever announced as `Absent`.
     #[test]
     fn an_unannounced_instance_stays_absent() {
         let slot = WitnessSlot::default();
