@@ -13,7 +13,9 @@ extern "C" {
         uint64_t *unpack_info;
         // Indexed variant descriptor (nullptr / 0 when the air is not indexed).
         uint8_t *col_source;      // per column: 0 = row stream, 1 = table stream (len nCols)
-        uint8_t *col_lane;        // per column: lane whose index selects its entry (len nCols)
+        uint8_t *col_lane;        // per column: lane whose index selects its entry (len nCols).
+                                  // Also null for a SINGLE-lane indexed air: every path reads a
+                                  // null map as lane 0, and only lanes > 1 requires it.
         uint64_t index_bits;      // width of ONE instruction index in the row's header
         uint64_t words_per_entry; // u64 words per instruction-table entry
         uint64_t lanes;           // instruction indices per row; 0/1 is the single-lane shape

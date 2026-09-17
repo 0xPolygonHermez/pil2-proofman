@@ -88,7 +88,8 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // dColSource / dColLane / dTable are DEVICE pointers and select the indexed
 // unpack: dColSource is 0 = row stream, 1 = instruction table, and dColLane
 // names the lane whose index selects that entry. Every dColLane entry must be
-// below dims.lanes -- the caller's contract, not checked here (it is device
+// below max(dims.lanes, 1) -- lanes 0 and 1 are both the single-lane shape, so
+// lane 0 is the only valid entry there. The caller's contract, not checked here (it is device
 // memory, and reading it back would stall the stream); a stray lane leaves that
 // column written by no pass. indexedDescriptorError (unpack_indexed_row.hpp)
 // checks it host-side at upload. dColSource and dTable must be non-null together,
