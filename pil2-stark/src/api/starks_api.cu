@@ -1411,6 +1411,15 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
+    // Same device-owned table as in commit_witness_gpu: the accumulator is still live (it is reset
+    // per proof, not per phase), so the proof re-derives cm1 from it rather than re-uploading a
+    // host trace that was never built. Both phases must agree, or the contribution root committed
+    // earlier will not match the one proved here.
+    const bool mulExported = !air_instance_info->is_packed &&
+                             mul_export_to_trace(airId, (int)sd.gpuId, dst, N, nCols, stream);
+    if (mulExported) {
+        // nothing to upload
+    } else
     // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
     // first version is in production); other GPUs use the legacy upload.
     if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
@@ -2432,7 +2441,19 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
-    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    // A prover-owned virtual table is already counted on this device: transpose the accumulator
+    // straight into the commit's destination instead of uploading a trace the host built from it.
+    // `params->trace` is left untouched in that case -- the air carries nothing but cm1 (no
+    // airvalues, no custom commits), so there is nothing else the host would have contributed.
+    const bool exported = !air_instance_info->is_packed &&
+                          mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
+    if (exported) {
+        TimerStartCategoryGPU(timer, H2D_COPY);
+        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
+        TimerStopCategoryGPU(timer, H2D_COPY);
+    } else {
+        copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    }
     PROOFMAN_SUMCHECK("contrib_before_unpack", dst, total_size / sizeof(uint64_t), stream);
 
     uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);

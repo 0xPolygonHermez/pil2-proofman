@@ -58,6 +58,43 @@ uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
 
 // Fold the prover-owned spans into the caller's accumulator, once per proof. `hostAcc` is scoped to
 // this call and never retained.
+// True when the device can produce this air's whole cm1 by itself, so the host must not build a
+// trace for it. False on a CPU-only build, where there is no device accumulator to export from.
+// Off until the caller says the counts never need a cross-rank reduction: with several ranks the
+// host adds every rank's share into one accumulator, and this device one holds only ours.
+uint64_t mul_air_has_owned(uint64_t airId) {
+    return mul_air_has_owned_tables(airId) ? 1 : 0;
+}
+
+void mul_set_device_export(uint64_t enabled) {
+#ifdef __USE_CUDA__
+    mulDeviceExportEnabled() = (enabled != 0);
+#else
+    (void)enabled;
+#endif
+}
+
+uint64_t mul_air_device_owned(uint64_t airId) {
+#ifdef __USE_CUDA__
+    return mul_air_fully_owned(airId) ? 1 : 0;
+#else
+    (void)airId;
+    return 0;
+#endif
+}
+
+// Ordering point for the device export: every instance has launched its scatter once this returns,
+// which is what lets the table's own commit transpose a complete accumulator. The fold used to be
+// where this happened, and the wait is all that is still needed once nothing comes back to the host.
+void mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return;
+    if (!mul_await_commits(expectedCommits)) exitProcess();
+#ifdef __USE_CUDA__
+    mul_phase_report();
+    mul_oob_report();
+#endif
+}
+
 void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits) {
     // Nothing prover-owned means no scatter ever ran, so there is nothing to fold.
     if (mulDecoders().empty() || hostAcc == nullptr) return;

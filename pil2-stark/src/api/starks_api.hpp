@@ -53,6 +53,10 @@ extern "C" {
     uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap);
     // Fold the prover-owned spans into `hostAcc`, which is scoped to this call and not retained.
     void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits);
+    uint64_t mul_air_has_owned(uint64_t airId);
+    void mul_set_device_export(uint64_t enabled);
+    uint64_t mul_air_device_owned(uint64_t airId);
+    void mul_sync_commits(uint64_t expectedCommits);
     // Allocate the accumulators (idempotent, no-op until a decoder is registered).
     void mul_alloc(void *d_buffers_);
     // Count one instance's lookups from a filled witness, for the paths that never commit.

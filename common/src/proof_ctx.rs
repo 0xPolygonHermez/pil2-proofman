@@ -307,6 +307,11 @@ pub struct ProofCtx<F: PrimeField64> {
     /// the virtual table. Held here rather than read back over the FFI: the witness library and the
     /// host binary each link their own copy of libstarks, and only the binary's is ever registered.
     pub prover_owned_tables: RwLock<Vec<u64>>,
+
+    /// Virtual-table airs the device produces end to end: it holds their counts and transposes them
+    /// into the trace at commit time, so the host must not build one -- and must not skip the
+    /// instance for looking empty, which is exactly what it looks like from here.
+    pub device_owned_table_airs: RwLock<Vec<usize>>,
     pub prover_counts: RwLock<HashMap<usize, Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -356,6 +361,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
+            device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
             global_info,

@@ -148,6 +148,7 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
+    mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
     stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
@@ -795,6 +796,20 @@ impl<F: PrimeField64> ProofMan<F> {
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
         if self.pctx.gpu {
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
+            // Now that the accumulators exist, record which airs the device can produce whole. The
+            // std reads this to leave their traces alone -- see `device_owned_table_airs`.
+            if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
+                let mut owned = self.pctx.device_owned_table_airs.write().unwrap();
+                owned.clear();
+                for l in layouts {
+                    if mul_air_device_owned_c(l.air_id) {
+                        owned.push(l.air_id as usize);
+                    }
+                }
+                if !owned.is_empty() {
+                    tracing::info!("Virtual tables: air(s) {:?} are produced and committed on the device", owned);
+                }
+            }
         }
         // Not in VirtualTableAir::execute: that is fork-exposed (--asm spawns the microservices
         // around it), where this FFI call would kill the process with no diagnostic.
@@ -2643,6 +2658,10 @@ where
         // reported proof time. Memoized either way (see `register_prover_multiplicities`).
         timer_start_info!(FITTING_VIRTUAL_TABLES);
         proofman.register_prover_multiplicities()?;
+        // A single rank never reduces counts across processes, so a fully prover-owned table can be
+        // produced on the device and committed from there. With several ranks the host still has to
+        // gather every rank's share, and the accumulator here holds only ours.
+        mul_set_device_export_c(proofman.mpi_ctx.n_processes == 1);
         timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
 
         Ok(proofman)
@@ -2808,8 +2827,20 @@ where
             return Ok(());
         }
         let expected_commits = self.pctx.dctx_get_process_instances_no_tables().len() as u64;
+        // Ordering point: every instance has launched its scatter once this returns. An air the
+        // device owns end to end needs nothing further here -- its own commit transposes the
+        // accumulator straight into the trace, so the counts never reach the host.
+        mul_sync_commits_c(expected_commits);
+
         let mut counts = self.pctx.prover_counts.write().unwrap();
         for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+            // Nothing to hand over: either the device commits the whole air by itself, or the
+            // prover counts none of its tables. The second is not a no-op by accident -- building
+            // the accumulator means clearing the whole table, for a fold that then matches no
+            // decoder and writes nothing.
+            if mul_air_device_owned_c(l.air_id) || !mul_air_has_owned_c(l.air_id) {
+                continue;
+            }
             let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
             // The fold adds into the destination, so clear first: exporting twice must not double.
             buf.iter_mut().for_each(|c| *c = 0);

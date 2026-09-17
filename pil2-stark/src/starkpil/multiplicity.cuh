@@ -448,6 +448,88 @@ inline uint64_t mul_oob_report() {
 
 // Fold every prover-owned span of `airId` into the Rust accumulator. One pass per GPU: each device
 // counted only the instances that ran on it, so the spans add rather than replace.
+void mul_transpose_acc_launch(const uint64_t* acc, uint64_t* trace, uint64_t numRows, uint64_t nCols,
+                              cudaStream_t stream);
+void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStream_t stream);
+
+// Peer staging buffer, one per GPU, allocated only when a second GPU exists.
+inline std::map<int, uint64_t*>& mulPeerStage() { static std::map<int, uint64_t*> m; return m; }
+
+// Write air `airId`'s counts straight into the committed trace at `dst`, on the device.
+//
+// This is what replaces the host round-trip: without it the accumulator is copied to the host,
+// added into a second host array, transposed there and uploaded again -- four passes over the same
+// ~370 MB, none of which the counts need. Returns false when it cannot own the export (no
+// accumulator, or a shape it does not recognise), and the caller must then take the host path,
+// which is still what a cross-rank reduction needs.
+// True when every table of `airId` is prover-owned, i.e. the device can produce the whole cm1.
+inline bool& mulDeviceExportEnabled() { static bool on = false; return on; }
+
+inline bool mul_air_fully_owned(uint64_t airId) {
+    if (!mulDeviceExportEnabled()) return false;
+    const MulVtLayout* L = nullptr;
+    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
+    if (L == nullptr || L->accBase.empty()) return false;
+    for (const auto& kv : L->accBase) if (mulDecoderFor(kv.first) == nullptr) return false;
+    return !mulAccs().empty();
+}
+
+inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
+                                uint64_t numRows, uint64_t nCols, cudaStream_t stream) {
+    if (dst == nullptr) return false;
+    const MulVtLayout* L = nullptr;
+    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
+    if (L == nullptr) return false;
+
+    // The accumulator is sized numRows * num_muls by construction; if the trace disagrees the
+    // layouts have diverged and a silent transpose would write the wrong counts.
+    if (numRows * nCols != L->nCounters) {
+        zklog.error("multiplicity: air " + std::to_string(airId) + " trace is " + std::to_string(numRows)
+                    + "x" + std::to_string(nCols) + " but its accumulator holds "
+                    + std::to_string(L->nCounters) + " counters");
+        return false;
+    }
+
+    // All or nothing: the transpose writes the whole cm1, so a table this air holds that the std
+    // still counts would be overwritten with zeros. Refuse the device path rather than lose it.
+    for (const auto& kv : L->accBase) {
+        if (mulDecoderFor(kv.first) == nullptr) return false;
+    }
+
+    MulAcc* local = nullptr;
+    std::vector<MulAcc*> remote;
+    for (auto& kv : mulAccs()) {
+        if (kv.first.first != airId) continue;
+        if (kv.first.second == gpuId) local = kv.second;
+        else remote.push_back(kv.second);
+    }
+    if (local == nullptr) return false;
+
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+    // Every scatter that fed this air, on every device: their counts must be visible before the
+    // transpose reads them.
+    mul_wait_scatters(gpuId);
+    for (MulAcc* r : remote) { CHECKCUDAERR(cudaSetDevice(r->gpuId)); mul_wait_scatters(r->gpuId); }
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+
+    // Several GPUs each hold a partial: fold them onto this one first. Staged through a local
+    // buffer rather than read across the link, so this does not depend on peer access being
+    // enabled between every pair.
+    if (!remote.empty()) {
+        uint64_t*& stage = mulPeerStage()[gpuId];
+        if (stage == nullptr)
+            CHECKCUDAERR(cudaMalloc(&stage, L->nCounters * sizeof(uint64_t)));
+        for (MulAcc* r : remote) {
+            CHECKCUDAERR(cudaMemcpyPeerAsync(stage, gpuId, r->d_acc, r->gpuId,
+                                             L->nCounters * sizeof(uint64_t), stream));
+            mul_acc_add_launch(local->d_acc, stage, L->nCounters, stream);
+        }
+    }
+
+    mul_transpose_acc_launch(local->d_acc, dst, numRows, nCols, stream);
+    return true;
+}
+
 inline void mul_fold_air(uint64_t airId, uint64_t* host_acc) {
     const MulVtLayout* L = nullptr;
     for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }

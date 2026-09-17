@@ -1920,6 +1920,29 @@ pub fn mul_migrated_tables_c() -> Vec<u64> {
 /// # Safety
 /// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
 /// duration of the call. The C++ side does not retain it.
+/// Whether the prover counts any table of `air_id`. An air where it counts none needs no host
+/// accumulator at all.
+pub fn mul_air_has_owned_c(air_id: u64) -> bool {
+    unsafe { mul_air_has_owned(air_id) != 0 }
+}
+
+/// Allow the device to export table traces by itself. Only sound when no cross-rank reduction is
+/// needed, since the device accumulator holds this process's counts alone.
+pub fn mul_set_device_export_c(enabled: bool) {
+    unsafe { mul_set_device_export(enabled as u64) }
+}
+
+/// Whether the device owns every table of `air_id`, so the host must not build its trace.
+pub fn mul_air_device_owned_c(air_id: u64) -> bool {
+    unsafe { mul_air_device_owned(air_id) != 0 }
+}
+
+/// Wait until every instance has launched its scatter. The table's own commit reads the
+/// accumulator on the device, so this is the ordering point that makes it complete.
+pub fn mul_sync_commits_c(expected_commits: u64) {
+    unsafe { mul_sync_commits(expected_commits) }
+}
+
 pub unsafe fn mul_fold_c(air_id: u64, host_acc: *mut u64, expected_commits: u64) {
     unsafe { mul_fold(air_id, host_acc, expected_commits) }
 }

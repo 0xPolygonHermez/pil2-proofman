@@ -393,6 +393,17 @@ inline uint64_t mul_migrated_tables_impl(uint64_t* out, uint64_t cap) {
 // proving key the prover claimed, and the per-air breakdown scales with the proving key rather
 // than with anything they did. Shared by both backends' `mul_alloc` (this is the whole of the
 // CPU-only one; the GPU one also logs its own per-device residency, see multiplicity.cuh).
+// Whether the prover counts anything at all in this air. An air where it counts nothing has no
+// counts to hand over, so the host must not build an accumulator for it -- allocating and clearing
+// one costs a pass over the whole table for a fold that then matches no decoder.
+inline bool mul_air_has_owned_tables(uint64_t airId) {
+    for (const auto& l : mulVtLayouts()) {
+        if (l.airId != airId) continue;
+        for (const auto& kv : l.accBase) if (mulDecoderFor(kv.first) != nullptr) return true;
+    }
+    return false;
+}
+
 inline void mul_log_coverage() {
     if (mulVtLayouts().empty()) return;
     size_t have = 0, total = 0;
