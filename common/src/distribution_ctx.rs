@@ -239,13 +239,28 @@ pub struct InstanceChunks {
 }
 
 /// Dispatch-order band for an instance, fixed at registration; says nothing about *why*.
-/// Variant order is load-bearing: `next_admission` ranks on the derived `Ord`.
+/// Pooled admission honours all three; the serial schedule honours only `Last`.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WitnessPriority {
     First,
     #[default]
     Normal,
     Last,
+}
+
+impl WitnessPriority {
+    /// How many pools `next_admission` walks.
+    pub const BANDS: usize = Self::Last.index() + 1;
+
+    /// This band's admission pool. A match, not a cast: a new variant must not compile
+    /// until it has a pool, or the handler indexes past the array and dies mid-phase.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::First => 0,
+            Self::Normal => 1,
+            Self::Last => 2,
+        }
+    }
 }
 
 /// Orders `instances` for dispatch. Only `Last` moves anything: `First` is a pooled preference
@@ -1468,7 +1483,7 @@ mod witness_priority_tests {
         assert_eq!(WitnessPriority::default(), WitnessPriority::Normal);
     }
 
-    /// Declaration order, not alphabetical: this is what the schedule sorts on.
+    /// Nothing in production ranks on this any more, but a reorder would still move `index`.
     #[test]
     fn the_bands_order_first_then_normal_then_last() {
         assert!(WitnessPriority::First < WitnessPriority::Normal);
@@ -1537,5 +1552,13 @@ mod witness_schedule_tests {
     #[test]
     fn an_empty_set_schedules_to_nothing() {
         assert!(witness_schedule(&[], bands(&[])).is_empty());
+    }
+
+    /// Catches a switch to `Ord`-based ranking here: only `Last` may move.
+    #[test]
+    fn a_mixed_set_moves_only_the_last_instance() {
+        let ids = [7, 2, 9, 4];
+        let order = witness_schedule(&ids, bands(&[(9, WitnessPriority::First), (2, WitnessPriority::Last)]));
+        assert_eq!(order, vec![7, 9, 4, 2], "Last moves to the back, First keeps its slot");
     }
 }
