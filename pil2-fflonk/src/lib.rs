@@ -13,7 +13,6 @@ mod air;
 mod curve;
 mod fr;
 mod linearisation;
-mod packing;
 mod pairing;
 mod proof;
 #[cfg(test)]
@@ -43,8 +42,7 @@ pub use curve::{CURVE_B, FQ_MODULUS, G1Affine, G2Affine, fq_modulus, g1_generato
 pub use verify::{AirInputs, Prepared, prepare};
 pub use air::{check_inv_zh, inv_zh, quotient_at, zh_at};
 pub use verifier_code::{EvalRef, Inputs, Instruction, Op, Operand, VerifierCode};
-pub use stage::{Combined, combined_for, trim};
-pub use packing::{FR_BYTES as PACKED_FR_BYTES, interleave, pad_rows, read_column};
+pub use stage::{FR_BYTES as STAGE_FR_BYTES, StagePlan, pad_rows, reserved_rows, stage_plan, stage_width};
 pub use pairing::{PairingCheck, Term, assemble};
 pub use roots::{OpeningSet, all_roots, coset_key, flattened, omega_key, roots_for};
 pub use linearisation::{Evaluations, Linearisation, f_at_root, linearise, r_at, resolve_evaluations};

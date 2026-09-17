@@ -16,7 +16,7 @@ AS  := nasm
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
 CPPFLAGS := -I. -I$(STARK_SRC)/rapidsnark -I$(STARK_SRC)/bn128/src/ffiasm \
-            -I$(STARK_SRC)/bn128/src/ntt \
+            -I$(STARK_SRC)/bn128/src/ntt -I$(STARK_SRC)/bn128/src \
             -I$(STARK_SRC)/XKCP -MMD -MP
 ASFLAGS  := -f elf64 -g -F dwarf
 
@@ -25,12 +25,16 @@ LDFLAGS_COMMON := -z noexecstack -fopenmp
 # ----------------------
 # Sources
 # ----------------------
-SHPLONK_SRCS := shplonk.cpp pilfflonk_api.cpp
+SHPLONK_SRCS := shplonk.cpp pilfflonk_api.cpp zkey_pilfflonk.cpp fflonk_info.cpp \
+                pilfflonk_prover.cpp pilfflonk_setup.cpp json_steps.cpp witness/main.pilfflonk.cpp \
+                $(wildcard chelpers/*.cpp)
 SHPLONK_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SHPLONK_SRCS))
 
 # Snark-side support pulled from pil2-stark: the logger fflonk/plonk already
 # use, and Keccak for the Fiat-Shamir transcript.
 SUPPORT_OBJS := $(BUILD_DIR)/ntt/ntt_bn128.o \
+                $(BUILD_DIR)/support/binfile_utils.o \
+                $(BUILD_DIR)/support/binfile_writer.o \
                 $(BUILD_DIR)/support/logger.o \
                 $(BUILD_DIR)/support/keccak_wrapper.o \
                 $(BUILD_DIR)/xkcp/Keccak-more-compact.o
@@ -74,7 +78,7 @@ runtests: testscpu
 	./testscpu
 
 testscpu: $(TESTS_OBJS) $(SHPLONK_OBJS) $(SUPPORT_OBJS) $(FFIASM_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread $(LDFLAGS_COMMON)
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lsodium -lpthread $(LDFLAGS_COMMON)
 
 # ----------------------
 # Pattern rules

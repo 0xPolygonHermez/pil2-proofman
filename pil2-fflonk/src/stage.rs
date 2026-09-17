@@ -1,58 +1,44 @@
-//! The combined polynomials a stage contributes, ready to be committed.
+//! Which columns each combined polynomial packs, for one stage.
 //!
-//! A proof is produced stage by stage: each one computes some polynomials,
-//! commits them, and the commitments go into the transcript that draws the next
-//! stage's challenges (see [`crate::air::air_challenges`]). This module covers
-//! the middle step -- turning a stage's coefficient buffer into the combined
-//! polynomials that stage commits.
+//! A proof is produced stage by stage: each computes some polynomials, commits
+//! them, and the commitments feed the transcript that draws the next stage's
+//! challenges (see [`crate::air::air_challenges`]).
 //!
-//! It stops short of committing. Multiplying by the powers of tau needs the
-//! curve arithmetic in `proofman-fflonk-lib-c`, and depending on that here
-//! would put a C++ toolchain in the way of building a crate that is otherwise
-//! pure Rust. So this returns what to commit and the caller commits it, the
-//! same division [`crate::pairing`] uses for the verifier's final check.
+//! This module reads the key and works out *what* to pack -- which columns of
+//! the stage's buffer belong to each `f_i`, in slot order, and how many
+//! coefficients to take from each. The packing itself is rapidsnark's
+//! `CPolynomial`, reached through `proofman-fflonk-lib-c::combine`, the same
+//! class the fflonk prover builds its `C0`/`C1`/`C2` with.
+//!
+//! Splitting it this way keeps the key-reading in Rust and the field arithmetic
+//! in the C++ that already implements it, rather than having a second
+//! implementation of the interleave to keep in step.
 
 use anyhow::{Context, Result, bail};
 
-use crate::packing::{FR_BYTES, interleave, read_column};
 use crate::proof::commitment_key;
 use crate::zkey::ZKey;
 
-/// One combined polynomial, named as its commitment will be.
+/// Bytes per coefficient, matching the key's `FrElement`.
+pub const FR_BYTES: usize = 32;
+
+/// One combined polynomial's recipe.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Combined {
+pub struct StagePlan {
     /// `f0`, `f1`, ... -- the key a commitment is stored under.
     pub name: String,
-    /// Interleaved coefficients, in the key's representation.
-    pub coefficients: Vec<u8>,
+    /// The stage columns this packs, in slot order, with how many coefficients
+    /// to take from each.
+    pub columns: Vec<(usize, usize)>,
 }
 
-/// The length a combined polynomial needs: the highest index any slot reaches,
-/// plus one.
+/// Work out what each `f_i` drawing on `stage` packs.
 ///
-/// Not the `degree` the key records. That is computed from each slot's length
-/// rather than its top index, so it overshoots by `nPols` -- harmless where it
-/// is used as an upper bound, wrong as a buffer size.
-fn combined_len(slots: &[Vec<u8>]) -> usize {
-    let n = slots.len();
-    slots
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.is_empty())
-        .map(|(j, s)| (s.len() / FR_BYTES - 1) * n + j + 1)
-        .max()
-        .unwrap_or(0)
-}
-
-/// Build every combined polynomial that draws on `stage`.
-///
-/// `coefficients` is that stage's buffer, coefficient-major over the stage's
-/// full width. Returns them in `f_i` index order, which is also the order their
-/// commitments are absorbed into the transcript.
-pub fn combined_for(zkey: &ZKey, stage: u32, coefficients: &[u8]) -> Result<Vec<Combined>> {
+/// Returned in `f_i` index order, which is also the order their commitments are
+/// absorbed into the transcript.
+pub fn stage_plan(zkey: &ZKey, stage: u32) -> Result<Vec<StagePlan>> {
     let names =
         zkey.pols_names_stage.get(&stage).with_context(|| format!("the key names no polynomials for stage {stage}"))?;
-    let n_pols_stage = names.len();
 
     let mut out = Vec::new();
     for f in &zkey.f {
@@ -70,9 +56,9 @@ pub fn combined_for(zkey: &ZKey, stage: u32, coefficients: &[u8]) -> Result<Vec<
             );
         }
 
-        let mut slots = Vec::with_capacity(f.pols.len());
+        let mut columns = Vec::with_capacity(f.pols.len());
         for name in &f.pols {
-            let pol_id = names
+            let id = names
                 .iter()
                 .position(|n| n == name)
                 .with_context(|| format!("f{}: {name} is not among stage {stage}'s polynomials", f.index))?;
@@ -84,32 +70,58 @@ pub fn combined_for(zkey: &ZKey, stage: u32, coefficients: &[u8]) -> Result<Vec<
                 .with_context(|| format!("f{}: {name} has no degree in stage {stage}", f.index))?
                 .degree;
 
-            slots.push(
-                read_column(coefficients, pol_id, n_pols_stage, degree as usize)
-                    .with_context(|| format!("f{}: reading {name}", f.index))?,
-            );
+            columns.push((id, degree as usize));
         }
 
-        let len = combined_len(&slots);
-        let coefficients = interleave(&slots, len).with_context(|| format!("f{}: interleaving its slots", f.index))?;
-
-        out.push(Combined { name: commitment_key(f.index), coefficients });
+        out.push(StagePlan { name: commitment_key(f.index), columns });
     }
 
     Ok(out)
 }
 
-/// Drop trailing zero coefficients.
+/// The number of columns a stage's buffer has.
+pub fn stage_width(zkey: &ZKey, stage: u32) -> Result<usize> {
+    Ok(zkey
+        .pols_names_stage
+        .get(&stage)
+        .with_context(|| format!("the key names no polynomials for stage {stage}"))?
+        .len())
+}
+
+/// Grow a coefficient buffer to `to_rows`, leaving the new rows zero.
 ///
-/// The setup stores polynomials trimmed this way -- it is what the C++
-/// `fixDegree()` does. Trailing zeros contribute nothing to a commitment, so
-/// this matters for comparing against the key, not for committing.
-pub fn trim(coefficients: &[u8]) -> &[u8] {
-    let mut end = coefficients.len();
-    while end >= FR_BYTES && coefficients[end - FR_BYTES..end].iter().all(|&b| b == 0) {
-        end -= FR_BYTES;
+/// A committed stage's polynomials are taller than its trace: interpolating `N`
+/// evaluations gives `N` coefficients, but the stage reserves `N + openings + 1`
+/// so blinding has somewhere to write -- it adds `b·(X^(j+N) - X^j)`, which is
+/// why the extra rows sit just above the domain. They are zero when blinding is
+/// disabled, which is what makes a run reproducible.
+pub fn pad_rows(buf: &[u8], n_cols: usize, to_rows: usize) -> Result<Vec<u8>> {
+    if n_cols == 0 {
+        bail!("cannot pad a buffer with no columns");
     }
-    &coefficients[..end]
+    if !buf.len().is_multiple_of(n_cols * FR_BYTES) {
+        bail!("a buffer of {} bytes is not a whole number of {n_cols}-column rows", buf.len());
+    }
+
+    let from_rows = buf.len() / (n_cols * FR_BYTES);
+    if to_rows < from_rows {
+        bail!("cannot pad {from_rows} rows down to {to_rows}");
+    }
+
+    let mut out = vec![0u8; to_rows * n_cols * FR_BYTES];
+    out[..buf.len()].copy_from_slice(buf);
+    Ok(out)
+}
+
+/// The coefficients a stage reserves per column, which is the tallest degree it
+/// declares.
+pub fn reserved_rows(zkey: &ZKey, stage: u32) -> Result<usize> {
+    zkey.f
+        .iter()
+        .flat_map(|f| f.stages.iter().filter(|s| s.stage == stage))
+        .flat_map(|s| s.pols.iter().map(|p| p.degree as usize))
+        .max()
+        .with_context(|| format!("stage {stage} declares no degrees"))
 }
 
 #[cfg(test)]
@@ -122,65 +134,63 @@ mod tests {
         ZKey::from_bytes(ZKEY).expect("the vendored key parses")
     }
 
-    /// Stage 0 is the one a key can be checked against on its own: it holds the
-    /// constant polynomials, and the key records both their coefficients and
-    /// the combined polynomials built from them.
+    /// The plan names the constant stage's two combined polynomials, in the
+    /// order the transcript absorbs them.
     #[test]
-    fn rebuilds_the_constant_stage_from_the_key() {
+    fn plans_the_constant_stage() {
         let zkey = key();
-        let coefs = zkey.bulk.get(&crate::zkey::SECTION_CONST_POLS_COEFS).expect("constant coefficients");
+        let plan = stage_plan(&zkey, 0).unwrap();
 
-        let built = combined_for(&zkey, 0, coefs).unwrap();
-        assert_eq!(built.len(), 2, "the reference key has two constant-only combined polynomials");
-
-        for c in &built {
-            let recorded = zkey
-                .f_commitments
-                .iter()
-                .find(|r| r.name == c.name)
-                .unwrap_or_else(|| panic!("{} has no recorded polynomial", c.name));
-
-            assert_eq!(trim(&c.coefficients), recorded.pol.as_slice(), "{}", c.name);
-        }
-    }
-
-    /// Order is the transcript's: commitments are absorbed by f_i index, so a
-    /// reordering here would change every challenge that follows.
-    #[test]
-    fn returns_them_in_index_order() {
-        let zkey = key();
-        let coefs = zkey.bulk.get(&crate::zkey::SECTION_CONST_POLS_COEFS).unwrap();
-
-        let names: Vec<String> = combined_for(&zkey, 0, coefs).unwrap().into_iter().map(|c| c.name).collect();
+        let names: Vec<&str> = plan.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["f0", "f1"]);
+
+        // f0 packs six constants, each the full domain.
+        assert_eq!(plan[0].columns.len(), 6);
+        assert!(plan[0].columns.iter().all(|&(_, len)| len == 256));
     }
 
-    /// A stage the key does not describe is an error rather than an empty list,
-    /// which would look like a stage that legitimately commits nothing.
+    /// Slot order is the key's `pols` order, not the stage's column order --
+    /// they differ, and swapping them would commit to a different polynomial.
+    #[test]
+    fn slot_order_follows_the_combined_polynomial_not_the_stage() {
+        let zkey = key();
+        let plan = stage_plan(&zkey, 0).unwrap();
+
+        let ids: Vec<usize> = plan[0].columns.iter().map(|&(id, _)| id).collect();
+        assert_eq!(ids, vec![5, 4, 3, 2, 1, 0], "f0's slots run down the stage's columns");
+    }
+
+    /// Stage 1 reserves more coefficients than the domain has rows, for
+    /// blinding.
+    #[test]
+    fn a_committed_stage_reserves_rows_for_blinding() {
+        let zkey = key();
+        assert!(reserved_rows(&zkey, 1).unwrap() > 256);
+        assert_eq!(stage_width(&zkey, 1).unwrap(), 15);
+    }
+
     #[test]
     fn rejects_a_stage_the_key_does_not_know() {
-        let zkey = key();
-        assert!(combined_for(&zkey, 99, &[]).is_err());
-    }
-
-    /// A truncated buffer is reported, not silently short-read.
-    #[test]
-    fn rejects_a_short_coefficient_buffer() {
-        let zkey = key();
-        let coefs = zkey.bulk.get(&crate::zkey::SECTION_CONST_POLS_COEFS).unwrap();
-        assert!(combined_for(&zkey, 0, &coefs[..coefs.len() / 2]).is_err());
+        assert!(stage_plan(&key(), 99).is_err());
+        assert!(stage_width(&key(), 99).is_err());
     }
 
     #[test]
-    fn trim_drops_only_whole_trailing_zero_coefficients() {
-        let mut buf = vec![0u8; FR_BYTES * 3];
-        buf[0] = 7;
-        assert_eq!(trim(&buf).len(), FR_BYTES);
+    fn pads_rows_with_zeroes() {
+        let buf = vec![7u8; FR_BYTES * 4];
+        let padded = pad_rows(&buf, 2, 4).unwrap();
 
-        buf[FR_BYTES * 2] = 9;
-        assert_eq!(trim(&buf).len(), FR_BYTES * 3);
+        assert_eq!(padded.len(), FR_BYTES * 8);
+        assert_eq!(&padded[..buf.len()], &buf[..]);
+        assert!(padded[buf.len()..].iter().all(|&b| b == 0));
+        assert_eq!(pad_rows(&buf, 2, 2).unwrap(), buf, "padding to the same height is a copy");
+    }
 
-        assert_eq!(trim(&[0u8; FR_BYTES * 2]).len(), 0);
-        assert_eq!(trim(&[]).len(), 0);
+    #[test]
+    fn rejects_padding_that_would_shrink_or_misalign() {
+        let buf = vec![0u8; FR_BYTES * 4];
+        assert!(pad_rows(&buf, 2, 1).is_err());
+        assert!(pad_rows(&buf, 3, 4).is_err());
+        assert!(pad_rows(&buf, 0, 4).is_err());
     }
 }

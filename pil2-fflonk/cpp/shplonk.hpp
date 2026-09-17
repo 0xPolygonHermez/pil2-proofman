@@ -8,9 +8,9 @@
 #include <nlohmann/json.hpp>
 #include "polynomial/polynomial.hpp"
 #include "polynomial/cpolynomial.hpp"
-#include "shplonk_setup.hpp"
+#include "zkey_pilfflonk.hpp"
 #include "shplonk.hpp"
-#include "keccak_256_transcript.hpp"
+#include "pilfflonk_transcript.hpp"
 #include <alt_bn128.hpp>
 #include "fft.hpp"
 
@@ -20,9 +20,6 @@ using namespace std;
 
 namespace ShPlonk {
     class ShPlonkProver {
-    // Prover state sits at the same access level as the compute* methods that
-    // own it, so tests can derive and observe it (see cpp/tests/shplonk.cpp).
-    protected:
 
         AltBn128::Engine &E;
 
@@ -30,9 +27,9 @@ namespace ShPlonk {
         using G1Point = typename AltBn128::G1Point;
         using G1PointAffine = typename AltBn128::G1PointAffine;
 
-        PilFflonk::ShPlonkSetup *setup;
+        PilFflonkZkey::PilFflonkZkey *zkeyPilFflonk;
         
-        Keccak256Transcript<AltBn128::Engine> *transcript;
+        PilFflonkTranscript *transcript;
 
         FrElement challengeXiSeed;
         FrElement challengeXi;
@@ -64,7 +61,7 @@ namespace ShPlonk {
         
         Polynomial<AltBn128::Engine> * getPolynomialShPlonk(const std::string &key);
 
-        ShPlonkProver(AltBn128::Engine &_E, PilFflonk::ShPlonkSetup *zkey);
+        ShPlonkProver(AltBn128::Engine &_E, PilFflonkZkey::PilFflonkZkey *zkey);
 
         ~ShPlonkProver();
 
@@ -129,7 +126,7 @@ namespace ShPlonk {
         
         FrElement *polynomialFromMontgomery(Polynomial<AltBn128::Engine> *polynomial);
 
-        void getCommittedPolynomial(u_int32_t stage, FrElement* buffCoefs, FrElement* reservedBuffer, PilFflonk::ShPlonkPol* pol, u_int64_t* degrees, u_int64_t* polsIds);
+        void getCommittedPolynomial(u_int32_t stage, FrElement* buffCoefs, FrElement* reservedBuffer, PilFflonkZkey::ShPlonkPol* pol, u_int64_t* degrees, u_int64_t* polsIds);
 
     };
 }

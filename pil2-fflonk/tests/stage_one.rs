@@ -14,7 +14,7 @@
 //! all. See `fixtures/reference/deterministic.patch`.
 
 use pil2_fflonk::ZKey;
-use proofman_fflonk_lib_c::{G1_AFFINE_BYTES, intt, msm};
+use proofman_fflonk_lib_c::{G1_AFFINE_BYTES, combine, intt, msm};
 
 const ZKEY: &[u8] = include_bytes!("fixtures/reference/pilfflonk.zkey");
 const TRACE: &[u8] = include_bytes!("fixtures/reference/pilfflonk.commit");
@@ -57,26 +57,22 @@ fn commits_stage_one_to_the_points_the_proof_carries() {
     // The stage reserves more coefficients than the trace has rows -- room for
     // blinding, which writes just above the domain. Those rows are zero here
     // because this proof was produced with blinding disabled.
-    let reserved = zkey
-        .f
-        .iter()
-        .flat_map(|f| f.stages.iter().filter(|s| s.stage == STAGE))
-        .flat_map(|s| s.pols.iter().map(|p| p.degree as usize))
-        .max()
-        .expect("stage 1 declares degrees");
+    let reserved = pil2_fflonk::reserved_rows(&zkey, STAGE).expect("stage 1 declares degrees");
     assert!(reserved > rows, "blinding needs rows above the domain");
 
     let coefficients = pil2_fflonk::pad_rows(&interpolated, names.len(), reserved).unwrap();
+    let width = pil2_fflonk::stage_width(&zkey, STAGE).unwrap();
 
-    let built = pil2_fflonk::combined_for(&zkey, STAGE, &coefficients).expect("stage 1 packs");
-    assert!(!built.is_empty(), "stage 1 commits nothing");
+    let plan = pil2_fflonk::stage_plan(&zkey, STAGE).expect("stage 1 plans");
+    assert!(!plan.is_empty(), "stage 1 commits nothing");
 
     let proof = commitments_from_the_proof();
-    for c in &built {
-        let terms = c.coefficients.len() / proofman_fflonk_lib_c::FR_BYTES;
+    for c in &plan {
+        let packed = combine(&coefficients, width, &c.columns).unwrap();
+        let terms = packed.len() / proofman_fflonk_lib_c::FR_BYTES;
         assert!(terms * G1_AFFINE_BYTES <= ptau.len(), "{}: not enough powers of tau", c.name);
 
-        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &c.coefficients).unwrap();
+        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &packed).unwrap();
         let expected = &proof[&c.name];
         assert!(!expected.is_null(), "the proof carries no {}", c.name);
 

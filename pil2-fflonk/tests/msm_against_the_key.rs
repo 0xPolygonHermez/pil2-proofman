@@ -13,7 +13,7 @@
 //! of the setup, and nothing here recomputes one from the other.
 
 use pil2_fflonk::ZKey;
-use proofman_fflonk_lib_c::{G1_AFFINE_BYTES, is_infinity, msm};
+use proofman_fflonk_lib_c::{G1_AFFINE_BYTES, combine, is_infinity, msm};
 
 const ZKEY: &[u8] = include_bytes!("fixtures/reference/pilfflonk.zkey");
 const VKEY: &str = include_str!("fixtures/pilfflonk.vkey");
@@ -106,24 +106,27 @@ fn builds_and_commits_the_constant_stage() {
     let ptau = ptau(&zkey);
     let coefs = zkey.bulk.get(&pil2_fflonk::SECTION_CONST_POLS_COEFS).expect("constant coefficients");
 
-    let built = pil2_fflonk::combined_for(&zkey, 0, coefs).unwrap();
-    assert_eq!(built.len(), 2, "the reference key has two constant-only combined polynomials");
+    let plan = pil2_fflonk::stage_plan(&zkey, 0).unwrap();
+    let width = pil2_fflonk::stage_width(&zkey, 0).unwrap();
+    assert_eq!(plan.len(), 2, "the reference key has two constant-only combined polynomials");
 
-    for c in &built {
+    for p in &plan {
         let recorded = zkey
             .f_commitments
             .iter()
-            .find(|r| r.name == c.name)
-            .unwrap_or_else(|| panic!("{} has no recorded commitment", c.name));
+            .find(|r| r.name == p.name)
+            .unwrap_or_else(|| panic!("{} has no recorded commitment", p.name));
 
-        // The packing matches what the setup stored ...
-        assert_eq!(pil2_fflonk::trim(&c.coefficients), recorded.pol.as_slice(), "{}", c.name);
+        let packed = combine(coefs, width, &p.columns).unwrap();
+
+        // CPolynomial trims trailing zeroes, as the setup did before storing.
+        assert_eq!(packed, recorded.pol, "{}", p.name);
 
         // ... and committing it lands on the point the setup recorded.
-        let terms = c.coefficients.len() / proofman_fflonk_lib_c::FR_BYTES;
-        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &c.coefficients).unwrap();
-        assert_eq!(got.as_slice(), recorded.commit.as_slice(), "{}", c.name);
-        assert!(!is_infinity(&got), "{}", c.name);
+        let terms = packed.len() / proofman_fflonk_lib_c::FR_BYTES;
+        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &packed).unwrap();
+        assert_eq!(got.as_slice(), recorded.commit.as_slice(), "{}", p.name);
+        assert!(!is_infinity(&got), "{}", p.name);
     }
 }
 
@@ -138,9 +141,11 @@ fn the_computed_constant_commitments_are_the_ones_the_verifier_uses() {
     let vkey: serde_json::Value = serde_json::from_str(VKEY).unwrap();
     let setup = pil2_fflonk::ShPlonkSetup::from_vkey_json(&vkey).unwrap();
 
-    for c in pil2_fflonk::combined_for(&zkey, 0, coefs).unwrap() {
-        let terms = c.coefficients.len() / proofman_fflonk_lib_c::FR_BYTES;
-        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &c.coefficients).unwrap();
+    let width = pil2_fflonk::stage_width(&zkey, 0).unwrap();
+    for c in pil2_fflonk::stage_plan(&zkey, 0).unwrap() {
+        let packed = combine(coefs, width, &c.columns).unwrap();
+        let terms = packed.len() / proofman_fflonk_lib_c::FR_BYTES;
+        let got = msm(&ptau[..terms * G1_AFFINE_BYTES], &packed).unwrap();
 
         // The verification key writes the point as decimal x/y; the prover
         // produces it in the key's own representation, so compare through the

@@ -1,27 +1,18 @@
-//! The Fiat-Shamir transcript, as the prover computes it.
+//! The Fiat-Shamir transcript.
 //!
-//! Mirrors `Keccak256Transcript` in pil2-stark's rapidsnark. The verifier has
-//! to reproduce every challenge bit-for-bit from the proof alone, so the
-//! encoding is pinned here against challenges taken from a real proving run.
+//! A thin adapter over rapidsnark's `Keccak256Transcript`, reached through
+//! `proofman-fflonk-lib-c`. The encoding is not reimplemented here: it is
+//! legacy Keccak-256 with `0x01` padding rather than SHA3's `0x06`, over
+//! fixed-width big-endian values, and a second implementation would have to
+//! match those exactly -- silently producing well-formed but different
+//! challenges if it did not.
 //!
-//! Encoding, from `Keccak256Transcript::getChallenge`:
-//!
-//! * a field element is 32 bytes big-endian;
-//! * a G1 point is converted to affine and written as `x ‖ y`, 32 bytes
-//!   big-endian each, with the point at infinity contributing nothing;
-//! * the concatenation is hashed and the digest read back big-endian as a
-//!   field element, reduced modulo r.
-//!
-//! The hash is **legacy Keccak-256, not SHA3-256**. `keccak_wrapper.cpp` calls
-//! `Keccak(1088, 512, ..., 0x01, ...)`: rate and capacity give the 256-bit
-//! variant, and the `0x01` suffix is the original padding. SHA3 uses `0x06`,
-//! and substituting it produces a perfectly well-formed but entirely different
-//! challenge.
+//! What this layer adds is only the conversion between the `BigUint` the
+//! verifier works in and the canonical big-endian bytes the C++ takes.
 
 use anyhow::{Context, Result, bail};
 use num_bigint::BigUint;
 use num_traits::Num;
-use sha3::{Digest, Keccak256};
 
 /// The BN254 scalar field modulus.
 pub const FR_MODULUS: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
@@ -33,43 +24,37 @@ pub fn fr_modulus() -> BigUint {
     BigUint::from_str_radix(FR_MODULUS, 10).expect("modulus parses")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Item {
-    Scalar(BigUint),
-    /// Affine G1 point. `None` is the point at infinity.
-    Commitment(Option<(BigUint, BigUint)>),
-}
-
 /// Accumulates transcript items and squeezes challenges from them.
-#[derive(Clone, Debug, Default)]
 pub struct Transcript {
-    items: Vec<Item>,
+    inner: proofman_fflonk_lib_c::Transcript,
 }
 
 impl Transcript {
     pub fn new() -> Self {
-        Self::default()
+        Self::try_new().expect("the C++ transcript allocates")
+    }
+
+    pub fn try_new() -> Result<Self> {
+        Ok(Transcript { inner: proofman_fflonk_lib_c::Transcript::new().map_err(anyhow::Error::msg)? })
     }
 
     /// Clear the transcript. The prover resets before each challenge rather
     /// than accumulating across them, so a verifier that keeps appending will
     /// diverge after the first.
     pub fn reset(&mut self) {
-        self.items.clear();
+        self.inner.reset().expect("reset cannot fail on a live transcript");
     }
 
     pub fn add_scalar(&mut self, value: BigUint) {
-        self.items.push(Item::Scalar(value));
+        self.inner.add_scalar(&to_rpr_be(&value)).expect("adding a scalar cannot fail");
     }
 
     /// Add an affine commitment as `x ‖ y`.
     pub fn add_commitment(&mut self, x: BigUint, y: BigUint) {
-        self.items.push(Item::Commitment(Some((x, y))));
-    }
-
-    /// Add the point at infinity, which contributes no bytes.
-    pub fn add_infinity(&mut self) {
-        self.items.push(Item::Commitment(None));
+        let mut xy = [0u8; 2 * FR_BYTES];
+        xy[..FR_BYTES].copy_from_slice(&to_rpr_be(&x));
+        xy[FR_BYTES..].copy_from_slice(&to_rpr_be(&y));
+        self.inner.add_commitment(&xy).expect("adding a commitment cannot fail");
     }
 
     /// Add a commitment written as the proof carries it: three decimal
@@ -87,29 +72,15 @@ impl Transcript {
         Ok(())
     }
 
-    /// The bytes that will be hashed.
-    fn serialise(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        for item in &self.items {
-            match item {
-                Item::Scalar(v) => out.extend_from_slice(&to_rpr_be(v)),
-                Item::Commitment(Some((x, y))) => {
-                    out.extend_from_slice(&to_rpr_be(x));
-                    out.extend_from_slice(&to_rpr_be(y));
-                }
-                // toRprBE returns 0 for the point at infinity, contributing
-                // nothing to the hashed length.
-                Item::Commitment(None) => {}
-            }
-        }
-        out
+    /// Squeeze a challenge.
+    pub fn get_challenge(&mut self) -> BigUint {
+        BigUint::from_bytes_be(&self.inner.challenge().expect("squeezing cannot fail"))
     }
+}
 
-    /// Squeeze a challenge: Keccak-256 over the serialisation, read back
-    /// big-endian and reduced modulo r.
-    pub fn get_challenge(&self) -> BigUint {
-        let digest = Keccak256::digest(self.serialise());
-        BigUint::from_bytes_be(&digest) % fr_modulus()
+impl Default for Transcript {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -126,19 +97,17 @@ fn to_rpr_be(v: &BigUint) -> [u8; FR_BYTES] {
 mod tests {
     use super::*;
 
-    fn n(s: &str) -> BigUint {
-        BigUint::from_str_radix(s, 10).unwrap()
-    }
-
-    // Challenges taken from a real run of pil-fflonk's prover on the
-    // checked-in fixtures. computeChallengeY is self-contained -- it resets,
-    // adds alpha, adds the W commitment, and squeezes -- so it pins the whole
-    // encoding: element order, big-endian layout, the Keccak variant and the
-    // reduction.
+    // From a real run of pil-fflonk's prover: alpha and the W commitment give
+    // challenge Y. Kept here as well as in the wrapper crate because this is
+    // the layer the verifier actually calls.
     const ALPHA: &str = "14560641611632097331351172125449579633774312004368406670544341241766131118492";
     const W_X: &str = "12419649577883164498958593584067611959324832377388732561925666137961148910692";
     const W_Y: &str = "21476078643738536497282674355688501033753144678841213640203400378618544673473";
     const EXPECTED_Y: &str = "10213856114127628084316690059097516037569626100727307492391249673580661585742";
+
+    fn n(s: &str) -> BigUint {
+        BigUint::from_str_radix(s, 10).unwrap()
+    }
 
     #[test]
     fn reproduces_the_provers_challenge_y() {
@@ -149,9 +118,6 @@ mod tests {
         assert_eq!(t.get_challenge(), n(EXPECTED_Y), "transcript does not match the prover");
     }
 
-    /// The prover resets before each challenge. A verifier that accumulates
-    /// would agree on the first challenge and diverge on every later one, so
-    /// the reset is part of the protocol rather than housekeeping.
     #[test]
     fn reset_clears_previous_items() {
         let mut t = Transcript::new();
@@ -163,8 +129,7 @@ mod tests {
         assert_eq!(t.get_challenge(), n(EXPECTED_Y));
     }
 
-    /// Order is part of the encoding: the same items appended the other way
-    /// round must not give the same challenge.
+    /// Order is part of the encoding.
     #[test]
     fn order_matters() {
         let mut forward = Transcript::new();
@@ -176,34 +141,6 @@ mod tests {
         reversed.add_scalar(n(ALPHA));
 
         assert_ne!(forward.get_challenge(), reversed.get_challenge());
-    }
-
-    #[test]
-    fn serialisation_widths_are_fixed() {
-        let mut t = Transcript::new();
-        t.add_scalar(n("1"));
-        assert_eq!(t.serialise().len(), 32, "a field element is 32 bytes however small");
-
-        let mut t = Transcript::new();
-        t.add_commitment(n("1"), n("2"));
-        assert_eq!(t.serialise().len(), 64, "a commitment is x and y, 32 bytes each");
-
-        // Small values must be left-padded, not truncated or right-aligned.
-        let mut t = Transcript::new();
-        t.add_scalar(n("1"));
-        let bytes = t.serialise();
-        assert_eq!(bytes[31], 1);
-        assert!(bytes[..31].iter().all(|&b| b == 0));
-    }
-
-    /// The point at infinity contributes no bytes, matching toRprBE returning
-    /// zero for it.
-    #[test]
-    fn infinity_contributes_nothing() {
-        let mut t = Transcript::new();
-        t.add_scalar(n("7"));
-        t.add_infinity();
-        assert_eq!(t.serialise().len(), 32);
     }
 
     #[test]

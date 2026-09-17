@@ -51,7 +51,8 @@ fn columns(zkey: &ZKey, stage: u32, buffer: &[u8]) -> Vec<(String, Vec<u8>)> {
         .enumerate()
         .map(|(id, name)| {
             let degree = entry.pols.iter().find(|p| &p.name == name).map(|p| p.degree).unwrap_or(1 << N_BITS);
-            let c = pil2_fflonk::read_column(buffer, id, names.len(), degree as usize).unwrap();
+            // A single-slot combine is just that column's coefficients.
+            let c = proofman_fflonk_lib_c::combine(buffer, names.len(), &[(id, degree as usize)]).unwrap();
             (name.clone(), c)
         })
         .collect()

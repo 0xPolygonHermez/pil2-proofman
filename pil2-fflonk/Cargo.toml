@@ -25,8 +25,10 @@ num-bigint = { workspace = true }
 num-traits = { workspace = true }
 sha3 = "0.10"
 
-[dev-dependencies]
-# Tests only: the library itself is pure Rust, and keeping this out of
-# [dependencies] means a C++ toolchain is needed to run the tests but not to
-# build the crate.
+# The field, curve and transcript arithmetic lives in the C++ this wraps --
+# rapidsnark's, the same code the fflonk prover is built on. Reimplementing any
+# of it in Rust would be a second definition to keep in step, so the C++
+# toolchain is a build requirement rather than a test-only one.
 proofman-fflonk-lib-c = { workspace = true }
+
+[dev-dependencies]

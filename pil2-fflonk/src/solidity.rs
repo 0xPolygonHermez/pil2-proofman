@@ -28,6 +28,12 @@ use crate::proof::{INV_KEY, INV_ZH_KEY, UNEVALUATED_POL, W_KEY, WP_KEY, ShPlonkP
 use crate::setup::ShPlonkSetup;
 use anyhow::{Context, Result, bail};
 
+// Note the name clash with `pil2_stark_recurser`'s `gen_solidity` /
+// `gen_iverifier`. Those are the same layer for the *other* fflonk: they emit a
+// wrapper that decodes a fixed `bytes32[24]` proof and pins a vadcop-final
+// Merkle root, which is snarkjs fflonk over a circom circuit. This one is for a
+// proof whose width comes from the setup. Neither can stand in for the other.
+
 /// Why layer 1 is absent, recorded where someone will look for it.
 pub const PROOF_LAYOUT_NOTE: &str = "\
 SHPLONK has no snarkjs solidity-verifier generator: snarkjs implements fflonk's \

@@ -1,14 +1,15 @@
 #include <sstream>
 #include "timer.hpp"
+#include "zklog.hpp"
 #include "shplonk.hpp"
 #include <algorithm>
 
 namespace ShPlonk {
 
-    ShPlonkProver::ShPlonkProver(AltBn128::Engine &_E, PilFflonk::ShPlonkSetup *zkey) : E(_E) {
-        setup = zkey;
+    ShPlonkProver::ShPlonkProver(AltBn128::Engine &_E, PilFflonkZkey::PilFflonkZkey *zkey) : E(_E) {
+        zkeyPilFflonk = zkey;
 
-        transcript = new Keccak256Transcript<AltBn128::Engine>(_E);
+        transcript = new PilFflonkTranscript(_E);
 
         this->reset();
     }
@@ -17,10 +18,9 @@ namespace ShPlonk {
         this->reset();
 
         delete transcript;
-        // The setup is NOT owned here. pil-fflonk deleted it, which only worked
-        // because its single caller heap-allocated the zkey and never freed it.
-        // In pil2 the setup is derived once from StarkInfo and shared across
-        // proofs, so its lifetime belongs to whoever built it.
+        // The zkey is NOT owned here: PilFflonkProver allocates it, hands it
+        // over, and deletes it in its own destructor. Deleting it again here is
+        // a double free -- latent only because the process usually exits first.
     }  
 
     void ShPlonkProver::reset() {
@@ -60,8 +60,8 @@ namespace ShPlonk {
     void ShPlonkProver::computeR() {
         TimerStart(SHPLONK_COMPUTE_R_POLYNOMIALS);
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            u_int32_t nRoots = setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            u_int32_t nRoots = zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
             FrElement* evals = new FrElement[nRoots];
 
             for(u_int32_t j = 0; j < nRoots; ++j) {
@@ -85,15 +85,15 @@ namespace ShPlonk {
     void ShPlonkProver::computeZT()
     { 
         u_int32_t nRoots = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            nRoots +=  setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            nRoots +=  zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
         }
 
         FrElement* arr = new FrElement[nRoots];
 
         u_int32_t index = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            for(u_int32_t j = 0; j < setup->f[i]->nPols * setup->f[i]->nOpeningPoints; ++j) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
                 arr[index++] = rootsMap["f" + std::to_string(i)][j];
             }
 
@@ -108,13 +108,13 @@ namespace ShPlonk {
     {
         TimerStart(SHPLONK_COMPUTE_L_POLYNOMIAL);
 
-        FrElement* mulL = new FrElement[setup->f.size()];
-        FrElement* preL = new FrElement[setup->f.size()];
-        FrElement* evalRiY = new FrElement[setup->f.size()];
+        FrElement* mulL = new FrElement[zkeyPilFflonk->f.size()];
+        FrElement* preL = new FrElement[zkeyPilFflonk->f.size()];
+        FrElement* evalRiY = new FrElement[zkeyPilFflonk->f.size()];
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
             FrElement mulLi = E.fr.one();
-            for (u_int32_t j = 0; j < setup->f[i]->nPols * setup->f[i]->nOpeningPoints; j++)
+            for (u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints; j++)
             {
                 mulLi = E.fr.mul(mulLi, E.fr.sub(challengeY, rootsMap["f" + std::to_string(i)][j]));
             }
@@ -123,9 +123,9 @@ namespace ShPlonk {
 
        
         FrElement alpha = E.fr.one();
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
             preL[i] = alpha;
-            for(u_int32_t j = 0; j < setup->f.size(); ++j) {
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f.size(); ++j) {
                 if(i != j) {
                     preL[i] = E.fr.mul(preL[i], mulL[j]);
                 }
@@ -133,14 +133,14 @@ namespace ShPlonk {
             alpha = E.fr.mul(alpha,challengeAlpha);
         }
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
             evalRiY[i] = polynomialsShPlonk["R" + std::to_string(i)]->fastEvaluate(challengeY);
         }
 
         u_int64_t maxDegree = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            if(setup->f[i]->degree > maxDegree) {
-                maxDegree = setup->f[i]->degree;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            if(zkeyPilFflonk->f[i]->degree > maxDegree) {
+                maxDegree = zkeyPilFflonk->f[i]->degree;
             }
         }
 
@@ -148,7 +148,7 @@ namespace ShPlonk {
 
         // COMPUTE L(X)
         polynomialsShPlonk["Wp"] = new Polynomial<AltBn128::Engine>(E, reservedBuffer, lengthBuffer);
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
             auto fTmp = Polynomial<AltBn128::Engine>::fromPolynomial(E, *polynomialsShPlonk["f" + std::to_string(i)], tmpBuffer);
             fTmp->subScalar(evalRiY[i]);
             fTmp->mulScalar(preL[i]);
@@ -176,15 +176,15 @@ namespace ShPlonk {
     void ShPlonkProver::computeZTS2()
     {
         u_int32_t nRoots = 0;
-        for(u_int32_t i = 1; i < setup->f.size(); ++i) {
-            nRoots += setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 1; i < zkeyPilFflonk->f.size(); ++i) {
+            nRoots += zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
         }
 
         FrElement* arr = new FrElement[nRoots];
 
         u_int32_t index = 0;
-        for(u_int32_t i = 1; i < setup->f.size(); ++i) {
-            for(u_int32_t j = 0; j < setup->f[i]->nPols * setup->f[i]->nOpeningPoints; ++j) {
+        for(u_int32_t i = 1; i < zkeyPilFflonk->f.size(); ++i) {
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
                 arr[index++] = rootsMap["f" + std::to_string(i)][j];
             }
         }
@@ -201,13 +201,13 @@ namespace ShPlonk {
         TimerStart(SHPLONK_COMPUTE_W_POLYNOMIAL);
 
         u_int64_t nTotalRoots = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            nTotalRoots += setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            nTotalRoots += zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
         }
 
         u_int64_t maxDegree = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            u_int64_t fiDegree = setup->f[i]->degree + nTotalRoots - setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            u_int64_t fiDegree = zkeyPilFflonk->f[i]->degree + nTotalRoots - zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
             if(fiDegree > maxDegree) {
                 maxDegree = fiDegree;
             }
@@ -221,28 +221,28 @@ namespace ShPlonk {
         for(u_int32_t i = 0; i < openingPoints.size(); ++i) {
             initialOpenValues[i] = challengeXi;
             for(u_int32_t j = 0; j < openingPoints[i]; ++j) {
-                initialOpenValues[i] = E.fr.mul(initialOpenValues[i], setup->omegas["w1_1d1"]);
+                initialOpenValues[i] = E.fr.mul(initialOpenValues[i], zkeyPilFflonk->omegas["w1_1d1"]);
             }
         } 
 
-        FrElement* alphas = new FrElement[setup->f.size()];
+        FrElement* alphas = new FrElement[zkeyPilFflonk->f.size()];
         alphas[0] = E.fr.one();
-        for(u_int32_t i = 1; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 1; i < zkeyPilFflonk->f.size(); ++i) {
             alphas[i] = E.fr.mul(alphas[i - 1], challengeAlpha);
         }
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
             auto fTmp = Polynomial<AltBn128::Engine>::fromPolynomial(E, *polynomialsShPlonk["f" + std::to_string(i)], tmpBuffer);
             fTmp->sub(*polynomialsShPlonk["R" + std::to_string(i)]);
             fTmp->mulScalar(alphas[i]);
 
-            for(u_int32_t j = 0; j < setup->f[i]->nOpeningPoints; ++j) {
-                u_int32_t openingPoint = setup->f[i]->openingPoints[j];
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+                u_int32_t openingPoint = zkeyPilFflonk->f[i]->openingPoints[j];
                 auto found = std::find(openingPoints.begin(), openingPoints.end(), openingPoint);
                 if (found == openingPoints.end()) throw std::runtime_error("Opening point not found");
                 FrElement openValue = initialOpenValues[std::distance(openingPoints.begin(), found)];
 
-                fTmp->divByZerofier(setup->f[i]->nPols, openValue);
+                fTmp->divByZerofier(zkeyPilFflonk->f[i]->nPols, openValue);
             }
            
             polynomialW->add(*fTmp);           
@@ -269,18 +269,17 @@ namespace ShPlonk {
         FrElement ZTS2Y = polynomialsShPlonk["ZTS2"]->fastEvaluate(challengeY);
         E.fr.inv(ZTS2Y, ZTS2Y); 
         polynomialsShPlonk["Wp"]->mulScalar(ZTS2Y);
-        // Divide by (X - y). pil-fflonk used a bespoke divByXSubValue here;
-        // divByZerofier(1, y) is the same division (pinned by
-        // POLYNOMIAL.divByXSubValue in bn128/tests). pil-fflonk's version also
-        // threw on a non-zero remainder -- deliberately not carried over: W'
-        // being divisible by (X - y) is an invariant of our own prover, so it
-        // belongs in the tests rather than in the hot path.
+        // divByZerofier(1, y) is the same division as pil-fflonk's bespoke
+        // divByXSubValue, which pil2-stark's Polynomial does not carry. That
+        // version also threw on a non-zero remainder; W' being divisible by
+        // (X - y) is an invariant of the prover's own construction, so it is
+        // checked in the tests rather than on the hot path.
         polynomialsShPlonk["Wp"]->divByZerofier(1, challengeY);
 
         u_int64_t maxDegree = 0; 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            if(setup->f[i]->degree > maxDegree) {
-                maxDegree = setup->f[i]->degree;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            if(zkeyPilFflonk->f[i]->degree > maxDegree) {
+                maxDegree = zkeyPilFflonk->f[i]->degree;
             }
         }
 
@@ -299,9 +298,9 @@ namespace ShPlonk {
         transcript->reset();
         transcript->addScalar(previousChallenge);
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            if(setup->f[i]->nStages > 1 || setup->f[i]->stages[0].stage != 0) {
-                G1Point commit = polynomialCommitments["f" + std::to_string(setup->f[i]->index)]; 
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            if(zkeyPilFflonk->f[i]->nStages > 1 || zkeyPilFflonk->f[i]->stages[0].stage != 0) {
+                G1Point commit = polynomialCommitments["f" + std::to_string(zkeyPilFflonk->f[i]->index)]; 
                 transcript->addPolCommitment(commit);
             }
         }
@@ -317,21 +316,21 @@ namespace ShPlonk {
         
         //Calculate evaluations size
         u_int32_t nEvaluations = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            nEvaluations += setup->f[i]->nPols * setup->f[i]->nOpeningPoints;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            nEvaluations += zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints;
         }
 
         std::string * evaluationsNames = new std::string[nEvaluations];
 
         //Calculate evaluations names
         int index = 0;
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            for(u_int32_t j = 0; j < setup->f[i]->nOpeningPoints; ++j) {
-            u_int32_t openingPoint = setup->f[i]->openingPoints[j];
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+            u_int32_t openingPoint = zkeyPilFflonk->f[i]->openingPoints[j];
                 std::string wPower = openingPoint == 0 ? "" : (openingPoint == 1 ? "w" : "w" + std::to_string(openingPoint));
 
-                for(u_int32_t k = 0; k < setup->f[i]->nPols; ++k) {
-                    std::string polName = setup->f[i]->pols[k];
+                for(u_int32_t k = 0; k < zkeyPilFflonk->f[i]->nPols; ++k) {
+                    std::string polName = zkeyPilFflonk->f[i]->pols[k];
                     evaluationsNames[index++] = polName + wPower; 
                 }
             }
@@ -358,11 +357,11 @@ namespace ShPlonk {
 
     void ShPlonkProver::calculateOpeningPoints() {
      
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            for(u_int32_t j = 0; j < setup->f[i]->nOpeningPoints; ++j) {
-                auto it = std::find(openingPoints.begin(), openingPoints.end(), setup->f[i]->openingPoints[j]);
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+                auto it = std::find(openingPoints.begin(), openingPoints.end(), zkeyPilFflonk->f[i]->openingPoints[j]);
                 if(it == openingPoints.end()) {
-                    openingPoints.push_back(setup->f[i]->openingPoints[j]);
+                    openingPoints.push_back(zkeyPilFflonk->f[i]->openingPoints[j]);
                 }
             }
         }        
@@ -373,18 +372,18 @@ namespace ShPlonk {
 
         std::map<std::string, FrElement *> omegasMap;
 
-        for(u_int32_t i = 0; i < setup->f.size(); i++) {
-            u_int32_t nPols =  setup->f[i]->nPols;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); i++) {
+            u_int32_t nPols =  zkeyPilFflonk->f[i]->nPols;
             std::string omega = "w" + std::to_string(nPols);
-            FrElement initialOmega =setup->omegas[omega];
+            FrElement initialOmega =zkeyPilFflonk->omegas[omega];
             
-            rootsMap["f" + std::to_string(i)] = new FrElement[nPols*setup->f[i]->nOpeningPoints];
+            rootsMap["f" + std::to_string(i)] = new FrElement[nPols*zkeyPilFflonk->f[i]->nOpeningPoints];
 
-            for(u_int32_t k = 0; k < setup->f[i]->nOpeningPoints; k++) {
+            for(u_int32_t k = 0; k < zkeyPilFflonk->f[i]->nOpeningPoints; k++) {
 
-                u_int32_t openingPoint = setup->f[i]->openingPoints[k];
+                u_int32_t openingPoint = zkeyPilFflonk->f[i]->openingPoints[k];
                 
-                FrElement initialValue = openingPoint == 0 ? E.fr.one() : setup->omegas[omega + "_" + std::to_string(openingPoint) + "d" + std::to_string(nPols)];
+                FrElement initialValue = openingPoint == 0 ? E.fr.one() : zkeyPilFflonk->omegas[omega + "_" + std::to_string(openingPoint) + "d" + std::to_string(nPols)];
                 
                 std::string wName = omega + "_" + std::to_string(openingPoint);
 
@@ -397,7 +396,7 @@ namespace ShPlonk {
 
                 rootsMap["f" + std::to_string(i)][nPols*k] = initialValue;
 
-                for(u_int32_t j = 0; j < setup->powerW / nPols; ++j) {
+                for(u_int32_t j = 0; j < zkeyPilFflonk->powerW / nPols; ++j) {
                     rootsMap["f" + std::to_string(i)][nPols*k] = E.fr.mul(rootsMap["f" + std::to_string(i)][nPols*k], challengeXiSeed);
                 }
 
@@ -422,23 +421,23 @@ namespace ShPlonk {
      
         std::map<std::string, bool> isAddedMulLi;
 
-        for(u_int32_t i = 1; i < setup->f.size(); ++i) {
-            std::string nPols = std::to_string(setup->f[i]->nPols);
+        for(u_int32_t i = 1; i < zkeyPilFflonk->f.size(); ++i) {
+            std::string nPols = std::to_string(zkeyPilFflonk->f[i]->nPols);
 
             std::string concatenatedOpenings;
 
-            for(u_int32_t j = 0; j < setup->f[i]->nOpeningPoints; ++j) {
-                concatenatedOpenings += std::to_string(setup->f[i]->openingPoints[j]);
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+                concatenatedOpenings += std::to_string(zkeyPilFflonk->f[i]->openingPoints[j]);
             }
 
-            std::string wName = setup->f[i]->openingPoints[0] == 0 
+            std::string wName = zkeyPilFflonk->f[i]->openingPoints[0] == 0 
                 ? nPols + "_" + concatenatedOpenings
-                : nPols + "_" + std::to_string(setup->f[i]->openingPoints[0]) + "d" + nPols + "_" +  concatenatedOpenings;
+                : nPols + "_" + std::to_string(zkeyPilFflonk->f[i]->openingPoints[0]) + "d" + nPols + "_" +  concatenatedOpenings;
 
             if (isAddedMulLi.find(wName) == isAddedMulLi.end()) {
                 isAddedMulLi[wName] = true;
                 FrElement mulLi = E.fr.one();
-                for (u_int32_t j = 0; j < setup->f[i]->nPols * setup->f[i]->nOpeningPoints; j++)
+                for (u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nPols * zkeyPilFflonk->f[i]->nOpeningPoints; j++)
                 {
                     mulLi = E.fr.mul(mulLi, E.fr.sub(challengeY, rootsMap["f" + std::to_string(i)][j]));
                 }
@@ -448,27 +447,27 @@ namespace ShPlonk {
 
         std::map<std::string, bool> isAddedDen;
 
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            std::string nPols = std::to_string(setup->f[i]->nPols);
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            std::string nPols = std::to_string(zkeyPilFflonk->f[i]->nPols);
 
             std::string concatenatedOpenings;
 
-            for(u_int32_t j = 0; j < setup->f[i]->nOpeningPoints; ++j) {
-                concatenatedOpenings += std::to_string(setup->f[i]->openingPoints[j]);
+            for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+                concatenatedOpenings += std::to_string(zkeyPilFflonk->f[i]->openingPoints[j]);
             }
 
-            std::string wName = setup->f[i]->openingPoints[0] == 0 
+            std::string wName = zkeyPilFflonk->f[i]->openingPoints[0] == 0 
                 ? nPols + "_" + concatenatedOpenings
-                : nPols + "_" + std::to_string(setup->f[i]->openingPoints[0]) + "d" + nPols + "_" +  concatenatedOpenings;
+                : nPols + "_" + std::to_string(zkeyPilFflonk->f[i]->openingPoints[0]) + "d" + nPols + "_" +  concatenatedOpenings;
 
             if (isAddedDen.find(wName) == isAddedDen.end()) {
                 isAddedDen[wName] = true;
 
-                if(setup->f[i]->nOpeningPoints > 2) {
+                if(zkeyPilFflonk->f[i]->nOpeningPoints > 2) {
                     computeLiMultipleOpeningPoints(i);
-                } else if(setup->f[i]->nOpeningPoints == 2) {
+                } else if(zkeyPilFflonk->f[i]->nOpeningPoints == 2) {
                     computeLiTwoOpeningPoints(i);
-                } else if(setup->f[i]->nPols > 1) {
+                } else if(zkeyPilFflonk->f[i]->nPols > 1) {
                     computeLiSingleOpeningPoint(i);
                 }
             }
@@ -490,7 +489,7 @@ namespace ShPlonk {
     }    
 
     void ShPlonkProver::computeLiMultipleOpeningPoints(u_int32_t i) {
-        u_int32_t nRoots = setup->f[i]->nPols *  setup->f[i]->nOpeningPoints;
+        u_int32_t nRoots = zkeyPilFflonk->f[i]->nPols *  zkeyPilFflonk->f[i]->nOpeningPoints;
         for (u_int64_t j = 0; j < nRoots; j++) {
             u_int32_t idx = j;
             FrElement den = E.fr.one();
@@ -503,16 +502,16 @@ namespace ShPlonk {
     }
 
     void ShPlonkProver::computeLiTwoOpeningPoints(u_int32_t i) {
-        u_int32_t len = setup->f[i]->nPols;
+        u_int32_t len = zkeyPilFflonk->f[i]->nPols;
 
         FrElement xi0 = challengeXi;
-        for(u_int32_t j = 0; j < setup->f[i]->openingPoints[0]; ++j) {
-            xi0 = E.fr.mul(xi0, setup->omegas["w1_1d1"]);
+        for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->openingPoints[0]; ++j) {
+            xi0 = E.fr.mul(xi0, zkeyPilFflonk->omegas["w1_1d1"]);
         }
 
         FrElement xi1 = challengeXi;
-        for(u_int32_t j = 0; j < setup->f[i]->openingPoints[1]; ++j) {
-            xi1 = E.fr.mul(xi1, setup->omegas["w1_1d1"]);
+        for(u_int32_t j = 0; j < zkeyPilFflonk->f[i]->openingPoints[1]; ++j) {
+            xi1 = E.fr.mul(xi1, zkeyPilFflonk->omegas["w1_1d1"]);
         }
 
         if(len == 1) {
@@ -557,7 +556,7 @@ namespace ShPlonk {
     }
 
     void ShPlonkProver::computeLiSingleOpeningPoint(u_int32_t i) {
-        u_int32_t len = setup->f[i]->nPols *  setup->f[i]->nOpeningPoints;
+        u_int32_t len = zkeyPilFflonk->f[i]->nPols *  zkeyPilFflonk->f[i]->nOpeningPoints;
 
         if(len == 1) return;
 
@@ -583,24 +582,24 @@ namespace ShPlonk {
         for(u_int32_t i = 0; i < openingPoints.size(); ++i) {
             initialOpenValues[i] = challengeXi;
             for(u_int32_t j = 0; j < openingPoints[i]; ++j) {
-                initialOpenValues[i] = E.fr.mul(initialOpenValues[i], setup->omegas["w1_1d1"]);
+                initialOpenValues[i] = E.fr.mul(initialOpenValues[i], zkeyPilFflonk->omegas["w1_1d1"]);
             }
         }
 
         //Calculate evaluations
-        for(u_int32_t i = 0; i < setup->f.size(); ++i) {
-            for(u_int32_t j = 0; j <  setup->f[i]->nOpeningPoints; ++j) {
-                u_int32_t openingPoint = setup->f[i]->openingPoints[j];
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f.size(); ++i) {
+            for(u_int32_t j = 0; j <  zkeyPilFflonk->f[i]->nOpeningPoints; ++j) {
+                u_int32_t openingPoint = zkeyPilFflonk->f[i]->openingPoints[j];
                 std::string wPower = openingPoint == 0 ? "" : (openingPoint == 1 ? "w" : "w" + std::to_string(openingPoint));
 
                 auto found = std::find(openingPoints.begin(), openingPoints.end(), openingPoint);
                 if (found == openingPoints.end()) throw std::runtime_error("Opening point not found");
                 FrElement openValue = initialOpenValues[std::distance(openingPoints.begin(), found)];
 
-                for(u_int32_t k = 0; k < setup->f[i]->nPols; ++k) {
-                    std::string polName = setup->f[i]->pols[k];
+                for(u_int32_t k = 0; k < zkeyPilFflonk->f[i]->nPols; ++k) {
+                    std::string polName = zkeyPilFflonk->f[i]->pols[k];
 
-                    u_int32_t stage = setup->f[i]->stages[0].stage;
+                    u_int32_t stage = zkeyPilFflonk->f[i]->stages[0].stage;
 
                     u_int32_t polDegree = findDegree(i, polName);
 
@@ -612,7 +611,7 @@ namespace ShPlonk {
 
                     u_int32_t polId = findPolId(stage, polName);
 
-                    u_int32_t nPols = setup->polsNamesStage[stage]->size();
+                    u_int32_t nPols = zkeyPilFflonk->polsNamesStage[stage]->size();
                     
                     evaluationCommitments[polName + wPower] = fastEvaluate(stage, buffCoefs, nPols, polDegree, polId, polName, openValue);
                 }
@@ -625,16 +624,16 @@ namespace ShPlonk {
     }
 
     u_int32_t ShPlonkProver::findPolId(u_int32_t stage, std::string polName) {
-        for (const auto& [index, name] : *setup->polsNamesStage[stage]) {
+        for (const auto& [index, name] : *zkeyPilFflonk->polsNamesStage[stage]) {
             if(name == polName) return index;
         }
         throw std::runtime_error("Polynomial name not found");
     }
 
     u_int32_t ShPlonkProver::findDegree(u_int32_t fIndex, std::string name) {
-        for(u_int32_t i = 0; i < setup->f[fIndex]->stages[0].nPols; i++) {
-            if(setup->f[fIndex]->stages[0].pols[i].name == name) {
-                return setup->f[fIndex]->stages[0].pols[i].degree;
+        for(u_int32_t i = 0; i < zkeyPilFflonk->f[fIndex]->stages[0].nPols; i++) {
+            if(zkeyPilFflonk->f[fIndex]->stages[0].pols[i].name == name) {
+                return zkeyPilFflonk->f[fIndex]->stages[0].pols[i].degree;
             }
         }
         throw std::runtime_error("Polynomial name not found");
@@ -660,9 +659,9 @@ namespace ShPlonk {
             for (u_int64_t j = nCoefs; j > 0; j--) {
                 if(stage == 4) {
                     u_int32_t index = (i * coefsThread) + j - 1;
-                    u_int32_t pos = (index) + id * setup->maxQDegree * (1 << setup->power);
+                    u_int32_t pos = (index) + id * zkeyPilFflonk->maxQDegree * (1 << zkeyPilFflonk->power);
                     FrElement coef;
-                    if(setup->maxQDegree > 0 && index >= setup->maxQDegree * (1 << setup->power)) {
+                    if(zkeyPilFflonk->maxQDegree > 0 && index >= zkeyPilFflonk->maxQDegree * (1 << zkeyPilFflonk->power)) {
                         coef = this->randomCoefs[polName][index];
                     } else {
                         coef = buffCoefs[pos];
@@ -727,24 +726,24 @@ namespace ShPlonk {
     // }
 
     // void ShPlonkProver::prepareCommits(std::map<std::string, AltBn128::FrElement *> ptrShPlonk) {
-    //     u_int32_t nPols = setup->f.size();
+    //     u_int32_t nPols = zkeyPilFflonk->f.size();
     //     for(u_int64_t i = 0; i < nPols; ++i) {
 
-    //         std::string* polynomialsNames = new std::string[setup->f[i]->nStages];
+    //         std::string* polynomialsNames = new std::string[zkeyPilFflonk->f[i]->nStages];
 
-    //         for(u_int64_t j = 0; j < setup->f[i]->nStages; ++j) {
+    //         for(u_int64_t j = 0; j < zkeyPilFflonk->f[i]->nStages; ++j) {
         
-    //             std::string index = "f" + std::to_string(setup->f[i]->index) + "_" + std::to_string(setup->f[i]->stages[j].stage);
+    //             std::string index = "f" + std::to_string(zkeyPilFflonk->f[i]->index) + "_" + std::to_string(zkeyPilFflonk->f[i]->stages[j].stage);
     //             polynomialsNames[j] = index;
 
     //             if(polynomialsShPlonk.find(index) == polynomialsShPlonk.end()) throw std::runtime_error("Polynomial " + index + " is not provided");
     //             if(polynomialCommitments.find(index) == polynomialCommitments.end()) throw std::runtime_error("Commit " + index + " is not provided");
     //         }
             
-    //         sumCommits(setup->f[i]->nStages, polynomialsNames, "f" + std::to_string(setup->f[i]->index));
-    //         sumPolynomials(setup->f[i]->nStages, polynomialsNames, ptrShPlonk,  "f" + std::to_string(setup->f[i]->index));
+    //         sumCommits(zkeyPilFflonk->f[i]->nStages, polynomialsNames, "f" + std::to_string(zkeyPilFflonk->f[i]->index));
+    //         sumPolynomials(zkeyPilFflonk->f[i]->nStages, polynomialsNames, ptrShPlonk,  "f" + std::to_string(zkeyPilFflonk->f[i]->index));
 
-    //         if(polynomialsShPlonk["f" + std::to_string(setup->f[i]->index)]->getDegree() > setup->f[i]->degree) {
+    //         if(polynomialsShPlonk["f" + std::to_string(zkeyPilFflonk->f[i]->index)]->getDegree() > zkeyPilFflonk->f[i]->degree) {
     //             throw std::runtime_error("Polynomial f" + std::to_string(i) + " degree is greater than expected");
     //         }   
             
@@ -754,12 +753,12 @@ namespace ShPlonk {
 
     void ShPlonkProver::commit(u_int32_t stage, FrElement* buffCoefs, G1PointAffine *PTau, std::map<std::string, AltBn128::FrElement *> ptrShPlonk) {
         
-        if(NULL == setup) {
+        if(NULL == zkeyPilFflonk) {
             throw std::runtime_error("Zkey data not set");
         }
 
-        for (auto it = setup->f.begin(); it != setup->f.end(); ++it) {
-            PilFflonk::ShPlonkPol* pol = it->second;
+        for (auto it = zkeyPilFflonk->f.begin(); it != zkeyPilFflonk->f.end(); ++it) {
+            PilFflonkZkey::ShPlonkPol* pol = it->second;
 
             u_int32_t* stages = new u_int32_t[pol->nStages];
             for(u_int32_t i = 0; i < pol->nStages; ++i) {
@@ -769,7 +768,7 @@ namespace ShPlonk {
             int stagePos = find(stages, pol->nStages, stage);
 
             if(stagePos != -1) {
-                PilFflonk::ShPlonkStage* stagePol = &pol->stages[stagePos];
+                PilFflonkZkey::ShPlonkStage* stagePol = &pol->stages[stagePos];
                 
                 u_int64_t* lengths = new u_int64_t[pol->nPols]{};
                 u_int64_t* polsIds = new u_int64_t[pol->nPols]{};
@@ -796,7 +795,7 @@ namespace ShPlonk {
                 }
 
                 G1Point Fi = multiExponentiation(PTau, polynomialsShPlonk[index], pol->nPols, lengths);
-                PilFflonkInfo("Commit " + index + ": " + E.g1.toString(Fi));
+                zklog.info("Commit " + index + ": " + E.g1.toString(Fi));
                 polynomialCommitments[index] = Fi;
                 
                 delete[] lengths;
@@ -807,7 +806,7 @@ namespace ShPlonk {
         }
     }
 
-    void ShPlonkProver::getCommittedPolynomial(u_int32_t stage, FrElement* buffCoefs, FrElement* reservedBuffer, PilFflonk::ShPlonkPol* pol, u_int64_t* degrees, u_int64_t* polsIds) {
+    void ShPlonkProver::getCommittedPolynomial(u_int32_t stage, FrElement* buffCoefs, FrElement* reservedBuffer, PilFflonkZkey::ShPlonkPol* pol, u_int64_t* degrees, u_int64_t* polsIds) {
         
         std::string name = "f" + std::to_string(pol->index);
 
@@ -816,7 +815,7 @@ namespace ShPlonk {
 
         polynomialsShPlonk[name] = new Polynomial<AltBn128::Engine>(E, reservedBuffer, polDegree + 1);
 
-        u_int32_t nPolsStage = setup->polsNamesStage[stage]->size();
+        u_int32_t nPolsStage = zkeyPilFflonk->polsNamesStage[stage]->size();
             
         #pragma omp parallel for
         for (u_int64_t i = 0; i < polDegree; i++) {
@@ -824,8 +823,8 @@ namespace ShPlonk {
                 if (degrees[j] >= 0 && i < degrees[j]) 
                 {
                     if(stage == 4) {
-                        u_int32_t pos = polsIds[j] * setup->maxQDegree * (1 << setup->power) + i;
-                        if(setup->maxQDegree > 0 && i >= setup->maxQDegree * (1 << setup->power)) {
+                        u_int32_t pos = polsIds[j] * zkeyPilFflonk->maxQDegree * (1 << zkeyPilFflonk->power) + i;
+                        if(zkeyPilFflonk->maxQDegree > 0 && i >= zkeyPilFflonk->maxQDegree * (1 << zkeyPilFflonk->power)) {
                             polynomialsShPlonk[name]->coef[i * nPols + j] = this->randomCoefs[pol->pols[j]][i];
                         } else {
                             polynomialsShPlonk[name]->coef[i * nPols + j] = buffCoefs[pos];
@@ -844,7 +843,7 @@ namespace ShPlonk {
     json ShPlonkProver::open(G1PointAffine *PTau, AltBn128::FrElement * buffCoefsConstant, std::map<std::string, AltBn128::FrElement *> ptrCommitted, std::map<std::string, AltBn128::FrElement *> ptrShPlonk, FrElement xiSeed, std::vector<std::string> nonCommittedPols) {
         TimerStart(SHPLONK_OPEN);
 
-        if(NULL == setup) {
+        if(NULL == zkeyPilFflonk) {
             throw std::runtime_error("Zkey data not set");
         }
 
@@ -854,11 +853,11 @@ namespace ShPlonk {
         challengeXiSeed = xiSeed;
 
         challengeXi = E.fr.one();
-        for(u_int32_t i = 0; i < setup->powerW; ++i) {
+        for(u_int32_t i = 0; i < zkeyPilFflonk->powerW; ++i) {
             challengeXi = E.fr.mul(challengeXi, challengeXiSeed);
         }
 
-        PilFflonkInfo("Challenge xi: " + E.fr.toString(challengeXi));
+        zklog.info("Challenge xi: " + E.fr.toString(challengeXi));
 
         // Calculate roots
         calculateRoots();
@@ -867,7 +866,7 @@ namespace ShPlonk {
 
         computeChallengeAlpha(nonCommittedPols);
 
-        PilFflonkInfo("Challenge alpha: " + E.fr.toString(challengeAlpha));
+        zklog.info("Challenge alpha: " + E.fr.toString(challengeAlpha));
 
         computeR();
         
@@ -877,11 +876,11 @@ namespace ShPlonk {
         G1Point W = multiExponentiation(PTau, polynomialsShPlonk["W"], 1, lengthsW);
         polynomialCommitments["W"] = W;
 
-        PilFflonkInfo("Commit W: " + E.g1.toString(polynomialCommitments["W"]));
+        zklog.info("Commit W: " + E.g1.toString(polynomialCommitments["W"]));
 
         computeChallengeY(W);
 
-        PilFflonkInfo("Challenge Y: " + E.fr.toString(challengeY));
+        zklog.info("Challenge Y: " + E.fr.toString(challengeY));
 
         computeWp(ptrShPlonk["Wp"], ptrShPlonk["tmp"]);
         u_int64_t* lengthsWp = new u_int64_t[1]{polynomialsShPlonk["Wp"]->getDegree() + 1};
@@ -889,11 +888,11 @@ namespace ShPlonk {
 
         polynomialCommitments["Wp"] = Wp;
 
-        PilFflonkInfo("Commit Wp: " + E.g1.toString(polynomialCommitments["Wp"]));
+        zklog.info("Commit Wp: " + E.g1.toString(polynomialCommitments["Wp"]));
 
         getMontgomeryBatchedInverse();
 
-        PilFflonkInfo("Batched Inverse shplonk: " + E.fr.toString(evaluationCommitments["inv"]));
+        zklog.info("Batched Inverse shplonk: " + E.fr.toString(evaluationCommitments["inv"]));
 
         delete[] lengthsW;
         delete[] lengthsWp;

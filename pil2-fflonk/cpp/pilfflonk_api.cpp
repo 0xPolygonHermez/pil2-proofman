@@ -3,11 +3,16 @@
 #include <cstring>
 #include <gmp.h>
 #include <exception>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <alt_bn128.hpp>
 #include <ntt_bn128.hpp>
+#include <polynomial/cpolynomial.hpp>
+#include <polynomial/polynomial.hpp>
+#include <keccak_256_transcript.hpp>
+#include <msm/msm_bn128.hpp>
 
 namespace {
 
@@ -50,10 +55,152 @@ void writeBE(uint8_t *out, const mpz_t v) {
     }
 }
 
+/// Read a canonical big-endian scalar into the engine's representation.
+FrEl readFr(const uint8_t *in) {
+    mpz_t v;
+    mpz_init(v);
+    mpz_import(v, PILFFLONK_FR_BYTES, 1, 1, 1, 0, in);
+    FrEl e;
+    Engine::engine.fr.fromMpz(e, v);
+    mpz_clear(v);
+    return e;
+}
+
 } // namespace
 
 extern "C" const char *pilfflonk_last_error(void) {
     return lastError.empty() ? nullptr : lastError.c_str();
+}
+
+extern "C" void *pilfflonk_transcript_new(void) {
+    try {
+        lastError.clear();
+        return new Keccak256Transcript<Engine>(Engine::engine);
+    } catch (const std::exception &e) {
+        lastError = e.what();
+        return nullptr;
+    } catch (...) {
+        lastError = "unknown error";
+        return nullptr;
+    }
+}
+
+extern "C" void pilfflonk_transcript_free(void *handle) {
+    delete static_cast<Keccak256Transcript<Engine> *>(handle);
+}
+
+extern "C" int pilfflonk_transcript_reset(void *handle) {
+    return guard([&] {
+        if (handle == nullptr) throw std::runtime_error("pilfflonk_transcript_reset: null handle");
+        static_cast<Keccak256Transcript<Engine> *>(handle)->reset();
+    });
+}
+
+extern "C" int pilfflonk_transcript_add_scalar(void *handle, const uint8_t *value) {
+    return guard([&] {
+        if (handle == nullptr || value == nullptr) throw std::runtime_error("pilfflonk_transcript_add_scalar: null");
+        static_cast<Keccak256Transcript<Engine> *>(handle)->addScalar(readFr(value));
+    });
+}
+
+extern "C" int pilfflonk_transcript_add_commitment(void *handle, const uint8_t *xy) {
+    return guard([&] {
+        if (handle == nullptr || xy == nullptr) throw std::runtime_error("pilfflonk_transcript_add_commitment: null");
+
+        auto &E = Engine::engine;
+
+        // The transcript takes a projective point; a proof records affine
+        // coordinates, so z is one.
+        mpz_t v;
+        mpz_init(v);
+        G1Point p;
+        mpz_import(v, PILFFLONK_FR_BYTES, 1, 1, 1, 0, xy);
+        E.f1.fromMpz(p.x, v);
+        mpz_import(v, PILFFLONK_FR_BYTES, 1, 1, 1, 0, xy + PILFFLONK_FR_BYTES);
+        E.f1.fromMpz(p.y, v);
+        mpz_clear(v);
+        E.f1.copy(p.zz, E.f1.one());
+        E.f1.copy(p.zzz, E.f1.one());
+
+        static_cast<Keccak256Transcript<Engine> *>(handle)->addPolCommitment(p);
+    });
+}
+
+extern "C" int pilfflonk_transcript_challenge(void *handle, uint8_t *out) {
+    return guard([&] {
+        if (handle == nullptr || out == nullptr) throw std::runtime_error("pilfflonk_transcript_challenge: null");
+
+        FrEl c = static_cast<Keccak256Transcript<Engine> *>(handle)->getChallenge();
+        mpz_t v;
+        mpz_init(v);
+        Engine::engine.fr.toMpz(v, c);
+        writeBE(out, v);
+        mpz_clear(v);
+    });
+}
+
+extern "C" int pilfflonk_combine(const uint8_t *stage, uint64_t stage_len, uint64_t stage_cols,
+                                 const uint64_t *col_ids, const uint64_t *col_lens, uint64_t n, uint8_t *out,
+                                 uint64_t out_cap, uint64_t *out_len) {
+    return guard([&] {
+        if (stage == nullptr || col_ids == nullptr || col_lens == nullptr || out == nullptr || out_len == nullptr) {
+            throw std::runtime_error("pilfflonk_combine: null buffer");
+        }
+        if (n == 0) throw std::runtime_error("pilfflonk_combine: no columns to pack");
+        if (stage_cols == 0) throw std::runtime_error("pilfflonk_combine: the stage has no columns");
+
+        auto &E = Engine::engine;
+
+        // One buffer per slot, read out of the stage with its stride. Held for
+        // the lifetime of the call: CPolynomial keeps pointers, it does not copy.
+        std::vector<std::vector<FrEl>> slots(n);
+        std::vector<std::unique_ptr<Polynomial<Engine>>> polys(n);
+
+        CPolynomial<Engine> combined(E, (int)n);
+        for (uint64_t j = 0; j < n; j++) {
+            if (col_ids[j] >= stage_cols) {
+                throw std::runtime_error("pilfflonk_combine: column " + std::to_string(col_ids[j]) +
+                                         " is outside a stage " + std::to_string(stage_cols) + " columns wide");
+            }
+
+            // A column that runs past the stage means the caller's idea of the
+            // degree disagrees with the key's -- report it rather than reading
+            // out of bounds.
+            if (col_lens[j] > 0) {
+                uint64_t last = col_ids[j] + stage_cols * (col_lens[j] - 1);
+                if (last >= stage_len) {
+                    throw std::runtime_error("pilfflonk_combine: coefficient " + std::to_string(col_lens[j] - 1) +
+                                             " of column " + std::to_string(col_ids[j]) + " runs past the stage (" +
+                                             std::to_string(stage_len) + " coefficients)");
+                }
+            }
+
+            slots[j].resize(col_lens[j]);
+
+            // Construct first: the constructor zeroes the buffer it is handed,
+            // so filling it beforehand would be undone. Then read the column
+            // out of the stage with its stride, and let fixDegree find the top.
+            polys[j] = std::make_unique<Polynomial<Engine>>(E, slots[j].data(), col_lens[j]);
+            for (uint64_t i = 0; i < col_lens[j]; i++) {
+                std::memcpy(&polys[j]->coef[i], stage + (col_ids[j] + stage_cols * i) * sizeof(FrEl), sizeof(FrEl));
+            }
+            polys[j]->fixDegree();
+
+            combined.addPolynomial((int)j, polys[j].get());
+        }
+
+        std::vector<FrEl> buffer(combined.getDegree() + 1);
+        std::unique_ptr<Polynomial<Engine>> result(combined.getPolynomial(buffer.data()));
+
+        uint64_t len = result->getDegree() + 1;
+        if (len > out_cap) {
+            throw std::runtime_error("pilfflonk_combine: the combined polynomial needs " + std::to_string(len) +
+                                     " coefficients but only " + std::to_string(out_cap) + " were provided");
+        }
+
+        std::memcpy(out, buffer.data(), len * sizeof(FrEl));
+        *out_len = len;
+    });
 }
 
 extern "C" int pilfflonk_eval(const uint8_t *coeffs, uint64_t n, const uint8_t *x, uint8_t *out) {
@@ -72,14 +219,16 @@ extern "C" int pilfflonk_eval(const uint8_t *coeffs, uint64_t n, const uint8_t *
         E.fr.fromMpz(point, xm);
         mpz_clear(xm);
 
-        // Horner, descending: acc = acc * x + c[i].
-        FrEl acc = E.fr.zero();
-        for (uint64_t i = n; i > 0; i--) {
-            FrEl c;
-            std::memcpy(&c, coeffs + (i - 1) * sizeof(FrEl), sizeof(FrEl));
-            E.fr.mul(acc, acc, point);
-            E.fr.add(acc, acc, c);
+        // Polynomial::fastEvaluate rather than a second Horner loop here. The
+        // constructor zeroes the buffer it wraps, so the coefficients go in
+        // after it, and fixDegree finds the real top.
+        std::vector<FrEl> buffer(n == 0 ? 1 : n);
+        Polynomial<Engine> poly(E, buffer.data(), n == 0 ? 1 : n);
+        if (n > 0) {
+            std::memcpy(poly.coef, coeffs, n * sizeof(FrEl));
+            poly.fixDegree();
         }
+        FrEl acc = poly.fastEvaluate(point);
 
         mpz_t r;
         mpz_init(r);
@@ -167,12 +316,10 @@ extern "C" int pilfflonk_msm(const uint8_t *ptau, const uint8_t *coeffs, uint64_
             E.fr.fromMontgomery(scalars[i], scalars[i]);
         }
 
-        // nx/x describe how ffiasm splits the work across threads; one span of
-        // the whole range asks it to choose for itself.
-        uint64_t lengths[1] = {n};
-        G1Point result;
-        E.g1.multiMulByScalar(
-            result, (G1PointAffine *)ptau, (uint8_t *)scalars.data(), sizeof(FrEl), n, 1, lengths);
+        // Through the shared helper rather than calling multiMulByScalar here,
+        // so the CPU MSM has one definition.
+        G1Point result = MsmBn128::msmHost(
+            E, (G1PointAffine *)ptau, (uint8_t *)scalars.data(), sizeof(FrEl), (unsigned int)n);
 
         G1PointAffine affine;
         E.g1.copy(affine, result);
