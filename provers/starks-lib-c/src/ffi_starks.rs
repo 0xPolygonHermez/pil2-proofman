@@ -1887,7 +1887,6 @@ pub fn mul_register_table_decode_c(table_id: u64, coef: &[u64], konst: u64) {
     unsafe { mul_register_table_decode(table_id, coef.as_ptr(), coef.len() as u64, konst) }
 }
 
-
 /// Hand down an exact-match key->row map.
 pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: u64) {
     unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
@@ -1896,10 +1895,7 @@ pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: 
 /// Register a digit-recoding decoder: `row = sum_i tab[i * base + digit_i(v)]` over the first
 /// tuple column. Between the affine fit and the exact map; see `fit_digit_rule`.
 pub fn mul_register_table_digits_c(table_id: u64, tab: &[u64], cols: &[u32]) {
-    unsafe {
-        mul_register_table_digits(table_id, tab.as_ptr(), tab.len() as u64,
-                                  cols.as_ptr(), cols.len() as u64)
-    }
+    unsafe { mul_register_table_digits(table_id, tab.as_ptr(), tab.len() as u64, cols.as_ptr(), cols.len() as u64) }
 }
 
 pub fn mul_migrated_tables_c() -> Vec<u64> {

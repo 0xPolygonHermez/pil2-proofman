@@ -12,7 +12,8 @@ use proofman_fields::PrimeField64;
 use proofman_witness::WitnessComponent;
 use proofman_common::{
     register_host_buffer, unregister_host_buffer, AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult,
-    SetupCtx, TraceInfo, Setup,};
+    SetupCtx, TraceInfo, Setup,
+};
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
 use crate::{
@@ -308,9 +309,7 @@ fn fit_exact_map(samples: &[(Vec<u64>, u64)], width: usize) -> Option<(usize, Ve
             shift.push(at);
             at += w;
         }
-        let pack = |t: &[u64]| -> u64 {
-            (0..nkey).fold(0u64, |acc, c| acc | (t[c] << shift[c]))
-        };
+        let pack = |t: &[u64]| -> u64 { (0..nkey).fold(0u64, |acc, c| acc | (t[c] << shift[c])) };
         // [MAGIC][(shift << 32) | width per key column][slots of (packed key, row)]. The shape rides
         // in the map's own header so the scatter job carries no extra field: register pressure in
         // that kernel caps occupancy for every air, not just the ones with a map.
@@ -351,11 +350,19 @@ fn fit_exact_map(samples: &[(Vec<u64>, u64)], width: usize) -> Option<(usize, Ve
             let mut found = None;
             for _ in 0..slots.min(MUL_MAP_MAX_PROBE) {
                 let slot = head + i * 2;
-                if kv[slot] == u64::MAX { break; }
-                if kv[slot] == k { found = Some(kv[slot + 1]); break; }
+                if kv[slot] == u64::MAX {
+                    break;
+                }
+                if kv[slot] == k {
+                    found = Some(kv[slot + 1]);
+                    break;
+                }
                 i = (i + 1) & (slots - 1);
             }
-            let ok = match found { Some(got) => got == *r || collided, None => false };
+            let ok = match found {
+                Some(got) => got == *r || collided,
+                None => false,
+            };
             if !ok {
                 tracing::error!(
                     "packed map does not probe back: key {:?} packs to {k:#x}, expected row {r}, \
@@ -376,9 +383,11 @@ fn fit_exact_map(samples: &[(Vec<u64>, u64)], width: usize) -> Option<(usize, Ve
 ///
 /// This is the map of last resort -- there is nothing to fall back to if it is wrong -- so it gets
 /// the same probe-back self-check as the packed path (see `fit_exact_map`) before being trusted.
-fn fit_exact_map_verbatim(samples: &[(Vec<u64>, u64)], nkey: usize, slots: usize)
-    -> Option<(usize, Vec<u64>, u64, bool)>
-{
+fn fit_exact_map_verbatim(
+    samples: &[(Vec<u64>, u64)],
+    nkey: usize,
+    slots: usize,
+) -> Option<(usize, Vec<u64>, u64, bool)> {
     let stride = nkey + 1;
     let mut kv = vec![u64::MAX; slots * stride];
     let mut collided = false;
@@ -408,18 +417,32 @@ fn fit_exact_map_verbatim(samples: &[(Vec<u64>, u64)], nkey: usize, slots: usize
 /// `MUL_MAP_MAX_PROBE` so this self-check agrees with what the GPU decoder actually does at
 /// runtime. There is no further fallback past this map, so a failure here means the table is left
 /// unfitted (and loudly logged) rather than silently registered wrong.
-fn verify_exact_map_verbatim(samples: &[(Vec<u64>, u64)], kv: &[u64], nkey: usize, slots: usize, collided: bool) -> bool {
+fn verify_exact_map_verbatim(
+    samples: &[(Vec<u64>, u64)],
+    kv: &[u64],
+    nkey: usize,
+    slots: usize,
+    collided: bool,
+) -> bool {
     let stride = nkey + 1;
     for (t, r) in samples.iter() {
         let mut i = (hash_key(&t[..nkey]) as usize) & (slots - 1);
         let mut found = None;
         for _ in 0..slots.min(MUL_MAP_MAX_PROBE) {
             let slot = i * stride;
-            if kv[slot..slot + nkey].iter().all(|v| *v == u64::MAX) { break; }
-            if kv[slot..slot + nkey] == t[..nkey] { found = Some(kv[slot + nkey]); break; }
+            if kv[slot..slot + nkey].iter().all(|v| *v == u64::MAX) {
+                break;
+            }
+            if kv[slot..slot + nkey] == t[..nkey] {
+                found = Some(kv[slot + nkey]);
+                break;
+            }
             i = (i + 1) & (slots - 1);
         }
-        let ok = match found { Some(got) => got == *r || collided, None => false };
+        let ok = match found {
+            Some(got) => got == *r || collided,
+            None => false,
+        };
         if !ok {
             tracing::error!(
                 "verbatim map does not probe back: key {:?}, expected row {r}, got {found:?} -- \
@@ -447,7 +470,11 @@ fn verify_exact_map_verbatim(samples: &[(Vec<u64>, u64)], kv: &[u64], nkey: usiz
 /// Returns `(base, digits_per_column, columns_used, table)`; the table is
 /// `columns * digits * base` entries with `u64::MAX` marking a digit the table never holds, so a
 /// tuple outside it misses cleanly instead of landing on a wrong row.
-fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) -> Option<(u64, u32, Vec<u32>, Vec<u64>)> {
+fn fit_separable_on(
+    samples: &[(Vec<u64>, u64)],
+    cols: &[u32],
+    col_max: &[u64],
+) -> Option<(u64, u32, Vec<u32>, Vec<u64>)> {
     const INVALID: u64 = u64::MAX;
     if samples.is_empty() || cols.is_empty() {
         return None;
@@ -464,7 +491,10 @@ fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) 
             let mut p = base;
             let top = *maxima.iter().max().unwrap_or(&0);
             while p <= top {
-                p = match p.checked_mul(base) { Some(x) => x, None => break };
+                p = match p.checked_mul(base) {
+                    Some(x) => x,
+                    None => break,
+                };
                 ndig += 1;
             }
         }
@@ -498,16 +528,29 @@ fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) 
                         for (i, d) in dig[..ndig].iter().enumerate() {
                             let k = idx(c, i, *d);
                             if f[k] == INVALID {
-                                if unknown.is_some() { many = true; } else { unknown = Some(k); }
+                                if unknown.is_some() {
+                                    many = true;
+                                } else {
+                                    unknown = Some(k);
+                                }
                             } else {
                                 sum = sum.wrapping_add(f[k]);
                             }
                         }
                     }
-                    if many { continue; }
+                    if many {
+                        continue;
+                    }
                     match unknown {
-                        Some(k) => { f[k] = r.wrapping_sub(sum); learned += 1; }
-                        None => if sum != *r { return true },
+                        Some(k) => {
+                            f[k] = r.wrapping_sub(sum);
+                            learned += 1;
+                        }
+                        None => {
+                            if sum != *r {
+                                return true;
+                            }
+                        }
                     }
                 }
                 if learned == 0 {
@@ -529,7 +572,9 @@ fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) 
                 digits_into(t[cols[c] as usize], base, ndig, &mut dig);
                 for (i, d) in dig[..ndig].iter().enumerate() {
                     let v = f[idx(c, i, *d)];
-                    if v == INVALID { return false; }
+                    if v == INVALID {
+                        return false;
+                    }
                     sum = sum.wrapping_add(v);
                 }
             }
@@ -542,10 +587,14 @@ fn fit_separable_on(samples: &[(Vec<u64>, u64)], cols: &[u32], col_max: &[u64]) 
         // Drop the columns that contribute nothing: table 126's rule needs only its packed column,
         // so the scatter evaluates one expression per row instead of six.
         let used: Vec<u32> = (0..width)
-            .filter(|&c| (0..ndig).any(|i| (0..base as usize).any(|d| {
-                let v = f[idx(c, i, d)];
-                v != INVALID && v != 0
-            })))
+            .filter(|&c| {
+                (0..ndig).any(|i| {
+                    (0..base as usize).any(|d| {
+                        let v = f[idx(c, i, d)];
+                        v != INVALID && v != 0
+                    })
+                })
+            })
             .map(|c| cols[c])
             .collect();
         if used.is_empty() {
@@ -583,10 +632,7 @@ fn separable_header(base: u64, ndig: u32, used: &[u32], flat: &[u64]) -> Vec<u64
 fn hash_key(key: &[u64]) -> u64 {
     let mut h: u64 = 0;
     for k in key {
-        h ^= k
-            .wrapping_add(0x9E37_79B9_7F4A_7C15)
-            .wrapping_add(h << 6)
-            .wrapping_add(h >> 2);
+        h ^= k.wrapping_add(0x9E37_79B9_7F4A_7C15).wrapping_add(h << 6).wrapping_add(h >> 2);
         h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         h ^= h >> 32;
     }
@@ -607,20 +653,48 @@ fn lookup_arity<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Hash
             for h in hints {
                 let o = HintFieldOptions::default();
                 let Ok(ty) = get_hint_field_constant_as::<u64, F>(
-                    pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
-                else { continue };
-                if ty != 0 { continue; } // assumes side only
+                    pctx,
+                    setup,
+                    airgroup_id,
+                    air_id,
+                    h as usize,
+                    "type_piop",
+                    o.clone(),
+                ) else {
+                    continue;
+                };
+                if ty != 0 {
+                    continue;
+                } // assumes side only
                 let Ok(ids) = get_hint_field_constant_a_as::<u64, F>(
-                    pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
-                else { continue };
+                    pctx,
+                    setup,
+                    airgroup_id,
+                    air_id,
+                    h as usize,
+                    "opids",
+                    o.clone(),
+                ) else {
+                    continue;
+                };
                 let Ok(len) = get_hint_field_constant_as::<u64, F>(
-                    pctx, setup, airgroup_id, air_id, h as usize, "len_expressions", o)
-                else { continue };
+                    pctx,
+                    setup,
+                    airgroup_id,
+                    air_id,
+                    h as usize,
+                    "len_expressions",
+                    o,
+                ) else {
+                    continue;
+                };
                 for id in ids {
                     // Disagreeing lookups mean no single key width; keep the smallest so the
                     // planner's own check catches the mismatch rather than reading past a tuple.
                     let e = arity.entry(id).or_insert(len as usize);
-                    if (len as usize) < *e { *e = len as usize; }
+                    if (len as usize) < *e {
+                        *e = len as usize;
+                    }
                 }
             }
         }
@@ -653,17 +727,27 @@ fn proves_side_tuple_names<F: PrimeField64>(
     let mut out = Vec::new();
     for h in get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "gsum_debug_data") {
         let o = HintFieldOptions::default();
-        let Ok(ty) = get_hint_field_constant_as::<u64, F>(
-            pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
-        else { continue };
-        if ty != 1 { continue; } // proves side: the table's own rows
-        let Ok(ids) = get_hint_field_constant_a_as::<u64, F>(
-            pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
-        else { continue };
-        if !ids.contains(&tid) { continue; }
-        let Ok(names) = get_hint_field_constant_a_as_string::<F>(
-            pctx, setup, airgroup_id, air_id, h as usize, "name_exprs", o)
-        else { continue };
+        let Ok(ty) =
+            get_hint_field_constant_as::<u64, F>(pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
+        else {
+            continue;
+        };
+        if ty != 1 {
+            continue;
+        } // proves side: the table's own rows
+        let Ok(ids) =
+            get_hint_field_constant_a_as::<u64, F>(pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
+        else {
+            continue;
+        };
+        if !ids.contains(&tid) {
+            continue;
+        }
+        let Ok(names) =
+            get_hint_field_constant_a_as_string::<F>(pctx, setup, airgroup_id, air_id, h as usize, "name_exprs", o)
+        else {
+            continue;
+        };
         if !names.is_empty() {
             out.push(names);
         }
@@ -696,10 +780,18 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
 
     let global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
     if global_hint.is_empty() {
-        return Ok((Vec::new(), VtFitSummary {
-            considered: 0, n_affine: 0, n_separable: 0, n_exact: 0, exact_bytes: 0, elapsed_ms: 0,
-            unclaimed_ids: Vec::new(),
-        }));
+        return Ok((
+            Vec::new(),
+            VtFitSummary {
+                considered: 0,
+                n_affine: 0,
+                n_separable: 0,
+                n_exact: 0,
+                exact_bytes: 0,
+                elapsed_ms: 0,
+                unclaimed_ids: Vec::new(),
+            },
+        ));
     }
     let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "airgroup_ids")?;
     let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "air_ids")?;
@@ -823,7 +915,6 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             // TEMP: 127's key expressions exceed the extractor; excluded so the rest can be
             // verified. Its generic answer is the interpreter, not another closed form.
 
-
             // A table's entries occupy the accumulator offsets [base, base+height). Each offset is
             // an (accumulator column, air row) pair, and the COL_* group holding a row is the one
             // whose UID names this table there. Bind each group to the column whose air rows it
@@ -943,12 +1034,11 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 }
             }
 
-            if !ok || rows_of_table.is_empty() || widths.is_empty()
-                || rows_of_table.len() as u64 > height
-            {
+            if !ok || rows_of_table.is_empty() || widths.is_empty() || rows_of_table.len() as u64 > height {
                 tracing::trace!(
                     "virtual table {tid}: SKIPPED before fitting (ok={ok} rows={} height={height} groups={})",
-                    rows_of_table.len(), widths.len()
+                    rows_of_table.len(),
+                    widths.len()
                 );
                 continue;
             }
@@ -1057,9 +1147,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
 
             // A rule that depends on ONE column (table 126's packed value) is tried next: a
             // column-by-column digit fit, cheap relative to the exact map's hash table.
-            let col_max: Vec<u64> = (0..width)
-                .map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0))
-                .collect();
+            let col_max: Vec<u64> = (0..width).map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0)).collect();
             let mut separable = None;
             if fitted.is_none() {
                 for c in 0..width as u32 {
@@ -1070,11 +1158,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 }
             }
 
-            let __exact = if fitted.is_none() && separable.is_none() {
-                fit_exact_map(&samples, width)
-            } else {
-                None
-            };
+            let __exact = if fitted.is_none() && separable.is_none() { fit_exact_map(&samples, width) } else { None };
             if let Some((coef, konst, w)) = fitted {
                 n_affine += 1;
                 tracing::debug!(
@@ -1088,9 +1172,16 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 tracing::debug!(
                     "virtual table {tid}: separable row map ({} entries, columns {used:?} of \
                      {width}, {} table entries)",
-                    samples.len(), tab.len()
+                    samples.len(),
+                    tab.len()
                 );
-                out.push(VtFittedMap { table_id: tid, coef: Vec::new(), konst: 0, map: None, digits: Some((used, tab)) });
+                out.push(VtFittedMap {
+                    table_id: tid,
+                    coef: Vec::new(),
+                    konst: 0,
+                    map: None,
+                    digits: Some((used, tab)),
+                });
             } else if let Some((nkey, kv, slots, _collided)) = __exact {
                 // Collisions are now genuine duplicate tuples -- the key is exactly what the
                 // lookup sends, so two entries sharing it are indistinguishable to the argument
@@ -1099,16 +1190,21 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 exact_bytes += kv.len() as u64 * 8;
                 tracing::debug!(
                     "virtual table {tid}: exact map over {} entries, {} key columns, {} slots ({} MB)",
-                    samples.len(), nkey, kv.len() / (nkey + 1), kv.len() * 8 / 1_000_000
+                    samples.len(),
+                    nkey,
+                    kv.len() / (nkey + 1),
+                    kv.len() * 8 / 1_000_000
                 );
                 out.push(VtFittedMap {
-                    table_id: tid, coef: Vec::new(), konst: 0, map: Some((nkey, kv, slots)),
+                    table_id: tid,
+                    coef: Vec::new(),
+                    konst: 0,
+                    map: Some((nkey, kv, slots)),
                     digits: None,
                 });
             } else {
-                let ranges: Vec<u64> = (0..width)
-                    .map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0))
-                    .collect();
+                let ranges: Vec<u64> =
+                    (0..width).map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0)).collect();
                 tracing::debug!(
                     "virtual table {tid}: NO FIT ({} entries, {width} columns) -- not affine and its \
                      tuple does not separate its rows; column maxima {ranges:?}",
@@ -1122,15 +1218,18 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
     // left to the std. The caller, which has both populations in scope, tells them apart.
     let fitted_ids: std::collections::HashSet<u64> = out.iter().map(|m| m.table_id).collect();
     let unclaimed_ids: Vec<u64> = considered_ids.into_iter().filter(|tid| !fitted_ids.contains(tid)).collect();
-    Ok((out, VtFitSummary {
-        considered,
-        n_affine,
-        n_separable,
-        n_exact,
-        exact_bytes,
-        elapsed_ms: __t0.elapsed().as_millis(),
-        unclaimed_ids,
-    }))
+    Ok((
+        out,
+        VtFitSummary {
+            considered,
+            n_affine,
+            n_separable,
+            n_exact,
+            exact_bytes,
+            elapsed_ms: __t0.elapsed().as_millis(),
+            unclaimed_ids,
+        },
+    ))
 }
 
 pub fn collect_virtual_table_layouts<F: PrimeField64>(
@@ -1728,8 +1827,13 @@ mod tests {
     /// so the exhaustive re-check actually exercises samples the Gauss-Jordan solve didn't use).
     #[test]
     fn fit_affine_recovers_affine_rule() {
-        let samples: Vec<(Vec<u64>, u64)> =
-            (0..12u64).map(|i| { let t = vec![i, (i * 3) % 7]; let r = 2 * t[0] + 3 * t[1] + 7; (t, r) }).collect();
+        let samples: Vec<(Vec<u64>, u64)> = (0..12u64)
+            .map(|i| {
+                let t = vec![i, (i * 3) % 7];
+                let r = 2 * t[0] + 3 * t[1] + 7;
+                (t, r)
+            })
+            .collect();
         let (coef, konst) = fit_affine(&samples, 2).expect("a genuinely affine table must fit");
         assert_eq!(coef, vec![2, 3]);
         assert_eq!(konst, 7);
@@ -1739,8 +1843,12 @@ mod tests {
     /// from a subsample.
     #[test]
     fn fit_affine_rejects_non_affine_table() {
-        let samples: Vec<(Vec<u64>, u64)> =
-            (0..12u64).map(|i| { let t = vec![i, (i * 3) % 7]; (t, i * i) }).collect();
+        let samples: Vec<(Vec<u64>, u64)> = (0..12u64)
+            .map(|i| {
+                let t = vec![i, (i * 3) % 7];
+                (t, i * i)
+            })
+            .collect();
         assert!(fit_affine(&samples, 2).is_none(), "a quadratic table must not fit an affine rule");
     }
 
@@ -1748,8 +1856,13 @@ mod tests {
     /// far outside the training samples' own range, not just the ones it was fit from.
     #[test]
     fn fit_affine_generalizes_to_out_of_range_tuple() {
-        let samples: Vec<(Vec<u64>, u64)> =
-            (0..8u64).map(|i| { let t = vec![i, (i * 3) % 7]; let r = 2 * t[0] + 3 * t[1] + 7; (t, r) }).collect();
+        let samples: Vec<(Vec<u64>, u64)> = (0..8u64)
+            .map(|i| {
+                let t = vec![i, (i * 3) % 7];
+                let r = 2 * t[0] + 3 * t[1] + 7;
+                (t, r)
+            })
+            .collect();
         let (coef, konst) = fit_affine(&samples, 2).expect("affine table must fit");
         let (t0, t1) = (1000u64, 53u64);
         let predicted = gl_add(gl_add(gl_mul(coef[0], gl_red(t0 as u128)), gl_mul(coef[1], gl_red(t1 as u128))), konst);
@@ -1780,7 +1893,10 @@ mod tests {
     fn fit_separable_on_recovers_digit_rule_and_extrapolates() {
         let rule = |v: u64| 3 * (v % 8) + 11 * (v / 8);
         let mut samples: Vec<(Vec<u64>, u64)> = (0..8u64).map(|d0| (vec![d0], rule(d0))).collect();
-        samples.extend((0..8u64).map(|d1| { let v = d1 * 8; (vec![v], rule(v)) }));
+        samples.extend((0..8u64).map(|d1| {
+            let v = d1 * 8;
+            (vec![v], rule(v))
+        }));
         let col_max = vec![63u64];
 
         let (base, ndig, used, flat) =
@@ -1798,9 +1914,8 @@ mod tests {
     /// that its discrete mixed difference is nonzero, so it must fail to fit at every base tried.
     #[test]
     fn fit_separable_on_rejects_non_separable_table() {
-        let samples: Vec<(Vec<u64>, u64)> = (0..8u64)
-            .flat_map(|t0| (0..8u64).map(move |t1| (vec![t0, t1], t0 * t1)))
-            .collect();
+        let samples: Vec<(Vec<u64>, u64)> =
+            (0..8u64).flat_map(|t0| (0..8u64).map(move |t1| (vec![t0, t1], t0 * t1))).collect();
         let col_max = vec![7u64, 7u64];
         assert!(
             fit_separable_on(&samples, &[0, 1], &col_max).is_none(),
@@ -1863,4 +1978,3 @@ mod tests {
         assert_eq!(probe_packed_map(&kv, nkey, slots, &[1, 2]), Some(10), "credit goes to the first-written row");
     }
 }
-
