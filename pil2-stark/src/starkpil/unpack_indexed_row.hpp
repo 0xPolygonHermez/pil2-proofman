@@ -73,6 +73,9 @@ static inline const char *indexedDescriptorError(uint64_t nCols, uint64_t wordsP
     if (nLanes > INDEXED_MAX_LANES) return "more lanes than a u8 col_lane entry can name";
     if (nLanes * indexBits > wordsPerRow * 64) return "the index header does not fit the compact row";
 
+    // Without the map every tagged column decodes from lane 0's entry.
+    if (nLanes > 1 && colLane == nullptr) return "a lane-packed descriptor has no col_lane map";
+
     // A column tagged for a lane the row does not carry is written by no pass at all.
     if (colLane != nullptr) {
         for (uint64_t c = 0; c < nCols; c++) {

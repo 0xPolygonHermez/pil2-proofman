@@ -456,15 +456,6 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     if (indexed && (dims.lanes ? dims.lanes : 1) > SC_MAX_LANES) return -7;
     // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
     if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
-    // A column naming a lane the row does not carry is claimed by no pass, so it keeps
-    // whatever the slot held. The map is <= 256 B, so read it back rather than trust it.
-    if (indexed && dColLane != nullptr) {
-        const uint64_t nLanes = dims.lanes ? dims.lanes : 1;
-        uint8_t hColLane[SC_MAX_COLS];
-        CHECKCUDAERR(cudaMemcpy(hColLane, dColLane, dims.nCols, cudaMemcpyDeviceToHost));
-        for (uint64_t c = 0; c < dims.nCols; c++)
-            if (hColLane[c] >= nLanes) return -8;
-    }
 
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;

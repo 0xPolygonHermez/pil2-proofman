@@ -206,6 +206,9 @@ TEST(UNPACK_INDEXED_CPU, descriptor_validation_rejects_what_the_kernels_cannot_d
     EXPECT_EQ(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES, lanes256.data(), &badCol), nullptr);
     EXPECT_NE(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES + 1, lanes256.data(), &badCol), nullptr);
 
+    // Lane-packed with no map at all: every tagged column would decode from lane 0.
+    EXPECT_NE(indexedDescriptorError(32, 10, 32, 4, nullptr, &badCol), nullptr);
+
     // A header that overruns the compact row.
     EXPECT_NE(indexedDescriptorError(32, 1, 32, 4, lanes4.data(), &badCol), nullptr);
     // An index width the bit walk cannot take.

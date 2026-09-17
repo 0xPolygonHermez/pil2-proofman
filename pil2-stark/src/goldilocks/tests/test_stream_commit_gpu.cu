@@ -458,25 +458,6 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
         CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS)); CHECKCUDAERR(cudaFree(dT));
     }
 
-    // A lane map naming a lane the row does not carry must be rejected too: no pass would
-    // claim that column, so it would keep whatever the slot held.
-    {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
-        std::vector<uint8_t> stray(colLane);
-        for (uint64_t c = 0; c < nCols; c++) {
-            if (colSource[c]) { stray[c] = static_cast<uint8_t>(lanes); break; }
-        }
-        uint8_t *dCS, *dCL;
-        CHECKCUDAERR(cudaMalloc(&dCS, nCols)); CHECKCUDAERR(cudaMalloc(&dCL, nCols));
-        CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpy(dCL, stray.data(), nCols, cudaMemcpyHostToDevice));
-        uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
-        gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
-        EXPECT_LT(streamCommitPacked(slot, d, widths.data(), hCompact.data(), rootIdx.data(), s,
-                                     dCS, dCL, dT, hash), 0);
-        CHECKCUDAERR(cudaFree(slot)); CHECKCUDAERR(cudaFree(dCS));
-        CHECKCUDAERR(cudaFree(dCL)); CHECKCUDAERR(cudaFree(dT));
-    }
     CHECKCUDAERR(cudaStreamDestroy(s));
 }
 

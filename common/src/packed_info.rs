@@ -63,6 +63,14 @@ impl PackedInfo {
             col_lane.len(),
             "indexed descriptor: col_source and col_lane must both cover every column"
         );
+        // C++ reads nCols entries from these pointers, nCols being the air's cm1 width --
+        // never a map's own length. Short maps would be read past; unpack_info is the one
+        // per-column vector whose length the same nCols already indexes.
+        assert_eq!(
+            col_source.len(),
+            self.unpack_info.len(),
+            "indexed descriptor: column maps must cover every unpack_info column"
+        );
         // A column naming a lane the row does not carry is written by no pass at all.
         let n_lanes = lanes.max(1);
         // Bounded before the header check, which multiplies it.
