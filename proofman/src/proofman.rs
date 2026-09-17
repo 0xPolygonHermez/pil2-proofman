@@ -2760,7 +2760,16 @@ where
         if !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
             return Ok(());
         }
-        let owned = collect_prover_owned_ranges(&self.pctx, &self.sctx)?;
+        // What the caller kept for itself. Everything else is the prover's, and below a table it
+        // cannot fit is an error rather than a quiet hand-back: the fall back costs a pass over the
+        // whole table on every proof, and nothing in a normal run would say so.
+        let std_owned: std::collections::HashSet<u64> =
+            self.options.std_owned_tables.iter().copied().collect();
+
+        let owned: Vec<(u64, i64)> = collect_prover_owned_ranges(&self.pctx, &self.sctx)?
+            .into_iter()
+            .filter(|(id, _)| !std_owned.contains(id))
+            .collect();
         // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`)
         // are independent hints; a pilout can have either without the other, so neither may gate
         // the other's registration below. Kept as ids past this point too, to tell apart -- in the
@@ -2776,7 +2785,25 @@ where
         // setup and verified against every entry; a table that fits neither is simply not claimed,
         // and the std keeps counting it exactly as before.
         let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx)?;
-        for m in &fitted {
+
+        // A table the caller did not keep, that neither the range path nor the fitter could claim,
+        // has no owner that can produce it cheaply. Say so here, with the ids, rather than let the
+        // proof run a slow path nobody asked for.
+        let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
+        let fitted_ids: std::collections::HashSet<u64> = fitted.iter().map(|m| m.table_id).collect();
+        let orphans: Vec<u64> = vt_summary
+            .unclaimed_ids
+            .iter()
+            .copied()
+            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t) && !fitted_ids.contains(t))
+            .collect();
+        if !orphans.is_empty() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "virtual tables {orphans:?} are neither declared in ProofmanOptions::std_owned_tables                  nor derivable by the prover: no row map fits them. Either declare them, so the                  witness counts them as before, or make their layout fittable."
+            )));
+        }
+
+        for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
             match m.map.as_ref() {
                 Some((nkey, kv, slots)) => mul_register_table_map_c(m.table_id, kv, *nkey, *slots),
                 None => match &m.digits {

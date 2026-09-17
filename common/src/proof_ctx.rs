@@ -195,6 +195,12 @@ pub struct ProofmanOptions {
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
     /// This run produces a final SNARK
     pub final_snark: bool,
+
+    /// Virtual tables the caller keeps for itself: it counts their multiplicities in the witness
+    /// and the prover must not claim them. Every other virtual table is the prover's, and one it
+    /// cannot derive a row map for is a setup error rather than a silent fall back to the witness --
+    /// that fall back costs a pass over the whole table per proof and nothing would report it.
+    pub std_owned_tables: Vec<u64>,
 }
 
 impl Default for ProofmanOptions {
@@ -212,6 +218,7 @@ impl Default for ProofmanOptions {
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
             final_snark: false,
+            std_owned_tables: Vec::new(),
         }
     }
 }
@@ -274,6 +281,12 @@ impl ProofmanOptions {
 
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
+    }
+
+    /// Declare the virtual tables this caller counts itself. Everything else is the prover's, and
+    /// a table it cannot derive fails the setup instead of quietly falling back to the witness.
+    pub fn std_owned_tables(&mut self, table_ids: Vec<u64>) {
+        self.std_owned_tables = table_ids;
     }
 }
 
