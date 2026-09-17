@@ -16,6 +16,7 @@ use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     CustomCommits, PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
     custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation, WitnessState, WitnessStats,
+    WitnessPriority,
 };
 
 use std::ffi::c_void;
@@ -305,7 +306,6 @@ pub struct ProofCtx<F: PrimeField64> {
     pub aggregation: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
-    pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_stats: WitnessStats,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
@@ -375,7 +375,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             recursion_weights,
             aggregation,
             witness_tx: RwLock::new(None),
-            witness_tx_priority: RwLock::new(None),
             witness_stats: WitnessStats::default(),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
@@ -416,26 +415,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.proof_tx.write().unwrap() = proof_tx;
     }
 
-    pub fn set_witness_tx_priority(&self, witness_tx_priority: Option<crossbeam_channel::Sender<usize>>) {
-        *self.witness_tx_priority.write().unwrap() = witness_tx_priority;
-    }
-
     pub fn set_witness_tx(&self, witness_tx: Option<crossbeam_channel::Sender<usize>>) {
         *self.witness_tx.write().unwrap() = witness_tx;
     }
 
-    /// Queue an instance for witness dispatch, at most once. The CAS is what stops a duplicate: the
-    /// default `pre_calculate_witness` re-announces every id it is handed.
-    pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
+    /// Queue this instance for dispatch, at most once per proof; urgency is its declared
+    /// [`WitnessPriority`], not an argument here.
+    pub fn announce_witness_ready(&self, global_id: usize) {
         if !self.dctx_try_queue_witness(global_id) {
             self.witness_stats.duplicate_sends.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
-        }
-        if priority {
-            if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
-                witness_tx_priority.send(global_id).unwrap();
-                return;
-            }
         }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
@@ -775,6 +764,36 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_instances.iter().copied().filter(|id| !dctx.is_skipped_instance(*id)).collect()
     }
 
+    /// This process's instances in dispatch order. See [`witness_schedule`].
+    pub fn dctx_witness_schedule(&self, instances: &[usize]) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        crate::witness_schedule(instances, |id| dctx.instance_priority(id))
+    }
+
+    /// The band `instance_id` was registered with.
+    pub fn dctx_instance_priority(&self, instance_id: usize) -> WitnessPriority {
+        self.dctx.read().unwrap().instance_priority(instance_id)
+    }
+
+    /// Stall diagnostic: of `instances`, those never `Done`, grouped by state -- `Absent` never
+    /// announced, `Queued` never dispatched, `Running` wedged in a hook, `Evicted` not recomputed.
+    /// Poison-tolerant: it runs only after a failure and must not replace the real error.
+    pub fn dctx_instances_not_done(&self, instances: &[usize]) -> Vec<(WitnessState, Vec<usize>)> {
+        let dctx = self.dctx.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let states = [WitnessState::Absent, WitnessState::Queued, WitnessState::Running, WitnessState::Evicted];
+        states
+            .into_iter()
+            .filter_map(|want| {
+                let ids: Vec<usize> = instances
+                    .iter()
+                    .copied()
+                    .filter(|&id| dctx.witness_states.get(id).is_some_and(|s| s.get() == want))
+                    .collect();
+                (!ids.is_empty()).then_some((want, ids))
+            })
+            .collect()
+    }
+
     pub fn dctx_skip_process_instance(&self, instance_id: usize) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.skip_instance(instance_id);
@@ -854,18 +873,35 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks, slow);
     }
 
-    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+    /// Registers an instance, assigned to the least-loaded partition immediately, in `priority`'s band.
+    pub fn add_instance_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
+    /// Registers an instance with no band preference.
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+        self.add_instance_with_priority(airgroup_id, air_id, WitnessPriority::default())
+    }
+
+    /// Registers an instance in `priority`'s band, to be assigned later by `assign_instances`.
+    pub fn add_instance_with_priority(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -890,12 +926,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_assigned_table(instance_id)
     }
 
-    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here
-    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here.
+    /// `priority` is required, not defaulted: a silent `Normal` here demotes an air with no error.
+    pub fn dctx_add_instance_no_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
@@ -1553,5 +1596,26 @@ mod tests {
         assert_eq!(blake3, 2_457_862_144);
         assert_eq!(poseidon, 155_713_536);
         assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));
+    }
+}
+
+#[cfg(test)]
+mod announce_tests {
+    use crate::{WitnessSlot, WitnessState};
+
+    /// `announce_witness_ready`'s gate: a duplicate announcement must not reach the channel twice.
+    #[test]
+    fn a_second_announcement_is_refused() {
+        let slot = WitnessSlot::default();
+        assert!(slot.try_queue(), "the first announcement queues");
+        assert!(!slot.try_queue(), "the duplicate must not reach the channel");
+        assert_eq!(slot.get(), WitnessState::Queued);
+    }
+
+    /// `dctx_instances_not_done` reports an instance nobody ever announced as `Absent`.
+    #[test]
+    fn an_unannounced_instance_stays_absent() {
+        let slot = WitnessSlot::default();
+        assert_eq!(slot.get(), WitnessState::Absent);
     }
 }

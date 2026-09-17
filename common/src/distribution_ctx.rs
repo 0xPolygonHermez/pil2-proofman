@@ -238,10 +238,45 @@ pub struct InstanceChunks {
     pub slow: bool,
 }
 
+/// Dispatch-order band for an instance, fixed at registration; says nothing about *why*.
+/// Pooled admission honours all three; the serial schedule honours only `Last`.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WitnessPriority {
+    First,
+    #[default]
+    Normal,
+    Last,
+}
+
+impl WitnessPriority {
+    /// How many pools `next_admission` walks.
+    pub const BANDS: usize = Self::Last.index() + 1;
+
+    /// This band's admission pool. A match, not a cast: a new variant must not compile
+    /// until it has a pool, or the handler indexes past the array and dies mid-phase.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::First => 0,
+            Self::Normal => 1,
+            Self::Last => 2,
+        }
+    }
+}
+
+/// Orders `instances` for dispatch. Only `Last` moves anything: `First` is a pooled preference
+/// with no serial analogue here, so honouring it would reorder airs that never actually race.
+/// The sort is stable, so everything else keeps registration order.
+pub fn witness_schedule(instances: &[usize], band: impl Fn(usize) -> WitnessPriority) -> Vec<usize> {
+    let mut ordered = instances.to_vec();
+    ordered.sort_by_key(|&id| band(id) == WitnessPriority::Last);
+    ordered
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
+    pub priority: WitnessPriority,
     pub table: bool,
     pub shared: bool,
     pub n_chunks: usize,
@@ -257,8 +292,9 @@ impl InstanceInfo {
         shared: bool,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
     ) -> Self {
-        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight }
+        Self { airgroup_id, air_id, priority, table, shared, n_chunks: 0, weight, compressor_weight }
     }
 
     /// Total cost this instance puts on its owner: basic, recursion chain and compressor
@@ -564,6 +600,12 @@ impl DistributionCtx {
         Ok((self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id))
     }
 
+    /// The band `instance_id` was registered with; an unknown id answers `Normal`, like every other lookup here.
+    #[inline]
+    pub fn instance_priority(&self, instance_id: usize) -> WitnessPriority {
+        self.instances.get(instance_id).map(|i| i.priority).unwrap_or_default()
+    }
+
     /// Get the airgroup and air ID of a given table
     /// Returns (airgroup_id, air_id)
     #[inline]
@@ -777,13 +819,14 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight);
+        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight, priority);
         let (total_weight, has_compressor) = (instance.total_weight(), instance.has_compressor());
         self.instances.push(instance);
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
@@ -833,12 +876,13 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight, priority));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.witness_states.push(WitnessSlot::default());
         self.instance_partition.push(-1);
@@ -854,7 +898,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0, WitnessPriority::default()));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -872,7 +916,15 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight, 0));
+        self.aux_tables.push(InstanceInfo::new(
+            airgroup_id,
+            air_id,
+            true,
+            false,
+            weight,
+            0,
+            WitnessPriority::default(),
+        ));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -1073,6 +1125,7 @@ impl DistributionCtx {
                         false,
                         table.weight,
                         0,
+                        WitnessPriority::default(),
                     ));
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                     self.witness_states.push(WitnessSlot::default());
@@ -1197,7 +1250,7 @@ mod tests {
     fn compressor_air_follows_cost_not_compressor_count() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, COMPRESSOR, COMPRESSOR] {
-            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight, WitnessPriority::default()).unwrap();
         }
         dctx.assign_instances().unwrap();
 
@@ -1212,7 +1265,7 @@ mod tests {
     fn immediate_assignation_balances_cost_instead_of_round_robin() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, LIGHT_PLAIN, LIGHT_PLAIN] {
-            dctx.add_instance(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance(0, air_id, weight, compressor_weight, WitnessPriority::default()).unwrap();
         }
 
         assert_eq!(dctx.instance_partition, vec![0, 1, 1]);
@@ -1223,7 +1276,7 @@ mod tests {
     #[test]
     fn first_instance_goes_to_partition_zero() {
         let mut dctx = ctx(4);
-        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2).unwrap();
+        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default()).unwrap();
 
         assert_eq!(dctx.instance_partition[0], 0);
         assert_eq!(dctx.instance_process[0], (0, 0));
@@ -1233,7 +1286,7 @@ mod tests {
     #[test]
     fn compressor_weight_counts_towards_the_partition_load() {
         let mut dctx = ctx(1);
-        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2).unwrap();
+        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2, WitnessPriority::default()).unwrap();
 
         assert_eq!(dctx.partition_weight, vec![1100]);
         assert_eq!(dctx.process_weight, vec![1100]);
@@ -1252,7 +1305,7 @@ mod tests {
     fn assign_table_to_records_intent() {
         let mut dctx = dctx_1w_2p();
         // add a regular instance to act as the reference (immediate path sets coords)
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
         // register the table normally
         dctx.add_table(7, 1, 50).expect("add_table");
         // record the assignment intent
@@ -1271,7 +1324,7 @@ mod tests {
     #[test]
     fn assign_table_to_rejects_duplicate_key() {
         let mut dctx = dctx_1w_2p();
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
         dctx.add_table(7, 1, 50).expect("add_table");
         dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
         let err = dctx.assign_table_to(7, 1, rom);
@@ -1288,8 +1341,8 @@ mod tests {
     fn assigned_table_copies_reference_coords_and_weight() {
         let mut dctx = dctx_1w_2p();
         // Two regular instances so process weights differ; ROM is the reference.
-        let _other = dctx.add_instance(7, 0, 100, 0).expect("add_instance other");
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let _other = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance other");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         let rom_partition = dctx.instance_partition[rom];
         let rom_process = dctx.instance_process[rom].0;
         let weight_before = dctx.process_weight[rom_process as usize];
@@ -1318,7 +1371,7 @@ mod tests {
         dctx.setup_partitions(2, vec![1]).expect("setup_partitions");
         dctx.setup_processes(2, 0).expect("setup_processes");
 
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         assert_eq!(dctx.instance_process[rom].0, -1, "reference is not owned by this worker");
         dctx.add_table(7, 1, 50).expect("add_table");
         dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
@@ -1339,8 +1392,8 @@ mod tests {
     #[test]
     fn duplicate_assign_table_to_keeps_the_original_gid() {
         let mut dctx = dctx_1w_2p();
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
-        let other = dctx.add_instance(7, 0, 100, 0).expect("add_instance other");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let other = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance other");
         dctx.add_table(7, 1, 50).expect("add_table");
         dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
         assert!(matches!(dctx.assign_table_to(7, 1, other), Err(ProofmanError::InvalidAssignation(_))));
@@ -1350,7 +1403,7 @@ mod tests {
     #[test]
     fn assigned_table_overrides_all_ranks_to_single_instance() {
         let mut dctx = dctx_1w_2p();
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         let instances_before = dctx.instances.len();
         // Register as ALL-RANKS (shared=false) but then assign it.
         dctx.add_table_all(7, 1, 50).expect("add_table_all");
@@ -1363,7 +1416,7 @@ mod tests {
     #[test]
     fn assigned_table_with_out_of_range_reference_errors() {
         let mut dctx = dctx_1w_2p();
-        let _rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let _rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         dctx.add_table(7, 1, 50).expect("add_table");
         // reference a gid that does not exist
         dctx.assign_table_to(7, 1, 999).expect("assign_table_to");
@@ -1374,7 +1427,7 @@ mod tests {
     #[test]
     fn assigned_table_with_unknown_key_errors() {
         let mut dctx = dctx_1w_2p();
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         // assignment for a table that was never registered in aux_tables
         dctx.assign_table_to(7, 99, rom).expect("assign_table_to");
         let err = dctx.assign_instances();
@@ -1384,7 +1437,7 @@ mod tests {
     #[test]
     fn ordinary_shared_table_is_not_assigned() {
         let mut dctx = dctx_1w_2p();
-        let _rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance");
+        let _rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
         dctx.add_table(7, 1, 50).expect("add_table");
         dctx.assign_instances().expect("assign_instances");
         let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
@@ -1395,7 +1448,7 @@ mod tests {
     fn reset_clears_assignment_state_across_cycles() {
         let mut dctx = dctx_1w_2p();
         // Cycle 1: assign a table to a reference, then run assignment.
-        let rom = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
         dctx.add_table(7, 1, 50).expect("add_table");
         dctx.assign_table_to(7, 1, rom).expect("assign_table_to cycle1");
         dctx.assign_instances().expect("assign cycle1");
@@ -1412,11 +1465,100 @@ mod tests {
         assert!(dctx.assigned_table_instances.is_empty(), "assigned_table_instances not cleared on reset");
 
         // Cycle 2: re-registering the same (ag, air) assignment must succeed.
-        let rom2 = dctx.add_instance(7, 0, 100, 0).expect("add_instance rom cycle2");
+        let rom2 = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom cycle2");
         dctx.add_table(7, 1, 50).expect("add_table cycle2");
         dctx.assign_table_to(7, 1, rom2).expect("assign_table_to cycle2 must not be duplicate");
         dctx.assign_instances().expect("assign cycle2");
         let table_gid_c2 = dctx.get_table_instance_idx(0).expect("table idx c2");
         assert!(dctx.is_assigned_table(table_gid_c2).expect("assigned c2"));
+    }
+}
+
+#[cfg(test)]
+mod witness_priority_tests {
+    use super::*;
+
+    #[test]
+    fn the_default_band_is_normal() {
+        assert_eq!(WitnessPriority::default(), WitnessPriority::Normal);
+    }
+
+    /// Nothing in production ranks on this any more, but a reorder would still move `index`.
+    #[test]
+    fn the_bands_order_first_then_normal_then_last() {
+        assert!(WitnessPriority::First < WitnessPriority::Normal);
+        assert!(WitnessPriority::Normal < WitnessPriority::Last);
+    }
+
+    #[test]
+    fn an_instance_keeps_the_band_it_was_built_with() {
+        let info = InstanceInfo::new(3, 7, false, false, 100, 0, WitnessPriority::Last);
+        assert_eq!(info.priority, WitnessPriority::Last);
+        assert_eq!(info.airgroup_id, 3, "the band must not disturb the other fields");
+        assert_eq!(info.air_id, 7);
+    }
+
+    #[test]
+    fn a_table_is_built_normal() {
+        let info = InstanceInfo::new(1, 2, true, true, 50, 0, WitnessPriority::default());
+        assert_eq!(info.priority, WitnessPriority::Normal);
+    }
+}
+
+#[cfg(test)]
+mod witness_schedule_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn bands(pairs: &[(usize, WitnessPriority)]) -> impl Fn(usize) -> WitnessPriority {
+        let map: HashMap<usize, WitnessPriority> = pairs.iter().copied().collect();
+        move |id| map.get(&id).copied().unwrap_or_default()
+    }
+
+    #[test]
+    fn an_all_default_set_keeps_its_registration_order() {
+        let ids = [7, 2, 9, 4];
+        assert_eq!(witness_schedule(&ids, bands(&[])), vec![7, 2, 9, 4]);
+    }
+
+    #[test]
+    fn a_last_instance_moves_behind_every_other() {
+        let ids = [7, 2, 9, 4];
+        let order = witness_schedule(&ids, bands(&[(7, WitnessPriority::Last)]));
+        assert_eq!(order, vec![2, 9, 4, 7], "the Last instance must end the walk");
+    }
+
+    #[test]
+    fn a_first_instance_does_not_move() {
+        let ids = [7, 2, 9, 4];
+        let order = witness_schedule(&ids, bands(&[(9, WitnessPriority::First)]));
+        assert_eq!(order, vec![7, 2, 9, 4], "First is a pooled preference, not a serial one");
+    }
+
+    #[test]
+    fn several_last_instances_keep_their_relative_order() {
+        let ids = [7, 2, 9, 4];
+        let order = witness_schedule(&ids, bands(&[(7, WitnessPriority::Last), (9, WitnessPriority::Last)]));
+        assert_eq!(order, vec![2, 4, 7, 9], "the sort must be stable within the Last band");
+    }
+
+    #[test]
+    fn an_all_last_set_keeps_its_registration_order() {
+        let ids = [7, 2, 9];
+        let all_last = |_: usize| WitnessPriority::Last;
+        assert_eq!(witness_schedule(&ids, all_last), vec![7, 2, 9]);
+    }
+
+    #[test]
+    fn an_empty_set_schedules_to_nothing() {
+        assert!(witness_schedule(&[], bands(&[])).is_empty());
+    }
+
+    /// Catches a switch to `Ord`-based ranking here: only `Last` may move.
+    #[test]
+    fn a_mixed_set_moves_only_the_last_instance() {
+        let ids = [7, 2, 9, 4];
+        let order = witness_schedule(&ids, bands(&[(9, WitnessPriority::First), (2, WitnessPriority::Last)]));
+        assert_eq!(order, vec![7, 9, 4, 2], "Last moves to the back, First keeps its slot");
     }
 }
