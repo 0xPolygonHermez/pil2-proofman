@@ -193,11 +193,6 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
-    /// Airs whose const *tree* is kept GPU-resident, for each of their Basic, Compressor
-    /// (when they have one) and Recursive1 circuits: `const_tree_size` VRAM each, against a
-    /// per-proof load from disk. Airgroup 0's Recursive2 is always preloaded and must not be
-    /// listed.
-    pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
     /// This run produces a final SNARK
     pub final_snark: bool,
 }
@@ -216,7 +211,6 @@ impl Default for ProofmanOptions {
             aggregation: true,
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
-            preloaded_const_tree_gpu: Vec::new(),
             final_snark: false,
         }
     }
@@ -280,10 +274,6 @@ impl ProofmanOptions {
 
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
-    }
-
-    pub fn preloaded_const_tree_gpu(&mut self, preloaded_const_tree_gpu: Vec<(usize, usize)>) {
-        self.preloaded_const_tree_gpu = preloaded_const_tree_gpu;
     }
 }
 
@@ -1202,10 +1192,8 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         if gpu {
             total_const_area += sctx.total_const_pols_size as u64;
-            total_const_area += sctx.total_const_tree_size as u64;
             if aggregation {
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
-                total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
             }
         }
 

@@ -949,8 +949,8 @@ pub fn load_device_setups<F: PrimeField64>(
     Ok(())
 }
 
-/// Uploads one air's packed const pols -- plus its tree when the group is preallocated --
-/// at `*offset`, then advances past the slot. Only a group owner transfers anything; later
+/// Uploads one air's packed const pols at `*offset`, then advances past the slot (the const
+/// tree is rebuilt on device). Only a group owner transfers anything; later
 /// members are just pointed at its offset. `slots` is per const buffer. Must stay in lockstep
 /// with the sizing in `SetupRepository::new`, which walks the same airs in the same order.
 #[allow(clippy::too_many_arguments)]
@@ -960,17 +960,11 @@ fn load_const_pols_slot<F: PrimeField64>(
     group: FixedGroup,
     airgroup_id: usize,
     air_id: usize,
-    verify_constraints: bool,
     only_first_gpu: bool,
     slots: &mut HashMap<(usize, usize), u64>,
     offset: &mut u64,
 ) {
     let proof_type: &str = setup.setup_type.into();
-    let load_tree = group.load_tree && !verify_constraints;
-    let tree_path = match load_tree {
-        true => setup.const_pols_tree_path.as_str(),
-        false => "",
-    };
 
     let shared_slot = slots.get(&group.owner).copied();
     let slot_offset = shared_slot.unwrap_or(*offset);
@@ -989,19 +983,15 @@ fn load_const_pols_slot<F: PrimeField64>(
         d_buffers,
         &setup.const_pols_path,
         setup.const_pols_size_packed as u64,
-        tree_path,
-        setup.const_tree_size as u64,
         proof_type,
         only_first_gpu,
         shared_slot.is_some(),
     );
 
     // Every air, shared or not: a slot-sharing air must learn the offset too. Must mirror the
-    // order SetupRepository::new sizes them in -- const pols, tree, then custom commits.
+    // order SetupRepository::new sizes them in -- const pols, then custom commits.
     if setup.custom_commits_reserved_words > 0 {
-        let custom_offset = slot_offset
-            + setup.const_pols_size_packed as u64
-            + if load_tree { setup.const_tree_size as u64 } else { 0 };
+        let custom_offset = slot_offset + setup.const_pols_size_packed as u64;
         reserve_custom_commit_slot_c(
             airgroup_id as u64,
             air_id as u64,
@@ -1016,30 +1006,20 @@ fn load_const_pols_slot<F: PrimeField64>(
     if shared_slot.is_none() {
         slots.insert(group.owner, slot_offset);
         *offset += setup.const_pols_size_packed as u64;
-        if load_tree {
-            *offset += setup.const_tree_size as u64;
-        }
         *offset += setup.custom_commits_reserved_words as u64;
     }
 }
 
 /// Defaults to a group of its own for setups the repository did not fingerprint: the
 /// standalone vadcop_final setups, and any air without a verkey.
-fn fixed_group_or_own<F: PrimeField64>(
-    sctx: Option<&SetupCtx<F>>,
-    setup: &Setup<F>,
-    airgroup_id: usize,
-    air_id: usize,
-) -> FixedGroup {
-    sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id))
-        .unwrap_or(FixedGroup { owner: (airgroup_id, air_id), load_tree: setup.preallocate })
+fn fixed_group_or_own<F: PrimeField64>(sctx: Option<&SetupCtx<F>>, airgroup_id: usize, air_id: usize) -> FixedGroup {
+    sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id)).unwrap_or(FixedGroup { owner: (airgroup_id, air_id) })
 }
 
 pub fn load_device_const_pols<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
 ) -> ProofmanResult<u64> {
@@ -1053,14 +1033,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx), setup, airgroup_id, air_id);
+                let group = fixed_group_or_own(Some(sctx), airgroup_id, air_id);
                 load_const_pols_slot(
                     d_buffers,
                     setup,
                     group,
                     airgroup_id,
                     air_id,
-                    verify_constraints,
                     only_first_gpu,
                     &mut basic_slots,
                     &mut offset,
@@ -1081,14 +1060,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
                     if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_compressor), setup, airgroup_id, air_id);
+                        let group = fixed_group_or_own(Some(sctx_compressor), airgroup_id, air_id);
                         load_const_pols_slot(
                             d_buffers,
                             setup,
                             group,
                             airgroup_id,
                             air_id,
-                            verify_constraints,
                             only_first_gpu,
                             &mut compressor_slots,
                             &mut offset_aggregation,
@@ -1128,14 +1106,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 for (air_id, _) in air_group.iter().enumerate() {
                     let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
                     if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_recursive1), setup, airgroup_id, air_id);
+                        let group = fixed_group_or_own(Some(sctx_recursive1), airgroup_id, air_id);
                         load_const_pols_slot(
                             d_buffers,
                             setup,
                             group,
                             airgroup_id,
                             air_id,
-                            verify_constraints,
                             only_first_gpu,
                             &mut recursive1_slots,
                             &mut offset_aggregation,
@@ -1150,14 +1127,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             let setup = sctx_recursive2.get_setup(airgroup_id, 0)?;
             if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx_recursive2), setup, airgroup_id, 0);
+                let group = fixed_group_or_own(Some(sctx_recursive2), airgroup_id, 0);
                 load_const_pols_slot(
                     d_buffers,
                     setup,
                     group,
                     airgroup_id,
                     0,
-                    verify_constraints,
                     only_first_gpu,
                     &mut recursive2_slots,
                     &mut offset_aggregation,
@@ -1170,14 +1146,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
         if setup_vadcop_final.gpu {
-            let group = fixed_group_or_own(None::<&SetupCtx<F>>, setup_vadcop_final, 0, 0);
+            let group = fixed_group_or_own(None::<&SetupCtx<F>>, 0, 0);
             load_const_pols_slot(
                 d_buffers,
                 setup_vadcop_final,
                 group,
                 0,
                 0,
-                verify_constraints,
                 only_first_gpu,
                 &mut final_slots,
                 &mut offset_aggregation,
@@ -1189,14 +1164,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
             if setup_vadcop_final_compressed.gpu {
                 // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
-                let group = FixedGroup { owner: (0, 1), load_tree: setup_vadcop_final_compressed.preallocate };
+                let group = FixedGroup { owner: (0, 1) };
                 load_const_pols_slot(
                     d_buffers,
                     setup_vadcop_final_compressed,
                     group,
                     0,
                     0,
-                    verify_constraints,
                     only_first_gpu,
                     &mut final_slots,
                     &mut offset_aggregation,

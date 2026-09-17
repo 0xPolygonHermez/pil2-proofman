@@ -6,14 +6,13 @@
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
 
     recursive = recursive_;
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    preallocate = preallocate_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -463,7 +462,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate && gpu) {    
+    if(gpu) {
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
@@ -471,7 +470,7 @@ void StarkInfo::setMapOffsets() {
 
         // This air's const tree is rebuilt on device (unpack + extend + merkelize from the
         // resident packed pols). No consttree file is ever read on GPU, so this is false only
-        // for the preallocate layout above and for airs with no constants at all.
+        // for airs with no constants at all.
         if (nConstants > 0) {
             calculateFixedExtended = true;
         }

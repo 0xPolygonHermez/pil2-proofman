@@ -142,7 +142,6 @@ pub fn stark_info_new_c(
     verify_constraints: bool,
     verify: bool,
     gpu: bool,
-    preallocate: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -154,7 +153,6 @@ pub fn stark_info_new_c(
             verify_constraints,
             verify,
             gpu,
-            preallocate,
         )
     }
 }
@@ -1828,8 +1826,6 @@ pub fn load_device_const_pols_c(
     d_buffers: *mut ::std::os::raw::c_void,
     const_filename: &str,
     const_size: u64,
-    const_tree_filename: &str,
-    const_tree_size: u64,
     proof_type: &str,
     only_first_gpu: bool,
     // This air shares its slot with one already uploaded: record the offsets, transfer nothing.
@@ -1837,9 +1833,6 @@ pub fn load_device_const_pols_c(
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
-
-    let const_tree_filename_name = CString::new(const_tree_filename).unwrap();
-    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
 
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1852,8 +1845,6 @@ pub fn load_device_const_pols_c(
             d_buffers,
             const_filename_ptr,
             const_size,
-            const_tree_filename_ptr,
-            const_tree_size,
             proof_type_ptr,
             only_first_gpu,
             already_loaded,

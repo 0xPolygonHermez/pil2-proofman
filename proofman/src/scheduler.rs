@@ -4,11 +4,10 @@
 //! each stream holds resident (`stream_warm`) so a popular key drains on one stream instead of
 //! reloading its const-tree on every free stream. Reservation picks in three passes: reuse a
 //! warm free stream → fresh-load an unloaded key → (last resort) reload rather than idle.
-//! Resident-tree basics are filler (never starve a ready compressor on the non-recursive pool).
 //!
 //! Wrap in a `Mutex`; the reserve FFIs are non-blocking, so the lock is held only briefly.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
@@ -107,10 +106,6 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     // the same air dispatch back-to-back: the stream-warm signal lags the dequeue-ahead depth,
     // and same-air adjacency is what the base/ext split's cross-proof overlap needs.
     last_prefetch_key: Option<(usize, usize)>,
-    /// Basic AIRs whose const-tree is resident (preallocated on-device). Held back as filler:
-    /// they load nothing, and a big resident table draining first would starve ready
-    /// compressors on the shared non-recursive streams.
-    resident_keys: HashSet<Key>,
     /// Basic AIRs with a dispatch rank: 0 = only fits the whole basic stream (phase A) and has a
     /// compressor, 1 = phase-A-only, 2 = has a compressor (its chain is the longest: basic, CPU
     /// witness, compressor, recursive1, recursive2). Unranked airs go by backlog. While any ranked
@@ -136,7 +131,6 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             queues: HashMap::new(),
             basic_queue: HashMap::new(),
             last_prefetch_key: None,
-            resident_keys: HashSet::new(),
             big_keys: HashMap::new(),
             stream_warm: BTreeMap::new(),
         }
@@ -149,15 +143,9 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
 
     /// Ready basic keys most-preferred first: the lowest-ranked phase-A-only airs while any is
     /// ready, then backlog desc (drain big runs first), then `(airgroup, air)` for determinism.
-    fn ready_basics(&self, include_resident: bool) -> Vec<((usize, usize), usize)> {
-        let mut ready: Vec<((usize, usize), usize)> = self
-            .basic_queue
-            .iter()
-            .filter(|(k, q)| {
-                !q.is_empty() && (include_resident || !self.resident_keys.contains(&(k.0, k.1, ProofType::Basic)))
-            })
-            .map(|(k, q)| (*k, q.len()))
-            .collect();
+    fn ready_basics(&self) -> Vec<((usize, usize), usize)> {
+        let mut ready: Vec<((usize, usize), usize)> =
+            self.basic_queue.iter().filter(|(_, q)| !q.is_empty()).map(|(k, q)| (*k, q.len())).collect();
         if let Some(best) = ready.iter().filter_map(|(k, _)| self.big_keys.get(k)).min().copied() {
             ready.retain(|(k, _)| self.big_keys.get(k) == Some(&best));
         }
@@ -221,14 +209,12 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
 
     /// Non-recursive stream, one shot: compressor > basic > rec2/rec1. Deciding here (not via two
     /// racy gates) means a worker yields a basic only when it actually takes recursive work — no
-    /// "yield-then-fail-to-place" idle. Resident basics are filler: eligible only when nothing
-    /// recursive/compressor is queued.
+    /// "yield-then-fail-to-place" idle.
     pub fn next_nonrecursive(&mut self) -> Option<WorkerPick<F>> {
         if let Some((w, s)) = self.next_of_types(&[ProofType::Compressor], false) {
             return Some(WorkerPick::Recursive(w, s));
         }
-        let allow_resident = self.is_empty();
-        if let Some((id, s)) = self.next_basic(allow_resident) {
+        if let Some((id, s)) = self.next_basic() {
             return Some(WorkerPick::Basic(id, s));
         }
         if let Some((w, s)) = self.next_of_types(&RECURSIVE_ORDER, false) {
@@ -237,10 +223,9 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         None
     }
 
-    /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`. Resident
-    /// basics are excluded unless `include_resident` (held back as filler otherwise).
-    pub fn next_basic(&mut self, include_resident: bool) -> Option<(usize, StreamReservation)> {
-        let ready = self.ready_basics(include_resident);
+    /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`.
+    pub fn next_basic(&mut self) -> Option<(usize, StreamReservation)> {
+        let ready = self.ready_basics();
         if ready.is_empty() {
             return None;
         }
@@ -260,8 +245,8 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// dequeuing: `(instance_id, airgroup_id, air_id)`. Drives the witness-
     /// prefetch lookahead; a wrong prediction costs only a skipped prefetch --
     /// gen_proof falls back to the legacy upload when the zone id mismatches.
-    pub fn peek_basic(&self, include_resident: bool) -> Option<(usize, usize, usize)> {
-        let ready = self.ready_basics(include_resident);
+    pub fn peek_basic(&self) -> Option<(usize, usize, usize)> {
+        let ready = self.ready_basics();
         if ready.is_empty() {
             return None;
         }
@@ -291,8 +276,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// [`Self::reserve_for_basic`]. Dequeue-not-peek: the pick cannot be stolen
     /// or mispredicted. Mirrors `peek_basic`'s warm-preferred order.
     pub fn pop_basic_prefetch(&mut self) -> Option<(usize, usize, usize)> {
-        let include_resident = self.is_empty();
-        let (id, ag, air) = self.peek_basic(include_resident)?;
+        let (id, ag, air) = self.peek_basic()?;
         let q = self.basic_queue.get_mut(&(ag, air)).expect("peeked basic key non-empty");
         let popped = q.pop_front().expect("peeked basic key non-empty");
         debug_assert_eq!(popped, id);
@@ -308,12 +292,8 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         self.pick_and_reserve(&[(airgroup_id, air_id, ProofType::Basic)], false).map(|(_, s)| s)
     }
 
-    /// Enqueue a stored basic instance for key-affinity dispatch. `resident` marks whether
-    /// this AIR's basic const-tree is preallocated on-device (→ treated as filler).
-    pub fn push_basic(&mut self, instance_id: usize, airgroup_id: usize, air_id: usize, resident: bool) {
-        if resident {
-            self.resident_keys.insert((airgroup_id, air_id, ProofType::Basic));
-        }
+    /// Enqueue a stored basic instance for key-affinity dispatch.
+    pub fn push_basic(&mut self, instance_id: usize, airgroup_id: usize, air_id: usize) {
         self.basic_queue.entry((airgroup_id, air_id)).or_default().push_back(instance_id);
     }
 
@@ -387,7 +367,6 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     pub fn drain_all(&mut self) -> (Vec<Proof<F>>, Vec<usize>) {
         let witnesses: Vec<Proof<F>> = self.queues.drain().flat_map(|(_, q)| q.into_iter()).collect();
         let basics: Vec<usize> = self.basic_queue.drain().flat_map(|(_, q)| q.into_iter()).collect();
-        self.resident_keys.clear();
         (witnesses, basics)
     }
 }
@@ -570,8 +549,8 @@ mod drain_tests {
         s.push(witness(&h, ProofType::Compressor, 0));
         s.push(witness(&h, ProofType::Recursive1, 1));
         s.push(witness(&h, ProofType::Recursive2, 2));
-        s.push_basic(10, 0, 0, false);
-        s.push_basic(11, 0, 1, true);
+        s.push_basic(10, 0, 0);
+        s.push_basic(11, 0, 1);
 
         let (witnesses, basics) = s.drain_all();
         assert_eq!(witnesses.len(), 3);

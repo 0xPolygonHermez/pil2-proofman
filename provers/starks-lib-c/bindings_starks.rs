@@ -51,7 +51,6 @@ extern "C" {
         verify_constraints: bool,
         verify: bool,
         gpu: bool,
-        preallocate: bool,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn set_hash_family(fam: u8);
@@ -674,8 +673,6 @@ extern "C" {
         d_buffers: *mut ::std::os::raw::c_void,
         constFilename: *mut ::std::os::raw::c_char,
         constSize: u64,
-        constTreeFilename: *mut ::std::os::raw::c_char,
-        constTreeSize: u64,
         proofType: *mut ::std::os::raw::c_char,
         onlyFirstGPU: bool,
         alreadyLoaded: bool,
