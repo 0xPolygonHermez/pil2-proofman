@@ -6,7 +6,6 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <cstdint>
-#include <tuple>
 #include <vector>
 
 #include "cuda_utils.cuh"
@@ -52,16 +51,20 @@ TEST(UNPACK_INDEXED_GPU, matches_the_cpu_walk_cell_for_cell)
     for (const uint64_t lanes : {1ull, 2ull, 4ull}) {
         const uint64_t INDEX_BITS = 32, nRows = 1024, nEntries = 13;
 
-        // {width, sub-columns per lane, instruction-derived}, expanded lane-major.
-        const std::vector<std::tuple<uint64_t, uint64_t, bool>> fields = {
-            {32, 2, false}, {1, 1, false}, {32, 1, true}, {64, 1, true}, {8, 1, true},
-            {38, 1, false}, {1, 1, true},
+        // {width, sub-columns per lane, instruction-derived}, expanded lane-major. A C array,
+        // not tuples + structured bindings: the goldilocks Makefile's NVCCFLAGS set no
+        // -std=c++17, so .cu tests get whatever nvcc defaults to (C++14 on CUDA 11).
+        const uint64_t FIELDS[][3] = {
+            {32, 2, 0}, {1, 1, 0}, {32, 1, 1}, {64, 1, 1}, {8, 1, 1}, {38, 1, 0}, {1, 1, 1},
         };
+        const uint64_t N_FIELDS = sizeof(FIELDS) / sizeof(FIELDS[0]);
 
         std::vector<uint64_t> widths, rowW, tabW, entryCol;
         std::vector<uint8_t> colSource, colLane;
         for (uint64_t l = 0; l < lanes; l++) rowW.push_back(INDEX_BITS);
-        for (auto &[width, sub, instr] : fields) {
+        for (uint64_t f = 0; f < N_FIELDS; f++) {
+            const uint64_t width = FIELDS[f][0], sub = FIELDS[f][1];
+            const bool instr = FIELDS[f][2] != 0;
             const uint64_t entryBase = tabW.size();
             for (uint64_t l = 0; l < lanes; l++)
                 for (uint64_t sc = 0; sc < sub; sc++) {
