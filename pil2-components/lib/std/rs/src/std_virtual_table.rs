@@ -912,6 +912,9 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             }
             considered += 1;
             considered_ids.push(tid);
+            // Per-table progress: the fit is several seconds of otherwise silent work, and which
+            // table it is stuck on is the first thing anyone asks.
+            let __t_tbl = std::time::Instant::now();
             // TEMP: 127's key expressions exceed the extractor; excluded so the rest can be
             // verified. Its generic answer is the interpreter, not another closed form.
 
@@ -1161,6 +1164,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             let __exact = if fitted.is_none() && separable.is_none() { fit_exact_map(&samples, width) } else { None };
             if let Some((coef, konst, w)) = fitted {
                 n_affine += 1;
+                tracing::info!("virtual table {tid}: affine ({} ms)", __t_tbl.elapsed().as_millis());
                 tracing::debug!(
                     "virtual table {tid}: row map fitted from its fixed columns ({} entries, \
                      {w} of {width} columns)",
@@ -1169,6 +1173,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 out.push(VtFittedMap { table_id: tid, coef, konst, map: None, digits: None });
             } else if let Some((used, tab)) = separable {
                 n_separable += 1;
+                tracing::info!("virtual table {tid}: separable ({} ms)", __t_tbl.elapsed().as_millis());
                 tracing::debug!(
                     "virtual table {tid}: separable row map ({} entries, columns {used:?} of \
                      {width}, {} table entries)",
@@ -1188,6 +1193,11 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 // and merging them is sound.
                 n_exact += 1;
                 exact_bytes += kv.len() as u64 * 8;
+                tracing::info!(
+                    "virtual table {tid}: exact map, {} MB ({} ms)",
+                    kv.len() * 8 / 1_000_000,
+                    __t_tbl.elapsed().as_millis()
+                );
                 tracing::debug!(
                     "virtual table {tid}: exact map over {} entries, {} key columns, {} slots ({} MB)",
                     samples.len(),
@@ -1205,6 +1215,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             } else {
                 let ranges: Vec<u64> =
                     (0..width).map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0)).collect();
+                tracing::info!("virtual table {tid}: no fit, left to the std ({} ms)", __t_tbl.elapsed().as_millis());
                 tracing::debug!(
                     "virtual table {tid}: NO FIT ({} entries, {width} columns) -- not affine and its \
                      tuple does not separate its rows; column maxima {ranges:?}",

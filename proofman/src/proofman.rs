@@ -2580,7 +2580,7 @@ where
 
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
 
-        Ok(Self {
+        let proofman = Self {
             pctx,
             sctx,
             mpi_ctx,
@@ -2635,7 +2635,17 @@ where
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
             computing: Mutex::new(()),
-        })
+        };
+
+        // Fitting the multiplicity decoders reads only the proving key -- no input, no witness --
+        // so it belongs here and not inside the first proof. It used to run from
+        // `register_witness`, which every `*_from_lib` entry calls, so its cost landed in the
+        // reported proof time. Memoized either way (see `register_prover_multiplicities`).
+        timer_start_info!(FITTING_VIRTUAL_TABLES);
+        proofman.register_prover_multiplicities()?;
+        timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
+
+        Ok(proofman)
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
@@ -2712,7 +2722,8 @@ where
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
         timer_start_info!(REGISTERING_WITNESS);
-        // Must precede the witness library, which reads the resulting ownership out of pctx.
+        // The table ownership the witness library reads out of pctx is fitted in `new`. Kept as a
+        // memoized safety net for any path that builds a ProofMan without going through it.
         self.register_prover_multiplicities()?;
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
