@@ -605,8 +605,6 @@ pub struct ProofMan<F: PrimeField64> {
     thread_budget: Arc<ThreadBudget>,
     witness_tx: Sender<usize>,
     witness_rx: Receiver<usize>,
-    witness_tx_priority: Sender<usize>,
-    witness_rx_priority: Receiver<usize>,
     contributions_tx: Sender<usize>,
     contributions_rx: Receiver<usize>,
     proofs_tx: Sender<usize>,
@@ -753,7 +751,6 @@ impl<F: PrimeField64> ProofMan<F> {
         ongoing_proofs.clear();
 
         self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
         self.pctx.set_proof_tx(None);
 
         // Releases the completion capability and joins the recursive workers. They disconnect only
@@ -771,7 +768,6 @@ impl<F: PrimeField64> ProofMan<F> {
 
         // Drain all relevant channels to ensure they are empty
         while self.witness_rx.try_recv().is_ok() {}
-        while self.witness_rx_priority.try_recv().is_ok() {}
         while self.contributions_rx.try_recv().is_ok() {}
         while self.proofs_rx.try_recv().is_ok() {}
 
@@ -1360,7 +1356,6 @@ where
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
-            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
 
         let witness_done = Arc::new(Counter::new());
@@ -1383,8 +1378,9 @@ where
 
         let my_instances = self.pctx.dctx_get_process_instances();
 
-        let my_instances_no_tables =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_no_tables = self.pctx.dctx_witness_schedule(
+            &my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>(),
+        );
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1398,7 +1394,6 @@ where
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(None);
-            self.pctx.set_witness_tx_priority(None);
         }
 
         self.witness_tx.send(usize::MAX).ok();
@@ -1711,14 +1706,16 @@ where
             handles: witness_handles.clone(),
         };
 
-        let my_instances_no_tables = my_instances
-            .iter()
-            .filter(|idx| {
-                !self.pctx.dctx_is_table(**idx)
-                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
-            })
-            .copied()
-            .collect::<Vec<_>>();
+        let my_instances_no_tables = self.pctx.dctx_witness_schedule(
+            &my_instances
+                .iter()
+                .filter(|idx| {
+                    !self.pctx.dctx_is_table(**idx)
+                        && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
+                })
+                .copied()
+                .collect::<Vec<_>>(),
+        );
 
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -2532,7 +2529,6 @@ where
         let thread_budget = Arc::new(ThreadBudget::new(max_num_threads));
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
@@ -2572,8 +2568,6 @@ where
             thread_budget,
             witness_tx,
             witness_rx,
-            witness_tx_priority,
-            witness_rx_priority,
             contributions_tx,
             contributions_rx,
             completions: DeviceCompletions::new(),
@@ -2724,7 +2718,6 @@ where
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
-                self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
             }
             let witness_done = Arc::new(Counter::new());
 
@@ -2871,8 +2864,9 @@ where
 
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_no_tables =
-                my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            let my_instances_no_tables = self.pctx.dctx_witness_schedule(
+                &my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>(),
+            );
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
@@ -2886,7 +2880,6 @@ where
 
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(None);
-                self.pctx.set_witness_tx_priority(None);
             }
             self.witness_tx.send(usize::MAX).ok();
 
@@ -4972,7 +4965,6 @@ where
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
-        let witness_rx_priority = self.witness_rx_priority.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
@@ -4980,15 +4972,8 @@ where
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
-            // Ready instances waiting to be admitted, priority-first, and how many slots each air
-            // currently holds. Taking straight off the channels would be pure FIFO with no choice;
-            // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
-            // stream so the slots it would have taken go to work the other streams can run.
-            // Two pools, not one queue: the priority pool is always scanned first, so a priority
-            // instance outranks every normal one however late it arrives, while arrival order is kept
-            // within each pool. That is all the two channels mean now — a ranking hint, no longer a
-            // queue-jump able to take every slot.
-            let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+            // One pool of ready-but-not-yet-admitted instances, ordered by declared band (arrival
+            // order within a band); pooling is what lets `witness_slot_cap` hold an air back.
             let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
             let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
             // Depth 1: a wakeup is a hint, not a count.
@@ -4996,9 +4981,6 @@ where
             let mut arrivals_done = false;
             Some(std::thread::spawn(move || loop {
                 // Take everything available without committing to any of it yet.
-                while let Ok(id) = witness_rx_priority.try_recv() {
-                    pending_priority.push_back(id);
-                }
                 while let Ok(id) = witness_rx.try_recv() {
                     if id == usize::MAX {
                         arrivals_done = true;
@@ -5021,64 +5003,46 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
-                // First admissible, priority pool first. Not reordered: `weight` is the proof cost
-                // of the air, so it is equal for every instance of one, and the instances of an air
-                // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
-                let first = |pool: &std::collections::VecDeque<usize>,
-                             held: &HashMap<(usize, usize), usize>|
-                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
-                let chosen: Option<(bool, usize)> = {
+                let chosen: Option<usize> = {
                     let held = in_flight.lock().unwrap();
-                    first(&pending_priority, &held)
-                        .map(|pos| (true, pos))
-                        .or_else(|| first(&pending, &held).map(|pos| (false, pos)))
+                    crate::next_admission(
+                        &pending,
+                        |id| admissible(id, &held),
+                        |id| pctx_clone.dctx_instance_priority(id),
+                    )
                 };
 
-                let instance_id =
-                    match chosen.and_then(
-                        |(is_priority, pos)| {
-                            if is_priority {
-                                pending_priority.remove(pos)
-                            } else {
-                                pending.remove(pos)
-                            }
-                        },
-                    ) {
-                        Some(id) => id,
-                        None => {
-                            // Nothing admissible. Exit only once no more can arrive and nothing is queued.
-                            if cancellation_info_clone.read_recover().token.is_cancelled() {
-                                break;
-                            }
-                            if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
-                                break;
-                            }
-                            // Wait on every event that can make work admissible -- an arrival on
-                            // either channel, or a freed slot -- rather than polling. Was a flat 1 ms
-                            // sleep: measured at ~8 ms per witness, 540 ms over a phase.
-                            let mut select = crossbeam_channel::Select::new();
-                            let priority_op = select.recv(&witness_rx_priority);
-                            let normal_op = select.recv(&witness_rx);
-                            let slot_op = select.recv(&slot_freed_rx);
-                            if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
-                                let index = op.index();
-                                if index == priority_op {
-                                    if let Ok(id) = op.recv(&witness_rx_priority) {
-                                        pending_priority.push_back(id);
-                                    }
-                                } else if index == normal_op {
-                                    match op.recv(&witness_rx) {
-                                        Ok(id) if id == usize::MAX => arrivals_done = true,
-                                        Ok(id) => pending.push_back(id),
-                                        Err(_) => {}
-                                    }
-                                } else if index == slot_op {
-                                    let _ = op.recv(&slot_freed_rx);
-                                }
-                            }
-                            continue;
+                let instance_id = match chosen.and_then(|pos| pending.remove(pos)) {
+                    Some(id) => id,
+                    None => {
+                        // Nothing admissible. Exit only once no more can arrive and nothing is queued.
+                        if cancellation_info_clone.read_recover().token.is_cancelled() {
+                            break;
                         }
-                    };
+                        if arrivals_done && pending.is_empty() {
+                            break;
+                        }
+                        // Wait on every event that can make work admissible -- an arrival on
+                        // the channel, or a freed slot -- rather than polling. Was a flat 1 ms
+                        // sleep: measured at ~8 ms per witness, 540 ms over a phase.
+                        let mut select = crossbeam_channel::Select::new();
+                        let normal_op = select.recv(&witness_rx);
+                        let slot_op = select.recv(&slot_freed_rx);
+                        if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
+                            let index = op.index();
+                            if index == normal_op {
+                                match op.recv(&witness_rx) {
+                                    Ok(id) if id == usize::MAX => arrivals_done = true,
+                                    Ok(id) => pending.push_back(id),
+                                    Err(_) => {}
+                                }
+                            } else if index == slot_op {
+                                let _ = op.recv(&slot_freed_rx);
+                            }
+                        }
+                        continue;
+                    }
+                };
 
                 if let Some(witness_start_time_clone) = &witness_start_time_clone {
                     if witness_start_time_clone.read().unwrap().is_none() {
@@ -5285,6 +5249,18 @@ where
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );
+
+        // A short wait alone doesn't say which instance is missing; check for one never announced.
+        if witness_done.value() < expected {
+            let never_ready = self.pctx.dctx_instances_not_ready(instances);
+            if !never_ready.is_empty() {
+                tracing::error!(
+                    "{} instance(s) were never announced ready and so were never dispatched: {:?}",
+                    never_ready.len(),
+                    never_ready
+                );
+            }
+        }
 
         let handles_to_join: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
         for handle in handles_to_join {

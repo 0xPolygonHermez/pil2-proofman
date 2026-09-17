@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
 use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
@@ -428,6 +428,22 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
     eligible + 1
 }
 
+/// Index into `pending` of the instance to admit next: lowest band first, ties by arrival.
+/// `admissible` outranks the band — it carries the slot cap, the reason this pools at all.
+pub(crate) fn next_admission(
+    pending: &VecDeque<usize>,
+    admissible: impl Fn(usize) -> bool,
+    band: impl Fn(usize) -> WitnessPriority,
+) -> Option<usize> {
+    pending
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|&(_, id)| admissible(id))
+        .min_by_key(|&(pos, id)| (band(id), pos))
+        .map(|(pos, _)| pos)
+}
+
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
 /// AIRs to feed the recursive pipeline), then heaviest-per-proof first (LPT), then
 /// `(airgroup_id, air_id)` to cluster each AIR's instances contiguously for const-tree reuse.
@@ -677,7 +693,9 @@ mod drain_tests {
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{eligible_stream_count, witness_slot_cap};
+    use super::{eligible_stream_count, next_admission, witness_slot_cap};
+    use proofman_common::WitnessPriority;
+    use std::collections::{HashMap, VecDeque};
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
     const CLASSES: [usize; 3] = [7598, 6390, 6390];
@@ -707,6 +725,61 @@ mod admission_tests {
         assert_eq!(eligible_stream_count(6133, &[]), 0);
         assert_eq!(witness_slot_cap(0, 3), usize::MAX);
         assert_eq!(witness_slot_cap(1, 0), usize::MAX);
+    }
+
+    fn queue(ids: &[usize]) -> VecDeque<usize> {
+        ids.iter().copied().collect()
+    }
+
+    fn bands(pairs: &[(usize, WitnessPriority)]) -> impl Fn(usize) -> WitnessPriority {
+        let map: HashMap<usize, WitnessPriority> = pairs.iter().copied().collect();
+        move |id| map.get(&id).copied().unwrap_or_default()
+    }
+
+    #[test]
+    fn an_empty_queue_admits_nothing() {
+        assert_eq!(next_admission(&queue(&[]), |_| true, bands(&[])), None);
+    }
+
+    #[test]
+    fn equal_bands_admit_in_arrival_order() {
+        assert_eq!(next_admission(&queue(&[7, 2, 9]), |_| true, bands(&[])), Some(0));
+    }
+
+    /// The band replaces the priority channel: a `First` instance must be chosen over
+    /// earlier arrivals, which is exactly what the second pool used to do.
+    #[test]
+    fn a_first_instance_outranks_earlier_arrivals() {
+        let pending = queue(&[7, 2, 9]);
+        let band = bands(&[(9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true, band), Some(2));
+    }
+
+    #[test]
+    fn a_last_instance_is_chosen_only_when_nothing_else_is_left() {
+        let band = bands(&[(7, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&queue(&[7, 2]), |_| true, &band), Some(1));
+        assert_eq!(next_admission(&queue(&[7]), |_| true, &band), Some(0));
+    }
+
+    /// The slot cap outranks the band: holding an air back is why this pools at all.
+    #[test]
+    fn an_inadmissible_instance_is_skipped_whatever_its_band() {
+        let pending = queue(&[7, 2]);
+        let band = bands(&[(7, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |id| id != 7, band), Some(1));
+    }
+
+    #[test]
+    fn nothing_admissible_admits_nothing() {
+        assert_eq!(next_admission(&queue(&[7, 2]), |_| false, bands(&[])), None);
+    }
+
+    #[test]
+    fn two_instances_in_one_band_keep_their_arrival_order() {
+        let pending = queue(&[7, 2, 9]);
+        let band = bands(&[(2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true, band), Some(1));
     }
 }
 
