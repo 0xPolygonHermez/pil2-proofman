@@ -79,6 +79,9 @@ impl PackedInfo {
             col_lane.iter().all(|&l| (l as u64) < n_lanes),
             "indexed descriptor: every col_lane must be below lanes ({n_lanes})"
         );
+        // One bit read, so 1..=64, as indexedDescriptorError requires C++-side. Bounded
+        // before the header check, which would otherwise overflow on a huge width.
+        assert!((1..=64).contains(&index_bits), "indexed descriptor: index_bits must be in 1..=64, got {index_bits}");
         // The CUDA walks read lane l's index at bit l * index_bits unguarded.
         assert!(
             n_lanes * index_bits <= self.num_packed_words * 64,

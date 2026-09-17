@@ -131,11 +131,17 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         const uint64_t hdrBits = nLanes * indexBits;
         uint64_t ridx = hdrBits / 64, roff = hdrBits % 64;
         uint64_t rword = (ridx < wordsPerRow) ? rbase[ridx] : 0;
-        for (uint64_t c = 0; c < cEnd; c++) {
+        // Reposition over the columns this chunk does not write, then extract.
+        for (uint64_t c = 0; c < (uint64_t)c0 && c < cEnd; c++) {
             const uint64_t info = scInfo[c];
             if ((info >> 32) & 1ull) continue;
-            const uint64_t val = scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
-            if (c >= c0) dst[(c - c0) * nRows + row] = val;
+            scStepBits<false>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
+        }
+        for (uint64_t c = c0; c < cEnd; c++) {
+            const uint64_t info = scInfo[c];
+            if ((info >> 32) & 1ull) continue;
+            dst[(c - c0) * nRows + row] =
+                scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
         }
     }
 
@@ -152,12 +158,17 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
 
         const uint64_t *tbase = table + index * wordsPerEntry;
         uint64_t tword = tbase[0], tidx = 0, toff = 0;
-        for (uint64_t c = 0; c < cEnd; c++) {
+        // Warp-uniform: source and lane depend only on c, so neither loop diverges.
+        for (uint64_t c = 0; c < (uint64_t)c0 && c < cEnd; c++) {
             const uint64_t info = scInfo[c];
-            // Warp-uniform: source and lane depend only on c, so this never diverges.
             if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            const uint64_t val = scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
-            if (c >= c0) dst[(c - c0) * nRows + row] = val;
+            scStepBits<false>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
+        }
+        for (uint64_t c = c0; c < cEnd; c++) {
+            const uint64_t info = scInfo[c];
+            if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
+            dst[(c - c0) * nRows + row] =
+                scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
         }
     }
 }
