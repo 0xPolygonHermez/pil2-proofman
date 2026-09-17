@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
 
 use crate::Ledger;
 use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
@@ -428,20 +428,11 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
     eligible + 1
 }
 
-/// Index into `pending` of the instance to admit next: lowest band first, ties by arrival.
-/// `admissible` outranks the band — it carries the slot cap, the reason this pools at all.
-pub(crate) fn next_admission(
-    pending: &VecDeque<usize>,
-    admissible: impl Fn(usize) -> bool,
-    band: impl Fn(usize) -> WitnessPriority,
-) -> Option<usize> {
-    pending
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|&(_, id)| admissible(id))
-        .min_by_key(|&(pos, id)| (band(id), pos))
-        .map(|(pos, _)| pos)
+/// `(pool, index)` of the instance to admit next: the first admissible entry of the most urgent
+/// non-empty band. Short-circuits at the head -- it runs under the `in_flight` lock.
+/// `admissible` outranks the band: it carries the slot cap, the reason this pools at all.
+pub(crate) fn next_admission(pools: &[VecDeque<usize>], admissible: impl Fn(usize) -> bool) -> Option<(usize, usize)> {
+    pools.iter().enumerate().find_map(|(band, pool)| pool.iter().position(|&id| admissible(id)).map(|pos| (band, pos)))
 }
 
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
@@ -695,7 +686,7 @@ mod drain_tests {
 mod admission_tests {
     use super::{eligible_stream_count, next_admission, witness_slot_cap};
     use proofman_common::WitnessPriority;
-    use std::collections::{HashMap, VecDeque};
+    use std::collections::VecDeque;
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
     const CLASSES: [usize; 3] = [7598, 6390, 6390];
@@ -727,59 +718,84 @@ mod admission_tests {
         assert_eq!(witness_slot_cap(1, 0), usize::MAX);
     }
 
-    fn queue(ids: &[usize]) -> VecDeque<usize> {
-        ids.iter().copied().collect()
+    /// The handler's arrival pools, in band order.
+    fn pools(pairs: &[(usize, WitnessPriority)]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        let mut out: [VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
+        for &(id, band) in pairs {
+            out[band.index()].push_back(id);
+        }
+        out
     }
 
-    fn bands(pairs: &[(usize, WitnessPriority)]) -> impl Fn(usize) -> WitnessPriority {
-        let map: HashMap<usize, WitnessPriority> = pairs.iter().copied().collect();
-        move |id| map.get(&id).copied().unwrap_or_default()
+    /// Arrivals that all took the default band.
+    fn normal(ids: &[usize]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        pools(&ids.iter().map(|&id| (id, WitnessPriority::Normal)).collect::<Vec<_>>())
     }
 
     #[test]
     fn an_empty_queue_admits_nothing() {
-        assert_eq!(next_admission(&queue(&[]), |_| true, bands(&[])), None);
+        assert_eq!(next_admission(&normal(&[]), |_| true), None);
     }
 
     #[test]
     fn equal_bands_admit_in_arrival_order() {
-        assert_eq!(next_admission(&queue(&[7, 2, 9]), |_| true, bands(&[])), Some(0));
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true), Some((1, 0)));
+    }
+
+    /// The production shape: one band, the head's air at its cap, another air behind it. Without
+    /// this, narrowing the scan to the head alone would pass every other test and stall the pool.
+    #[test]
+    fn a_capped_head_does_not_block_the_rest_of_its_pool() {
+        assert_eq!(next_admission(&normal(&[7, 2]), |id| id != 7), Some((1, 1)));
     }
 
     /// The band replaces the priority channel: a `First` instance must be chosen over
     /// earlier arrivals, which is exactly what the second pool used to do.
     #[test]
     fn a_first_instance_outranks_earlier_arrivals() {
-        let pending = queue(&[7, 2, 9]);
-        let band = bands(&[(9, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |_| true, band), Some(2));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
+        assert_eq!(pending[0][0], 9);
     }
 
     #[test]
     fn a_last_instance_is_chosen_only_when_nothing_else_is_left() {
-        let band = bands(&[(7, WitnessPriority::Last)]);
-        assert_eq!(next_admission(&queue(&[7, 2]), |_| true, &band), Some(1));
-        assert_eq!(next_admission(&queue(&[7]), |_| true, &band), Some(0));
+        let pending = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((1, 0)));
+        assert_eq!(pending[1][0], 2);
+        let only_last = pools(&[(7, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&only_last, |_| true), Some((2, 0)));
     }
 
     /// The slot cap outranks the band: holding an air back is why this pools at all.
     #[test]
     fn an_inadmissible_instance_is_skipped_whatever_its_band() {
-        let pending = queue(&[7, 2]);
-        let band = bands(&[(7, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |id| id != 7, band), Some(1));
+        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&pending, |id| id != 7), Some((1, 0)));
+        assert_eq!(pending[1][0], 2);
     }
 
     #[test]
     fn nothing_admissible_admits_nothing() {
-        assert_eq!(next_admission(&queue(&[7, 2]), |_| false, bands(&[])), None);
+        assert_eq!(next_admission(&normal(&[7, 2]), |_| false), None);
     }
 
     #[test]
     fn two_instances_in_one_band_keep_their_arrival_order() {
-        let pending = queue(&[7, 2, 9]);
-        let band = bands(&[(2, WitnessPriority::First), (9, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |_| true, band), Some(1));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
+        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
+    }
+
+    /// Catches a reorder of the variants or of the pools passed in.
+    #[test]
+    fn a_mixed_set_admits_the_first_band_even_when_it_arrived_last() {
+        let pending = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
+        assert_eq!(pending[0][0], 9);
+        // With the First one held back by its slot cap, Normal still beats Last.
+        assert_eq!(next_admission(&pending, |id| id != 9), Some((1, 0)));
+        assert_eq!(pending[1][0], 2);
     }
 }
 
