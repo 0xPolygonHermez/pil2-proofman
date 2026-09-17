@@ -941,6 +941,25 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
         exitProcess();
     }
 
+    // Checked on the host copy, before upload to every GPU. PackedInfo::with_indexed asserts
+    // the same Rust-side, but it is one optional constructor on a struct of public fields.
+    if (packedInfo != nullptr && packedInfo->col_source != nullptr) {
+        const uint64_t nCols = setupCtx->starkInfo.mapSectionsN.at("cm1");
+        uint64_t bad_col = 0;
+        const char *why = indexedDescriptorError(nCols, packedInfo->num_packed_words,
+                                                 packedInfo->index_bits, packedInfo->lanes,
+                                                 packedInfo->col_lane, &bad_col);
+        if (why != nullptr) {
+            zklog.error("load_device_setup: air (" + std::to_string(airgroupId) + "," +
+                        std::to_string(airId) + ") has an invalid indexed descriptor: " + why +
+                        " (lanes=" + std::to_string(packedInfo->lanes) + ", index_bits=" +
+                        std::to_string(packedInfo->index_bits) + ", words_per_row=" +
+                        std::to_string(packedInfo->num_packed_words) + ", col " +
+                        std::to_string(bad_col) + ")");
+            exitProcess();
+        }
+    }
+
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         if (d_buffers->air_instances[key][proofType][i] != nullptr) {
@@ -3116,6 +3135,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // at setup from PackedInfo; d_instr_table arrives per program via
     // register_instruction_table). Both live outside gpuMemoryBuffer[0].
     const uint8_t *dColSource = nullptr;
+    const uint8_t *dColLane = nullptr;
     const uint64_t *dTable = nullptr;
     AirInstanceInfo *aii = nullptr;
     auto it = d_buffers->air_instances.find({airgroupId, airId});
@@ -3134,10 +3154,12 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             return -16;
         }
         dColSource = aii->d_col_source;
+        dColLane = aii->d_col_lane;
         dTable = aii->d_instr_table;
         dims.indexBits = aii->index_bits;
         dims.wordsPerEntry = aii->words_per_entry;
         dims.numEntries = aii->num_entries;
+        dims.lanes = aii->lanes;
     }
 
     const StreamCommitHash scHash = (scFamily == HashFamily::Blake3)
@@ -3154,7 +3176,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                            sizeof(Goldilocks::Element);
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
-                                    dColSource, dTable, scHash);
+                                    dColSource, dColLane, dTable, scHash);
     streamCommitReleaseRegion(d_buffers);
     return rc;
 }
