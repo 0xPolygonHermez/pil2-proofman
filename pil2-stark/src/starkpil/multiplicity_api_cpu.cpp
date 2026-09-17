@@ -59,6 +59,30 @@ uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
     return mul_migrated_tables_impl(out, cap);
 }
 
+uint64_t mul_air_has_owned(uint64_t airId) {
+    return mul_air_has_owned_tables(airId) ? 1 : 0;
+}
+
+// There is no device to export from here, so the switch is accepted and ignored: the caller sets it
+// from the rank count without knowing which backend it linked.
+void mul_set_device_export(uint64_t enabled) {
+    (void)enabled;
+}
+
+// Never: this backend has no device accumulator, so every air's trace is built on the host.
+uint64_t mul_air_device_owned(uint64_t airId) {
+    (void)airId;
+    return 0;
+}
+
+// The ordering point the GPU backend needs before its table commit reads the accumulator. Harmless
+// here -- the CPU scatter runs inline on the committing thread -- but kept so the caller's sequence
+// is the same on both backends.
+void mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return;
+    if (!mul_await_commits(expectedCommits)) exitProcess();
+}
+
 // No commit barrier: the CPU scatter runs inline on the committing thread, so by the time an
 // instance's commit returns its counts are already in. `expectedCommits` is accepted and ignored so
 // the Rust side needs no backend-specific call.
