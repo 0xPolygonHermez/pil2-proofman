@@ -21,7 +21,7 @@ pub fn verify_proof_from_file<F: PrimeField64>(
     proof_values: Option<Vec<F>>,
     challenges: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -77,7 +77,7 @@ pub fn verify_proof<F: PrimeField64>(
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
@@ -143,7 +143,7 @@ pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F
     let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);

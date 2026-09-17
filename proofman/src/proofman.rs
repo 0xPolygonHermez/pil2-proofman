@@ -5,7 +5,7 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConstTree, PackedInfo,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -974,9 +974,9 @@ where
 
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, gpu)?;
 
-        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu)?;
 
         proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
 
@@ -2150,7 +2150,6 @@ where
             &air_info,
             &ProofType::RecurserAggregator,
             false,
-            false,
             self.options.gpu,
             Some(&vadcop_final_stem),
         )?;
@@ -2221,8 +2220,6 @@ where
             d_buffers_ptr,
             &setup.const_pols_path,
             packed_len,
-            "",
-            setup.const_tree_size as u64,
             proof_type,
             false,
             // Recursers swap through a single reserved slot; each one really is uploaded.
@@ -3529,11 +3526,7 @@ where
                                 while let Ok(id) = proofs_rx.try_recv() {
                                     match pctx_clone.dctx_get_instance_info(id) {
                                         Ok((ag, air)) => {
-                                            // Mark resident-tree basics (preallocated const-tree)
-                                            // so the scheduler treats them as filler.
-                                            let resident =
-                                                sctx_clone.get_setup(ag, air).map(|s| s.preallocate).unwrap_or(false);
-                                            guard.push_basic(id, ag, air, resident);
+                                            guard.push_basic(id, ag, air);
                                         }
                                         Err(e) => {
                                             cancellation_info_clone.write_recover().cancel(Some(e));
@@ -3693,11 +3686,7 @@ where
                                     while let Ok(id) = proofs_rx.try_recv() {
                                         match pctx_clone.dctx_get_instance_info(id) {
                                             Ok((ag, air)) => {
-                                                let resident = sctx_clone
-                                                    .get_setup(ag, air)
-                                                    .map(|s| s.preallocate)
-                                                    .unwrap_or(false);
-                                                guard.push_basic(id, ag, air, resident);
+                                                guard.push_basic(id, ag, air);
                                             }
                                             Err(e) => {
                                                 cancellation_info_clone.write_recover().cancel(Some(e));
@@ -4712,14 +4701,7 @@ where
 
         if self.pctx.gpu && self.pctx.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
-            let _ = load_device_const_pols(
-                &self.pctx,
-                &self.sctx,
-                &self.setups,
-                self.options.verify_constraints,
-                self.options.aggregation,
-                true,
-            )?;
+            let _ = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.options.aggregation, true)?;
             self.pctx.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
             timer_stop_and_log_info!(RELOAD_FIXED_POLS);
         }
@@ -5438,7 +5420,7 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
-        } else if !setup.preallocate {
+        } else {
             steps_params.p_const_pols = std::ptr::null_mut();
             steps_params.p_const_tree = std::ptr::null_mut();
         }
@@ -5519,42 +5501,13 @@ where
         }
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let mut preloaded_const = Vec::new();
-        if pctx.gpu {
-            // Airgroup 0's Recursive2 is the one unconditional preload: every aggregation
-            // path proves it. The rest depend on the air mix, so the caller chooses.
-            preloaded_const.push(PreLoadedConstTree::new(0, 0, ProofType::Recursive2));
-            for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
-                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Basic));
-                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Compressor));
-                }
-                preloaded_const.push(PreLoadedConstTree::new(airgroup_id, air_id, ProofType::Recursive1));
-            }
-        }
-
-        // Names airs by index, so a typo would otherwise be silently ignored.
-        for &(airgroup_id, air_id) in &options.preloaded_const_tree_gpu {
-            if pctx.global_info.airs.get(airgroup_id).and_then(|g| g.get(air_id)).is_none() {
-                return Err(ProofmanError::InvalidConfiguration(format!(
-                    "preloaded_const_tree_gpu names air ({airgroup_id}, {air_id}), which does not exist in this proving key"
-                )));
-            }
-        }
-
-        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
-            &pctx.global_info,
-            &ProofType::Basic,
-            options.verify_constraints,
-            &preloaded_const,
-            options.gpu,
-        )?);
+        let sctx: Arc<SetupCtx<F>> =
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints, options.gpu)?);
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
             options.verify_constraints,
             options.aggregation,
-            &preloaded_const,
             options.gpu,
         )?);
 
@@ -5687,14 +5640,7 @@ where
         timer_start_info!(LOADING_FIXED_POLS);
         // End of the init-time aggregation const-pols uploads = start of the
         // reserved recurser slot (see register_recurser_setup).
-        let aggregation_const_end = load_device_const_pols(
-            &pctx,
-            &sctx,
-            &setups_vadcop,
-            options.verify_constraints,
-            options.aggregation,
-            false,
-        )?;
+        let aggregation_const_end = load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);

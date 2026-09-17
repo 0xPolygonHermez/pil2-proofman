@@ -976,7 +976,7 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     }
 }
 
-void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU, bool alreadyLoaded) {
+void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *proofType, bool onlyFirstGPU, bool alreadyLoaded) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeConstPols = constSize * sizeof(Goldilocks::Element);
 
@@ -984,17 +984,12 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
 
     uint64_t const_pols_offset = initial_offset;
 
-    // Sharing a slot with an air already uploaded: point this air's info at it, transfer
-    // nothing. Layout is the same either way, so the tree offset still derives from it.
+    // Sharing a slot with an air already uploaded: point this air's info at it, transfer nothing.
     if (alreadyLoaded) {
         for(int i=0; i<d_buffers->n_gpus; ++i){
             if (onlyFirstGPU && i > 0) break;
             AirInstanceInfo* air_instance_info = d_buffers->air_instances[key][proofType][i];
             air_instance_info->const_pols_offset = const_pols_offset;
-            if (strcmp(constTreeFilename, "") != 0) {
-                air_instance_info->const_tree_offset = const_pols_offset + constSize;
-                air_instance_info->stored_tree = true;
-            }
         }
         return;
     }
@@ -1013,30 +1008,6 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
     }
 
     delete[] constPols;
-
-    if (strcmp(constTreeFilename, "") != 0) {
-        uint64_t sizeConstTree = constTreeSize * sizeof(Goldilocks::Element);
-        
-        std::pair<uint64_t, uint64_t> key = {airgroupId, airId};
-
-        uint64_t const_tree_offset = initial_offset + constSize;
-
-        Goldilocks::Element *constTree = new Goldilocks::Element[constTreeSize];
-
-        loadFileParallel(constTree, constTreeFilename, sizeConstTree);
-        
-        for(int i=0; i<d_buffers->n_gpus; ++i){
-            if (onlyFirstGPU && i > 0) break;
-            cudaSetDevice(d_buffers->my_gpu_ids[i]);
-            gl64_t *d_constTree = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
-            CHECKCUDAERR(cudaMemcpy(d_constTree + const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));
-            AirInstanceInfo* air_instance_info = d_buffers->air_instances[key][proofType][i];
-            air_instance_info->const_tree_offset = const_tree_offset;
-            air_instance_info->stored_tree = true;
-        }
-
-        delete[] constTree;
-    }
 }
 
 // ---- Recursive1 const slot cache (DeviceCommitBuffers::constCache) ----
@@ -1096,7 +1067,6 @@ void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofTy
         AirInstanceInfo *air = d_buffers->air_instances[airKey][proofType][i];
         air->constCached = true;
         air->const_pols_offset = UINT64_MAX;
-        air->stored_tree = false;
     }
 }
 
@@ -1397,33 +1367,24 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
     gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
-    gl64_t *d_const_tree;
-    if (air_instance_info->stored_tree) {
-        // Preallocated in the const buffer, so it is in place unconditionally.
-        d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
-        reuse_const_tree = reuse_constants;
-    } else {
-        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
-        // operator[] would silently insert offset 0 -- the tree would then be written over the
-        // aux BASE.
-        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
-        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
-            exitProcess();
-        }
-        uint64_t offsetConstTree = itConstTree->second;
-        d_const_tree = d_aux_trace + offsetConstTree;
+    // find(), not operator[]: operator[] would silently insert offset 0 for a starkinfo with no
+    // aux tree slot -- the tree would then be written over the aux BASE.
+    auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
+    if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
+        zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                    " has no aux const-tree slot");
+        exitProcess();
+    }
+    gl64_t *d_const_tree = d_aux_trace + itConstTree->second;
 
-        // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
-        // device (calculateFixedExtended). Reaching here without that flag means the tree slot
-        // would stay uninitialised, which used to be masked by a silent file upload.
-        if (!setupCtx->starkInfo.calculateFixedExtended) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no on-device const-tree rebuild (calculateFixedExtended is false) and"
-                        " no preallocated tree -- nothing would initialise (\"const\", true)");
-            exitProcess();
-        }
+    // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
+    // device (calculateFixedExtended). Reaching here without that flag means the tree slot
+    // would stay uninitialised, which used to be masked by a silent file upload.
+    if (!setupCtx->starkInfo.calculateFixedExtended) {
+        zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                    " has no on-device const-tree rebuild (calculateFixedExtended is false)"
+                    " -- nothing would initialise (\"const\", true)");
+        exitProcess();
     }
     sd.constTreeResident = true;
 
@@ -2022,33 +1983,24 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // is a timer of its own rather than a category: a category here would be divided by a window
     // that does not contain it, which is what made that table total 102% with OTHER pinned at zero.
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + constPolsOffset;
-    gl64_t *d_const_tree;
-    if (air_instance_info->stored_tree) {
-        // Preallocated in the const buffer, so it is in place unconditionally.
-        d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
-        reuse_const_tree = reuse_constants;
-    } else {
-        // find(), not operator[]: a preallocate-layout starkinfo has NO aux tree slot, and
-        // operator[] would silently insert offset 0 -- the tree would then be written over the
-        // aux BASE.
-        auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
-        if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no aux const-tree slot (preallocate layout) but stored_tree is false");
-            exitProcess();
-        }
-        uint64_t offsetConstTree = itConstTree->second;
-        d_const_tree = d_aux_trace + offsetConstTree;
+    // find(), not operator[]: operator[] would silently insert offset 0 for a starkinfo with no
+    // aux tree slot -- the tree would then be written over the aux BASE.
+    auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
+    if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
+        zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                    " has no aux const-tree slot");
+        exitProcess();
+    }
+    gl64_t *d_const_tree = d_aux_trace + itConstTree->second;
 
-        // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
-        // device (calculateFixedExtended). Reaching here without that flag means the tree slot
-        // would stay uninitialised, which used to be masked by a silent file upload.
-        if (!setupCtx->starkInfo.calculateFixedExtended) {
-            zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " has no on-device const-tree rebuild (calculateFixedExtended is false) and"
-                        " no preallocated tree -- nothing would initialise (\"const\", true)");
-            exitProcess();
-        }
+    // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
+    // device (calculateFixedExtended). Reaching here without that flag means the tree slot
+    // would stay uninitialised, which used to be masked by a silent file upload.
+    if (!setupCtx->starkInfo.calculateFixedExtended) {
+        zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                    " has no on-device const-tree rebuild (calculateFixedExtended is false)"
+                    " -- nothing would initialise (\"const\", true)");
+        exitProcess();
     }
     sd.constTreeResident = true;
 
@@ -2148,16 +2100,6 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
-    if (air_instance_info->stored_tree) {
-        // The stream was reserved by selectStream (status=1); returning without
-        // releasing it would leak the slot for the process lifetime (selectStream
-        // never considers status==1 eligible), eventually starving the pool.
-        d_buffers->streamsData[streamId].mutex_stream_selection.lock();
-        d_buffers->streamsData[streamId].reset(false);
-        d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
-        return;
-    }
-
     StreamData &sd = d_buffers->streamsData[streamId];
     sd.airgroupId = airgroupId;
     sd.airId = airId;
@@ -2179,7 +2121,7 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
     if (itConstTree == setupCtx->starkInfo.mapOffsets.end()) {
         zklog.error("const-tree rebuild: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                    " has no aux const-tree slot (preallocate layout)");
+                    " has no aux const-tree slot");
         exitProcess();
     }
     uint64_t offsetConstTree = itConstTree->second;

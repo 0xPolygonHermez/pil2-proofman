@@ -106,7 +106,6 @@ pub struct Setup<F: PrimeField64> {
     pub verkey_file: String,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
-    pub preallocate: bool,
     pub gpu: bool,
 }
 
@@ -294,7 +293,6 @@ impl<F: PrimeField64> Setup<F> {
         air_info: &GlobalInfoAir,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preallocate: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
@@ -373,16 +371,8 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && gpu;
-            let p_stark_info = stark_info_new_c(
-                stark_info_path.as_str(),
-                recursive_final,
-                recursive,
-                verify_constraints,
-                false,
-                gpu,
-                preallocate_const,
-            );
+            let p_stark_info =
+                stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
@@ -588,7 +578,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
-            preallocate,
             gpu,
         })
     }
@@ -596,10 +585,10 @@ impl<F: PrimeField64> Setup<F> {
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
-    /// GPU airs merkelize const pols on device; only CPU, BN128/RecursiveF and the
-    /// `PROOFMAN_CONST_TREE_RESIDENT` opt-in ever read the tree file back.
+    /// GPU airs merkelize const pols on device; only CPU and BN128/RecursiveF ever read the
+    /// tree file back.
     pub fn needs_const_tree_file(&self) -> bool {
         let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
-        !self.gpu || !goldilocks || self.preallocate
+        !self.gpu || !goldilocks
     }
 }

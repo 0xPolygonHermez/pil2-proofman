@@ -203,7 +203,7 @@ impl ProveAirCmd {
             ))));
         };
 
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], self.gpu)?;
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, &setup_proof_type, false, self.gpu)?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
@@ -287,13 +287,8 @@ impl ProveAirCmd {
         // gen_recursive_proof_gpu reads const pols from the *aggregation* buffer, which
         // set_device_buffers only allocates under aggregation=true -- hence an empty SetupsVadcop
         // patched with this AIR's const sizes, then set_device_buffers(aggregation: true).
-        let load_tree = setup.preallocate;
-        let mut setups_vadcop: SetupsVadcop<Goldilocks> =
-            SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?;
+        let mut setups_vadcop: SetupsVadcop<Goldilocks> = SetupsVadcop::new(&pctx.global_info, false, false, self.gpu)?;
         setups_vadcop.total_const_pols_size = setup.const_pols_size_packed;
-        if load_tree {
-            setups_vadcop.total_const_tree_size = setup.const_tree_size;
-        }
         pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0)?;
 
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
@@ -309,7 +304,6 @@ impl ProveAirCmd {
             std::ptr::null_mut(),
             Some(&exec_file_data),
         );
-        let tree_path = if load_tree { setup.const_pols_tree_path.as_str() } else { "" };
         load_device_const_pols_c(
             airgroup_id as u64,
             air_id as u64,
@@ -317,8 +311,6 @@ impl ProveAirCmd {
             d_buffers,
             &setup.const_pols_path,
             setup.const_pols_size_packed as u64,
-            tree_path,
-            setup.const_tree_size as u64,
             proof_type_str,
             false,
             // Single AIR, single slot: nothing to share with.

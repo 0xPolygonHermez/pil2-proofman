@@ -60,7 +60,7 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
 void free_device_buffers_recursivef_gpu(void *d_buffers);
 void upload_custom_commit_packed_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_);
 void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU);
-void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
+void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
 uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
 void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
@@ -443,9 +443,9 @@ void reserve_custom_commit_slot(uint64_t airgroupId, uint64_t airId, char *proof
     if (backend->reserve_custom_commit_slot) backend->reserve_custom_commit_slot(airgroupId, airId, proofType, offset, reservedWords, d_buffers_, onlyFirstGPU);
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded) {
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->load_device_const_pols) backend->load_device_const_pols(airgroupId, airId, initial_offset, d_buffers, constFilename, constSize, constTreeFilename, constTreeSize, proofType, onlyFirstGPU, alreadyLoaded);
+    if (backend->load_device_const_pols) backend->load_device_const_pols(airgroupId, airId, initial_offset, d_buffers, constFilename, constSize, proofType, onlyFirstGPU, alreadyLoaded);
 }
 
 void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords) {

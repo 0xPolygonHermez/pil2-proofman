@@ -13,37 +13,12 @@ use crate::Setup;
 use crate::exec_header;
 use crate::ProofType;
 
-pub struct PreLoadedConstTree {
-    pub airgroup_id: usize,
-    pub air_id: usize,
-    pub proof_type: ProofType,
-}
-
-impl PreLoadedConstTree {
-    pub fn new(airgroup_id: usize, air_id: usize, proof_type: ProofType) -> Self {
-        PreLoadedConstTree { airgroup_id, air_id, proof_type }
-    }
-}
-
 /// The slot an air's packed const pols occupy in the GPU const buffer. Airs with identical
 /// fixed columns -- same verkey, i.e. same const-tree root -- share one slot; `owner` is the
-/// first of the group and the only one that uploads. `load_tree` is a group property, so the
-/// slot layout does not depend on which member is asked.
+/// first of the group and the only one that uploads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedGroup {
     pub owner: (usize, usize),
-    pub load_tree: bool,
-}
-
-pub fn is_preload_fixed(
-    airgroup_id: usize,
-    air_id: usize,
-    proof_type: &ProofType,
-    preloaded_const: &[PreLoadedConstTree],
-) -> bool {
-    preloaded_const
-        .iter()
-        .any(|pc| pc.airgroup_id == airgroup_id && pc.air_id == air_id && pc.proof_type == *proof_type)
 }
 
 /// Columns the recursion's HOST trace buffer needs for one air.
@@ -79,7 +54,6 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
-    pub total_const_tree_size: usize,
     pub recurser_const_slot_size: usize,
 }
 
@@ -91,17 +65,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
-        preloaded_const: &[PreLoadedConstTree],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         if aggregation {
-            let sctx_compressor =
-                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preloaded_const, gpu)?;
-            let sctx_recursive1 =
-                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preloaded_const, gpu)?;
-            let sctx_recursive2 =
-                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preloaded_const, gpu)?;
-            let preallocate_final = is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
+            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu)?;
+            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu)?;
+            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu)?;
             let setup_vadcop_final = Setup::new(
                 &global_info.get_setup_path("vadcop_final"),
                 0,
@@ -109,7 +78,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 &GlobalInfoAir::new("VadcopFinal".to_string()),
                 &ProofType::VadcopFinal,
                 verify_constraints,
-                preallocate_final,
                 gpu,
                 None,
             )?;
@@ -126,7 +94,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     &GlobalInfoAir::new("VadcopFinalCompressed".to_string()),
                     &ProofType::VadcopFinalCompressed,
                     verify_constraints,
-                    false,
                     gpu,
                     None,
                 )?)
@@ -148,13 +115,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 + setup_vadcop_final.const_pols_size_packed
                 + setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_pols_size_packed)
                 + recurser_const_slot_size;
-
-            let mut total_const_tree_size = sctx_compressor.total_const_tree_size
-                + sctx_recursive1.total_const_tree_size
-                + sctx_recursive2.total_const_tree_size;
-            if preallocate_final {
-                total_const_tree_size += setup_vadcop_final.const_tree_size;
-            }
 
             let max_const_size = sctx_compressor
                 .max_const_size
@@ -260,7 +220,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_n_bits_ext,
                 max_compact_trace_size,
                 total_const_pols_size,
-                total_const_tree_size,
                 recurser_const_slot_size,
             })
         } else {
@@ -271,7 +230,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 setup_vadcop_final: None,
                 setup_vadcop_final_compressed: None,
                 total_const_pols_size: 0,
-                total_const_tree_size: 0,
                 recurser_const_slot_size: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
@@ -339,7 +297,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_pinned_proof_size: usize,
     max_compact_trace_size: usize,
     total_const_pols_size: usize,
-    total_const_tree_size: usize,
     total_custom_commits_reserved_words: usize,
     fixed_groups: HashMap<(usize, usize), FixedGroup>,
     global_bin: Option<*mut c_void>,
@@ -365,7 +322,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preloaded_const: &[PreLoadedConstTree],
         gpu: bool,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
@@ -390,29 +346,19 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut prover_buffer_sizes: Vec<((usize, usize), usize)> = Vec::new();
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
-        let mut total_const_tree_size = 0;
         let mut total_custom_commits_reserved_words = 0;
         let mut max_compact_trace_size = 0;
         let mut max_const_pols_size_packed = 0;
         let mut n_const_slots = 0;
 
-        // Airs in the order load_device_const_pols walks them, and the slot each verkey maps
-        // to. `preallocate` is OR-ed over a group: members share one tree, so preloading it
-        // for one preloads it for all.
+        // Airs in the order load_device_const_pols walks them, and the slot each verkey maps to.
         let mut sized_airs: Vec<(usize, usize)> = Vec::new();
-        let mut groups: HashMap<Vec<u64>, ((usize, usize), bool)> = HashMap::new();
+        let mut groups: HashMap<Vec<u64>, (usize, usize)> = HashMap::new();
 
         // Initialize Hashmap for each airgroup_id, air_id
 
         for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                // Default: no basic air keeps a resident const TREE (the preload air's stored
-                // tree dominates the const buffer); its starkinfo carves the aux tree slot and
-                // the on-device rebuild covers it, like every other air. Frees ~1.3 GB and lets
-                // every exps module warm at setup. PROOFMAN_CONST_TREE_RESIDENT=1 restores the
-                // resident tree (worth ~0.3-0.5 s/block on the largest blocks).
-                let preallocate = is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const)
-                    && std::env::var("PROOFMAN_CONST_TREE_RESIDENT").map(|v| v == "1").unwrap_or(false);
                 let setup_path = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
                 let setup = Setup::new(
                     &setup_path,
@@ -421,7 +367,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                     &global_info.airs[airgroup_id][air_id],
                     setup_type,
                     verify_constraints,
-                    preallocate,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
                 )?;
@@ -444,8 +389,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     if setup.gpu {
                         sized_airs.push((airgroup_id, air_id));
                         if !setup.verkey.is_empty() {
-                            let group = groups.entry(setup.get_vk()).or_insert(((airgroup_id, air_id), false));
-                            group.1 |= preallocate;
+                            groups.entry(setup.get_vk()).or_insert((airgroup_id, air_id));
                         }
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
@@ -464,8 +408,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             }
         }
 
-        // Second pass: `load_tree` is only settled once every member has been seen. Sizes one
-        // slot per group, in the same order the loader assigns offsets -- must not drift.
+        // Second pass: the group owner is only settled once every member has been seen. Sizes
+        // one slot per group, in the same order the loader assigns offsets -- must not drift.
         let mut fixed_groups: HashMap<(usize, usize), FixedGroup> = HashMap::new();
         let mut sized_slots: HashSet<(usize, usize)> = HashSet::new();
         let mut shared_airs = 0;
@@ -473,9 +417,9 @@ impl<F: PrimeField64> SetupRepository<F> {
         for air in sized_airs {
             let setup = &setups[&air];
             let group = match groups.get(&setup.get_vk()) {
-                Some(&(owner, load_tree)) => FixedGroup { owner, load_tree },
+                Some(&owner) => FixedGroup { owner },
                 // Nothing to fingerprint with (no verkey): the air is its own group.
-                None => FixedGroup { owner: air, load_tree: setup.preallocate },
+                None => FixedGroup { owner: air },
             };
             fixed_groups.insert(air, group);
             max_const_pols_size_packed = max_const_pols_size_packed.max(setup.const_pols_size_packed);
@@ -486,16 +430,10 @@ impl<F: PrimeField64> SetupRepository<F> {
                 // register_custom_commits supplies the file path.
                 total_const_pols_size += setup.custom_commits_reserved_words;
                 total_custom_commits_reserved_words += setup.custom_commits_reserved_words;
-                if group.load_tree {
-                    total_const_tree_size += setup.const_tree_size;
-                }
             } else {
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
                 saved += setup.custom_commits_reserved_words;
-                if group.load_tree {
-                    saved += setup.const_tree_size;
-                }
             }
         }
         if shared_airs > 0 {
@@ -512,12 +450,12 @@ impl<F: PrimeField64> SetupRepository<F> {
         // Recursive1 const pols are not resident per setup: the loader carves a slot cache of
         // RECURSIVE1_CONST_SLOTS (or fewer when there are fewer setups) slots of the largest packed
         // set, filled at launch from host pinned copies (see DeviceCommitBuffers::constCache). The
-        // custom commits and preallocated trees of this repository would need resident slots; the
-        // recursion setups have none, which is asserted here rather than assumed.
+        // custom commits of this repository would need resident slots; the recursion setups have
+        // none, which is asserted here rather than assumed.
         let const_slot_cache_slots = if gpu && *setup_type == ProofType::Recursive1 && n_const_slots > 0 {
             assert!(
-                total_custom_commits_reserved_words == 0 && total_const_tree_size == 0,
-                "recursive1 setups with custom commits or preallocated const trees cannot use the const slot cache"
+                total_custom_commits_reserved_words == 0,
+                "recursive1 setups with custom commits cannot use the const slot cache"
             );
             RECURSIVE1_CONST_SLOTS.min(n_const_slots)
         } else {
@@ -539,7 +477,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             prover_buffer_sizes,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
-            total_const_tree_size,
             total_custom_commits_reserved_words,
             max_compact_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
@@ -563,7 +500,6 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_compact_trace_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
-    pub total_const_tree_size: usize,
     /// Included in `total_const_pols_size`, and tracked separately because it stays resident even
     /// in no-const-buf mode: nothing stages custom commits per switch.
     pub total_custom_commits_reserved_words: usize,
@@ -583,10 +519,9 @@ impl<F: PrimeField64> SetupCtx<F> {
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preloaded_const: &[PreLoadedConstTree],
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, preloaded_const, gpu)?;
+        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, gpu)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
@@ -594,7 +529,6 @@ impl<F: PrimeField64> SetupCtx<F> {
         let prover_buffer_sizes = setup_repository.prover_buffer_sizes.clone();
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
-        let total_const_tree_size = setup_repository.total_const_tree_size;
         let total_custom_commits_reserved_words = setup_repository.total_custom_commits_reserved_words;
         let max_compact_trace_size = setup_repository.max_compact_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
@@ -611,7 +545,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_pinned_proof_size,
             max_n_bits_ext,
             total_const_pols_size,
-            total_const_tree_size,
             total_custom_commits_reserved_words,
             max_const_pols_size_packed,
             const_slot_cache_slots,

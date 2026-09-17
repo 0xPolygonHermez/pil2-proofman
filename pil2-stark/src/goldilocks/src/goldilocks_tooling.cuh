@@ -59,12 +59,9 @@ struct AirInstanceInfo {
     uint64_t airId;
 
     uint64_t const_pols_offset;
-    uint64_t const_tree_offset;
     // The packed const pols are not resident: they live in host pinned memory and take a slot of
     // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
     bool constCached = false;
-
-    bool stored_tree = false;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
@@ -485,9 +482,8 @@ struct StreamData{
     // separates the two const buffers (unrelated offsets), constRecurserId the recursers
     // (one shared slot). custom_fixed is per-air and stays keyed on the air.
     uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
-    // Where the unpacked pols land in the aux trace. Part of the key because two airs can
-    // share a slot yet lay out ("const", false) differently -- a preallocated const tree
-    // moves it.
+    // Where the unpacked pols land in the aux trace. Part of the key because two airs can in
+    // principle share a slot yet lay out ("const", false) differently.
     uint64_t constAuxOffset = 0;
     bool constAggBuffer = false;
     string constRecurserId;

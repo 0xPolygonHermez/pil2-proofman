@@ -59,11 +59,11 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], self.gpu)?);
+        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, self.gpu)?);
 
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?);
+        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, self.gpu)?);
         pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1, false, 0)?;
         pctx.initialize_custom_commits(custom_commits_map, &sctx, CustomCommitValidation::Skip)?;
 

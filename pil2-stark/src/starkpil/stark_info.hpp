@@ -195,7 +195,6 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
-    bool preallocate = false;
 
     bool calculateFixedExtended = false;
 
@@ -212,7 +211,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
+    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
     StarkInfo() {};
     
     /* Loads data from a json object */
