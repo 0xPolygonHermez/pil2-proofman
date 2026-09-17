@@ -23,6 +23,16 @@ pub fn max_positive_multiplicity<F: PrimeField64>() -> u64 {
     (F::ORDER_U64 - 1) / 2
 }
 
+pub trait AirComponent<F: PrimeField64> {
+    fn new(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        shared_tables: bool,
+    ) -> ProofmanResult<Arc<Self>>;
+}
+
 /// Normalize the values.
 pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> &[HintFieldOutput<F>] {
     let is_zero = |v: &HintFieldOutput<F>| match v {
