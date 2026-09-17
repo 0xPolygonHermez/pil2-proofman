@@ -160,8 +160,16 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     proc_macro::TokenStream::from(expanded)
 }
 
+/// COL_LANE names a lane in a u8, so ids 0..=255. Mirrors `packed_info::MAX_LANES`.
+const MAX_LANES: usize = u8::MAX as usize + 1;
+
 /// Lane count: the outer dimension of the `@instr` columns, which all of them must share.
 /// Scalar instruction columns mean a single-lane row.
+///
+/// An `@instr` array's outer dimension is ALWAYS the lane count: `imm: [u32; 2] @instr` is two
+/// lanes of a scalar, not one lane with a two-word immediate. Spell the latter
+/// `[[u32; 2]; 1]`. Mismatched outer dims are a compile error, but `@instr` columns that all
+/// share the same unintended one describe the wrong shape consistently, and nothing catches it.
 fn infer_lanes(fields: &[(TraceField, bool)]) -> Result<usize> {
     let mut lanes: Option<(usize, Ident)> = None;
     for (f, _) in fields.iter().filter(|(_, instr)| *instr) {
@@ -177,10 +185,10 @@ fn infer_lanes(fields: &[(TraceField, bool)]) -> Result<usize> {
                         "indexed_trace_row!: an `@instr` column cannot be zero lanes wide",
                     ));
                 }
-                if len > u8::MAX as usize {
+                if len > MAX_LANES {
                     return Err(syn::Error::new_spanned(
                         &f.name,
-                        format!("indexed_trace_row!: at most {} lanes (COL_LANE is a u8)", u8::MAX),
+                        format!("indexed_trace_row!: at most {MAX_LANES} lanes (COL_LANE names one in a u8)"),
                     ));
                 }
                 lanes = Some((len, f.name.clone()));

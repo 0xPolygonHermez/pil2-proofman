@@ -87,6 +87,19 @@ struct DeviceCommitBuffersCPU
             } else {
                 col_lane_vec.assign(nCols, 0);
             }
+            // PackedInfo::with_indexed asserts the same things Rust-side, but it is one
+            // optional constructor on a struct of public fields.
+            uint64_t bad_col = 0;
+            const char *why = indexedDescriptorError(nCols, num_packed_words, index_bits, lanes,
+                                                     col_lane_vec.data(), &bad_col);
+            if (why != nullptr) {
+                zklog.error("addPackedInfoCPU: air (" + std::to_string(airgroupId) + "," +
+                            std::to_string(airId) + ") has an invalid indexed descriptor: " + why +
+                            " (lanes=" + std::to_string(lanes) + ", index_bits=" +
+                            std::to_string(index_bits) + ", words_per_row=" +
+                            std::to_string(num_packed_words) + ", col " + std::to_string(bad_col) + ")");
+                exitProcess();
+            }
         }
         PackedInfoCPU pInfo = {is_packed,     num_packed_words, unpack_vec, col_source_vec,
                                col_lane_vec,  index_bits,       words_per_entry, lanes};

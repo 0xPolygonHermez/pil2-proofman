@@ -42,6 +42,10 @@ class gl64_t;
 // (245 columns); Poseidon1 has no such limit beyond the header.
 static constexpr uint64_t SC_MAX_COLS = 256;
 
+// A lane is named by a u8 (dColLane, and bits 33-40 of the unpack kernel's metadata word),
+// so ids 0..255 -- 256 lanes -- is the ceiling.
+static constexpr uint64_t SC_MAX_LANES = 256;
+
 // Hash family the slot commits with. Must match the proving key's family --
 // the caller (commit_witness_streaming_gpu) derives it from get_hash_family().
 enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1 };
@@ -90,8 +94,8 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // all three (the default) to commit a plain packed witness.
 //
 // Returns 0, or a negative value on invalid dims (nCols outside
-// (0, SC_MAX_COLS], arity mismatch with the slot layout contract, or an
-// inconsistent indexed descriptor).
+// (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot
+// layout contract, or an inconsistent indexed descriptor).
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,

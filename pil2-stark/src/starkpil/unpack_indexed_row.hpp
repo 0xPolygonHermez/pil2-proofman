@@ -58,6 +58,36 @@ static inline uint64_t indexedReadBits(IndexedBitCursor &c, uint64_t nbits)
     return val;
 }
 
+/// A lane is named by a u8, so ids 0..255 -- 256 lanes -- is the ceiling.
+static constexpr uint64_t INDEXED_MAX_LANES = 256;
+
+/// Descriptor soundness, checked on the host before any unpack runs: the kernels read lane
+/// l's index at bit l * indexBits unguarded and can neither report nor abort. Returns the
+/// reason, or nullptr when the descriptor is usable; `badCol` receives the offending column.
+static inline const char *indexedDescriptorError(uint64_t nCols, uint64_t wordsPerRow,
+                                                 uint64_t indexBits, uint64_t lanes,
+                                                 const uint8_t *colLane, uint64_t *badCol)
+{
+    if (indexBits == 0 || indexBits > 64) return "index width is not in 1..64";
+
+    const uint64_t nLanes = lanes ? lanes : 1;
+    // Bounded before the header check, which multiplies it.
+    if (nLanes > INDEXED_MAX_LANES) return "more lanes than a u8 col_lane entry can name";
+    if (nLanes * indexBits > wordsPerRow * 64) return "the index header does not fit the compact row";
+
+    // A column tagged for a lane the row does not carry is written by no pass at all, so it
+    // keeps whatever the destination held -- a wrong trace with no other symptom.
+    if (colLane != nullptr) {
+        for (uint64_t c = 0; c < nCols; c++) {
+            if (colLane[c] >= nLanes) {
+                if (badCol != nullptr) *badCol = c;
+                return "a column names a lane the row does not carry";
+            }
+        }
+    }
+    return nullptr;
+}
+
 /// Unpack one indexed row into `out` (nCols values). Returns false when a lane's index is
 /// past the table, reporting that lane and index; `out` is then incomplete. `lanes` 0 or 1
 /// is the single-lane shape.
@@ -86,7 +116,9 @@ static inline bool unpackIndexedRow(const uint64_t *rbase, uint64_t wordsPerRow,
         }
         IndexedBitCursor tc = indexedCursorAt(&table[index * wordsPerEntry], wordsPerEntry, 0);
         for (uint64_t c = 0; c < nCols; c++) {
-            if (colSource[c] && colLane[c] == l) out[c] = indexedReadBits(tc, unpackInfo[c]);
+            // No lane map is the single-lane shape, as in both CUDA kernels.
+            const uint64_t lane = (colLane != nullptr) ? colLane[c] : 0;
+            if (colSource[c] && lane == l) out[c] = indexedReadBits(tc, unpackInfo[c]);
         }
     }
     return true;

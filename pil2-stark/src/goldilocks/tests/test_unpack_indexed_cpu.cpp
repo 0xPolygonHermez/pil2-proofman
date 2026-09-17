@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <tuple>
 #include <vector>
 
 #include "unpack_indexed_row.hpp"
@@ -158,4 +159,66 @@ TEST(UNPACK_INDEXED_CPU, reports_the_lane_whose_index_is_out_of_range)
                                   &badIndex));
     EXPECT_EQ(badLane, 1ull);
     EXPECT_EQ(badIndex, 7ull);
+}
+
+// A single-lane descriptor carries no lane map; the walk must read lane 0 rather than
+// dereference the null, which is what AirInstanceInfo relies on when it leaves d_col_lane
+// null and what both CUDA kernels already do.
+TEST(UNPACK_INDEXED_CPU, a_null_lane_map_is_the_single_lane_shape)
+{
+    Layout L(1, {{16, 1, false}, {32, 1, true}});
+    const uint64_t rowWords = wordsFor(L.rowWidths), entWords = wordsFor(L.entryWidths);
+
+    std::vector<uint64_t> table(2 * entWords, 0);
+    packBits({0xFEEDFACEull}, L.entryWidths, entWords, &table[1 * entWords]);
+
+    std::vector<uint64_t> packed(rowWords);
+    packBits({1 /*index*/, 0xABCD}, L.rowWidths, rowWords, packed.data());
+
+    std::vector<uint64_t> withMap(L.widths.size(), 0), noMap(L.widths.size(), 0);
+    ASSERT_TRUE(unpackIndexedRow(packed.data(), rowWords, table.data(), entWords, 2, L.indexBits,
+                                 L.lanes, L.widths.data(), L.colSource.data(), L.colLane.data(),
+                                 L.widths.size(), withMap.data()));
+    ASSERT_TRUE(unpackIndexedRow(packed.data(), rowWords, table.data(), entWords, 2, L.indexBits,
+                                 L.lanes, L.widths.data(), L.colSource.data(), nullptr,
+                                 L.widths.size(), noMap.data()));
+    EXPECT_EQ(noMap, withMap);
+    EXPECT_EQ(noMap[0], 0xABCDull);
+    EXPECT_EQ(noMap[1], 0xFEEDFACEull);
+}
+
+// The descriptor checks the unpackers cannot make themselves: the CUDA kernels read lane
+// l's index unguarded and can neither report nor abort, so a bad descriptor has to be
+// refused on the host before it is uploaded.
+TEST(UNPACK_INDEXED_CPU, descriptor_validation_rejects_what_the_kernels_cannot_decode)
+{
+    std::vector<uint8_t> lanes4(32);
+    for (size_t c = 0; c < lanes4.size(); c++) lanes4[c] = c % 4;
+    uint64_t badCol = 0;
+
+    // 4 indices of 32 bits = 2 words, well inside a 10-word row.
+    EXPECT_EQ(indexedDescriptorError(32, 10, 32, 4, lanes4.data(), &badCol), nullptr);
+    // The all-@instr row: the header fills the compact row exactly.
+    EXPECT_EQ(indexedDescriptorError(32, 2, 32, 4, lanes4.data(), &badCol), nullptr);
+    // No lane map at all is the single-lane shape.
+    EXPECT_EQ(indexedDescriptorError(32, 10, 32, 0, nullptr, &badCol), nullptr);
+
+    // A u8 NAMES a lane, so 256 lanes (ids 0..255) is the ceiling, not 255.
+    std::vector<uint8_t> lanes256(256);
+    for (size_t c = 0; c < lanes256.size(); c++) lanes256[c] = static_cast<uint8_t>(c);
+    EXPECT_EQ(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES, lanes256.data(), &badCol), nullptr);
+    EXPECT_NE(indexedDescriptorError(256, 200, 32, INDEXED_MAX_LANES + 1, lanes256.data(), &badCol), nullptr);
+
+    // A header that overruns the compact row: the lane pass would read past it.
+    EXPECT_NE(indexedDescriptorError(32, 1, 32, 4, lanes4.data(), &badCol), nullptr);
+    // An index width the bit walk cannot take.
+    EXPECT_NE(indexedDescriptorError(32, 10, 0, 4, lanes4.data(), &badCol), nullptr);
+    EXPECT_NE(indexedDescriptorError(32, 10, 65, 4, lanes4.data(), &badCol), nullptr);
+
+    // A column tagged for a lane the row does not carry is written by no pass at all, so it
+    // would keep whatever the destination held. The offending column is named.
+    std::vector<uint8_t> stray = lanes4;
+    stray[7] = 4;
+    EXPECT_NE(indexedDescriptorError(32, 10, 32, 4, stray.data(), &badCol), nullptr);
+    EXPECT_EQ(badCol, 7ull);
 }

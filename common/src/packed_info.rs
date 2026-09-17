@@ -40,6 +40,10 @@ pub struct PackedInfo {
     pub lanes: u64,
 }
 
+/// `col_lane` names a lane in a `u8`, so ids 0..=255. Mirrored C++-side by
+/// `INDEXED_MAX_LANES` (unpack_indexed_row.hpp) and `SC_MAX_LANES` (stream_commit.cuh).
+pub const MAX_LANES: u64 = u8::MAX as u64 + 1;
+
 impl PackedInfo {
     pub fn new(is_packed: bool, num_packed_words: u64, unpack_info: Vec<u64>) -> Self {
         Self { is_packed, num_packed_words, unpack_info, ..Default::default() }
@@ -63,11 +67,8 @@ impl PackedInfo {
         // The unpackers write a table column in the pass its lane names, so a column
         // tagged for a lane the row does not carry would be written by no pass at all.
         let n_lanes = lanes.max(1);
-        assert!(
-            n_lanes <= u8::MAX as u64,
-            "indexed descriptor: at most {} lanes (col_lane is a u8)",
-            u8::MAX
-        );
+        // Bounded before the header check below, which multiplies the lane count.
+        assert!(n_lanes <= MAX_LANES, "indexed descriptor: at most {MAX_LANES} lanes (col_lane names one in a u8)");
         assert!(
             col_lane.iter().all(|&l| (l as u64) < n_lanes),
             "indexed descriptor: every col_lane must be below lanes ({n_lanes})"

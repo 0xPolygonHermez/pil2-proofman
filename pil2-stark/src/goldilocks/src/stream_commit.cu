@@ -459,6 +459,9 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // A lane-packed row without its lane map would read every column from lane 0's entry:
     // a wrong trace with no other symptom, so refuse it here.
     if (indexed && dims.lanes > 1 && dColLane == nullptr) return -5;
+    // Past SC_MAX_LANES the tail lanes match no column, so their steps silently drop out of
+    // the trace. Bounded before the header check, which multiplies the lane count.
+    if (indexed && (dims.lanes ? dims.lanes : 1) > SC_MAX_LANES) return -7;
     // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
     if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
 
