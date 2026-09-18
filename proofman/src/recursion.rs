@@ -1448,4 +1448,34 @@ mod arity_tests {
             assert_eq!(total_recursive_proofs(n, 2).n_proofs, n - 1, "n={n}");
         }
     }
+
+    /// The drain sizes its wait with `total_recursive_proofs(n, arity)`; `n` must
+    /// count proofs, not the workers they cover, or it waits forever for folds a
+    /// peer already performed.
+    #[test]
+    fn a_drain_is_sized_by_proofs_not_by_the_workers_they_cover() {
+        // Own leaf plus a peer proof folding {A, B}: two proofs, three workers.
+        assert_eq!(total_recursive_proofs(2, 2).n_proofs, 1, "two proofs fold once");
+        assert_eq!(total_recursive_proofs(3, 2).n_proofs, 2, "one fold too many: the hang");
+    }
+
+    /// Distributing moves folds between workers without creating or destroying any.
+    #[test]
+    fn distributing_the_tree_preserves_the_total_fold_count() {
+        for arity in [2usize, 3] {
+            for n_leaves in 1..40 {
+                let (mut sets, mut folds) = (n_leaves, 0usize);
+                while sets > 1 {
+                    let group = arity.min(sets);
+                    sets = sets - group + 1;
+                    folds += 1;
+                }
+                assert_eq!(
+                    folds,
+                    total_recursive_proofs(n_leaves, arity).n_proofs,
+                    "arity={arity} n_leaves={n_leaves}"
+                );
+            }
+        }
+    }
 }
