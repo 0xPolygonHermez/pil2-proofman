@@ -624,6 +624,10 @@ pub struct ProofMan<F: PrimeField64> {
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
+    /// Per airgroup, recursive2 proof objects pending aggregation. Not
+    /// `received_agg_proofs.len()`: a peer proof folding several workers is one
+    /// proof but many indexes, and the drain must wait on proofs.
+    received_agg_proof_count: Arc<RwLock<Vec<usize>>>,
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
@@ -722,6 +726,11 @@ impl<F: PrimeField64> ProofMan<F> {
         }
     }
 
+    /// Aggregation arity of the loaded proving key (a hash-family constant).
+    pub fn aggregation_arity(&self) -> usize {
+        self.pctx.global_info.aggregation_arity
+    }
+
     pub fn get_options(&self) -> ProofmanOptions {
         self.options.clone()
     }
@@ -791,6 +800,9 @@ impl<F: PrimeField64> ProofMan<F> {
 
         for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
             inner_vec.clear();
+        }
+        for count in self.received_agg_proof_count.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+            *count = 0;
         }
 
         self.thread_budget.reset();
@@ -2540,6 +2552,7 @@ where
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
+        let received_agg_proof_count = Arc::new(RwLock::new(vec![0usize; n_airgroups]));
 
         Ok(Self {
             pctx,
@@ -2588,6 +2601,7 @@ where
             outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
             total_outer_agg_proofs: Arc::new(Counter::new()),
             received_agg_proofs,
+            received_agg_proof_count,
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
             handle_contributions: Arc::new(Mutex::new(Vec::new())),
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
@@ -4112,6 +4126,7 @@ where
 
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                     self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].push(worker_index);
+                    self.received_agg_proof_count.write().unwrap()[proof.airgroup_id as usize] += 1;
                 }
                 if phase == ProvePhase::Internal {
                     timer_stop_and_log_info!(GENERATING_PROOFS);
@@ -4120,7 +4135,7 @@ where
             }
 
             if self.mpi_ctx.rank == 0 {
-                let vadcop_final = self.receive_aggregated_proofs_inner(vec![], true, true, &options)?;
+                let vadcop_final = self.receive_aggregated_proofs_inner(vec![], true, true, false, &options)?;
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
@@ -4186,6 +4201,36 @@ where
         }
     }
 
+    /// Drop everything this instance holds for the outer aggregation -- its resident
+    /// proof (including the leaf phase 2 registered for itself), the worker indexes it
+    /// has accounted for, and the fold pipeline -- while keeping `worker_contributions`
+    /// and the global challenge, which `reset()` destroys and a node still needs to
+    /// verify incoming proofs.
+    ///
+    /// For re-folding a lost node's subtree elsewhere: the replacement has a leaf of its
+    /// own already registered, and that leaf is covered by one of the proofs it is about
+    /// to absorb.
+    pub fn reset_aggregation_state(&self) {
+        self.stop_outer_aggregations();
+
+        for proof_lock in self.recursive2_proofs.iter() {
+            proof_lock.write().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner()).clear();
+
+        for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+            inner_vec.clear();
+        }
+        for count in self.received_agg_proof_count.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+            *count = 0;
+        }
+        for contrib in self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+            contrib.aggregated = false;
+        }
+
+        self.total_outer_agg_proofs.reset();
+    }
+
     pub fn register_aggregated_proofs(&self, agg_proofs: Vec<AggProofsRegister>) -> ProofmanResult<()> {
         let mut received = self.received_agg_proofs.write().unwrap();
 
@@ -4210,18 +4255,23 @@ where
         Ok(())
     }
 
+    /// `keep_resident` (only meaningful with `last_proof && !final_proof`) returns a
+    /// copy of the converged proof and leaves it in place as this node's subtree, so
+    /// the same instance can absorb again and fold at a further level of a
+    /// distributed aggregation tree. Without it the drain is destructive.
     pub fn receive_aggregated_proofs(
         &self,
         agg_proofs: Vec<AggProofs>,
         last_proof: bool,
         final_proof: bool,
+        keep_resident: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         let _computing = self.acquire_computing("receive_aggregated_proofs");
         if options.compressed {
             self.ensure_compressed_final_supported()?;
         }
-        self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, options)
+        self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, keep_resident, options)
     }
 
     fn receive_aggregated_proofs_inner(
@@ -4229,6 +4279,7 @@ where
         agg_proofs: Vec<AggProofs>,
         last_proof: bool,
         final_proof: bool,
+        keep_resident: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         if !agg_proofs.is_empty() {
@@ -4323,6 +4374,8 @@ where
                 id
             };
 
+            self.received_agg_proof_count.write().unwrap()[proof.airgroup_id as usize] += 1;
+
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
@@ -4330,9 +4383,13 @@ where
             let mut total_proofs_to_be_done = 0;
             let mut total_proofs_received = vec![0; self.received_agg_proofs.read().unwrap().len()];
             if !self.cancellation_info.read_recover().token.is_cancelled() {
+                let proof_counts = self.received_agg_proof_count.read().unwrap().clone();
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
-                    let n_agg_proofs = worker_indexes.len();
-                    if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? {
+                    let n_agg_proofs = proof_counts[airgroup_id];
+                    if n_agg_proofs == 1
+                        && worker_indexes.len() == 1
+                        && worker_indexes[0] == self.pctx.get_worker_index()?
+                    {
                         continue;
                     }
                     total_proofs_received[airgroup_id] = n_agg_proofs;
@@ -4375,23 +4432,37 @@ where
 
             self.check_cancel(false)?;
 
+            let keep_resident = keep_resident && !final_proof;
+
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
-                    let proof = std::mem::take(
-                        &mut lock
-                            .first_mut()
-                            .ok_or_else(|| {
-                                ProofmanError::InvalidProof(format!(
-                                    "Expected at least one proof for airgroup {}",
-                                    airgroup_id
-                                ))
-                            })?
-                            .proof,
-                    );
+                    let converged = &mut lock
+                        .first_mut()
+                        .ok_or_else(|| {
+                            ProofmanError::InvalidProof(format!(
+                                "Expected at least one proof for airgroup {}",
+                                airgroup_id
+                            ))
+                        })?
+                        .proof;
+                    let proof =
+                        if keep_resident { converged.clone() } else { std::mem::take(converged) };
                     Ok(AggProofs::new(airgroup_id as u64, proof, vec![]))
                 })
                 .collect::<ProofmanResult<Vec<_>>>()?;
+
+            if keep_resident {
+                // The converged proof stays as this node's subtree, so the next absorb
+                // folds into it. `received_agg_proofs` keeps the worker indexes already
+                // covered, which is what still rejects a duplicate contribution.
+                for (airgroup_id, proof_lock) in self.recursive2_proofs.iter().enumerate() {
+                    proof_lock.write().unwrap().truncate(1);
+                    self.received_agg_proof_count.write().unwrap()[airgroup_id] = 1;
+                }
+                self.recursive2_proofs_ongoing.write().unwrap().clear();
+                self.total_outer_agg_proofs.reset();
+            }
 
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
