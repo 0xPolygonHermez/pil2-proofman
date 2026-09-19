@@ -26,7 +26,15 @@ public:
 
     Polynomial(Engine &_E, u_int64_t length, u_int64_t blindLength = 0);
 
-    Polynomial(Engine &_E, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength = 0);
+    /// Wrap an existing buffer.
+    ///
+    /// `initialize` false adopts the buffer's contents as the coefficients
+    /// instead of zeroing it, and recovers the degree from them. The default
+    /// zeroes, which is what every existing caller expects -- but a caller that
+    /// has just filled a buffer needs the other behaviour, since otherwise the
+    /// constructor erases the data it was handed.
+    Polynomial(Engine &_E, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength = 0,
+               bool initialize = true);
 
     // From coefficients
     static Polynomial<Engine>* fromPolynomial(Engine &_E, Polynomial<Engine> &polynomial, u_int64_t blindLength = 0);

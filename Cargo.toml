@@ -19,7 +19,9 @@ members = [
   "proofman",
   "macros",
   "provers/starks-lib-c",
+  "provers/fflonk-lib-c",
   "pil2-stark",
+  "pil2-fflonk",
   "witness",
   "util",
   "verifier",
@@ -79,6 +81,7 @@ proofman-macros = { path = "macros", version = "1.3.0-alpha" }
 proofman = { path = "proofman", version = "1.3.0-alpha" }
 proofman-common = { path = "common", version = "1.3.0-alpha" }
 proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "1.3.0-alpha" }
+proofman-fflonk-lib-c = { path = "provers/fflonk-lib-c", version = "1.3.0-alpha" }
 proofman-starks-src = { path = "pil2-stark", version = "1.3.0-alpha" }
 proofman-hints = { path = "hints", version = "1.3.0-alpha" }
 proofman-soundness = { path = "soundness", version = "1.3.0-alpha" }

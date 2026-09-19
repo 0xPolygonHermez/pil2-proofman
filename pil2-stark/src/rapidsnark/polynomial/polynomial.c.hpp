@@ -27,9 +27,15 @@ Polynomial<Engine>::Polynomial(Engine &_E, u_int64_t length, u_int64_t blindLeng
 }
 
 template<typename Engine>
-Polynomial<Engine>::Polynomial(Engine &_E, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength) : E(_E) {
+Polynomial<Engine>::Polynomial(Engine &_E, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength,
+                               bool initialize) : E(_E) {
     this->coef = reservedBuffer;
-    this->initialize(length, blindLength, false);
+    if (initialize) {
+        this->initialize(length, blindLength, false);
+    } else {
+        this->length = length + blindLength;
+        this->fixDegree();
+    }
 }
 
 template<typename Engine>
@@ -114,8 +120,8 @@ bool Polynomial<Engine>::isEqual(const Polynomial<Engine> &other) const {
         return false;
     }
 
-    for (int i = 0; i <= degree; i++) {
-        if (E.fr.noeq(coef[i], other.coef[i])) {
+    for (u_int64_t i = 0; i <= degree; i++) {
+        if (!E.fr.eq(coef[i], other.coef[i])) {
             return false;
         }
     }
@@ -135,19 +141,25 @@ void Polynomial<Engine>::blindCoefficients(FrElement blindingFactors[], u_int32_
 
 template<typename Engine>
 typename Engine::FrElement Polynomial<Engine>::getCoef(u_int64_t index) const {
-    if (index > length) {
+    if (index > length - 1) {
         return E.fr.zero();
-        //throw std::runtime_error("Polynomial::getCoef: invalid index");
     }
     return coef[index];
 }
 
 template<typename Engine>
 void Polynomial<Engine>::setCoef(u_int64_t index, FrElement value) {
-    if (index > degree) {
-        throw std::runtime_error("Polynomial::getCoef: invalid index");
+    if (index > length - 1) {
+        throw std::runtime_error("Polynomial::setCoef: invalid index");
     }
     coef[index] = value;
+    if (index > degree) {
+        degree = index;
+    } else if (index == degree && E.fr.isZero(value)) {
+        // index - 1 would wrap to UINT64_MAX at index 0 and make fixDegreeFrom
+        // read out of bounds on its first probe.
+        fixDegreeFrom(index == 0 ? 0 : index - 1);
+    }
 }
 
 //TODO     static async to4T(buffer, domainSize, blindingFactors, Fr) {
@@ -214,13 +226,18 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
         newCoef = new FrElement[polynomial.length];
     }
 
-    u_int64_t thisLength = this->length;
-    u_int64_t polyLength = polynomial.length;
+    // Bounded by degree, not length: the result cannot reach above
+    // max(thisDegree, polyDegree), and the buffer above that may hold whatever
+    // a previous, longer occupant left there. Iterating to the length would
+    // fold that in, and fixDegree() would then report it as the degree.
+    u_int64_t thisDegree = this->degree;
+    u_int64_t polyDegree = polynomial.degree;
+    u_int64_t maxDegree = std::max(thisDegree, polyDegree);
 
     #pragma omp parallel for
-    for (u_int64_t i = 0; i < std::max(thisLength, polyLength); i++) {
-        FrElement a = i < thisLength ? this->coef[i] : E.fr.zero();
-        FrElement b = i < polyLength ? polynomial.coef[i] : E.fr.zero();
+    for (u_int64_t i = 0; i <= maxDegree; i++) {
+        FrElement a = i <= thisDegree ? this->coef[i] : E.fr.zero();
+        FrElement b = i <= polyDegree ? polynomial.coef[i] : E.fr.zero();
         FrElement sum;
         E.fr.add(sum, a, b);
 
@@ -234,9 +251,10 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
     if (resize) {
         if(createBuffer) delete[] this->coef;
         this->coef = newCoef;
+        this->length = polynomial.length;
     }
 
-    fixDegree();
+    fixDegreeFrom(maxDegree);
 }
 
 template <typename Engine>
@@ -287,16 +305,42 @@ void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &
 //TODO when the polynomial subtracted is bigger than the current one
 template<typename Engine>
 void Polynomial<Engine>::sub(Polynomial<Engine> &polynomial) {
-    u_int64_t length = std::max(this->length, polynomial.length);
+    FrElement *newCoef = NULL;
+    bool resize = polynomial.length > this->length;
 
-    #pragma omp parallel for
-    for (u_int64_t i = 0; i < length; i++) {
-        FrElement a = i < this->length ? this->coef[i] : E.fr.zero();
-        FrElement b = i < polynomial.length ? polynomial.coef[i] : E.fr.zero();
-        this->coef[i] = E.fr.sub(a, b);
+    if (resize) {
+        newCoef = new FrElement[polynomial.length];
     }
 
-    fixDegree();
+    // Bounded by degree, not length: the result cannot reach above
+    // max(thisDegree, polyDegree), and the buffer above that may hold whatever
+    // a previous, longer occupant left there. Iterating to the length would
+    // fold that in, and fixDegree() would then report it as the degree.
+    u_int64_t thisDegree = this->degree;
+    u_int64_t polyDegree = polynomial.degree;
+    u_int64_t maxDegree = std::max(thisDegree, polyDegree);
+
+    #pragma omp parallel for
+    for (u_int64_t i = 0; i <= maxDegree; i++) {
+        FrElement a = i <= thisDegree ? this->coef[i] : E.fr.zero();
+        FrElement b = i <= polyDegree ? polynomial.coef[i] : E.fr.zero();
+        FrElement diff;
+        E.fr.sub(diff, a, b);
+
+        if (resize) {
+            newCoef[i] = diff;
+        } else {
+            this->coef[i] = diff;
+        }
+    }
+
+    if (resize) {
+        if(createBuffer) delete[] this->coef;
+        this->coef = newCoef;
+        this->length = polynomial.length;
+    }
+
+    fixDegreeFrom(maxDegree);
 }
 
 template <typename Engine>
@@ -380,17 +424,23 @@ void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     pol->fixDegree();
 
     // Step 1: multiply each coefficient by value
-    this->mulScalar(value);
+    // Step 1: multiply each coefficient by (-value); the divisor is (X^n - value)
+    FrElement negValue = E.fr.neg(value);
+    this->mulScalar(negValue);
 
     // Step 2: Add current polynomial to destination polynomial
     pol->add(*this);
 
-    // Swap buffers
+    // Swap buffers. Ownership of pol->coef transfers to this, so clear pol's
+    // ownership flag before deleting it or the destructor frees the buffer
+    // this->coef now points at.
     if(this->createBuffer) delete[] this->coef;
     this->coef = pol->coef;
+    this->length = pol->length;
+    pol->createBuffer = false;
     delete pol;
 
-    fixDegree();
+    fixDegreeFrom(this->degree + n);
 }
 
 // Euclidean division
@@ -720,19 +770,22 @@ void Polynomial<Engine>::divByZerofier(u_int64_t n, FrElement beta) {
 
 template<typename Engine>
 void Polynomial<Engine>::byX() {
-    bool resize = E.fr.neq(E.fr.zero, this->coef[this->length - 1]);
     int nThreads = omp_get_max_threads() / 2;
 
+    bool resize = !E.fr.isZero(this->coef[this->length - 1]);
     if (resize) {
         FrElement *newCoef = new FrElement[this->length + 1];
-        ThreadUtils::parcpy(newCoef[1], coef[0], sizeof(coef), nThreads);
+        ThreadUtils::parcpy(&newCoef[1], &coef[0], length * sizeof(FrElement), nThreads);
+        if (createBuffer) delete[] this->coef;
         coef = newCoef;
+        this->length++;
     } else {
-        ThreadUtils::parcpy(coef[1], coef[0], sizeof(coef), nThreads);
+        memcpy(&coef[1], &coef[0], (length - 1) * sizeof(FrElement));
     }
 
-    coef[0] = E.fr.zero;
-    fixDegree();
+    this->degree++;
+
+    coef[0] = E.fr.zero();
 }
 
 template<typename Engine>
@@ -752,16 +805,26 @@ template<typename Engine>
 Polynomial<Engine> *
 Polynomial<Engine>::computeLagrangePolynomial(u_int64_t i, FrElement xArr[], FrElement yArr[], u_int32_t length) {
     Engine &E = Engine::engine;
-    Polynomial<Engine> *polynomial = NULL;
+    Polynomial<Engine> *polynomial = new Polynomial<Engine>(E, length);
 
+    // Interpolating a single point leaves the loop below with nothing to do:
+    // the basis polynomial is the constant 1. Using a null `polynomial` as the
+    // "first iteration" flag conflated that case with "not built yet" and
+    // dereferenced null -- which a single-root opening set reaches immediately.
+    if (length == 1) {
+        polynomial->coef[0] = E.fr.one();
+        polynomial->fixDegree();
+    }
+
+    bool first = true;
     for (u_int64_t j = 0; j < length; j++) {
         if (j == i) continue;
 
-        if (NULL == polynomial) {
-            polynomial = new Polynomial<Engine>(E, length);
+        if (first) {
             polynomial->coef[0] = E.fr.neg(xArr[j]);
             polynomial->coef[1] = E.fr.one();
             polynomial->fixDegree();
+            first = false;
 
         } else {
             polynomial->byXSubValue(xArr[j]);
