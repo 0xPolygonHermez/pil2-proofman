@@ -195,6 +195,9 @@ pub struct ProofmanOptions {
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
     /// This run produces a final SNARK
     pub final_snark: bool,
+    /// Custom-commit name -> packed file, known up front: the const buffer then reserves each commit's
+    /// real packed width instead of one word per column. Same map `register_custom_commits` takes.
+    pub custom_commits_fixed: HashMap<String, PathBuf>,
 }
 
 impl Default for ProofmanOptions {
@@ -212,6 +215,7 @@ impl Default for ProofmanOptions {
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
             final_snark: false,
+            custom_commits_fixed: HashMap::new(),
         }
     }
 }
@@ -270,6 +274,12 @@ impl ProofmanOptions {
 
     pub fn verbose_mode(&mut self, verbose_mode: VerboseMode) {
         self.verbose_mode = verbose_mode;
+    }
+
+    /// Name the packed custom-commit files before the const buffer is sized. Optional: without it
+    /// every custom commit reserves one word per column.
+    pub fn custom_commits_fixed(&mut self, custom_commits_fixed: HashMap<String, PathBuf>) {
+        self.custom_commits_fixed = custom_commits_fixed;
     }
 
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
@@ -489,7 +499,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                for custom_commit in setup.stark_info.custom_commits.iter() {
+                for (commit_idx, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
                     if custom_commit.stage_widths[0] > 0 {
                         let custom_file_path = custom_commits_fixed.get(&custom_commit.name).ok_or_else(|| {
                             ProofmanError::ProofmanError(format!(
@@ -529,6 +539,19 @@ impl<F: PrimeField64> ProofCtx<F> {
                                     );
                                 }
                             }
+                        }
+
+                        // The const buffer was sized from an assumed width; a wider file would overrun the slot.
+                        let reserved =
+                            setup.custom_commits_words_per_row.get(commit_idx).copied().unwrap_or(words_per_row);
+                        if words_per_row > reserved {
+                            return Err(ProofmanError::ProofmanError(format!(
+                                "custom commit '{}' at '{}' packs {words_per_row} words per row, but the const \
+                                 buffer reserved {reserved} for [{airgroup_id}:{air_id}]. The file registered \
+                                 here must be the one named before the buffer was sized.",
+                                custom_commit.name,
+                                custom_file_path.display(),
+                            )));
                         }
 
                         // Resident for the process lifetime: no proof DMAs a custom commit.

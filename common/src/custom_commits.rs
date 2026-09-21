@@ -73,12 +73,22 @@ pub enum CustomCommitValidation {
     Strict,
 }
 
-/// Words to reserve in the const-pols buffer for an air's packed custom commits. Sized for
-/// words_per_row == n_cols: the real value lives in the commit file, unknown when the buffer
-/// is sized.
-pub fn custom_commit_reserved_words(n_bits: u32, stage_widths: &[u64]) -> usize {
+/// Words to reserve in the const-pols buffer for an air's packed custom commits.
+///
+/// `words_per_row[i]` is commit `i`'s real packed width if its file was resolved; `None` falls back
+/// to one word per column (never short). The width is data-dependent, so it only comes from the file.
+pub fn custom_commit_reserved_words(n_bits: u32, stage_widths: &[u64], words_per_row: &[Option<u64>]) -> usize {
     let n = 1u64 << n_bits;
-    stage_widths.iter().copied().filter(|w| *w > 0).map(|w| (1 + w + n * w) as usize).sum()
+    stage_widths
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, w)| *w > 0)
+        .map(|(i, w)| {
+            let packed = words_per_row.get(i).copied().flatten().filter(|&p| p > 0 && p <= w).unwrap_or(w);
+            (1 + w + n * packed) as usize
+        })
+        .sum()
 }
 
 /// A registered custom commit: file, Merkle root, and its packed `words_per_row`.
@@ -188,22 +198,64 @@ mod format_tests {
 
     #[test]
     fn zisk_rom_reserves_the_raw_small_domain() {
-        // N = 2^22, w = 12 -> 384 MB reserved, vs 256 MB actually uploaded at words_per_row = 8.
-        let words = custom_commit_reserved_words(22, &[12]);
+        // N = 2^22, w = 12: 384 MB with no file, 256 MB at words_per_row = 8.
+        let words = custom_commit_reserved_words(22, &[12], &[None]);
         assert_eq!(words, 1 + 12 + (1usize << 22) * 12);
         assert_eq!(words * 8 / (1024 * 1024), 384);
+
+        let resolved = custom_commit_reserved_words(22, &[12], &[Some(8)]);
+        assert_eq!(resolved * 8 / (1024 * 1024), 256);
     }
 
     #[test]
     fn airs_without_a_custom_commit_reserve_nothing() {
-        assert_eq!(custom_commit_reserved_words(22, &[0]), 0);
-        assert_eq!(custom_commit_reserved_words(22, &[]), 0);
+        assert_eq!(custom_commit_reserved_words(22, &[0], &[None]), 0);
+        assert_eq!(custom_commit_reserved_words(22, &[], &[]), 0);
     }
 
     #[test]
     fn several_commits_sum() {
         let n = 1usize << 10;
-        assert_eq!(custom_commit_reserved_words(10, &[3, 0, 5]), (1 + 3 + n * 3) + (1 + 5 + n * 5));
+        assert_eq!(custom_commit_reserved_words(10, &[3, 0, 5], &[]), (1 + 3 + n * 3) + (1 + 5 + n * 5));
+    }
+
+    /// A known commit file reserves exactly its real packed width.
+    #[test]
+    fn a_known_commit_file_reserves_its_real_width_not_the_worst_case() {
+        let worst = custom_commit_reserved_words(N.trailing_zeros(), &[W], &[None]);
+        assert_eq!(worst, (1 + W + N * W) as usize, "no file: one word per column");
+
+        let exact = custom_commit_reserved_words(N.trailing_zeros(), &[W], &[Some(3)]);
+        assert_eq!(exact, (1 + W + N * 3) as usize);
+        assert!(exact < worst);
+        // The reservation is the packed file minus its Merkle root, so a short one would overrun.
+        assert_eq!(
+            exact as u64 * 8,
+            custom_commit_packed_file_size_bytes(N, W, 3) - 32,
+            "reservation must cover exactly what the loader reads back"
+        );
+    }
+
+    /// A commit with no path keeps the worst case even when a sibling resolved.
+    #[test]
+    fn an_unresolved_commit_keeps_its_worst_case_beside_a_resolved_one() {
+        let both = custom_commit_reserved_words(N.trailing_zeros(), &[W, W], &[Some(3), None]);
+        assert_eq!(both, (1 + W + N * 3) as usize + (1 + W + N * W) as usize);
+    }
+
+    /// A resolved width never reserves more than the worst case.
+    #[test]
+    fn a_resolved_width_is_never_wider_than_the_worst_case() {
+        for wpr in 1..=W {
+            let exact = custom_commit_reserved_words(N.trailing_zeros(), &[W], &[Some(wpr)]);
+            let worst = custom_commit_reserved_words(N.trailing_zeros(), &[W], &[None]);
+            assert!(exact <= worst, "words_per_row {wpr} must not reserve more than one word per column");
+        }
+        // A width above the column count is impossible; clamp to the worst case.
+        assert_eq!(
+            custom_commit_reserved_words(N.trailing_zeros(), &[W], &[Some(W + 3)]),
+            custom_commit_reserved_words(N.trailing_zeros(), &[W], &[None])
+        );
     }
 
     #[test]

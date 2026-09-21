@@ -2152,6 +2152,7 @@ where
             false,
             self.options.gpu,
             Some(&vadcop_final_stem),
+            &self.options.custom_commits_fixed,
         )?;
 
         tracing::info!(
@@ -5501,8 +5502,13 @@ where
         }
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints, options.gpu)?);
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new_with_commit_files(
+            &pctx.global_info,
+            &ProofType::Basic,
+            options.verify_constraints,
+            options.gpu,
+            &options.custom_commits_fixed,
+        )?);
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -5857,6 +5863,7 @@ where
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
             slot,
+            instance_id as u64,
             airgroup_id as u64,
             air_id as u64,
             trace as *mut c_void,
