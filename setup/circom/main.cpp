@@ -290,7 +290,6 @@ void freeCircuit(Circom_Circuit *circuit)
 {
   delete[] circuit->InputHashMap;
   delete[] circuit->witness2SignalList;
-  delete[] circuit->signal_map.sig;
   delete[] circuit->signal_map.adds;
   // delete[] circuit->circuitConstants;
   
@@ -447,13 +446,18 @@ extern "C" __attribute__((visibility("default"))) int64_t prepareSignalMap(
         return 0;
     };
 
-    u32 *sig = new u32[entries];
+    // The resolved map lands IN PLACE over exec_data's map section, so EVERYTHING that can still
+    // fail has to fail before the first store: on -1 the caller keeps the original witness-index
+    // map, and getWitnessTrace's fallback reads it as such. Overwriting first and failing after
+    // would leave signal indices where it expects witness indices -- an adds_ext[] overrun.
     for (uint64_t i = 0; i < entries && !bad; i++) {
         uint32_t v;
         memcpy(&v, p_sMap + i * sizeof(uint32_t), sizeof(uint32_t));
-        sig[i] = (v == 0) ? 0 : resolve(v, "entry");
+        if (v != 0) (void)resolve(v, "entry");
     }
 
+    // The additions section, never the map: resolving it does not read what the store below
+    // overwrites, so it is free to run first.
     const uint64_t *p_adds = &exec_data[exec_layout::HEADER_WORDS];
     u32 *adds = new u32[h.nAdds * 2];
     for (uint64_t i = 0; i < h.nAdds && !bad; i++) {
@@ -462,11 +466,21 @@ extern "C" __attribute__((visibility("default"))) int64_t prepareSignalMap(
     }
 
     if (bad) {
-        delete[] sig;
         delete[] adds;
         return -1;
     }
-    map.sig = sig;
+
+    // Past every failure: the map section becomes the resolved map. Stored through char* for the
+    // same reason it is read that way -- aliasing a uint64_t array as uint32_t is undefined.
+    char *p_sMap_w = reinterpret_cast<char *>(&exec_data[exec_layout::map_at(h)]);
+    for (uint64_t i = 0; i < entries; i++) {
+        uint32_t v;
+        memcpy(&v, p_sMap_w + i * sizeof(uint32_t), sizeof(uint32_t));
+        const uint32_t resolved = (v == 0) ? 0 : resolve(v, "entry");
+        memcpy(p_sMap_w + i * sizeof(uint32_t), &resolved, sizeof(uint32_t));
+    }
+
+    map.sig = p_sMap_w;
     map.adds = adds;
     map.ok = true;
     return 0;
@@ -585,7 +599,7 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
     // synchronization.
     // With a prepared map the entries already hold signal indices, so a cell costs one random
     // load instead of chasing witness2SignalList first. Same values either way.
-    const uint32_t *sig = circuit->signal_map.ok ? circuit->signal_map.sig : nullptr;
+    const char *sig = circuit->signal_map.ok ? circuit->signal_map.sig : nullptr;
     const uint64_t *adds = adds_ext.data();
     const u64 *signalValues = ctx->signalValues;
 
@@ -599,9 +613,10 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
             }
             const uint64_t mapped = mapCols;
             if (sig != nullptr) {
-                const uint32_t *srow = sig + i * h.mapCols;
+                const char *srow = sig + i * h.mapCols * sizeof(uint32_t);
                 for (uint64_t j = 0; j < mapped; j++) {
-                    const uint32_t s = srow[j];
+                    uint32_t s;
+                    memcpy(&s, srow + j * sizeof(uint32_t), sizeof(uint32_t));
                     row[j] = s == 0 ? Goldilocks::zero()
                            : Goldilocks::fromU64((s & SIGNAL_MAP_ADD_FLAG) ? adds[s & ~SIGNAL_MAP_ADD_FLAG]
                                                                            : signalValues[s]);
