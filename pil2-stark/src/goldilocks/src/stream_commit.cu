@@ -157,9 +157,18 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
             const uint64_t info = scInfo[c];
             const uint64_t nbits = info & 0xFFFFFFFFull;
             if ((info >> 32) & 1ull) {
+                // indexedDescriptorError validates l < nLanes host-side, but scAcc holds
+                // exactly nLanes entries: a stray id would be an out-of-bounds SHARED write
+                // (corrupting scStart/scInfo of other columns), not the documented
+                // "written by no pass". The lane pass below matches no l for it either way,
+                // so guarding here changes nothing for a valid descriptor.
                 const uint64_t l = (info >> 33) & 0xFFull;
-                scStart[c] = scAcc[l];
-                scAcc[l] += nbits;
+                if (l < nLanes) {
+                    scStart[c] = scAcc[l];
+                    scAcc[l] += nbits;
+                } else {
+                    scStart[c] = 0;
+                }
             } else {
                 scStart[c] = accRow;
                 accRow += nbits;

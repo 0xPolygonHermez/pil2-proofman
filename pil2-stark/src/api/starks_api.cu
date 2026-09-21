@@ -1250,9 +1250,9 @@ static gl64_t *auxTraceFor(DeviceCommitBuffers *d_buffers, uint32_t streamId) {
                         : (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][sd.localStreamId];
 }
 
-// Caller MUST hold prefetchMutex. Drops a stale unconsumed entry (host-syncing its
-// in-flight upload first), orders the copy behind the slot's drain, records
-// prefetchReady and advances the cursor. Returns the slot used.
+// Caller MUST hold prefetchMutex. Claims a FREE slot, orders the copy behind that slot's
+// drain, records prefetchReady and returns the slot used. Returns -1 when every slot still
+// holds an unconsumed staging, which the caller must handle (fall back / report).
 static int stageWitnessSlotLocked(DeviceCommitBuffers *d_buffers, uint64_t instanceId,
                                   const void *trace, uint64_t total_size) {
     // Claim a FREE slot; -1 when every slot still holds an unconsumed staging. Never evicts:
@@ -3253,8 +3253,8 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64
 // Upload `instanceId`'s trace into the prefetch zone on the copy stream, while the
 // current proof runs. Chunked so no single transfer monopolizes PCIe. The caller must
 // keep `trace` alive until the matching gen_proof consumes the zone. Returns 0 on
-// success; negative = zone absent/unknown air/too small (caller falls back to the
-// legacy upload silently).
+// success; negative = zone absent/unknown air/too small/every slot busy (caller falls
+// back to the legacy upload silently, and MUST NOT record the instance as staged).
 int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
                              uint64_t airgroupId, uint64_t airId, void *trace) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -3277,7 +3277,10 @@ int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instan
 
     std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
     cudaSetDevice(d_buffers->my_gpu_ids[0]);
-    stageWitnessSlotLocked(d_buffers, instanceId, trace, total_size);
+    // Every slot still holds an unconsumed staging: nothing was queued. Reporting success
+    // here would have the caller mark the instance staged and never retry it, so the
+    // look-ahead would be lost for that instance rather than merely deferred.
+    if (stageWitnessSlotLocked(d_buffers, instanceId, trace, total_size) < 0) return -5;
     return 0;
 }
 
