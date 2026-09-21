@@ -78,6 +78,11 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     qMinScratch = ek.qMinScratch;
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
+    exprPairLaunchFn = (void *)ek.exprPairLaunch;
+    // Claim module code + kernel pools while VRAM is free (see expsWarmup); skip = warn only.
+    if (!expsWarmup(setupCtx, ek)) {
+        zklog.warning("ExpressionsGPU: exps module warmup skipped (low VRAM); first generated-kernel launches stay lazy for this air");
+    }
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -168,10 +173,19 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
             if (p1.op == opType::tmp && p1.inverse && exprCovered(p1.expId)) {
                 if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
                     TimerStartCategoryGPU(timer, EXPRESSIONS);
-                    exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
-                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_MUL_INV, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    // Kill-switch: PROOFMAN_EXPS_PAIR=0 forces the legacy two-launch
+                    // path (write, then multiply-by-inverse) instead of the fused
+                    // pair kernel. Runtime escape hatch, same spirit as CUDA_GRAPHS=0.
+                    static const bool pairEnabled = [] {
+                        const char *e = getenv("PROOFMAN_EXPS_PAIR");
+                        return e == nullptr || e[0] != '0';
+                    }();
+                    auto pairLaunch=(ExprPairLaunchFn)exprPairLaunchFn;
+                    bool paired=pairEnabled && pairLaunch && pairLaunch(p0.expId,p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                    if (!paired) {
+                        exprLaunch(p0.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_WRITE,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                        exprLaunch(p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_MUL_INV,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
+                    }
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
                     handled = true;
                 } else if (p0.op == opType::number && !p0.inverse) {
@@ -283,7 +297,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
     if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream);
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());

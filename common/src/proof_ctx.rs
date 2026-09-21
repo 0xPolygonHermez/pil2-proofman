@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::RwLock,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -11,18 +11,19 @@ use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
-use std::fs;
 use proofman_fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    CustomCommits, PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation, WitnessState, WitnessStats,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
-    check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_stream_commit_floor_c,
-    get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_const_pols_aggregation_offset_c,
+    upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
+    gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
+    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
+    get_mops_floor_bytes_c, get_post_alloc_headroom_bytes_c, get_const_pols_aggregation_offset_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -63,6 +64,9 @@ pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 /// GPU memory (in MB) left unallocated for consumers outside our arena.
 const GPU_MEMORY_RESERVE_MB: u64 = 1536;
+/// Extra free memory (MB) kept when the layout adds the phase-A recursion alias stream: its CUDA
+/// graphs and per-stream device buffers (measured ~0.3 GB at 712 tx, rounded up).
+const PHASE_A_ALIAS_HEADROOM_MB: u64 = 512;
 
 /// Unified-buffer floor (bytes) for final-snark runs: the snark prover borrows the buffer
 /// whole and carves ~27.97 GiB (2^24 plonk key), regardless of what the streams need.
@@ -189,16 +193,6 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
-    /// Airs whose const *tree* is kept GPU-resident, for each of their Basic, Compressor
-    /// (when they have one) and Recursive1 circuits: `const_tree_size` VRAM each, against a
-    /// per-proof load from disk. Airgroup 0's Recursive2 is always preloaded and must not be
-    /// listed.
-    pub preloaded_const_tree_gpu: Vec<(usize, usize)>,
-    /// Tables: airs proved at most once, so their const pols need not survive the proof and
-    /// the layout can alias them onto the const tree's node area, saving `N * nConstants` per
-    /// stream (see StarkInfo::constPolsAliasTree). Airs that do not qualify keep the normal
-    /// layout. Listing a non-table air costs a re-merkelize of its fixed on every proof.
-    pub table_airs_gpu: Vec<(usize, usize)>,
     /// This run produces a final SNARK
     pub final_snark: bool,
 }
@@ -209,7 +203,7 @@ impl Default for ProofmanOptions {
             max_number_streams: 20,
             max_number_recursive_streams: 10,
             number_threads_pools_witness: 4,
-            max_witness_stored: 10,
+            max_witness_stored: 8,
             are_threads_per_witness_set: false,
             packed: false,
             gpu: false,
@@ -217,8 +211,6 @@ impl Default for ProofmanOptions {
             aggregation: true,
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
-            preloaded_const_tree_gpu: Vec::new(),
-            table_airs_gpu: Vec::new(),
             final_snark: false,
         }
     }
@@ -283,14 +275,6 @@ impl ProofmanOptions {
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
     }
-
-    pub fn preloaded_const_tree_gpu(&mut self, preloaded_const_tree_gpu: Vec<(usize, usize)>) {
-        self.preloaded_const_tree_gpu = preloaded_const_tree_gpu;
-    }
-
-    pub fn table_airs_gpu(&mut self, table_airs_gpu: Vec<(usize, usize)>) {
-        self.table_airs_gpu = table_airs_gpu;
-    }
 }
 
 #[allow(dead_code)]
@@ -304,13 +288,15 @@ pub struct ProofCtx<F: PrimeField64> {
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
     pub compressor_weights: HashMap<(usize, usize), u64>,
-    pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
+    pub recursion_weights: HashMap<(usize, usize), u64>,
+    pub custom_commits_values: Mutex<HashMap<String, CustomCommitEntry>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub witness_stats: WitnessStats,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
     /// Airs whose rows components must write packed. Holds the same `packedTrace && is_packed`
@@ -321,6 +307,12 @@ pub struct ProofCtx<F: PrimeField64> {
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
     /// this is what makes stream eligibility visible to the Rust-side schedulers.
     pub basic_stream_sizes: Vec<usize>,
+    /// Phase B registered: the two recursive streams alias the single basic stream's buffer and
+    /// open only after every basic and compressor completed (set_phase_b_c from the proofs phase).
+    pub phase_b: bool,
+    /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
+    /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
+    pub phase_b_half: usize,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -352,6 +344,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let weights = HashMap::new();
         let compressor_weights = HashMap::new();
+        let recursion_weights = HashMap::new();
 
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
@@ -369,15 +362,19 @@ impl<F: PrimeField64> ProofCtx<F> {
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             compressor_weights,
+            recursion_weights,
             aggregation,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
+            witness_stats: WitnessStats::default(),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             basic_stream_sizes: Vec::new(),
+            phase_b: false,
+            phase_b_half: 0,
         })
     }
 
@@ -417,7 +414,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.witness_tx.write().unwrap() = witness_tx;
     }
 
+    /// Queue an instance for witness dispatch, at most once. The CAS is what stops a duplicate: the
+    /// default `pre_calculate_witness` re-announces every id it is handed.
     pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
+        if !self.dctx_try_queue_witness(global_id) {
+            self.witness_stats.duplicate_sends.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         if priority {
             if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
                 witness_tx_priority.send(global_id).unwrap();
@@ -429,17 +432,64 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+    /// A witness about to be computed over a trace that already holds one: always redundant, and
+    /// only reachable if a component produced the trace outside `calculate_witness`.
+    pub fn note_witness_recomputed_over_trace(&self, global_idx: usize) {
+        let seen = self.witness_stats.recomputed_over_trace.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if seen < 8 {
+            tracing::warn!("Instance {global_idx}: recomputing a witness over a trace that already has one");
+        }
+    }
+
+    /// `words_per_row` and root of a registered custom-commit file, or why it cannot be used.
+    fn read_custom_commit_header(
+        setup: &Setup<F>,
+        custom_commit: &CustomCommits,
+        path: &Path,
+    ) -> ProofmanResult<(u64, [u8; 32])> {
+        if !path.exists() {
+            return Err(ProofmanError::ProofmanError(format!("{} does not exist", path.display())));
+        }
+        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+        let n_extended = 1u64 << setup.stark_info.stark_struct.n_bits_ext;
+        let n_cols = custom_commit.stage_widths[0] as u64;
+        let arity = setup.stark_info.stark_struct.merkle_tree_arity;
+        let words_per_row = custom_commit_words_per_row(path, n, n_extended, n_cols, arity)?;
+
+        let mut root_bytes = [0u8; 32];
+        File::open(path)?.read_exact(&mut root_bytes)?;
+        Ok((words_per_row, root_bytes))
+    }
+
+    /// Packed `words_per_row` of a registered custom commit; 0 if its file is not generated yet.
+    pub fn get_custom_commit_words_per_row(&self, name: &str) -> u64 {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.get(name).map(|(_, _, wpr)| *wpr).unwrap_or(0)
+    }
+
+    /// Names of the custom commits whose files still have to be generated.
+    pub fn custom_commits_pending(&self) -> Vec<String> {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.iter().filter(|(_, (_, _, wpr))| *wpr == 0).map(|(name, _)| name.clone()).collect()
+    }
+
+    /// The registered name -> file map, to re-run validation after a regeneration.
+    pub fn custom_commits_paths(&self) -> HashMap<String, PathBuf> {
+        let lock = self.custom_commits_values.lock().unwrap();
+        lock.iter().map(|(name, (path, _, _))| (name.clone(), path.clone())).collect()
+    }
+
     pub fn initialize_custom_commits(
         &self,
         custom_commits_fixed: HashMap<String, PathBuf>,
         sctx: &SetupCtx<F>,
-        only_init: bool,
+        validation: CustomCommitValidation,
     ) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                for (commit_id, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
+                for custom_commit in setup.stark_info.custom_commits.iter() {
                     if custom_commit.stage_widths[0] > 0 {
                         let custom_file_path = custom_commits_fixed.get(&custom_commit.name).ok_or_else(|| {
                             ProofmanError::ProofmanError(format!(
@@ -448,59 +498,56 @@ impl<F: PrimeField64> ProofCtx<F> {
                             ))
                         })?;
 
+                        // words_per_row == 0 marks the entry as still needing generation.
                         let mut root_bytes = [0u8; 32];
-                        if !only_init {
-                            if !PathBuf::from(&custom_file_path).exists() {
-                                let error_message = format!(
-                                    "Error: Unable to find {} custom commit at '{}'.\n\
-                                    Please run the following command:\n\
-                                    \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                    custom_commit.name,
-                                    custom_file_path.display(),
-                                );
-                                tracing::warn!("{}", error_message);
-                                return Err(ProofmanError::ProofmanError(error_message));
-                            }
-
-                            let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
-                            let expected_size = (size + 4) * 8;
-
-                            match fs::metadata(custom_file_path) {
-                                Ok(metadata) => {
-                                    let actual_size = metadata.len() as usize;
-                                    if actual_size != expected_size {
+                        let mut words_per_row = 0u64;
+                        if validation != CustomCommitValidation::Skip {
+                            match Self::read_custom_commit_header(setup, custom_commit, custom_file_path) {
+                                Ok((wpr, root)) => {
+                                    words_per_row = wpr;
+                                    root_bytes = root;
+                                }
+                                Err(err) => {
+                                    if validation == CustomCommitValidation::Strict {
                                         let error_message = format!(
-                                            "Error: The custom commit file for {} at '{}' has the wrong size for the current proving key \
-                                            (expected {} bytes, found {} bytes). It was most likely generated with different setup \
-                                            parameters (blowup factor, merkle tree arity, hash mode) or is stale/corrupted.\n\
+                                            "Error: The custom commit file for {} at '{}' cannot be used ({}) and \
+                                            regenerating it did not help.\n\
                                             Please regenerate it by running:\n\
                                             \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
                                             custom_commit.name,
                                             custom_file_path.display(),
-                                            expected_size,
-                                            actual_size,
+                                            err,
                                         );
                                         tracing::warn!("{}", error_message);
                                         return Err(ProofmanError::ProofmanError(error_message));
                                     }
-                                }
-                                Err(err) => {
-                                    let error_message = format!(
-                                        "Failed to open {} for custom_commit {}: {}",
-                                        setup.air_name, custom_commit.name, err
+                                    tracing::info!(
+                                        "Custom commit {} at '{}' will be regenerated ({})",
+                                        custom_commit.name,
+                                        custom_file_path.display(),
+                                        err
                                     );
-                                    tracing::warn!("{}", error_message);
-                                    return Err(ProofmanError::ProofmanError(error_message));
                                 }
                             }
-                            let mut file = File::open(custom_file_path)?;
-                            file.read_exact(&mut root_bytes)?;
                         }
 
-                        self.custom_commits_values
-                            .lock()
-                            .unwrap()
-                            .insert(custom_commit.name.clone(), (custom_file_path.clone(), root_bytes.to_vec()));
+                        // Resident for the process lifetime: no proof DMAs a custom commit.
+                        if setup.gpu && words_per_row > 0 {
+                            upload_custom_commit_packed_c(
+                                airgroup_id as u64,
+                                air_id as u64,
+                                setup.setup_type.into(),
+                                &custom_file_path.to_string_lossy(),
+                                words_per_row,
+                                (&setup.p_setup).into(),
+                                self.get_device_buffers_ptr(),
+                            );
+                        }
+
+                        self.custom_commits_values.lock().unwrap().insert(
+                            custom_commit.name.clone(),
+                            (custom_file_path.clone(), root_bytes.to_vec(), words_per_row),
+                        );
                     }
                 }
             }
@@ -512,7 +559,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let custom_commit_lock = self.custom_commits_values.lock().unwrap();
         let root_bytes = custom_commit_lock.get(name);
         match root_bytes {
-            Some((_, bytes)) => Ok(bytes.clone()),
+            Some((_, bytes, _)) => Ok(bytes.clone()),
             None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
@@ -533,9 +580,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext))
     }
 
-    /// Cost of the basic proof of every air, plus the compressor proof it triggers if it has one.
-    /// Both are needed to balance instances: a compressor proof runs on the owner of its basic
-    /// proof, and its cost varies ~2x between airs in the current zisk proving key.
+    /// One `recursive1` per instance, plus its share of the `recursive2` tree: collapsing `n`
+    /// leaves at arity `a` takes `(n - 1) / (a - 1)` proofs. Arity >= 2 is enforced by GlobalInfo.
+    fn recursion_weight(w_recursive1: u64, w_recursive2: u64, aggregation_arity: usize) -> u64 {
+        w_recursive1 + w_recursive2 / (aggregation_arity as u64 - 1)
+    }
+
+    /// Basic proof of every air, its compressor if it has one, and its recursion chain. The
+    /// recursion is ~half the GPU work on blake3 and used to weigh nothing, which let one heavy
+    /// air eat a whole worker's budget and skew instance counts ~7x.
     pub fn set_weights(&mut self, sctx: &SetupCtx<F>, setups_vadcop: &SetupsVadcop<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -548,11 +601,25 @@ impl<F: PrimeField64> ProofCtx<F> {
                         self.compressor_weights.insert((airgroup_id, air_id), Self::setup_weight(compressor_setup));
                     }
                 }
+
+                // Both None without aggregation, and then no recursion proof runs
+                if let (Some(sctx_recursive1), Some(sctx_recursive2)) =
+                    (setups_vadcop.sctx_recursive1.as_ref(), setups_vadcop.sctx_recursive2.as_ref())
+                {
+                    let w_recursive1 = Self::setup_weight(sctx_recursive1.get_setup(airgroup_id, air_id)?);
+                    // recursive2 is per airgroup, hence air_id 0
+                    let w_recursive2 = Self::setup_weight(sctx_recursive2.get_setup(airgroup_id, 0)?);
+                    self.recursion_weights.insert(
+                        (airgroup_id, air_id),
+                        Self::recursion_weight(w_recursive1, w_recursive2, self.global_info.aggregation_arity),
+                    );
+                }
             }
         }
         Ok(())
     }
 
+    /// Basic proof alone: the whole cost only for tables, which trigger no recursion
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
@@ -562,11 +629,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.compressor_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
     }
 
+    /// 0 without aggregation, and then no recursion proof runs
+    pub fn get_recursion_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        self.recursion_weights.get(&(airgroup_id, air_id)).copied().unwrap_or(0)
+    }
+
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
         let custom_commits_lock = self.custom_commits_values.lock().unwrap();
         let file_name = custom_commits_lock.get(name);
         match file_name {
-            Some((path, _)) => Ok(path.to_path_buf()),
+            Some((path, _, _)) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
                     Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))
@@ -579,10 +651,20 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
-        *self.air_instances[global_idx].write().unwrap() = air_instance;
+        {
+            // Carried across the replacement, never restarted.
+            let mut slot = self.air_instances[global_idx].write().unwrap();
+            let generation = slot.trace_generation.wrapping_add(1);
+            *slot = air_instance;
+            slot.trace_generation = generation;
+        }
         if let Some(proof_tx) = &*self.proof_tx.read().unwrap() {
             proof_tx.send(global_idx).unwrap();
         }
+    }
+
+    pub fn instance_trace_generation(&self, global_idx: usize) -> u64 {
+        self.air_instances[global_idx].read().unwrap().trace_generation
     }
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
@@ -604,28 +686,66 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_first_process()
     }
 
-    pub fn dctx_reset_instances_calculated(&self) {
-        let dctx = self.dctx.read().unwrap();
-        for instance in dctx.instances_calculated.iter() {
-            instance.store(false, std::sync::atomic::Ordering::SeqCst);
+    // The state accessors below are bounds-tolerant on purpose: `air_instances` is a fixed
+    // MAX_INSTANCES vector while `witness_states` only grows with the registered instances, so an
+    // id valid for the former can be past the end of the latter. Out of range answers "not tracked":
+    // do the work, record nothing.
+
+    /// Take ownership of an instance's witness. False means another hook owns it or already
+    /// produced it: do not run the component.
+    pub fn dctx_try_acquire_witness(&self, global_idx: usize) -> bool {
+        self.dctx.read().unwrap().witness_states.get(global_idx).is_none_or(|s| s.try_acquire())
+    }
+
+    /// Hand an instance back. `produced` is the observed residency, not the hook's intent.
+    pub fn dctx_release_witness(&self, global_idx: usize, produced: bool) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.release(produced);
         }
     }
 
-    pub fn dctx_try_mark_instance_calculated(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx]
-            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
-            .is_ok()
+    /// The one place duplicate dispatches are stopped.
+    pub fn dctx_try_queue_witness(&self, global_idx: usize) -> bool {
+        self.dctx.read().unwrap().witness_states.get(global_idx).is_none_or(|s| s.try_queue())
     }
 
-    pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].store(false, std::sync::atomic::Ordering::SeqCst);
+    /// The trace is gone. Does not by itself make the instance computable again -- a blanket
+    /// re-announce must not pick it up -- `rearm` does.
+    pub fn dctx_mark_witness_evicted(&self, global_idx: usize) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.mark_evicted();
+        }
     }
 
+    /// Ask for this instance to be prepared, queued and computed from scratch again.
+    pub fn dctx_rearm_witness(&self, global_idx: usize) {
+        if let Some(slot) = self.dctx.read().unwrap().witness_states.get(global_idx) {
+            slot.rearm();
+        }
+    }
+
+    /// Re-arm everything that never produced or lost its trace, and report how many. Unlike the
+    /// blanket reset it replaces, a `Done` instance whose trace is resident stays put and is reused.
+    pub fn dctx_rearm_witnesses(&self) -> usize {
+        self.dctx.read().unwrap().witness_states.iter().filter(|s| s.rearm()).count()
+    }
+
+    /// Cost proxy for picking which stored trace to reclaim first: the cheapest to redo.
+    pub fn dctx_instance_weight(&self, global_idx: usize) -> u64 {
+        self.dctx.read().unwrap().instances.get(global_idx).map_or(0, |i| i.weight)
+    }
+
+    pub fn dctx_witness_state(&self, global_idx: usize) -> WitnessState {
+        self.dctx.read().unwrap().witness_states.get(global_idx).map_or(WitnessState::Absent, |s| s.get())
+    }
+
+    pub fn dctx_count_witness_state(&self, state: WitnessState) -> usize {
+        self.dctx.read().unwrap().witness_states.iter().filter(|s| s.get() == state).count()
+    }
+
+    /// A witness exists for this instance, whether or not its trace is still resident.
     pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances_calculated[global_idx].load(std::sync::atomic::Ordering::SeqCst)
+        matches!(self.dctx_witness_state(global_idx), WitnessState::Running | WitnessState::Done)
     }
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
@@ -726,14 +846,14 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
@@ -750,9 +870,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
+    pub fn assign_table_to(&self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.assign_table_to(airgroup_id, air_id, gid)
+    }
+
+    pub fn dctx_is_assigned_table(&self, instance_id: usize) -> ProofmanResult<bool> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_assigned_table(instance_id)
+    }
+
+    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here
     pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
     }
 
@@ -971,11 +1103,32 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
-        self.air_instances[instance_id].write().unwrap().reset()
+        // One lock across both: marking first and clearing later lets a hook acquire the `Evicted`
+        // slot and release `Done` over the trace this then drops.
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
+        self.dctx_mark_witness_evicted(instance_id);
+        air_instance.reset()
     }
 
+    /// Reclaim an instance's trace, marking it `Evicted`. That is not the same as computable again:
+    /// only an explicit `rearm` puts it back in play, so a blanket re-announce cannot redo work the
+    /// pipeline has already consumed.
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
-        self.air_instances[instance_id].write().unwrap().clear_traces()
+        // One transition, for the same reason as `free_instance`.
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
+        self.dctx_mark_witness_evicted(instance_id);
+        air_instance.clear_traces()
+    }
+
+    /// Only if the resident trace is still the one offered: a queued candidate outlives the trace it
+    /// names, and freeing on a stale entry throws away a recomputation.
+    pub fn free_instance_traces_at(&self, instance_id: usize, generation: u64) -> (bool, Vec<F>) {
+        let mut air_instance = self.air_instances[instance_id].write().unwrap();
+        if air_instance.trace_generation != generation {
+            return (false, Vec::new());
+        }
+        self.dctx_mark_witness_evicted(instance_id);
+        air_instance.clear_traces()
     }
 
     pub fn set_instance_stream_id(&self, instance_id: usize, stream_id: u64) {
@@ -993,6 +1146,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
+        // Witness prefetch-region area (elements), carved inside the unified buffer (0 = none).
+        prefetch_region_area: u64,
+        // -> (basic streams/GPU, aggregation workers/GPU, GPUs)
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
@@ -1036,10 +1192,8 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         if gpu {
             total_const_area += sctx.total_const_pols_size as u64;
-            total_const_area += sctx.total_const_tree_size as u64;
             if aggregation {
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
-                total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
             }
         }
 
@@ -1066,11 +1220,17 @@ impl<F: PrimeField64> ProofCtx<F> {
         );
         tracing::info!("Max prover recursive buffer size: {}", format_bytes(recursive_capable_size as f64 * 8.0));
         tracing::info!(
-            "Max prover recursive1/recursive2 buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+            "Max prover recursive1/recursive2 buffer size: {} (recursive2 map {} + compact witness tail {})",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0),
+            format_bytes(setups_vadcop.sctx_recursive2.as_ref().map_or(0, |s| s.max_prover_buffer_size) as f64 * 8.0),
+            format_bytes(setups_vadcop.sctx_recursive2.as_ref().map_or(0, |s| s.max_compact_trace_size) as f64 * 8.0),
         );
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
+
+        // The prefetch region is carved INSIDE the unified buffer after planning;
+        // hide it from the planner's budget or its streams overrun VRAM.
+        let max_size_buffer = max_size_buffer.saturating_sub(prefetch_region_area);
 
         let layout = match gpu {
             true => plan_stream_layout(
@@ -1086,15 +1246,92 @@ impl<F: PrimeField64> ProofCtx<F> {
             false => StreamLayout {
                 basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
                 recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                aggregation_workers: 0,
                 unused: 0,
             },
         };
+
+        // Phase B splits the single basic stream in two halves that host recursion and every basic
+        // that fits them (the big ones ran in phase A). The stream is grown into all the slack the
+        // post-allocation headroom leaves (at least to the mops floor, the pre-const area the pad would
+        // otherwise fill), which makes the halves as large as the card allows: the more airs fit a
+        // half, the shorter phase A. The halves must hold the recursive1/recursive2 class. The budget
+        // already excludes GPU_MEMORY_RESERVE_MB, so only the difference to the C++ headroom is kept.
+        let mut layout = layout;
+        let mut phase_b_half: usize = 0;
+        if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
+            let floor_area = (get_mops_floor_bytes_c() / 8) as usize;
+            let mut headroom_extra =
+                (get_post_alloc_headroom_bytes_c().saturating_sub(GPU_MEMORY_RESERVE_MB * 1024 * 1024) / 8) as usize;
+            let current = layout.basic[0].size;
+            let grow_to = |headroom_extra: usize| {
+                current
+                    .max(floor_area.saturating_sub(prefetch_region_area as usize))
+                    .max((current + layout.unused).saturating_sub(headroom_extra))
+                    .min(current + layout.unused)
+            };
+            let mut target = grow_to(headroom_extra);
+            // The phase-A recursion alias (below) is a fourth device stream, and every stream brings
+            // its own CUDA graphs and small device buffers (~0.3 GB measured at 712 tx); when the
+            // stream will hold it, keep that much more free.
+            if target >= sctx.max_prover_buffer_size + max_prover_recursive2_buffer_size {
+                headroom_extra += (PHASE_A_ALIAS_HEADROOM_MB * 1024 * 1024 / 8) as usize;
+                target = grow_to(headroom_extra);
+            }
+            let half = target / 2;
+            if half >= max_prover_recursive2_buffer_size {
+                layout.unused -= target - current;
+                layout.basic[0].size = target;
+                phase_b_half = half;
+            } else {
+                tracing::warn!(
+                    "single basic stream can grow to {} at most, whose half does not hold the recursive class ({}) -- phase B will not be available on this layout",
+                    format_bytes(target as f64 * 8.0),
+                    format_bytes(max_prover_recursive2_buffer_size as f64 * 8.0)
+                );
+            }
+        }
 
         let aux_trace_sizes: Vec<u64> = layout.basic_stream_sizes().iter().map(|&s| s as u64).collect();
         // Retained so the witness admission can tell which airs are confined to a subset of streams.
         self.basic_stream_sizes = layout.basic_stream_sizes();
         let n_streams_per_gpu = layout.n_basic_streams();
-        let n_recursive_streams_per_gpu = layout.recursive.count;
+        let mut n_recursive_streams_per_gpu = layout.recursive.count;
+
+        // Phase B: with aggregation and one basic stream, two recursive-class streams alias that
+        // stream's halves (sized above). They cost no memory and open once every instance that does
+        // not fit a half has completed (see the phase-A countdown in the proofs phase).
+        // PROOFMAN_NO_PHASE_B=1 disables.
+        self.phase_b = gpu
+            && aggregation
+            && n_streams_per_gpu == 1
+            && n_recursive_streams_per_gpu == 0
+            && phase_b_half > 0
+            && !std::env::var("PROOFMAN_NO_PHASE_B").map(|v| v == "1").unwrap_or(false);
+        // Phase-A recursion alias: when the stream also holds the recursive class beside the largest
+        // basic, a third recursive-class stream runs recursion there during phase A (see
+        // DeviceCommitBuffers::phaseAAliasOffset). Otherwise recursion interleaves on the basic
+        // stream in phase A as before.
+        let mut phase_a_alias_offset: usize = 0;
+        if self.phase_b {
+            configure_phase_b_c(d_buffers.get_ptr());
+            n_recursive_streams_per_gpu = 2;
+            self.phase_b_half = phase_b_half;
+            let largest_basic = sctx.max_prover_buffer_size;
+            if layout.basic[0].size >= largest_basic + max_prover_recursive2_buffer_size {
+                phase_a_alias_offset = largest_basic;
+                n_recursive_streams_per_gpu = 3;
+            } else {
+                tracing::info!(
+                    "Phase A alias not available: the stream ({}) does not hold the recursive class ({}) beside the largest basic ({})",
+                    format_bytes(layout.basic[0].size as f64 * 8.0),
+                    format_bytes(max_prover_recursive2_buffer_size as f64 * 8.0),
+                    format_bytes(largest_basic as f64 * 8.0)
+                );
+            }
+        }
+        // The recursive-class streams' capacity: the halves under phase B, else the recursive class.
+        let recursive_stream_size = if self.phase_b { phase_b_half } else { max_prover_recursive2_buffer_size };
 
         if gpu {
             let classes = layout
@@ -1103,12 +1340,25 @@ impl<F: PrimeField64> ProofCtx<F> {
                 .map(|c| format!("{} x {}", c.count, format_bytes(c.size as f64 * 8.0)))
                 .collect::<Vec<_>>()
                 .join(" + ");
+            let aggregation_desc = match n_recursive_streams_per_gpu {
+                0 => format!("{} aggregation workers sharing the basic streams", layout.aggregation_workers),
+                2 if self.phase_b => format!(
+                    "2 phase-B streams over the basic stream's halves ({} each, recursion + basics that fit)",
+                    format_bytes(phase_b_half as f64 * 8.0)
+                ),
+                3 if self.phase_b => format!(
+                    "2 phase-B streams over the basic stream's halves ({} each, recursion + basics that fit) + a phase-A recursion alias past the largest basic ({} free)",
+                    format_bytes(phase_b_half as f64 * 8.0),
+                    format_bytes((layout.basic[0].size - phase_a_alias_offset) as f64 * 8.0)
+                ),
+                n => format!("{n} dedicated streams per GPU for recursive proofs"),
+            };
             tracing::info!(
-                "Using {} streams per GPU for basic proofs ({}) and {} streams per GPU for recursive proofs. \
+                "Using {} streams per GPU for basic proofs ({}) and {}. \
                  Using {} for fixed pols, {} unused",
                 n_streams_per_gpu,
                 classes,
-                n_recursive_streams_per_gpu,
+                aggregation_desc,
                 format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
                 format_bytes(layout.unused as f64 * 8.0),
             );
@@ -1123,7 +1373,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             d_buffers.get_ptr(),
             &aux_trace_sizes,
             n_recursive_streams_per_gpu as u64,
-            max_prover_recursive2_buffer_size as u64,
+            recursive_stream_size as u64,
             max_pinned_proof_size,
             self.global_info.transcript_arity as u64,
         );
@@ -1132,7 +1382,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                + if self.phase_b {
+                    0
+                } else {
+                    n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
+                }
                 + total_const_area_aggregation
                 + total_const_area;
             let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);
@@ -1158,15 +1412,17 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
-            max_prover_recursive2_buffer_size as u64,
+            recursive_stream_size as u64,
             total_const_area,
             total_const_area_aggregation,
             unified_buffer_pad_area,
+            prefetch_region_area,
+            phase_a_alias_offset as u64,
         );
 
         self.d_buffers = d_buffers;
 
-        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
+        Ok((n_streams_per_gpu as u64, layout.aggregation_workers as u64, n_gpus))
     }
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {
@@ -1260,5 +1516,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proofman_fields::Goldilocks;
+
+    type Pctx = super::ProofCtx<Goldilocks>;
+
+    /// At arity 2 a leaf pays for a whole recursive2 proof, at arity 3 for half of one
+    #[test]
+    fn recursion_weight_scales_with_the_aggregation_arity() {
+        assert_eq!(Pctx::recursion_weight(1000, 400, 2), 1400);
+        assert_eq!(Pctx::recursion_weight(1000, 400, 3), 1200);
+    }
+
+    /// Real setup weights: blake3 charges ~15.8x Poseidon, 11.8x circuit x 1.33x arity. This
+    /// ratio is what keeps the balance hash-agnostic with no per-family branch.
+    #[test]
+    fn recursion_weight_separates_the_hash_families() {
+        let blake3 = Pctx::recursion_weight(1_228_931_072, 1_228_931_072, 2);
+        let poseidon = Pctx::recursion_weight(103_809_024, 103_809_024, 3);
+        assert_eq!(blake3, 2_457_862_144);
+        assert_eq!(poseidon, 155_713_536);
+        assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));
     }
 }

@@ -21,38 +21,44 @@ void calculateWitnessExpr(SetupCtx& setupCtx, StepsParams& params, ExpressionsCt
 }
 
 
+// The im_col/im_airval hints do not depend on `prod`: they read cm1 + stage-2 challenges and write
+// the same "reference" destinations either way, so evaluating them inside calculateWitnessSTD ran the
+// whole set twice whenever an AIR has both a gprod and a gsum column (the recursion airs do).
+void calculateImHints(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx) {
+    if(setupCtx.expressionsBin.getNumberHintIdsByName("gprod_col") == 0 && setupCtx.expressionsBin.getNumberHintIdsByName("gsum_col") == 0) return;
+
+    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
+    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
+    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
+    if(nImTotalHints == 0) return;
+
+    std::vector<uint64_t> imHints(nImTotalHints);
+    setupCtx.expressionsBin.getHintIdsByName(imHints.data(), "im_col");
+    setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
+    std::vector<std::string> hintFieldDest(nImTotalHints);
+    std::vector<std::string> hintField1(nImTotalHints);
+    std::vector<std::string> hintField2(nImTotalHints);
+    std::vector<HintFieldOptions> hintOptions1(nImTotalHints);
+    std::vector<HintFieldOptions> hintOptions2(nImTotalHints);
+    for(uint64_t i = 0; i < nImTotalHints; i++) {
+        hintFieldDest[i] = "reference";
+        hintField1[i] = "numerator";
+        hintField2[i] = "denominator";
+        HintFieldOptions options1;
+        HintFieldOptions options2;
+        options2.inverse = true;
+        hintOptions1[i] = options1;
+        hintOptions2[i] = options2;
+    }
+
+    multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints.data(), hintFieldDest.data(), hintField1.data(), hintField2.data(), hintOptions1.data(), hintOptions2.data());
+}
+
 void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
     setupCtx.expressionsBin.getHintIdsByName(hint, name);
-
-    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
-    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
-    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
-    if(nImTotalHints > 0) {
-        std::vector<uint64_t> imHints(nImHints + nImHintsAirVals);
-        setupCtx.expressionsBin.getHintIdsByName(imHints.data(), "im_col");
-        setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
-        std::vector<std::string> hintFieldDest(nImTotalHints);
-        std::vector<std::string> hintField1(nImTotalHints);
-        std::vector<std::string> hintField2(nImTotalHints);
-        std::vector<HintFieldOptions> hintOptions1(nImTotalHints);
-        std::vector<HintFieldOptions> hintOptions2(nImTotalHints);
-        for(uint64_t i = 0; i < nImTotalHints; i++) {
-            hintFieldDest[i] = "reference";
-            hintField1[i] = "numerator";
-            hintField2[i] = "denominator";
-            HintFieldOptions options1;
-            HintFieldOptions options2;
-            options2.inverse = true;
-            hintOptions1[i] = options1;
-            hintOptions2[i] = options2;
-        }
-
-        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints.data(), hintFieldDest.data(), hintField1.data(), hintField2.data(), hintOptions1.data(), hintOptions2.data());
-        
-    }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
@@ -132,6 +138,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
 
+    calculateImHints(setupCtx, params, expressionsCtx);
     calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
     calculateWitnessSTD(setupCtx, params, expressionsCtx, false);
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);

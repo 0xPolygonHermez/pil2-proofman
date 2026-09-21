@@ -6,7 +6,22 @@ use crate::{Hash, Poseidon1_16, Poseidon2_16, PrimeField64};
 pub type TranscriptP1_16<F> = Transcript<F, Poseidon1_16>;
 pub type TranscriptP2_16<F> = Transcript<F, Poseidon2_16>;
 
-pub struct Transcript<F: PrimeField64, H: Hash<F>> {
+/// A hash whose permutation a rate/capacity SPONGE can be built on.
+///
+/// Not every `Hash` qualifies, and the one that does not is the reason this trait exists: BLAKE3's
+/// transcript absorbs eight words per compression with the state in the chaining value, so wrapping
+/// `Blake3_8` in this sponge silently produces different challenges from the prover's. `Blake3_8`
+/// deliberately does NOT implement this, which turns that mistake into a compile error; blake3's
+/// transcript is `Blake3Transcript`.
+///
+/// ```compile_fail
+/// use proofman_fields::{Blake3_8, Goldilocks, Transcript};
+/// // BLAKE3 is not a sponge: this must not compile.
+/// let _t: Transcript<Goldilocks, Blake3_8> = Transcript::new();
+/// ```
+pub trait SpongeHash<F: PrimeField64>: Hash<F> {}
+
+pub struct Transcript<F: PrimeField64, H: SpongeHash<F>> {
     state: H::State,
     pending: Vec<F>,
     out: H::State,
@@ -15,13 +30,13 @@ pub struct Transcript<F: PrimeField64, H: Hash<F>> {
     _marker: core::marker::PhantomData<H>,
 }
 
-impl<F: PrimeField64, H: Hash<F>> Default for Transcript<F, H> {
+impl<F: PrimeField64, H: SpongeHash<F>> Default for Transcript<F, H> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: PrimeField64, H: Hash<F>> Transcript<F, H> {
+impl<F: PrimeField64, H: SpongeHash<F>> Transcript<F, H> {
     pub fn new() -> Self {
         Transcript {
             state: H::State::default(),
@@ -123,3 +138,45 @@ impl<F: PrimeField64, H: Hash<F>> Transcript<F, H> {
         permutations
     }
 }
+
+/// What a verifier needs of a transcript, so `stark_verify` can be generic over the CONSTRUCTION
+/// and not over a hash it then wraps in a sponge.
+///
+/// The distinction is load-bearing: `Transcript<F, H>` is a rate-4 sponge, while BLAKE3's transcript
+/// absorbs eight words per compression with the state in the chaining value. Parameterising the
+/// verifier by `Blake3_8` and building a sponge from it produces different challenges from the
+/// prover's -- see the test in `blake3_transcript.rs`.
+pub trait TranscriptLike<F: PrimeField64> {
+    fn new_transcript() -> Self;
+    fn put(&mut self, inputs: &[F]);
+    fn get_field(&mut self, value: &mut [F]);
+    fn get_state(&mut self) -> Vec<F>;
+    fn get_permutations(&mut self, n: u64, n_bits: u64) -> Vec<u64>;
+}
+
+impl<F: PrimeField64, H: SpongeHash<F>> TranscriptLike<F> for Transcript<F, H> {
+    fn new_transcript() -> Self {
+        Self::new()
+    }
+    fn put(&mut self, inputs: &[F]) {
+        Transcript::put(self, inputs)
+    }
+    fn get_field(&mut self, value: &mut [F]) {
+        Transcript::get_field(self, value)
+    }
+    fn get_state(&mut self) -> Vec<F> {
+        Transcript::get_state(self)
+    }
+    fn get_permutations(&mut self, n: u64, n_bits: u64) -> Vec<u64> {
+        Transcript::get_permutations(self, n, n_bits)
+    }
+}
+
+// The sponge families. Blake3_8 is absent on purpose -- see `SpongeHash`.
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon1_8 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon1_12 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon1_16 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon2_4 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon2_8 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon2_12 {}
+impl<F: PrimeField64> SpongeHash<F> for crate::Poseidon2_16 {}

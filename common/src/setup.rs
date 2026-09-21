@@ -2,20 +2,32 @@ use std::os::raw::{c_void, c_char};
 use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::fs;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
 
-pub type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub type GetWitnessTraceFunc = unsafe extern "C" fn(
+    zkin: *mut u64,
+    circom_circuit: *mut c_void,
+    exec_data: *mut u64,
+    trace: *mut c_void,
+    publics: *mut c_void,
+    n: u64,
+    n_publics: u64,
+    n_committed_pols: u64,
+    n_mutexes: u64,
+    signal_values: *mut c_void, // optional pool buffer (>= total_signal_no u64s); null => self-alloc
+) -> i64;
+
+pub type GetTotalSignalNoFunc = unsafe extern "C" fn() -> u64;
+pub type PrepareSignalMapFunc = unsafe extern "C" fn(circuit: *mut c_void, exec_data: *mut u64, exec_words: u64) -> i64;
 
 #[derive(Debug)]
 pub struct CircomState {
     library: Option<Library>,
     pub circuit: Option<*mut c_void>,
-    pub get_witness_fn: Option<GetWitnessFunc>,
+    pub get_witness_trace_fn: Option<GetWitnessTraceFunc>,
 }
 
 unsafe impl Send for CircomState {}
@@ -26,10 +38,10 @@ use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
     get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
-    calculate_words_per_row_c,
+    calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -39,6 +51,7 @@ pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+pub type FreeComponentCacheFunc = unsafe extern "C" fn();
 
 #[derive(Debug)]
 #[repr(C)]
@@ -73,6 +86,7 @@ pub struct Setup<F: PrimeField64> {
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
+    pub custom_commits_reserved_words: usize,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
@@ -83,37 +97,195 @@ pub struct Setup<F: PrimeField64> {
     pub pinned_proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
-    pub size_witness: Option<u64>,
+    pub total_signal_no: Option<u64>,
     pub circom_state: RwLock<CircomState>,
     pub exec_data_path: Option<String>,
     pub exec_data: Option<Arc<Vec<u64>>>,
-    pub n_adds: Option<u64>,
     pub air_name: String,
     pub verkey: Vec<F>,
     pub verkey_file: String,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
-    pub preallocate: bool,
     pub gpu: bool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
     fn drop(&mut self) {
         let mut state = self.circom_state.write().unwrap();
-        if let Some(circom_circuit) = state.circuit.take() {
-            if let Some(circom_library) = &state.library {
+        let circuit = state.circuit.take();
+        if let Some(circom_library) = &state.library {
+            if let Some(circom_circuit) = circuit {
                 unsafe {
                     let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
                         circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
                     free_circom_circuit(circom_circuit);
                 }
             }
+            // Best-effort: absent from an older proving key's library.
+            unsafe {
+                if let Ok(free_component_cache) = circom_library.get::<FreeComponentCacheFunc>(b"freeComponentCache\0")
+                {
+                    free_component_cache();
+                }
+            }
         }
     }
 }
 
+/// Magic and layout version of the `.exec` file, mirroring `EXEC_MAGIC` / `EXEC_FORMAT_VERSION`
+/// in stark-recurser's plonk2pil, which writes them, and `exec_layout.hpp`, which also reads them.
+const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
+const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+const EXEC_FORMAT_VERSION: u64 = 2;
+const EXEC_HEADER_WORDS: usize = 4;
+
+/// Dimensions from a loaded `.exec` buffer's header.
+pub struct ExecHeader {
+    pub n_adds: u64,
+    pub map_rows: u64,
+    pub map_cols: u64,
+}
+
+/// Reads the header of a buffer [`load_exec_file`] returned, which has already validated it.
+///
+/// Go through this rather than indexing the buffer: the header has grown once already, and the
+/// call sites that hard-coded `exec[0]` for `n_adds` all became silently wrong when it did.
+pub fn exec_header(exec: &[u64]) -> ExecHeader {
+    debug_assert!(
+        exec.len() >= EXEC_HEADER_WORDS && exec[0] == (EXEC_MAGIC | EXEC_FORMAT_VERSION),
+        "exec buffer was not produced by load_exec_file"
+    );
+    ExecHeader { n_adds: exec[1], map_rows: exec[2], map_cols: exec[3] }
+}
+
+/// Reads a whole `.exec` file into memory and validates its header.
+///
+/// The layout is `exec_layout.hpp`'s: magic and version, `n_adds`, then the map's row and column
+/// extent, then the additions, the map as u32 pairs, and a gate-band section. This reads to the
+/// end of the file rather than to the map's length, so the band section comes along.
+pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u64>> {
+    let mut file = File::open(exec_filename)?;
+
+    let file_bytes = file.metadata()?.len();
+    if file_bytes % 8 != 0 {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {file_bytes} bytes, not a multiple of 8"
+        )));
+    }
+    let total_elements = usize::try_from(file_bytes / 8)
+        .map_err(|_| ProofmanError::InvalidSetup(format!("exec file {exec_filename}: size overflow")))?;
+    if total_elements < EXEC_HEADER_WORDS {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {total_elements} words, too short to hold a header"
+        )));
+    }
+
+    let mut header = [0u64; EXEC_HEADER_WORDS];
+    for word in header.iter_mut() {
+        let mut bytes = [0u8; 8];
+        file.read_exact(&mut bytes)?;
+        *word = u64::from_le_bytes(bytes);
+    }
+
+    if header[0] & EXEC_MAGIC_MASK != EXEC_MAGIC {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} does not carry an exec header; it predates the current \
+             layout -- regenerate the proving key with a matching setup"
+        )));
+    }
+    let version = header[0] & !EXEC_MAGIC_MASK;
+    if version != EXEC_FORMAT_VERSION {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is format version {version}, but this build reads version \
+             {EXEC_FORMAT_VERSION} -- regenerate the proving key with a matching setup"
+        )));
+    }
+
+    let (n_adds, map_rows, map_cols) = (header[1], header[2], header[3]);
+    if map_cols > n_cols {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} maps {map_cols} columns into a trace {n_cols} wide; the \
+             proving key's exec file and stark info disagree"
+        )));
+    }
+
+    // The map is u32 pairs, so its words are half its entries rounded up.
+    let prefix_elements: usize = (|| -> Option<usize> {
+        let adds_terms = n_adds.checked_mul(4)?;
+        let map_words = map_rows.checked_mul(map_cols)?.checked_add(1)? / 2;
+        usize::try_from((EXEC_HEADER_WORDS as u64).checked_add(adds_terms)?.checked_add(map_words)?).ok()
+    })()
+    .ok_or_else(|| {
+        ProofmanError::InvalidSetup(format!(
+            "exec header for {exec_filename}: size overflow (n_adds={n_adds}, map_rows={map_rows}, \
+             map_cols={map_cols})"
+        ))
+    })?;
+
+    if total_elements < prefix_elements {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is {total_elements} words, shorter than its own header claims \
+             ({prefix_elements})"
+        )));
+    }
+
+    // Header already consumed; read the remaining u64s in one go.
+    let mut exec_data: Vec<u64> = vec![0; total_elements];
+    exec_data[..EXEC_HEADER_WORDS].copy_from_slice(&header);
+    let body_bytes = (total_elements - EXEC_HEADER_WORDS) * 8;
+    let body_slice =
+        unsafe { std::slice::from_raw_parts_mut(exec_data[EXEC_HEADER_WORDS..].as_mut_ptr() as *mut u8, body_bytes) };
+    file.read_exact(body_slice)?;
+    Ok(exec_data)
+}
+
 #[allow(clippy::too_many_arguments)]
 impl<F: PrimeField64> Setup<F> {
+    /// Uploads this setup to every GPU, gate-band section included.
+    ///
+    /// Go through this (or [`Setup::load_device_as`]) rather than `load_device_setup_c`: the GPU
+    /// expander rebuilds the hash gates' trace interiors from those bands, and a setup uploaded
+    /// without them proves a trace with holes in it.
+    pub fn load_device(
+        &self,
+        airgroup_id: u64,
+        air_id: u64,
+        d_buffers: *mut std::os::raw::c_void,
+        packed_info: *mut std::os::raw::c_void,
+    ) {
+        let exec = self.exec_data.as_ref().map(|e| e.as_slice());
+        self.load_device_as(self.setup_type.into(), airgroup_id, air_id, d_buffers, packed_info, exec);
+    }
+
+    /// [`Setup::load_device`] with the registration key and the exec buffer spelled out, for
+    /// `prove_air`: it proves one AIR under the proof type named in the proof file, which can
+    /// differ from this setup's own, and it loads the exec file itself.
+    pub fn load_device_as(
+        &self,
+        proof_type: &str,
+        airgroup_id: u64,
+        air_id: u64,
+        d_buffers: *mut std::os::raw::c_void,
+        packed_info: *mut std::os::raw::c_void,
+        exec: Option<&[u64]>,
+    ) {
+        let (exec_ptr, exec_words) = match exec {
+            Some(exec) => (exec.as_ptr() as *mut u64, exec.len() as u64),
+            None => (std::ptr::null_mut(), 0),
+        };
+        load_device_setup_c(
+            airgroup_id,
+            air_id,
+            proof_type,
+            (&self.p_setup).into(),
+            d_buffers,
+            self.verkey.as_ptr() as *mut u8,
+            packed_info,
+            exec_ptr,
+            exec_words,
+        );
+    }
+
     pub fn new(
         setup_path: &Path,
         airgroup_id: usize,
@@ -121,9 +293,6 @@ impl<F: PrimeField64> Setup<F> {
         air_info: &GlobalInfoAir,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preallocate: bool,
-        // Table air: proved at most once, so its const pols need not survive the proof.
-        single_use: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
@@ -202,17 +371,8 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && gpu;
-            let p_stark_info = stark_info_new_c(
-                stark_info_path.as_str(),
-                recursive_final,
-                recursive,
-                verify_constraints,
-                false,
-                gpu,
-                preallocate_const,
-                single_use && gpu,
-            );
+            let p_stark_info =
+                stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
@@ -265,16 +425,20 @@ impl<F: PrimeField64> Setup<F> {
             } else {
                 let mut const_pols_size_packed = 0;
                 if gpu && setup_type != &ProofType::RecursiveF {
-                    let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
-                        let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
-                        if bytes.len() >= 8 {
-                            u64::from_le_bytes(bytes[..8].try_into().unwrap())
-                        } else {
-                            0
-                        }
-                    } else {
-                        calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
-                    };
+                    let mut header = [0u8; 8];
+                    let words_per_row: u64 =
+                        match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
+                            Ok(()) => u64::from_le_bytes(header),
+                            // Missing or truncated: regenerated later, size it from the source .const.
+                            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::UnexpectedEof) => {
+                                calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
+                            }
+                            Err(e) => {
+                                return Err(ProofmanError::InvalidSetup(format!(
+                                    "Failed to read GPU const pols header {const_pols_path}: {e}"
+                                )))
+                            }
+                        };
                     const_pols_size_packed =
                         (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
                 }
@@ -305,7 +469,7 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_type != &ProofType::Basic,
         };
 
-        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data_path, exec_data, n_adds) =
+        let (circom_library, circom_circuit, get_witness_trace_fn, total_signal_no, exec_data_path, exec_data) =
             if needs_circom {
                 let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
                 let rust_lib_filename = setup_path.display().to_string() + lib_extension;
@@ -327,60 +491,61 @@ impl<F: PrimeField64> Setup<F> {
                     let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
                     init_circom_circuit(dat_filename_ptr)
                 };
+                // loadCircuit returns nullptr on a bad .dat; unchecked it segfaults in getWitnessTrace.
+                if circom_circuit_ptr.is_null() {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "initCircuit failed for {dat_filename} (see the loadCircuit error above)"
+                    )));
+                }
 
-                let witness_size = unsafe {
-                    let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-                    get_size_witness()
+                // Sizes the pooled signalValues buffers, so it must be exact: a `getSizeWitness`
+                // fallback would under-count (signals >= witness entries) and overflow them.
+                let total_signal_no = unsafe {
+                    let get_total_signal_no: Symbol<GetTotalSignalNoFunc> = library.get(b"getTotalSignalNo\0")?;
+                    get_total_signal_no()
                 };
 
-                // Load the getWitness function pointer for later use
-                let get_witness_fn = unsafe {
-                    let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-                    Some(*get_witness_symbol)
-                };
+                let get_witness_trace_fn =
+                    unsafe { library.get::<GetWitnessTraceFunc>(b"getWitnessTrace\0").ok().map(|sym| *sym) };
 
-                // Pre-load the entire .exec file into memory. Header is the first two u64s
-                // (n_adds, n_smap); the rest is read sequentially. Pre-loading gives RAM-speed
-                // access during every `get_committed_pols_c` call — no on-demand page faults.
+                // Pre-loaded so every `getWitnessTrace` scatter reads it at RAM speed.
                 let exec_filename = setup_path.display().to_string() + ".exec";
-                let mut file = File::open(&exec_filename)?;
-                let mut bytes = [0u8; 8];
-                file.read_exact(&mut bytes)?;
-                let n_adds = u64::from_le_bytes(bytes);
-                file.read_exact(&mut bytes)?;
-                let n_smap = u64::from_le_bytes(bytes);
-                let exec_data_size_elements: usize = (|| -> Option<usize> {
-                    let adds_terms = n_adds.checked_mul(4)?;
-                    let smap_terms = n_smap.checked_mul(n_cols)?;
-                    let elements = 2u64.checked_add(adds_terms)?.checked_add(smap_terms)?;
-                    usize::try_from(elements).ok()
-                })()
-                .ok_or_else(|| {
-                    ProofmanError::InvalidSetup(format!(
-                        "exec header for {exec_filename}: size overflow (n_adds={n_adds}, n_smap={n_smap}, n_cols={n_cols})"
-                    ))
-                })?;
-                // Header already consumed; read the remaining (size - 2) u64s.
-                let mut exec_data: Vec<u64> = vec![0; exec_data_size_elements];
-                exec_data[0] = n_adds;
-                exec_data[1] = n_smap;
-                let body_bytes = (exec_data_size_elements - 2) * 8;
-                let body_slice =
-                    unsafe { std::slice::from_raw_parts_mut(exec_data[2..].as_mut_ptr() as *mut u8, body_bytes) };
-                file.read_exact(body_slice)?;
+                let mut exec_data = load_exec_file(&exec_filename, n_cols)?;
+
+                // Best-effort: getWitnessTrace reads the exec map directly if this is absent,
+                // as it is in an older proving key's library.
+                unsafe {
+                    if let Ok(prepare) = library.get::<PrepareSignalMapFunc>(b"prepareSignalMap\0") {
+                        let words = exec_data.len() as u64;
+                        prepare(circom_circuit_ptr, exec_data.as_mut_ptr(), words);
+                    }
+                }
 
                 (
                     Some(library),
                     Some(circom_circuit_ptr),
-                    get_witness_fn,
-                    Some(witness_size),
+                    get_witness_trace_fn,
+                    Some(total_signal_no),
                     Some(exec_filename),
                     Some(Arc::new(exec_data)),
-                    Some(n_adds),
                 )
             } else {
-                (None, None, None, None, None, None, None)
+                (None, None, None, None, None, None)
             };
+
+        // Worst case (words_per_row == n_cols): the real value is in the commit file, which is
+        // registered long after the const buffer is sized.
+        let custom_commits_reserved_words = match gpu {
+            true => custom_commit_reserved_words(
+                stark_info.stark_struct.n_bits as u32,
+                &stark_info
+                    .custom_commits
+                    .iter()
+                    .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
+                    .collect::<Vec<_>>(),
+            ),
+            false => 0,
+        };
 
         Ok(Self {
             air_id,
@@ -389,6 +554,7 @@ impl<F: PrimeField64> Setup<F> {
             p_setup: SetupC { p_stark_info, p_expressions_bin },
             const_pols_size,
             const_pols_size_packed,
+            custom_commits_reserved_words,
             const_tree_size,
             verkey,
             verkey_file,
@@ -397,11 +563,14 @@ impl<F: PrimeField64> Setup<F> {
             contributions_size,
             proof_size,
             pinned_proof_size,
-            size_witness,
-            circom_state: RwLock::new(CircomState { library: circom_library, circuit: circom_circuit, get_witness_fn }),
+            total_signal_no,
+            circom_state: RwLock::new(CircomState {
+                library: circom_library,
+                circuit: circom_circuit,
+                get_witness_trace_fn,
+            }),
             exec_data_path,
             exec_data,
-            n_adds,
             setup_path: setup_path.to_path_buf().clone(),
             setup_type: *setup_type,
             air_name: air_info.name.clone(),
@@ -409,7 +578,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
-            preallocate,
             gpu,
         })
     }
@@ -417,10 +585,10 @@ impl<F: PrimeField64> Setup<F> {
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
-
-    pub fn get_circom_witness_size(&self) -> usize {
-        let base_size = self.size_witness.unwrap_or(0) as usize;
-        let exec_offset = self.n_adds.unwrap_or(0) as usize;
-        base_size + exec_offset
+    /// GPU airs merkelize const pols on device; only CPU and BN128/RecursiveF ever read the
+    /// tree file back.
+    pub fn needs_const_tree_file(&self) -> bool {
+        let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
+        !self.gpu || !goldilocks
     }
 }

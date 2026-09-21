@@ -599,11 +599,11 @@ mod tests {
 
     #[test]
     fn test_recursive2_params() {
-        let fri = Fri::new(test_config(1 << 17, 0.125, 145, vec![3, 3, 3, 3, 3], 20));
+        let fri = Fri::new(test_config(1 << 17, 0.125, 145, vec![3, 3, 3, 3, 3], 21));
         assert_eq!(fri.alpha(), 0.0);
 
-        assert_eq!(fri.num_merkle_openings(), 365);
-        assert_eq!(fri.total_query_hashes().round(), 9_271.0);
+        assert_eq!(fri.num_merkle_openings(), 360);
+        assert_eq!(fri.total_query_hashes().round(), 9_144.0);
 
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
@@ -617,8 +617,8 @@ mod tests {
         assert_eq!(fri.total_security_bits(), 128);
 
         let sec = fri.security_params();
-        assert_eq!(sec.n_queries, 73, "nQueries mismatch: got {}", sec.n_queries);
-        assert_eq!(sec.grinding_bits_query, 20);
+        assert_eq!(sec.n_queries, 72, "nQueries mismatch: got {}", sec.n_queries);
+        assert_eq!(sec.grinding_bits_query, 21);
         assert_eq!(sec.grinding_bits_batching, 0);
         assert_eq!(sec.grinding_bits_folding, vec![0; 5]);
     }

@@ -9,10 +9,12 @@
 #include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
-#include "exec_file.hpp"
+#include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
+#include "recursion_trace/exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+#include "pack_columns.hpp"
 #include "build_const_tree.hpp"
 #include "../rapidsnark/fflonk_setup.hpp"
 #include "../rapidsnark/plonk_setup.hpp"
@@ -278,15 +280,19 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use)
+void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate, single_use);
+    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu);
 
     return starkInfo;
 }
 
 uint64_t get_proof_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->proofSize;
+}
+
+uint64_t get_n_publics(void *pStarkInfo) {
+    return ((StarkInfo *)pStarkInfo)->nPublics;
 }
 
 uint64_t get_proof_pinned_size(void *pStarkInfo) {
@@ -616,18 +622,40 @@ uint64_t custom_commit_size(void *pSetup, uint64_t commitId) {
     return (N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended);
 }
 
-void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
+void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile, uint64_t wordsPerRow)
 {
     auto setupCtx = *(SetupCtx *)pSetup;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
 
     std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-    
+
     Goldilocks::Element *bufferGL = (Goldilocks::Element *)buffer;
-    loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
+    Goldilocks::Element *base = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]];
+    Goldilocks::Element *extended = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]];
+
+    // One read of everything past the root: loadFileParallel only does whole-file loads (it
+    // asserts size + skipBytes == the file size).
+    std::vector<uint64_t> blob(1 + nCols + N * wordsPerRow);
+    loadFileParallel(blob.data(), bufferFile, blob.size() * sizeof(uint64_t), true, 32);
+    if (blob[0] != wordsPerRow) {
+        zklog.error("load_custom_commit: " + string(bufferFile) + " header says words_per_row " +
+                    to_string(blob[0]) + ", caller said " + to_string(wordsPerRow));
+        exitProcess();
+    }
+
+    unpackRowsBits(&blob[1 + nCols], (uint64_t *)base, N, nCols, &blob[1], wordsPerRow);
+
+    // Same three calls write_custom_commit_cpu makes, so the root the caller read still matches.
+    MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
+    mt.setSource(extended);
+    mt.setNodes(&extended[NExtended * nCols]);
+    NTT_Goldilocks ntt(N);
+    ntt.LDE(mt.source, base, NExtended, N, nCols);
+    mt.merkelize();
 }
 
 void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
@@ -646,12 +674,18 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     mt.getRoot(&rootGL[0]);
 
     if(std::string(bufferFile) != "") {
+        // Packed small domain only: the LDE leaves and nodes are rebuilt by whoever loads it.
+        std::vector<uint64_t> pack_info(nCols, 0);
+        uint64_t words_per_row = packWidthsRowMajor((const uint64_t *)buffer, N, nCols, pack_info.data());
+        std::vector<uint64_t> packed(N * words_per_row, 0);
+        packRowsBits((const uint64_t *)buffer, packed.data(), N, nCols, pack_info.data(), words_per_row);
+
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
-        writeFileParallel(buffFile, buffer, N * nCols * sizeof(Goldilocks::Element), 32);
-        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
-        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, &words_per_row, sizeof(uint64_t), 32);
+        writeFileParallel(buffFile, pack_info.data(), nCols * sizeof(uint64_t), 40);
+        writeFileParallel(buffFile, packed.data(), N * words_per_row * sizeof(uint64_t), 40 + nCols * sizeof(uint64_t));
         fw.close();
     }
 }
@@ -676,7 +710,8 @@ static void unpack_cm1_cpu(DeviceCommitBuffersCPU *d_buffers, uint64_t airgroupI
     }
     d_buffers->unpack_cpu_indexed(src, table, dst, nRows, nCols, pInfo->num_packed_words,
                                   pInfo->words_per_entry, pInfo->unpack_info, pInfo->col_source,
-                                  pInfo->index_bits, d_buffers->getInstructionTableEntries(airgroupId, airId),
+                                  pInfo->col_lane, pInfo->index_bits, pInfo->lanes,
+                                  d_buffers->getInstructionTableEntries(airgroupId, airId),
                                   airgroupId, airId);
 }
 
@@ -812,7 +847,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 
 // Gen proof
 // =================================================================================
-uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained)  {
+uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained)  {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
@@ -864,14 +899,18 @@ void free_device_buffers_cpu(void *d_buffers_) {
     delete d_buffers;
 }
 
-void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_) {
+void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_, uint64_t *execData, uint64_t execWords) {
+    (void)execData;
+    (void)execWords;  // the CPU backend expands gate bands on the host trace, before the proof
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
 
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     PackedInfo *packedInfo = (PackedInfo *)packedInfo_;
     if (packedInfo != nullptr) {
-        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info, packedInfo->col_source, packedInfo->index_bits, packedInfo->words_per_entry);
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words,
+                                    packedInfo->unpack_info, packedInfo->col_source, packedInfo->col_lane,
+                                    packedInfo->index_bits, packedInfo->words_per_entry, packedInfo->lanes);
     }
 }
 
@@ -939,12 +978,56 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 
 
 
-void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
-    readExecFile(exec_data, string(exec_file), nCommitedPols);
-}
-
 void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
+}
+
+uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommitedPols, uint64_t execWords, uint64_t N) {
+    gate_bands::ExpandResult res =
+        gate_bands::expand_gate_bands((Goldilocks::Element *)witness, execData, nCommitedPols, execWords, N);
+    if (res.status == gate_bands::ExpandStatus::Ok) return res.nBands;
+
+    const std::string where = "band " + std::to_string(res.badBand) + " (row " + std::to_string(res.row) +
+                              ", kind " + std::to_string(res.kind) + ")";
+    switch (res.status) {
+        case gate_bands::ExpandStatus::MalformedSection:
+            zklog.error("expand_gate_bands: the exec file's gate-band section does not describe a "
+                        "buffer of " + std::to_string(execWords) + " words; the proving key is corrupt");
+            break;
+        case gate_bands::ExpandStatus::UnsupportedExecFormat:
+            zklog.error("expand_gate_bands: the exec file's format version is not the version " +
+                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) + " this build reads; "
+                        "regenerate the proving key with a matching setup");
+            break;
+        case gate_bands::ExpandStatus::UnsupportedVersion:
+            zklog.error("expand_gate_bands: gate-band section is format version " +
+                        std::to_string(res.version) + ", but this build understands version " +
+                        std::to_string(gate_bands::GATE_BAND_FORMAT_VERSION) +
+                        "; the proving key and this build disagree on the exec format -- "
+                        "regenerate the proving key with a matching setup");
+            break;
+        case gate_bands::ExpandStatus::UnexpandableBand:
+            zklog.error("expand_gate_bands: " + where + " cannot be expanded into a trace of " +
+                        std::to_string(N) + " rows; the proving key and the prover disagree");
+            break;
+        case gate_bands::ExpandStatus::OutputMismatch:
+            zklog.error("expand_gate_bands: " + where + " does not hash its own input to the output "
+                        "already in the trace; the witness gate and the trace expander disagree");
+            break;
+        case gate_bands::ExpandStatus::TableTooLargeForTrace:
+            zklog.error("expand_gate_bands: a BLAKE3 air of " + std::to_string(N) + " rows cannot "
+                        "hold the 2^17-row XOR/ROTR table, so its lookup counts have nowhere to go; "
+                        "circuits/blake3.pil rejects this at setup, so the proving key and this "
+                        "build disagree");
+            break;
+        case gate_bands::ExpandStatus::MixedFamilies:
+            zklog.error("expand_gate_bands: this air's gate bands name two different hash families, "
+                        "so no expander owns them all; the proving key was built from mismatched setups");
+            break;
+        case gate_bands::ExpandStatus::Ok: break;
+    }
+    exitProcess();
+    return 0;
 }
 
 void *load_zkey(char* zkeyFile) {

@@ -53,7 +53,6 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
 
 __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset, uint64_t stride, Goldilocks::Element *d_pol, uint64_t dim, uint64_t N);
 
-__global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
 __global__ void computeEvals_v2(
     uint64_t domainSize,
@@ -92,8 +91,9 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
 
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_openingPoints, Goldilocks::Element *d_xiChallenge, cudaStream_t stream);
 
-void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream);
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream);
+void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
+void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void extendAndMerkelizeFixed(SetupCtx&, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 

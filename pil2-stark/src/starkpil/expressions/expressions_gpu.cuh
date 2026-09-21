@@ -53,8 +53,11 @@ public:
     void *expsLib = nullptr;
     void *qLaunchFn = nullptr;
     uint64_t qMinScratch = 0;
+    // Set once tryLaunchExpsQ's first-call sentinel has proven this air's Q kernel runs.
+    bool qLaunchVerified = false;
     void *exprCoveredFn = nullptr;
     void *exprLaunchFn = nullptr;
+    void *exprPairLaunchFn = nullptr;
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
@@ -63,4 +66,3 @@ public:
     void calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream);
 };
 #endif
-

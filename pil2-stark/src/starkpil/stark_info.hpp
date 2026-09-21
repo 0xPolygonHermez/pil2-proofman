@@ -135,6 +135,16 @@ public:
     }
 };
 
+// Opening points are processed in batches of at most this many per LEv build /
+// evaluation pass. Used by the proof drivers' batching loops, the per-air EvalInfo
+// tables, the lev/lev_helper arena sizing and the helper-offset arithmetic -- they
+// must all agree, so never hardcode the value at a call site.
+static constexpr uint64_t EVALS_OPENING_BATCH = 4;
+
+// Row-stripe count of the evaluations reduction (computeEvals_v2 grid.y). Shared with
+// setMapOffsets, which sizes the "lev_helper" region for the reduction partials.
+static constexpr uint64_t EVALS_HELPER_CHUNKS = 16;
+
 class StarkInfo
 {
 public:
@@ -185,16 +195,8 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
-    bool preallocate = false;
-    // Table air: proved at most once, so nothing reuses its unpacked const pols.
-    bool singleUse = false;
 
     bool calculateFixedExtended = false;
-    // ("const", false) aliases the node area of ("const", true) instead of getting its own
-    // region. Implies calculateFixedExtended, which makes extendAndMerkelizeFixed the last
-    // reader of the const pols before the nodes overwrite them. Forbids const reuse across
-    // proofs: afterwards the region holds Merkle nodes.
-    bool constPolsAliasTree = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNContributions;
@@ -209,7 +211,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false, bool single_use = false);
+    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
     StarkInfo() {};
     
     /* Loads data from a json object */

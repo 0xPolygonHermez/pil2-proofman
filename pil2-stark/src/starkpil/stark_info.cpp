@@ -6,15 +6,13 @@
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
 
     recursive = recursive_;
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    preallocate = preallocate_;
-    singleUse = single_use_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -464,30 +462,26 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate && gpu) {    
+    if(gpu) {
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
-        if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+        // This air's const tree is rebuilt on device (unpack + extend + merkelize from the
+        // resident packed pols). No consttree file is ever read on GPU, so this is false only
+        // for airs with no constants at all.
+        if (nConstants > 0) {
             calculateFixedExtended = true;
         }
-
-        // extendAndMerkelizeFixed is the last reader of the unpacked const pols (quotient, evals
-        // and FRI use the extended tree), and a single-use air never reuses them across proofs, so
-        // they can live in the region they extend into and cost nothing.
-        constPolsAliasTree = singleUse && calculateFixedExtended;
     }
 
     if (gpu) {
-        if (constPolsAliasTree) {
-            mapOffsets[std::make_pair("const", false)] =
-                mapOffsets[std::make_pair("const", true)];
-        } else {
-            mapOffsets[std::make_pair("const", false)] = mapTotalN;
-            mapTotalN += N * nConstants;
-        }
+        // Const pols and const tree are always distinct regions. They used to be allowed to
+        // overlap for single-use airs -- valid only because the merkelize was then the last
+        // reader of the small domain, an ordering a pre-proof rebuild cannot honour.
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
     }
 
     if(gpu) {
@@ -636,14 +630,15 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), uint64_t(4));
+    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), EVALS_OPENING_BATCH);
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
     if(!gpu) {
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
         LEvSize += maxOpenings * N * FIELD_EXTENSION;
     } else {    
-        mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
-        LEvSize += FIELD_EXTENSION * N + openingPoints.size() * FIELD_EXTENSION;
+        // Scratch for the evaluations step 
+        mapOffsets[std::make_pair("lev_helper", false)] = LEvSize;
+        LEvSize += 2 * maxOpenings * FIELD_EXTENSION + evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);

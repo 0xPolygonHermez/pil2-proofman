@@ -433,23 +433,49 @@ impl MpiCtx {
         }
     }
 
+    /// Fail loudly if the ranks disagree on the aggregation arity.
+    ///
+    /// Tags are arity-derived, so disagreeing ranks would send to tags nobody receives on and
+    /// hang silently. The all-gather is symmetric: every rank sees the mismatch and panics.
+    #[cfg(feature = "mpi")]
+    fn check_aggregation_arity_agreement(&self, arity: usize) {
+        if self.n_processes <= 1 {
+            return;
+        }
+        let send: [u64; 1] = [arity as u64];
+        let mut all: Vec<u64> = vec![0u64; self.n_processes as usize];
+        self.world.all_gather_into(&send[..], &mut all[..]);
+        if let Some((other_rank, &other)) = all.iter().enumerate().find(|&(_, &v)| v != arity as u64) {
+            panic!(
+                "aggregation arity disagreement across MPI ranks: rank {} has {}, rank {} has {}. \
+                 Every rank must load a proving key built with the same aggregationArity.",
+                self.rank, arity, other_rank, other
+            );
+        }
+    }
+
     #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
+    pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>], arity: usize) {
         #[cfg(feature = "mpi")]
         {
+            // Must run before any tagged send/receive below: the tags are arity-derived.
+            self.check_aggregation_arity_agreement(arity);
+
             // Count number of aggregations that will be done
             let n_groups = alives.len();
-            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(3)).sum();
+            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(arity)).sum();
             let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
 
             let mut i_proof = 0;
             // tags codes:
-            // 0,...,ngroups-1: proofs that need to be sent to rank0 from another rank for a group with alive == 1
-            // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
+            // 0,...,ngroups-1: proofs sent to rank0 from another rank for a group with alive == 1
+            // ngroups, ..., ngroups + arity*n_aggregations - 1: proofs sent to the owner of the
+            // aggregation task. Every rank must derive `arity` from the same proving key, or
+            // senders and receivers use different tags and the exchange deadlocks.
 
             for (group_idx, &alive) in alives.iter().enumerate() {
                 let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
-                let n_aggs_group = alive.div_ceil(3);
+                let n_aggs_group = alive.div_ceil(arity);
 
                 if n_aggs_group == 0 {
                     assert!(alive == 1);
@@ -470,36 +496,23 @@ impl MpiCtx {
                     let chunk = i_proof / aggs_per_process;
                     let owner_rank =
                         if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
-                    let left_idx = i * 3;
-                    let mid_idx = i * 3 + 1;
-                    let right_idx = i * 3 + 2;
 
                     if owner_rank == self.rank as usize {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
+                        for k in 0..arity {
+                            let idx = i * arity + k;
                             if idx < alive && group_proofs[idx].is_none() {
-                                let tag = if idx == left_idx {
-                                    i_proof * 3 + n_groups
-                                } else if idx == mid_idx {
-                                    i_proof * 3 + n_groups + 1
-                                } else {
-                                    i_proof * 3 + n_groups + 2
-                                };
-                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                let tag = (i_proof * arity + n_groups + k) as i32;
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
                                 group_proofs[idx] = Some(msg);
                             }
                         }
                     } else if self.n_processes > 1 {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
+                        for k in 0..arity {
+                            let idx = i * arity + k;
                             if idx < alive {
                                 if let Some(proof) = group_proofs[idx].take() {
-                                    let tag = if idx == left_idx {
-                                        i_proof * 3 + n_groups
-                                    } else if idx == mid_idx {
-                                        i_proof * 3 + n_groups + 1
-                                    } else {
-                                        i_proof * 3 + n_groups + 2
-                                    };
-                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
+                                    let tag = (i_proof * arity + n_groups + k) as i32;
+                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag);
                                 }
                             }
                         }
@@ -568,48 +581,68 @@ impl MpiCtx {
             let buff_size = _n_cols * (_col_len + 1);
 
             if _owner != self.rank {
-                // Pack multiplicities in a sparse vector
-                let mut packed_multiplicities = vec![0u32; _n_cols];
-                for (col_idx, column) in _multiplicities.chunks(_col_len).enumerate() {
-                    for (idx, mul) in column.iter().enumerate() {
-                        let m = mul.load(Ordering::Relaxed);
-                        if m != 0 {
-                            assert!(m < u32::MAX as u64);
-                            packed_multiplicities[col_idx] += 1;
-                            packed_multiplicities.push(idx as u32);
-                            packed_multiplicities.push(m as u32);
+                // Pack multiplicities in a sparse vector the per-column scan is parallel
+                use rayon::prelude::*;
+                let per_col: Vec<Vec<u32>> = _multiplicities
+                    .par_chunks(_col_len)
+                    .map(|column| {
+                        let mut pairs: Vec<u32> = Vec::new();
+                        for (idx, mul) in column.iter().enumerate() {
+                            let m = mul.load(Ordering::Relaxed);
+                            if m != 0 {
+                                assert!(m < u32::MAX as u64);
+                                pairs.push(idx as u32);
+                                pairs.push(m as u32);
+                            }
                         }
-                    }
+                        pairs
+                    })
+                    .collect();
+                let total: usize = per_col.iter().map(|v| v.len()).sum();
+                let mut packed_multiplicities: Vec<u32> = Vec::with_capacity(_n_cols + total);
+                packed_multiplicities.extend(per_col.iter().map(|v| (v.len() / 2) as u32));
+                for v in &per_col {
+                    packed_multiplicities.extend_from_slice(v);
                 }
-
                 self.world
                     .process_at_rank(_owner)
                     .send_with_tag(&packed_multiplicities[..], _MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
             } else {
-                let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
+                use rayon::prelude::*;
                 for i in 0..self.n_processes {
                     if i != _owner {
-                        let (msg, _) =
+                        // Receive exactly the message size
+                        let (msg, status) =
                             self.world.process_at_rank(i).matched_probe_with_tag(_MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
-                        msg.matched_receive_into(&mut packed_multiplicities);
-
-                        // Read counters
-                        let mut counters = vec![0usize; _n_cols];
-                        for col_idx in 0.._n_cols {
-                            counters[col_idx] = packed_multiplicities[col_idx] as usize;
+                        let count = status.count(u32::equivalent_datatype()) as usize;
+                        assert!(
+                            count >= _n_cols && count <= buff_size * 2,
+                            "distribute_multiplicities: bad message size {count}"
+                        );
+                        let mut packed_multiplicities: Vec<u32> = vec![0; count];
+                        msg.matched_receive_into(&mut packed_multiplicities[..]);
+                        // Per-column offsets into the pair area, then unpack columns in parallel
+                        // (each column touches only its own atomics; fetch_add keeps it exact).
+                        let mut offsets = Vec::with_capacity(_n_cols + 1);
+                        let mut acc = _n_cols;
+                        for &counter in &packed_multiplicities[.._n_cols] {
+                            offsets.push(acc);
+                            acc += 2 * counter as usize;
                         }
-
-                        // Unpack multiplicities
-                        let mut idx = _n_cols;
-                        for (col_idx, &count) in counters.iter().enumerate() {
+                        offsets.push(acc);
+                        assert_eq!(acc, count, "distribute_multiplicities: counters do not match message size");
+                        let packed = &packed_multiplicities;
+                        (0.._n_cols).into_par_iter().for_each(|col_idx| {
                             let col_base = col_idx * _col_len;
-                            for _ in 0..count {
-                                let row_idx = packed_multiplicities[idx] as usize;
-                                let m = packed_multiplicities[idx + 1] as u64;
+                            let mut idx = offsets[col_idx];
+                            let end = offsets[col_idx + 1];
+                            while idx < end {
+                                let row_idx = packed[idx] as usize;
+                                let m = packed[idx + 1] as u64;
                                 _multiplicities[col_base + row_idx].fetch_add(m, Ordering::Relaxed);
                                 idx += 2;
                             }
-                        }
+                        });
                     }
                 }
             }

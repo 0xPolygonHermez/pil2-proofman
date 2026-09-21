@@ -26,12 +26,16 @@ pub use templates::{
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Options forwarded from `GenCircomOptions` / CLI `--has*` flags.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct CircomGenOptions {
     pub airgroup_id: Option<usize>,
     pub has_compressor: bool,
     pub has_recursion: bool,
     pub is_final: bool,
+    /// Proofs a `recursive2` circuit aggregates. Only that template reads it, and it rejects
+    /// anything unsupported; others pass 0. Deliberately no `Default` — an unstated arity is
+    /// how a wrong one would reach the circuit unnoticed.
+    pub agg_arity: usize,
 }
 
 /// All inputs for a [`gen_circom_circuit`] call (mirrors `gencircom.js` parameters).

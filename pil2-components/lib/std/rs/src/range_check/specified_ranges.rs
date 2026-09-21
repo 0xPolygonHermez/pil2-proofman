@@ -128,16 +128,6 @@ impl<F: PrimeField64> SpecifiedRanges<F> {
         (value - range_min) as u64
     }
 
-    pub fn get_global_rows(range_min: i64, values: &[i64]) -> Vec<u64> {
-        values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
-    }
-
-    /// [leak fix] Variant that writes into a caller-supplied buffer to avoid any alloc.
-    pub fn get_global_rows_into(range_min: i64, values: &[i64], out: &mut Vec<u64>) {
-        out.clear();
-        out.extend(values.iter().map(|&v| Self::get_global_row(range_min, v)));
-    }
-
     /// Core update function: Updates multiplicities for value/multiplicity pairs
     #[inline]
     fn update(&self, table_offset: usize, range_min: i64, iter: impl Iterator<Item = (i64, u64)>) {
@@ -173,20 +163,6 @@ impl<F: PrimeField64> SpecifiedRanges<F> {
         self.update(range.acc_height, range.min, std::iter::once((value, multiplicity)));
     }
 
-    /// Update multiple values with corresponding multiplicities
-    pub fn update_values(&self, id: usize, values: &[i64], multiplicities: &[u64]) {
-        debug_assert!(!values.is_empty() && values.len() == multiplicities.len());
-        let range = &self.ranges[id];
-        self.update(range.acc_height, range.min, values.iter().copied().zip(multiplicities.iter().copied()));
-    }
-
-    /// Update multiple values with the same multiplicity
-    pub fn update_values_same_mul(&self, id: usize, values: &[i64], multiplicity: u64) {
-        debug_assert!(!values.is_empty());
-        let range = &self.ranges[id];
-        self.update(range.acc_height, range.min, values.iter().copied().map(|v| (v, multiplicity)));
-    }
-
     /// Update directly from an iterator of (value, multiplicity) pairs. Lets callers
     /// avoid materializing intermediate buffers when values come from a synthetic range
     /// or another iterator chain.
@@ -201,6 +177,32 @@ impl<F: PrimeField64> SpecifiedRanges<F> {
 
     pub fn air_id(&self) -> usize {
         self.air_id
+    }
+}
+
+#[cfg(test)]
+impl<F: PrimeField64> SpecifiedRanges<F> {
+    /// `mins` are the range minima, one per specified range; heights accumulate in order.
+    pub(crate) fn for_test(num_rows: usize, mins_and_heights: &[(i64, usize)], num_cols: usize) -> Arc<Self> {
+        let ranges = mins_and_heights.iter().map(|&(min, acc_height)| SpecifiedRange { acc_height, min }).collect();
+        Arc::new(Self {
+            airgroup_id: 0,
+            air_id: 0,
+            shift: num_rows.trailing_zeros() as usize,
+            mask: num_rows - 1,
+            num_rows,
+            num_cols,
+            multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
+            table_instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+            ranges,
+            shared_tables: false,
+            trace_buffer: Arc::new(Mutex::new(Some(vec![F::ZERO; num_cols * num_rows]))),
+        })
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<u64> {
+        self.multiplicities.iter().map(|m| m.load(Ordering::Relaxed)).collect()
     }
 }
 
@@ -261,12 +263,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for SpecifiedR
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            if self.shared_tables {
+            // An assigned table is computed only on its single owner node; its
+            // multiplicities are produced there, so there is no cross-rank reduction.
+            let assigned = pctx.dctx_is_assigned_table(instance_id)?;
+
+            if self.shared_tables && !assigned {
                 let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, self.num_cols, self.num_rows, owner_idx);
             }
 
-            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
+            if (!self.shared_tables && !assigned) || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
                 // The slot is pre-populated by `new` and refilled by the reclaim hook
                 // on every prior iteration's clear_traces / Drop. If it's empty here,

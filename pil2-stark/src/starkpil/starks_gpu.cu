@@ -1,6 +1,7 @@
 #include "starks.hpp"
 #include "starks_api_internal.cuh"
 #include "starks_gpu.cuh"
+#include "unpack_indexed_device.cuh"
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
 #endif
@@ -103,83 +104,6 @@ __global__ void unpack(
     }
 }
 
-// Read `nbits` from a packed stream at cursor (word,idx,off), advancing the cursor.
-// Mirrors unpack()'s bit-walk exactly so indexed output is bit-identical.
-__device__ __forceinline__ uint64_t idx_read_bits(
-    const uint64_t* base, uint64_t words, uint64_t &word, uint64_t &idx, uint64_t &off, uint64_t nbits)
-{
-    uint64_t val;
-    uint64_t bits_left = 64 - off;
-    if (nbits <= bits_left) {
-        uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
-        val = (word >> off) & mask;
-        off += nbits;
-        if (off == 64 && idx + 1 < words) { word = base[++idx]; off = 0; }
-    } else {
-        uint64_t low = word >> off;
-        word = base[++idx];
-        uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
-        val = (high << bits_left) | low;
-        off = nbits - bits_left;
-    }
-    return val;
-}
-
-// Indexed unpack: each compact row holds a leading instruction index plus the runtime
-// columns; the instruction-derived columns live once in `table`. Two bit cursors (row,
-// table); each output column c is sourced per d_col_source[c]. Bit-identical to unpack().
-__global__ void unpack_indexed(
-    const uint64_t* src,             // compact rows: words_per_row each
-    const uint64_t* table,           // instruction table: words_per_entry each
-    uint64_t* dst,
-    uint64_t nRows,
-    uint64_t nCols,
-    uint64_t words_per_row,
-    uint64_t words_per_entry,
-    const uint64_t* d_unpack_info,   // nbits per output column
-    const uint8_t*  d_col_source,    // 0 = from row stream, 1 = from table stream
-    uint64_t index_bits,             // width of the leading index header in the row
-    uint64_t num_entries,            // instruction-table entry count (index bound)
-    Layout layout
-) {
-    // One shared word per column carries BOTH the width and the source flag
-    // (nbits in the low 32 bits, source in bit 32) -- nbits <= 64, so they fit.
-    // Folding them keeps the inner loop at a single shared read instead of also
-    // taking a dependent global load for d_col_source, and keeps the shared
-    // footprint identical to the plain unpack, so unpack_trace's sharedMemSize
-    // (nCols * 8) covers both kernels unchanged. This kernel is DRAM-bound (the
-    // strided row reads dominate), so treat it as hygiene, not a throughput win.
-    extern __shared__ uint64_t shared_unpack_info[];
-    for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
-        shared_unpack_info[i] = d_unpack_info[i] | ((uint64_t)(d_col_source[i] != 0) << 32);
-    }
-    __syncthreads();
-
-    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= nRows) return;
-
-    const uint64_t* rbase = src + row * words_per_row;
-    uint64_t rword = rbase[0], ridx = 0, roff = 0;
-    uint64_t index = idx_read_bits(rbase, words_per_row, rword, ridx, roff, index_bits);
-    // A witness bug can put an out-of-range index here. The CPU unpack reports it and
-    // aborts; a kernel cannot, so fall back to entry 0 to stay in bounds -- the proof
-    // then simply fails instead of reading past the table.
-    if (index >= num_entries) index = 0;
-
-    const uint64_t* tbase = table + index * words_per_entry;
-    uint64_t tword = tbase[0], tidx = 0, toff = 0;
-
-    for (uint64_t c = 0; c < nCols; c++) {
-        uint64_t info = shared_unpack_info[c];
-        uint64_t nbits = info & 0xFFFFFFFFull;
-        // Warp-uniform: col_source depends only on c, so this never diverges.
-        uint64_t val = (info >> 32)
-            ? idx_read_bits(tbase, words_per_entry, tword, tidx, toff, nbits)
-            : idx_read_bits(rbase, words_per_row, rword, ridx, roff, nbits);
-        dst[getBufferOffset(row, c, nRows, nCols, layout)] = val;
-    }
-}
-
 void unpack_fixed(
     uint64_t* d_num_packed_words,
     uint64_t* d_unpack_info,
@@ -235,6 +159,15 @@ void unpack_trace(
                         "table is registered; call register_instruction_table first");
             exitProcess();
         }
+        // Without the lane map every column would decode from lane 0's entry: a wrong
+        // trace with no other symptom.
+        if (air_instance_info->lanes > 1 && air_instance_info->d_col_lane == nullptr) {
+            zklog.error("unpack_trace: air (" + std::to_string(air_instance_info->airgroupId) + "," +
+                        std::to_string(air_instance_info->airId) + ") packs " +
+                        std::to_string(air_instance_info->lanes) + " lanes per row but carries no "
+                        "col_lane map");
+            exitProcess();
+        }
         // Indexed cm1 unpack: compact rows + shared instruction table reconstruct the full
         // nCols output. Same storage layout as the plain path.
         unpack_indexed<<<blocks, threads, sharedMemSize, stream>>>(
@@ -247,7 +180,9 @@ void unpack_trace(
             air_instance_info->words_per_entry,
             air_instance_info->unpack_info,
             air_instance_info->d_col_source,
+            air_instance_info->d_col_lane,
             air_instance_info->index_bits,
+            air_instance_info->lanes,
             air_instance_info->num_entries,
             layout
         );
@@ -329,12 +264,12 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
     x[k] = gl64_t(shift.fe) * w_k;
 }
 
-void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript,  bool skipRecalculation, TimerGPU &timer, cudaStream_t stream)
+void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
     
-        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, skipRecalculation, timer, stream);
+        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, timer, stream);
     }
     else
     {
@@ -342,7 +277,7 @@ void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **trees
     }
 }
 
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream)
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
 {
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     std::string section = "cm" + to_string(step);
@@ -354,25 +289,23 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
     Goldilocks::Element * dstGL = (Goldilocks::Element*) (d_aux_trace);
 
-    treesGL[step - 1]->setSource(dstGL + offset_dst);
+    // source/nodes were set by genProof_gpu right after the Starks ctor (outside the capture
+    // regions this runs in); a setter here would be skipped on replay.
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes(pNodes);
 
-    if(!skipRecalculation) {
-        NTTGoldilocksGPU ntt;
+    NTTGoldilocksGPU ntt;
 
-        if (nCols > 0)
-        {
-            // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
-            PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
-            // pNodes is free scratch until the merkelize below fills it; its capacity lets the
-            // LDE stage a wider column chunk.
-            ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
-            PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-        }
+    if (nCols > 0)
+    {
+        // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
+        PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
+        // pNodes is free scratch until the merkelize below fills it; its capacity lets the
+        // LDE stage a wider column chunk.
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+        PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
+        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
     }
 
     if (nCols > 0)
@@ -386,22 +319,27 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
 // preserve_src: must the unpacked const pols survive? Yes whenever a later proof of the same air
 // can reuse them instead of re-unpacking -- so for everything except an aliased air.
-void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    uint64_t nCols = setupCtx.starkInfo.nConstants;
+// Extend one fixed/preprocessed section and build its Merkle tree in place. Sections are stored
+// fixedLayout() (ColMajor); pNodes sits above the LDE's writes, so it doubles as LDE scratch.
+void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+    uint64_t NExtended = 1ull << nBitsExt;
     NTTGoldilocksGPU ntt;
-
-    Goldilocks::Element *src = d_fixedPols;
-    Goldilocks::Element *dst = d_fixedPolsExtended;
-    Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    // Const sections are stored fixedLayout() (ColMajor); the Merkle build reads dst in that
-    // layout. pNodes is free scratch: above the LDE's writes, filled by the merkelize below.
+    Goldilocks::Element *pNodes = d_polsExtended + nCols * NExtended;
     TimerStartCategoryGPU(timer, NTT);
-    ntt.ldeColMajor((gl64_t *)dst, (gl64_t *)src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+    ntt.ldeColMajor((gl64_t *)d_polsExtended, (gl64_t *)d_pols, nBits, nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, numNodes);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, fixedLayout(), stream);
+    buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_polsExtended, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
+}
+
+void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    extendAndMerkelizeSection(setupCtx.starkInfo.nConstants, setupCtx.starkInfo.starkStruct.nBits,
+                              setupCtx.starkInfo.starkStruct.nBitsExt,
+                              setupCtx.starkInfo.starkStruct.merkleTreeArity,
+                              setupCtx.starkInfo.getNumNodesMT(NExtended),
+                              d_fixedPols, d_fixedPolsExtended, preserve_src, timer, stream);
 }
 
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
@@ -420,9 +358,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
      
     Goldilocks::Element* d_aux_traceGL = (Goldilocks::Element*) d_aux_trace;
 
-    treesGL[step - 1]->setSource(d_aux_traceGL + offset_cmQ);
     Goldilocks::Element *pNodes = d_aux_traceGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes(pNodes);
 
     if (nCols > 0)
     {
@@ -456,39 +392,7 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-__global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
-{
-    uint64_t i  = blockIdx.y;                  // opening point index
-    uint64_t k0 = blockIdx.x * blockDim.x;     // start exponent for this block
-    uint64_t row  = k0 + threadIdx.x;          // this thread's exponent index
-    if (i >= nOpeningPoints || row >= N) return;
-
-    Goldilocks3GPU::Element xi;
-    xi[0] = d_shiftedValues[i * FIELD_EXTENSION + 0];
-    xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
-    xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
-
-    __shared__ Goldilocks3GPU::Element basePow;
-
-    if (threadIdx.x == 0) {
-        Goldilocks3GPU::pow(xi, k0, basePow);
-    }
-    __syncthreads();
-
-    Goldilocks3GPU::Element xi_t;
-    Goldilocks3GPU::pow(xi, threadIdx.x, xi_t);
-
-    Goldilocks3GPU::Element res;
-    Goldilocks3GPU::mul(res, basePow, xi_t);
-
-    Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
-    
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[0];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[1];
-    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION, layout)] = res[2];
-}
-
-__global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
+__global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_, uint64_t nBits, uint64_t domainInv_)
 {
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -509,7 +413,111 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
         d_shiftedValues[i * FIELD_EXTENSION] = xi[0];
         d_shiftedValues[i * FIELD_EXTENSION + 1] = xi[1];
         d_shiftedValues[i * FIELD_EXTENSION + 2] = xi[2];
+
+        Goldilocks3GPU::Element xiN, factor, one;
+        Goldilocks3GPU::copy(xiN, xi);
+        for (uint64_t bit = 0; bit < nBits; ++bit)
+            Goldilocks3GPU::mul(xiN, xiN, xiN);
+        Goldilocks3GPU::one(one);
+        Goldilocks3GPU::sub(factor, one, xiN);
+        gl64_t domainInv(domainInv_);
+        Goldilocks3GPU::mul(factor, factor, domainInv);
+        gl64_t *d_factors = d_shiftedValues + nOpeningPoints * FIELD_EXTENSION;
+        d_factors[i * FIELD_EXTENSION] = factor[0];
+        d_factors[i * FIELD_EXTENSION + 1] = factor[1];
+        d_factors[i * FIELD_EXTENSION + 2] = factor[2];
     }
+}
+
+// Field exponentiation with a 64-bit exponent 
+static __device__ __forceinline__ gl64_t gl64Pow(gl64_t base, uint64_t e)
+{
+    gl64_t acc(uint64_t(1));
+    while (e) {
+        if (e & 1) acc *= base;
+        base *= base;
+        e >>= 1;
+    }
+    return acc;
+}
+
+static __device__ __forceinline__ void storeLEv(gl64_t *d_LEv, uint64_t row, uint64_t opening,
+                                                uint64_t N, uint64_t nOpeningPoints, Layout layout,
+                                                const Goldilocks3GPU::Element &v)
+{
+    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k)
+        d_LEv[getBufferOffset(row, opening * FIELD_EXTENSION + k, N,
+                              nOpeningPoints * FIELD_EXTENSION, layout)] = v[k];
+}
+
+// Direct (barycentric) Lagrange-kernel fill: LEv[row] = factor / (1 - z*w^{-row}) with
+// factor = (1 - z^N)/N precomputed per opening point (see evalXiShifted), which equals
+// L_row(z) by the closed form (z^N - 1) w^row / (N (z - w^row)). Each thread owns BATCH
+// consecutive rows and inverts their denominators with ONE cubic inversion (Montgomery
+// prefix trick), so the inversion cost is amortized BATCH ways.
+// factor == 0 means z^N = 1, i.e. z landed exactly on a domain node (negligible-probability
+// challenge, but exact): LEv is then the indicator vector of the matching row.
+template<uint32_t BATCH>
+__global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t nOpeningPoints,
+                                     uint64_t N, gl64_t *d_shiftedValues,
+                                     uint64_t rootInv_)
+{
+    const uint64_t opening = blockIdx.y;
+    const uint64_t batch = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const uint64_t row0 = batch * BATCH;
+    if (opening >= nOpeningPoints || row0 >= N) return;
+
+    const uint32_t count = (uint32_t)min((uint64_t)BATCH, N - row0);
+    Goldilocks3GPU::Element xi, factor;
+    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k) {
+        xi[k] = d_shiftedValues[opening * FIELD_EXTENSION + k];
+        factor[k] = d_shiftedValues[(nOpeningPoints + opening) * FIELD_EXTENSION + k];
+    }
+    const bool factorZero = factor[0].is_zero() && factor[1].is_zero() && factor[2].is_zero();
+    gl64_t rootInv(rootInv_);
+    gl64_t root = gl64Pow(rootInv, row0);
+    gl64_t roots[BATCH];
+    Goldilocks3GPU::Element prefix[BATCH], scaled, den, one;
+    Goldilocks3GPU::one(one);
+    #pragma unroll
+    for (uint32_t b = 0; b < BATCH; ++b) {
+        if (b >= count) break;
+        roots[b] = root;
+        Goldilocks3GPU::mul(scaled, xi, root);
+        Goldilocks3GPU::sub(den, one, scaled);
+        if (b == 0) Goldilocks3GPU::copy(prefix[0], den);
+        else Goldilocks3GPU::mul(prefix[b], prefix[b - 1], den);
+        root *= rootInv;
+    }
+    // 63 - __clzll(N) is log2(N)
+    const Layout layout = resolveLayout(63 - __clzll(N), nOpeningPoints * FIELD_EXTENSION);
+    if (factorZero) {
+        Goldilocks3GPU::Element out;
+        for (uint32_t b = 0; b < count; ++b) {
+            Goldilocks3GPU::mul(scaled, xi, roots[b]);
+            Goldilocks3GPU::sub(den, one, scaled);
+            const bool match = den[0].is_zero() && den[1].is_zero() && den[2].is_zero();
+            out[0] = match ? gl64_t(uint64_t(1)) : gl64_t(uint64_t(0));
+            out[1] = gl64_t(uint64_t(0));
+            out[2] = gl64_t(uint64_t(0));
+            storeLEv(d_LEv, row0 + b, opening, N, nOpeningPoints, layout, out);
+        }
+        return;
+    }
+    // Montgomery unwind: inv = (prod of remaining dens)^{-1}; each step peels one den
+    // (recomputed rather than stored -- one cubic mul against BATCH extra registers).
+    Goldilocks3GPU::Element inv, weight, out;
+    Goldilocks3GPU::inv(inv, prefix[count - 1]);
+    for (uint32_t b = count - 1; b > 0; --b) {
+        Goldilocks3GPU::mul(weight, inv, prefix[b - 1]);
+        Goldilocks3GPU::mul(out, factor, weight);
+        storeLEv(d_LEv, row0 + b, opening, N, nOpeningPoints, layout, out);
+        Goldilocks3GPU::mul(scaled, xi, roots[b]);
+        Goldilocks3GPU::sub(den, one, scaled);
+        Goldilocks3GPU::mul(inv, inv, den);
+    }
+    Goldilocks3GPU::mul(out, factor, inv);
+    storeLEv(d_LEv, row0, opening, N, nOpeningPoints, layout, out);
 }
 
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream)
@@ -517,25 +525,30 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     TimerStartCategoryGPU(timer, LEV);
     uint64_t N = 1 << nBits;
 
+    // Helper-region footprint: 2 * nOpeningPoints * FIELD_EXTENSION elements -- the shifted
+    // points z = xi * g^{+-k} * s^{-1}, followed by their factors (1 - z^N)/N (see
+    // evalXiShifted). Both are consumed by fillLEvDirectBatched.
     gl64_t * d_shiftedValues = d_aux_trace + offset_helper;
 
     Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
 
-    // Evaluate the shifted value for each opening point
+    // Evaluate the shifted value and its factor for each opening point
     dim3 nThreads_(32);
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
-    evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
+    Goldilocks::Element domainInv = Goldilocks::inv(Goldilocks::fromU64(N));
+    evalXiShifted<<<nBlocks_, nThreads_, 0, stream>>>(
+        d_shiftedValues, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe,
+        nOpeningPoints, d_openingPoints, invShift.fe, nBits, domainInv.fe);
 
-    dim3 nThreads(512, 1);
-    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x, (nOpeningPoints + nThreads.y - 1) / nThreads.y);
-    fillLEv_2d<<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
+    // BATCH = 4: measured optimum (BATCH = 8 amortizes the per-thread inversion further
+    // but the extra cubic registers cost more than it saves: 31.4 vs 22.0 ms per phase).
+    constexpr uint32_t directBatch = 4;
+    dim3 nThreads(256, 1);
+    dim3 nBlocks((N + nThreads.x * directBatch - 1) / (nThreads.x * directBatch), nOpeningPoints);
+    Goldilocks::Element rootInv = Goldilocks::inv(Goldilocks::w(nBits));
+    fillLEvDirectBatched<directBatch><<<nBlocks, nThreads, 0, stream>>>(d_LEv, nOpeningPoints, N, d_shiftedValues, rootInv.fe);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
-
-    TimerStartCategoryGPU(timer, NTT);
-    NTTGoldilocksGPU ntt;
-    ntt.INTT(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
-    TimerStopCategoryGPU(timer, NTT);
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
@@ -583,7 +596,7 @@ __global__ void computeEvals_v2(
     gl64_t *d_helper)
 {
 
-    extern __shared__ Goldilocks3GPU::Element shared_sum[];
+    extern __shared__ Goldilocks3GPU::Element warp_sum[];
     uint64_t evalIdx = blockIdx.x;
     uint64_t chunkIdx = blockIdx.y;
 
@@ -612,10 +625,9 @@ __global__ void computeEvals_v2(
             polLayout = fixedLayout();
         }
 
+        Goldilocks3GPU::Element sum;
         for (int i = 0; i < FIELD_EXTENSION; i++)
-        {
-            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0));
-        }
+            sum[i] = gl64_t(uint64_t(0));
         uint64_t tid = chunkIdx * blockDim.x + threadIdx.x;
         while (tid < N)
         {
@@ -638,29 +650,36 @@ __global__ void computeEvals_v2(
                 val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols, polLayout)];
                 Goldilocks3GPU::mul(res, LEv, val);
             }
-            Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
+            Goldilocks3GPU::add(sum, sum, res);
             tid += blockDim.x * gridDim.y;
         }
-        __syncthreads();
-        int s = (blockDim.x + 1) / 2;
-        while (s > 0)
-        {
-            if (threadIdx.x < s)
-            {
-                Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], shared_sum[threadIdx.x + s]);
-            }
-            __syncthreads();
-            if (s == 1)
-                break;
-            s = (s + 1) / 2;
+
+        const uint32_t lane = threadIdx.x & 31;
+        const uint32_t warp = threadIdx.x >> 5;
+        const uint32_t nWarps = (blockDim.x + 31) >> 5;   // warp_sum is sized to this at launch
+        for (uint32_t offset = 16; offset > 0; offset >>= 1) {
+            Goldilocks3GPU::Element other;
+            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                other[i][0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)sum[i][0], offset);
+            if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
         }
-        
+        if (lane == 0) Goldilocks3GPU::copy(warp_sum[warp], sum);
         __syncthreads();
-        if (threadIdx.x == 0) {
-            uint64_t partial_pos = evalIdx * gridDim.y + chunkIdx;
-            d_helper[partial_pos * FIELD_EXTENSION] = shared_sum[0][0];
-            d_helper[partial_pos * FIELD_EXTENSION + 1] = shared_sum[0][1];
-            d_helper[partial_pos * FIELD_EXTENSION + 2] = shared_sum[0][2];
+        if (warp == 0) {
+            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                sum[i] = lane < nWarps ? warp_sum[lane][i] : gl64_t(uint64_t(0));
+            for (uint32_t offset = 16; offset > 0; offset >>= 1) {
+                Goldilocks3GPU::Element other;
+                for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
+                    other[i][0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)sum[i][0], offset);
+                if (lane < offset) Goldilocks3GPU::add(sum, sum, other);
+            }
+            if (lane == 0) {
+                uint64_t partial_pos = evalIdx * gridDim.y + chunkIdx;
+                d_helper[partial_pos * FIELD_EXTENSION] = sum[0];
+                d_helper[partial_pos * FIELD_EXTENSION + 1] = sum[1];
+                d_helper[partial_pos * FIELD_EXTENSION + 2] = sum[2];
+            }
         }
     }
 }
@@ -693,13 +712,16 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
     EvalInfo *d_evalsInfo = air_instance_info->evalsInfo[chunk];
     uint64_t nEvals = air_instance_info->evalsInfoSizes[chunk];
 
-    uint64_t n_eval_chunks = 16;
+    uint64_t n_eval_chunks = EVALS_HELPER_CHUNKS;
 
-    gl64_t *d_helper = (gl64_t *)h_params.aux_trace + offset_helper;
+    // The head of the lev_helper region holds the shifted points + factors written by
+    // computeLEv_inplace for this batch; the reduction partials live after them.
+    uint64_t maxOpenings = std::min(uint64_t(setupCtx.starkInfo.openingPoints.size()), EVALS_OPENING_BATCH);
+    gl64_t *d_helper = (gl64_t *)h_params.aux_trace + offset_helper + 2 * maxOpenings * FIELD_EXTENSION;
     
     dim3 nThreads(256);
     dim3 nBlocks(nEvals, n_eval_chunks);
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
+    computeEvals_v2<<<nBlocks, nThreads, ((nThreads.x + 31) / 32) * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
 
     dim3 nBlocks_2((nEvals + nThreads.x - 1) / nThreads.x);
     computeEvalsReduction<<<nBlocks_2, nThreads, 0, stream>>>((gl64_t *)h_params.evals, d_helper, d_evalsInfo, nEvals, n_eval_chunks);
@@ -981,15 +1003,18 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     uint64_t height = pol2N / width;
     dim3 nThreads(32, 32);
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
-    transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
-    
+    // The transpose lays the polynomial out for the tree, so it belongs to the same category.
     TimerStartCategoryGPU(timer, MERKLE_TREE);
+    transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
+
     buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, Layout::RowMajor, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     uint64_t tree_size = treeFRI->numNodes;
     if(d_transcript != nullptr) {
+        TimerStartCategoryGPU(timer, TRANSCRIPT);
         d_transcript->put(&treeFRI->nodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+        TimerStopCategoryGPU(timer, TRANSCRIPT);
     }
 }
 
@@ -1087,11 +1112,18 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
     CHECKCUDAERR(cudaGetLastError());
 
 
+    // Node arrays come from the layout, never from tree-object state: the same source setProof
+    // reads roots/ll from. A mismatch means a tree object was consumed with stale pointers.
     for (uint k = 0; k < nStages + 1; k++)
     {
+        gl64_t *nodesK = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + std::to_string(k + 1), true)];
+        if ((gl64_t *)trees[k]->get_nodes_ptr() != nodesK) {
+            zklog.error("proveQueries: tree " + std::to_string(k) + " nodes pointer disagrees with the layout (stale tree object)");
+            exitProcess();
+        }
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[k]->get_nodes_ptr(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>(nodesK, trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
         CHECKCUDAERR(cudaGetLastError());
     }
     CHECKCUDAERR(cudaGetLastError());

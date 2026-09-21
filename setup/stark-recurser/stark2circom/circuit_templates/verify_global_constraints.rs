@@ -230,10 +230,9 @@ fn split_chunks(code: &[Value]) -> Vec<Chunk> {
 ///
 /// Returns the complete circom text: all `GlobalConstraint{c}_chunk{i}` helper
 /// templates followed by `template VerifyGlobalConstraints() { ... }`.
-pub fn gen_verify_global_constraints(stark_info: &Value, vadcop_info: &Value) -> String {
+pub fn gen_verify_global_constraints(vadcop_info: &Value) -> String {
     let mut out = String::new();
 
-    let arity = stark_info["starkStruct"]["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let agg_types = vadcop_info["aggTypes"].as_array().cloned().unwrap_or_default();
     let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
@@ -347,11 +346,10 @@ pub fn gen_verify_global_constraints(stark_info: &Value, vadcop_info: &Value) ->
     out.push_str("\n    signal input globalChallenge[3];\n\n");
     out.push_str(&format!("    signal challenges[{num_challenges_1}][3];\n"));
 
-    let poseidon2 = vadcop_info.get("hash").and_then(|v| v.as_str()).map(|s| s == "Poseidon2").unwrap_or(true);
+    let hash_family = vadcop_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2");
 
     // Transcript to derive challenges from globalChallenge
-    let mut transcript = Transcript::new(arity, None);
-    transcript.set_poseidon2(poseidon2);
+    let mut transcript = Transcript::new(None, hash_family);
     transcript.put("globalChallenge", 3);
     for i in 0..num_challenges_1 {
         transcript.get_field(&format!("challenges[{i}]"));

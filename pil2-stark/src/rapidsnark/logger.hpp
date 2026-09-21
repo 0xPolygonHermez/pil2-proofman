@@ -119,6 +119,7 @@ namespace CPlusPlusLogging
 
          // Interfaces to control log levels
          void updateLogLevel(LogLevel logLevel);
+         LogLevel getLogLevel() const { return m_LogLevel; }
          void enaleLog();  // Enable all log levels
          void disableLog(); // Disable all log levels, except error and alarm
 

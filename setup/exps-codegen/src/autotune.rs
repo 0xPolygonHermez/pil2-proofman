@@ -16,6 +16,21 @@ const CHUNK_MIN: usize = 64; // give-up floor
 const BIG_OPS: usize = 20000; // ops threshold for "large expressions"
 const BIG_START_CHUNK: usize = 250; // autotuner start chunk for AIRs with > BIG_OPS ops
 
+/// Start chunk for the recursion phases, whatever their op count.
+///
+/// This tuner takes the LARGEST chunk that does not spill, and largest is not fastest: past some size
+/// the register pressure costs more than the launches it saves, and the recursion AIRs sit past that
+/// point at CHUNK_MAX. Scoped to those phases rather than lowered globally because the optimum is
+/// per-AIR: the recursion AIRs are the same handful of shapes on every proof, while a basic AIR is
+/// whatever the project makes it -- opt.rs records Main preferring the opposite of Binary and Rom on
+/// the neighbouring fold decision. `--exps-chunk N` pins it per run.
+const RECURSION_START_CHUNK: usize = 250;
+
+/// Whether an AIR's phase (the `sym` prefix, see `proof_phase`) is one of the recursion ones.
+fn is_recursion_phase(sym: &str) -> bool {
+    ["compressor_", "recursive_", "final_"].iter().any(|p| sym.starts_with(p))
+}
+
 /// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
 /// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
 fn max_stack(obj: &Path) -> i64 {
@@ -29,10 +44,10 @@ fn max_stack(obj: &Path) -> i64 {
     // the hoisted-invariants program straight-line) may spill freely; its
     // stack must not gate the per-row chunk kernels -- it made the autotuner
     // reject Main at every chunk size ("still spills at CHUNK_MIN").
-    // names are mangled: `..._powPK11StepsParams...` (table kernel) vs
+    // names are mangled: `..._powPK11StepsParams...` / `..._pow_s3PK...` (table kernel, slices) vs
     // `..._c12PK11StepsParams...` (chunk kernels) / `..._kernelPK...`
     let re_fn = Regex::new(r"Function\s+(\S+?):\s*$").unwrap();
-    let re_pow = Regex::new(r"_pow(?:PK|P\d|\(|:|\s|$)").unwrap();
+    let re_pow = Regex::new(r"_pow(?:_s\d+)?(?:PK|P\d|\(|:|\s|$)").unwrap();
     let re_st = Regex::new(r"STACK:(\d+)").unwrap();
     let mut best = 0i64;
     let mut skip = false;
@@ -69,6 +84,10 @@ pub fn tune_chunk(tc: &Toolchain, ir: &Ir, sym: &str, n_ops: usize, out_dir: &Pa
     result
 }
 
+/// One probe: `Some(max STACK over the chunk TUs)` with their objects, or `None` when nvcc
+/// rejected a TU (reported; treated as spilling by the callers).
+type Probe = (Option<i64>, Vec<PathBuf>);
+
 fn tune_inner(
     tc: &Toolchain,
     ir: &Ir,
@@ -77,30 +96,36 @@ fn tune_inner(
     probe: &Path,
     out_dir: &Path,
 ) -> anyhow::Result<Option<usize>> {
-    let mut chunk = n_ops.min(if n_ops > BIG_OPS { BIG_START_CHUNK } else { CHUNK_MAX });
-    let mut last_spill: Option<usize> = None;
-    while chunk >= CHUNK_MIN {
+    let start = if is_recursion_phase(sym) {
+        RECURSION_START_CHUNK
+    } else if n_ops > BIG_OPS {
+        BIG_START_CHUNK
+    } else {
+        CHUNK_MAX
+    };
+    // Every probe compiles into a subdir of its own and keeps its objects, so the winner is
+    // staged from them: re-emitting and recompiling it after the bisection was one whole extra
+    // round on the critical path of every refined AIR.
+    let compile_at = |chunk: usize| -> anyhow::Result<(Probe, usize)> {
+        let dir = probe.join(chunk.to_string());
+        std::fs::create_dir_all(&dir)?;
         let plan = plan_chunks(ir, chunk, sym)?;
         let files = emit_air(ir, &plan, sym);
-
-        // write + compile every TU (parallel); each .o sits next to its .cu in probe_dir.
         let objs: Vec<PathBuf> =
-            files.iter().map(|(fname, _)| probe.join(fname.strip_suffix(".cu").unwrap().to_string() + ".o")).collect();
+            files.iter().map(|(fname, _)| dir.join(fname.strip_suffix(".cu").unwrap().to_string() + ".o")).collect();
         for (fname, text) in &files {
-            std::fs::write(probe.join(fname), text)?;
+            std::fs::write(dir.join(fname), text)?;
         }
         let results: Vec<(bool, String)> = files
             .par_iter()
             .zip(&objs)
-            .map(|((fname, _), obj)| tc.compile_tu(&probe.join(fname), obj, Some(probe)))
+            .map(|((fname, _), obj)| tc.compile_tu(&dir.join(fname), obj, Some(probe)))
             .collect::<anyhow::Result<Vec<_>>>()?;
-
         if let Some((_, err)) = results.iter().find(|(ok, _)| !ok) {
             let last = err.trim().lines().last().unwrap_or("");
             eprintln!("  [tune] {sym} chunk={chunk} COMPILE FAILED: {last}");
-            return Ok(None);
+            return Ok(((None, objs), files.len()));
         }
-
         let stacks: Vec<i64> = objs.iter().map(|o| max_stack(o)).collect();
         if stacks.iter().any(|&s| s < 0) {
             anyhow::bail!(
@@ -109,18 +134,25 @@ fn tune_inner(
                  or pass --chunk <N> to skip autotuning."
             );
         }
-        let st = stacks.into_iter().max().unwrap_or(0);
-        eprintln!("  [tune] {sym} chunk={chunk} ({} TUs) -> STACK={st}", files.len());
+        Ok(((Some(stacks.into_iter().max().unwrap_or(0)), objs), files.len()))
+    };
+
+    let mut chunk = n_ops.min(start);
+    let mut last_spill: Option<usize> = None;
+    while chunk >= CHUNK_MIN {
+        let ((st, objs), n_files) = compile_at(chunk)?;
+        let Some(st) = st else { return Ok(None) };
+        eprintln!("  [tune] {sym} chunk={chunk} ({n_files} TUs) -> STACK={st}");
         // A single-kernel AIR (chunk covers every op) may keep a few bytes of
         // local memory: splitting it in two costs a launch plus cross-chunk
         // slots, which measured worse (VirtualTableZisk1: 8-byte spill at 280
         // ops -> 2 chunks -> +30% kernel time). Chunked kernels stay at zero.
         const SINGLE_SPILL_TOL: i64 = 32;
         if st == 0 || (chunk >= n_ops && st <= SINGLE_SPILL_TOL) {
-            // Halving overshoots: a 24-byte spill at 512 used to cost Poseidon half
-            // its chunk (and doubled its cross-chunk slots). Bisect upward between
-            // this clean size and the last spilling one; keep the largest clean.
-            let (best_chunk, best_objs) = refine_up(tc, ir, sym, probe, chunk, last_spill, objs)?;
+            // Halving overshoots: a spill of a few bytes at one size costs the whole
+            // next size down, and with it double the cross-chunk slots. Bisect upward
+            // between this clean size and the last spilling one; keep the largest clean.
+            let (best_chunk, best_objs) = refine_up(sym, &compile_at, chunk, last_spill, objs)?;
             for obj in &best_objs {
                 let dest = out_dir.join(obj.file_name().unwrap());
                 std::fs::copy(obj, &dest)
@@ -136,51 +168,27 @@ fn tune_inner(
 
 /// Bisection between a clean chunk `lo` and a spilling `hi` (None = `lo` was the
 /// first probe, nothing above it to try). Returns the largest clean chunk found
-/// and its compiled objects (the probe dir is shared, so objects are re-emitted
-/// for the winner when a larger probe overwrote them).
+/// and its compiled objects.
 fn refine_up(
-    tc: &Toolchain,
-    ir: &Ir,
     sym: &str,
-    probe: &Path,
+    compile_at: &dyn Fn(usize) -> anyhow::Result<(Probe, usize)>,
     lo: usize,
     hi: Option<usize>,
     lo_objs: Vec<PathBuf>,
 ) -> anyhow::Result<(usize, Vec<PathBuf>)> {
-    let compile_at = |chunk: usize| -> anyhow::Result<(Option<i64>, Vec<PathBuf>)> {
-        let plan = plan_chunks(ir, chunk, sym)?;
-        let files = emit_air(ir, &plan, sym);
-        let objs: Vec<PathBuf> =
-            files.iter().map(|(fname, _)| probe.join(fname.strip_suffix(".cu").unwrap().to_string() + ".o")).collect();
-        for (fname, text) in &files {
-            std::fs::write(probe.join(fname), text)?;
-        }
-        let results: Vec<(bool, String)> = files
-            .par_iter()
-            .zip(&objs)
-            .map(|((fname, _), obj)| tc.compile_tu(&probe.join(fname), obj, Some(probe)))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        if results.iter().any(|(ok, _)| !ok) {
-            return Ok((None, objs));
-        }
-        let stacks: Vec<i64> = objs.iter().map(|o| max_stack(o)).collect();
-        if stacks.iter().any(|&s| s < 0) {
-            return Ok((None, objs));
-        }
-        Ok((Some(stacks.into_iter().max().unwrap_or(0)), objs))
-    };
     let Some(mut hi) = hi else {
         return Ok((lo, lo_objs)); // first probe was clean: nothing above it to try
     };
-    let mut lo = lo;
+    let (mut lo, mut lo_objs) = (lo, lo_objs);
     // stop when the bracket is within ~1/8 of lo: the slot/grid payoff below that is noise
     while hi - lo > (lo / 8).max(8) {
         let mid = (lo + hi) / 2;
-        let (st, _) = compile_at(mid)?;
+        let ((st, objs), _) = compile_at(mid)?;
         match st {
             Some(0) => {
                 eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK=0");
                 lo = mid;
+                lo_objs = objs;
             }
             Some(st) => {
                 eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK={st}");
@@ -192,7 +200,21 @@ fn refine_up(
             }
         }
     }
-    // re-emit the winner so the returned objects match `lo` (probes overwrote them)
-    let (_, objs) = compile_at(lo)?;
-    Ok((lo, objs))
+    Ok((lo, lo_objs))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The recursion phases take the smaller start chunk; a basic AIR keeps the old bounds. Pinned
+    /// because the discriminator is the `sym` prefix, which `make_sym` builds from `proof_phase` --
+    /// rename a phase there and this silently stops firing.
+    #[test]
+    fn only_the_recursion_phases_get_the_smaller_start() {
+        for sym in ["compressor_a0_0_b19_e12056", "recursive_a0_1_b21_e900", "final_a0_0_b18_e400"] {
+            assert!(super::is_recursion_phase(sym), "{sym} should be a recursion phase");
+        }
+        for sym in ["basic_a0_2_b19_e4634", "basic_a0_0_b19_e12056", "other_a0_0_b16_e10"] {
+            assert!(!super::is_recursion_phase(sym), "{sym} should not be");
+        }
+    }
 }

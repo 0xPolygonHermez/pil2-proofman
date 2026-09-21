@@ -1,4 +1,17 @@
-function selectval1(const expr vals[][], const expr key[], const expr res[], const expr sel) {
+// SELECTVALUE GATES - pick one of `arity` values (each a 4-element vector) by a key.
+//
+// The names track the circom custom templates these constrain, SelectValueArity4 and
+// SelectValueArity2 in circuits.gl/selectval.circom, and the GateRole entries in
+// common/src/hash_family.rs. The number in each name is the ARITY, as it is for every neighbouring
+// gate (TreeSelector4, TreeSelector8, FFT4, EvPol4) -- not the recursive SelectValue template's
+// `nLastLevels`, which is where a `selectval1` spelling would come from and would read as an arity
+// that does not exist.
+//
+// Which arity an air needs follows its hash family: hash_family::merkle_tree_arity is 4 for
+// Poseidon1/Poseidon2 and 2 for blake3, and blake3 has_forced_tree_geometry, so it is arity 2.
+
+// 16 values + 2 key bits + 4 selected = 22 signals.
+function selectValueArity4(const expr vals[][], const expr key[], const expr res[], const expr sel) {
 
     const expr key00 = (1 - key[0]) * (1 - key[1]);
     const expr key10 = key[0] * (1 - key[1]);
@@ -27,4 +40,21 @@ function selectval1(const expr vals[][], const expr key[], const expr res[], con
 
     sel * (key[0]*(1 - key[0])) === 0;
     sel * (key[1]*(1 - key[1])) === 0;
+}
+
+/*
+    8 values + 1 key bit + 4 selected = 13 signals, so the whole gate fits ONE row of an 18-wide
+    band -- unlike arity 4, which needs 22 and therefore two.
+
+    A mux, not a mask: `res = vals[0] + key*(vals[1] - vals[0])` is four degree-3 constraints, where
+    the arity-4 shape's `sel * mask * diff` would be eight. Same idiom as blake3OrderByKey and
+    poseidonInputOrder. `key` is taken as a one-element array so the two arities stay swappable at
+    the call site.
+*/
+function selectValueArity2(const expr vals[][], const expr key[], const expr res[], const expr sel) {
+    for (int i = 0; i < 4; i++) {
+        sel * ((vals[0][i] - res[i]) + key[0] * (vals[1][i] - vals[0][i])) === 0;
+    }
+
+    sel * (key[0]*(1 - key[0])) === 0;
 }
