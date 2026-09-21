@@ -232,6 +232,16 @@ struct SetupRecursiveTestArgs {
     #[arg(long)]
     blake3_lanes: Option<usize>,
 
+    /// Floor the fixture's air at 2^n rows; omit to take what the circuit needs. Harness-only.
+    #[arg(long)]
+    min_n_bits: Option<usize>,
+
+    /// Override the template's blowup for this fixture (2^b); omit to keep `recursive_blowup`.
+    /// Harness-only -- a production starkstructs rejects initialBlowupFactor. The max constraint
+    /// degree follows it, so the PIL and the row count move too.
+    #[arg(long)]
+    blowup: Option<usize>,
+
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end.
     /// No-op if nvcc is not on PATH.
     #[arg(long, default_value_t = false)]
@@ -470,6 +480,12 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
             let build_dir = args.build_dir.clone();
+            if let Some(b) = args.blowup {
+                if !(1..=3).contains(&b) {
+                    anyhow::bail!("--blowup must be in 1..=3 (past 3 the max constraint degree saturates at 8), got {b}");
+                }
+                tracing::info!("  blowup: 2^{b} (overriding the template default)");
+            }
             if let Some(l) = args.blake3_lanes {
                 if !(1..=8).contains(&l) {
                     anyhow::bail!("--blake3-lanes must be in 1..8 (the air's boundary depth caps it), got {l}");
@@ -483,6 +499,8 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
                 hash: args.hash,
                 blake3_lanes: args.blake3_lanes,
+                blowup: args.blowup,
+                min_n_bits: args.min_n_bits,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)?;
 
