@@ -142,9 +142,6 @@ pub fn stark_info_new_c(
     verify_constraints: bool,
     verify: bool,
     gpu: bool,
-    preallocate: bool,
-    // Table airs: proved at most once, so the const pols need not survive the proof.
-    single_use: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -156,8 +153,6 @@ pub fn stark_info_new_c(
             verify_constraints,
             verify,
             gpu,
-            preallocate,
-            single_use,
         )
     }
 }
@@ -180,6 +175,10 @@ pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
 
 pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
+}
+
+pub fn get_n_publics_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_n_publics(p_stark_info) }
 }
 
 pub fn set_hash_family_c(family: &str) {
@@ -666,7 +665,13 @@ pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
     unsafe { custom_commit_size(p_setup, commit_id) }
 }
 
-pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
+pub fn load_custom_commit_c(
+    setup: *mut c_void,
+    commit_id: u64,
+    buffer: *mut u8,
+    buffer_file: &str,
+    words_per_row: u64,
+) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         load_custom_commit(
@@ -674,6 +679,7 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
             commit_id,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
         );
     }
 }
@@ -964,7 +970,6 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
-    skip_recalculation: bool,
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
@@ -996,7 +1001,6 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
-            skip_recalculation,
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
@@ -1179,14 +1183,12 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
-pub fn read_exec_file_c(exec_data: *mut u64, exec_file: &str, nCols: u64) {
-    let exec_file_name = CString::new(exec_file).unwrap();
-    let exec_file_ptr = exec_file_name.as_ptr() as *mut std::os::raw::c_char;
-    unsafe {
-        read_exec_file(exec_data, exec_file_ptr, nCols);
-    }
-}
-
+/// Gathers the circom witness into the committed-polynomial trace, zeroing every cell the
+/// exec file's map does not cover.
+///
+/// `exec_data` must come from `load_exec_file`, which is what rejects a header this build
+/// cannot read and a map wider than the trace. Passing an unvalidated buffer yields a
+/// zero-filled trace at best.
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     circomWitness: *mut u8,
@@ -1210,6 +1212,13 @@ pub fn get_committed_pols_c(
             nCols,
         );
     }
+}
+
+/// Fills the trace cells `get_committed_pols_c` leaves unmapped, from the boundary cells it
+/// placed. No-op when the setup's exec file carries no band section, so it is safe to call
+/// unconditionally. Returns the number of bands expanded.
+pub fn expand_gate_bands_c(witness: *mut u8, exec_data: *mut u64, n_cols: u64, exec_words: u64, n: u64) -> u64 {
+    unsafe { expand_gate_bands(witness as *mut std::os::raw::c_void, exec_data, n_cols, exec_words, n) }
 }
 
 pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
@@ -1493,6 +1502,9 @@ pub fn alloc_device_large_buffers_c(
     const_pols_area: u64,
     const_pols_aggregation_area: u64,
     unified_buffer_pad_area: u64,
+    prefetch_region_area: u64,
+    // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
+    phase_a_alias_offset: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1501,15 +1513,98 @@ pub fn alloc_device_large_buffers_c(
             const_pols_area,
             const_pols_aggregation_area,
             unified_buffer_pad_area,
+            prefetch_region_area,
+            phase_a_alias_offset,
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn get_instances_ready_c(d_buffers: *mut ::std::os::raw::c_void, instances_ready: *mut i64) {
+pub fn configure_prefetch_zone_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    witness_bytes: u64,
+    fixed_tree_bytes: u64,
+    packed_const_bytes: u64,
+    rec_witness_bytes: u64,
+) {
     unsafe {
-        get_instances_ready(d_buffers, instances_ready);
+        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
     }
+}
+
+pub fn get_prefetch_witness_slots_c() -> u32 {
+    unsafe { get_prefetch_witness_slots() }
+}
+
+pub fn get_mops_floor_bytes_c() -> u64 {
+    unsafe { get_mops_floor_bytes() }
+}
+
+pub fn get_post_alloc_headroom_bytes_c() -> u64 {
+    unsafe { get_post_alloc_headroom_bytes() }
+}
+
+pub fn configure_const_slot_cache_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    base_offset: u64,
+    slot_elems: u64,
+    n_slots: u32,
+) {
+    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+}
+
+pub fn load_host_const_pols_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    const_filename: &str,
+    const_size: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let const_filename_name = CString::new(const_filename).unwrap();
+    unsafe {
+        load_host_const_pols(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut c_char,
+            const_filename_name.as_ptr() as *mut c_char,
+            const_size,
+            d_buffers,
+            only_first_gpu,
+        )
+    }
+}
+
+pub fn set_pipeline_mode_c(d_buffers: *mut ::std::os::raw::c_void, enable: bool) {
+    unsafe { set_pipeline_mode(d_buffers, enable) }
+}
+
+pub fn configure_phase_b_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_phase_b(d_buffers) }
+}
+
+pub fn set_phase_b_c(d_buffers: *mut ::std::os::raw::c_void, state: u32) -> i64 {
+    unsafe { set_phase_b(d_buffers, state) }
+}
+
+pub fn dump_pipeline_state_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { dump_pipeline_state(d_buffers) }
+}
+
+pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { harvest_pipeline(d_buffers) }
+}
+
+pub fn prefetch_witness_c(
+    p_setup_ctx: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    trace: *mut ::std::os::raw::c_void,
+) -> i64 {
+    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1640,6 +1735,9 @@ pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     }
 }
 
+/// `exec_data`/`exec_words` carry the whole `.exec` file, whose tail holds the gate bands the
+/// GPU expander needs. Pass a null pointer and 0 for setups without one (basic airs).
+#[allow(clippy::too_many_arguments)]
 pub fn load_device_setup_c(
     airgroup_id: u64,
     air_id: u64,
@@ -1648,6 +1746,8 @@ pub fn load_device_setup_c(
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
     packed_info: *mut ::std::os::raw::c_void,
+    exec_data: *mut u64,
+    exec_words: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1661,6 +1761,59 @@ pub fn load_device_setup_c(
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
             packed_info,
+            exec_data,
+            exec_words,
+        );
+    }
+}
+
+/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+#[allow(clippy::too_many_arguments)]
+pub fn upload_custom_commit_packed_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    custom_file: &str,
+    words_per_row: u64,
+    p_setup_ctx: *mut c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let custom_file_name = CString::new(custom_file).unwrap();
+    unsafe {
+        upload_custom_commit_packed(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            custom_file_name.as_ptr() as *mut std::os::raw::c_char,
+            words_per_row,
+            p_setup_ctx,
+            d_buffers,
+        );
+    }
+}
+
+/// Record the const-buffer slot reserved for an air's packed custom commits. Called for every air,
+/// shared slot or not, so a slot-sharing air also learns the offset.
+pub fn reserve_custom_commit_slot_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    offset: u64,
+    reserved_words: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    unsafe {
+        reserve_custom_commit_slot(
+            airgroup_id,
+            air_id,
+            proof_type_name.as_ptr() as *mut std::os::raw::c_char,
+            offset,
+            reserved_words,
+            d_buffers,
+            only_first_gpu,
         );
     }
 }
@@ -1673,8 +1826,6 @@ pub fn load_device_const_pols_c(
     d_buffers: *mut ::std::os::raw::c_void,
     const_filename: &str,
     const_size: u64,
-    const_tree_filename: &str,
-    const_tree_size: u64,
     proof_type: &str,
     only_first_gpu: bool,
     // This air shares its slot with one already uploaded: record the offsets, transfer nothing.
@@ -1682,9 +1833,6 @@ pub fn load_device_const_pols_c(
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
-
-    let const_tree_filename_name = CString::new(const_tree_filename).unwrap();
-    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
 
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1697,8 +1845,6 @@ pub fn load_device_const_pols_c(
             d_buffers,
             const_filename_ptr,
             const_size,
-            const_tree_filename_ptr,
-            const_tree_size,
             proof_type_ptr,
             only_first_gpu,
             already_loaded,

@@ -40,7 +40,13 @@ static constexpr uint8_t FLAG_ROOT        = 1u << 3;
 
 static constexpr uint32_t BLOCK_U64 = 8;     // u64 words per block (64 bytes)
 static constexpr uint32_t CHUNK_U64 = 128;   // u64 words per chunk (1024 bytes)
-static constexpr int      CV_STACK  = 24;    // handles up to 2^24 chunks
+// Chaining values held while the chunk tree merges. `slen` after k chunks is popcount(k), so the
+// peak is the bit width of the chunk count. `hash_le64` takes `n_u64` as a uint32_t, giving at most
+// ceil((2^32-1)/128) = 2^25 chunks and a peak of 25 -- so 24 was one short of what its own signature
+// admits, and overflowing it is a silent stack smash rather than an error. 26 makes it impossible by
+// construction. Every real caller is far below: a Merkle node is 8 words (1 chunk) and a trace-row
+// leaf 256 (2), so this costs 64 bytes nothing ever touches.
+static constexpr int      CV_STACK  = 26;
 
 // IV / message schedule. A plain namespace-scope constexpr array is host-only
 // for nvcc when indexed at runtime in device code, so keep a host copy and a
@@ -306,6 +312,143 @@ B3_HD void permute_xof(const uint64_t *in, uint32_t n_u64, uint64_t *out)
 
 // Width-8 permutation (grinding + arity-2 transcript).
 B3_HD void permute8(const uint64_t in[8], uint64_t out[8]) { permute_xof(in, 8, out); }
+
+
+// Incremental BLAKE3 over Goldilocks words, for the Fiat-Shamir transcript.
+// finalize_xof is const: it roots a *copy*, because ROOT is terminal in BLAKE3
+// while a transcript keeps absorbing after each challenge.
+struct Hasher
+{
+    uint32_t cv[8];
+    uint64_t buf[BLOCK_U64];   // held back until more input arrives
+    uint32_t buf_len;
+    uint32_t chunk_blocks;
+    uint64_t chunk_counter;
+    uint32_t stack[CV_STACK * 8];
+    int32_t slen;
+    uint64_t chunks_done;
+
+    B3_HD void init()
+    {
+        for (int i = 0; i < 8; ++i) cv[i] = b3_iv(i);
+        buf_len = 0;
+        chunk_blocks = 0;
+        chunk_counter = 0;
+        slen = 0;
+        chunks_done = 0;
+    }
+
+    B3_HD void fill_block(uint32_t block[16]) const
+    {
+        for (uint32_t k = 0; k < BLOCK_U64; ++k)
+        {
+            const uint64_t v = (k < buf_len) ? to_canonical(buf[k]) : 0ull;
+            block[2 * k] = (uint32_t)v;
+            block[2 * k + 1] = (uint32_t)(v >> 32);
+        }
+    }
+
+    B3_HD void compress_buffered()
+    {
+        uint32_t block[16];
+        fill_block(block);
+        uint8_t flags = 0;
+        if (chunk_blocks == 0) flags |= FLAG_CHUNK_START;
+        // Every chunk's last block carries CHUNK_END, not just the stream's.
+        if (chunk_blocks + 1 == CHUNK_U64 / BLOCK_U64) flags |= FLAG_CHUNK_END;
+        compress_in_place(cv, block, (uint8_t)(buf_len * 8u), chunk_counter, flags);
+        ++chunk_blocks;
+        buf_len = 0;
+
+        if (chunk_blocks == CHUNK_U64 / BLOCK_U64)
+        {
+            // Merge while the completed count is even, as hash_le64 does.
+            uint32_t node[8];
+            for (int i = 0; i < 8; ++i) node[i] = cv[i];
+            uint64_t total = chunks_done + 1;
+            while ((total & 1ull) == 0)
+            {
+                uint32_t merged[8];
+                parent_cv(&stack[(slen - 1) * 8], node, false, merged);
+                for (int i = 0; i < 8; ++i) node[i] = merged[i];
+                --slen;
+                total >>= 1;
+            }
+            for (int i = 0; i < 8; ++i) stack[slen * 8 + i] = node[i];
+            ++slen;
+
+            ++chunks_done;
+            ++chunk_counter;
+            chunk_blocks = 0;
+            for (int i = 0; i < 8; ++i) cv[i] = b3_iv(i);
+        }
+    }
+
+    B3_HD void absorb(const uint64_t *in, uint32_t n)
+    {
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            // Compress only once more input is known to follow, so the stream's
+            // final block is still buffered when finalize runs.
+            if (buf_len == BLOCK_U64) compress_buffered();
+            buf[buf_len++] = in[i];
+        }
+    }
+
+    // 64 bytes of XOF as 8 canonical words. `ob` is the output-block index,
+    // which BLAKE3 carries in the root node's counter field.
+    B3_HD void finalize_xof(uint32_t ob, uint64_t out[8]) const
+    {
+        uint32_t root_cv[8];
+        uint32_t root_block[16];
+        uint8_t root_len;
+        uint8_t root_flags;
+
+        uint8_t last_flags = FLAG_CHUNK_END;
+        if (chunk_blocks == 0) last_flags |= FLAG_CHUNK_START;
+
+        if (slen == 0)
+        {
+            // Single chunk: the buffered block is the root.
+            for (int i = 0; i < 8; ++i) root_cv[i] = cv[i];
+            fill_block(root_block);
+            root_len = (uint8_t)(buf_len * 8u);
+            root_flags = (uint8_t)(last_flags | FLAG_ROOT);
+        }
+        else
+        {
+            // Close the chunk without ROOT, then merge a copy of the stack; the
+            // final merge is the root parent.
+            uint32_t node[8];
+            for (int i = 0; i < 8; ++i) node[i] = cv[i];
+            uint32_t block[16];
+            fill_block(block);
+            compress_in_place(node, block, (uint8_t)(buf_len * 8u), chunk_counter, last_flags);
+
+            int32_t s = slen;
+            while (s > 1)
+            {
+                uint32_t merged[8];
+                parent_cv(&stack[(s - 1) * 8], node, false, merged);
+                for (int i = 0; i < 8; ++i) node[i] = merged[i];
+                --s;
+            }
+            for (int i = 0; i < 8; ++i) root_cv[i] = b3_iv(i);
+            for (int i = 0; i < 8; ++i)
+            {
+                root_block[i] = stack[i];
+                root_block[8 + i] = node[i];
+            }
+            root_len = 64;
+            root_flags = (uint8_t)(FLAG_PARENT | FLAG_ROOT);
+        }
+
+        uint32_t xof[16];
+        compress_xof(root_cv, root_block, root_len, (uint64_t)ob, root_flags, xof);
+        for (int k = 0; k < 8; ++k)
+            out[k] = to_canonical((uint64_t)xof[2 * k] | ((uint64_t)xof[2 * k + 1] << 32));
+    }
+};
 
 }  // namespace blake3core
 

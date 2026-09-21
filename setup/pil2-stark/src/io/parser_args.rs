@@ -531,13 +531,27 @@ pub fn get_parser_args(
                     used.airgroup_values |= r.airgroup_values;
                 }
 
-                // Build parameter list (always include tmp slices if they exist).
+                // Build parameter list. `count1d`/`count3d` size the tmp slices for the WHOLE
+                // expression, so a chunk gets them even when it touches neither -- blake3's
+                // recursive2 verifier has ~90 chunks that never index tmp_1. Test the chunk's own
+                // body and underscore what it does not reference, the same treatment `_publics`
+                // already gets below; the caller passes positionally, so only the name changes.
+                let body = &operation_lines[chunk_start..chunk_end];
+                let touches = |name: &str| body.iter().any(|l| l.contains(name));
                 let mut params: Vec<&'static str> = Vec::new();
                 if count1d > 0 {
-                    params.push("tmp_1: &mut [Goldilocks]");
+                    params.push(if touches("tmp_1[") {
+                        "tmp_1: &mut [Goldilocks]"
+                    } else {
+                        "_tmp_1: &mut [Goldilocks]"
+                    });
                 }
                 if count3d > 0 {
-                    params.push("tmp_3: &mut [CubicExtensionField<Goldilocks>]");
+                    params.push(if touches("tmp_3[") {
+                        "tmp_3: &mut [CubicExtensionField<Goldilocks>]"
+                    } else {
+                        "_tmp_3: &mut [CubicExtensionField<Goldilocks>]"
+                    });
                 }
 
                 if !global {

@@ -208,11 +208,16 @@ pub fn verify_merge_soundness(s_map: &[Vec<u32>], merged_reps: &[u32], n_cols: u
             bad += 1;
         }
     }
+    // Two situations land here and only one is a bug, so the message says both. A merge where one
+    // endpoint has no other placement is BENIGN -- that endpoint is dead and the dropped copy
+    // constrained nothing -- and this guard cannot tell it from the real fault, which is a cell the
+    // remap sweep never reached.
     assert_eq!(
         bad, 0,
-        "merge_copies UNSOUND: {bad} merged representatives have in-band (col<{n_cols}) \
-         multiplicity < 2; their dropped copy equality is unenforced. Disable merge_copies \
-         or fix the verifier circuit/layout."
+        "merge_copies: {bad} merged representatives have in-band (col<{n_cols}) multiplicity < 2. \
+         Either one endpoint of those copies is unused (harmless), or a placement was not reached \
+         by apply_remap_to_s_map, in which case the dropped copy equality is unenforced. Check the \
+         second before trusting the first; disabling merge_copies restores the copy gates either way."
     );
 }
 
@@ -349,9 +354,11 @@ mod tests {
     /// exact-copy endpoint resolves to the same representative in the final s_map and
     /// no raw endpoint id survives, so the connection argument ties them. Point it at
     /// a real recursion `.r1cs` via `MERGE_R1CS` (no fixture committed):
-    ///   MERGE_R1CS=path/to/x.r1cs cargo test -p stark-recurser structural_merge_soundness -- --ignored --nocapture
+    ///   MERGE_R1CS=path/to/x.r1cs cargo test -p pil2-stark-recurser structural_merge_soundness -- --nocapture
+    ///
+    /// Not `#[ignore]`d: it self-skips loudly, and behind `--ignored` nobody ran the only
+    /// end-to-end check on the one place the pipeline drops a constraint.
     #[test]
-    #[ignore]
     fn structural_merge_soundness() {
         use crate::plonk2pil::r1cs::to_plonk::r1cs2plonk;
         use crate::plonk2pil::r1cs::types::{read_r1cs_from_bytes, PlonkOptions};
@@ -439,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UNSOUND")]
+    #[should_panic(expected = "multiplicity < 2")]
     fn guard_fires_when_rep_only_out_of_band() {
         // rep 5 appears only in col 4 (>= n_cols=4, out of connection band) -> unsound.
         // cols 0..3 in-band hold nothing; col 4 holds 5.
@@ -448,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UNSOUND")]
+    #[should_panic(expected = "multiplicity < 2")]
     fn guard_fires_when_rep_in_band_multiplicity_one() {
         // rep 5 appears once in-band -> connection cycle length 1, equality unenforced.
         let s_map = vec![vec![5u32], vec![0u32], vec![0u32], vec![0u32]];

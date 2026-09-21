@@ -65,7 +65,11 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer
+    TimerGPU &timer,
+    // Off for a copy that runs outside the window the category report is divided by: counting it
+    // there puts its time in the numerator and not the denominator. Such a copy gets a timer of its
+    // own instead -- see STARK_GPU_WITNESS in gen_recursive_proof_gpu.
+    bool categorize
     ){
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
 
@@ -78,65 +82,43 @@ void copy_to_device_in_chunks(
     // the per-GPU mutex_pinned lock (avoids serializing behind large stagings):
     //  - direct: large + already host-pinned source
     //  - small:  sub-threshold copy, one shot
-    TimerStartCategoryGPU(timer, H2D_COPY);
+    if (categorize) { TimerStartCategoryGPU(timer, H2D_COPY); }
     if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
         // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
         // gates recycling the host trace buffer (see wait_trace_h2d_done).
         cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-        TimerStopCategoryGPU(timer, H2D_COPY);
+        if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
         return;
     }
 
     std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
     uint64_t block_size = d_buffers->pinned_size;
-    Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
-    Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
-
+    // Ping-pong through the two pinned halves, waiting on each half's own copy
+    // retirement event before refilling it. A cudaStreamSynchronize here would
+    // wait for every queued kernel of the previous proof (pipelining), draining
+    // the GPU for the whole host memcpy of the next chunk.
+    Goldilocks::Element *half[2] = { d_buffers->pinned_buffer[gpuLocalId],
+                                     d_buffers->pinned_buffer_extra[gpuLocalId] };
+    cudaEvent_t *ev = d_buffers->pinned_copy_done[gpuLocalId];
     uint64_t nBlocks = (total_size + block_size - 1) / block_size;
-
-    Goldilocks::Element *pinned_buffer_temp;
-    
-    uint64_t copySizeBlock = std::min(block_size, total_size);
-    std::memcpy(pinned_buffer_extra, (const uint8_t*)src, copySizeBlock);
-
-    for (uint64_t i = 1; i < nBlocks; ++i) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-        pinned_buffer_temp = pinned_buffer;
-        pinned_buffer = pinned_buffer_extra;
-        pinned_buffer_extra = pinned_buffer_temp;
-
-        uint64_t copySizeBlockPrev = std::min(block_size, total_size - (i - 1) * block_size);
-
-        CHECKCUDAERR(cudaMemcpyAsync(
-            (uint8_t*)dst + (i - 1) * block_size,
-            pinned_buffer,
-            copySizeBlockPrev,
-            cudaMemcpyHostToDevice,
-            stream));
-
-        uint64_t copySizeBlock = std::min(block_size, total_size - i * block_size);
-        std::memcpy(pinned_buffer_extra, (const uint8_t*)src + i * block_size, copySizeBlock);
+    for (uint64_t i = 0; i < nBlocks; ++i) {
+        int h = (int)(i & 1);
+        uint64_t len = std::min(block_size, total_size - i * block_size);
+        CHECKCUDAERR(cudaEventSynchronize(ev[h]));
+        std::memcpy(half[h], (const uint8_t*)src + i * block_size, len);
+        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)dst + i * block_size, half[h], len,
+                                     cudaMemcpyHostToDevice, stream));
+        CHECKCUDAERR(cudaEventRecord(ev[h], stream));
     }
-
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-    
-    uint64_t copySizeBlockFinal = std::min(block_size, total_size - (nBlocks - 1) * block_size);
-    
-    CHECKCUDAERR(cudaMemcpyAsync(
-        (uint8_t*)dst + (nBlocks - 1) * block_size,
-        pinned_buffer_extra,
-        copySizeBlockFinal,
-        cudaMemcpyHostToDevice,
-        stream
-    ));
-
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    // The pinned halves are shared (mutex releases on return): wait for our own
+    // copies to retire, NOT for the stream tail.
+    CHECKCUDAERR(cudaEventSynchronize(ev[0]));
+    CHECKCUDAERR(cudaEventSynchronize(ev[1]));
     // Staged path: `src` was memcpy'd into the pinned staging buffer and the copies are already
     // synced, so the host trace buffer is free here. Record anyway so the event always marks this
     // commit's release point rather than leaving a stale record from an earlier one.
     cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-    TimerStopCategoryGPU(timer, H2D_COPY);
+    if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
 }
 
 void copy_to_device_in_chunks(
@@ -196,64 +178,4 @@ void copy_to_device_in_chunks(
 
 }
 
-void load_and_copy_to_device_in_chunks(
-    DeviceCommitBuffers* d_buffers,
-    const char* bufferPath,
-    void* dst,
-    uint64_t total_size,
-    uint64_t streamId,
-    uint64_t header_skip_bytes
-    ){
-
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-
-    cudaSetDevice(gpuId);
-
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
-
-    uint64_t block_size = d_buffers->pinned_size;
-
-    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
-    Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
-
-    uint64_t nBlocks = (total_size + block_size - 1) / block_size;
-
-    Goldilocks::Element *pinned_buffer_temp;
-
-    loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, 0, header_skip_bytes);
-
-    for (uint64_t i = 1; i < nBlocks; ++i) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-        pinned_buffer_temp = pinned_buffer;
-        pinned_buffer = pinned_buffer_extra;
-        pinned_buffer_extra = pinned_buffer_temp;
-
-        uint64_t copySizeBlockPrev = std::min(block_size, total_size - (i - 1) * block_size);
-        CHECKCUDAERR(cudaMemcpyAsync(
-            (uint8_t*)dst + (i - 1) * block_size,
-            pinned_buffer,
-            copySizeBlockPrev,
-            cudaMemcpyHostToDevice,
-            stream));
-
-        loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, i, header_skip_bytes);
-    }
-
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    uint64_t copySizeBlockFinal = std::min(block_size, total_size - (nBlocks - 1) * block_size);
-
-    CHECKCUDAERR(cudaMemcpyAsync(
-        (uint8_t*)dst + (nBlocks - 1) * block_size,
-        pinned_buffer_extra,
-        copySizeBlockFinal,
-        cudaMemcpyHostToDevice,
-        stream
-    ));
-
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-}
 #endif // __GOLDILOCKS_ENV__

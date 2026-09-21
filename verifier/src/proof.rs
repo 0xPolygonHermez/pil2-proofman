@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use proofman_fields::{Goldilocks, PrimeField64};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "std")]
@@ -72,7 +73,25 @@ impl VadcopFinalProof {
             )
         })?;
         let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
+        proof.check_canonical_publics()?;
         Ok(proof)
+    }
+
+    /// Pin the publics to one encoding.
+    ///
+    /// Both verifiers reduce before use -- blake3 through `Goldilocks::toU64`, poseidon through the
+    /// permutation's modular add -- so `x` and `x + p` verify identically while a caller reading
+    /// the raw words back as outputs sees two different values. `stark_verify` rejects this in
+    /// Rust; the C++ verifier does not, so an untrusted proof is checked here.
+    pub fn check_canonical_publics(&self) -> Result<(), String> {
+        match self.public_values.iter().position(|&word| word >= Goldilocks::ORDER_U64) {
+            Some(i) => Err(format!(
+                "Public {i} is not a canonical Goldilocks element: {} >= {}",
+                self.public_values[i],
+                Goldilocks::ORDER_U64
+            )),
+            None => Ok(()),
+        }
     }
 
     pub fn proof_with_publics(&self) -> Vec<u64> {
@@ -82,5 +101,36 @@ impl VadcopFinalProof {
         result.extend_from_slice(&self.proof);
 
         result
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    /// Only publics below `2^32 - 1` have an alias at all, since `x + p` has to fit in a u64.
+    #[test]
+    fn a_public_at_or_above_the_order_is_rejected() {
+        let canonical =
+            VadcopFinalProof::new(alloc::vec![7], alloc::vec![0, Goldilocks::ORDER_U64 - 1], false, "Poseidon2".into());
+        assert!(canonical.check_canonical_publics().is_ok());
+
+        for alias in [Goldilocks::ORDER_U64, Goldilocks::ORDER_U64 + 1, u64::MAX] {
+            let proof = VadcopFinalProof::new(alloc::vec![7], alloc::vec![0, alias], false, "Poseidon2".into());
+            let err = proof.check_canonical_publics().expect_err("{alias} must be rejected");
+            assert!(err.contains("Public 1"), "{err}");
+        }
+    }
+
+    /// Both encode the same field element, so every derived challenge matches -- only this check
+    /// tells them apart.
+    #[test]
+    fn the_alias_of_a_small_public_is_the_same_field_element() {
+        let x = 12345u64;
+        let alias = x + Goldilocks::ORDER_U64;
+        assert_eq!(Goldilocks::from_u64(alias).as_canonical_u64(), x);
+        assert!(VadcopFinalProof::new(alloc::vec![7], alloc::vec![alias], false, "Poseidon2".into())
+            .check_canonical_publics()
+            .is_err());
     }
 }

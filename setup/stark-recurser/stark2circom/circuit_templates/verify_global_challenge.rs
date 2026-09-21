@@ -43,12 +43,11 @@ pub fn gen_verify_global_challenge(stark_info: &Value, vadcop_info: &Value) -> S
     out.push_str("    signal input globalChallenge[3];\n");
     out.push_str("    signal calculatedGlobalChallenge[3];\n\n");
 
-    let poseidon2 = vadcop_info.get("hash").and_then(|v| v.as_str()).map(|s| s == "Poseidon2").unwrap_or(true);
+    let hash_family = vadcop_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2");
 
     // Build transcript with per-round used_vals override:
     // rounds < early_rounds → used_vals=4, final round → used_vals=3
-    let mut transcript = Transcript::new(arity, None);
-    transcript.set_poseidon2(poseidon2);
+    let mut transcript = Transcript::new(None, hash_family);
     transcript.set_early_rounds_override(early_rounds, 4, 3);
 
     if n_publics > 0 {

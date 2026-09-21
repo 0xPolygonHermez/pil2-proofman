@@ -1,9 +1,9 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_verifier::{verifier, VadcopFinalProof};
-use proofman_common::initialize_logger;
-use std::fs::File;
-use std::io::Read;
+use proofman_verifier::VadcopFinalProof;
+use proofman_common::{hash_family, initialize_logger};
+use proofman_fields::{Goldilocks, PrimeField64};
+use proofman::verify_proof;
 use colored::Colorize;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
@@ -31,23 +31,46 @@ impl VerifyStark {
 
         let proof = VadcopFinalProof::load(&self.proof)?;
 
-        let mut verkey_file = File::open(&self.verkey)?;
-        let mut vk_bytes = Vec::new();
-        verkey_file.read_to_end(&mut vk_bytes)?;
-        if vk_bytes.len() % 8 != 0 {
-            return Err(format!("Verkey file size ({} bytes) is not a multiple of 8", vk_bytes.len()).into());
+        // The verifier is read from the proving key rather than compiled in: the
+        // aggregator binds the application's publics into q_verify, so a verifier
+        // generated for one application rejects proofs another's correct prover
+        // produced. The setup artifacts sit next to the verkey, as
+        // <base>.starkinfo.json / <base>.verifier.bin / <base>.verkey.json.
+        let base = self
+            .verkey
+            .strip_suffix(".verkey.bin")
+            .or_else(|| self.verkey.strip_suffix(".verkey.json"))
+            .ok_or_else(|| {
+                format!(
+                    "--verkey must be a <name>.verkey.bin or <name>.verkey.json from a provingKey, got {}",
+                    self.verkey
+                )
+            })?
+            .to_string();
+
+        // The C++ Merkle/transcript code reads the hash family from a process-global that only
+        // `GlobalInfo::load` sets, and this command never loads a proving key -- leaving it unset
+        // makes `get_hash_family` throw out of the FFI before a single proof is verified. The
+        // family the prover used travels with the proof; a wrong one here only costs a failed
+        // verification, never a false accept, because it changes the transcript and the roots.
+        if !hash_family::is_known_family(&proof.hash) {
+            return Err(
+                format!("proof declares hash family {:?}; known: {:?}", proof.hash, hash_family::FAMILIES).into()
+            );
         }
-        let vk: Vec<u64> = vk_bytes.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
+        proofman_starks_lib_c::set_hash_family_c(&proof.hash);
 
         timer_start_info!(VERIFY_STARK);
-        // The hash family travels inside the proof, so the verifier dispatches
-        // without an out-of-band flag or compile-time feature.
-        let v = verifier(&proof.hash);
-        let valid = if proof.compressed {
-            v.verify_vadcop_final_compressed(&proof, &vk)
-        } else {
-            v.verify_vadcop_final(&proof, &vk)
-        };
+        let publics: Vec<Goldilocks> = proof.public_values.iter().map(|&x| Goldilocks::from_u64(x)).collect();
+        let valid = verify_proof::<Goldilocks>(
+            &proof.proof,
+            base.clone() + ".starkinfo.json",
+            base.clone() + ".verifier.bin",
+            base + ".verkey.json",
+            Some(publics),
+            None,
+            None,
+        );
         timer_stop_and_log_info!(VERIFY_STARK);
 
         if !valid {

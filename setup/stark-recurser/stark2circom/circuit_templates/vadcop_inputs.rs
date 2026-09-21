@@ -267,21 +267,20 @@ pub fn init_vadcop_inputs(
 
 /// Port of `main_templates/vadcop/agg_vadcop_inputs.circom.ejs`.
 ///
-/// Aggregates VADCOP signals from three verifier instances (a/b/c) into one output.
-/// Used by `recursive2`.
-pub fn agg_vadcop_inputs(
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    prefix1: &str,
-    prefix2: &str,
-    prefix3: &str,
-    prefix: &str,
-) -> String {
+/// Aggregates VADCOP signals from `slot_prefixes.len()` verifier instances into one
+/// output, folding them left-to-right.  Used by `recursive2`.
+pub fn agg_vadcop_inputs(vadcop_info: &Value, airgroup_id: usize, slot_prefixes: &[String], prefix: &str) -> String {
     let mut out = String::new();
-    let prefix1_ = if prefix1.is_empty() { String::new() } else { format!("{prefix1}_") };
-    let prefix2_ = if prefix2.is_empty() { String::new() } else { format!("{prefix2}_") };
-    let prefix3_ = if prefix3.is_empty() { String::new() } else { format!("{prefix3}_") };
+    let p: Vec<String> =
+        slot_prefixes.iter().map(|s| if s.is_empty() { String::new() } else { format!("{s}_") }).collect();
+    let n = p.len();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
+
+    // Name of the accumulator after folding the first k slots: the slots' initial
+    // letters, uppercased. k=2 gives "AB", which is what the arity-3 text uses.
+    let acc = |k: usize| -> String {
+        p[..k].iter().filter_map(|q| q.chars().next()).map(|c| c.to_ascii_uppercase()).collect()
+    };
 
     let agg_types_len = vadcop_info["aggTypes"]
         .as_array()
@@ -310,50 +309,190 @@ pub fn agg_vadcop_inputs(
     }
 
     if multi_air {
-        out.push_str(&format!(
-            "    signal {{binary}} AB_isNull <== IsZero()(2 - {prefix1_}isNull - {prefix2_}isNull);\n"
-        ));
-
-        if agg_types_len > 0 {
-            out.push_str(&format!(
-                "    signal airgroupValues_AB[{agg_types_len}][3];\n    for (var i = 0; i < {agg_types_len}; i++) {{\n        airgroupValues_AB[i] <== AggregateAirgroupValuesNull()({prefix1_}airgroupvalues[i], {prefix2_}airgroupvalues[i], aggTypes[i], {prefix1_}isNull, {prefix2_}isNull);\n        {prefix_}airgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupValues_AB[i], {prefix3_}airgroupvalues[i], aggTypes[i], AB_isNull, {prefix3_}isNull);\n    }}\n\n"
-            ));
+        // Running isNull for each intermediate accumulator.
+        for k in 2..n {
+            let terms: String = p[..k].iter().map(|q| format!(" - {q}isNull")).collect();
+            out.push_str(&format!("    signal {{binary}} {}_isNull <== IsZero()({k}{terms});\n", acc(k)));
         }
 
+        if agg_types_len > 0 {
+            let mut decls = String::new();
+            for k in 2..n {
+                decls.push_str(&format!("    signal airgroupValues_{}[{agg_types_len}][3];\n", acc(k)));
+            }
+            let mut body = String::new();
+            for k in 1..n {
+                let (lhs, lhs_isnull) = if k == 1 {
+                    (format!("{}airgroupvalues[i]", p[0]), format!("{}isNull", p[0]))
+                } else {
+                    (format!("airgroupValues_{}[i]", acc(k)), format!("{}_isNull", acc(k)))
+                };
+                let target = if k == n - 1 {
+                    format!("{prefix_}airgroupvalues[i]")
+                } else {
+                    format!("airgroupValues_{}[i]", acc(k + 1))
+                };
+                body.push_str(&format!(
+                    "        {target} <== AggregateAirgroupValuesNull()({lhs}, {}airgroupvalues[i], aggTypes[i], {lhs_isnull}, {}isNull);\n",
+                    p[k], p[k]
+                ));
+            }
+            out.push_str(&format!("{decls}    for (var i = 0; i < {agg_types_len}; i++) {{\n{body}    }}\n\n"));
+        }
+
+        let null_list = p.iter().map(|q| format!("{q}isNull")).collect::<Vec<_>>().join(", ");
+        let proof_list = p.iter().map(|q| format!("{q}aggregatedProofs")).collect::<Vec<_>>().join(", ");
         out.push_str(&format!(
-            "    signal {{binary}} isNull[3] <== [{prefix1_}isNull, {prefix2_}isNull, {prefix3_}isNull];\n    {prefix_}aggregatedProofs <== AggregateProofsNull(3)([{prefix1_}aggregatedProofs, {prefix2_}aggregatedProofs, {prefix3_}aggregatedProofs], isNull);\n\n"
+            "    signal {{binary}} isNull[{n}] <== [{null_list}];\n    {prefix_}aggregatedProofs <== AggregateProofsNull({n})([{proof_list}], isNull);\n\n"
         ));
 
-        if curve != "None" {
-            out.push_str(&format!(
-                "    signal AB_stage1Hash[2][5] <== AccumulatePointsNull()({prefix1_}stage1Hash, {prefix2_}stage1Hash, {prefix1_}isNull, {prefix2_}isNull);\n    {prefix_}stage1Hash <== AccumulatePointsNull()(AB_stage1Hash, {prefix3_}stage1Hash, AB_isNull, {prefix3_}isNull);\n"
-            ));
-        } else {
-            out.push_str(&format!(
-                "    signal AB_stage1Hash[{lattice_size}] <== AggregateValuesNull({lattice_size})({prefix1_}stage1Hash, {prefix2_}stage1Hash, {prefix1_}isNull, {prefix2_}isNull);\n    {prefix_}stage1Hash <== AggregateValuesNull({lattice_size})(AB_stage1Hash, {prefix3_}stage1Hash, AB_isNull, {prefix3_}isNull);\n"
-            ));
+        for k in 1..n {
+            let (lhs, lhs_isnull) = if k == 1 {
+                (format!("{}stage1Hash", p[0]), format!("{}isNull", p[0]))
+            } else {
+                (format!("{}_stage1Hash", acc(k)), format!("{}_isNull", acc(k)))
+            };
+            let call = if curve != "None" {
+                format!("AccumulatePointsNull()({lhs}, {}stage1Hash, {lhs_isnull}, {}isNull)", p[k], p[k])
+            } else {
+                format!("AggregateValuesNull({lattice_size})({lhs}, {}stage1Hash, {lhs_isnull}, {}isNull)", p[k], p[k])
+            };
+            if k == n - 1 {
+                out.push_str(&format!("    {prefix_}stage1Hash <== {call};\n"));
+            } else {
+                let name = acc(k + 1);
+                let dim = if curve != "None" { "[2][5]".to_string() } else { format!("[{lattice_size}]") };
+                out.push_str(&format!("    signal {name}_stage1Hash{dim} <== {call};\n"));
+            }
         }
     } else {
         if agg_types_len > 0 {
-            out.push_str(&format!(
-                "    signal airgroupValuesAB[{agg_types_len}][3];\n    for (var i = 0; i < {agg_types_len}; i++) {{\n        airgroupValuesAB[i] <== AggregateAirgroupValues()({prefix1_}airgroupvalues[i], {prefix2_}airgroupvalues[i], aggTypes[i]);\n        {prefix_}airgroupvalues[i] <== AggregateAirgroupValues()(airgroupValuesAB[i], {prefix3_}airgroupvalues[i], aggTypes[i]);\n    }}\n\n"
-            ));
+            let mut decls = String::new();
+            for k in 2..n {
+                decls.push_str(&format!("    signal airgroupValues{}[{agg_types_len}][3];\n", acc(k)));
+            }
+            let mut body = String::new();
+            for k in 1..n {
+                let lhs =
+                    if k == 1 { format!("{}airgroupvalues[i]", p[0]) } else { format!("airgroupValues{}[i]", acc(k)) };
+                let target = if k == n - 1 {
+                    format!("{prefix_}airgroupvalues[i]")
+                } else {
+                    format!("airgroupValues{}[i]", acc(k + 1))
+                };
+                body.push_str(&format!(
+                    "        {target} <== AggregateAirgroupValues()({lhs}, {}airgroupvalues[i], aggTypes[i]);\n",
+                    p[k]
+                ));
+            }
+            out.push_str(&format!("{decls}    for (var i = 0; i < {agg_types_len}; i++) {{\n{body}    }}\n\n"));
         }
 
-        out.push_str(&format!(
-            "    {prefix_}aggregatedProofs <== AggregateProofs(3)([{prefix1_}aggregatedProofs, {prefix2_}aggregatedProofs, {prefix3_}aggregatedProofs]);\n\n"
-        ));
+        let proof_list = p.iter().map(|q| format!("{q}aggregatedProofs")).collect::<Vec<_>>().join(", ");
+        out.push_str(&format!("    {prefix_}aggregatedProofs <== AggregateProofs({n})([{proof_list}]);\n\n"));
 
-        if curve != "None" {
-            out.push_str(&format!(
-                "    signal AB_stage1Hash[2][5] <== AccumulatePoints()({prefix1_}stage1Hash, {prefix2_}stage1Hash);\n    {prefix_}stage1Hash <== AccumulatePoints()(AB_stage1Hash, {prefix3_}stage1Hash);\n"
-            ));
-        } else {
-            out.push_str(&format!(
-                "    signal AB_stage1Hash[{lattice_size}] <== AggregateValues({lattice_size})({prefix1_}stage1Hash, {prefix2_}stage1Hash);\n    {prefix_}stage1Hash <== AggregateValues({lattice_size})(AB_stage1Hash, {prefix3_}stage1Hash);\n"
-            ));
+        for k in 1..n {
+            let lhs = if k == 1 { format!("{}stage1Hash", p[0]) } else { format!("{}_stage1Hash", acc(k)) };
+            let call = if curve != "None" {
+                format!("AccumulatePoints()({lhs}, {}stage1Hash)", p[k])
+            } else {
+                format!("AggregateValues({lattice_size})({lhs}, {}stage1Hash)", p[k])
+            };
+            if k == n - 1 {
+                out.push_str(&format!("    {prefix_}stage1Hash <== {call};\n"));
+            } else {
+                let name = acc(k + 1);
+                let dim = if curve != "None" { "[2][5]".to_string() } else { format!("[{lattice_size}]") };
+                out.push_str(&format!("    signal {name}_stage1Hash{dim} <== {call};\n"));
+            }
         }
     }
 
     out
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+
+    fn single_air() -> serde_json::Value {
+        serde_json::json!({
+            "aggTypes": [[{"aggType": 0, "stage": 2}]], "air_groups": ["g"],
+            "airs": [[{"name": "a"}]], "curve": "None", "latticeSize": 368
+        })
+    }
+    fn multi_air() -> serde_json::Value {
+        serde_json::json!({
+            "aggTypes": [[{"aggType": 0, "stage": 2}]], "air_groups": ["g"],
+            "airs": [[{"name": "a"}, {"name": "b"}]], "curve": "None", "latticeSize": 368
+        })
+    }
+    fn slots(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("{}_sv", (b'a' + i as u8) as char)).collect()
+    }
+
+    // The exact text `agg_vadcop_inputs` emitted for three slots before it became a fold.
+    // Inlined rather than kept as fixture files so the expected output is readable beside
+    // the assertion. Byte-exact: this is the whole point of the test.
+    const EXPECTED_N3_SINGLE: &str = r#"    sv_circuitType <== 0;
+
+    sv_aggregationTypes <== aggregationTypes;
+    signal {binary} aggTypes[1];
+    for (var i = 0; i < 1; i++) {
+        sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
+        aggTypes[i] <== sv_aggregationTypes[i];
+    }
+
+    signal airgroupValuesAB[1][3];
+    for (var i = 0; i < 1; i++) {
+        airgroupValuesAB[i] <== AggregateAirgroupValues()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i]);
+        sv_airgroupvalues[i] <== AggregateAirgroupValues()(airgroupValuesAB[i], c_sv_airgroupvalues[i], aggTypes[i]);
+    }
+
+    sv_aggregatedProofs <== AggregateProofs(3)([a_sv_aggregatedProofs, b_sv_aggregatedProofs, c_sv_aggregatedProofs]);
+
+    signal AB_stage1Hash[368] <== AggregateValues(368)(a_sv_stage1Hash, b_sv_stage1Hash);
+    sv_stage1Hash <== AggregateValues(368)(AB_stage1Hash, c_sv_stage1Hash);
+"#;
+
+    const EXPECTED_N3_MULTI: &str = r#"    sv_circuitType <== 1;
+
+    sv_aggregationTypes <== aggregationTypes;
+    signal {binary} aggTypes[1];
+    for (var i = 0; i < 1; i++) {
+        sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
+        aggTypes[i] <== sv_aggregationTypes[i];
+    }
+
+    signal {binary} AB_isNull <== IsZero()(2 - a_sv_isNull - b_sv_isNull);
+    signal airgroupValues_AB[1][3];
+    for (var i = 0; i < 1; i++) {
+        airgroupValues_AB[i] <== AggregateAirgroupValuesNull()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i], a_sv_isNull, b_sv_isNull);
+        sv_airgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupValues_AB[i], c_sv_airgroupvalues[i], aggTypes[i], AB_isNull, c_sv_isNull);
+    }
+
+    signal {binary} isNull[3] <== [a_sv_isNull, b_sv_isNull, c_sv_isNull];
+    sv_aggregatedProofs <== AggregateProofsNull(3)([a_sv_aggregatedProofs, b_sv_aggregatedProofs, c_sv_aggregatedProofs], isNull);
+
+    signal AB_stage1Hash[368] <== AggregateValuesNull(368)(a_sv_stage1Hash, b_sv_stage1Hash, a_sv_isNull, b_sv_isNull);
+    sv_stage1Hash <== AggregateValuesNull(368)(AB_stage1Hash, c_sv_stage1Hash, AB_isNull, c_sv_isNull);
+"#;
+
+    #[test]
+    fn arity_three_output_is_unchanged() {
+        assert_eq!(agg_vadcop_inputs(&single_air(), 0, &slots(3), "sv"), EXPECTED_N3_SINGLE);
+        assert_eq!(agg_vadcop_inputs(&multi_air(), 0, &slots(3), "sv"), EXPECTED_N3_MULTI);
+    }
+
+    #[test]
+    fn arity_two_folds_once_and_names_no_intermediate_twice() {
+        let out = agg_vadcop_inputs(&single_air(), 0, &slots(2), "sv");
+        // One combine, so exactly one AB intermediate and no reference to slot c.
+        assert_eq!(out.matches("AggregateProofs(2)").count(), 1);
+        assert!(!out.contains("c_sv"), "N=2 must not mention a third slot:\n{out}");
+        // One combine means the result goes straight to the output signal, so the
+        // fold declares no intermediate accumulator at all.
+        assert!(!out.contains("AB_stage1Hash"), "N=2 needs no intermediate:\n{out}");
+        assert!(out.contains("sv_stage1Hash <== "), "N=2 must write the output directly:\n{out}");
+    }
 }

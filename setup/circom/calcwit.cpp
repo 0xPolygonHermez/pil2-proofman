@@ -2,8 +2,36 @@
 #include <sstream>
 #include <assert.h>
 #include "calcwit.hpp"
+#include <mutex>
+#include <thread>
+#include <vector>
 
 extern void run(Circom_CalcWit* ctx);
+
+// One componentMemory array is kept per circuit and reused by the next witness of it.
+//
+// The array is 144 B x get_number_of_components() -- 67 MB for ZisK's recursive2 -- and every
+// witness of a circuit builds an identical one, so `new[]` faults in the whole thing and runs a
+// constructor per element: 16.5 ms of a 95 ms solve. The destructor nulls every pointer member as
+// it frees, which is what leaves the array reusable.
+//
+// One .so serves one circuit, so a cached array always has the right length. Concurrent solves of
+// the same circuit take separate arrays; only one is kept, hence the mutex.
+static std::mutex componentCacheMutex;
+static Circom_Component *componentCache = nullptr;
+
+// The cache is a per-.so static: without this it lives to process exit. Called when Setup drops.
+extern "C" __attribute__((visibility("default"))) void freeComponentCache() {
+    Circom_Component *cached;
+    {
+        std::lock_guard<std::mutex> lk(componentCacheMutex);
+        cached = componentCache;
+        componentCache = nullptr;
+    }
+    // Outside the lock: the free walks the whole array.
+    delete[] cached;
+}
+
 
 std::string int_to_hex( u64 i )
 {
@@ -23,25 +51,32 @@ u64 fnv1a(std::string s) {
   return hash;
 }
 
-Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh) {
+Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh, u64* signalValuesBuf) {
     circuit = aCircuit;
     inputSignalAssignedCounter = get_main_input_signal_no();
 
     inputSignalAssigned = new bool[inputSignalAssignedCounter];
     memset(inputSignalAssigned, 0, inputSignalAssignedCounter * sizeof(bool));
 
-    signalValues = new u64[get_total_signal_no()];
+    if (signalValuesBuf != nullptr) {
+        signalValues = signalValuesBuf;
+        ownsSignalValues = false;
+    } else {
+        signalValues = new u64[get_total_signal_no()];
+        ownsSignalValues = true;
+    }
     signalValues[0] = 1;
 
-    componentMemory = new Circom_Component[get_number_of_components()];
-    // Initialize all component pointers to NULL to ensure safe cleanup
-    for (uint i = 0; i < get_number_of_components(); i++) {
-        componentMemory[i].subcomponents = nullptr;
-        componentMemory[i].subcomponentsParallel = nullptr;
-        componentMemory[i].outputIsSet = nullptr;
-        componentMemory[i].mutexes = nullptr;
-        componentMemory[i].cvs = nullptr;
-        componentMemory[i].sbct = nullptr;
+    // `new Circom_Component[N]` default-initializes, and every pointer member carries a `= NULL`
+    // default member initializer (see circom.hpp), so the six are already null here. The loop that
+    // set them again cost ~6 ns per component -- 2.9 ms per recursive2 witness, on 488,841 of them.
+    {
+        std::lock_guard<std::mutex> lk(componentCacheMutex);
+        componentMemory = componentCache;
+        componentCache = nullptr;
+    }
+    if (componentMemory == nullptr) {
+        componentMemory = new Circom_Component[get_number_of_components()];
     }
 
     // circuitConstants = circuit ->circuitConstants;
@@ -54,26 +89,42 @@ Circom_CalcWit::Circom_CalcWit(Circom_Circuit *aCircuit, uint maxTh) {
 }
 Circom_CalcWit::~Circom_CalcWit() {
 
-  // Clean up any component memory that wasn't released during execution
-  for (uint i = 0; i < get_number_of_components(); i++) {
-    if (componentMemory[i].subcomponents) {
-      delete[] componentMemory[i].subcomponents;
+  // Clean up any component memory that wasn't released during execution. Nulling as it frees is
+  // what makes the array reusable: a cached array is handed to the next witness as-is, and its
+  // `_create` calls only set the members of components that have subcomponents -- a stale pointer
+  // left in a leaf would be freed twice.
+  //
+  // The cost is the 144 B-stride walk, not the frees: `release_memory_component` already nulls
+  // most components during the solve. Each iteration touches only its own component.
+  const uint nComponents = get_number_of_components();
+  auto release_range = [this](uint from, uint to) {
+    for (uint i = from; i < to; i++) {
+      Circom_Component &c = componentMemory[i];
+      delete[] c.subcomponents;         c.subcomponents = NULL;
+      delete[] c.subcomponentsParallel; c.subcomponentsParallel = NULL;
+      delete[] c.outputIsSet;           c.outputIsSet = NULL;
+      delete[] c.mutexes;               c.mutexes = NULL;
+      delete[] c.cvs;                   c.cvs = NULL;
+      delete[] c.sbct;                  c.sbct = NULL;
     }
-    if (componentMemory[i].subcomponentsParallel) {
-      delete[] componentMemory[i].subcomponentsParallel;
+  };
+  // Below this the spawns cost more than the walk they split.
+  const uint PARALLEL_MIN_COMPONENTS = 1u << 15;
+  uint nThreads = maxThread > 1 ? (uint)maxThread : 1u;
+  if (nThreads > 1 && nComponents >= PARALLEL_MIN_COMPONENTS) {
+    const uint block = (nComponents + nThreads - 1) / nThreads;
+    std::vector<std::thread> workers;
+    workers.reserve(nThreads - 1);
+    for (uint t = 1; t < nThreads; t++) {
+      const uint from = t * block;
+      if (from >= nComponents) break;
+      const uint to = (from + block < nComponents) ? from + block : nComponents;
+      workers.emplace_back(release_range, from, to);
     }
-    if (componentMemory[i].outputIsSet) {
-      delete[] componentMemory[i].outputIsSet;
-    }
-    if (componentMemory[i].mutexes) {
-      delete[] componentMemory[i].mutexes;
-    }
-    if (componentMemory[i].cvs) {
-      delete[] componentMemory[i].cvs;
-    }
-    if (componentMemory[i].sbct) {
-      delete[] componentMemory[i].sbct;
-    }
+    release_range(0, block < nComponents ? block : nComponents);
+    for (auto &w : workers) w.join();
+  } else {
+    release_range(0, nComponents);
   }
   
   // Let circom handle all component memory cleanup via release_memory_component()
@@ -83,7 +134,15 @@ Circom_CalcWit::~Circom_CalcWit() {
   }
   
   delete[] inputSignalAssigned;
-  delete[] signalValues;
+  if (ownsSignalValues) delete[] signalValues;
+  {
+    std::lock_guard<std::mutex> lk(componentCacheMutex);
+    if (componentCache == nullptr) {
+      componentCache = componentMemory;
+      componentMemory = NULL;
+    }
+  }
+  // NULL when the cache kept it; `delete[] NULL` is a no-op.
   delete[] componentMemory;
 }
 
@@ -152,8 +211,6 @@ std::string Circom_CalcWit::getTrace(u64 id_cmp){
 
     return Circom_CalcWit::getTrace(id_father) + "." + my_name;
   }
-
-
 }
 
 std::string Circom_CalcWit::generate_position_array(uint* dimensions, uint size_dimensions, uint index){

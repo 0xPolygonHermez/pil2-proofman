@@ -64,7 +64,6 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     let const_pols_tree_size = setup.const_tree_size;
 
     let const_pols: Vec<F> = vec![F::ZERO; const_pols_size];
-    let const_tree: Vec<F> = vec![F::ZERO; const_pols_tree_size];
 
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_tree_path = &setup.const_pols_tree_path.clone();
@@ -73,11 +72,21 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
 
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
+    let p_stark_info = setup.p_setup.p_stark_info;
+
+    if setup.gpu {
+        pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+    }
+
+    if !setup.needs_const_tree_file() {
+        return;
+    }
+
+    let const_tree: Vec<F> = vec![F::ZERO; const_pols_tree_size];
+
     tracing::debug!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     let verkey_path = setup.verkey_file.clone();
-
-    let p_stark_info = setup.p_setup.p_stark_info;
 
     let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
         let const_pols_tree_size = setup.const_tree_size;
@@ -103,10 +112,6 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     } else {
         false
     };
-
-    if setup.gpu {
-        pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
-    }
 
     if !valid_root {
         timer_start_info!(WRITING_CONST_TREE);
