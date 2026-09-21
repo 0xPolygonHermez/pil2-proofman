@@ -321,7 +321,7 @@ inline void PoseidonGoldilocks<W>::merkletree(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX512__
-        mode = PoseidonMode::Avx512Batch;
+        mode = Goldilocks::hasAvx512() ? PoseidonMode::Avx512Batch : PoseidonMode::AvxBatch;
 #elif defined(__AVX2__)
         mode = PoseidonMode::AvxBatch;
 #else

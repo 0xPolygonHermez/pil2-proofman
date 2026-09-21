@@ -216,6 +216,13 @@ public:
     */
 #ifdef __AVX512__ 
 
+    // Runtime gate for the always-compiled AVX-512 paths. Probed once.
+    static inline bool hasAvx512()
+    {
+        static const bool supported = __builtin_cpu_supports("avx512f");
+        return supported;
+    }
+
     static void load_avx512(__m512i &a_, const Goldilocks::Element *a8);
     static void load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride);
     static void load_avx512_a(__m512i &a_, const Goldilocks::Element *a8_a);

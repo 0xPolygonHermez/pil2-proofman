@@ -179,17 +179,11 @@ else ifeq ($(UNAME_S),Linux)
     # Add MPI include path and libraries - use C bindings only
     CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__ -D__USE_ASSEMBLY__
     LDFLAGS += $(MPI_LDFLAGS)
-    # AVX512/AVX2 detection
-    AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
-    ifneq ($(AVX512_SUPPORTED),)
-        CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
-        $(info AVX-512 is supported by the CPU)
-    endif
-    AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
-    ifneq ($(AVX2_SUPPORTED),)
-        CXXFLAGS += -mavx2 -D__AVX2__
-        $(info AVX2 is supported by the CPU)
-    endif
+    # Fixed SIMD baseline, never probed from the build host: libstarks.a is
+    # CI-cached and linked into release binaries, so host-tuned flags SIGILL on
+    # the next machine. __AVX512__ compiles the AVX-512 paths in without a global
+    # -mavx512f (their bodies scope it themselves); hasAvx512() selects at runtime.
+    CXXFLAGS += -mavx2 -D__AVX2__ -D__AVX512__ -D__USE_ASSEMBLY__
 
     # CUDA arch staleness check: gencode flags are baked into the GPU objects
     # and make's .d files don't track them, so a flag change (CUDA_ARCHS=89 ->
