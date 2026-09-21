@@ -1,6 +1,9 @@
 #ifndef GOLDILOCKS_AVX512
 #define GOLDILOCKS_AVX512
 #ifdef __AVX512__
+// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
 
@@ -16,9 +19,17 @@
 // 1.  a + b overflows iff (a + b) < a (AVX does not suport carry, this is the way to check)
 // 2.  a - b underflows iff (a - b) > a (AVX does not suport carry, this is the way to check)
 
-const __m512i P8 = _mm512_set_epi64(GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME, GOLDILOCKS_PRIME);
-const __m512i P8_n = _mm512_set_epi64(GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG, GOLDILOCKS_PRIME_NEG);
-const __m512i sqmask8 = _mm512_set_epi64(0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF, 0x1FFFFFFFF);
+// Aggregate init, not _mm512_set_epi64: a namespace-scope intrinsic initialiser
+// lands in static-init code, outside this target region. All eight lanes equal.
+#define GOLDILOCKS_SPLAT8(v) \
+    { (long long)(v), (long long)(v), (long long)(v), (long long)(v), \
+      (long long)(v), (long long)(v), (long long)(v), (long long)(v) }
+
+const __m512i P8 = GOLDILOCKS_SPLAT8(GOLDILOCKS_PRIME);
+const __m512i P8_n = GOLDILOCKS_SPLAT8(GOLDILOCKS_PRIME_NEG);
+const __m512i sqmask8 = GOLDILOCKS_SPLAT8(0x1FFFFFFFF);
+
+#undef GOLDILOCKS_SPLAT8
 
 inline void Goldilocks::load_avx512(__m512i &a_, const Goldilocks::Element *a8)
 {
@@ -466,5 +477,6 @@ inline void Goldilocks::op_avx512(uint64_t op, __m512i &c_, const __m512i &a_, c
         break;
     }
 };
+#pragma GCC pop_options
 #endif
 #endif

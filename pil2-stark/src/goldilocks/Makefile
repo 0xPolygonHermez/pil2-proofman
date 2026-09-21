@@ -35,11 +35,8 @@ ifeq ($(UNAME_S),Linux)
     # Standalone tests/benches always exercise the Poseidon2 path. Force-undef
     # STARK_POSEIDON1 in case the environment inherited it from the outer build, like this both paths are reached
     CXXFLAGS += -U STARK_POSEIDON1
-    # Auto-enable AVX512 if the host CPU supports it
-    AVX512_SUPPORTED := $(shell grep -m1 avx512f /proc/cpuinfo)
-    ifneq ($(AVX512_SUPPORTED),)
-      CXXFLAGS += -mavx512f -D__AVX512__
-    endif
+    # Same fixed baseline as pil2-stark/Makefile; selection happens at runtime.
+    CXXFLAGS += -D__AVX512__
 
     # CUDA/GPU build options (Linux only)
     NVCC := /usr/local/cuda/bin/nvcc

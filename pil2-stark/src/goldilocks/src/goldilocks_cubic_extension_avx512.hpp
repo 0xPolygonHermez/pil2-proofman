@@ -1,6 +1,9 @@
 #ifndef GOLDILOCKS_CUBIC_EXTENSION_AVX512
 #define GOLDILOCKS_CUBIC_EXTENSION_AVX512
 #ifdef __AVX512__
+// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include <cassert>
@@ -136,5 +139,6 @@ inline void Goldilocks3::op_31_avx512(uint64_t op, Element_avx512 &c_, const Ele
         break;
     }
 }
+#pragma GCC pop_options
 #endif
 #endif
