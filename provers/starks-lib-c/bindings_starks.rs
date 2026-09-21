@@ -762,6 +762,7 @@ extern "C" {
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,
         slot_idx: u64,
+        instance_id: u64,
         airgroup_id: u64,
         air_id: u64,
         packed: *mut ::std::os::raw::c_void,

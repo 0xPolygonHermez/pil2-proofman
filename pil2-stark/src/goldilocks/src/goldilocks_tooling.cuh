@@ -776,13 +776,6 @@ struct DeviceCommitBuffers
     std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
-    Goldilocks::Element **pinned_buffer;
-    Goldilocks::Element **pinned_buffer_extra;
-    // Retirement events for the two pinned staging halves above (per GPU, index
-    // 0 = pinned_buffer, 1 = pinned_buffer_extra). The chunked upload loops wait
-    // on THESE before refilling a half, instead of cudaStreamSynchronize, which
-    // under pipelining drains every queued kernel of the previous proof.
-    cudaEvent_t (*pinned_copy_done)[2];
     gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
@@ -792,7 +785,6 @@ struct DeviceCommitBuffers
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
     // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
-    uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     // Device-idle barrier. Worker: increment `device_active` THEN read `cancelled`. Teardown: raise
     // `cancelled` THEN wait for `device_active == 0`. seq_cst on both gives a total order so neither
@@ -808,7 +800,6 @@ struct DeviceCommitBuffers
     uint32_t n_recursive_streams;
     // Aux trace elements per non-recursive stream, largest class first; length n_streams. Owned here.
     uint64_t *aux_trace_sizes = nullptr;
-    std::mutex *mutex_pinned;
     StreamData *streamsData;
 
     

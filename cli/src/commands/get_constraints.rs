@@ -1,4 +1,5 @@
 // extern crate env_logger;
+use std::collections::HashMap;
 use clap::Parser;
 use proofman_fields::Goldilocks;
 use proofman_common::initialize_logger;
