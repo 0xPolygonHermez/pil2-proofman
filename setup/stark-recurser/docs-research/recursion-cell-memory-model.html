@@ -174,7 +174,7 @@
   <header>
     <p class="eyebrow">Recursion setup · linear-hash model</p>
     <h1>Cell &amp; GPU-memory decision map</h1>
-    <p class="sub">Each cell is a recursive-verifier configuration at 2<sup>N</sup> rows, blowup&nbsp;2<sup>b</sup>, folding factor&nbsp;3, Merkle arity from the hash (blake3 and SHA-256 binary, blake2b quaternary). Hash counts mirror <code>verifier_hashes.rs</code> rule for rule &mdash; leaf hashes, Merkle paths to <code>lastLevelVerification</code>, per-tree root reductions, the real <code>generate_stark_struct</code> schedule. Transcript and grinding are left out. Paths dominate, 60&ndash;75% of the total. Color is prover GPU memory; a teal ring marks <strong>feasible</strong>: the verifier self-fits, a ZisK&nbsp;Main proof fits the cell budget, and memory stays under 32&nbsp;GB.</p>
+    <p class="sub">Each cell is a recursive-verifier configuration at 2<sup>N</sup> rows, blowup&nbsp;2<sup>b</sup>, Merkle arity from the hash (blake3 and SHA-256 binary, blake2b quaternary). The folding schedule is not a single factor: <strong>STIR folds by 4 for every family</strong>, while <strong>FRI is solved, not folded</strong>, for the binary-tree families &mdash; <code>optimal_fri_steps</code> gives blake3 2<sup>21</sup>&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7, folds of 4/4/3/3, because path cost is linear in the bits and leaf cost exponential in the fold. Both tests stop at the family's <code>fri_terminal_degree</code> (blake3&nbsp;7), which FRI reads as the last committed <em>domain</em> and STIR as the degree bound <em>d<sub>M</sub></em> itself. Hash counts mirror <code>verifier_hashes.rs</code> rule for rule &mdash; leaf hashes, Merkle paths to <code>lastLevelVerification</code>, per-tree root reductions, the real <code>generate_stark_struct</code> schedule. Transcript and grinding are left out. Paths dominate, 60&ndash;75% of the total. Color is prover GPU memory; a teal ring marks <strong>feasible</strong>: the verifier self-fits, a ZisK&nbsp;Main proof fits the cell budget, and memory stays under 32&nbsp;GB.</p>
     <p class="sub" style="margin-top:10px">Blake3's stage widths are <strong>measured on the <code>test-recursive</code> recursion air</strong>, not extrapolated from the <code>examples/hashes</code> precompile. <code>stage1&nbsp;=&nbsp;59k&nbsp;+&nbsp;20</code>, <strong>affine</strong> in <em>k</em> rather than proportional: a lane costs 59 columns, the 18-wide plonk band and 2 multiplicity columns are shared. <code>fixed&nbsp;=&nbsp;42</code>. Widths also move <strong>along the blowup axis</strong> &mdash; 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so <code>maxDeg&nbsp;=&nbsp;min(2<sup>b</sup>+1,&nbsp;8)</code> and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Blowup&nbsp;2 is measured at <strong>k&nbsp;=&nbsp;2/3/4/5</strong> (stage1 138/197/256/315, stage2 69/93/117/141); other blowups are the model's own <code>im</code> arithmetic. Self-fit is a <strong>fixed point</strong> &mdash; each lane widens the trace the verifier must hash itself &mdash; and <strong>LANES trades rows for columns while the next layer pays for the columns</strong>, so packing lanes shortens this air and makes the one verifying it dearer. Blake3 is 56 clocks, SHA-256 72, Blake2b 96 &mdash; and <strong>only blake3's lane geometry is a recursion air</strong>. SHA-256's is the <code>examples/hashes</code> <strong>precompile</strong>, anchored to its one measured point (115&nbsp;committed columns &times; 72&nbsp;clocks = <strong>8,280</strong> cells at LANES&nbsp;1, blowup&nbsp;1). Its lane does not amortize with <em>k</em> &mdash; <code>sha2.pil</code> has no LANES parameter to share columns across &mdash; but it <em>does</em> move along the blowup axis, and <strong>the wrong way</strong>: 8,280&nbsp;&rarr;&nbsp;8,496&nbsp;&rarr;&nbsp;9,144 at blowup 1/2/3. Degree headroom lets <code>std_sum</code> cluster more bus terms behind each <code>im</code>, but the <code>im</code> constraint then becomes the air's highest-degree one, so <code>stageQ</code> grows unconditionally. Blake3 wins that trade with 48 columns of stage2 to give back; sha2 has 6, so it pays the stageQ growth for almost nothing. Blake2b's is extrapolated. Read SHA-256's cells as a <strong>floor</strong>, not a like-for-like &mdash; blake3's own precompile is 4,382 against the 5,264 its recursion air costs at the same k=4/blowup&nbsp;2, a 20% gap, and 115 counts stageQ where blake3's 94 does not.</p>
   </header>
 
@@ -296,8 +296,10 @@
     <br>&middot; digest 4 field elements &middot; extension degree 3 &middot; target 128-bit (JBR) &middot; Merkle arity per hash family &middot; grinding on the slider, starting at <code>hash_family::recursive_grinding_bits</code> (24 blake3, 20 poseidon, blake2b extrapolated to 24).
     <br>&middot; Leaf hashes are block compressions, not rate-limited sponge absorptions: blake3 8 elements per 64-byte block plus a parent per extra 1024-byte chunk, blake2b 16 per 128-byte block, SHA-256 <code>ceil((8w+9)/64)</code> because FIPS appends the terminator and length as message data (one extra block exactly when <code>w mod 8</code> is 0 or 7). Merkle arity follows the block &mdash; blake3 and SHA-256 fold 2 digests per 64B block (binary), blake2b 4 per 128B (quaternary) &mdash; one permutation per node, which for SHA-256 holds only under a domain-separated, length-free node hash; with literal FIPS nodes a 64-byte arity-2 node costs two compressions and that variant is not modelled here.
     <br>&middot; Paths stop at the slider's <code>lastLevelVerification</code>, which counts LEVELS at any arity, so the kept level holds <code>arity^llv</code> nodes; each tree pays its root reduction once, as <code>merkleTreeGL</code> does. <code>generate_stark_struct</code> defaults it to <code>floor(log_arity(16))</code>.
-    <br>&middot; Query counts come from <code>security::pcs::Fri</code> and a port of <code>security::pcs::Stir</code> &mdash; the same calculators that size proving keys. At powBits 24 / blowup 2 the closed form gives 106, which is what the pipeline generated. Folding factor is read off each family's measured starkStruct (blake3 4, poseidon2 3).
-    <br>&middot; SHA-256 = 72 clocks (<code>sha2.pil</code>: 4 load-state + 16 load-input + 48 mixing + 4 write-state), fold 4 and grinding 24 read off a real sha256 proving key, block/arity/padding exact arithmetic. Its WIDTHS are anchored to the <code>examples/hashes</code> precompile at LANES 1 / blowup 1 &mdash; fixed 5, stage1 103, stage2 6, stageQ 6, 115 committed &mdash; with <code>bus 3</code> back-fitted from that stage2 so the model reproduces the point and runs its own <code>im</code> arithmetic above it. stage1 does not amortize with <em>k</em> (no LANES parameter to share across) and no sha256 recursion air exists to fit a slope to; building one is what would pin it. Its <code>laneCols</code> counts stageQ, following README.md's cells/hash convention, where the recursion-air families' does not. Earlier revisions instead scaled blake3's recursion slopes by the two precompiles' widths (103/53); measured, sha2's stage2 is 6 against blake3's 48, so that overstated its bus by roughly 8x and its cells/permutation by 50%.
+    <br>&middot; Query counts come from <code>security::pcs::Fri</code> and a port of <code>security::pcs::Stir</code> &mdash; the same calculators that size proving keys. At powBits 24 / blowup 2 the closed form gives 106, which is what the pipeline generated &mdash; and STIR's <em>t<sub>0</sub></em> is the same 106, since round 0 sees the same rate under the same regime. Only its later rounds collapse (43, 27), because STIR halves the domain while the degree drops by 2<sup>k</sup>, so the rate improves every round (1:2<sup>2</sup>&nbsp;&rarr;&nbsp;2<sup>5</sup>&nbsp;&rarr;&nbsp;2<sup>8</sup>&nbsp;&rarr;&nbsp;2<sup>11</sup>) where FRI's stays pinned.
+    <br>&middot; SHA-256 = 72 clocks (<code>sha2.pil</code>: 4 load-state + 16 load-input + 48 mixing + 4 write-state), grinding 24 read off a real sha256 proving key, block/arity/padding exact arithmetic; its <code>fold</code> is inert, since an arity-2 family solves its FRI schedule rather than folding uniformly. Its WIDTHS are anchored to the <code>examples/hashes</code> precompile at LANES 1 / blowup 1 &mdash; fixed 5, stage1 103, stage2 6, stageQ 6, 115 committed &mdash; with <code>bus 3</code> back-fitted from that stage2 so the model reproduces the point and runs its own <code>im</code> arithmetic above it. stage1 does not amortize with <em>k</em> (no LANES parameter to share across) and no sha256 recursion air exists to fit a slope to; building one is what would pin it. Its <code>laneCols</code> counts stageQ, following README.md's cells/hash convention, where the recursion-air families' does not. Earlier revisions instead scaled blake3's recursion slopes by the two precompiles' widths (103/53); measured, sha2's stage2 is 6 against blake3's 48, so that overstated its bus by roughly 8x and its cells/permutation by 50%.
+    <br>&middot; <strong>Folding schedules follow <code>stark_struct.rs</code>, not a uniform factor.</strong> STIR: <code>generate_stir_schedule</code> folds the DEGREE bound by 4 (<code>initial_folding_factor.unwrap_or(is_stir ? 4 : 3)</code>) until it reaches <code>fri_terminal_degree</code>, shortening the last fold to land exactly &mdash; blake3 at 2<sup>19</sup> gives 19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7 at every blowup, since the stopping point is a family constant and does not move with the rate. FRI: arity-2 families run <code>optimal_fri_steps</code>, a DP over committed domains costed as (compressions/query, trees), ported here in full; arity-4 families fold uniformly by 3. An earlier revision of this page folded STIR to <code>5 &minus; blowup</code> and FRI uniformly to a constant 2<sup>5</sup> domain, which ran STIR one phantom round past its terminal (19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7&nbsp;&rarr;&nbsp;3) and overstated its hash bill by 1.9%, and put FRI on 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;9&nbsp;&rarr;&nbsp;5 instead of the solved 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7. Both are now checked against the repo: at 2<sup>19</sup>&nbsp;/&nbsp;blowup&nbsp;2 the model reproduces <code>generate_stark_struct</code>'s schedules and the solver's <em>q</em>&nbsp;=&nbsp;106, <em>t</em>&nbsp;=&nbsp;[106,&nbsp;43,&nbsp;27] exactly.
+    <br>&middot; <strong>Grinding is uniform across STIR rounds</strong>, which is what <code>generate_stir_schedule</code> emits (<code>vec![grinding_bits; M]</code>). The per-round <code>grindingBitsQueries</code> override exists and is the one untaken lever &mdash; round 0 alone is worth &minus;7.7% at 24&nbsp;&rarr;&nbsp;32, since <em>t<sub>0</sub></em> is what multiplies the four trace trees &mdash; but it is prover proof-of-work, not a free saving, and the slider here models the uniform default.
     <br>&middot; blake3 = 56 clocks &times; the lane width; stage1 59k+20, fixed 42, stage2/stageQ follow maxDeg &mdash; <strong>measured at k = 2/3/4/5, blowup 2, on the <code>test-recursive</code> air</strong> (42/256/117/12 at k=4), the rest extrapolated. blake2b = 96 clocks, stage1 98k+2, fixed 6, 12 rounds; <code>blake2b.pil</code> has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared).
     <br>&middot; Main: nBits 22, blowup 1, fixed 3 / stageQ 6 / stage2 24 / stage1 38, 3 opening points, not blake-packed.
   </footer>
@@ -349,14 +351,18 @@ const HASHES = {
   // Where the fitted slopes come from: stage1 = 59k + 20 (the 18-wide plonk band and the 2
   // multiplicity columns are shared), busOps = 32k + 25 -- at k=4 that is 153, im = ceil(150/4)
   // = 38, stage2 = 3*39 = 117, reproducing the measured air above.
-  // `fold` is READ OFF the measured starkStruct, not assumed: blake3's test-recursive air folds
-  // 21 -> 17 -> 13 -> 9 -> 5, so 4 bits a step, where poseidon2's folds 20 -> 17 -> 14 -> 11 -> 8 -> 5,
-  // 3 bits. generate_stark_struct picks the schedule with optimal_fri_steps, and it lands on
-  // different factors per family. blake2b has no measured air, so it keeps 3.
+  // `fold` is the UNIFORM FRI fold, used only by families that do not solve their schedule --
+  // `uses_optimal_fri_schedule(family) = merkle_tree_arity(family) == 2`, so arity-2 families
+  // (blake3, sha256) run optimal_fri_steps instead and this field is unused for them. STIR never
+  // reads it: generate_stark_struct folds STIR by STIR_FOLD for every family.
+  // `terminal` is hash_family::fri_terminal_degree: the family constant both tests stop at, which
+  // FRI reads as a DOMAIN size (degree bound = terminal - blowup) and STIR as the degree bound
+  // d_M itself. Only blake3's 7 and poseidon's 5 exist in the repo; blake2b and sha256 have no
+  // family entry at all, so they take the value of the arity they share (arity 2 -> 7, arity 4 -> 5).
   blake3: { label: 'Blake3', block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 42, grinding: 24,
-            fold: 4, stage1: 59, stage1Base: 20, bus: 32, busBase: 25 },
+            fold: 4, terminal: 7, stage1: 59, stage1Base: 20, bus: 32, busBase: 25 },
   blake2: { label: 'Blake2', block: 16, chunkElems: 0,   arity: 4, clocks: 96, fixed: 6, grinding: 24,
-            fold: 3, stage1: 98, stage1Base: 2, bus: 52, busBase: 2 },
+            fold: 3, terminal: 5, stage1: 98, stage1Base: 2, bus: 52, busBase: 2 },
   // SHA-256, and it is modelled on a DIFFERENT AIR from the other two -- deliberately. blake3's
   // widths come from the test-recursive RECURSION air; sha2 has no recursion air at all, and
   // sha2.pil has no LANES parameter, so there is nothing to fit a per-lane slope to. Rather than
@@ -402,11 +408,12 @@ const HASHES = {
   //
   // `padBytes: 9` is the FIPS terminator plus length field and is exact arithmetic, as are block,
   // arity and clocks (sha2.pil: 4 load-state + 16 load-input + 48 mixing + 4 write-state = 72).
-  // `fold: 4` / `grinding: 24` are read off a real sha256 proving key. `chunkElems: 0` because
+  // `grinding: 24` is read off a real sha256 proving key; `fold` is carried for completeness but
+  // never read, since arity 2 routes it through optimal_fri_steps. `chunkElems: 0` because
   // Merkle-Damgard is sequential and has no chunk tree, so on WIDE leaves it beats blake3, which
   // pays a parent per extra 1024 bytes (2137 elements: 268 compressions against 284).
   sha256: { label: 'SHA-256', block: 8, chunkElems: 0, padBytes: 9, arity: 2, clocks: 72, fixed: 5,
-            grinding: 24, fold: 4, stage1: 103, stage1Base: 0, bus: 3, busBase: 0,
+            grinding: 24, fold: 4, terminal: 7, stage1: 103, stage1Base: 0, bus: 3, busBase: 0,
             laneIncludesStageQ: true, precompile: true },
 };
 
@@ -521,19 +528,70 @@ function leafHashes(p, widthElems) {
   return blocks + (chunks - 1);
 }
 
-// The FRI schedule, exactly as generate_stark_struct builds it: fold the EXTENDED
-// DOMAIN by `fold` until it reaches final_degree + 1, snapping to final_degree on
-// the last step. steps[0] is the committed domain; every later step commits a tree
+// STIR folds by 4 for every family: generate_stark_struct takes
+// `initial_folding_factor.unwrap_or(is_stir ? 4 : 3)`, and recursive_stark_settings pins the same
+// split. It is NOT the family's FRI fold, which is what an earlier revision of this page used --
+// right for blake3 by coincidence, wrong for the arity-4 families.
+const STIR_FOLD = 4;
+// The uniform FRI fold for families that do not solve their schedule (generate_fri_schedule).
+const FRI_FOLD = 3;
+
+// The FRI schedule, as generate_stark_struct builds it. Two paths, and the arity picks between
+// them -- `uses_optimal_fri_schedule(family) = merkle_tree_arity(family) == 2`:
+//
+//   arity 2  optimal_fri_steps, a DP over committed DOMAIN sizes (below).
+//   arity 4  generate_fri_schedule: fold uniformly by FRI_FOLD to the degree bound, with the
+//            last fold shortened so the bound is hit exactly.
+//
+// Either way the walk STOPS at the family's terminal DOMAIN, `terminal` -- not at a constant 5.
+// steps[0] is the committed domain and has no tree of its own; every later step commits a tree
 // the queries open, and the final polynomial is sent in the clear.
-const FINAL_DEGREE = 5;
-function friSteps(n, blowup, fold) {
-  const steps = [n + blowup];
-  let b = steps[0];
-  while (b > FINAL_DEGREE + 1) {
-    b = b > fold + FINAL_DEGREE ? b - fold : FINAL_DEGREE;
-    steps.push(b);
+function friSteps(n, blowup, h) {
+  const ext = n + blowup;
+  const terminal = Math.min(h.terminal, ext);
+  if (h.arity === 2) return optimalFriSteps(ext, terminal, getLlv(), h);
+  // generate_fri_schedule works in DEGREE bounds; the domain is the bound plus the (constant) rate.
+  const finalDeg = Math.max(0, Math.min(terminal - blowup, n));
+  const degrees = [n];
+  while (degrees[degrees.length - 1] > finalDeg) {
+    const d = degrees[degrees.length - 1];
+    degrees.push(d - Math.min(FRI_FOLD, d - finalDeg));
   }
-  return steps;
+  return degrees.map(d => d + blowup);
+}
+
+// Port of stark_struct::optimal_fri_steps -- the schedule that costs the in-circuit verifier the
+// least, found exactly rather than by folding at a fixed rate.
+//
+// A committed step at `b` bits costs one compression per Merkle level it keeps, `depth(b) - llv`,
+// and a query opens a folding group of 2^d extension elements, `ceil(2^d * FE / block)`
+// compressions. Path cost is LINEAR in the bits and leaf cost EXPONENTIAL in the fold, so the
+// cheapest schedule folds hard where the bits are high and gently near the end -- a shape no
+// uniform factor can express. Cost is compared as (per-query compressions, trees); the tree count
+// only breaks ties. Terminating high is free, so the DP always ends exactly at `terminal`.
+//
+// At ext 21, arity 2, llv 4, terminal 7 this returns 21 > 17 > 13 > 10 > 7 (folds 4,4,3,3), which
+// is what the repo's own test asserts for blake3 recursive1/recursive2 -- against the 21 > 17 >
+// 13 > 9 > 5 an earlier revision of this page produced by folding uniformly to a constant 5.
+function optimalFriSteps(ext, terminal, llv, h) {
+  const logArity = Math.max(1, Math.log2(h.arity));
+  const depth = b => Math.ceil(b / logArity);
+  const path = b => Math.max(0, depth(b) - llv);
+  const leaf = d => Math.ceil((2 ** d) * FE / h.block);
+  const best = new Array(ext + 1).fill(null);   // [[perQuery, trees], steps]
+  for (let b = 0; b <= ext; b++) {
+    let cur = b <= terminal ? [[0, 0], [b]] : null;
+    for (let d = 1; d <= b; d++) {
+      const sub = best[b - d];
+      if (!sub) continue;
+      const cost = [sub[0][0] + leaf(d) + path(b - d), sub[0][1] + 1];
+      if (!cur || cost[0] < cur[0][0] || (cost[0] === cur[0][0] && cost[1] < cur[0][1])) {
+        cur = [cost, [b, ...sub[1]]];
+      }
+    }
+    best[b] = cur;
+  }
+  return best[ext][1];
 }
 
 // JBR proximity parameter, exactly as security::regimes computes it at alpha = 0:
@@ -670,18 +728,22 @@ function stirSolve({ logTrace, blowup, foldBits, arity, grinding, batchSize, tar
            finalLogDeg: dims[M], queryHashes };
 }
 
-// Fold at the same rate FRI does and stop at the same FINAL DEGREE, so the two
-// tests send a final polynomial of the same size and the comparison changes the
-// low-degree test and nothing else. friSteps works in DOMAIN bits and stops at
-// FINAL_DEGREE, so the degree it lands on is FINAL_DEGREE - blowup; STIR's dims
-// are already degrees, hence the subtraction. Its own tests in stir.rs use
-// hand-tuned schedules that run a round deeper than this.
-function stirFoldBits(n, fold, blowup) {
-  const target = Math.max(0, FINAL_DEGREE - blowup);
+// generate_stir_schedule: fold the DEGREE bound by STIR_FOLD until it reaches the family's
+// terminal, shortening the last fold so the bound is hit exactly. The domain halves each round
+// (handled in stirSolve, where rate_{i+1} = rate_i + k_i - 1), which is the whole difference from
+// FRI -- the rate improves every round, so the query counts collapse.
+//
+// The stopping point is the family constant ITSELF (blake3's 7), not `5 - blowup`. FRI reads that
+// same constant as a domain size and subtracts the blowup; STIR reads it as the degree bound d_M.
+// An earlier revision of this page subtracted the blowup on BOTH sides, which ran STIR a whole
+// extra round -- at 2^19 / blowup 2 it gave [19,15,11,7,3] against the repo's [19,15,11,7], and
+// so overstated STIR's hash bill by 1.9%. recursive.rs explains why the bound cannot go lower:
+// every quotient round needs |G_i| = t_{i-1} + 1 < d_i, and the last round is the tight one.
+function stirFoldBits(n, blowup, h) {
+  const target = Math.max(0, Math.min(h.terminal, n - 1));
   const out = [];
   let d = n;
-  while (d - fold >= target) { out.push(fold); d -= fold; }
-  if (d > target) out.push(d - target);          // snap, the way friSteps does
+  while (d > target) { const k = Math.min(STIR_FOLD, d - target); out.push(k); d -= k; }
   if (out.length === 0) out.push(Math.max(1, n - target));
   return out;
 }
@@ -707,7 +769,7 @@ function stirFoldBits(n, fold, blowup) {
 // and t_i falls away. Taller trees, far fewer openings.
 function ldtLayers(p) {
   if (getLdt() === 'stir') {
-    const s = stirSolve({ logTrace: p.n, blowup: p.blowup, foldBits: stirFoldBits(p.n, p.fold, p.blowup),
+    const s = stirSolve({ logTrace: p.n, blowup: p.blowup, foldBits: stirFoldBits(p.n, p.blowup, p.hash),
                           arity: p.arity, grinding: getGrinding(), batchSize: batchSizeOf(p) });
     if (s) {
       const oracles = [];
@@ -727,7 +789,7 @@ function ldtLayers(p) {
     // No schedule at this geometry (the alpha loop diverged): fall back to FRI rather
     // than reporting a cell the scheme cannot express.
   }
-  const steps = friSteps(p.n, p.blowup, p.fold);
+  const steps = friSteps(p.n, p.blowup, p.hash);
   const q = nQueries(p.n, p.blowup);
   const oracles = [];
   for (let i = 1; i < steps.length; i++) {
@@ -824,8 +886,8 @@ function estimate(p) {
 const MAIN = { n: 22, blowup: 1, fixed: 3, stageQ: 6, stage2: 24, stage1: 38, openings: 3, proofs: 1, blakes: 0 };
 function mainParams(fold, cpb, laneCols) {
   const h = currentHash();
-  return { ...MAIN, fold, cpb, block: h.block, chunkElems: h.chunkElems, padBytes: h.padBytes || 0, arity: h.arity,
-           llv: getLlv(), instanceCols: laneCols };
+  return { ...MAIN, fold, cpb, hash: h, block: h.block, chunkElems: h.chunkElems, padBytes: h.padBytes || 0,
+           arity: h.arity, llv: getLlv(), instanceCols: laneCols };
 }
 function mainEstimate(fold, cpb, laneCols) { return estimate(mainParams(fold, cpb, laneCols)); }
 
@@ -911,7 +973,9 @@ function recParams() {
     // memory by ~12%. At 4 the model lands at 7.564 GB against the measured 7.50 (+0.9%) and
     // 1.315 against poseidon2's 1.29 (+1.9%), so 4 is what get_prover_memory's term counts.
     openings: 4, proofs: 2,
-    fold: h.fold, // read off the measured starkStruct; see HASHES
+    // FRI's uniform fold, for the arity-4 path only; the arity-2 families solve their schedule
+    // and STIR folds by STIR_FOLD regardless. See friSteps / stirFoldBits.
+    fold: h.fold,
     block: h.block, chunkElems: h.chunkElems, padBytes: h.padBytes || 0, arity: h.arity, llv: getLlv(),
   };
 }
