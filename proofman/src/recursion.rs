@@ -126,6 +126,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.global_idx.unwrap(),
             &updated_proof,
             recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+            memory_handler_recursive_witness.witness_threads(),
         )?;
         timer_stop_and_log_debug_net!(
             GENERATE_COMPRESSOR_WITNESS,
@@ -179,6 +180,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.global_idx.unwrap(),
             &updated_proof,
             recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+            memory_handler_recursive_witness.witness_threads(),
         )?;
         timer_stop_and_log_debug_net!(
             GENERATE_RECURSIVE1_WITNESS,
@@ -248,6 +250,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
         0,
         &updated_proof_recursive2,
         recursion_trace_stride(setup_exec_slice(setup_recursive2), setup_recursive2.n_cols, pctx.gpu),
+        memory_handler_recursive_witness.agg_witness_threads(),
     )?;
 
     timer_stop_and_log_debug_net!(
@@ -691,6 +694,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         0,
         &updated_proof,
         recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        memory_handler_recursive_witness.witness_threads(),
     )?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_PROOF_WITNESS);
     let mut witness_final_proof = Proof::new_witness(
@@ -780,6 +784,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         0,
         &vadcop_final_proof[1..],
         recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        memory_handler_recursive_witness.witness_threads(),
     )?;
     timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
     let mut witness_final_proof = Proof::new_witness(
@@ -872,6 +877,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         // Full width, NOT the compact stride: RecursiveF has no device gate-band expander, so
         // `expand_gate_bands_c` runs host-side over the whole trace.
         setup.n_cols,
+        memory_handler_recursive_witness.witness_threads(),
     )?;
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_WITNESS);
     // Release-on-drop lease: returns to the pool on every exit path (see generate_recursive_proof).
@@ -969,6 +975,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         &zkin,
         // Compact on GPU: the device reads mapCols out of this same exec header and widens.
         recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, setup.gpu),
+        memory_handler_recursive_witness.witness_threads(),
     ) {
         Ok(witness) => witness,
         Err(e) => {
@@ -1206,6 +1213,7 @@ fn generate_witness<F: PrimeField64>(
     instance_id: usize,
     zkin: &[u64],
     stride: u64,
+    witness_threads: usize,
 ) -> ProofmanResult<(Vec<F>, Vec<F>)> {
     let state = setup.circom_state.read().unwrap();
     let circom_circuit_ptr = match state.circuit {
@@ -1229,7 +1237,7 @@ fn generate_witness<F: PrimeField64>(
     // Internal circom solve threads for this witness. Stream-aware (set from
     // cores/n_streams in proofman) to avoid oversubscription when many recursive
     // witnesses run concurrently.
-    let nmutex = memory_handler_recursive_witness.witness_threads();
+    let nmutex = witness_threads;
 
     // Taken before the signalValues buffer, so no pooled buffer is held across a fallible step:
     // `Pool::reset` reports one lost to an early `?` return as leaked. Held until
