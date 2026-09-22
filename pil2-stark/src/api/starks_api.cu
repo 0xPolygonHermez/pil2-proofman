@@ -2011,6 +2011,18 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         fixedPrebuilt = true;
     }
 
+    // Const-tree residency is per stream, and aggregation folds pick a stream through
+    // selectStream (capacity class first, warmth only as a tiebreaker), so a fold can land
+    // cold and pay the whole unpack + extend + merkelize before its proof starts. The
+    // category timers cannot show this: clearCategories() opens the proof window AFTER the
+    // rebuild, so its kernels are dropped from that table. Logged at info, once per
+    // aggregation proof, so one run says how many folds rebuilt and how many reused.
+    if (aggregation) {
+        zklog.info("gen_recursive_proof " + string(proofType) + " air (" + std::to_string(airgroupId) +
+                   ":" + std::to_string(airId) + ") on stream " + std::to_string(streamId) +
+                   (fixedPrebuilt ? " REBUILT const tree" : " reused const tree"));
+    }
+
     TimerStartGPU(timer, STARK_GPU_WITNESS);
     if (compactWitness) {
         CHECKCUDAERR(cudaMemsetAsync((uint8_t*)(d_aux_trace + offsetStage1Extended), 0, sizeTrace, stream));

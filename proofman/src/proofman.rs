@@ -623,6 +623,9 @@ pub struct ProofMan<F: PrimeField64> {
     outer_aggregation_state: Mutex<OuterAggregationState>,
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
+    /// Where a fold's wall time goes, accumulated by the pipeline threads and reported
+    /// by the drain. See [`AggFoldStats`].
+    agg_fold_stats: Arc<AggFoldStats>,
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
     /// Per airgroup, recursive2 proof objects pending aggregation. Not
     /// `received_agg_proofs.len()`: a peer proof folding several workers is one
@@ -675,6 +678,53 @@ enum OuterAggregationState {
     Running(CompletionOwner),
 }
 
+/// Per-fold cost accounting for the outer (distributed) aggregation.
+///
+/// A fold's wall time is spent in three places that a single wall-clock number cannot
+/// separate: the CPU witness build for the recursive2 circuit, the launch-plus-H2D of
+/// that witness, and the GPU proof itself. The first two happen on the pipeline's
+/// background threads, so they are accumulated here and read back by the drain, which
+/// reports all of them on one line.
+///
+/// Counters are nanosecond sums over one fold: reset when the pipeline starts, read
+/// when it drains.
+#[derive(Default)]
+struct AggFoldStats {
+    /// `gen_witness_aggregation` — CPU witness for the recursive2 circuit.
+    witness_ns: AtomicU64,
+    /// `gen_recursive_proof_size` + `generate_recursive_proof` — proof-buffer sizing,
+    /// kernel launch, and the trace host-to-device copy this blocks on.
+    launch_ns: AtomicU64,
+    /// Recursive2 witnesses built in this fold.
+    witnesses: AtomicU64,
+}
+
+impl AggFoldStats {
+    fn reset(&self) {
+        self.witness_ns.store(0, Ordering::Relaxed);
+        self.launch_ns.store(0, Ordering::Relaxed);
+        self.witnesses.store(0, Ordering::Relaxed);
+    }
+
+    fn record_witness(&self, elapsed: std::time::Duration) {
+        self.witness_ns.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        self.witnesses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_launch(&self, elapsed: std::time::Duration) {
+        self.launch_ns.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// (witness ms, launch+H2D ms, recursive2 witnesses built).
+    fn read(&self) -> (f64, f64, u64) {
+        (
+            self.witness_ns.load(Ordering::Relaxed) as f64 / 1e6,
+            self.launch_ns.load(Ordering::Relaxed) as f64 / 1e6,
+            self.witnesses.load(Ordering::Relaxed),
+        )
+    }
+}
+
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         self.memory_handler.cancel();
@@ -701,6 +751,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // `outer_aggregations()` acquires the owner, which spins until any prior owner drops (under
         // this same lock in `stop_outer_aggregations`). The `Running(_)` check above guarantees we
         // are `Idle`, so the acquire can't block here — keep that check immediately before this.
+        self.agg_fold_stats.reset();
         *outer_aggregation_state = OuterAggregationState::Running(self.outer_aggregations());
     }
 
@@ -2600,6 +2651,7 @@ where
             rec2_witness_rx,
             outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
             total_outer_agg_proofs: Arc::new(Counter::new()),
+            agg_fold_stats: Arc::new(AggFoldStats::default()),
             received_agg_proofs,
             received_agg_proof_count,
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
@@ -4282,6 +4334,10 @@ where
         keep_resident: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let fold_started = std::time::Instant::now();
+        let mut verify_elapsed = std::time::Duration::ZERO;
+        let mut absorbed = 0usize;
+
         if !agg_proofs.is_empty() {
             tracing::info!("Received {:?} aggregated proofs", agg_proofs);
         }
@@ -4347,7 +4403,10 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
+            let verify_started = std::time::Instant::now();
             let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+            verify_elapsed += verify_started.elapsed();
+            absorbed += 1;
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -4419,6 +4478,7 @@ where
                 tracing::info!("Last proof received. {:?} proofs were received and waiting for {} aggregated proofs to be generated...", total_proofs_received, total_proofs_to_be_done);
             }
 
+            let gpu_wait_started = std::time::Instant::now();
             self.total_outer_agg_proofs.wait_until_value_and_check_streams(
                 total_proofs_to_be_done,
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
@@ -4428,12 +4488,19 @@ where
                 self.cancel_memory_handlers();
             }
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+            // Covers the whole background pipeline: witness build, launch/H2D and the GPU
+            // proof. `agg_fold_stats` splits the first two back out of it.
+            let gpu_wait_elapsed = gpu_wait_started.elapsed();
+
+            let teardown_started = std::time::Instant::now();
             self.stop_outer_aggregations();
+            let teardown_elapsed = teardown_started.elapsed();
 
             self.check_cancel(false)?;
 
             let keep_resident = keep_resident && !final_proof;
 
+            let collect_started = std::time::Instant::now();
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
@@ -4463,6 +4530,28 @@ where
                 self.recursive2_proofs_ongoing.write().unwrap().clear();
                 self.total_outer_agg_proofs.reset();
             }
+            let collect_elapsed = collect_started.elapsed();
+
+            // One line per fold, so a distributed tree's cost can be attributed without
+            // correlating scattered start/stop timers. `gpu` is the wait minus the work the
+            // pipeline threads reported, i.e. what the device spent proving recursive2.
+            let (witness_ms, launch_ms, n_witnesses) = self.agg_fold_stats.read();
+            let gpu_wait_ms = gpu_wait_elapsed.as_secs_f64() * 1e3;
+            tracing::info!(
+                "[AggFold] absorbed {} proof(s), {} recursive2 witness(es) | total {:.1}ms = \
+                 verify {:.1} + witness {:.1} + launch/h2d {:.1} + gpu {:.1} + teardown {:.1} + \
+                 collect {:.1} (final: {})",
+                absorbed,
+                n_witnesses,
+                fold_started.elapsed().as_secs_f64() * 1e3,
+                verify_elapsed.as_secs_f64() * 1e3,
+                witness_ms,
+                launch_ms,
+                (gpu_wait_ms - witness_ms - launch_ms).max(0.0),
+                teardown_elapsed.as_secs_f64() * 1e3,
+                collect_elapsed.as_secs_f64() * 1e3,
+                final_proof,
+            );
 
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
@@ -4582,6 +4671,7 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
+            let agg_fold_stats_clone = self.agg_fold_stats.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -4600,12 +4690,14 @@ where
                     if recursive2_airgroup_proofs.len() >= arity {
                         let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
 
+                        let witness_started = std::time::Instant::now();
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             &chunk.iter().collect::<Vec<_>>(),
                         );
+                        agg_fold_stats_clone.record_witness(witness_started.elapsed());
 
                         let witness = match w {
                             Ok(witness) => witness,
@@ -4634,6 +4726,7 @@ where
             let cancellation_info_clone = self.cancellation_info.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
+            let agg_fold_stats_clone = self.agg_fold_stats.clone();
             let handle = std::thread::spawn(move || loop {
                 if cancellation_info_clone.read_recover().token.is_cancelled() {
                     break;
@@ -4659,6 +4752,7 @@ where
 
                 witness.global_idx = Some(id);
 
+                let launch_started = std::time::Instant::now();
                 let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
@@ -4691,6 +4785,9 @@ where
                     cancellation_info_clone.write_recover().cancel(Some(e));
                     break;
                 }
+                // Stops at the trace H2D wait inside `generate_recursive_proof`; the GPU
+                // proof itself runs on past this and is accounted for by the drain's wait.
+                agg_fold_stats_clone.record_launch(launch_started.elapsed());
 
                 if !pctx_clone.gpu {
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
