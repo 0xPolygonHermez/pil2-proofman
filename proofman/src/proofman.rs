@@ -4368,8 +4368,10 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            let valid_recursive_proof =
-                !options.verify_agg_proofs || self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+            // Canonical publics gate the fold whatever `verify_agg_proofs` says: skipping them is
+            // what would make the fast path unsound. See `agg_publics_are_canonical`.
+            let valid_recursive_proof = self.agg_publics_are_canonical(proof.airgroup_id as usize, &proof.proof)
+                && (!options.verify_agg_proofs || self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?);
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -5465,20 +5467,38 @@ where
     /// own setup files. circuit_type (publics[0]): 0 = null proof (no-op), 1 = recursive2, k >= 2 =
     /// the un-aggregated recursive1 of air k-2 that a single-instance worker sends -- verified with
     /// that air's recursive1 setup (same circuit shape, its own root_c).
-    fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
+    /// Every aggregated public must be a canonical field element.
+    ///
+    /// Soundness, not defence in depth, which is why it runs outside `verify_agg_proofs`. These
+    /// words come off the wire and are fed to circom as raw `u64`s, and circom reduces mod p: a
+    /// `circuit_type` sent as `p` arrives as 0, where the fold's `isNull <== IsZero(circuitType)`
+    /// and `enable <== 1 - isNull` switch off that child's stark verification -- the very check
+    /// that makes skipping the CPU one safe. Nothing else pins word 0: the accumulated-challenge
+    /// comparison covers only the slice `get_accumulated_challenge` returns.
+    fn agg_publics_are_canonical(&self, airgroup_id: usize, proof_data: &[u64]) -> bool {
         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
-        let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
-        // These words come off the wire and are read back as the proof's outputs, so pin them to
-        // one encoding: verification reduces, making `x` and `x + p` pass alike. Only the challenge
-        // slice is otherwise covered, by the caller's `as_canonical_u64` comparison.
+        let Some(publics) = proof_data.get(..publics_aggregation) else {
+            tracing::error!("Aggregated proof from airgroup {airgroup_id} is too short to hold its publics");
+            return false;
+        };
         if let Some(i) = publics.iter().position(|&word| word >= F::ORDER_U64) {
             tracing::error!(
                 "Aggregated public {i} from airgroup {airgroup_id} is not canonical: {} >= {}",
                 publics[i],
                 F::ORDER_U64
             );
+            return false;
+        }
+        true
+    }
+
+    fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
+        let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
+        // Repeated from the caller so this stays correct standalone; it is a handful of compares.
+        if !self.agg_publics_are_canonical(airgroup_id, proof_data) {
             return Ok(false);
         }
+        let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
         let circuit_type = publics[0];
         if circuit_type == 0 {
             return Ok(true);
