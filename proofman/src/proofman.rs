@@ -2544,8 +2544,22 @@ where
         // The GPU is the constraint here (99% utilisation), so witness time is not on the critical
         // path and buying it with cores is a net loss. Re-measure wall clock, not just the phase
         // timers, before raising this.
+        //
+        // That measurement is phase 2, where the witness overlaps a saturated GPU. It does not
+        // carry to the outer aggregation, where a fold is strictly serial (witness -> launch ->
+        // prove) and the GPU sits idle for the witness's ~29ms, so there is nothing to deschedule
+        // and more threads are free. The two paths share this pool, so raising it trades phase-2
+        // wall clock for phase-3 latency: PIL2_RECURSIVE_WITNESS_THREADS makes that measurable
+        // per deployment instead of settling it here.
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
-        let recursive_witness_threads = max_num_threads.clamp(1, 8);
+        let recursive_witness_threads = match std::env::var("PIL2_RECURSIVE_WITNESS_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+        {
+            Some(requested) => requested.min(max_num_threads),
+            None => max_num_threads.clamp(1, 8),
+        };
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             setups_vadcop.max_compact_trace_size,
@@ -4404,7 +4418,15 @@ where
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
             let verify_started = std::time::Instant::now();
-            let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+            // Soundness rests on the recursive2 circuit verifying its children, not on this:
+            // a bad peer proof still fails at the final vadcop proof. Skipping only delays the
+            // detection, which a trusted cluster trades for the ~68ms it costs every fold. The
+            // length check above and the challenge comparison below are unaffected.
+            let valid_recursive_proof = if options.skip_agg_verification {
+                true
+            } else {
+                self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?
+            };
             verify_elapsed += verify_started.elapsed();
             absorbed += 1;
 

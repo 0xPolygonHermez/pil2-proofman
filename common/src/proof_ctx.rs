@@ -81,6 +81,13 @@ pub struct ProofOptions {
     pub compressed: bool,
     pub verify_proofs: bool,
     pub minimal_memory: bool,
+    /// Skip the CPU verification of each proof absorbed by a distributed aggregation node.
+    ///
+    /// The check is defence in depth, not soundness: the recursive2 circuit verifies its own
+    /// children, so a bad peer proof still fails at the final vadcop proof. It only decides how
+    /// early a corrupt peer is caught, which is worth ~68ms per fold on a trusted cluster.
+    /// The length and accumulated-challenge checks around it are separate and always run.
+    pub skip_agg_verification: bool,
 }
 
 impl BorshSerialize for ProofOptions {
@@ -91,6 +98,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        BorshSerialize::serialize(&self.skip_agg_verification, writer)?;
         Ok(())
     }
 }
@@ -103,8 +111,17 @@ impl BorshDeserialize for ProofOptions {
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
+        let skip_agg_verification = bool::deserialize_reader(reader)?;
 
-        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory })
+        Ok(Self {
+            verify_constraints,
+            aggregation,
+            rma,
+            compressed,
+            verify_proofs,
+            minimal_memory,
+            skip_agg_verification,
+        })
     }
 }
 
@@ -152,6 +169,7 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
+            skip_agg_verification: false,
         }
     }
 }
@@ -166,7 +184,19 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
     ) -> Self {
-        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory }
+        Self {
+            verify_constraints,
+            aggregation,
+            rma,
+            compressed,
+            verify_proofs,
+            minimal_memory,
+            skip_agg_verification: false,
+        }
+    }
+
+    pub fn skip_agg_verification(&mut self, skip: bool) {
+        self.skip_agg_verification = skip;
     }
 
     pub fn minimal_memory(&mut self) {
