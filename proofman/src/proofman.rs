@@ -21,7 +21,7 @@ use crate::add_publics_circom;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
@@ -603,6 +603,8 @@ pub struct ProofMan<F: PrimeField64> {
     max_num_threads: usize,
     num_threads_per_witness: usize,
     thread_budget: Arc<ThreadBudget>,
+    /// Instances the phase must finish before `Last` opens; `usize::MAX` until it is published.
+    last_gate: Arc<AtomicUsize>,
     witness_tx: Sender<usize>,
     witness_rx: Receiver<usize>,
     contributions_tx: Sender<usize>,
@@ -765,6 +767,8 @@ impl<F: PrimeField64> ProofMan<F> {
         for handle in handles {
             let _ = handle.join();
         }
+
+        self.last_gate.store(usize::MAX, Ordering::Release);
 
         // Drain all relevant channels to ensure they are empty
         while self.witness_rx.try_recv().is_ok() {}
@@ -2559,6 +2563,7 @@ where
             roots_contributions,
             values_contributions,
             thread_budget,
+            last_gate: Arc::new(AtomicUsize::new(usize::MAX)),
             witness_tx,
             witness_rx,
             contributions_tx,
@@ -4960,6 +4965,7 @@ where
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
+        let last_gate = self.last_gate.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
@@ -4999,9 +5005,12 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
+                // No `Last` runs while the gate is shut, so every completion `witness_done` has
+                // counted is one of the others -- it is the tally, no second counter needed.
+                let scope = crate::bands_in_scope(witness_done_clone.value(), last_gate.load(Ordering::Acquire));
                 let chosen: Option<(usize, usize)> = {
                     let held = in_flight.lock().unwrap();
-                    crate::next_admission(&pending, |id| admissible(id, &held))
+                    crate::next_admission(&pending[..scope], |id| admissible(id, &held))
                 };
 
                 let instance_id = match chosen.and_then(|(band, pos)| pending[band].remove(pos)) {
@@ -5125,6 +5134,10 @@ where
         // can't reach it and the wait stalls with no cancellation.
         let mut expected = instances.len();
         if !minimal_memory && (self.pctx.gpu || stats) {
+            // What `Last` waits on, published before anything can announce.
+            let non_last =
+                instances.iter().filter(|&&id| self.pctx.dctx_instance_priority(id) != WitnessPriority::Last).count();
+            self.last_gate.store(non_last, Ordering::Release);
             timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
@@ -5134,6 +5147,14 @@ where
                 if skip {
                     expected -= 1;
                     continue;
+                }
+                // `witness_schedule` put `Last` at the back of this walk, but the threads ahead of
+                // it may still be running, and a barrier means waiting for them.
+                if self.pctx.dctx_instance_priority(instance_id) == WitnessPriority::Last {
+                    let outstanding: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
+                    for handle in outstanding {
+                        handle.join().unwrap();
+                    }
                 }
                 let n_threads_witness = self.num_threads_per_witness;
 

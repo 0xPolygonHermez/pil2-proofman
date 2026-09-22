@@ -239,7 +239,9 @@ pub struct InstanceChunks {
 }
 
 /// Dispatch-order band for an instance, fixed at registration; says nothing about *why*.
-/// Pooled admission honours all three; the serial schedule honours only `Last`.
+///
+/// `First` and `Normal` are preferences: they order what is ready now. `Last` is a barrier -- it
+/// starts only once every other instance of the phase has finished, however early it was ready.
 ///
 /// Spaced like nice values, not numbered 0, 1, 2: a band added later (a `Bulk` at 20) takes a
 /// free number instead of renumbering the ones above it. Lower is more urgent, and `Ord` follows
@@ -275,7 +277,8 @@ impl WitnessPriority {
 
 /// Orders `instances` for dispatch. Only `Last` moves anything: `First` is a pooled preference
 /// with no serial analogue here, so honouring it would reorder airs that never actually race.
-/// The sort is stable, so everything else keeps registration order.
+/// The sort is stable, so everything else keeps registration order. This is only the order; the
+/// barrier that holds `Last` back is enforced where instances are dispatched.
 pub fn witness_schedule(
     instances: impl IntoIterator<Item = usize>,
     band: impl Fn(usize) -> WitnessPriority,

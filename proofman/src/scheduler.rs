@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
 use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
@@ -428,9 +428,23 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
     eligible + 1
 }
 
+/// Bands admission may draw from. `Last` is a barrier, not a tie-break: it opens only once the
+/// phase's other instances have finished. An empty pool cannot stand in for that -- the urgent
+/// pools run dry constantly while collectors still feed them -- hence the count, which is
+/// `usize::MAX` until the phase publishes it.
+pub fn bands_in_scope(done: usize, non_last_total: usize) -> usize {
+    if done >= non_last_total {
+        WitnessPriority::BANDS
+    } else {
+        WitnessPriority::Last.index()
+    }
+}
+
 /// `(pool, index)` of the instance to admit next: the first admissible entry of the most urgent
 /// non-empty band. Short-circuits at the head -- it runs under the `in_flight` lock.
-/// `admissible` outranks the band: it carries the slot cap, the reason this pools at all.
+/// `admissible` outranks the band: it carries the slot cap, the reason this pools at all. So a
+/// band held back by the cap yields to a less urgent one -- which is why a barrier band has to be
+/// kept out of `pools` by the caller, not ranked last here.
 pub(crate) fn next_admission(pools: &[VecDeque<usize>], admissible: impl Fn(usize) -> bool) -> Option<(usize, usize)> {
     pools.iter().enumerate().find_map(|(band, pool)| pool.iter().position(|&id| admissible(id)).map(|pos| (band, pos)))
 }
@@ -684,8 +698,7 @@ mod drain_tests {
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{eligible_stream_count, next_admission, witness_slot_cap};
-    use proofman_common::WitnessPriority;
+    use super::{bands_in_scope, eligible_stream_count, next_admission, witness_slot_cap, WitnessPriority};
     use std::collections::VecDeque;
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
@@ -765,6 +778,18 @@ mod admission_tests {
         assert_eq!(next_admission(&no_first, |_| true), Some((1, 0)));
         let only_last = pools(&[(7, WitnessPriority::Last)]);
         assert_eq!(next_admission(&only_last, |_| true), Some((2, 0)));
+    }
+
+    /// The case band ordering alone got wrong: a ready `Last`, alone in the pools, must still wait.
+    #[test]
+    fn last_stays_out_of_scope_until_the_phase_owes_nothing() {
+        let pending = pools(&[(7, WitnessPriority::Last)]);
+        let scope = |done, total| next_admission(&pending[..bands_in_scope(done, total)], |_| true);
+        assert_eq!(scope(0, usize::MAX), None, "unarmed: shut, so nothing slips through on startup");
+        assert_eq!(scope(1, 2), None, "one of two done: ready, alone, and still held");
+        assert_eq!(scope(2, 2), Some((2, 0)), "the last one lands and the band opens");
+        assert_eq!(scope(0, 0), Some((2, 0)), "a phase of only Last instances must not deadlock");
+        assert_eq!(scope(3, 2), Some((2, 0)), "an eviction recompute overshoots; the gate stays open");
     }
 
     /// The slot cap outranks the band: holding an air back is why this pools at all.
