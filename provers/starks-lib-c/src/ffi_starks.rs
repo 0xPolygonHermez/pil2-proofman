@@ -1685,6 +1685,7 @@ pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n
 pub fn commit_witness_streaming_c(
     d_buffers: *mut ::std::os::raw::c_void,
     slot_idx: u64,
+    instance_id: u64,
     airgroup_id: u64,
     air_id: u64,
     packed: *mut ::std::os::raw::c_void,
@@ -1699,6 +1700,7 @@ pub fn commit_witness_streaming_c(
         commit_witness_streaming(
             d_buffers,
             slot_idx,
+            instance_id,
             airgroup_id,
             air_id,
             packed,

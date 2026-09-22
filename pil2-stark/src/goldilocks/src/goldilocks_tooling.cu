@@ -71,52 +71,20 @@ void copy_to_device_in_chunks(
     // own instead -- see STARK_GPU_WITNESS in gen_recursive_proof_gpu.
     bool categorize
     ){
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-
-    cudaSetDevice(gpuId);
-
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
 
-    // Fast paths that do NOT need the shared pinned-staging buffer, so they skip
-    // the per-GPU mutex_pinned lock (avoids serializing behind large stagings):
-    //  - direct: large + already host-pinned source
-    //  - small:  sub-threshold copy, one shot
+    // One copy, whatever the source. The pinned double-buffer this used to stage through existed
+    // for pageable sources, but every trace handed in here comes from a page-locked pool
+    // (`MemoryHandler` registers it all-or-nothing), so the staging never ran for them: measured
+    // over a whole proof, 2 copies of 170 took it, 38 MB of 26.9 GB, and the largest was 32 MB
+    // against buffers of 1 GiB each. For the sources that did, a direct `cudaMemcpyAsync` measured
+    // no slower below 1 GB -- the driver stages pageable memory itself -- and faster under the old
+    // 16 MB threshold, where the staged path was taking a per-GPU mutex to move a few MB.
     if (categorize) { TimerStartCategoryGPU(timer, H2D_COPY); }
-    if (copy_direct_registered_h2d_if_enabled(src, dst, total_size, stream)) {
-        // The direct path leaves a DMA reading `src`, so mark where it finishes: this is what
-        // gates recycling the host trace buffer (see wait_trace_h2d_done).
-        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-        if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
-    uint64_t block_size = d_buffers->pinned_size;
-    // Ping-pong through the two pinned halves, waiting on each half's own copy
-    // retirement event before refilling it. A cudaStreamSynchronize here would
-    // wait for every queued kernel of the previous proof (pipelining), draining
-    // the GPU for the whole host memcpy of the next chunk.
-    Goldilocks::Element *half[2] = { d_buffers->pinned_buffer[gpuLocalId],
-                                     d_buffers->pinned_buffer_extra[gpuLocalId] };
-    cudaEvent_t *ev = d_buffers->pinned_copy_done[gpuLocalId];
-    uint64_t nBlocks = (total_size + block_size - 1) / block_size;
-    for (uint64_t i = 0; i < nBlocks; ++i) {
-        int h = (int)(i & 1);
-        uint64_t len = std::min(block_size, total_size - i * block_size);
-        CHECKCUDAERR(cudaEventSynchronize(ev[h]));
-        std::memcpy(half[h], (const uint8_t*)src + i * block_size, len);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)dst + i * block_size, half[h], len,
-                                     cudaMemcpyHostToDevice, stream));
-        CHECKCUDAERR(cudaEventRecord(ev[h], stream));
-    }
-    // The pinned halves are shared (mutex releases on return): wait for our own
-    // copies to retire, NOT for the stream tail.
-    CHECKCUDAERR(cudaEventSynchronize(ev[0]));
-    CHECKCUDAERR(cudaEventSynchronize(ev[1]));
-    // Staged path: `src` was memcpy'd into the pinned staging buffer and the copies are already
-    // synced, so the host trace buffer is free here. Record anyway so the event always marks this
-    // commit's release point rather than leaving a stale record from an earlier one.
+    CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
+    // Marks where the DMA finishes reading `src`: this is what gates recycling the host trace
+    // buffer (see wait_trace_h2d_done).
     cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
     if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
 }

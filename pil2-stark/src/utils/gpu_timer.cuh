@@ -244,6 +244,12 @@ public:
         activeCategoryTimers.clear();
     }
 
+    // Categories that move bytes or wait for bytes rather than compute. Kept apart in the
+    // report so a reader cannot mistake them for SM work.
+    static bool isTransferCategory(const std::string& c) {
+        return c == "H2D_COPY" || c == "D2H_COPY" || c == "STAGED_WAIT" || c == "STAGED_D2D" || c == "LOAD_TREE_WAIT";
+    }
+
     void logCategoryContributions(const std::string& total_name) {
 #ifndef __GOLDILOCKS_ENV__
         if (timers.find(total_name) == timers.end()) return;
@@ -253,21 +259,36 @@ public:
         // recorded during the load phase used to be divided by the proof's own span.
         double time_total = getTimeSec(total_name);
         if (multiTimers.empty()) return;
-        zklog.trace("     KERNELS CONTRIBUTIONS:");
 
-        std::vector<std::pair<std::string, double>> category_times;
+        std::vector<std::pair<std::string, double>> kernel_times, transfer_times;
         for (const auto& [category, entries] : multiTimers) {
-            category_times.emplace_back(category, getCategoryTotalTimeSec(category));
+            double t = getCategoryTotalTimeSec(category);
+            (isTransferCategory(category) ? transfer_times : kernel_times).emplace_back(category, t);
         }
 
-        std::sort(category_times.begin(), category_times.end(),
-                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        auto byDesc = [](const auto& a, const auto& b) { return a.second > b.second; };
+        std::sort(kernel_times.begin(), kernel_times.end(), byDesc);
+        std::sort(transfer_times.begin(), transfer_times.end(), byDesc);
+
         std::ostringstream oss;
-        for (const auto& [category, total_sec] : category_times) {
-           oss << std::fixed << std::setprecision(4) << total_sec << "s (" << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%)";
-            zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
-            oss.str("");
-            oss.clear();
+        auto dump = [&](const std::vector<std::pair<std::string, double>>& v) {
+            for (const auto& [category, total_sec] : v) {
+               oss << std::fixed << std::setprecision(4) << total_sec << "s (" << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%)";
+                zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
+                oss.str("");
+                oss.clear();
+            }
+        };
+        if (!kernel_times.empty()) {
+            zklog.trace("     KERNELS CONTRIBUTIONS:");
+            dump(kernel_times);
+        }
+        // Printed apart because these are NOT compute: they are the copy engine and the stream
+        // stalls waiting on it. They sit inside the window, so they belong to the percentages,
+        // but adding them to the kernel times would overstate how busy the SMs were.
+        if (!transfer_times.empty()) {
+            zklog.trace("     TRANSFERS / STALLS (copy engine, not GPU compute):");
+            dump(transfer_times);
         }
 #endif
     }

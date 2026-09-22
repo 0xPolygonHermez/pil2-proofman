@@ -6,6 +6,7 @@ use std::io::{ErrorKind, Read};
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 
 pub type GetWitnessTraceFunc = unsafe extern "C" fn(
     zkin: *mut u64,
@@ -41,7 +42,7 @@ use proofman_starks_lib_c::{
     calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{custom_commit_reserved_words, GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -87,6 +88,10 @@ pub struct Setup<F: PrimeField64> {
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
     pub custom_commits_reserved_words: usize,
+    /// Packed `words_per_row` the reservation assumed for each custom commit (its column count
+    /// when the file was not resolved at sizing time). A registered file wider than this would
+    /// overrun the const buffer, so `initialize_custom_commits` refuses it.
+    pub custom_commits_words_per_row: Vec<u64>,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
@@ -295,6 +300,9 @@ impl<F: PrimeField64> Setup<F> {
         verify_constraints: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
+        // Commit name -> packed file, when the caller knows them before the const buffer is
+        // sized. Empty reserves each custom commit's worst case.
+        custom_commits_fixed: &HashMap<String, PathBuf>,
     ) -> ProofmanResult<Self> {
         let starkinfo_borrow_path = match setup_type {
             ProofType::Recursive1 => Some(
@@ -533,17 +541,52 @@ impl<F: PrimeField64> Setup<F> {
                 (None, None, None, None, None, None)
             };
 
-        // Worst case (words_per_row == n_cols): the real value is in the commit file, which is
-        // registered long after the const buffer is sized.
+        // The packed width is data-dependent, so it can only come from the commit file. When the
+        // caller named the file up front we read its header and reserve exactly; otherwise the
+        // worst case (one word per column), which is never short.
+        // What the reservation above assumed, per commit: registration must not exceed it.
+        let mut custom_commits_words_per_row: Vec<u64> = Vec::new();
         let custom_commits_reserved_words = match gpu {
-            true => custom_commit_reserved_words(
-                stark_info.stark_struct.n_bits as u32,
-                &stark_info
+            true => {
+                let widths: Vec<u64> = stark_info
                     .custom_commits
                     .iter()
                     .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
-                    .collect::<Vec<_>>(),
-            ),
+                    .collect();
+                let n = 1u64 << stark_info.stark_struct.n_bits;
+                let n_extended = 1u64 << stark_info.stark_struct.n_bits_ext;
+                let arity = stark_info.stark_struct.merkle_tree_arity;
+                let packed: Vec<Option<u64>> = stark_info
+                    .custom_commits
+                    .iter()
+                    .zip(&widths)
+                    .map(|(commit, &n_cols)| {
+                        if n_cols == 0 {
+                            return None;
+                        }
+                        let path = custom_commits_fixed.get(&commit.name)?;
+                        match custom_commit_words_per_row(path, n, n_extended, n_cols, arity) {
+                            Ok(words) => Some(words),
+                            // Not fatal here: registration validates the same file later and is
+                            // where a bad one must be reported. Sizing just keeps the worst case.
+                            Err(e) => {
+                                tracing::debug!("custom commit '{}' not sized from its file: {e}", commit.name);
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                custom_commits_words_per_row = widths
+                    .iter()
+                    .zip(&packed)
+                    .map(|(&n_cols, resolved)| resolved.filter(|&p| p > 0 && p <= n_cols).unwrap_or(n_cols))
+                    .collect();
+                custom_commit_reserved_words(
+                    stark_info.stark_struct.n_bits as u32,
+                    &widths,
+                    &custom_commits_words_per_row.iter().copied().map(Some).collect::<Vec<_>>(),
+                )
+            }
             false => 0,
         };
 
@@ -555,6 +598,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size,
             const_pols_size_packed,
             custom_commits_reserved_words,
+            custom_commits_words_per_row,
             const_tree_size,
             verkey,
             verkey_file,

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+use std::path::PathBuf;
 
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
@@ -67,6 +68,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         aggregation: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
+        let custom_commits_fixed = &HashMap::new();
         if aggregation {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu)?;
             let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu)?;
@@ -80,6 +82,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 verify_constraints,
                 gpu,
                 None,
+                custom_commits_fixed,
             )?;
 
             // Only if the key says it carries the stage. `Setup::new` reads the starkinfo from disk
@@ -96,6 +99,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     verify_constraints,
                     gpu,
                     None,
+                    custom_commits_fixed,
                 )?)
             } else {
                 None
@@ -323,6 +327,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
 
@@ -369,6 +374,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     verify_constraints,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
+                    custom_commits_fixed,
                 )?;
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
@@ -515,13 +521,26 @@ pub struct SetupCtx<F: PrimeField64> {
 pub const RECURSIVE1_CONST_SLOTS: usize = 20;
 
 impl<F: PrimeField64> SetupCtx<F> {
+    /// Every custom commit reserves its worst case. Use `new_with_commit_files` when the caller
+    /// already knows the packed files: only then can the const buffer reserve their real width.
     pub fn new(
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, gpu)?;
+        Self::new_with_commit_files(global_info, setup_type, verify_constraints, gpu, &HashMap::new())
+    }
+
+    pub fn new_with_commit_files(
+        global_info: &GlobalInfo,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+        gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+    ) -> ProofmanResult<Self> {
+        let setup_repository =
+            SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
