@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
 use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
@@ -428,6 +428,27 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
     eligible + 1
 }
 
+/// Bands admission may draw from. `Last` is a barrier, not a tie-break: it opens only once the
+/// phase's other instances have finished. An empty pool cannot stand in for that -- the urgent
+/// pools run dry constantly while collectors still feed them -- hence the count, which is
+/// `usize::MAX` until the phase publishes it.
+pub fn bands_in_scope(done: usize, non_last_total: usize) -> usize {
+    if done >= non_last_total {
+        WitnessPriority::BANDS
+    } else {
+        WitnessPriority::Last.index()
+    }
+}
+
+/// `(pool, index)` of the instance to admit next: the first admissible entry of the most urgent
+/// non-empty band. Short-circuits at the head -- it runs under the `in_flight` lock.
+/// `admissible` outranks the band: it carries the slot cap, the reason this pools at all. So a
+/// band held back by the cap yields to a less urgent one -- which is why a barrier band has to be
+/// kept out of `pools` by the caller, not ranked last here.
+pub(crate) fn next_admission(pools: &[VecDeque<usize>], admissible: impl Fn(usize) -> bool) -> Option<(usize, usize)> {
+    pools.iter().enumerate().find_map(|(band, pool)| pool.iter().position(|&id| admissible(id)).map(|pos| (band, pos)))
+}
+
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
 /// AIRs to feed the recursive pipeline), then heaviest-per-proof first (LPT), then
 /// `(airgroup_id, air_id)` to cluster each AIR's instances contiguously for const-tree reuse.
@@ -677,7 +698,8 @@ mod drain_tests {
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{eligible_stream_count, witness_slot_cap};
+    use super::{bands_in_scope, eligible_stream_count, next_admission, witness_slot_cap, WitnessPriority};
+    use std::collections::VecDeque;
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
     const CLASSES: [usize; 3] = [7598, 6390, 6390];
@@ -707,6 +729,75 @@ mod admission_tests {
         assert_eq!(eligible_stream_count(6133, &[]), 0);
         assert_eq!(witness_slot_cap(0, 3), usize::MAX);
         assert_eq!(witness_slot_cap(1, 0), usize::MAX);
+    }
+
+    /// The handler's arrival pools, in band order.
+    fn pools(pairs: &[(usize, WitnessPriority)]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        let mut out: [VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
+        for &(id, band) in pairs {
+            out[band.index()].push_back(id);
+        }
+        out
+    }
+
+    /// Arrivals that all took the default band.
+    fn normal(ids: &[usize]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        pools(&ids.iter().map(|&id| (id, WitnessPriority::Normal)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn nothing_to_admit_admits_nothing() {
+        assert_eq!(next_admission(&normal(&[]), |_| true), None, "no pool has anything");
+        assert_eq!(next_admission(&normal(&[7, 2]), |_| false), None, "every candidate is at its cap");
+    }
+
+    /// Within a band the pool is FIFO, and the band still outranks arrival order.
+    #[test]
+    fn arrival_order_decides_within_a_band() {
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true), Some((1, 0)));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
+        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
+    }
+
+    /// The production shape: one band, the head's air at its cap, another air behind it. Without
+    /// this, narrowing the scan to the head alone would pass every other test and stall the pool.
+    #[test]
+    fn a_capped_head_does_not_block_the_rest_of_its_pool() {
+        assert_eq!(next_admission(&normal(&[7, 2]), |id| id != 7), Some((1, 1)));
+    }
+
+    /// The band replaces the priority channel, and the walk runs the whole way down. 7 arrives
+    /// first but sits in the least urgent band; 9 arrives last in the most urgent.
+    #[test]
+    fn bands_outrank_arrival_order() {
+        let all = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&all, |_| true), Some((0, 0)));
+        assert_eq!(all[0][0], 9, "the pools must come back untouched");
+        let no_first = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&no_first, |_| true), Some((1, 0)));
+        let only_last = pools(&[(7, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&only_last, |_| true), Some((2, 0)));
+    }
+
+    /// The case band ordering alone got wrong: a ready `Last`, alone in the pools, must still wait.
+    #[test]
+    fn last_stays_out_of_scope_until_the_phase_owes_nothing() {
+        let pending = pools(&[(7, WitnessPriority::Last)]);
+        let scope = |done, total| next_admission(&pending[..bands_in_scope(done, total)], |_| true);
+        assert_eq!(scope(0, usize::MAX), None, "unarmed: shut, so nothing slips through on startup");
+        assert_eq!(scope(1, 2), None, "one of two done: ready, alone, and still held");
+        assert_eq!(scope(2, 2), Some((2, 0)), "the last one lands and the band opens");
+        assert_eq!(scope(0, 0), Some((2, 0)), "a phase of only Last instances must not deadlock");
+        assert_eq!(scope(3, 2), Some((2, 0)), "an eviction recompute overshoots; the gate stays open");
+    }
+
+    /// The slot cap outranks the band: holding an air back is why this pools at all.
+    #[test]
+    fn the_slot_cap_outranks_the_band() {
+        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal), (9, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&pending, |id| id != 7), Some((1, 0)), "a capped First yields to Normal");
+        assert_eq!(next_admission(&pending, |id| id != 7 && id != 2), Some((2, 0)), "and Normal to Last");
     }
 }
 

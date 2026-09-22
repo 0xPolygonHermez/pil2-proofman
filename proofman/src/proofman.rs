@@ -5,7 +5,7 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo,
+    SetupsVadcop, VerboseMode, WitnessPriority, MAX_INSTANCES, PackedInfo,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -21,7 +21,7 @@ use crate::add_publics_circom;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
@@ -603,10 +603,10 @@ pub struct ProofMan<F: PrimeField64> {
     max_num_threads: usize,
     num_threads_per_witness: usize,
     thread_budget: Arc<ThreadBudget>,
+    /// Instances the phase must finish before `Last` opens; `usize::MAX` until it is published.
+    last_gate: Arc<AtomicUsize>,
     witness_tx: Sender<usize>,
     witness_rx: Receiver<usize>,
-    witness_tx_priority: Sender<usize>,
-    witness_rx_priority: Receiver<usize>,
     contributions_tx: Sender<usize>,
     contributions_rx: Receiver<usize>,
     proofs_tx: Sender<usize>,
@@ -753,7 +753,6 @@ impl<F: PrimeField64> ProofMan<F> {
         ongoing_proofs.clear();
 
         self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
         self.pctx.set_proof_tx(None);
 
         // Releases the completion capability and joins the recursive workers. They disconnect only
@@ -769,9 +768,10 @@ impl<F: PrimeField64> ProofMan<F> {
             let _ = handle.join();
         }
 
+        self.last_gate.store(usize::MAX, Ordering::Release);
+
         // Drain all relevant channels to ensure they are empty
         while self.witness_rx.try_recv().is_ok() {}
-        while self.witness_rx_priority.try_recv().is_ok() {}
         while self.contributions_rx.try_recv().is_ok() {}
         while self.proofs_rx.try_recv().is_ok() {}
 
@@ -1360,7 +1360,6 @@ where
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
-            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
 
         let witness_done = Arc::new(Counter::new());
@@ -1384,7 +1383,7 @@ where
         let my_instances = self.pctx.dctx_get_process_instances();
 
         let my_instances_no_tables =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            self.pctx.dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1398,7 +1397,6 @@ where
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(None);
-            self.pctx.set_witness_tx_priority(None);
         }
 
         self.witness_tx.send(usize::MAX).ok();
@@ -1490,7 +1488,7 @@ where
         transcript.put(&dummy_element);
 
         let instances = self.pctx.dctx_get_instances();
-        let my_instances = self.pctx.dctx_get_process_instances();
+        let my_instances = self.pctx.dctx_witness_schedule(self.pctx.dctx_get_process_instances());
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for &instance_id in my_instances.iter() {
@@ -1711,14 +1709,10 @@ where
             handles: witness_handles.clone(),
         };
 
-        let my_instances_no_tables = my_instances
-            .iter()
-            .filter(|idx| {
-                !self.pctx.dctx_is_table(**idx)
-                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
-            })
-            .copied()
-            .collect::<Vec<_>>();
+        let my_instances_no_tables = self.pctx.dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| {
+            !self.pctx.dctx_is_table(idx)
+                && skip_prover_instance(&self.pctx, idx).map(|(skip, _)| !skip).unwrap_or(false)
+        }));
 
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -2532,7 +2526,6 @@ where
         let thread_budget = Arc::new(ThreadBudget::new(max_num_threads));
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
@@ -2570,10 +2563,9 @@ where
             roots_contributions,
             values_contributions,
             thread_budget,
+            last_gate: Arc::new(AtomicUsize::new(usize::MAX)),
             witness_tx,
             witness_rx,
-            witness_tx_priority,
-            witness_rx_priority,
             contributions_tx,
             contributions_rx,
             completions: DeviceCompletions::new(),
@@ -2724,7 +2716,6 @@ where
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
-                self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
             }
             let witness_done = Arc::new(Counter::new());
 
@@ -2871,8 +2862,9 @@ where
 
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_no_tables =
-                my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            let my_instances_no_tables = self
+                .pctx
+                .dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
@@ -2886,7 +2878,6 @@ where
 
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(None);
-                self.pctx.set_witness_tx_priority(None);
             }
             self.witness_tx.send(usize::MAX).ok();
 
@@ -3899,6 +3890,8 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
+        // Exempt from `witness_schedule`: `my_instances` is already ordered by `schedule_key` for
+        // const-tree clustering, and rescheduling it would override that competing order.
         let mut instances_to_be_calculated = Vec::with_capacity(my_instances.len());
         for &instance_id in my_instances.iter() {
             // Committed to the async callback; if the send panics the guard settles it. The basic
@@ -4972,7 +4965,7 @@ where
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
-        let witness_rx_priority = self.witness_rx_priority.clone();
+        let last_gate = self.last_gate.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
@@ -4980,30 +4973,21 @@ where
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
-            // Ready instances waiting to be admitted, priority-first, and how many slots each air
-            // currently holds. Taking straight off the channels would be pure FIFO with no choice;
-            // pooling is what lets `witness_slot_cap` hold back an air that can only drain on one
-            // stream so the slots it would have taken go to work the other streams can run.
-            // Two pools, not one queue: the priority pool is always scanned first, so a priority
-            // instance outranks every normal one however late it arrives, while arrival order is kept
-            // within each pool. That is all the two channels mean now — a ranking hint, no longer a
-            // queue-jump able to take every slot.
-            let mut pending_priority: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-            let mut pending: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+            // One pool of ready-but-not-yet-admitted instances per band, in band order (arrival
+            // order within a band); pooling is what lets `witness_slot_cap` hold an air back.
+            // Bucketed once on arrival so admission never re-reads a band under `in_flight`.
+            let mut pending: [std::collections::VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
             let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
             // Depth 1: a wakeup is a hint, not a count.
             let (slot_freed_tx, slot_freed_rx): (Sender<()>, Receiver<()>) = bounded(1);
             let mut arrivals_done = false;
             Some(std::thread::spawn(move || loop {
                 // Take everything available without committing to any of it yet.
-                while let Ok(id) = witness_rx_priority.try_recv() {
-                    pending_priority.push_back(id);
-                }
                 while let Ok(id) = witness_rx.try_recv() {
                     if id == usize::MAX {
                         arrivals_done = true;
                     } else {
-                        pending.push_back(id);
+                        pending[pctx_clone.dctx_instance_priority(id).index()].push_back(id);
                     }
                 }
 
@@ -5021,64 +5005,45 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
-                // First admissible, priority pool first. Not reordered: `weight` is the proof cost
-                // of the air, so it is equal for every instance of one, and the instances of an air
-                // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
-                let first = |pool: &std::collections::VecDeque<usize>,
-                             held: &HashMap<(usize, usize), usize>|
-                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
-                let chosen: Option<(bool, usize)> = {
+                // No `Last` runs while the gate is shut, so every completion `witness_done` has
+                // counted is one of the others -- it is the tally, no second counter needed.
+                let scope = crate::bands_in_scope(witness_done_clone.value(), last_gate.load(Ordering::Acquire));
+                let chosen: Option<(usize, usize)> = {
                     let held = in_flight.lock().unwrap();
-                    first(&pending_priority, &held)
-                        .map(|pos| (true, pos))
-                        .or_else(|| first(&pending, &held).map(|pos| (false, pos)))
+                    crate::next_admission(&pending[..scope], |id| admissible(id, &held))
                 };
 
-                let instance_id =
-                    match chosen.and_then(
-                        |(is_priority, pos)| {
-                            if is_priority {
-                                pending_priority.remove(pos)
-                            } else {
-                                pending.remove(pos)
-                            }
-                        },
-                    ) {
-                        Some(id) => id,
-                        None => {
-                            // Nothing admissible. Exit only once no more can arrive and nothing is queued.
-                            if cancellation_info_clone.read_recover().token.is_cancelled() {
-                                break;
-                            }
-                            if arrivals_done && pending.is_empty() && pending_priority.is_empty() {
-                                break;
-                            }
-                            // Wait on every event that can make work admissible -- an arrival on
-                            // either channel, or a freed slot -- rather than polling. Was a flat 1 ms
-                            // sleep: measured at ~8 ms per witness, 540 ms over a phase.
-                            let mut select = crossbeam_channel::Select::new();
-                            let priority_op = select.recv(&witness_rx_priority);
-                            let normal_op = select.recv(&witness_rx);
-                            let slot_op = select.recv(&slot_freed_rx);
-                            if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
-                                let index = op.index();
-                                if index == priority_op {
-                                    if let Ok(id) = op.recv(&witness_rx_priority) {
-                                        pending_priority.push_back(id);
-                                    }
-                                } else if index == normal_op {
-                                    match op.recv(&witness_rx) {
-                                        Ok(id) if id == usize::MAX => arrivals_done = true,
-                                        Ok(id) => pending.push_back(id),
-                                        Err(_) => {}
-                                    }
-                                } else if index == slot_op {
-                                    let _ = op.recv(&slot_freed_rx);
-                                }
-                            }
-                            continue;
+                let instance_id = match chosen.and_then(|(band, pos)| pending[band].remove(pos)) {
+                    Some(id) => id,
+                    None => {
+                        // Nothing admissible. Exit only once no more can arrive and nothing is queued.
+                        if cancellation_info_clone.read_recover().token.is_cancelled() {
+                            break;
                         }
-                    };
+                        if arrivals_done && pending.iter().all(|p| p.is_empty()) {
+                            break;
+                        }
+                        // Wait on every event that can make work admissible -- an arrival on
+                        // the channel, or a freed slot -- rather than polling. Was a flat 1 ms
+                        // sleep: measured at ~8 ms per witness, 540 ms over a phase.
+                        let mut select = crossbeam_channel::Select::new();
+                        let normal_op = select.recv(&witness_rx);
+                        let slot_op = select.recv(&slot_freed_rx);
+                        if let Ok(op) = select.select_timeout(ADMISSION_WAIT) {
+                            let index = op.index();
+                            if index == normal_op {
+                                match op.recv(&witness_rx) {
+                                    Ok(id) if id == usize::MAX => arrivals_done = true,
+                                    Ok(id) => pending[pctx_clone.dctx_instance_priority(id).index()].push_back(id),
+                                    Err(_) => {}
+                                }
+                            } else if index == slot_op {
+                                let _ = op.recv(&slot_freed_rx);
+                            }
+                        }
+                        continue;
+                    }
+                };
 
                 if let Some(witness_start_time_clone) = &witness_start_time_clone {
                     if witness_start_time_clone.read().unwrap().is_none() {
@@ -5120,10 +5085,14 @@ where
                         cancellation_info_clone.write_recover().cancel(Some(e));
                     }
                     drop(tokens);
-                    // Free the slot before the counter so admission can refill immediately.
-                    drop(slot);
-                    // The buffer carries its own wait, whichever worker blocked for it.
+                    // The buffer carries its own wait, whichever worker blocked for it. Read
+                    // before the counter, so nothing touches the trace once the phase may proceed.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    // Counter before the slot: dropping the slot is what wakes admission, and that
+                    // wake must not arrive ahead of the completion that may open the `Last` gate,
+                    // or the gate sits out an `ADMISSION_WAIT` it has no reason to.
+                    witness_done_clone.increment();
+                    drop(slot);
                     timer_stop_and_log_debug_net!(
                         GENERATING_WC,
                         waited,
@@ -5132,7 +5101,6 @@ where
                         airgroup_id,
                         air_id
                     );
-                    witness_done_clone.increment();
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
@@ -5169,15 +5137,33 @@ where
         // can't reach it and the wait stalls with no cancellation.
         let mut expected = instances.len();
         if !minimal_memory && (self.pctx.gpu || stats) {
+            // What `Last` waits on, published before anything can announce.
+            let non_last =
+                instances.iter().filter(|&&id| self.pctx.dctx_instance_priority(id) != WitnessPriority::Last).count();
+            self.last_gate.store(non_last, Ordering::Release);
             timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
-            for &instance_id in instances.iter() {
+            // Scheduled here rather than trusting the caller: the proofs phase hands this list in
+            // `schedule_key` order for const-tree clustering, so a `Last` instance arrives in the
+            // middle of it, and the barrier below would then join only what was spawned ahead of
+            // it while everything after still ran alongside. The sort is stable, so the clustering
+            // survives -- only `Last` moves.
+            let ordered = self.pctx.dctx_witness_schedule(instances.iter().copied());
+            for &instance_id in ordered.iter() {
                 let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
                 if skip {
                     expected -= 1;
                     continue;
+                }
+                // `Last` is a barrier: it is at the back now, but the threads ahead of it may
+                // still be running, and a barrier means waiting for them.
+                if self.pctx.dctx_instance_priority(instance_id) == WitnessPriority::Last {
+                    let outstanding: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
+                    for handle in outstanding {
+                        handle.join().unwrap();
+                    }
                 }
                 let n_threads_witness = self.num_threads_per_witness;
 
@@ -5285,6 +5271,21 @@ where
             || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
             &self.cancellation_info,
         );
+
+        // A short wait says only "one is missing"; name it. Also reached on cancellation, so the
+        // wording must hold when the real error is elsewhere.
+        if witness_done.value() < expected {
+            const SHOWN: usize = 16;
+            for (state, ids) in self.pctx.dctx_instances_not_done(instances) {
+                tracing::error!(
+                    "{} instance(s) still {:?} when the witness phase gave up: {:?}{}",
+                    ids.len(),
+                    state,
+                    &ids[..ids.len().min(SHOWN)],
+                    if ids.len() > SHOWN { format!(" (+{} more)", ids.len() - SHOWN) } else { String::new() }
+                );
+            }
+        }
 
         let handles_to_join: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
         for handle in handles_to_join {
