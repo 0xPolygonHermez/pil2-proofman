@@ -1025,7 +1025,7 @@ mod tests {
     // ---- signalValues pool ----
 
     fn signal_handler(cap: usize, n: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new_with_signal_pool(1, 8, Some((cap, n)), 4)
+        MemoryHandlerRecursive::new_with_signal_pool(1, 8, Some((cap, n)), 4, 4)
     }
 
     #[test]
