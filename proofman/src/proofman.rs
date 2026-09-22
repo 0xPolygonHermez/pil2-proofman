@@ -2491,13 +2491,19 @@ where
         // solves do not take the ThreadBudget, so each gets its share of the cores (at most 32).
         // 8 per worker measured best while the GPU was the constraint (1x RTX 5090, 2 streams:
         // 52.5 s/proof at 8 threads vs 55.4 s at 24); re-measure wall clock before changing.
+        //
+        // That share is phase 2's. An outer-aggregation fold is serial -- witness, then launch, then
+        // prove -- and the GPU idles through its witness, so there is nothing to deschedule there
+        // and the witness sits squarely on the critical path. That path gets every core.
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
         let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(1, 32);
+        let agg_witness_threads = max_num_threads.max(1);
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             setups_vadcop.max_compact_trace_size,
             signal_pool,
             recursive_witness_threads,
+            agg_witness_threads,
         ));
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -4344,7 +4350,8 @@ where
             }
 
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            let valid_recursive_proof = self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
+            let valid_recursive_proof =
+                !options.verify_agg_proofs || self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?;
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -4443,8 +4450,7 @@ where
                             ))
                         })?
                         .proof;
-                    let proof =
-                        if keep_resident { converged.clone() } else { std::mem::take(converged) };
+                    let proof = if keep_resident { converged.clone() } else { std::mem::take(converged) };
                     Ok(AggProofs::new(airgroup_id as u64, proof, vec![]))
                 })
                 .collect::<ProofmanResult<Vec<_>>>()?;

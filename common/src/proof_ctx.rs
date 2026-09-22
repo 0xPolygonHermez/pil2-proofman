@@ -81,6 +81,14 @@ pub struct ProofOptions {
     pub compressed: bool,
     pub verify_proofs: bool,
     pub minimal_memory: bool,
+    /// Verify each proof an outer-aggregation node absorbs, before folding it.
+    ///
+    /// Defence in depth rather than soundness: the recursive2 circuit verifies its own children, so
+    /// a corrupt peer proof still fails at the final vadcop proof either way. The check only decides
+    /// how early it is caught, and it costs a CPU stark verification on the fold's critical path.
+    /// Clusters whose peers are trusted can turn it off; the proof-length and accumulated-challenge
+    /// checks around it are separate and always run.
+    pub verify_agg_proofs: bool,
 }
 
 impl BorshSerialize for ProofOptions {
@@ -91,6 +99,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        BorshSerialize::serialize(&self.verify_agg_proofs, writer)?;
         Ok(())
     }
 }
@@ -103,8 +112,9 @@ impl BorshDeserialize for ProofOptions {
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
+        let verify_agg_proofs = bool::deserialize_reader(reader)?;
 
-        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory })
+        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, verify_agg_proofs })
     }
 }
 
@@ -152,6 +162,7 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
+            verify_agg_proofs: true,
         }
     }
 }
@@ -166,7 +177,20 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
     ) -> Self {
-        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory }
+        Self {
+            verify_constraints,
+            aggregation,
+            rma,
+            compressed,
+            verify_proofs,
+            minimal_memory,
+            verify_agg_proofs: true,
+        }
+    }
+
+    /// Turn off the pre-fold verification of absorbed aggregation proofs.
+    pub fn skip_agg_verification(&mut self) {
+        self.verify_agg_proofs = false;
     }
 
     pub fn minimal_memory(&mut self) {
