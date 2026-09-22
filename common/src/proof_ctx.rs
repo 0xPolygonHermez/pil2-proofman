@@ -755,9 +755,15 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     /// This process's instances in dispatch order. See [`witness_schedule`].
+    ///
+    /// The collect is load-bearing, not a copy to be optimised away: callers pass lazy iterators
+    /// whose filters call back into `dctx` (`dctx_is_table`, `skip_prover_instance`). Draining one
+    /// under the guard would take a second read on the same `RwLock`, which std documents as
+    /// allowed to panic and which deadlocks outright behind a queued writer.
     pub fn dctx_witness_schedule(&self, instances: impl IntoIterator<Item = usize>) -> Vec<usize> {
+        let ids: Vec<usize> = instances.into_iter().collect();
         let dctx = self.dctx.read().unwrap();
-        crate::witness_schedule(instances, |id| dctx.instance_priority(id))
+        crate::witness_schedule(ids, |id| dctx.instance_priority(id))
     }
 
     /// The band `instance_id` was registered with.

@@ -5085,10 +5085,14 @@ where
                         cancellation_info_clone.write_recover().cancel(Some(e));
                     }
                     drop(tokens);
-                    // Free the slot before the counter so admission can refill immediately.
-                    drop(slot);
-                    // The buffer carries its own wait, whichever worker blocked for it.
+                    // The buffer carries its own wait, whichever worker blocked for it. Read
+                    // before the counter, so nothing touches the trace once the phase may proceed.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    // Counter before the slot: dropping the slot is what wakes admission, and that
+                    // wake must not arrive ahead of the completion that may open the `Last` gate,
+                    // or the gate sits out an `ADMISSION_WAIT` it has no reason to.
+                    witness_done_clone.increment();
+                    drop(slot);
                     timer_stop_and_log_debug_net!(
                         GENERATING_WC,
                         waited,
@@ -5097,7 +5101,6 @@ where
                         airgroup_id,
                         air_id
                     );
-                    witness_done_clone.increment();
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
@@ -5142,14 +5145,20 @@ where
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
-            for &instance_id in instances.iter() {
+            // Scheduled here rather than trusting the caller: the proofs phase hands this list in
+            // `schedule_key` order for const-tree clustering, so a `Last` instance arrives in the
+            // middle of it, and the barrier below would then join only what was spawned ahead of
+            // it while everything after still ran alongside. The sort is stable, so the clustering
+            // survives -- only `Last` moves.
+            let ordered = self.pctx.dctx_witness_schedule(instances.iter().copied());
+            for &instance_id in ordered.iter() {
                 let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
                 if skip {
                     expected -= 1;
                     continue;
                 }
-                // `witness_schedule` put `Last` at the back of this walk, but the threads ahead of
-                // it may still be running, and a barrier means waiting for them.
+                // `Last` is a barrier: it is at the back now, but the threads ahead of it may
+                // still be running, and a barrier means waiting for them.
                 if self.pctx.dctx_instance_priority(instance_id) == WitnessPriority::Last {
                     let outstanding: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
                     for handle in outstanding {

@@ -1648,7 +1648,8 @@ mod witness_schedule_tests {
     }
 
     /// Only `Last` may move -- catches a switch to `Ord`-based ranking here, which would also
-    /// pull `First` forward and reorder airs that never race.
+    /// pull `First` forward and reorder airs that never race. `2` starts mid-list on purpose: the
+    /// serial walk relies on this to put `Last` at the back of a list handed to it in any order.
     #[test]
     fn only_the_last_band_moves() {
         let ids = [7, 2, 9, 4];
