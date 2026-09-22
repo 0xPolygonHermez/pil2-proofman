@@ -4343,6 +4343,19 @@ where
                     break;
                 }
             }
+            // An absorbed proof has to name the workers it covers: the challenge check below is
+            // rebuilt from their contributions, and with none `aggregate_contributions` indexes
+            // `values[0]` on a curve key (panic) or sums to zero on a lattice one, where the
+            // comparison then fails with a message blaming the challenge. Reachable from the wire,
+            // and from a caller forwarding a folded proof -- `receive_aggregated_proofs` returns
+            // those with no indexes -- so it is rejected here rather than left to either outcome.
+            if proof.worker_indexes.is_empty() {
+                self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                    "Aggregated proof for airgroup {} names no worker indexes, so the contributions                      its accumulated challenge must match cannot be identified",
+                    proof.airgroup_id
+                ))));
+                break;
+            }
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
