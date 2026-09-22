@@ -617,6 +617,8 @@ pub struct ProofMan<F: PrimeField64> {
     rec1_witness_rx: Receiver<Proof<F>>,
     rec2_witness_tx: Sender<Proof<F>>,
     rec2_witness_rx: Receiver<Proof<F>>,
+    /// Serialises the outer-aggregation witnesses; see where it is taken.
+    agg_witness_permit: Arc<Mutex<()>>,
     /// Owns the single proof-done callback registration. Each phase takes a `CompletionOwner` and
     /// releases it on drop, so exactly one is live at a time (see `completion.rs`).
     completions: DeviceCompletions,
@@ -2616,6 +2618,7 @@ where
             rec1_witness_rx,
             rec2_witness_tx,
             rec2_witness_rx,
+            agg_witness_permit: Arc::new(Mutex::new(())),
             outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
             total_outer_agg_proofs: Arc::new(Counter::new()),
             received_agg_proofs,
@@ -4600,6 +4603,7 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let recursive_rx_clone = completions.receiver();
             let cancellation_info_clone = self.cancellation_info.clone();
+            let agg_witness_permit = self.agg_witness_permit.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -4611,12 +4615,24 @@ where
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
 
-                    let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                    recursive2_airgroup_proofs.push(proof);
-
+                    // Popped under the lock, solved without it: the witness below used to run with
+                    // this guard alive, blocking every other generator pushing to the same airgroup
+                    // for the length of a circom solve.
                     let arity = pctx_clone.global_info.aggregation_arity;
-                    if recursive2_airgroup_proofs.len() >= arity {
-                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
+                    let chunk = {
+                        let mut recursive2_airgroup_proofs =
+                            recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                        recursive2_airgroup_proofs.push(proof);
+                        (recursive2_airgroup_proofs.len() >= arity)
+                            .then(|| (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect::<Vec<_>>())
+                    };
+
+                    if let Some(chunk) = chunk {
+                        // One aggregation witness at a time. Each asks circom for every core (see
+                        // `agg_witness_threads`), which only holds while a single fold runs: the
+                        // guard above serialises folds of one airgroup, but there is one guard per
+                        // airgroup, so without this the request multiplied by the streams.
+                        let _agg_permit = agg_witness_permit.lock().unwrap_or_else(|e| e.into_inner());
 
                         let w = gen_witness_aggregation(
                             &pctx_clone,
@@ -4935,6 +4951,7 @@ where
             let recursive_rx_clone = completions.receiver();
             let recursive2_done_clone = recursive2_done.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
+            let agg_witness_permit = self.agg_witness_permit.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
                 while let Ok(msg) = recursive_rx_clone.recv() {
@@ -4947,12 +4964,24 @@ where
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
 
-                    let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                    recursive2_airgroup_proofs.push(proof);
-
+                    // Popped under the lock, solved without it: the witness below used to run with
+                    // this guard alive, blocking every other generator pushing to the same airgroup
+                    // for the length of a circom solve.
                     let arity = pctx_clone.global_info.aggregation_arity;
-                    if recursive2_airgroup_proofs.len() >= arity {
-                        let chunk: Vec<_> = (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
+                    let chunk = {
+                        let mut recursive2_airgroup_proofs =
+                            recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                        recursive2_airgroup_proofs.push(proof);
+                        (recursive2_airgroup_proofs.len() >= arity)
+                            .then(|| (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect::<Vec<_>>())
+                    };
+
+                    if let Some(chunk) = chunk {
+                        // One aggregation witness at a time. Each asks circom for every core (see
+                        // `agg_witness_threads`), which only holds while a single fold runs: the
+                        // guard above serialises folds of one airgroup, but there is one guard per
+                        // airgroup, so without this the request multiplied by the streams.
+                        let _agg_permit = agg_witness_permit.lock().unwrap_or_else(|e| e.into_inner());
                         let w = gen_witness_aggregation(
                             &pctx_clone,
                             &memory_handler_recursive_witness,

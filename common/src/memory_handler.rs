@@ -606,6 +606,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// saturated GPU, where extra threads deschedule the ones driving it. An aggregation fold is
     /// serial -- witness, then launch, then prove -- and the GPU idles throughout the witness, so
     /// there is nothing to deschedule and the cores are free.
+    ///
+    /// That holds for *one* fold. Folds of different airgroups take different locks and would
+    /// otherwise run at once, each asking for this many threads, so the caller serialises the
+    /// witnesses (`agg_witness_permit`). Handing out every core is only sound behind that permit.
     pub fn agg_witness_threads(&self) -> usize {
         self.agg_witness_threads
     }
