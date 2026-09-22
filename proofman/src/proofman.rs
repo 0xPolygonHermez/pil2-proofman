@@ -724,6 +724,18 @@ impl<F: PrimeField64> ProofMan<F> {
         for handle in handles {
             let _ = handle.join();
         }
+
+        // Generators and consumers are joined, so nothing is producing or consuming any more. A
+        // witness the consumers never reached still pins a pooled trace, and the next fold would
+        // take it for new work once `reset_aggregation_state` has cleared the ongoing list. Return
+        // the buffer rather than dropping it, as `reset` does, or the pool comes back short.
+        //
+        // The main recursion pipeline reads this channel too, but it cannot be live here: both it
+        // and this service hold the one completion slot, and we only get past the `Idle` return
+        // above when this service held it.
+        while let Ok(mut w) = self.rec2_witness_rx.try_recv() {
+            drop(self.memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut w.trace)));
+        }
     }
 
     /// Aggregation arity of the loaded proving key (a hash-family constant).
