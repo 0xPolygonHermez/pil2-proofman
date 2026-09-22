@@ -733,13 +733,18 @@ mod admission_tests {
     }
 
     #[test]
-    fn an_empty_queue_admits_nothing() {
-        assert_eq!(next_admission(&normal(&[]), |_| true), None);
+    fn nothing_to_admit_admits_nothing() {
+        assert_eq!(next_admission(&normal(&[]), |_| true), None, "no pool has anything");
+        assert_eq!(next_admission(&normal(&[7, 2]), |_| false), None, "every candidate is at its cap");
     }
 
+    /// Within a band the pool is FIFO, and the band still outranks arrival order.
     #[test]
-    fn equal_bands_admit_in_arrival_order() {
+    fn arrival_order_decides_within_a_band() {
         assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true), Some((1, 0)));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
+        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
     }
 
     /// The production shape: one band, the head's air at its cap, another air behind it. Without
@@ -749,53 +754,25 @@ mod admission_tests {
         assert_eq!(next_admission(&normal(&[7, 2]), |id| id != 7), Some((1, 1)));
     }
 
-    /// The band replaces the priority channel: a `First` instance must be chosen over
-    /// earlier arrivals, which is exactly what the second pool used to do.
+    /// The band replaces the priority channel, and the walk runs the whole way down. 7 arrives
+    /// first but sits in the least urgent band; 9 arrives last in the most urgent.
     #[test]
-    fn a_first_instance_outranks_earlier_arrivals() {
-        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
-        assert_eq!(pending[0][0], 9);
-    }
-
-    #[test]
-    fn a_last_instance_is_chosen_only_when_nothing_else_is_left() {
-        let pending = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
-        assert_eq!(next_admission(&pending, |_| true), Some((1, 0)));
-        assert_eq!(pending[1][0], 2);
+    fn bands_outrank_arrival_order() {
+        let all = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&all, |_| true), Some((0, 0)));
+        assert_eq!(all[0][0], 9, "the pools must come back untouched");
+        let no_first = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&no_first, |_| true), Some((1, 0)));
         let only_last = pools(&[(7, WitnessPriority::Last)]);
         assert_eq!(next_admission(&only_last, |_| true), Some((2, 0)));
     }
 
     /// The slot cap outranks the band: holding an air back is why this pools at all.
     #[test]
-    fn an_inadmissible_instance_is_skipped_whatever_its_band() {
-        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal)]);
-        assert_eq!(next_admission(&pending, |id| id != 7), Some((1, 0)));
-        assert_eq!(pending[1][0], 2);
-    }
-
-    #[test]
-    fn nothing_admissible_admits_nothing() {
-        assert_eq!(next_admission(&normal(&[7, 2]), |_| false), None);
-    }
-
-    #[test]
-    fn two_instances_in_one_band_keep_their_arrival_order() {
-        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
-        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
-    }
-
-    /// Catches a reorder of the variants or of the pools passed in.
-    #[test]
-    fn a_mixed_set_admits_the_first_band_even_when_it_arrived_last() {
-        let pending = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
-        assert_eq!(next_admission(&pending, |_| true), Some((0, 0)));
-        assert_eq!(pending[0][0], 9);
-        // With the First one held back by its slot cap, Normal still beats Last.
-        assert_eq!(next_admission(&pending, |id| id != 9), Some((1, 0)));
-        assert_eq!(pending[1][0], 2);
+    fn the_slot_cap_outranks_the_band() {
+        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal), (9, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&pending, |id| id != 7), Some((1, 0)), "a capped First yields to Normal");
+        assert_eq!(next_admission(&pending, |id| id != 7 && id != 2), Some((2, 0)), "and Normal to Last");
     }
 }
 

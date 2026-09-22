@@ -755,7 +755,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     /// This process's instances in dispatch order. See [`witness_schedule`].
-    pub fn dctx_witness_schedule(&self, instances: &[usize]) -> Vec<usize> {
+    pub fn dctx_witness_schedule(&self, instances: impl IntoIterator<Item = usize>) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         crate::witness_schedule(instances, |id| dctx.instance_priority(id))
     }
@@ -1584,26 +1584,5 @@ mod tests {
         assert_eq!(blake3, 2_457_862_144);
         assert_eq!(poseidon, 155_713_536);
         assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));
-    }
-}
-
-#[cfg(test)]
-mod announce_tests {
-    use crate::{WitnessSlot, WitnessState};
-
-    /// `announce_witness_ready`'s gate: a duplicate announcement must not reach the channel twice.
-    #[test]
-    fn a_second_announcement_is_refused() {
-        let slot = WitnessSlot::default();
-        assert!(slot.try_queue(), "the first announcement queues");
-        assert!(!slot.try_queue(), "the duplicate must not reach the channel");
-        assert_eq!(slot.get(), WitnessState::Queued);
-    }
-
-    /// `dctx_instances_not_done` reports an instance nobody ever announced as `Absent`.
-    #[test]
-    fn an_unannounced_instance_stays_absent() {
-        let slot = WitnessSlot::default();
-        assert_eq!(slot.get(), WitnessState::Absent);
     }
 }

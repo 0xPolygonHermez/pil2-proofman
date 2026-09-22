@@ -1378,9 +1378,8 @@ where
 
         let my_instances = self.pctx.dctx_get_process_instances();
 
-        let my_instances_no_tables = self.pctx.dctx_witness_schedule(
-            &my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>(),
-        );
+        let my_instances_no_tables =
+            self.pctx.dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1485,7 +1484,7 @@ where
         transcript.put(&dummy_element);
 
         let instances = self.pctx.dctx_get_instances();
-        let my_instances = self.pctx.dctx_witness_schedule(&self.pctx.dctx_get_process_instances());
+        let my_instances = self.pctx.dctx_witness_schedule(self.pctx.dctx_get_process_instances());
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for &instance_id in my_instances.iter() {
@@ -1706,16 +1705,10 @@ where
             handles: witness_handles.clone(),
         };
 
-        let my_instances_no_tables = self.pctx.dctx_witness_schedule(
-            &my_instances
-                .iter()
-                .filter(|idx| {
-                    !self.pctx.dctx_is_table(**idx)
-                        && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
-                })
-                .copied()
-                .collect::<Vec<_>>(),
-        );
+        let my_instances_no_tables = self.pctx.dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| {
+            !self.pctx.dctx_is_table(idx)
+                && skip_prover_instance(&self.pctx, idx).map(|(skip, _)| !skip).unwrap_or(false)
+        }));
 
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -2864,9 +2857,9 @@ where
 
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_no_tables = self.pctx.dctx_witness_schedule(
-                &my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>(),
-            );
+            let my_instances_no_tables = self
+                .pctx
+                .dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
