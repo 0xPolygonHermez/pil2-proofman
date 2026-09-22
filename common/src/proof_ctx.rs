@@ -86,8 +86,13 @@ pub struct ProofOptions {
     /// Defence in depth rather than soundness: the recursive2 circuit verifies its own children, so
     /// a corrupt peer proof still fails at the final vadcop proof either way. The check only decides
     /// how early it is caught, and it costs a CPU stark verification on the fold's critical path.
-    /// Clusters whose peers are trusted can turn it off; the proof-length and accumulated-challenge
-    /// checks around it are separate and always run.
+    /// Clusters whose peers are trusted can turn it off; the proof-length, canonical-public and
+    /// accumulated-challenge checks around it are separate and always run.
+    ///
+    /// That "either way" rests on the canonical-public check, so it must stay outside this option:
+    /// the child verification the circuit performs is itself switched off by a `circuit_type` of
+    /// zero, and circom reduces mod p, so a peer sending `p` would buy exactly that. See
+    /// `ProofMan::agg_publics_are_canonical`.
     pub verify_agg_proofs: bool,
 }
 
