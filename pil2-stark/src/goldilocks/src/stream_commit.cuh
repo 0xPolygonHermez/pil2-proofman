@@ -36,12 +36,13 @@ class TimerGPU;
 // streamCommitSlotElems); concurrent calls on different slots/streams are
 // independent.
 
-// Widest witness a slot commit accepts. The slot head reserves one element per
-// column for the bit widths, and the blake3 absorb hashes a row as at most two
-// blake3 chunks (2 x 128 words, one parent node): wider rows would need the
-// general chaining-value stack of b3_hash_row. 256 covers the lane-packed Main
-// (245 columns); Poseidon1 has no such limit beyond the header.
-static constexpr uint64_t SC_MAX_COLS = 256;
+// Widest witness a slot commit accepts. Cost is only the slot head (one element per column for
+// the bit widths). 512 covers zisk Keccakf (453 columns).
+static constexpr uint64_t SC_MAX_COLS = 512;
+
+// Widest row blake3's absorb can hash (two parked CVs, four 128-word chunks). Tied to SC_MAX_COLS
+// by a static_assert in stream_commit.cu.
+static constexpr uint64_t SC_B3_MAX_COLS = 512;
 
 // A lane is named by a u8 (dColLane, and bits 33-40 of the kernel's metadata word).
 static constexpr uint64_t SC_MAX_LANES = 256;

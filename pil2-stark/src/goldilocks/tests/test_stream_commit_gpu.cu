@@ -500,6 +500,13 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_two_chunks)
     for (uint64_t nCols : shapes) runStreamCommitReducedWide(14, nCols, 2, StreamCommitHash::Blake3);
 }
 
+// Three and four chunks (257..512): two parked chaining values.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_four_chunks)
+{
+    const uint64_t shapes[] = {257, 300, 384, 385, 450, 512};
+    for (uint64_t nCols : shapes) runStreamCommitReducedWide(14, nCols, 2, StreamCommitHash::Blake3);
+}
+
 // Lane-packed Main shape on this branch: 245 columns.
 TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_lanes_shape)
 {
