@@ -760,6 +760,7 @@ extern "C" {
         d_buffers: *mut ::std::os::raw::c_void,
         n_slots: u64,
         slot_bytes: u64,
+        contrib_footprint_bytes: u64,
     );
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,

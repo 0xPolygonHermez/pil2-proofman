@@ -248,7 +248,7 @@ extern "C" {
     uint64_t get_stream_commit_slots(void *d_buffers_);
     uint64_t get_stream_commit_floor(void *d_buffers_);
     uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
-    void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes, uint64_t contribFootprintBytes);
     void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
     int64_t stage_witness(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size);
     void release_staged_witness(void *d_buffers_, uint64_t instanceId);

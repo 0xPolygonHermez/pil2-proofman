@@ -78,7 +78,7 @@ uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
-void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes, uint64_t contribFootprintBytes);
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
 int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size);
 void release_staged_witness_gpu(void *d_buffers_, uint64_t instanceId);
@@ -549,10 +549,10 @@ uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nC
                : 0;
 }
 
-void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes) {
+void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes, uint64_t contribFootprintBytes) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->configure_stream_commit_slots)
-        backend->configure_stream_commit_slots(d_buffers_, nSlots, slotBytes);
+        backend->configure_stream_commit_slots(d_buffers_, nSlots, slotBytes, contribFootprintBytes);
 }
 
 void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes) {

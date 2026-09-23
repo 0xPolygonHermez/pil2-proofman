@@ -1698,8 +1698,9 @@ pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, wor
     unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64,
+                                       contrib_footprint_bytes: u64) {
+    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes, contrib_footprint_bytes) }
 }
 
 #[allow(clippy::too_many_arguments)]

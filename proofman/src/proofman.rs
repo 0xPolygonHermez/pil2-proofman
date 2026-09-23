@@ -5902,8 +5902,21 @@ where
                         pi.num_packed_words,
                     ));
                 }
+                // A slot only runs during contributions, so overlap with a basic stream is decided by the
+                // contribution footprint (mapTotalNContributions), not the stream's full extent.
+                let contrib_footprint_bytes = pctx
+                    .global_info
+                    .airs
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(ag, g)| (0..g.len()).map(move |ai| (ag, ai)))
+                    .filter_map(|(ag, ai)| sctx.get_setup(ag, ai).ok().map(|s| s.contributions_size))
+                    .max()
+                    .unwrap_or(0)
+                    * 8;
                 if slot_bytes > 0 {
-                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes);
+                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes,
+                                                    contrib_footprint_bytes);
                 } else {
                     tracing::info!(
                         "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
