@@ -5895,12 +5895,23 @@ where
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
-                    slot_bytes = slot_bytes.max(stream_commit_slot_bytes_c(
+                    let mut bytes = stream_commit_slot_bytes_c(
                         ss.n_bits,
                         ss.n_bits_ext,
                         n_cols,
                         pi.num_packed_words,
-                    ));
+                    );
+                    // Room at the tail for a column-major copy of the packed rows, which the
+                    // commit's unpack and the multiplicity scatter both read. Every non-indexed
+                    // air gets the allowance, so the per-commit "does it pay" decision can never
+                    // be refused for space -- a refusal mid-commit, after the witness was copied
+                    // in, is what produced a wrong global challenge. Costs 2049 -> 2497 MB per
+                    // slot; a third slot at that size no longer fits above gpu-mops, and was
+                    // measured worth nothing anyway. The indexed layout takes no copy.
+                    if pi.col_source.is_empty() {
+                        bytes += (1u64 << ss.n_bits) * pi.num_packed_words * 8;
+                    }
+                    slot_bytes = slot_bytes.max(bytes);
                 }
                 // A slot only runs during contributions, so overlap with a basic stream is decided by the
                 // contribution footprint (mapTotalNContributions), not the stream's full extent.

@@ -864,13 +864,8 @@ struct DeviceCommitBuffers
     // overwrites live data. FIRST GPU only. prefetchInstanceId == -1 means free.
     // The zone IS the prefetch region (slot s at prefetchRegionBase + s*prefetchSlotStride);
     // prefetchArmed means configure ran: the stream and events below exist.
-    // The zone is a run of PREFETCH_WITNESS_SLOTS *units*, each half the largest trace: a
-    // witness takes ceil(bytes/unit) CONSECUTIVE units, at most PREFETCH_UNIT_SPAN. Sized this
-    // way because the trace population is bimodal -- zisk Main is 896 MB and needs two units,
-    // but Keccakf (408 MB, the most numerous air) and 38 other instances fit in one, where a
-    // one-size slot made every one of them reserve 896 MB. Same region, twice the stagings.
-    // get_prefetch_witness_slots reports UNITS/SPAN, so the Rust region sizing (which counts
-    // largest-trace multiples) is unchanged.
+    // A run of units, each half the largest trace: a witness takes ceil(bytes/unit) consecutive
+    // units, at most PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN.
     static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
     static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
     bool prefetchArmed = false;
@@ -879,9 +874,8 @@ struct DeviceCommitBuffers
     cudaEvent_t prefetchReady[PREFETCH_WITNESS_SLOTS] = {};
     cudaEvent_t prefetchDrained[PREFETCH_WITNESS_SLOTS] = {};
     std::mutex prefetchMutex;
-    // Every unit of a span carries the instance id, so a scan finds the head (lowest index)
-    // first and a free-by-id reaches the whole run. The head alone carries the span length
-    // and the byte count; a tail keeps 0, which also stops it matching a head lookup.
+    // Every unit of a span carries the instance id, so a scan finds the head first and a
+    // free-by-id reaches the whole run. Only the head carries the length and byte count.
     int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
     uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};
     uint32_t prefetchSpanUnits[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};

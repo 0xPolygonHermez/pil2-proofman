@@ -26,7 +26,7 @@ void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t r
                              const uint64_t* packed = nullptr, uint64_t wordsPerRow = 0,
                              const uint64_t* side = nullptr, const uint64_t* table = nullptr,
                              uint64_t wordsPerEntry = 0, uint64_t numEntries = 0,
-                             uint64_t indexBits = 0);
+                             uint64_t indexBits = 0, uint32_t packedColMajor = 0);
 
 // One device copy of the plan per (air, gpu), built on first use.
 struct MulPlanDev { const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; };

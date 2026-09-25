@@ -266,7 +266,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
@@ -283,7 +283,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
 
     // An incomplete indexed descriptor must be rejected, not silently mis-unpacked.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
         EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr, nullptr), 0);
@@ -427,7 +427,7 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries, lanes};
         uint8_t *dCS, *dCL;
         CHECKCUDAERR(cudaMalloc(&dCS, nCols)); CHECKCUDAERR(cudaMalloc(&dCL, nCols));
         CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
@@ -449,7 +449,7 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
     // A lane-packed descriptor without its lane map must be rejected: decoding every
     // column from lane 0's entry would be a wrong trace with no other symptom.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries, lanes};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));

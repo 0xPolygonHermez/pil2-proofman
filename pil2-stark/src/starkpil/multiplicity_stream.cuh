@@ -21,6 +21,9 @@
 // refuses the slot otherwise.
 
 struct MulStreamCtx {
+    // Packed rows are column-major (word w of row r at packed[w * nRows + r]) when
+    // StreamCommitDims::colMajorForHook is set, which keeps the +-row shifts in one cache line.
+    uint32_t packedColMajor = 0;
     SetupCtx *setupCtx;
     uint64_t airgroupId, airId;
     uint64_t *acc;
@@ -168,6 +171,24 @@ inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems) {
     return mulStreamBuf(bufs, gpuId, slotIdx, elems);
 }
 
+// Min cm1 reads per row for the scatter to get a column-major copy (StreamCommitDims::colMajorForHook).
+// The transpose costs one pass over the packed rows, so it pays only for read-heavy scatters
+// (Keccakf, BinaryHuge, BinaryExtensionLarge), not e.g. Mem.
+#define MUL_COLMAJOR_MIN_READS_PER_ROW 100
+
+inline bool mulScatterWantsColMajor(SetupCtx &setupCtx, uint64_t airgroupId, uint64_t airId,
+                                    const StreamCommitDims &dims) {
+    // The indexed walk addresses the row and the table with one expression, so it is left alone.
+    if (dims.indexBits != 0 || dims.wordsPerRow == 0) return false;
+    const MulPlan &plan = mulPlanFor(setupCtx, airgroupId, airId);
+    if (plan.jobs.empty() || !mulPlanStreamable(plan)) return false;
+    uint64_t reads = 0;
+    for (const MulInsnDev &in : plan.prog)
+        for (const MulOperandDev *o : {&in.a, &in.b})
+            if (o->kind == MUL_OPND_COL && o->term.src == MUL_SRC_TRACE) reads++;
+    return reads >= MUL_COLMAJOR_MIN_READS_PER_ROW;
+}
+
 // The hook handed to streamCommitPacked.
 inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
                           const StreamCommitDims &dims, cudaStream_t stream, void *user) {
@@ -225,7 +246,8 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
                             nRows, nRows, c->acc, c->oob,
                             (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
                             dPacked, dims.wordsPerRow, c->hintSide,
-                            c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits);
+                            c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits,
+                            c->packedColMajor);
     if (c->timer) c->timer->stopCategory("MUL_SCATTER_PACKED");
     mul_note_scatter(gpuId, stream);
 }

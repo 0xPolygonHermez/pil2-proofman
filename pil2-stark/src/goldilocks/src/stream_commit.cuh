@@ -56,6 +56,9 @@ struct StreamCommitDims {
     uint64_t nBitsExt;     // log2 extended rows
     uint64_t nCols;        // witness columns (<= SC_MAX_COLS)
     uint64_t wordsPerRow;  // packed 64-bit words per row
+    // Hand the hook a column-major copy of the packed rows, transposed into the slot's unused
+    // tail (scTransposePackedKernel).
+    bool colMajorForHook = false;
 
     // Indexed (compact) witness. Each row is a header of `lanes` instruction indices
     // (indexBits wide each) followed by the runtime columns; the columns flagged in
@@ -81,7 +84,7 @@ struct StreamCommitDims {
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
                                StreamCommitHash hash = StreamCommitHash::Poseidon1);
 
-// Commit the bit-packed witness at hPacked (N*wordsPerRow u64, row-major) and
+// Commit the bit-packed witness at hPacked (N*wordsPerRow u64, row- or column-major) and
 // write the 4-element root to hRoot. colWidths: per-column bit widths (nCols
 // entries, host). The packed upload is issued as 32 MiB cudaMemcpyAsync blocks.
 // Synchronous on return: the root is valid, and both the slot and the caller's
@@ -114,6 +117,14 @@ typedef void (*StreamCommitHook)(const uint64_t *dPacked, const uint64_t *dWidth
 typedef void (*StreamCommitChunkHook)(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
                                       cudaStream_t stream, void *user);
 
+// Whether a slot of `slotElems` elements fits this layout AND a column-major packed copy at the tail.
+inline bool streamCommitColMajorFits(const StreamCommitDims &dims, StreamCommitHash hash,
+                                     uint64_t slotElems) {
+    const uint64_t need = (1ull << dims.nBits) * dims.wordsPerRow;
+    return need != 0 && slotElems >= need &&
+           streamCommitSlotElems(dims, hash) + need <= slotElems;
+}
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
@@ -123,6 +134,9 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            StreamCommitHash hash = StreamCommitHash::Poseidon1,
                            StreamCommitHook hook = nullptr, void *hookUser = nullptr,
                            TimerGPU *timer = nullptr,
-                           StreamCommitChunkHook chunkHook = nullptr, void *chunkUser = nullptr);
+                           StreamCommitChunkHook chunkHook = nullptr, void *chunkUser = nullptr,
+                           // Elements the slot owns; colMajorForHook transposes into the
+                           // unused tail. 0 disables it.
+                           uint64_t slotElems = 0);
 
 #endif

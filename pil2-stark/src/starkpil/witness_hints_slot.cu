@@ -35,7 +35,8 @@ void slotHintPatchKernel(uint64_t *__restrict__ dst, uint32_t c0, uint32_t cc, u
 }
 
 void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_t nOps,
-                        const uint64_t *dPacked, uint64_t wordsPerRow, const uint64_t *dConstPols,
+                        const uint64_t *dPacked, uint64_t wordsPerRow, bool packedColMajor,
+                        const uint64_t *dConstPols,
                         const uint64_t *dVals, const SlotHintValOffsets &vo, uint64_t *dSide,
                         uint64_t nRows, cudaStream_t stream) {
     if (dProg == nullptr || nOps == 0 || dSide == nullptr || nRows == 0) return;
@@ -50,6 +51,7 @@ void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_
     b.packed = dPacked;
     b.side = dSide;
     b.wordsPerRow = wordsPerRow;
+    b.packedColMajor = packedColMajor ? 1u : 0u;
     const uint32_t blocks = (uint32_t)((nRows + SLOT_HINT_BLOCK - 1) / SLOT_HINT_BLOCK);
     // Declaration order, one launch each on one stream: a hint may read an earlier hint's column.
     for (uint32_t i = 0; i < nOps; ++i) {

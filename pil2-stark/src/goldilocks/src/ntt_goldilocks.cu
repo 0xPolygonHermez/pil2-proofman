@@ -1362,6 +1362,8 @@ struct NttRun {
         // (r[2][Z] = 16 field elements). Z consecutive 8-byte elements = 64 B = whole
         // memory sectors per coalesced load, and Z independent butterflies give the ILP
         // that hides the multiply-chain latency (these kernels are latency-bound).
+        // Z=4 or tighter __launch_bounds__ are slower: ~80 regs at ~50% occupancy is the right
+        // trade for this latency-bound kernel.
         // Positioning roots are derived once per thread, then extended to the other
         // Z-1 slots with one multiply each (the zStepRoots tables). Grid and shared
         // memory scale with it: num_blocks/Z blocks, (Z+1)*shared_sz bytes -- each
@@ -1459,6 +1461,8 @@ uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
     if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
         l2Bytes = 32 << 20;
     uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / colBytes);
+    // Deliberately under-fills the machine (a few columns per batch): L2 residency beats
+    // occupancy here, wider batches are slower.
     if (chunk < 1) chunk = 1;
     if (chunk > nCols) chunk = (uint32_t)nCols;
     return chunk;

@@ -23,6 +23,8 @@ struct MulBases {
     // Indexed rows: the instruction table and its geometry, air-uniform.
     const uint64_t *table = nullptr;
     uint64_t wordsPerEntry = 0, numEntries = 0, indexBits = 0;
+    // If set, `packed` is column-major: word w of row r at packed[w * traceRows + r].
+    uint32_t packedColMajor = 0;
 };
 
 __device__ __forceinline__ const uint64_t* mulBaseFor(const MulBases& b, uint32_t src) {
@@ -63,15 +65,26 @@ __device__ __forceinline__ uint64_t mulTermOffset(const MulTermDev& t, const Mul
     return t.sectionOffset + (uint64_t)t.col * (rowMask + 1) + r;
 }
 
-// A term's VALUE. Not a base plus an offset: a packed field is a bit range, which that shape
-// cannot express, and splitting it was what pushed the hint evaluator into a copy of its own.
+// Column-major variant: a straddling field's two words are nRows apart.
+__device__ __forceinline__ uint64_t mulPackedAtCol(const uint64_t* __restrict__ packed,
+                                                   uint64_t nRows, uint64_t row,
+                                                   uint64_t bit, uint64_t nbits) {
+    const uint64_t widx = bit >> 6, boff = bit & 63;
+    uint64_t v = __ldg(&packed[widx * nRows + row]) >> boff;
+    if (boff + nbits > 64) v |= __ldg(&packed[(widx + 1) * nRows + row]) << (64 - boff);
+    return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : v;
+}
+
 // A term's value, given the GLOBAL row (the power-of-two mask wraps `'`-shifts). A tile holds no
 // neighbours, so mulPlanStreamable refuses airs with shifted cm1 terms.
 __device__ __forceinline__ uint64_t mulTermValue(const MulTermDev& t, const MulBases& b,
                                                  uint64_t row, uint64_t rowMask) {
-    if (t.src == MUL_SRC_PACKED)
-        return mulPackedAt(b.packed, b.wordsPerRow, (row + (uint64_t)t.rowStride) & rowMask,
-                           t.sectionOffset, t.nCols);
+    if (t.src == MUL_SRC_PACKED) {
+        const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
+        if (b.packedColMajor)
+            return mulPackedAtCol(b.packed, b.traceRows, r, t.sectionOffset, t.nCols);
+        return mulPackedAt(b.packed, b.wordsPerRow, r, t.sectionOffset, t.nCols);
+    }
     if (t.src == MUL_SRC_PACKED_IDX) {
         const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
         // Lane index from the row header, then the field from that table entry.

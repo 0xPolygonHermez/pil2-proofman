@@ -89,7 +89,7 @@ void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t r
                              uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream,
                              const uint64_t* packed, uint64_t wordsPerRow, const uint64_t* side,
                              const uint64_t* table, uint64_t wordsPerEntry, uint64_t numEntries,
-                             uint64_t indexBits) {
+                             uint64_t indexBits, uint32_t packedColMajor) {
     if (d_jobs == nullptr || nJobs == 0 || rows == 0) return;
     MulBases bases = { bases_[MUL_SRC_CONST],  bases_[MUL_SRC_TRACE],
                        bases_[MUL_SRC_AUX],    bases_[MUL_SRC_PUBLIC],
@@ -97,6 +97,7 @@ void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t r
                        bases_[MUL_SRC_AIRGROUPVALUE], bases_[MUL_SRC_CUSTOM],
                        traceRows, rowBegin, rowStart };
     bases.packed = packed; bases.side = side; bases.wordsPerRow = wordsPerRow;
+    bases.packedColMajor = packedColMajor;
     bases.table = table; bases.wordsPerEntry = wordsPerEntry;
     bases.numEntries = numEntries; bases.indexBits = indexBits;
     // Same kernel as the full domain, over this tile's rows: never fork a tile-only copy.

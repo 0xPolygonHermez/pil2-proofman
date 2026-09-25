@@ -3253,8 +3253,11 @@ static void slotCommitHook(const uint64_t *dPacked, const uint64_t *dWidths,
         CHECKCUDAERR(cudaMemcpyAsync(c->dVals, c->hVals, c->nVals * sizeof(uint64_t),
                                      cudaMemcpyHostToDevice, stream));
     if (c->nOps != 0)
-        slotHintEvalLaunch(c->prog, c->ops, c->nOps, dPacked, dims.wordsPerRow, c->constPols,
+        // `dPacked` is the transposed copy when colMajorForHook; both readers must agree.
+        slotHintEvalLaunch(c->prog, c->ops, c->nOps, dPacked, dims.wordsPerRow,
+                           dims.colMajorForHook, c->constPols,
                            c->dVals, c->valOff, c->side, c->nRows, stream);
+    // Inline on the commit stream: the device is saturated, so a separate stream gains nothing.
     if (c->mul != nullptr) mulStreamHook(dPacked, dWidths, dims, stream, c->mul);
 }
 
@@ -3334,6 +3337,13 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                         : StreamCommitHash::Poseidon1;
     if (streamCommitSlotElems(dims, scHash) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
         return -13;
+
+    // Transpose the packed rows once into the slot's tail so the unpack and scatter read
+    // column-major (coalesced). Decided before any work: it cannot be refused mid-commit.
+    const uint64_t slotElems = d_buffers->streamCommitSlotBytes / sizeof(Goldilocks::Element);
+    dims.colMajorForHook = aii != nullptr && aii->is_packed && aii->setupCtx != nullptr &&
+                           streamCommitColMajorFits(dims, scHash, slotElems) &&
+                           mulScatterWantsColMajor(*aii->setupCtx, airgroupId, airId, dims);
 
     if (!streamCommitAcquireRegion(d_buffers)) return -21;  // region busy (overlapping stream in use)
 
@@ -3519,6 +3529,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.dColSource = dColSource;
         mulCtx.dColLane = dColLane;
         mulCtx.dTable = dTable;
+        mulCtx.packedColMajor = dims.colMajorForHook ? 1u : 0u;
         mulCtx.constPols = dConstUnpacked;
         mulCtx.hostVals = hVals;
         mulCtx.nVals = nVals;
@@ -3559,6 +3570,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // Claimed only after every early return above, so a refused slot leaves it for the legacy path.
     const void *packedSrc = packed;
     int stagedSlot = -1;
+
     if (d_buffers->prefetchArmed) {
         const uint64_t packedBytes = nRowsSlot * dims.wordsPerRow * sizeof(Goldilocks::Element);
         std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
@@ -3592,7 +3604,8 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
                                     dColSource, dColLane, dTable, scHash,
                                     hook, hook ? (void *)&slotCtx : nullptr, &timer,
-                                    chunkHook, chunkHook ? (void *)&slotCtx : nullptr);
+                                    chunkHook, chunkHook ? (void *)&slotCtx : nullptr,
+                                    slotElems);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     // Free the staging only once the copy out of it has certainly happened. streamCommitPacked
     // returns with the root on the host, so its stream is drained; the event orders a future
