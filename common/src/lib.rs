@@ -19,6 +19,7 @@ pub mod custom_commits;
 pub mod constraints;
 pub mod fixed_cols;
 pub mod memory_handler;
+pub mod gpu_witness;
 pub mod packed_info;
 pub mod error_manager;
 
@@ -42,6 +43,7 @@ pub use constraints::*;
 pub use fixed_cols::*;
 pub use memory_handler::*;
 pub use mpi_ctx::*;
+pub use gpu_witness::*;
 pub use packed_info::*;
 pub use trace::GenericTrace;
 pub use error_manager::*;

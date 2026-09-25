@@ -30,6 +30,8 @@ pub struct StepsParams {
     pub p_const_pols: *mut u8,
     pub p_const_tree: *mut u8,
     pub custom_commits_fixed: *mut u8,
+    /// Ops staged in `trace` for a GPU-witness air (`trace` holds kernel inputs); 0 otherwise.
+    pub witness_ops: u64,
 }
 
 impl From<&StepsParams> for *mut u8 {
@@ -53,6 +55,7 @@ impl Default for StepsParams {
             p_const_pols: ptr::null_mut(),
             p_const_tree: ptr::null_mut(),
             custom_commits_fixed: ptr::null_mut(),
+            witness_ops: 0,
         }
     }
 }
@@ -178,6 +181,8 @@ pub struct AirInstance<F> {
     pub reclaim_slot: Option<ReclaimSlot<F>>,
     /// Names the resident trace, so a stale reclaim candidate cannot free its replacement.
     pub trace_generation: u64,
+    /// Ops staged in `trace` for a GPU-witness air (`trace` holds kernel inputs); 0 otherwise.
+    pub gpu_witness_ops: u64,
 }
 
 impl<F: PrimeField64> AirInstance<F> {
@@ -208,6 +213,7 @@ impl<F: PrimeField64> AirInstance<F> {
             stream_id: 0,
             reclaim_slot: trace_info.reclaim_slot,
             trace_generation: 0,
+            gpu_witness_ops: 0,
         }
     }
 

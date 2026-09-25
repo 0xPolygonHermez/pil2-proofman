@@ -405,10 +405,11 @@ struct AirInstanceInfo {
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
 
-// Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths.
+// Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths, GW inputs.
 #define STREAM_COMMIT_HOST_ROOT_WORDS 4
 #define STREAM_COMMIT_HOST_WIDTH_WORDS 512
-#define STREAM_COMMIT_HOST_WORDS (STREAM_COMMIT_HOST_ROOT_WORDS + STREAM_COMMIT_HOST_WIDTH_WORDS)
+#define STREAM_COMMIT_HOST_GW_BYTES (16ull << 20)
+#define STREAM_COMMIT_HOST_WORDS (STREAM_COMMIT_HOST_ROOT_WORDS + STREAM_COMMIT_HOST_WIDTH_WORDS + STREAM_COMMIT_HOST_GW_BYTES / 8)
 
 // Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
 // buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against it. Shared by the
@@ -897,8 +898,8 @@ struct DeviceCommitBuffers
     // Pinned per-slot staging for the multiplicity hook's publics/values.
     // [n_gpus * streamCommitSlots * PINNED_AUX_VALUES_MAX]
     Goldilocks::Element *streamCommitAuxValues = nullptr;
-    // Pinned per slot (pageable copies block the driver): root and column widths.
-    // [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
+    // Pinned per slot (pageable copies block the driver): root, column widths, GPU-witness
+    // input bounce. [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
     uint64_t *streamCommitHost = nullptr;
     // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
     // claims every overlapped stream's selection mutex, the last releases them. `cv` is signalled

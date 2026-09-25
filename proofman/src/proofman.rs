@@ -17,7 +17,8 @@ use proofman_starks_lib_c::{
 use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
-    harvest_pipeline_c, dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    gpu_witness_count_c, harvest_pipeline_c, dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c,
+    load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -2576,9 +2577,22 @@ where
         };
 
         let (max_witness_trace_size, max_witness_trace_size_packed) =
-            calculate_max_witness_trace_size(&pctx, &sctx, &options.packed_info)?;
+            calculate_max_witness_trace_size(&pctx, &sctx, &options.packed_info, &options.gpu_witness_airs)?;
 
         let max_buffer_size = if options.packed { max_witness_trace_size_packed } else { max_witness_trace_size };
+
+        // Report what was declared and its effect: both sizings are a `max` over airs, so a
+        // declared air that was not the widest frees nothing.
+        if !options.gpu_witness_airs.is_empty() {
+            let names: Vec<String> =
+                options.gpu_witness_airs.iter().map(|a| format!("{}:{}", a.airgroup_id, a.air_id)).collect();
+            tracing::info!(
+                "GPU witness airs: {} ({}); host trace pool sized to {} without them",
+                options.gpu_witness_airs.len(),
+                names.join(", "),
+                proofman_common::format_bytes((max_buffer_size * std::mem::size_of::<F>()) as f64),
+            );
+        }
 
         let n_proof_threads = match options.gpu {
             true => n_gpus,
@@ -5779,6 +5793,11 @@ where
                 let mut witness_bytes: u64 = 0;
                 for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
                     for (air_id, _) in group.iter().enumerate() {
+                        // A GPU-witness air never uploads a trace, so it must not
+                        // widen the slots the uploads share.
+                        if options.gpu_witness_airs.contains(airgroup_id, air_id) {
+                            continue;
+                        }
                         let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
                         let n = 1u64 << setup.stark_info.stark_struct.n_bits;
                         let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
@@ -5815,6 +5834,29 @@ where
         // buffer's region (arming refuses on a mismatch).
         if prefetch_witness_bytes > 0 {
             configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes);
+        }
+
+        // GPU witness airs, once the zone's fate is known. They have no host trace, so every
+        // condition below must hold or the run stops; there is no host fallback.
+        // The C++ kernel registry is process-wide and outlives this ProofMan; clear it when this job
+        // declares none, or a later commit runs a stale kernel and aborts in cudaMemcpy.
+        if options.gpu_witness_airs.is_empty() {
+            proofman_starks_lib_c::gpu_witness_clear_c();
+        } else {
+            if !options.gpu {
+                return Err(ProofmanError::InvalidConfiguration(
+                    "GPU witness airs were declared but this is not a GPU run".into(),
+                ));
+            }
+            options.gpu_witness_airs.register();
+            let registered = gpu_witness_count_c();
+            if registered != options.gpu_witness_airs.len() as u64 {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "declared {} GPU witness airs but the prover registered {registered}",
+                    options.gpu_witness_airs.len(),
+                )));
+            }
+            tracing::info!("GPU witness kernels registered: {registered}");
         }
 
         // Streaming-commit slots, the GPU's only contributions path. The slot COUNT is a memory-budget
@@ -6154,12 +6196,15 @@ where
         Ok(())
     }
 
-    /// Per air: the bytes its witness occupies on the wire (what the prefetch zone stages), and
-    /// whether its host buffer may go back to the pool once staged.
+    /// Per air: wire bytes of its witness (what the zone stages), and whether its host buffer may
+    /// return to the pool once staged. GPU-witness airs are absent.
     fn zone_staging_airs(&self) -> HashMap<(usize, usize), (u64, bool)> {
         let mut m = HashMap::new();
         for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in group.iter().enumerate() {
+                if self.options.gpu_witness_airs.contains(airgroup_id, air_id) {
+                    continue;
+                }
                 let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
                 let n = 1u64 << setup.stark_info.stark_struct.n_bits;
                 let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);

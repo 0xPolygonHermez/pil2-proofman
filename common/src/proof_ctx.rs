@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
-use crate::{MpiCtx, ProofmanError};
+use crate::{GpuWitnessAir, GpuWitnessAirs, MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
@@ -202,6 +202,10 @@ pub struct ProofmanOptions {
     /// Virtual tables the caller counts itself in the witness; the prover must not claim them. Every
     /// other table is the prover's, and one it cannot derive a row map for is a setup error.
     pub std_owned_tables: Vec<u64>,
+
+    /// Airs whose stage-1 witness a GPU kernel writes into the commit slot. They get no host trace
+    /// buffer or upload, so the trace pool and prefetch zone are sized without them.
+    pub gpu_witness_airs: GpuWitnessAirs,
 }
 
 impl Default for ProofmanOptions {
@@ -221,6 +225,7 @@ impl Default for ProofmanOptions {
             final_snark: false,
             custom_commits_fixed: HashMap::new(),
             std_owned_tables: Vec::new(),
+            gpu_witness_airs: GpuWitnessAirs::default(),
         }
     }
 }
@@ -294,6 +299,12 @@ impl ProofmanOptions {
     /// Declare the virtual tables this caller counts itself. A prover table it cannot derive fails setup.
     pub fn std_owned_tables(&mut self, table_ids: Vec<u64>) {
         self.std_owned_tables = table_ids;
+    }
+
+    /// Declare the airs whose witness a GPU kernel produces on the device. Must be set before
+    /// `ProofMan::new`, which sizes the trace pool and prefetch zone from it. See [`GpuWitnessAirs`].
+    pub fn gpu_witness_airs(&mut self, airs: Vec<GpuWitnessAir>) {
+        self.gpu_witness_airs = GpuWitnessAirs::new(airs);
     }
 }
 
@@ -1148,6 +1159,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             p_const_pols: const_pols,
             p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
+            witness_ops: air_instance.gpu_witness_ops,
         }
     }
 

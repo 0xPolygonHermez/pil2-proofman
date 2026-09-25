@@ -1899,6 +1899,42 @@ pub fn register_mul_vt_c(
     }
 }
 
+/// A witness kernel's entry point, as `ZISK_GPU_WITNESS_ENTRIES` generates it.
+///
+/// Enqueue-only: no allocation, no synchronisation, one launch on `stream`; anything else breaks
+/// the CUDA graph capture of the commit path. Arguments: device inputs, their count, commit slot,
+/// device id (-1 = current) and `cudaStream_t`. Returns 0 on success.
+///
+/// Declared here because this crate is below proofman-common, which re-exports it.
+pub type GpuWitnessFillFn = unsafe extern "C" fn(
+    d_ops: *const c_void,
+    num_ops: u64,
+    d_dst: *mut u64,
+    device_id: i32,
+    stream: *mut c_void,
+) -> i32;
+
+/// Forget every registered kernel, so a later prover in the process does not inherit them.
+pub fn gpu_witness_clear_c() {
+    unsafe { gpu_witness_clear() }
+}
+
+/// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
+/// device. The single source of truth for staging kernel inputs vs filling a trace.
+pub fn gpu_witness_is_registered_c(airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { gpu_witness_is_registered(airgroup_id, air_id) == 1 }
+}
+
+/// Declare that this air's stage-1 witness comes from `fill`, not a host upload.
+pub fn gpu_witness_register_c(airgroup_id: u64, air_id: u64, bytes_per_op: u64, emits: i32, fill: GpuWitnessFillFn) {
+    unsafe { gpu_witness_register(airgroup_id, air_id, bytes_per_op, emits, fill) }
+}
+
+/// How many airs the C++ side has registered.
+pub fn gpu_witness_count_c() -> u64 {
+    unsafe { gpu_witness_count() }
+}
+
 /// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
 pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
     debug_assert_eq!(table_ids.len(), biases.len());

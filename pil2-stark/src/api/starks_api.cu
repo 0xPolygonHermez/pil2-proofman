@@ -16,6 +16,7 @@
 #include "multiplicity_stream.cuh"
 #include "witness_hints_slot.hpp"
 #include "multiplicity.cuh"
+#include "gpu_witness.hpp"
 #include "multiplicity_plan.hpp"
 
 
@@ -1468,6 +1469,73 @@ void release_staged_witness_gpu(void *d_buffers_, uint64_t instanceId) {
     }
 }
 
+/// Produce this air's cm1 with a registered GPU kernel instead of uploading a host trace.
+/// `params->trace` holds the kernel's INPUTS (`witnessOps` x `bytesPerOp`), staged in the tail
+/// of the air's extended-cm1 section. Preconditions are fatal: a kernel air has no host trace,
+/// so falling back to an upload would silently prove garbage.
+/// Returns false only when the air has no kernel (the caller uploads).
+static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *params,
+                                uint64_t airgroupId, uint64_t airId, uint64_t instanceId,
+                                bool is_packed, uint64_t *dst, uint64_t dst_bytes,
+                                gl64_t *cm1ext_base, uint64_t cm1ext_words, int gpuId,
+                                uint64_t streamId, cudaStream_t stream) {
+    const uint64_t total_words = dst_bytes / sizeof(gl64_t);
+    const GpuWitnessAirReg *reg = gpu_witness_for(airgroupId, airId);
+    if (reg == nullptr) return false;
+
+    const std::string air = std::to_string(airgroupId) + ":" + std::to_string(airId);
+    // A kernel emitting the other layout would decode into a silently wrong trace.
+    const bool emits_packed = reg->emits == GPU_WITNESS_PACKED_CM1;
+    if (emits_packed != is_packed) {
+        zklog.error("gpu witness: air " + air + " is " + (is_packed ? "packed" : "unpacked") +
+                    " but its kernel emits " + (emits_packed ? "packed" : "unpacked"));
+        exitProcess();
+    }
+    const uint64_t num_ops = params->witnessOps;
+    if (num_ops == 0 || reg->bytesPerOp == 0) {
+        zklog.error("gpu witness: air " + air + " staged " + std::to_string(num_ops) +
+                    " ops of " + std::to_string(reg->bytesPerOp) + " bytes; nothing to run on");
+        exitProcess();
+    }
+    const uint64_t input_bytes = num_ops * reg->bytesPerOp;
+
+    // Stage the inputs in the tail of the air's extended-cm1 section: private to this stream,
+    // and unused until the LDE (the commit writes the small domain at the section's start).
+    // Not the prefetch slots: their protocol assumes a single staging producer.
+    const uint64_t input_words = (input_bytes + sizeof(gl64_t) - 1) / sizeof(gl64_t);
+    if (input_words + total_words > cm1ext_words) {
+        zklog.error("gpu witness: air " + air + " needs " + std::to_string(input_bytes) +
+                    " bytes of input staging but only " +
+                    std::to_string((cm1ext_words - total_words) * sizeof(gl64_t)) +
+                    " bytes are free in its extended cm1 section");
+        exitProcess();
+    }
+    void *d_ops = (void *)(cm1ext_base + cm1ext_words - input_words);
+    if (params->trace == nullptr) {
+        zklog.error("gpu witness: air " + air + " instance " + std::to_string(instanceId) +
+                    " has a registered kernel but its host inputs are gone (trace is null): the "
+                    "witness side staged or released this buffer as if it were a trace");
+        exitProcess();
+    }
+    // Synchronous: the caller may recycle `params->trace` on return. On this stream, since the
+    // prover streams are blocking and a plain cudaMemcpy would wait for all of them.
+    CHECKCUDAERR(cudaMemcpyAsync(d_ops, params->trace, input_bytes, cudaMemcpyHostToDevice, stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    // Zero first: a kernel writes only the rows its operations occupy, and the gap would
+    // otherwise keep the previous instance's bytes, which the lookup scatter then decodes.
+    CHECKCUDAERR(cudaMemsetAsync(dst, 0, dst_bytes, stream));
+
+    const int rc = reg->fill((const void *)d_ops, num_ops, dst, gpuId, (void *)stream);
+    if (rc != 0) {
+        zklog.error("gpu witness: air " + air + " kernel returned " + std::to_string(rc));
+        exitProcess();
+    }
+    // Record the trace path's release gate so the caller's recycling logic is unchanged.
+    CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream));
+    return true;
+}
+
 
 uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
 
@@ -1572,7 +1640,14 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // Must match the slot commit (commit_witness_streaming_gpu), or the contribution root will not match.
     const bool mulExported = !air_instance_info->is_packed &&
                              mul_export_to_trace(airId, (int)sd.gpuId, dst, N, nCols, stream);
-    if (mulExported) {
+    // A virtual table is never also a caller's kernel air, so the order is free.
+    const bool kernelFilled = !mulExported &&
+                              gpuWitnessFillTrace(d_buffers, params, airgroupId, airId, instanceId,
+                                                  air_instance_info->is_packed, dst, total_size,
+                                                  (gl64_t *)dst,
+                                                  (1ull << setupCtx->starkInfo.starkStruct.nBitsExt) * nCols,
+                                                  (int)sd.gpuId, streamId, stream);
+    if (mulExported || kernelFilled) {
         // nothing to upload
     } else
     // Not gated with the producer: the miss path stages on the copy stream rather than queueing
@@ -1743,19 +1818,19 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
-    // The third place a trace reaches the device, and the one verify-constraints and
-    // stats go through. The device producer has to run here too, for the same reason it
-    // runs in the commit paths: the std no longer fills a prover-owned virtual table on
-    // the host. Omitting it leaves that air all-zero, which every per-AIR constraint
-    // accepts and only the cross-air lookup balance rejects -- i.e. a failing GLOBAL
-    // constraint with nothing else to point at.
-    //
-    // `dst` is the small-domain staging area rather than the extended one, but its role
-    // is identical: the transform below reads exactly what the upload would have written
-    // there, so the producer targets the same slot as in the other two sites.
+    // The verify-constraints / stats path needs both device producers too: without them those
+    // airs are all-zero, which only the global lookup balance rejects.
     const bool mulExported = !air_instance_info->is_packed &&
                              mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
-    if (!mulExported) {
+    // This path never runs the LDE, so the whole extended section is free for staging.
+    const uint64_t NExtended = (1 << setupCtx->starkInfo.starkStruct.nBitsExt);
+    gl64_t *cm1ext = d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    const bool kernelFilled = !mulExported &&
+                              gpuWitnessFillTrace(d_buffers, params, airgroupId, airId, instanceId,
+                                                  air_instance_info->is_packed, dst, total_size,
+                                                  cm1ext, NExtended * nCols, (int)gpuId, streamId,
+                                                  stream);
+    if (!mulExported && !kernelFilled) {
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
     PROOFMAN_SUMCHECK("proof_before_unpack", dst, total_size / sizeof(uint64_t), stream);
@@ -3254,6 +3329,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (const int enterRc = streamCommitEnter(d_buffers, gl); enterRc != 0) return enterRc;
     uint64_t *hRoot = d_buffers->streamCommitHost + slotIdx * STREAM_COMMIT_HOST_WORDS;
     uint64_t *hWidths = hRoot + STREAM_COMMIT_HOST_ROOT_WORDS;
+    void *hGw = (void *)(hWidths + STREAM_COMMIT_HOST_WIDTH_WORDS);
 
     cudaSetDevice(gpu);
     gl64_t *slotBase = d_buffers->gpuMemoryBuffer[gl] +
@@ -3458,17 +3534,76 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     const void *packedSrc = packed;
     int stagedSlot = -1;
 
+    // A GPU-witness air has no host trace: `packed` holds its kernel's INPUTS. The kernel writes
+    // the packed rows straight into the slot; otherwise the commit would hash the inputs.
+    const GpuWitnessAirReg *gwReg = gpu_witness_for(airgroupId, airId);
     uint64_t *dPacked = (uint64_t *)slotBase + SC_MAX_COLS;   // where streamCommitPacked reads the rows
     const uint64_t packedWords = nRowsSlot * dims.wordsPerRow;
+    if (gwReg != nullptr) {
+        StepsParams *gwParams = (StepsParams *)params_;
+        if (gwParams == nullptr || packed == nullptr) {
+            zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " instance " + std::to_string(instanceId) + " has a registered kernel but no host "
+                        "inputs (params " + std::string(gwParams ? "set" : "null") + ", trace " +
+                        std::string(packed ? "set" : "null") + "): the witness side treated it as a "
+                        "host-filled air. Is gpu_witness_airs declared for this run?");
+            exitProcess();
+        }
+        if ((gwReg->emits == GPU_WITNESS_PACKED_CM1) != packedAir) {
+            zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
+                        std::to_string(airId) + " packing disagrees with its kernel");
+            exitProcess();
+        }
+        const uint64_t nOps = gwParams->witnessOps;
+        if (nOps == 0 || gwReg->bytesPerOp == 0) {
+            zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
+                        std::to_string(airId) + " reached a slot commit with no operations");
+            exitProcess();
+        }
+        const uint64_t inputBytes = nOps * gwReg->bytesPerOp;
+        const uint64_t inputWords = (inputBytes + sizeof(gl64_t) - 1) / sizeof(gl64_t);
+        // The inputs ride in the slot's tail, untouched before the commit on the same stream.
+        if (SC_MAX_COLS + packedWords + inputWords > slotElems) {
+            zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
+                        " does not fit a streaming slot with its inputs");
+            exitProcess();
+        }
+        void *dOps = (void *)((uint64_t *)slotBase + slotElems - inputWords);
+        cudaStream_t gwStream = d_buffers->streamCommitStreams[slotIdx];
+        timer.startCategory("GW_INPUT_H2D");
+        // Through the slot's pinned bounce (free: the previous commit synced this stream), since a
+        // pageable copy blocks behind the copy engine.
+        const void *gwSrc = packed;
+        if (inputBytes <= STREAM_COMMIT_HOST_GW_BYTES) {
+            memcpy(hGw, packed, inputBytes);
+            gwSrc = hGw;
+        }
+        CHECKCUDAERR(cudaMemcpyAsync(dOps, gwSrc, inputBytes, cudaMemcpyHostToDevice, gwStream));
+        timer.stopCategory("GW_INPUT_H2D");
+        timer.startCategory("GW_MEMSET");
+        CHECKCUDAERR(cudaMemsetAsync(dPacked, 0, packedWords * sizeof(uint64_t), gwStream));
+        timer.stopCategory("GW_MEMSET");
+        timer.startCategory("GW_KERNEL");
+        const int gwRc = gwReg->fill((const void *)dOps, nOps, dPacked,
+                                     gpu, (void *)gwStream);
+        if (gwRc != 0) {
+            zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
+                        std::to_string(airId) + " kernel returned " + std::to_string(gwRc));
+            exitProcess();
+        }
+        timer.stopCategory("GW_KERNEL");
+        packedSrc = (const void *)dPacked;
+    }
+
     // A prover-owned virtual table: its rows come from the device accumulator, as in the legacy
     // commit (row-major, one word per column). After every refusal: the export folds across GPUs.
-    const bool exported = aii != nullptr && !aii->is_packed &&
+    const bool exported = gwReg == nullptr && aii != nullptr && !aii->is_packed &&
                           mul_export_to_trace(airId, gpu, dPacked, nRowsSlot, nCols,
                                               d_buffers->streamCommitStreams[slotIdx]);
     if (exported) packedSrc = (const void *)dPacked;
 
     PrefetchZone *zone = d_buffers->prefetchArmed ? &d_buffers->prefetchZones[gl] : nullptr;
-    if (!exported && zone != nullptr) {
+    if (gwReg == nullptr && !exported && zone != nullptr) {
         const uint64_t packedBytes = nRowsSlot * dims.wordsPerRow * sizeof(Goldilocks::Element);
         std::lock_guard<std::mutex> lk(zone->mutex);
         stagedSlot = prefetchFindSpanLocked(*zone, instanceId);
@@ -3701,6 +3836,7 @@ uint64_t get_mops_floor_bytes_gpu() {
 uint64_t get_post_alloc_headroom_bytes_gpu() {
     return postAllocHeadroomBytes();
 }
+
 
 // How many LARGEST-TRACE witnesses the Rust side sizes the prefetch region for (not the unit count).
 uint32_t get_prefetch_witness_slots_gpu() {
