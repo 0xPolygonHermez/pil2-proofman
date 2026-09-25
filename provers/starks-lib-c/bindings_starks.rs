@@ -799,6 +799,19 @@ extern "C" {
         accBases: *const u64,
         nTables: u64,
     );
+    // GPU witness kernels. Defined in gpu_witness_api.cpp, which compiles into BOTH
+    // libraries, so these link on a CPU-only build too (where nothing registers).
+    pub fn gpu_witness_register(
+        airgroup_id: u64,
+        air_id: u64,
+        bytes_per_op: u64,
+        emits: ::std::os::raw::c_int,
+        fill: crate::GpuWitnessFillFn,
+    );
+    pub fn gpu_witness_clear();
+    pub fn gpu_witness_count() -> u64;
+    pub fn gpu_witness_is_registered(airgroup_id: u64, air_id: u64) -> ::std::os::raw::c_int;
+
     pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
     pub fn mul_register_table_map(table_id: u64, kv: *const u64, n: u64, slots: u64, n_key: u64);
 
