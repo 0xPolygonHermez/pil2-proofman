@@ -10,6 +10,7 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
+    get_num_gpus_c,
     mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_decode_c,
     mul_register_table_digits_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
@@ -579,6 +580,9 @@ struct SlotCommitCtx {
     pool_rx: Receiver<u64>,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     committed: AtomicU64,
+    /// Single GPU: every packed air commits on a slot; transient refusals retry, others are fatal.
+    /// With several GPUs only the first has slots; the others use the legacy commit.
+    strict: bool,
 }
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
@@ -2965,6 +2969,7 @@ where
                         pool_rx,
                         packed_info: self.options.packed_info.clone(),
                         committed: AtomicU64::new(0),
+                        strict: get_num_gpus_c() == 1,
                     })
                 })
             } else {
@@ -6148,9 +6153,8 @@ where
         Ok(())
     }
 
-    /// Try to commit `instance_id` on a reserved streaming slot. Returns false
-    /// (caller takes the legacy stream path) when the AIR is not slot-eligible,
-    /// no slot token is free, or the C side rejects the shape.
+    /// Commit `instance_id` on a streaming slot. Ok(false) means take the legacy path: the air has
+    /// no packed info (virtual tables), or, outside strict mode, no token is free or C refuses.
     ///
     /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
     /// (col_source / col_lane / index_bits / lanes / words_per_entry) and its uploaded
@@ -6168,35 +6172,23 @@ where
         params: *mut u8,
         roots_contributions: &[[F; 4]],
         staged: bool,
-    ) -> bool {
+    ) -> ProofmanResult<bool> {
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
-            return false;
+            return Ok(false);
         };
         // A null trace is fine when staged (the slot reads the zone); without a staging it is an error.
         if trace.is_null() && !staged {
-            return false;
+            return Ok(false);
         }
         let ss = &setup.stark_info.stark_struct;
         if !stream_commit_eligible(&pctx.global_info.hash, setup) {
-            return false;
+            return Ok(false);
         }
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
-            return false;
+            return Ok(false);
         };
-        // Slots used to be restricted to the gpu-mops borrow window, on the reasoning that the
-        // legacy path is "strictly better" once a stream is free. Measured, it is not: allowing
-        // them throughout took CALCULATING_CONTRIBUTIONS from 2855 to 2630 ms over 8 runs per arm,
-        // even though most attempts still bounce off the region check. A commit that cannot get
-        // the region falls back to legacy anyway, so the worst case is the old behaviour.
-        // One-shot token take: a miss means all slots are busy right-now and the
-        // instance goes legacy.
-        let Ok(slot) = ctx.pool_rx.try_recv() else {
-            return false;
-        };
-        // An unpacked air is just the degenerate packing: one full 64-bit word per column, which
-        // is exactly its row-major layout. The unpack cursor already handles a 64-bit field
-        // (scStepBits masks with ~0ULL at nbits == 64), so the walk is an identity read and the
-        // slot path needs no special case for it.
+        // Slots are allowed outside the gpu-mops borrow window too. An unpacked air is the degenerate
+        // packing (one 64-bit word per column), which the unpack cursor reads as identity.
         let identity_widths: Vec<u64>;
         let (words_per_row, widths): (u64, &[u64]) = if pi.is_packed {
             (pi.num_packed_words, pi.unpack_info.as_slice())
@@ -6204,42 +6196,57 @@ where
             identity_widths = vec![64u64; n_cols as usize];
             (n_cols, identity_widths.as_slice())
         };
-        let rc = commit_witness_streaming_c(
-            pctx.get_device_buffers_ptr(),
-            slot,
-            instance_id as u64,
-            airgroup_id as u64,
-            air_id as u64,
-            trace as *mut c_void,
-            ss.n_bits,
-            ss.n_bits_ext,
-            n_cols,
-            words_per_row,
-            widths.as_ptr() as *mut c_void,
-            roots_contributions[instance_id].as_ptr() as *mut c_void,
-            params as *mut c_void,
-        );
-        ctx.pool_tx.send(slot).ok();
-        if rc != 0 {
-            // -14 is returned for either of two expected, transient conditions:
-            // the slots are quiesced (gpu-mops entered its final planning phase,
-            // typical near the window close), or the overlapped legacy region is
-            // busy (streamCommitAcquireRegion could not claim every overlapped
-            // first-GPU stream). Both mean "take the legacy path this time".
-            // Anything else is a misconfiguration worth surfacing (e.g. -15 wrong
-            // hash family, -13 shape/slot-size drift, -16 indexed air whose
-            // instruction table was never registered, -4 incomplete indexed
-            // descriptor). Note the legacy fallback is NOT a rescue for -16: the
-            // prover-side unpack aborts on the same missing table.
-            if rc != -14 {
-                tracing::warn!(
-                    "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
-                );
+        loop {
+            let slot = if ctx.strict {
+                match ctx.pool_rx.recv() {
+                    Ok(slot) => slot,
+                    Err(_) => return Ok(false),
+                }
+            } else {
+                let Ok(slot) = ctx.pool_rx.try_recv() else {
+                    return Ok(false);
+                };
+                slot
+            };
+            let rc = commit_witness_streaming_c(
+                pctx.get_device_buffers_ptr(),
+                slot,
+                instance_id as u64,
+                airgroup_id as u64,
+                air_id as u64,
+                trace as *mut c_void,
+                ss.n_bits,
+                ss.n_bits_ext,
+                n_cols,
+                words_per_row,
+                widths.as_ptr() as *mut c_void,
+                roots_contributions[instance_id].as_ptr() as *mut c_void,
+                params as *mut c_void,
+            );
+            ctx.pool_tx.send(slot).ok();
+            match rc {
+                0 => {
+                    ctx.committed.fetch_add(1, Ordering::Relaxed);
+                    return Ok(true);
+                }
+                // Transient: the slots are quiesced for gpu-mops' final phase, or a legacy stream
+                // still holds the overlapped region. Both lift on their own.
+                -20 | -21 if ctx.strict => std::thread::sleep(std::time::Duration::from_micros(500)),
+                -20 | -21 => return Ok(false),
+                _ if ctx.strict => {
+                    return Err(ProofmanError::ProofmanError(format!(
+                        "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]: \
+                         every packed air commits on a slot, so this is a configuration error, not a fallback"
+                    )));
+                }
+                _ => {
+                    tracing::warn!(
+                        "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
+                    );
+                    return Ok(false);
+                }
             }
-            return false;
         }
-        ctx.committed.fetch_add(1, Ordering::Relaxed);
-        true
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6306,7 +6313,7 @@ where
                 p_steps_params,
                 roots_contributions,
                 staged,
-            ),
+            )?,
             None => false,
         };
 

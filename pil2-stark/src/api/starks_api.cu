@@ -3402,7 +3402,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " has witness_calc hints a slot cannot run ("
-                           + hintPlan->why + "); taking the legacy commit path");
+                           + hintPlan->why + "); refusing the slot (fatal on a single GPU, legacy with several)");
             });
             streamCommitReleaseRegion(d_buffers);
             return -14;
@@ -3471,7 +3471,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " cannot be counted on a slot (reads "
-                           + mulSrcMaskNames(p.srcMask) + "); taking the legacy commit path");
+                           + mulSrcMaskNames(p.srcMask) + "); refusing the slot (fatal on a single GPU, legacy with several)");
             });
             streamCommitReleaseRegion(d_buffers);
             return -14;
@@ -3483,7 +3483,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " cannot scatter from the packed rows; "
-                           "taking the legacy commit path");
+                           "refusing the slot (fatal on a single GPU, legacy with several)");
             });
             streamCommitReleaseRegion(d_buffers);
             return -23;
@@ -3635,16 +3635,17 @@ void stream_commit_pause_gpu() {
     DeviceCommitBuffers *d_buffers = gStreamCommitBuffers.load(std::memory_order_acquire);
     if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
     d_buffers->streamCommitQuiesced.store(1, std::memory_order_release);
-    for (int spins = 0; spins < 4000; spins++) {  // ~2 s cap; commits take ~250 ms max
+    // Unbounded: returning with a commit still in flight hands its slot memory to the borrower.
+    for (int spins = 0;; spins++) {
         bool busy;
         {
             std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
             busy = d_buffers->streamCommitInFlight != 0;
         }
         if (!busy) return;
+        if (spins == 4000) zklog.warning("stream_commit_pause: slot commits still in flight after 2 s; waiting");
         std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
-    zklog.warning("stream_commit_pause: in-flight slot commits did not drain within 2 s");
 }
 
 // Acquires exclusive use of the FIRST GPU's unified buffer (my_gpu_ids[0]) for the
