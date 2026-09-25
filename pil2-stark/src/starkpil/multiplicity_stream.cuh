@@ -14,18 +14,11 @@
 
 // Counting lookups during a STREAMING slot commit.
 //
-// The slot exists because gpu-mops has borrowed the first GPU's buffer, so there is no room to
-// materialise cm1: the commit unpacks a few columns at a time and LDEs them in place. Nothing after
-// the upload can read the witness, and nothing before it is unpacked -- which is why the scatter
-// hooks in exactly between the two.
-//
-// Rather than teach the scatter to read bit-packed rows, this materialises cm1 a TILE of rows at a
-// time and runs the ordinary kernel over the tile. One fact from the plan makes that sound: no job
-// reads a later stage, so cm1 is all the scatter needs at commit time. A `'`-shifted cm1 reference
-// is served by giving the tile a halo, and only a reach wider than MUL_TILE_MAX_HALO is refused.
-// Both are checked in mulPlanStreamable rather than assumed -- an air that broke either would be
-// miscounted silently, so it refuses the slot instead.
-#define MUL_STREAM_TILE_ROWS (1u << 14)
+// The slot has no room to materialise cm1: the commit unpacks a few columns at a time and LDEs
+// them in place, so the scatter must hook in between upload and unpack. Its program is rewritten
+// onto the bit-packed rows (mulPackedProgramFor), so one launch covers the domain and `'`-shifted
+// reads wrap. Sound only because no job reads a later stage; mulPlanStreamable checks that and
+// refuses the slot otherwise.
 
 struct MulStreamCtx {
     SetupCtx *setupCtx;
@@ -45,27 +38,108 @@ struct MulStreamCtx {
     uint64_t nVals;                     // words in the window
     // Already on the device (the air's witness_calc hints read the same pools): used instead of uploading.
     const uint64_t *dVals;
-    // Stage-1 columns the prover computes rather than the witness carrying them. The tile below
-    // is unpacked from the packed rows, which predate them, so a lookup reading one would count
-    // against a stale value -- they are patched in before the scatter. Null when the air has no
-    // witness_calc hints. See witness_hints_slot.hpp.
+    // Stage-1 columns the prover computes; the packed rows predate them, so the rewrite reads them
+    // from this buffer. Null when the air has no witness_calc hints (see witness_hints_slot.hpp).
     const uint64_t *hintSide;
     const uint32_t *hintDestCols, *hintDestSlots;
     uint32_t hintNDest;
     uint64_t offPublics, offAirValues, offProofValues, offAirgroupValues;  // words into it
+    // Host-side packing layout for rewriting the program onto the packed rows. For an INDEXED air the
+    // column map says whether a value sits in the compact row or the instruction table, and which lane.
+    const std::vector<uint64_t> *widths = nullptr;
+    const std::vector<uint8_t> *colSource = nullptr, *colLane = nullptr;
+    const SlotHintPlan *hintPlan = nullptr;
+    uint64_t indexBits = 0, wordsPerEntry = 0, numEntries = 0, lanes = 0;
     // Custom commits are still absent: they are trace-sized, not value-sized.
     // Slot scatter timer, the counterpart of MUL_SCATTER_KERNEL on the legacy path.
     TimerGPU *timer;
 };
 
-// One scratch buffer per (device, slot), grown to the widest air seen on that slot. Cached because
-// a slot commit is on the critical path and cudaMalloc there would serialise against the copy
-// engine. Keyed by slotIdx, not just gpuId: commit_witness_streaming_gpu is documented safe to call
-// concurrently on distinct slots, and a per-GPU-only key handed the same pointer to two slots'
-// concurrently-running async unpack/scatter kernels, plus a cudaFree-while-in-use on resize. Each
-// slot's own commit is synchronous (streamCommitPacked syncs its stream before returning), so
-// growing a given slot's tile between two calls on that same slot is safe -- the prior kernels
-// using the old buffer have already completed by the time the next call could resize it.
+// Rewrite the scatter to read the packed rows directly.
+//
+// Column addressing must mirror unpackIndexedRow bit for bit. Runtime columns start past the
+// index header, a table column at the start of its lane's entry; non-indexed is the degenerate
+// case. On refusal the CALLER declines the slot; the hook itself cannot refuse.
+struct MulPackedProg { const MulInsnDev* prog = nullptr; bool ok = false; };
+
+inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx& c,
+                                         uint64_t airgroupId, uint64_t airId, int gpuId) {
+    static std::map<std::tuple<uint64_t,uint64_t,int>, MulPackedProg> cache;
+    static std::mutex mtx;
+    std::lock_guard<std::mutex> lock(mtx);
+    auto key = std::make_tuple(airgroupId, airId, gpuId);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+
+    MulPackedProg r;
+    const std::vector<uint64_t>* w = c.widths;
+    if (w == nullptr || w->empty() || plan.prog.empty()) { cache[key] = r; return r; }
+    const bool indexed = c.colSource != nullptr && !c.colSource->empty();
+    if (indexed && (c.colSource->size() < w->size() || c.numEntries == 0 || c.indexBits == 0)) {
+        cache[key] = r; return r;
+    }
+    const uint64_t nLanes = c.lanes ? c.lanes : 1;
+    auto laneOf = [&](size_t i) -> uint8_t {
+        return (c.colLane != nullptr && i < c.colLane->size()) ? (*c.colLane)[i] : 0;
+    };
+    auto fromTable = [&](size_t i) { return indexed && (*c.colSource)[i] != 0; };
+
+    // Bit offset of each column, in the stream it actually belongs to.
+    std::vector<uint64_t> bitOf(w->size(), 0);
+    { uint64_t cur = nLanes * c.indexBits;                       // runtime columns
+      for (size_t i = 0; i < w->size(); ++i)
+          if (!fromTable(i)) { bitOf[i] = cur; cur += (*w)[i]; } }
+    for (uint64_t l = 0; l < nLanes; ++l) {                      // one entry stream per lane
+        uint64_t cur = 0;
+        for (size_t i = 0; i < w->size(); ++i)
+            if (fromTable(i) && laneOf(i) == l) { bitOf[i] = cur; cur += (*w)[i]; }
+    }
+
+    std::map<uint32_t,uint32_t> hintSlotOf;
+    if (c.hintPlan != nullptr)
+        for (const auto& op : c.hintPlan->ops) hintSlotOf[op.destCol] = op.destSlot;
+
+    std::vector<MulInsnDev> prog = plan.prog;
+    for (auto& in : prog)
+        for (MulOperandDev* o : {&in.a, &in.b}) {
+            if (o->kind != MUL_OPND_COL) continue;
+            MulTermDev& t = o->term;
+            if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST) continue;   // served as-is
+            if (t.src != MUL_SRC_TRACE) { cache[key] = r; return r; }
+            auto h = hintSlotOf.find(t.col);
+            if (h != hintSlotOf.end()) {          // a column a hint produced, not the witness
+                t.src = MUL_SRC_HINTCOL;
+                t.sectionOffset = h->second;
+                continue;
+            }
+            if (t.col >= w->size() || (*w)[t.col] == 0 || (*w)[t.col] > 64) { cache[key] = r; return r; }
+            const uint32_t width = (uint32_t)(*w)[t.col];
+            if (fromTable(t.col)) {
+                t.src = MUL_SRC_PACKED_IDX;
+                t.sectionOffset = bitOf[t.col];
+                t.col = laneOf(t.col);            // the lane, from here on
+                t.nCols = width;
+            } else {
+                t.src = MUL_SRC_PACKED;
+                t.sectionOffset = bitOf[t.col];
+                t.nCols = width;
+            }
+        }
+
+    MulInsnDev* dp = nullptr;
+    const size_t bytes = prog.size() * sizeof(MulInsnDev);
+    if (cudaMalloc(&dp, bytes) != cudaSuccess) { cache[key] = r; return r; }
+    if (cudaMemcpy(dp, prog.data(), bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+        cudaFree(dp); cache[key] = r; return r;
+    }
+    r.prog = dp; r.ok = true;
+    cache[key] = r;
+    return r;
+}
+
+// One scratch buffer per (device, slot), grown to the widest air seen; cached to keep cudaMalloc
+// off the critical path. Keyed by slot because distinct slots commit concurrently. Growing is
+// safe because each slot's commit syncs its stream before returning.
 using MulStreamBufs = std::map<std::pair<int, uint64_t>, std::pair<uint64_t*, size_t>>;
 
 inline std::mutex& mulStreamBufsMutex() { static std::mutex m; return m; }
@@ -82,13 +156,13 @@ inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, 
     return e.first;
 }
 
-inline uint64_t* mulStreamTile(int gpuId, uint64_t slotIdx, size_t elems) {
+// Publics and the three value pools, staged per (device, slot).
+inline uint64_t* mulStreamVals(int gpuId, uint64_t slotIdx, size_t elems) {
     static MulStreamBufs bufs;
     return mulStreamBuf(bufs, gpuId, slotIdx, elems);
 }
 
-// Where the caller expands this air's const pols before the commit; same caching rationale as the
-// tile. Sized nConstants * N, which is small next to the trace (zisk Main: 2 columns, 64 MiB).
+// Where the caller expands this air's const pols before the commit. Sized nConstants * N.
 inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems) {
     static MulStreamBufs bufs;
     return mulStreamBuf(bufs, gpuId, slotIdx, elems);
@@ -102,13 +176,11 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
 
     const MulPlan &plan = mulPlanFor(*c->setupCtx, c->airgroupId, c->airId);
     if (plan.jobs.empty()) return;     // the interpreter fallback cannot run here; see the caller
-    // Asserted, not assumed: a later-stage read has nothing to read from here, and a row-shifted
-    // one would cross a tile boundary. Both are false for every air today; an air that changed
-    // must not be silently miscounted.
+    // Asserted, not assumed: a later-stage read has nothing to read here and would be miscounted.
     if (!mulPlanStreamable(plan)) {
         zklog.error("multiplicity: air " + std::to_string(c->airgroupId) + "/"
                     + std::to_string(c->airId) + " reads " + mulSrcMaskNames(plan.srcMask)
-                    + ", and a slot commit has only the const pols and the tile -- it must not take "
+                    + ", and a slot commit has only the const pols and the packed rows -- it must not take "
                     "the streaming path");
         exitProcess();
     }
@@ -119,77 +191,42 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
     if (dev.jobs == nullptr) return;
 
     const uint64_t nRows = 1ull << dims.nBits;
-    const uint64_t tileRows = std::min<uint64_t>(MUL_STREAM_TILE_ROWS, nRows);
-    // A `'`-shifted cm1 reference reads off its own row, so the tile carries that many extra rows
-    // on each side. zisk Keccakf reaches 4, all of it inside compiled programs; most airs need 0.
-    // The halo wraps at the domain edges, which is why the tile is filled in up to three passes
-    // and the kernel's trace addressing is modular.
-    const uint64_t halo = std::min<uint64_t>(plan.traceHalo, nRows / 2);
-    const uint64_t tileH = tileRows + 2 * halo;
-    // The window rides at the end of the tile buffer rather than in a buffer of its own: same
-    // lifetime, same per-(device, slot) key, one fewer allocation.
-    uint64_t *tile = mulStreamTile(gpuId, c->slotIdx, dims.nCols * tileH + c->nVals);
-    if (tile == nullptr) {
-        zklog.error("multiplicity: no room for the streaming tile buffer on gpu "
-                    + std::to_string(gpuId) + " -- this air's lookups would go uncounted");
-        exitProcess();
-    }
-
     const uint64_t *vals = c->dVals;
     if (vals == nullptr && c->hostVals != nullptr && c->nVals != 0) {
-        uint64_t *dst = tile + dims.nCols * tileH;
+        uint64_t *dst = mulStreamVals(gpuId, c->slotIdx, c->nVals);
+        if (dst == nullptr) {
+            zklog.error("multiplicity: no room for the value window on gpu "
+                        + std::to_string(gpuId) + " -- this air's lookups would go uncounted");
+            exitProcess();
+        }
         CHECKCUDAERR(cudaMemcpyAsync(dst, c->hostVals, c->nVals * sizeof(uint64_t),
                                      cudaMemcpyHostToDevice, stream));
         vals = dst;
     }
 
-    // The jobs address cm1 as `col * nRows + row`; over a tile the stride is the tile's height.
-    // That is `rows`, not `tileRows`: the unpack lays its columns out at the height it was asked
-    // for, so a short final tile would otherwise be read at the nominal stride. Every domain is a
-    // power of two today and MUL_STREAM_TILE_ROWS divides them all, so no tile is short -- but the
-    // two strides have to be the same variable, not two that happen to agree.
-    for (uint64_t begin = 0; begin < nRows; begin += tileRows) {
-        const uint64_t rows = std::min(tileRows, nRows - begin);
-        // The window this tile serves: `rows` counted rows, plus the halo on each side. It is a
-        // cyclic range, so it is filled in up to three contiguous passes -- all writing at the
-        // whole tile's stride, not their own row count.
-        const uint64_t winBegin = (begin + nRows - halo) & (nRows - 1);
-        const uint64_t winRows = rows + 2 * halo;
-        for (uint64_t done = 0; done < winRows; ) {
-            const uint64_t from = (winBegin + done) & (nRows - 1);
-            const uint64_t take = std::min(winRows - done, nRows - from);
-            streamCommitUnpackTile(dPacked, dWidths, dims, from, take, 0, (uint32_t)dims.nCols,
-                                   tile, stream, c->dColSource, c->dColLane, c->dTable,
-                                   tileH, done);
-            done += take;
-        }
-        // The prover's own stage-1 columns over the witness's, before anything counts them.
-        if (c->hintNDest != 0)
-            for (uint64_t done = 0; done < winRows; ) {
-                const uint64_t from = (winBegin + done) & (nRows - 1);
-                const uint64_t take = std::min(winRows - done, nRows - from);
-                slotHintPatchLaunch(tile + done, 0, (uint32_t)dims.nCols, take, from, nRows,
-                                    c->hintSide, c->hintDestCols, c->hintDestSlots, c->hintNDest,
-                                    stream, tileH);
-                done += take;
-            }
-        // Const pols, the tile, and the value window the caller staged. Aux and the custom
-        // commits stay unreachable -- mulPlanStreamable guarantees no job reads them.
-        const uint64_t *bases[MUL_SRC_N] = {
-            c->constPols, tile, nullptr,
-            vals ? vals + c->offPublics        : nullptr,
-            vals ? vals + c->offAirValues      : nullptr,
-            vals ? vals + c->offProofValues    : nullptr,
-            vals ? vals + c->offAirgroupValues : nullptr,
-            nullptr, nullptr, nullptr };   // no custom commits; the tile is already unpacked
-        // Degree-0 jobs contribute once per instance, not once per tile: only the first tile runs
-        // them. Every other job is per-row and its rows are the tile's.
-        if (c->timer) c->timer->startCategory("MUL_SCATTER_TILE");
-        mul_scatter_launch_tile(dev.jobs, (uint32_t)plan.jobs.size(), rows, winBegin, begin, bases,
-                                tileH, nRows, c->acc, c->oob,
-                                (c->airgroupId << 32) | c->airId, dev.prog, stream);
-        if (c->timer) c->timer->stopCategory("MUL_SCATTER_TILE");
+    // The rewrite was validated before the commit (the slot is refused otherwise), so it cannot fail
+    // here. One launch over the whole domain; `'`-shifted reads wrap on rowMask.
+    const MulPackedProg packedProg = mulPackedProgramFor(plan, *c, c->airgroupId, c->airId, gpuId);
+    if (!packedProg.ok) {
+        zklog.error("multiplicity: air " + std::to_string(c->airgroupId) + "/"
+                    + std::to_string(c->airId) + " reached the slot scatter with no packed "
+                    "program -- its lookups would go uncounted");
+        exitProcess();
     }
+    const uint64_t *bases[MUL_SRC_N] = {
+        c->constPols, nullptr, nullptr,
+        vals ? vals + c->offPublics        : nullptr,
+        vals ? vals + c->offAirValues      : nullptr,
+        vals ? vals + c->offProofValues    : nullptr,
+        vals ? vals + c->offAirgroupValues : nullptr,
+        nullptr, nullptr, nullptr, nullptr };
+    if (c->timer) c->timer->startCategory("MUL_SCATTER_PACKED");
+    mul_scatter_launch_tile(dev.jobs, (uint32_t)plan.jobs.size(), nRows, 0, 0, bases,
+                            nRows, nRows, c->acc, c->oob,
+                            (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
+                            dPacked, dims.wordsPerRow, c->hintSide,
+                            c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits);
+    if (c->timer) c->timer->stopCategory("MUL_SCATTER_PACKED");
     mul_note_scatter(gpuId, stream);
 }
 

@@ -35,29 +35,16 @@ struct MulPlan {
     // because a slot commit has no aux trace or custom commits on device.
     uint32_t                    srcMask = 0;
     uint64_t                    maxRows = 0;       // tallest job: the row-stationary grid height
-    // How far a cm1 reference reaches off its own row, in rows. A tile must carry this many
-    // extra rows on each side or those reads fall outside it; 0 for most airs, 4 for zisk
-    // Keccakf, whose shifts hide inside the compiled programs.
-    uint32_t                    traceHalo = 0;
 };
 
-// A tile carries this many extra rows on each side. Generous next to the 4 rows zisk's widest
-// air reaches, and still negligible against MUL_STREAM_TILE_ROWS.
-#define MUL_TILE_MAX_HALO 64u
-
 inline bool mulPlanStreamable(const MulPlan& p) {
-    // Const pols and the tile are resident by construction; publics and the three value pools are
-    // staged into the hook's own per-slot buffer (see MulStreamCtx::hostVals), which is cheap
-    // because PINNED_AUX_VALUES_MAX caps all four at 512 KB. Aux and the custom commits are
-    // trace-sized and stay out.
+    // Const pols and packed rows are resident; publics and value pools are staged per slot
+    // (MulStreamCtx::hostVals, capped by PINNED_AUX_VALUES_MAX). Aux and custom commits stay out.
     const uint32_t resident = (1u << MUL_SRC_CONST)   | (1u << MUL_SRC_TRACE)
                             | (1u << MUL_SRC_PUBLIC)  | (1u << MUL_SRC_AIRVALUE)
                             | (1u << MUL_SRC_PROOFVALUE) | (1u << MUL_SRC_AIRGROUPVALUE);
-    // Compiled programs, exact maps and digit rules used to be refused here because the tile
-    // had its own cut-down evaluator. It no longer has one -- a tile is the same kernel over a
-    // different window -- and a `'`-shifted CM1 reference is served by giving that window a halo,
-    // so the only thing left to refuse is a reach the halo would not cover.
-    return p.packable && (p.srcMask & ~resident) == 0 && p.traceHalo <= MUL_TILE_MAX_HALO;
+    // Shifted cm1 reads wrap on rowMask over the whole domain, so no reach bound is needed.
+    return p.packable && (p.srcMask & ~resident) == 0;
 }
 
 inline std::string mulSrcName(uint32_t s) {
@@ -325,14 +312,6 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
         plan.nCols1 = (uint32_t)cols.size();
         plan.packable = ok;
         for (const auto& j : plan.jobs) if (j.rows > plan.maxRows) plan.maxRows = j.rows;
-        // The halo. Every field is a program, so its operands are the only place a cm1 reference
-        // can hide -- scanning anything less is what once made Keccakf look shift-free while 1720
-        // of its operands were shifted.
-        for (const auto& in : plan.prog)
-            for (const MulOperandDev* o : {&in.a, &in.b})
-                if (o->kind == MUL_OPND_COL && o->term.src == MUL_SRC_TRACE)
-                    plan.traceHalo = std::max(plan.traceHalo, (uint32_t)std::abs((int)o->term.rowStride));
-
         if (!plan.jobs.empty())
             zklog.trace("Multiplicity plan: cm1 cols=" + std::to_string(plan.nCols1)
                        + " packable=" + std::to_string((int)plan.packable)

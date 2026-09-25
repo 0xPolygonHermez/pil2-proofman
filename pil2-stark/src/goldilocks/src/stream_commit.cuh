@@ -108,16 +108,6 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 typedef void (*StreamCommitHook)(const uint64_t *dPacked, const uint64_t *dWidths,
                                  const StreamCommitDims &dims, cudaStream_t stream, void *user);
 
-// Unpack `cc` columns from `c0` for the rows [rowBegin, rowBegin + rows) of a packed witness into
-// `dst`, ColMajor with `rows` rows. The same bit walk the commit itself uses, exposed so a caller
-// can materialise a slice of cm1 without a full unpack -- the commit never holds one.
-void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
-                            const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
-                            uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
-                            const uint8_t *dColSource = nullptr, const uint8_t *dColLane = nullptr,
-                            const uint64_t *dTable = nullptr, uint64_t dstStride = 0,
-                            uint64_t dstOff = 0);
-
 // Called after each chunk is unpacked and BEFORE it is extended in place. `dst` holds `cc` columns
 // from `c0`, ColMajor at the small-domain stride. Prover-computed stage-1 columns (witness_calc
 // hints) are written here.

@@ -34,7 +34,10 @@ enum MulSrc : uint32_t {
     //   HINTCOL -- stage-1 column from a witness_calc hint: `sectionOffset` = its side-buffer slot.
     MUL_SRC_PACKED = 8,
     MUL_SRC_HINTCOL = 9,
-    MUL_SRC_N = 10
+    //   PACKED_IDX -- indexed air column in the instruction table: `col` = lane, `sectionOffset` =
+    //              bit offset, `nCols` = width. Must match unpackIndexedRow's walk.
+    MUL_SRC_PACKED_IDX = 10,
+    MUL_SRC_N = 11
 };
 // Publics and the value pools (no row term). A range, not a floor: slot sources sit above.
 #define MUL_SRC_IS_UNIFORM(s) ((s) >= MUL_SRC_PUBLIC && (s) <= MUL_SRC_AIRGROUPVALUE)

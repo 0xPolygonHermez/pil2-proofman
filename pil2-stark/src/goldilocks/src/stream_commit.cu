@@ -515,39 +515,6 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
     return SC_MAX_COLS + N * dims.wordsPerRow + (uint64_t)wsCols * NExt + N;
 }
 
-void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
-                            const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
-                            uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
-                            const uint8_t *dColSource, const uint8_t *dColLane,
-                            const uint64_t *dTable, uint64_t dstStride, uint64_t dstOff)
-{
-    if (rows == 0 || cc == 0) return;
-    // A caller assembling a haloed tile fills it in several passes, so the destination stride is
-    // the WHOLE tile's height, not this pass's row count.
-    if (dstStride == 0) dstStride = rows;
-    const uint64_t *src = dPacked + rowBegin * dims.wordsPerRow;
-    const uint32_t blk = (uint32_t)((rows + SC_TPB - 1) / SC_TPB);
-    if (dColSource != nullptr) {
-        // scInfo[nCols] + scStart[nCols] + one accumulator per lane -- the same three arrays
-        // the kernel carves out of `scShared`, and the same size the full-trace launch below
-        // passes. This asked for one nCols and the kernel ran off the end of the block's
-        // shared memory; it only ever showed up once an indexed air reached the multiplicity
-        // hook, which is the only caller of this function.
-        scUnpackRangeIndexedKernel<<<blk, SC_TPB,
-                                     (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t),
-                                     stream>>>(
-            src, dTable, dWidths, dColSource, dColLane, dst, dims.nCols, rows, dims.wordsPerRow,
-            dims.wordsPerEntry, dims.numEntries, dims.indexBits, dims.lanes, c0, cc,
-            dstStride, dstOff);
-    } else {
-        // scColStart[cc] -- the same the full-trace launch passes. Zero here walked off the end
-        // of the block's shared memory; it never showed because the only air that reached this
-        // function was indexed, and took the branch above.
-        scUnpackRangeKernel<<<blk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(
-            src, dWidths, dst, dims.nCols, rows, dims.wordsPerRow, c0, cc, dstStride, dstOff);
-    }
-    CHECKCUDAERR(cudaGetLastError());
-}
 
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,

@@ -3384,6 +3384,31 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // slot without the hook would produce a valid root and silently wrong multiplicities -- the
     // worst failure mode available. Refuse the slot instead and let the caller take the legacy
     // path, which counts.
+    // Packing layout for the scatter. An unpacked air is the identity packing -- one 64-bit word
+    // per column, which is its row-major layout -- so it reads the packed rows like everything
+    // else. Same widths the caller synthesises for colWidths (try_slot_commit).
+    if (aii != nullptr) {
+        static std::mutex idwMtx;
+        static std::map<std::pair<uint64_t,uint64_t>, std::vector<uint64_t>> idw;
+        const std::vector<uint64_t> *widths = &aii->unpack_info_host;
+        if (widths->empty()) {
+            std::lock_guard<std::mutex> lk(idwMtx);
+            auto &v = idw[{airgroupId, airId}];
+            if (v.empty()) v.assign(nCols, 64);
+            widths = &v;
+        }
+        mulCtx.widths    = widths;
+        mulCtx.hintPlan  = hintPlan;
+        if (aii->d_col_source != nullptr) {              // indexed: columns may live in the table
+            mulCtx.colSource     = &aii->col_source_host;
+            mulCtx.colLane       = aii->col_lane_host.empty() ? nullptr : &aii->col_lane_host;
+            mulCtx.indexBits     = aii->index_bits;
+            mulCtx.wordsPerEntry = aii->words_per_entry;
+            mulCtx.numEntries    = aii->num_entries;
+            mulCtx.lanes         = aii->lanes;
+        }
+    }
+
     bool needsCount = false;
     if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
         const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
@@ -3400,6 +3425,18 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             });
             streamCommitReleaseRegion(d_buffers);
             return -14;
+        }
+        // The scatter must also be able to read the packed rows (a slot never materialises cm1).
+        // Decided here: the hook cannot refuse once the commit is under way.
+        if (needsCount && !mulPackedProgramFor(p, mulCtx, airgroupId, airId, firstGpu).ok) {
+            static std::once_flag once;
+            std::call_once(once, [&] {
+                zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
+                           + std::to_string(airId) + " cannot scatter from the packed rows; "
+                           "taking the legacy commit path");
+            });
+            streamCommitReleaseRegion(d_buffers);
+            return -23;
         }
     }
     if (needsCount && (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)) {

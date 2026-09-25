@@ -87,6 +87,8 @@ struct AirInstanceInfo {
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
     std::vector<uint64_t> unpack_info_host;
+    // Host mirrors of the indexed descriptor, for the multiplicity rewriter.
+    std::vector<uint8_t> col_source_host, col_lane_host;
     uint64_t* d_num_packed_words;
 
     // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
@@ -322,11 +324,13 @@ struct AirInstanceInfo {
                 lanes = packedInfo->lanes;
                 CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                col_source_host.assign(packedInfo->col_source, packedInfo->col_source + nCols);
                 // Left null for a single-lane descriptor: the kernels then read lane 0. An
                 // all-zero map would instead disarm the null checks the refusals downstream rely on.
                 if (packedInfo->col_lane != nullptr) {
                     CHECKCUDAERR(cudaMalloc(&d_col_lane, nCols * sizeof(uint8_t)));
                     CHECKCUDAERR(cudaMemcpy(d_col_lane, packedInfo->col_lane, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                    col_lane_host.assign(packedInfo->col_lane, packedInfo->col_lane + nCols);
                 }
             }
         }

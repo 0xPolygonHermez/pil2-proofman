@@ -20,6 +20,9 @@ struct MulBases {
     // (witness_hints_slot.hpp). Last and defaulted so brace initialisers are unaffected.
     const uint64_t *packed = nullptr, *side = nullptr;
     uint64_t wordsPerRow = 0;
+    // Indexed rows: the instruction table and its geometry, air-uniform.
+    const uint64_t *table = nullptr;
+    uint64_t wordsPerEntry = 0, numEntries = 0, indexBits = 0;
 };
 
 __device__ __forceinline__ const uint64_t* mulBaseFor(const MulBases& b, uint32_t src) {
@@ -69,6 +72,14 @@ __device__ __forceinline__ uint64_t mulTermValue(const MulTermDev& t, const MulB
     if (t.src == MUL_SRC_PACKED)
         return mulPackedAt(b.packed, b.wordsPerRow, (row + (uint64_t)t.rowStride) & rowMask,
                            t.sectionOffset, t.nCols);
+    if (t.src == MUL_SRC_PACKED_IDX) {
+        const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
+        // Lane index from the row header, then the field from that table entry.
+        const uint64_t index = mulPackedAt(b.packed, b.wordsPerRow, r,
+                                           (uint64_t)t.col * b.indexBits, b.indexBits);
+        if (index >= b.numEntries) return 0;   // in bounds; a wrong root is the signal we want
+        return mulPackedAt(b.table, b.wordsPerEntry, index, t.sectionOffset, t.nCols);
+    }
     if (t.src == MUL_SRC_HINTCOL)
         return mulCanonHD(__ldg(&b.side[t.sectionOffset * (rowMask + 1)
                                         + ((row + (uint64_t)t.rowStride) & rowMask)]));

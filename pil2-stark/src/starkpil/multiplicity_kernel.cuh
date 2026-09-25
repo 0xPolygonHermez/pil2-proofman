@@ -20,7 +20,13 @@ void mul_scatter_launch_rows(const MulJobDev* d_jobs, uint32_t nJobs, const uint
 void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows,
                              uint64_t rowBegin, uint64_t rowStart, const uint64_t* const* bases,
                              uint64_t traceRows, uint64_t fullRows, uint64_t* acc, uint64_t* oob,
-                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream);
+                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream,
+                             // Slot-only: `packed` reads cm1 in place instead of from a tile;
+                             // `table` and its geometry serve an indexed air.
+                             const uint64_t* packed = nullptr, uint64_t wordsPerRow = 0,
+                             const uint64_t* side = nullptr, const uint64_t* table = nullptr,
+                             uint64_t wordsPerEntry = 0, uint64_t numEntries = 0,
+                             uint64_t indexBits = 0);
 
 // One device copy of the plan per (air, gpu), built on first use.
 struct MulPlanDev { const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; };

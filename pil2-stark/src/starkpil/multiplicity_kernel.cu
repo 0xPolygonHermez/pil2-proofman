@@ -86,19 +86,20 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
 void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows,
                              uint64_t rowBegin, uint64_t rowStart, const uint64_t* const* bases_,
                              uint64_t traceRows, uint64_t fullRows, uint64_t* acc, uint64_t* oob,
-                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream) {
+                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream,
+                             const uint64_t* packed, uint64_t wordsPerRow, const uint64_t* side,
+                             const uint64_t* table, uint64_t wordsPerEntry, uint64_t numEntries,
+                             uint64_t indexBits) {
     if (d_jobs == nullptr || nJobs == 0 || rows == 0) return;
     MulBases bases = { bases_[MUL_SRC_CONST],  bases_[MUL_SRC_TRACE],
                        bases_[MUL_SRC_AUX],    bases_[MUL_SRC_PUBLIC],
                        bases_[MUL_SRC_AIRVALUE], bases_[MUL_SRC_PROOFVALUE],
                        bases_[MUL_SRC_AIRGROUPVALUE], bases_[MUL_SRC_CUSTOM],
                        traceRows, rowBegin, rowStart };
-    // The same kernel the full domain uses, over this tile's rows. Sharing it is the point: the
-    // tile used to be a partial copy, and every difference it accumulated -- a dropped `'`-shift,
-    // a stride that only matched by luck, no compiled programs, no decoders -- was a bug or a
-    // refusal. A row-stationary launch also keeps the selector memoisation, which matters: zisk
-    // Keccakf's 86 jobs share one 121-instruction predicate, evaluated once a row here and 86
-    // times a row under the per-job grid this replaces.
+    bases.packed = packed; bases.side = side; bases.wordsPerRow = wordsPerRow;
+    bases.table = table; bases.wordsPerEntry = wordsPerEntry;
+    bases.numEntries = numEntries; bases.indexBits = indexBits;
+    // Same kernel as the full domain, over this tile's rows: never fork a tile-only copy.
     const uint32_t blocks = (uint32_t)((rows + MUL_SCATTER_BLOCK - 1) / MUL_SCATTER_BLOCK);
     mul_scatter_kernel_rows<<<blocks, MUL_SCATTER_BLOCK, 0, stream>>>(
         d_jobs, nJobs, bases, fullRows - 1, rows, acc, oob, air, d_prog);
