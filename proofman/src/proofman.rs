@@ -21,7 +21,7 @@ use proofman_starks_lib_c::{
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
-    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
+    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c,
 };
 use crate::add_publics_circom;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
@@ -6148,9 +6148,8 @@ where
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
             return false;
         };
-        // A null trace is expected when the instance is staged: the slot commit reads the packed
-        // rows out of the prefetch zone. Without a staging it means there is nothing to read.
-        if !pi.is_packed || (trace.is_null() && !staged) {
+        // A null trace is fine when staged (the slot reads the zone); without a staging it is an error.
+        if trace.is_null() && !staged {
             return false;
         }
         let ss = &setup.stark_info.stark_struct;
@@ -6160,16 +6159,26 @@ where
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
             return false;
         };
-        // Slots only pay off while gpu-mops holds the first GPU's buffer (no
-        // legacy stream is available there); once released, the legacy path is
-        // strictly better -- async, pinned, and it keeps witness residency.
-        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr()) {
-            return false;
-        }
+        // Slots used to be restricted to the gpu-mops borrow window, on the reasoning that the
+        // legacy path is "strictly better" once a stream is free. Measured, it is not: allowing
+        // them throughout took CALCULATING_CONTRIBUTIONS from 2855 to 2630 ms over 8 runs per arm,
+        // even though most attempts still bounce off the region check. A commit that cannot get
+        // the region falls back to legacy anyway, so the worst case is the old behaviour.
         // One-shot token take: a miss means all slots are busy right-now and the
         // instance goes legacy.
         let Ok(slot) = ctx.pool_rx.try_recv() else {
             return false;
+        };
+        // An unpacked air is just the degenerate packing: one full 64-bit word per column, which
+        // is exactly its row-major layout. The unpack cursor already handles a 64-bit field
+        // (scStepBits masks with ~0ULL at nbits == 64), so the walk is an identity read and the
+        // slot path needs no special case for it.
+        let identity_widths: Vec<u64>;
+        let (words_per_row, widths): (u64, &[u64]) = if pi.is_packed {
+            (pi.num_packed_words, pi.unpack_info.as_slice())
+        } else {
+            identity_widths = vec![64u64; n_cols as usize];
+            (n_cols, identity_widths.as_slice())
         };
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
@@ -6181,8 +6190,8 @@ where
             ss.n_bits,
             ss.n_bits_ext,
             n_cols,
-            pi.num_packed_words,
-            pi.unpack_info.as_ptr() as *mut c_void,
+            words_per_row,
+            widths.as_ptr() as *mut c_void,
             roots_contributions[instance_id].as_ptr() as *mut c_void,
             params as *mut c_void,
         );

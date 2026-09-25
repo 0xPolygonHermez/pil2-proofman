@@ -231,27 +231,39 @@ inline bool mulCompileField(SetupCtx& setupCtx, const HintFieldValue& v, uint64_
     return true;
 }
 
-// `konst + sum(coef[e] * element_e)`, the row map a fitted virtual table addresses itself by.
-//
-// Every element the zisk PIL fits is a bare column -- measured, all 132 folds compile to one
-// instruction each -- so this works on OPERANDS and emits the sum directly. An element that is an
-// expression is refused with a reason rather than spliced: splicing whole programs meant shifting
-// each one's temporaries above the accumulator and re-pinning its last instruction's destination
-// (which the compiler leaves unchecked), and nothing in the PIL has ever needed it.
-//
-// Temporary 0 holds the running sum, 1 scales a term.
+// `konst + sum(coef[e] * element_e)`, the row map of a fitted virtual table. Bare-column elements
+// are used as operands directly; expression elements are spliced in as sub-programs.
 inline bool mulCompileFold(SetupCtx& setupCtx, const std::vector<HintFieldValue>& values,
                            const uint64_t* coef, uint8_t nCoef, uint64_t konst,
                            uint64_t bufferCommitSize, uint64_t domainSize, MulProgram& out) {
     out = MulProgram{};
-    const uint16_t SUM = 0, SCR = 1;
+    // Top of the temp space, so a spliced sub-program keeps its own numbering unremapped.
+    const uint16_t SUM = MUL_PROG_MAX_TEMP - 1, SCR = MUL_PROG_MAX_TEMP - 2;
     bool haveSum = false;
     for (uint8_t e = 0; e < nCoef; ++e) {
         if (coef[e] == 0) continue;              // a column the fit found irrelevant
         if (e >= values.size()) { mulProgFailReason() = "fold wider than the tuple"; return false; }
-        if (values[e].operand == opType::tmp) { mulProgFailReason() = "fold over an expression"; return false; }
         MulOperandDev o{};
-        if (!mulOperandOfField(setupCtx, values[e], bufferCommitSize, domainSize, o)) return false;
+        if (values[e].operand == opType::tmp) {
+            // Splice the sub-program; its last dst holds the result. Its temps are consumed
+            // before the next term, so terms may reuse them.
+
+            MulProgram sub;
+            if (!mulCompileField(setupCtx, values[e], bufferCommitSize, domainSize, sub))
+                return false;                       // reason already set by the compiler
+            if (sub.insns.empty()) { mulProgFailReason() = "fold term compiled to nothing"; return false; }
+            for (const MulInsnDev& in : sub.insns) {
+                if (in.dst >= SCR) { mulProgFailReason() = "fold term needs the accumulator's temps"; return false; }
+                if ((in.a.kind == MUL_OPND_TEMP && in.a.tmp >= SCR) ||
+                    (in.b.kind == MUL_OPND_TEMP && in.b.tmp >= SCR)) {
+                    mulProgFailReason() = "fold term reads the accumulator's temps"; return false;
+                }
+            }
+            out.insns.insert(out.insns.end(), sub.insns.begin(), sub.insns.end());
+            o = mulOpTemp(sub.insns.back().dst);
+        } else if (!mulOperandOfField(setupCtx, values[e], bufferCommitSize, domainSize, o)) {
+            return false;
+        }
         if (coef[e] != 1) { mulEmit(out, SCR, o, 2 /*mul*/, mulOpConst(coef[e])); o = mulOpTemp(SCR); }
         if (!haveSum) { mulEmit(out, SUM, o, 0 /*add*/, mulOpConst(0)); haveSum = true; }
         else          { mulEmit(out, SUM, mulOpTemp(SUM), 0, o); }

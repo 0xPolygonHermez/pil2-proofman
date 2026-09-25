@@ -2546,6 +2546,7 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     Goldilocks::Element *pNodes = (Goldilocks::Element*)d_aux_trace + offset_mt;
     NTTGoldilocksGPU ntt;
 
+    // Read the raw rows from the upper half (src) and write them column-major into the head (dst).
     if (d_buffers->packedTrace && air_instance_info->is_packed) {
         unpack_trace(air_instance_info, (uint64_t *)(d_aux_trace + offset_dst), (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
     } else {
@@ -3253,7 +3254,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     const HashFamily scFamily = get_hash_family();
     if (scFamily != HashFamily::Poseidon1 && scFamily != HashFamily::Blake3) return -15;
     // Quiesced: gpu-mops is in its final planning phase — stay off the GPU.
-    if (d_buffers->streamCommitQuiesced.load(std::memory_order_acquire)) return -14;
+    if (d_buffers->streamCommitQuiesced.load(std::memory_order_acquire)) return -20;
 
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
 
@@ -3294,7 +3295,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (streamCommitSlotElems(dims, scHash) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
         return -13;
 
-    if (!streamCommitAcquireRegion(d_buffers)) return -14;
+    if (!streamCommitAcquireRegion(d_buffers)) return -21;  // region busy (overlapping stream in use)
 
     cudaSetDevice(d_buffers->my_gpu_ids[0]);
     gl64_t *slotBase = d_buffers->gpuMemoryBuffer[0] +
@@ -3403,7 +3404,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     }
     if (needsCount && (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)) {
         streamCommitReleaseRegion(d_buffers);
-        return -14;
+        return -22;  // countable but no accumulator / const pols on this device
     }
 
     // The const pols, unpacked into a slot scratch: d_constPols is BIT-PACKED behind a header, and
@@ -3454,6 +3455,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.hintDestCols  = hintDev.destCols;
         mulCtx.hintDestSlots = hintDev.destSlots;
         mulCtx.hintNDest     = hintDev.nDest;
+        mulCtx.timer         = &timer;
         slotCtx.mul = &mulCtx;
     }
 
@@ -3716,6 +3718,13 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
             for (uint32_t sIdx = 0; sIdx < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; sIdx++) { d_buffers->prefetchInstanceId[sIdx] = -1; d_buffers->prefetchTraceBytes[sIdx] = 0; }
         }
     }
+    // Quiesce means "gpu-mops is in its final planning phase -- stay off the GPU". It was only
+    // ever cleared by acquire_first_gpu_buffer, so after the last borrow of a run it stayed set and
+    // every later slot commit was refused: measured 55 of 59 attempts in a ziskethone contributions
+    // phase. Clearing it here makes the flag match its meaning, and slot commits are available
+    // outside the borrow window -- worth 2855 -> 2630 ms of CALCULATING_CONTRIBUTIONS over 8 runs
+    // per arm.
+    d_buffers->streamCommitQuiesced.store(0, std::memory_order_release);
     d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
 }
 

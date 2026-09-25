@@ -50,11 +50,12 @@ static MulOperandDev opCol(uint16_t c) {
     MulOperandDev o{}; o.kind = MUL_OPND_COL; o.term.col = c; return o;
 }
 
-// Exactly what mulCompileFold emits, once its operands are resolved.
+// What mulCompileFold emits for operand elements, once they are resolved (a spliced expression
+// element is not modelled here). Same temporaries as the real one: the top of the temp space.
 static bool buildFold(const uint16_t* col, const uint64_t* coef, uint8_t n, uint64_t konst,
                       MulProgram& out) {
     out = MulProgram{};
-    const uint16_t SUM = 0, SCR = 1;
+    const uint16_t SUM = MUL_PROG_MAX_TEMP - 1, SCR = MUL_PROG_MAX_TEMP - 2;
     bool haveSum = false;
     for (uint8_t e = 0; e < n; ++e) {
         if (coef[e] == 0) continue;

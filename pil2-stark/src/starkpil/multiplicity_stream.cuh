@@ -10,6 +10,7 @@
 #include "stream_commit.cuh"
 #include "witness_hints_slot.cuh"
 #include "setup_ctx.hpp"
+#include "gpu_timer.cuh"
 
 // Counting lookups during a STREAMING slot commit.
 //
@@ -53,6 +54,8 @@ struct MulStreamCtx {
     uint32_t hintNDest;
     uint64_t offPublics, offAirValues, offProofValues, offAirgroupValues;  // words into it
     // Custom commits are still absent: they are trace-sized, not value-sized.
+    // Slot scatter timer, the counterpart of MUL_SCATTER_KERNEL on the legacy path.
+    TimerGPU *timer;
 };
 
 // One scratch buffer per (device, slot), grown to the widest air seen on that slot. Cached because
@@ -181,9 +184,11 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
             nullptr, nullptr, nullptr };   // no custom commits; the tile is already unpacked
         // Degree-0 jobs contribute once per instance, not once per tile: only the first tile runs
         // them. Every other job is per-row and its rows are the tile's.
+        if (c->timer) c->timer->startCategory("MUL_SCATTER_TILE");
         mul_scatter_launch_tile(dev.jobs, (uint32_t)plan.jobs.size(), rows, winBegin, begin, bases,
                                 tileH, nRows, c->acc, c->oob,
                                 (c->airgroupId << 32) | c->airId, dev.prog, stream);
+        if (c->timer) c->timer->stopCategory("MUL_SCATTER_TILE");
     }
     mul_note_scatter(gpuId, stream);
 }
