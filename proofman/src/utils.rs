@@ -23,7 +23,7 @@ use proofman_starks_lib_c::{
     prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
 };
 use proofman_util::create_buffer_fast;
-use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
+use proofman_common::{GpuWitnessAirs, PackedInfo, VerboseMode, GlobalInfo};
 
 use pil2_std_lib::Std;
 use proofman_witness::WitnessManager;
@@ -849,16 +849,26 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     Ok(())
 }
 
+/// Size the host trace pool: the largest thing the host still has to hold.
+///
+/// A `gpu_witness_airs` air counts by its staged *inputs*, not its trace: it still takes a
+/// (pinned) pool buffer to stage them from. Taking the max keeps this correct if inputs ever
+/// exceed every remaining trace.
 pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
+    gpu_witness_airs: &GpuWitnessAirs,
 ) -> ProofmanResult<(usize, usize)> {
     let mut max_witness_trace_size = 0;
     let mut max_witness_trace_size_packed = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
+            if gpu_witness_airs.contains(airgroup_id, air_id) {
+                continue;
+            }
             let setup = sctx.get_setup(airgroup_id, air_id)?;
+
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
@@ -871,7 +881,9 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             max_witness_trace_size_packed = max_witness_trace_size_packed.max(trace_size_packed as usize);
         }
     }
-    Ok((max_witness_trace_size, max_witness_trace_size_packed))
+    // In elements (8-byte F), like the traces above.
+    let input_elems = gpu_witness_airs.max_input_bytes().div_ceil(8) as usize;
+    Ok((max_witness_trace_size.max(input_elems), max_witness_trace_size_packed.max(input_elems)))
 }
 
 pub fn load_device_setups<F: PrimeField64>(
