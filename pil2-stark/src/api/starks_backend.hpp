@@ -104,6 +104,9 @@ struct StarksBackend {
 // Active backend pointer — set via set_gpu_mode()
 extern std::atomic<StarksBackend*> active_backend;
 
+// True when the GPU backend is active, as opposed to merely compiled in.
+bool starks_gpu_mode_active();
+
 // CPU backend (always available)
 extern StarksBackend cpu_backend;
 

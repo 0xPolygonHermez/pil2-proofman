@@ -100,6 +100,22 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot
 // layout contract, or an inconsistent indexed descriptor).
+
+// Called once, after the packed witness (`dPacked`, widths `dWidths`, both device) is uploaded and
+// before the chunk loop. The only point where the whole witness exists: the loop LDEs columns
+// IN PLACE, so nothing after it can read cm1.
+typedef void (*StreamCommitHook)(const uint64_t *dPacked, const uint64_t *dWidths,
+                                 const StreamCommitDims &dims, cudaStream_t stream, void *user);
+
+// Unpack `cc` columns from `c0` for the rows [rowBegin, rowBegin + rows) of a packed witness into
+// `dst`, ColMajor with `rows` rows. The same bit walk the commit itself uses, exposed so a caller
+// can materialise a slice of cm1 without a full unpack -- the commit never holds one.
+void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
+                            const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
+                            uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
+                            const uint8_t *dColSource = nullptr, const uint8_t *dColLane = nullptr,
+                            const uint64_t *dTable = nullptr);
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
@@ -107,6 +123,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint8_t *dColLane = nullptr,
                            const uint64_t *dTable = nullptr,
                            StreamCommitHash hash = StreamCommitHash::Poseidon1,
+                           StreamCommitHook hook = nullptr, void *hookUser = nullptr,
                            TimerGPU *timer = nullptr);
 
 #endif

@@ -61,6 +61,7 @@ void getHintField(
     HintFieldOptions& hintOptions
 );
 
+void addHintFieldAt(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, uint64_t valueIdx, HintFieldOptions hintFieldOptions, bool skipRedundantOne = true);
 void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, HintFieldOptions hintFieldOptions);
 
 void accHintField(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add);

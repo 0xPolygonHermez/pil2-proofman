@@ -4,6 +4,8 @@
 #include "goldilocks_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "expressions_codegen.cuh"
+#include "../warp_atomic.cuh"
+#include "../multiplicity.cuh"   // mulIndexedBaseTabFor: re-point scatter.dec.baseTab at this GPU
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
 #endif
@@ -126,14 +128,14 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
                     " exceeds pinned slot capacity " + std::to_string(PINNED_EXPS_SLOTS));
         exitProcess();
     }
-    // Each slot spans 2 DestParamsGPU (stride 2*sizeof) and d_destParams is sized for 2;
-    // more params would overrun both the pinned slot and the device buffer.
-    if (h_expsArgs.dest_nParams > 2) {
+    // Each slot spans MAX_DEST_PARAMS DestParamsGPU and d_destParams is sized to match; more
+    // params would overrun both the pinned slot and the device buffer.
+    if (h_expsArgs.dest_nParams > MAX_DEST_PARAMS) {
         zklog.error("ExpressionsGPU: dest_nParams " + std::to_string(h_expsArgs.dest_nParams) +
-                    " exceeds slot capacity 2");
+                    " exceeds slot capacity " + std::to_string(MAX_DEST_PARAMS));
         exitProcess();
     }
-    uint8_t *paramsSlot = (uint8_t *)pinned_exps_params + countId * 2 * sizeof(DestParamsGPU);
+    uint8_t *paramsSlot = (uint8_t *)pinned_exps_params + countId * MAX_DEST_PARAMS * sizeof(DestParamsGPU);
     memcpy(paramsSlot, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
     CHECKCUDAERR(cudaMemcpyAsync(d_destParams, paramsSlot, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
 
@@ -148,7 +150,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     // expression, or the hint pair (numerator x denominator^{-1}) fused as two
     // passes (write, then multiply-by-inverse in the store). Anything else
     // falls through to the bytecode interpreter below.
-    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr) {
+    // Not for scatter dests: this launcher never reaches scatterPolynomial__.
+    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && dest.scatter.acc == nullptr
+        && exprLaunchFn != nullptr) {
         auto exprCovered = (ExprCoveredFn)exprCoveredFn;
         auto exprLaunch = (ExprLaunchFn)exprLaunchFn;
         auto offc = [&](const char *sec) -> uint64_t {
@@ -249,8 +253,20 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.dest_dim = dest.dim;
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
+    h_expsArgs.scatter = dest.scatter;
+    // Defensive, not load-bearing today: hints.cu already re-points dest.scatter.dec.baseTab at its
+    // device mirror before this copy runs (the only place a `MulDecoder` is currently populated for
+    // this struct), so this value-copy already carries a device pointer. Kept here anyway, mirroring
+    // the mapKV/digitTab pattern, because this is the last host-side point before the whole struct
+    // crosses to the device -- any future caller that lands a fresh (host-pointer) decoder here
+    // gets corrected at the choke point instead of needing to remember the fixup itself.
+    if (h_expsArgs.scatter.dec.nSel != 0) {
+        int gpuId = 0;
+        CHECKCUDAERR(cudaGetDevice(&gpuId));
+        h_expsArgs.scatter.dec.baseTab = mulIndexedBaseTabFor(h_expsArgs.scatter.dec.table_id, gpuId);
+    }
 
-    assert(dest.params.size() == 1 || dest.params.size() == 2);
+    assert(dest.params.size() >= 1 && dest.params.size() <= MAX_DEST_PARAMS);
 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
@@ -349,9 +365,21 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_dim = dest.dim;
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
+    h_expsArgs.scatter = dest.scatter;
+    // Defensive, not load-bearing today: hints.cu already re-points dest.scatter.dec.baseTab at its
+    // device mirror before this copy runs (the only place a `MulDecoder` is currently populated for
+    // this struct), so this value-copy already carries a device pointer. Kept here anyway, mirroring
+    // the mapKV/digitTab pattern, because this is the last host-side point before the whole struct
+    // crosses to the device -- any future caller that lands a fresh (host-pointer) decoder here
+    // gets corrected at the choke point instead of needing to remember the fixup itself.
+    if (h_expsArgs.scatter.dec.nSel != 0) {
+        int gpuId = 0;
+        CHECKCUDAERR(cudaGetDevice(&gpuId));
+        h_expsArgs.scatter.dec.baseTab = mulIndexedBaseTabFor(h_expsArgs.scatter.dec.table_id, gpuId);
+    }
 
     // The pinned slot and d_destParams hold at most 2 entries.
-    assert(dest.params.size() == 1 || dest.params.size() == 2);
+    assert(dest.params.size() >= 1 && dest.params.size() <= MAX_DEST_PARAMS);
 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
@@ -524,6 +552,61 @@ __device__ __forceinline__ void load__(
     out1 = nullptr;
     out2 = nullptr;
     return;
+}
+
+// Scatter-accumulate destination for lookup multiplicities.
+// Params sit at stride FIELD_EXTENSION*blockDim.x (see getInversePolinomial__), and the selector
+// is the last param unless it was the literal 1, which addHintField drops.
+__device__ __noinline__ void scatterPolynomial__(ExpsArguments *d_expsArgs,
+                                                 Goldilocks::Element *destVals, uint64_t row) {
+    const ScatterDest &sc = d_expsArgs->scatter;
+    if (row + threadIdx.x >= sc.rows) return;
+
+    // Values here may be unreduced; canonicalise every read (they feed indices and comparisons).
+    const uint64_t stride = (uint64_t)FIELD_EXTENSION * blockDim.x;
+    const uint64_t *base = (const uint64_t *)destVals + threadIdx.x;
+
+    // A tuple-resolved table (map, digit rule, or indexed-base) occupies the first nVal slots; an
+    // affine one just slot 0. digitCols carries its own column count; the other two share nKey
+    // (mapSlots' own registration parameter, or indexed-base's derived max(selCol,strideCol)+1 --
+    // see MulIndexedBaseShape).
+    const bool tupleForm = sc.dec.mapSlots != 0 || sc.dec.digitCols != 0 || sc.dec.nSel != 0;
+    const uint32_t nVal = sc.dec.digitCols != 0 ? sc.dec.digitCols : (tupleForm ? sc.dec.nKey : 1u);
+
+    const uint64_t sel = sc.selConstOne ? 1ULL : mulCanonHD(base[nVal * stride]);
+    if (sel == 0) return;
+
+    // Dynamic opid (multi_range_check): keep only the rows addressed to this decoder's table.
+    if (sc.hasBus) {
+        const uint32_t slot = nVal + (sc.selConstOne ? 0u : 1u);
+        if (mulCanonHD(base[slot * stride]) != (uint64_t)sc.dec.table_id) return;
+    }
+
+    uint64_t idx;
+    // Every tuple-resolved shape must take this branch; the affine decode would count a wrong row.
+    if (tupleForm) {
+        // Same resolve step as the scatter kernel. Bound by nVal, not nKey (0 for digit decoders).
+        uint64_t keyv[MUL_MAX_TUPLE];
+        for (uint32_t c = 0; c < nVal && c < MUL_MAX_TUPLE; ++c)
+            keyv[c] = mulCanonHD(base[c * stride]);
+        if (!mulResolveRow(keyv, nVal, sc.dec.mapSlots, sc.dec.mapKV, idx,
+                           sc.dec.digitCols, sc.dec.digitTab, &sc.dec)) {
+            mulRecordOob(sc.oob, sc.dec.table_id, sc.air, keyv, nVal);
+            return;
+        }
+    } else {
+        idx = mul_decode(sc.dec, base[0]);
+    }
+    if (idx >= sc.dec.n_rows) {
+        mulRecordOob(sc.oob, sc.dec.table_id, sc.air, &idx, 1u);
+        return;
+    }
+
+    // Warp-aggregated: range checks are warp-clustered, so per-lane atomics would serialise.
+    const uint64_t key = sc.dec.acc_base + idx;
+    unsigned long long *counter = (unsigned long long *)&sc.acc[key];
+    if (sc.selConstOne) warpAggregatedInc(__activemask(), key, counter);
+    else                warpAggregatedAdd(__activemask(), key, sel, counter);
 }
 
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
@@ -897,7 +980,13 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 
         }
 
-        if (d_expsArgs->dest_nParams == 2)
+        if (d_expsArgs->scatter.acc != nullptr)
+        {
+            // MUST precede the nParams == 2 branch: a scatter has >= 2 params, and
+            // multiplyPolynomials__ would silently store row*sel instead.
+            scatterPolynomial__(d_expsArgs, destVals, i);
+        }
+        else if (d_expsArgs->dest_nParams == 2)
         {
             
             multiplyPolynomials__(d_expsArgs, d_destParams, d_deviceArgs, (gl64_t*) destVals, i);

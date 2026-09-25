@@ -3,6 +3,8 @@
 #include "goldilocks_tooling.cuh"
 #include "starks_gpu.cuh"
 #include "gen_proof.cuh"
+#include "multiplicity.cuh"
+#include "hints.cuh"
 #include <algorithm>
 #include <vector>
 
@@ -173,7 +175,7 @@ void verifyConstraintGPU(
     cudaFree(d_invalidValues);
 }
 
-void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, Goldilocks::Element *airgroupValuesCPU, TimerGPU &timer, cudaStream_t stream) {
+void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, Goldilocks::Element *airgroupValuesCPU, uint64_t airgroupId, uint64_t airId, TimerGPU &timer, cudaStream_t stream) {
     
     uint64_t countId = 0;
 
@@ -227,6 +229,22 @@ void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t st
     TimerStartGPU(timer, CALCULATE_IM_POLS);
     calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
+
+    // Count lookups into prover-owned tables: verify-constraints never commits, so the commit's
+    // scatter does not run and those tables would stay at zero.
+    {
+        int gpuId = 0;
+        CHECKCUDAERR(cudaGetDevice(&gpuId));
+        MulAcc *mulAcc = nullptr;
+        for (const auto &kv : mulAccs())
+            if (kv.first.second == gpuId) { mulAcc = kv.second; break; }
+        if (mulAcc != nullptr) {
+            calculateMulCalcGPU(setupCtx, h_params, d_params, airgroupId, airId, mulAcc->d_acc,
+                                air_instance_info->expressions_gpu, d_expsArgs, d_destParams,
+                                pinned_exps_params, pinned_exps_args, countId, timer, stream);
+            mul_note_commit();
+        }
+    }
 
     CHECKCUDAERR(cudaMemcpyAsync(airgroupValuesCPU, d_aux_trace + offsetAirgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));

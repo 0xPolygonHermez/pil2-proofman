@@ -10,6 +10,11 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
+    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_decode_c,
+    mul_register_table_digits_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+};
+use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
+use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
     prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
@@ -142,7 +147,7 @@ use crate::{
 };
 
 use proofman_starks_lib_c::{
-    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
+    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
     stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
@@ -788,6 +793,12 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
+        if self.pctx.gpu {
+            unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
+        }
+        // Not in VirtualTableAir::execute: it is fork-exposed under --asm, where this FFI call kills
+        // the process silently.
+        mul_reset_c();
 
         for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
             inner_vec.clear();
@@ -1049,6 +1060,8 @@ where
     }
 
     pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self.execute_(output_path)
     }
 
@@ -1345,6 +1358,8 @@ where
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
     pub fn compute_witness_from_lib(&self, debug_info: &DebugInfo, options: ProofOptions) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self.pctx.set_debug_info(debug_info);
         self.compute_witness_(options)
     }
@@ -1381,10 +1396,7 @@ where
 
         let _ = self.exec()?;
 
-        let my_instances = self.pctx.dctx_get_process_instances();
-
-        let my_instances_no_tables =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_no_tables = self.pctx.dctx_get_process_instances_no_tables();
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1465,6 +1477,8 @@ where
     }
 
     pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self._get_debug_info(debug_info)
     }
 
@@ -1523,6 +1537,7 @@ where
 
         let my_instances_tables = self.pctx.dctx_get_my_tables();
 
+        self.export_prover_multiplicities()?;
         timer_start_info!(CALCULATING_TABLES);
         for instance_id in my_instances_tables.iter() {
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -1607,6 +1622,8 @@ where
     }
 
     pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self._verify_proof_constraints(debug_info)
     }
 
@@ -1749,6 +1766,7 @@ where
             .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
             .collect::<Vec<_>>();
 
+        self.export_prover_multiplicities()?;
         timer_start_debug!(CALCULATING_TABLES);
 
         for instance_id in my_instances_tables.iter() {
@@ -1810,6 +1828,14 @@ where
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
+        // The prove path counts from its commit hook, which never runs here.
+        // CPU only: on the GPU path the trace is on the device and this pointer must not be read.
+        if !self.pctx.gpu {
+            unsafe {
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
+            };
+        }
 
         #[cfg(feature = "diagnostic")]
         {
@@ -1894,6 +1920,14 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
+        // Verify-constraints never runs the commit hook that counts on the prove path. Must follow the
+        // constraint evaluation, which populates the const pols read here. CPU only.
+        if !pctx.gpu {
+            unsafe {
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
+            };
+        }
+
         let valid =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
 
@@ -1951,6 +1985,8 @@ where
     }
 
     pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         let _computing = self.acquire_computing("generate_air_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -2331,6 +2367,8 @@ where
         proof_options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         if self.options.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has been initialized in verify_constraints mode".into(),
@@ -2542,7 +2580,7 @@ where
 
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
 
-        Ok(Self {
+        let proofman = Self {
             pctx,
             sctx,
             mpi_ctx,
@@ -2597,7 +2635,15 @@ where
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
             computing: Mutex::new(()),
-        })
+        };
+
+        // Fitting reads only the proving key, so do it here rather than inside the first proof.
+        // Memoized (see `register_prover_multiplicities`).
+        timer_start_info!(FITTING_VIRTUAL_TABLES);
+        proofman.register_prover_multiplicities()?;
+        timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
+
+        Ok(proofman)
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
@@ -2674,11 +2720,96 @@ where
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
         timer_start_info!(REGISTERING_WITNESS);
+        // Normally already fitted in `new`; memoized safety net for other construction paths.
+        self.register_prover_multiplicities()?;
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
         // Custom commits registered before the library was loaded could not be generated then.
         self.ensure_custom_commits_fixed()
+    }
+
+    /// Hand the prover the range tables it can count itself plus the geometry those counters live
+    /// in, and record which it accepted. Must run in the host binary: the witness library links its
+    /// own copy of libstarks, so a registration made there is invisible to the scatter and fold.
+    fn register_prover_multiplicities(&self) -> ProofmanResult<()> {
+        // Reached from `register_witness` and every `*_from_lib` entry.
+        if !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+            return Ok(());
+        }
+        let owned = collect_prover_owned_ranges(&self.pctx, &self.sctx)?;
+        // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`)
+        // are independent hints; a pilout can have either without the other, so neither may gate
+        // the other's registration below. Kept as ids past this point too, to tell apart -- in the
+        // summary below -- the range tables that also fall inside the virtual-table population from
+        // the ones living in their own dedicated range-check airs.
+        let (range_ids, range_biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
+        if !range_ids.is_empty() {
+            mul_register_range_tables_c(&range_ids, &range_biases);
+        }
+
+        // Tables the prover can address itself: an affine row map where the table's layout admits
+        // one, otherwise an exact map over the table's own entries. Both are derived from the
+        // setup and verified against every entry; a table that fits neither is simply not claimed,
+        // and the std keeps counting it exactly as before.
+        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx)?;
+        for m in &fitted {
+            match m.map.as_ref() {
+                Some((nkey, kv, slots)) => mul_register_table_map_c(m.table_id, kv, *nkey, *slots),
+                None => match &m.digits {
+                    Some((cols, tab)) => mul_register_table_digits_c(m.table_id, tab, cols),
+                    None => mul_register_table_decode_c(m.table_id, &m.coef, m.konst),
+                },
+            };
+        }
+
+        // Unfitted tables also in `range_ids` are prover-owned via the range path; only the rest are
+        // left to the std. Exact-map bytes are GPU-resident, per device.
+        if vt_summary.considered > 0 {
+            let range_ids_set: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
+            let n_range_in_scope = vt_summary.unclaimed_ids.iter().filter(|t| range_ids_set.contains(t)).count();
+            let n_std_left = vt_summary.unclaimed_ids.len() - n_range_in_scope;
+            let n_fitted = fitted.len();
+            tracing::info!(
+                "Virtual tables: {}/{} prover-owned in {} ms -- {n_range_in_scope} range, {} affine, \
+                 {} separable, {} exact map ({} MB); {n_std_left} left to the std",
+                n_fitted + n_range_in_scope,
+                vt_summary.considered,
+                vt_summary.elapsed_ms,
+                vt_summary.n_affine,
+                vt_summary.n_separable,
+                vt_summary.n_exact,
+                vt_summary.exact_bytes / 1_000_000,
+            );
+        }
+
+        for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+            register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
+        }
+
+        let migrated = mul_migrated_tables_c();
+        // Read lazily by the std: the virtual table airs are built before this, so a value captured at
+        // construction would be empty and every claimed table double-counted.
+        pil2_std_lib::set_prover_owned_tables(migrated.clone());
+        *self.pctx.prover_owned_tables.write().unwrap() = migrated;
+        Ok(())
+    }
+
+    /// Pull what the prover counted into pctx, for the virtual-table airs to merge in. In the host
+    /// binary for the same linkage reason as `register_prover_multiplicities`.
+    fn export_prover_multiplicities(&self) -> ProofmanResult<()> {
+        if self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+            return Ok(());
+        }
+        let expected_commits = self.pctx.dctx_get_process_instances_no_tables().len() as u64;
+        let mut counts = self.pctx.prover_counts.write().unwrap();
+        for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+            let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
+            // The fold adds into the destination, so clear first: exporting twice must not double.
+            buf.iter_mut().for_each(|c| *c = 0);
+            unsafe { mul_fold_c(l.air_id, buf.as_mut_ptr(), expected_commits) };
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2868,12 +2999,9 @@ where
                 *witness_start_time.write().unwrap() = Some(std::time::Instant::now());
             }
 
-            let my_instances = self.pctx.dctx_get_process_instances();
-
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_no_tables =
-                my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            let my_instances_no_tables = self.pctx.dctx_get_process_instances_no_tables();
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
@@ -2903,6 +3031,7 @@ where
 
             drop(witness_handles);
 
+            self.export_prover_multiplicities()?;
             timer_start_debug!(CALCULATING_TABLES);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();

@@ -792,6 +792,35 @@ extern "C" {
     pub fn reset_agg_readiness_tracker();
 }
 
+extern "C" {
+    pub fn register_mul_vt(
+        airgroupId: u64,
+        airId: u64,
+        numRows: u64,
+        numCols: u64,
+        tableIds: *const u64,
+        accBases: *const u64,
+        nTables: u64,
+    );
+    pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
+    pub fn mul_register_table_decode(table_id: u64, coef: *const u64, n_coef: u64, konst: u64);
+    pub fn mul_register_table_map(table_id: u64, kv: *const u64, n: u64, slots: u64, n_key: u64);
+    pub fn mul_register_table_digits(table_id: u64, tab: *const u64, n: u64,
+                                     cols: *const u32, n_cols: u64);
+
+    pub fn mul_migrated_tables(out: *mut u64, cap: u64) -> u64;
+    pub fn mul_alloc(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn mul_air_has_lookups(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
+    pub fn mul_scatter(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        params: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+    );
+    pub fn mul_reset();
+    pub fn mul_fold(airId: u64, hostAcc: *mut u64, expectedCommits: u64);
+}
+
 // Type definitions
 pub type ProofDoneCallback =
     ::std::option::Option<unsafe extern "C" fn(instanceId: u64, proofType: *const ::std::os::raw::c_char)>;

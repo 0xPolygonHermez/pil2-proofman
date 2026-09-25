@@ -264,6 +264,16 @@ std::atomic<StarksBackend*> active_backend(&cpu_backend);
 // Runtime backend switch
 // ============================================================================
 
+// Whether the GPU backend is active, which __USE_CUDA__ does not answer: the CUDA build also runs
+// whole proofs on the CPU.
+bool starks_gpu_mode_active() {
+#ifdef __USE_CUDA__
+    return active_backend.load(std::memory_order_acquire) == &gpu_backend;
+#else
+    return false;
+#endif
+}
+
 bool set_gpu_mode(bool use_gpu) {
 #ifdef __USE_CUDA__
     active_backend.store(use_gpu ? &gpu_backend : &cpu_backend, std::memory_order_release);
