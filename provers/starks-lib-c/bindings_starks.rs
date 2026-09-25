@@ -711,6 +711,8 @@ extern "C" {
     );
 
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
+    pub fn stage_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64, trace: *mut ::std::os::raw::c_void, total_size: u64) -> i64;
+    pub fn release_staged_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64);
     pub fn get_prefetch_witness_slots() -> u32;
     pub fn get_mops_floor_bytes() -> u64;
     pub fn get_post_alloc_headroom_bytes() -> u64;

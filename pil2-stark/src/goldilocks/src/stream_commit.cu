@@ -566,12 +566,13 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // Chunked DIRECT copy: the witness pool is host-registered (MemoryHandler),
     // so each block is a plain pinned DMA with no staging memcpy; short blocks
     // keep any single transfer from monopolizing the copy engine.
+    // cudaMemcpyDefault: `hPacked` may be a device pointer into the prefetch zone.
     const uint64_t packedBytes = N * dims.wordsPerRow * 8;
     const uint64_t blockBytes = 32ull << 20;
     for (uint64_t off = 0; off < packedBytes; off += blockBytes) {
         uint64_t len = std::min(blockBytes, packedBytes - off);
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_packed + off, (const uint8_t *)hPacked + off, len,
-                                     cudaMemcpyHostToDevice, stream));
+                                     cudaMemcpyDefault, stream));
     }
     SC_CAT_STOP(timer, H2D_COPY);
 

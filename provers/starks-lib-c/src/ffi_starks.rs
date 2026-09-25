@@ -1531,6 +1531,27 @@ pub fn configure_prefetch_zone_c(
     }
 }
 
+/// Stage a witness into the prefetch zone ahead of its commit. Returns the slot, or -1 when there
+/// is no zone or every slot still holds an unconsumed staging; the commit then stages for itself.
+#[cfg(not(feature = "cpu-only"))]
+pub fn stage_witness_c(d_buffers: *mut c_void, instance_id: u64, trace: *mut c_void, total_size: u64) -> i64 {
+    unsafe { stage_witness(d_buffers, instance_id, trace, total_size) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn stage_witness_c(_d_buffers: *mut c_void, _instance_id: u64, _trace: *mut c_void, _total_size: u64) -> i64 {
+    -1
+}
+
+/// Drop a staging whose commit already ran, so its slot goes back to the zone.
+#[cfg(not(feature = "cpu-only"))]
+pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
+    unsafe { release_staged_witness(d_buffers, instance_id) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
+
 pub fn get_prefetch_witness_slots_c() -> u32 {
     unsafe { get_prefetch_witness_slots() }
 }

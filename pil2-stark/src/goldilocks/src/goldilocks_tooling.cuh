@@ -862,15 +862,15 @@ struct DeviceCommitBuffers
     // prefetchArmed means configure ran: the stream and events below exist.
     // PREFETCH_WITNESS_SLOTS is the single source for the slot count (the Rust region
     // sizing reads it through get_prefetch_witness_slots).
-    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 2;
+    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 4;
     bool prefetchArmed = false;
     uint64_t prefetchSlotStride = 0; // elements between slot bases
     cudaStream_t prefetchStream = nullptr;
     cudaEvent_t prefetchReady[PREFETCH_WITNESS_SLOTS] = {};
     cudaEvent_t prefetchDrained[PREFETCH_WITNESS_SLOTS] = {};
     std::mutex prefetchMutex;
-    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1};
-    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0};
+    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1};
+    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0};
 
 
     // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST

@@ -15,7 +15,8 @@ use proofman_starks_lib_c::{
 };
 use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
+    harvest_pipeline_c, dump_pipeline_state_c,
     prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
@@ -513,6 +514,17 @@ impl Drop for WitnessGuard {
     }
 }
 
+/// `trace_owner` values. The witness thread claims only once its staging has landed, so its claim
+/// means the commit can source from the zone and will never read the host buffer.
+const TRACE_OWNER_WITNESS: u8 = 1;
+const TRACE_OWNER_COMMIT: u8 = 2;
+
+/// First caller wins. `who` won iff this returns true.
+fn claim_trace_owner(owners: &Mutex<HashMap<usize, u8>>, instance_id: usize, who: u8) -> bool {
+    let mut g = owners.lock().unwrap_or_else(|e| e.into_inner());
+    *g.entry(instance_id).or_insert(who) == who
+}
+
 #[derive(Debug, Default)]
 pub struct CancellationInfo {
     pub token: CancellationToken,
@@ -599,6 +611,9 @@ pub struct ProofMan<F: PrimeField64> {
     recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>>,
     roots_contributions: Arc<Vec<[F; 4]>>,
     values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
+    /// Who releases a contributions instance's host trace buffer: the witness thread that staged
+    /// it into the prefetch zone, or the commit. Exactly one of them does.
+    trace_owner: Arc<Mutex<HashMap<usize, u8>>>,
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
@@ -735,6 +750,8 @@ impl<F: PrimeField64> ProofMan<F> {
 
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
+        // Per job: a stale WITNESS claim makes the next job's commit null a trace nobody handed back.
+        self.trace_owner.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
         for proof_lock in self.proofs.iter() {
             let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
@@ -774,6 +791,13 @@ impl<F: PrimeField64> ProofMan<F> {
         let handles = self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect::<Vec<_>>();
         for handle in handles {
             let _ = handle.join();
+        }
+        // The zone outlives the job; a leftover staging would match the next job's commit by instance id.
+        // Safe here: all commits are joined.
+        if self.pctx.gpu {
+            for instance_id in self.pctx.dctx_get_process_instances() {
+                release_staged_witness_c(self.pctx.get_device_buffers_ptr(), instance_id as u64);
+            }
         }
 
         // Drain all relevant channels to ensure they are empty
@@ -2623,6 +2647,7 @@ where
             const_tree,
             roots_contributions,
             values_contributions,
+            trace_owner: Arc::new(Mutex::new(HashMap::new())),
             thread_budget,
             witness_tx,
             witness_rx,
@@ -2958,6 +2983,7 @@ where
                 let aux_scratch = aux_scratch.clone();
                 let const_scratch = const_scratch.clone();
                 let slot_commit_ctx_clone = slot_commit_ctx.clone();
+                let trace_owner_clone = self.trace_owner.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
@@ -2967,6 +2993,11 @@ where
                             if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
+                            // Claim the host trace BEFORE touching it. Losing means the witness
+                            // thread staged this instance and already freed the buffer: the commit
+                            // must source from the zone and must not release.
+                            let owns_trace =
+                                claim_trace_owner(&trace_owner_clone, instance_id, TRACE_OWNER_COMMIT);
                             // Single-writer borrow of the shared scratch (see `SharedScratch`); the
                             // guards hold the invariant for the duration of get_contribution_air.
                             let mut aux_trace_local = aux_scratch.borrow_mut();
@@ -2980,6 +3011,7 @@ where
                                 &mut aux_trace_local,
                                 &mut const_pols_local,
                                 slot_commit_ctx_clone.as_deref(),
+                                !owns_trace,
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -2992,7 +3024,15 @@ where
                                 tracing::info!("First GPU contribution queued");
                             }
 
-                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
+                            // Release a staging no commit consumed (the commit ran before the witness thread staged it);
+                            // otherwise it holds its slot for the rest of the run. No-op when consumed.
+                            if pctx_clone.gpu {
+                                release_staged_witness_c(
+                                    pctx_clone.get_device_buffers_ptr(),
+                                    instance_id as u64,
+                                );
+                            }
+                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id) && owns_trace;
                             if is_shared_buffer {
                                 // Trace H2D is async, so don't recycle the shared buffer until the
                                 // commit completes. Wait on the commit's stream (air_instance
@@ -3219,6 +3259,13 @@ where
         timer_start_info!(GENERATING_PROOFS);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
+
+        // Zone stagings match by instance id; drop contribution leftovers (all those commits are done).
+        if self.pctx.gpu {
+            for instance_id in self.pctx.dctx_get_process_instances() {
+                release_staged_witness_c(self.pctx.get_device_buffers_ptr(), instance_id as u64);
+            }
+        }
 
         debug_assert_eq!(
             self.pctx.dctx_count_witness_state(proofman_common::WitnessState::Running),
@@ -5157,6 +5204,42 @@ where
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
         let sctx_admission = self.sctx.clone();
+        // Bytes a witness occupies on the wire, per air, so a finished witness can be pushed to the
+        // device without re-deriving it per instance. Same expression the prefetch zone is sized
+        // with (see prefetch_witness_bytes).
+        let staged_bytes: Arc<HashMap<(usize, usize), u64>> = Arc::new({
+            let mut m = HashMap::new();
+            for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                    let words = self
+                        .options
+                        .packed_info
+                        .get(&(airgroup_id, air_id))
+                        .filter(|pi| pi.is_packed && self.options.packed)
+                        .map(|pi| pi.num_packed_words)
+                        .unwrap_or(cm1);
+                    m.insert((airgroup_id, air_id), words * n * 8);
+                }
+            }
+            m
+        });
+        // clear_traces() also drops custom_commits_fixed, so an air whose commit needs those
+        // cannot have its buffer handed back early.
+        let early_release_ok: Arc<HashMap<(usize, usize), bool>> = Arc::new({
+            let mut m = HashMap::new();
+            for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let has_custom = setup.stark_info.custom_commits.iter().any(|c| c.stage_widths[0] > 0);
+                    m.insert((airgroup_id, air_id), !has_custom);
+                }
+            }
+            m
+        });
+        let trace_owner = self.trace_owner.clone();
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
@@ -5291,7 +5374,12 @@ where
 
                 let pctx_clone = pctx_clone.clone();
                 let gpu = pctx_clone.gpu;
+                let staged_bytes = staged_bytes.clone();
+                let early_release_ok = early_release_ok.clone();
+                let trace_owner = trace_owner.clone();
                 let cancellation_info_clone = cancellation_info_clone.clone();
+                // Only a contributions commit consumes a witness-thread staging.
+                let in_contributions = witness_start_time_clone.is_some();
                 let handle = std::thread::spawn(move || {
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) =
@@ -5302,6 +5390,46 @@ where
                     drop(tokens);
                     // Free the slot before the counter so admission can refill immediately.
                     drop(slot);
+                    // Push the witness to the device as soon as it exists, instead of letting its
+                    // commit do it. The upload then overlaps with other witnesses computing, and by
+                    // the time the commit runs there is nothing to wait for -- commit_witness_gpu
+                    // finds the slot by instance id (starks_api.cu) and skips STAGED_WAIT, which is
+                    // 1.435 s of a 3.485 s CALCULATING_CONTRIBUTIONS.
+                    //
+                    // Ownership is deliberately unchanged: the buffer is still released by the
+                    // contribution completion handler. Releasing it here as well double-releases --
+                    // clear_traces() runs twice and the second empty Vec goes back into the pool --
+                    // which surfaces as "trace buffer has only 0 entries" in an unrelated instance.
+                    // -1 means no zone or no free slot, and the commit stages for itself as before.
+                    if gpu && !stats && in_contributions {
+                        if let Some(&bytes) = staged_bytes.get(&(airgroup_id, air_id)) {
+                            let trace = pctx_clone.get_air_instance_trace_ptr(instance_id);
+                            if !trace.is_null() && bytes != 0 {
+                                let slot = stage_witness_c(
+                                    pctx_clone.get_device_buffers_ptr(),
+                                    instance_id as u64,
+                                    trace as *mut c_void,
+                                    bytes,
+                                );
+                                // The bytes are on the device now, so nothing will read this
+                                // buffer again: hand it back instead of holding it until the
+                                // commit runs. 53% of witness-thread time in this phase is spent
+                                // blocked on that pool.
+                                //
+                                // Claim only AFTER the staging lands. add_air_instance dispatches
+                                // to the contributions channel from INSIDE calculate_witness, so
+                                // the commit may already own the buffer and be reading it -- we
+                                // then lose the claim and release nothing.
+                                if slot >= 0
+                                    && early_release_ok.get(&(airgroup_id, air_id)).copied().unwrap_or(false)
+                                    && pctx_clone.is_shared_buffer(instance_id)
+                                    && claim_trace_owner(&trace_owner, instance_id, TRACE_OWNER_WITNESS)
+                                {
+                                    memory_handler_clone.to_be_released_buffer(instance_id);
+                                }
+                            }
+                        }
+                    }
                     // The buffer carries its own wait, whichever worker blocked for it.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
                     timer_stop_and_log_debug_net!(
@@ -6015,11 +6143,14 @@ where
         trace: *mut u8,
         params: *mut u8,
         roots_contributions: &[[F; 4]],
+        staged: bool,
     ) -> bool {
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
             return false;
         };
-        if !pi.is_packed || trace.is_null() {
+        // A null trace is expected when the instance is staged: the slot commit reads the packed
+        // rows out of the prefetch zone. Without a staging it means there is nothing to read.
+        if !pi.is_packed || (trace.is_null() && !staged) {
             return false;
         }
         let ss = &setup.stark_info.stark_struct;
@@ -6088,6 +6219,7 @@ where
         aux_trace: &mut [F],
         const_pols: &mut [F],
         slot_commit: Option<&SlotCommitCtx>,
+        staged: bool,
     ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -6109,6 +6241,13 @@ where
             load_const_pols(setup, const_pols);
             steps_params.p_const_pols = const_pols.as_mut_ptr() as *mut u8;
         }
+
+        // Staged with the host buffer handed back, so the inherited pointer may be recycled. Null it;
+        // C reads the packed rows from the zone.
+        if staged {
+            steps_params.trace = std::ptr::null_mut();
+        }
+
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 
@@ -6133,6 +6272,7 @@ where
                 steps_params.trace,
                 p_steps_params,
                 roots_contributions,
+                staged,
             ),
             None => false,
         };
