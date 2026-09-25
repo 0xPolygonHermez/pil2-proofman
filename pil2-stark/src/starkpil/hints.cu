@@ -1,7 +1,6 @@
 #include "hints.cuh"
 #include "multiplicity.cuh"
 #include "multiplicity_kernel.cuh"
-#include "cuda_utils.cuh"
 #include "expressions_gpu.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "expressions_pack.hpp"
@@ -200,90 +199,34 @@ void calculateExprGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_
     }
 }
 
-
 // Multiplicity scatter: evaluate each lookup's tuple, selector and bus id over this air's trace
 // into the device mirror, using the per-air plan built from `gsum_debug_data` hints.
-void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params,
-                         uint64_t airgroupId, uint64_t airId,
-                         uint64_t *acc, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs,
-                         DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params,
-                         Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer,
-                         cudaStream_t stream) {
+void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, uint64_t airgroupId, uint64_t airId,
+                         uint64_t *acc, TimerGPU &timer, cudaStream_t stream) {
     if (acc == nullptr || mulDecoders().empty()) return;
 
     const MulPlan &plan = mulPlanFor(setupCtx, airgroupId, airId);
-    if (plan.jobs.empty() && plan.fallback.empty()) return;
+    if (plan.jobs.empty()) return;
 
     int gpuId = 0;
     CHECKCUDAERR(cudaGetDevice(&gpuId));
     uint64_t *oob = mulOob(gpuId);
 
     const uint64_t domainSize = 1ULL << setupCtx.starkInfo.starkStruct.nBits;
-    if (!plan.jobs.empty()) {
-        const MulPlanDev dev = mulPlanDevice(plan, airgroupId, airId, gpuId);
-        if (dev.jobs != nullptr) {
-            timer.startCategory("MUL_SCATTER_KERNEL");
-            uint64_t mapped = 0, jobRows = 0;
-            for (const auto& j : plan.jobs) { if (j.mapSlots) ++mapped; jobRows += j.rows; }
-            const size_t prof = mul_phase_begin(MUL_PHASE_KERNEL, stream, (airgroupId << 32) | airId,
-                                                plan.jobs.size() | (mapped << 32), jobRows);
-            const uint64_t *bases[MUL_SRC_N] = {
-                (const uint64_t *)h_params.pConstPolsAddress, (const uint64_t *)h_params.trace,
-                (const uint64_t *)h_params.aux_trace,         (const uint64_t *)h_params.publicInputs,
-                (const uint64_t *)h_params.airValues,         (const uint64_t *)h_params.proofValues,
-                (const uint64_t *)h_params.airgroupValues,    (const uint64_t *)h_params.pCustomCommitsFixed,
-                nullptr, nullptr };   // slot-only sources; the legacy scatter reads the unpacked trace
-            mul_scatter_launch_rows(dev.jobs, (uint32_t)plan.jobs.size(), bases,
-                                    domainSize, plan.maxRows,
-                                    acc, oob, (airgroupId << 32) | airId, dev.prog, stream);
-            mul_phase_end(prof, stream);
-            timer.stopCategory("MUL_SCATTER_KERNEL");
-        }
-    }
-
-    // Whatever did not compile still goes through the expression interpreter.
+    const MulPlanDev dev = mulPlanDevice(plan, airgroupId, airId, gpuId);
+    timer.startCategory("MUL_SCATTER_KERNEL");
+    const uint64_t *bases[MUL_SRC_N] = {
+        (const uint64_t *)h_params.pConstPolsAddress, (const uint64_t *)h_params.trace,
+        (const uint64_t *)h_params.aux_trace,         (const uint64_t *)h_params.publicInputs,
+        (const uint64_t *)h_params.airValues,         (const uint64_t *)h_params.proofValues,
+        (const uint64_t *)h_params.airgroupValues,    (const uint64_t *)h_params.pCustomCommitsFixed,
+        nullptr, nullptr };   // slot-only sources; the legacy scatter reads the unpacked trace
+    mul_scatter_launch(dev.jobs, (uint32_t)plan.jobs.size(), plan.maxRows, domainSize, bases,
+                       acc, oob, (airgroupId << 32) | airId, dev.prog, stream);
+    timer.stopCategory("MUL_SCATTER_KERNEL");
     // The fold waits on these events (no device sync during graph capture).
-    if (plan.fallback.empty()) { mul_note_scatter(gpuId, stream); return; }
-    HintFieldOptions opts;
-    timer.startCategory("MUL_SCATTER_INTERP");
-    const size_t profInterp = mul_phase_begin(MUL_PHASE_INTERP, stream, (airgroupId << 32) | airId,
-                                              plan.fallback.size(), 1ULL << setupCtx.starkInfo.starkStruct.nBits);
-    for (const MulFallbackJob &fb : plan.fallback) {
-        Dest dest(nullptr, fb.rows, 0, 0, fb.rows == 1);
-        dest.dest_gpu          = nullptr;   // forces the generic path, where the scatter lives
-        dest.scatter.acc       = acc;
-        dest.scatter.oob       = oob;
-        dest.scatter.dec       = fb.dec;
-        // `dec`'s map/digit/base pointers are host copies; swap in this GPU's mirror.
-        if (dest.scatter.dec.mapSlots != 0)
-            dest.scatter.dec.mapKV = mulMapFor(fb.dec.table_id, gpuId);
-        if (dest.scatter.dec.digitCols != 0)
-            dest.scatter.dec.digitTab = mulDigitsFor(fb.dec.table_id, gpuId);
-        dest.scatter.air       = (airgroupId << 32) | airId;
-        dest.scatter.rows      = fb.rows;
-        dest.scatter.selConstOne = fb.selConstOne;
-        dest.scatter.hasBus      = fb.hasBus;
-
-        // Value first, then selector, then bus id -- the order scatterPolynomial__ reads.
-        // skipRedundantOne is off: a value that is the literal 1 must still occupy slot 0.
-        // Mapped and indexed-base tables need the whole tuple; for indexed-base, dec.nKey is the
-        // registration-time floor (max selCol/strideCol + 1).
-
-        const uint32_t nVal = fb.dec.digitCols != 0 ? fb.dec.digitCols
-                            : (fb.dec.mapSlots != 0 ? fb.dec.nKey : 1u);
-        for (uint32_t c = 0; c < nVal; ++c)
-            addHintFieldAt(setupCtx, h_params, fb.hintId, dest, "expressions", c, opts, false);
-        if (!fb.selConstOne) addHintField(setupCtx, h_params, fb.hintId, dest, "num_reps", opts);
-        if (fb.hasBus)       addHintField(setupCtx, h_params, fb.hintId, dest, "busid", opts);
-
-        opHintFieldsGPU(d_params, dest, fb.rows, false, GPUExpressionsCtx, d_expsArgs,
-                        d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    }
-    mul_phase_end(profInterp, stream);
-    timer.stopCategory("MUL_SCATTER_INTERP");
     mul_note_scatter(gpuId, stream);
 }
-
 
 void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
     if(setupCtx.expressionsBin.hints.size() == 0) {

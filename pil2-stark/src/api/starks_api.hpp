@@ -44,15 +44,12 @@ extern "C" {
                          const uint64_t *tableIds, const uint64_t *accBases, uint64_t nTables);
     // Every virtual range-check table, as (id, bias): the row a lookup addresses is value + bias.
     void mul_register_range_tables(const uint64_t *tableIds, const int64_t *biases, uint64_t n);
-    void mul_register_table_decode(uint64_t tableId, const uint64_t *coef, uint64_t nCoef, uint64_t konst);
     void mul_register_table_map(uint64_t tableId, const uint64_t *kv, uint64_t n, uint64_t slots,
                                 uint64_t nKey);
-    void mul_register_table_digits(uint64_t tableId, const uint64_t *tab, uint64_t n,
-                                   const uint32_t *cols, uint64_t nCols);
     // Table ids whose multiplicities the prover now owns, so Std stops counting them.
     uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap);
     // Fold the prover-owned spans into `hostAcc`, which is scoped to this call and not retained.
-    void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits);
+    void mul_fold(uint64_t airId, uint64_t *hostAcc);
     uint64_t mul_air_has_owned(uint64_t airId);
     void mul_set_device_export(uint64_t enabled);
     uint64_t mul_air_device_owned(uint64_t airId);

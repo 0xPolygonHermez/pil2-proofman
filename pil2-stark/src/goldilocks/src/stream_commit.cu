@@ -627,7 +627,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         SC_CAT_STOP(timer, TRANSPOSE_PACKED);
         d_hookPacked = d_col;
     }
-    if (hook != nullptr) hook(d_hookPacked, d_widths, dims, stream, hookUser);
+    if (hook != nullptr) hook(d_hookPacked, dims, stream, hookUser);
 
     NTTGoldilocksGPU ntt;
     const uint32_t ublk = (uint32_t)((N + SC_TPB - 1) / SC_TPB);

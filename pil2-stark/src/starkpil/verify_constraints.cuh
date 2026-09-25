@@ -235,13 +235,9 @@ void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t st
     {
         int gpuId = 0;
         CHECKCUDAERR(cudaGetDevice(&gpuId));
-        MulAcc *mulAcc = nullptr;
-        for (const auto &kv : mulAccs())
-            if (kv.first.second == gpuId) { mulAcc = kv.second; break; }
+        MulAcc *mulAcc = mulAccOnGpu(gpuId);
         if (mulAcc != nullptr) {
-            calculateMulCalcGPU(setupCtx, h_params, d_params, airgroupId, airId, mulAcc->d_acc,
-                                air_instance_info->expressions_gpu, d_expsArgs, d_destParams,
-                                pinned_exps_params, pinned_exps_args, countId, timer, stream);
+            calculateMulCalcGPU(setupCtx, h_params, airgroupId, airId, mulAcc->d_acc, timer, stream);
             mul_note_commit();
         }
     }

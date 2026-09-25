@@ -8,12 +8,11 @@
 #include "expressions_bin.hpp"
 #include "setup_ctx.hpp"
 
-// Why the last compile gave up (a field on the interpreter is a performance cliff).
+// Why the last compile gave up.
 inline const char*& mulProgFailReason() { static const char* r = nullptr; return r; }
 
 // A term's address: prover buffers are flat column-major, so one element offset plus the row.
-inline bool mulTermToDev(SetupCtx& setupCtx, const MulLinTerm& t, uint64_t domainSize, MulTermDev& out) {
-    (void)domainSize;
+inline bool mulTermToDev(SetupCtx& setupCtx, const MulLinTerm& t, MulTermDev& out) {
     const auto& si = setupCtx.starkInfo;
     const uint32_t base = (uint32_t)(1 + si.nStages + 3 + si.customCommits.size());
     out = MulTermDev{};
@@ -86,9 +85,8 @@ struct MulByteCode {
 };
 
 // Transliterate the instruction stream one-for-one. Anything not understood returns false with a
-// reason, and the caller keeps the interpreter for it.
-inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, uint64_t domainSize,
-                               MulProgram& out) {
+// reason.
+inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulProgram& out) {
     out = MulProgram{};
     mulProgFailReason() = nullptr;
     auto bail = [&](const char* why) { mulProgFailReason() = why; return false; };
@@ -112,7 +110,7 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, uint64
         if (!mulIsUniformType(type, bc.base) && type >= bc.base + 2) return bail("challenge/eval operand");
         if (!mulIsUniformType(type, bc.base) && type > bc.nSections) return bail("zi / xDivXSub operand");
         o.kind = MUL_OPND_COL;
-        if (!mulTermToDev(setupCtx, MulLinTerm{ type, argIdx, argOff }, domainSize, o.term))
+        if (!mulTermToDev(setupCtx, MulLinTerm{ type, argIdx, argOff }, o.term))
             return bail("operand address not resolvable");
         return true;
     };
@@ -130,12 +128,11 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, uint64
         out.insns.push_back(in);
         i += 8;
     }
-    out.ok = true;
     return true;
 }
 
 inline bool mulCompileExpr(SetupCtx& setupCtx, uint64_t expId, uint64_t bufferCommitSize,
-                           uint64_t domainSize, MulProgram& out) {
+                           MulProgram& out) {
     auto it = setupCtx.expressionsBin.expressionsInfo.find(expId);
     if (it == setupCtx.expressionsBin.expressionsInfo.end()) { mulProgFailReason() = "no expression"; return false; }
     const ParserParams& pp = it->second;
@@ -150,13 +147,13 @@ inline bool mulCompileExpr(SetupCtx& setupCtx, uint64_t expId, uint64_t bufferCo
     bc.nTemp1    = pp.nTemp1;
     bc.base      = (uint32_t)bufferCommitSize;
     bc.nSections = (uint32_t)(setupCtx.starkInfo.nStages + 1);
-    return mulCompileBytecode(setupCtx, bc, domainSize, out);
+    return mulCompileBytecode(setupCtx, bc, out);
 }
 
 // A field that is not an expression carries no bytecode at all (caseNoOperations__): it is a bare
 // column, number or uniform, which resolves straight to one operand.
 inline bool mulOperandOfField(SetupCtx& setupCtx, const HintFieldValue& v, uint64_t bufferCommitSize,
-                              uint64_t domainSize, MulOperandDev& out) {
+                              MulOperandDev& out) {
     const StarkInfo& si = setupCtx.starkInfo;
     MulLinTerm t{};
     bool modelled = false;
@@ -197,7 +194,7 @@ inline bool mulOperandOfField(SetupCtx& setupCtx, const HintFieldValue& v, uint6
             break;
         case opType::airvalue: {
             // airValues is laid out by stage: stage 1 takes one slot, later stages three
-            // (as in addHintFieldAt).
+            // (as in addHintField).
             if (si.airValuesMap[v.id].stage != 1) break;
             uint64_t pos = 0;
             for (uint64_t i = 0; i < v.id; ++i)
@@ -211,7 +208,7 @@ inline bool mulOperandOfField(SetupCtx& setupCtx, const HintFieldValue& v, uint6
     if (!modelled) { mulProgFailReason() = "operand kind not modelled"; return false; }
     out = MulOperandDev{};
     out.kind = MUL_OPND_COL;
-    if (!mulTermToDev(setupCtx, t, domainSize, out.term)) {
+    if (!mulTermToDev(setupCtx, t, out.term)) {
         mulProgFailReason() = "operand address not resolvable";
         return false;
     }
@@ -220,57 +217,13 @@ inline bool mulOperandOfField(SetupCtx& setupCtx, const HintFieldValue& v, uint6
 
 // mulEvalProgram returns the last instruction's result, so a bare operand becomes `x + 0`.
 inline bool mulCompileField(SetupCtx& setupCtx, const HintFieldValue& v, uint64_t bufferCommitSize,
-                            uint64_t domainSize, MulProgram& out) {
+                            MulProgram& out) {
     if (v.operand == opType::tmp)
-        return mulCompileExpr(setupCtx, v.id, bufferCommitSize, domainSize, out);
+        return mulCompileExpr(setupCtx, v.id, bufferCommitSize, out);
     MulOperandDev o{};
-    if (!mulOperandOfField(setupCtx, v, bufferCommitSize, domainSize, o)) return false;
+    if (!mulOperandOfField(setupCtx, v, bufferCommitSize, o)) return false;
     out = MulProgram{};
     mulEmit(out, 0, o, 0 /*add*/, mulOpConst(0));
-    out.ok = true;
-    return true;
-}
-
-// `konst + sum(coef[e] * element_e)`, the row map of a fitted virtual table. Bare-column elements
-// are used as operands directly; expression elements are spliced in as sub-programs.
-inline bool mulCompileFold(SetupCtx& setupCtx, const std::vector<HintFieldValue>& values,
-                           const uint64_t* coef, uint8_t nCoef, uint64_t konst,
-                           uint64_t bufferCommitSize, uint64_t domainSize, MulProgram& out) {
-    out = MulProgram{};
-    // Top of the temp space, so a spliced sub-program keeps its own numbering unremapped.
-    const uint16_t SUM = MUL_PROG_MAX_TEMP - 1, SCR = MUL_PROG_MAX_TEMP - 2;
-    bool haveSum = false;
-    for (uint8_t e = 0; e < nCoef; ++e) {
-        if (coef[e] == 0) continue;              // a column the fit found irrelevant
-        if (e >= values.size()) { mulProgFailReason() = "fold wider than the tuple"; return false; }
-        MulOperandDev o{};
-        if (values[e].operand == opType::tmp) {
-            // Splice the sub-program; its last dst holds the result. Its temps are consumed
-            // before the next term, so terms may reuse them.
-
-            MulProgram sub;
-            if (!mulCompileField(setupCtx, values[e], bufferCommitSize, domainSize, sub))
-                return false;                       // reason already set by the compiler
-            if (sub.insns.empty()) { mulProgFailReason() = "fold term compiled to nothing"; return false; }
-            for (const MulInsnDev& in : sub.insns) {
-                if (in.dst >= SCR) { mulProgFailReason() = "fold term needs the accumulator's temps"; return false; }
-                if ((in.a.kind == MUL_OPND_TEMP && in.a.tmp >= SCR) ||
-                    (in.b.kind == MUL_OPND_TEMP && in.b.tmp >= SCR)) {
-                    mulProgFailReason() = "fold term reads the accumulator's temps"; return false;
-                }
-            }
-            out.insns.insert(out.insns.end(), sub.insns.begin(), sub.insns.end());
-            o = mulOpTemp(sub.insns.back().dst);
-        } else if (!mulOperandOfField(setupCtx, values[e], bufferCommitSize, domainSize, o)) {
-            return false;
-        }
-        if (coef[e] != 1) { mulEmit(out, SCR, o, 2 /*mul*/, mulOpConst(coef[e])); o = mulOpTemp(SCR); }
-        if (!haveSum) { mulEmit(out, SUM, o, 0 /*add*/, mulOpConst(0)); haveSum = true; }
-        else          { mulEmit(out, SUM, mulOpTemp(SUM), 0, o); }
-    }
-    if (!haveSum) { mulProgFailReason() = "fold has no terms"; return false; }
-    if (konst != 0) mulEmit(out, SUM, mulOpTemp(SUM), 0, mulOpConst(konst));
-    out.ok = true;
     return true;
 }
 

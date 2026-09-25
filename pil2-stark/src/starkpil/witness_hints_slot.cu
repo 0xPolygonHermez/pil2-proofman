@@ -47,7 +47,6 @@ void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_
     b.proofValues    = dVals ? dVals + vo.proofValues    : nullptr;
     b.airgroupValues = dVals ? dVals + vo.airgroupValues : nullptr;
     b.airValues      = dVals ? dVals + vo.airValues      : nullptr;
-    b.traceRows = nRows;
     b.packed = dPacked;
     b.side = dSide;
     b.wordsPerRow = wordsPerRow;

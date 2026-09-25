@@ -10,10 +10,6 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <thread>
 #include "zklog.hpp"
 #include "exit_process.hpp"
 #include "multiplicity_decoders.hpp"
@@ -42,6 +38,18 @@ inline std::vector<MulVtLayout>& mulVtLayouts() {
     return v;
 }
 
+inline const MulVtLayout* mulLayoutFor(uint64_t airId) {
+    for (const auto& l : mulVtLayouts()) if (l.airId == airId) return &l;
+    return nullptr;
+}
+
+// True iff a registered decoder targets a table in this layout.
+inline bool mulLayoutHostsMigrated(const MulVtLayout& L) {
+    for (const auto& d : mulDecoders())
+        if (L.accBase.count(d.table_id)) return true;
+    return false;
+}
+
 inline void mul_register_vt(uint64_t airgroupId, uint64_t airId,
                             uint64_t numRows, uint64_t numCols,
                             const uint64_t* tableIds, const uint64_t* accBases, uint64_t nTables) {
@@ -57,7 +65,6 @@ inline void mul_register_vt(uint64_t airgroupId, uint64_t airId,
                + std::to_string(L.accBase.size()) + " tables");
 }
 
-
 // Range tables the prover owns, as (table_id, bias). Requests and layouts arrive in either order,
 // so decoders are materialised lazily. Shared by both backends.
 struct MulOwnedReq { uint64_t table_id; int64_t bias; };
@@ -67,20 +74,6 @@ inline std::vector<MulOwnedReq>& mulOwnedReqs() {
     return v;
 }
 
-// A row map fitted and verified from a table's COL_* fixed columns. Attached to the decoder when
-// it materialises, so registration order does not matter.
-struct MulFittedMap { uint8_t nCoef; uint64_t coef[MUL_MAX_TUPLE]; uint64_t konst; };
-
-inline std::map<uint64_t, MulFittedMap>& mulFittedMaps() {
-    static std::map<uint64_t, MulFittedMap> m;
-    return m;
-}
-
-// A table has one row-map shape (fitted / exact-map / digit-rule): mulResolveRow would silently
-// pick one by priority. Tracked apart from mulDecoders() since the decoder may not exist yet.
-inline std::map<uint64_t, std::string>& mulShapeClaims() { static std::map<uint64_t, std::string> m; return m; }
-inline std::mutex& mulShapeClaimsMutex() { static std::mutex m; return m; }
-
 // Every decode rule is also a claim on the table; without one nobody counts it.
 inline void mulClaimOwned(uint64_t tableId) {
     if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
@@ -88,55 +81,21 @@ inline void mulClaimOwned(uint64_t tableId) {
         mulOwnedReqs().push_back({tableId, 0});
 }
 
-inline void mulClaimShape(uint64_t tableId, const char* shape) {
-    std::lock_guard<std::mutex> lk(mulShapeClaimsMutex());
-    auto& claimed = mulShapeClaims();
-    auto it = claimed.find(tableId);
-    if (it != claimed.end() && it->second != shape) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " already claimed as a \""
-                    + it->second + "\" row map, now also registered as \"" + shape
-                    + "\" -- a table can only have one shape");
-        exitProcess();
-    }
-    claimed[tableId] = shape;
-}
+// Exact-match map of one table. Slots are stored: they cannot be derived from the buffer length
+// once a layout has a header.
+struct MulTableMap {
+    std::vector<uint64_t> kv;
+    uint32_t nKey = 0;
+    uint64_t slots = 0;
+};
 
-inline void mul_register_table_decode_impl(uint64_t tableId, const uint64_t* coef, uint64_t nCoef,
-                                           uint64_t konst) {
-    mulClaimShape(tableId, "fitted");
-    if (nCoef == 0 || nCoef > MUL_MAX_TUPLE) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " fitted with "
-                    + std::to_string(nCoef) + " coefficients; the cap is "
-                    + std::to_string(MUL_MAX_TUPLE));
-        exitProcess();
-    }
-    MulFittedMap f{};
-    f.nCoef = (uint8_t)nCoef;
-    f.konst = konst;
-    for (uint64_t i = 0; i < nCoef; ++i) f.coef[i] = coef[i];
-    mulFittedMaps()[tableId] = f;
-    // Bias is zero: the fit's constant already places the row.
-    mulClaimOwned(tableId);
-    // A decoder may already exist for this table (registration order is not fixed).
-    for (auto& d : mulDecoders())
-        if (d.table_id == tableId) { d.nCoef = f.nCoef; d.konst = f.konst;
-                                     for (uint64_t i = 0; i < nCoef; ++i) d.coef[i] = coef[i]; }
-}
-
-// Exact-match maps, by table id.
-inline std::map<uint64_t, std::vector<uint64_t>>& mulTableMaps() {
-    static std::map<uint64_t, std::vector<uint64_t>> m;
+inline std::map<uint64_t, MulTableMap>& mulTableMaps() {
+    static std::map<uint64_t, MulTableMap> m;
     return m;
 }
 
-inline std::map<uint64_t, uint32_t>& mulTableMapKeys() { static std::map<uint64_t, uint32_t> m; return m; }
-
-// Slots per map, stored: it cannot be derived from the buffer length once a layout has a header.
-inline std::map<uint64_t, uint64_t>& mulTableMapSlots() { static std::map<uint64_t, uint64_t> m; return m; }
-
 inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, uint64_t n,
                                         uint64_t slots, uint64_t nKey) {
-    mulClaimShape(tableId, "map");
     // The probe masks with `slots - 1`, so slots must be a power of two.
     if (slots == 0 || (slots & (slots - 1)) != 0) {
         zklog.error("multiplicity: table " + std::to_string(tableId) + " map has " + std::to_string(slots)
@@ -144,10 +103,11 @@ inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, ui
         exitProcess();
     }
     // Length is given, never re-derived: a packed map is `1 + nKey + slots*2` words.
-    auto& v = mulTableMaps()[tableId];
-    v.assign(kv, kv + n);
-    mulTableMapKeys()[tableId] = (uint32_t)nKey;
-    mulTableMapSlots()[tableId] = slots;
+    MulTableMap& m = mulTableMaps()[tableId];
+    m.kv.assign(kv, kv + n);
+    m.nKey = (uint32_t)nKey;
+    m.slots = slots;
+    const std::vector<uint64_t>& v = m.kv;
     mulClaimOwned(tableId);
     for (auto& d : mulDecoders())
         if (d.table_id == tableId) { d.mapSlots = slots; d.mapKV = v.data(); d.nKey = (uint32_t)nKey; }
@@ -157,76 +117,21 @@ inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, ui
                + " (" + std::to_string(v.size() * 8 / 1000000) + " MB)");
 }
 
-// Digit-recoding tables, by table id.
-inline std::map<uint64_t, std::vector<uint64_t>>& mulTableDigits() {
-    static std::map<uint64_t, std::vector<uint64_t>> m;
-    return m;
-}
-struct MulDigitShape { uint32_t cols; uint32_t col[MUL_MAX_TUPLE]; };
-inline std::map<uint64_t, MulDigitShape>& mulTableDigitShape() {
-    static std::map<uint64_t, MulDigitShape> m;
-    return m;
-}
-
-inline void mul_register_table_digits_impl(uint64_t tableId, const uint64_t* tab, uint64_t n,
-                                           const uint32_t* cols, uint64_t nCols) {
-    mulClaimShape(tableId, "digits");
-    auto& v = mulTableDigits()[tableId];
-    v.assign(tab, tab + n);
-    MulDigitShape sh{};
-    sh.cols = (uint32_t)nCols;
-    if (nCols > MUL_MAX_TUPLE) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " separable over "
-                    + std::to_string(nCols) + " columns, more than the tuple holds");
-        exitProcess();
-    }
-    for (uint64_t i = 0; i < nCols; ++i) sh.col[i] = cols[i];
-    mulTableDigitShape()[tableId] = sh;
-    mulClaimOwned(tableId);
-    for (auto& d : mulDecoders())
-        if (d.table_id == tableId) {
-            d.digitCols = sh.cols;
-            for (uint32_t i = 0; i < sh.cols; ++i) d.digitCol[i] = sh.col[i];
-            d.digitTab = v.data();
-        }
-    zklog.trace("Multiplicity separable: table " + std::to_string(tableId) + " over "
-               + std::to_string(nCols) + " columns (" + std::to_string(n * 8)
-               + " bytes) -- no map needed");
-}
-
-
 inline void mul_materialize_decoders() {
     for (const auto& L : mulVtLayouts()) {
         for (const auto& o : mulOwnedReqs()) {
             if (!L.accBase.count(o.table_id) || mulDecoderFor(o.table_id) != nullptr) continue;
             MulDecoder d{};
             d.table_id = (uint32_t)o.table_id;
+            d.hostAirId = L.airId;
             d.acc_base = L.accBase.at(o.table_id);
             d.n_rows   = L.tableHeight(o.table_id);
             d.bias     = o.bias;
-            auto dg = mulTableDigits().find(o.table_id);
-            if (dg != mulTableDigits().end() && !dg->second.empty()) {
-                const MulDigitShape& sh = mulTableDigitShape()[o.table_id];
-                d.digitCols = sh.cols;
-                for (uint32_t i = 0; i < sh.cols; ++i) d.digitCol[i] = sh.col[i];
-                d.digitTab = dg->second.data();
-            }
             auto mp = mulTableMaps().find(o.table_id);
             if (mp != mulTableMaps().end()) {
-                d.nKey = mulTableMapKeys()[o.table_id];
-                d.mapSlots = mulTableMapSlots()[o.table_id];
-                d.mapKV = mp->second.data();
-            }
-            auto fit = mulFittedMaps().find(o.table_id);
-            if (fit != mulFittedMaps().end()) {
-                d.nCoef = fit->second.nCoef;
-                d.konst = fit->second.konst;
-                for (uint8_t c = 0; c < d.nCoef; ++c) d.coef[c] = fit->second.coef[c];
-            }
-            if (d.mapSlots != 0 && (d.mapSlots & (d.mapSlots - 1)) != 0) {
-                zklog.error("multiplicity: table " + std::to_string(o.table_id) + " map has "
-                            + std::to_string(d.mapSlots) + " slots, which is not a power of two");
-                exitProcess();
+                d.nKey = mp->second.nKey;
+                d.mapSlots = mp->second.slots;
+                d.mapKV = mp->second.kv.data();
             }
             mulDecoders().push_back(d);
             zklog.trace("Multiplicity decoder: table " + std::to_string(o.table_id)
@@ -265,11 +170,8 @@ inline uint64_t mul_migrated_tables_impl(uint64_t* out, uint64_t cap) {
 
 // Whether the prover counts anything in this air; if not, the host builds no accumulator for it.
 inline bool mul_air_has_owned_tables(uint64_t airId) {
-    for (const auto& l : mulVtLayouts()) {
-        if (l.airId != airId) continue;
-        for (const auto& kv : l.accBase) if (mulDecoderFor(kv.first) != nullptr) return true;
-    }
-    return false;
+    const MulVtLayout* L = mulLayoutFor(airId);
+    return L != nullptr && mulLayoutHostsMigrated(*L);
 }
 
 // One aggregate line of what is still Rust-owned across all virtual-table airs, with the height a
@@ -290,14 +192,13 @@ inline void mul_log_coverage() {
                + " airs; remaining:" + (todo.empty() ? " none" : todo));
 }
 
-// Commits completed this proof. The fold runs inside CALCULATING_TABLES, before the commit
+// Commits completed this proof. mul_sync_commits runs inside CALCULATING_TABLES, before the commit
 // workers are joined, so it cannot assume every instance has scattered.
 inline std::atomic<uint64_t>& mulCommits() { static std::atomic<uint64_t> n{0}; return n; }
 
 inline void mul_note_commit() { mulCommits().fetch_add(1, std::memory_order_release); }
 
 // Block until `expected` instances have committed. Bounded, so a wrong expectation fails loudly.
-
 inline bool mul_await_commits(uint64_t expected) {
     using namespace std::chrono;
     const auto deadline = steady_clock::now() + seconds(120);

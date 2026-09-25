@@ -11,7 +11,7 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
     get_num_gpus_c, mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c,
-    mul_register_table_decode_c, mul_register_table_digits_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+    mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
 use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
@@ -2789,19 +2789,19 @@ where
             mul_register_range_tables_c(&range_ids, &range_biases);
         }
 
-        // Affine row map where the layout admits one, else an exact map over the table's entries; both
-        // verified against every entry. A table that fits neither must be in `std_owned_tables`.
-        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx)?;
+        // An exact map over each table's entries, verified against every entry. A table that does not
+        // fit must be in `std_owned_tables`.
+        let layouts = collect_virtual_table_layouts(&self.pctx, &self.sctx)?;
+        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx, &layouts)?;
 
-        // Unkept and unclaimed by both the range path and the fitter: fail with the ids rather than
-        // run a slow path.
+        // Unkept and unclaimed by both the range path and the fitter (`unclaimed_ids` excludes the
+        // fitted ones): fail with the ids rather than run a slow path.
         let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
-        let fitted_ids: std::collections::HashSet<u64> = fitted.iter().map(|m| m.table_id).collect();
         let orphans: Vec<u64> = vt_summary
             .unclaimed_ids
             .iter()
             .copied()
-            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t) && !fitted_ids.contains(t))
+            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t))
             .collect();
         if !orphans.is_empty() {
             return Err(ProofmanError::InvalidSetup(format!(
@@ -2812,36 +2812,27 @@ where
         }
 
         for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
-            match m.map.as_ref() {
-                Some((nkey, kv, slots)) => mul_register_table_map_c(m.table_id, kv, *nkey, *slots),
-                None => match &m.digits {
-                    Some((cols, tab)) => mul_register_table_digits_c(m.table_id, tab, cols),
-                    None => mul_register_table_decode_c(m.table_id, &m.coef, m.konst),
-                },
-            };
+            let (nkey, kv, slots) = &m.map;
+            mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
         }
 
         // Unfitted tables also in `range_ids` are prover-owned via the range path; only the rest are
         // left to the std. Exact-map bytes are GPU-resident, per device.
         if vt_summary.considered > 0 {
-            let range_ids_set: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
-            let n_range_in_scope = vt_summary.unclaimed_ids.iter().filter(|t| range_ids_set.contains(t)).count();
+            let n_range_in_scope = vt_summary.unclaimed_ids.iter().filter(|t| range_owned.contains(t)).count();
             let n_std_left = vt_summary.unclaimed_ids.len() - n_range_in_scope;
-            let n_fitted = fitted.len();
             tracing::info!(
-                "Virtual tables: {}/{} prover-owned in {} ms -- {n_range_in_scope} range, {} affine, \
-                 {} separable, {} exact map ({} MB); {n_std_left} left to the std",
-                n_fitted + n_range_in_scope,
+                "Virtual tables: {}/{} prover-owned in {} ms -- {n_range_in_scope} range, {} exact map \
+                 ({} MB); {n_std_left} left to the std",
+                fitted.len() + n_range_in_scope,
                 vt_summary.considered,
                 vt_summary.elapsed_ms,
-                vt_summary.n_affine,
-                vt_summary.n_separable,
-                vt_summary.n_exact,
+                fitted.len(),
                 vt_summary.exact_bytes / 1_000_000,
             );
         }
 
-        for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+        for l in &layouts {
             register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
         }
 
@@ -2874,7 +2865,7 @@ where
             let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
             // The fold adds into the destination, so clear first: exporting twice must not double.
             buf.iter_mut().for_each(|c| *c = 0);
-            unsafe { mul_fold_c(l.air_id, buf.as_mut_ptr(), expected_commits) };
+            unsafe { mul_fold_c(l.air_id, buf.as_mut_ptr()) };
         }
         Ok(())
     }

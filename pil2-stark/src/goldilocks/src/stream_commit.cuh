@@ -105,11 +105,11 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 // (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot
 // layout contract, or an inconsistent indexed descriptor).
 
-// Called once, after the packed witness (`dPacked`, widths `dWidths`, both device) is uploaded and
-// before the chunk loop. The only point where the whole witness exists: the loop LDEs columns
-// IN PLACE, so nothing after it can read cm1.
-typedef void (*StreamCommitHook)(const uint64_t *dPacked, const uint64_t *dWidths,
-                                 const StreamCommitDims &dims, cudaStream_t stream, void *user);
+// Called once, after the packed witness (`dPacked`, device) is uploaded and before the chunk loop.
+// The only point where the whole witness exists: the loop LDEs columns IN PLACE, so nothing after
+// it can read cm1.
+typedef void (*StreamCommitHook)(const uint64_t *dPacked, const StreamCommitDims &dims,
+                                 cudaStream_t stream, void *user);
 
 // Called after each chunk is unpacked and BEFORE it is extended in place. `dst` holds `cc` columns
 // from `c0`, ColMajor at the small-domain stride. Prover-computed stage-1 columns (witness_calc

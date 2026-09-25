@@ -88,7 +88,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
             plan.why = "hint has no expression or no destination"; return plan;
         }
         MulProgram pg;
-        if (!mulCompileField(setupCtx, fe->values[0], bcs, plan.nRows, pg)) {
+        if (!mulCompileField(setupCtx, fe->values[0], bcs, pg)) {
             plan.why = std::string("expression did not compile: ") + (mulProgFailReason() ? mulProgFailReason() : "?");
             return plan;
         }

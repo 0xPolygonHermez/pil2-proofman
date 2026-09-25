@@ -50,7 +50,8 @@ __device__ __forceinline__ void mulCombineDeposit(MulCombine c, uint64_t key, ui
     else                                          atomicAdd(&acc[key], (unsigned long long)total);
 }
 
-// Warp-aggregate exactly as warp_atomic.cuh does, then deposit once per matched group.
+// Warp-aggregate (one deposit per counter per warp; the all-equal fast path keeps group sums
+// constant-time), then deposit once per matched group. Every lane must be active in `mask`.
 __device__ __forceinline__ void mulCombineAdd(MulCombine c, unsigned mask, uint64_t key,
                                               uint64_t value, unsigned long long* acc) {
     const unsigned peers = __match_any_sync(mask, key);

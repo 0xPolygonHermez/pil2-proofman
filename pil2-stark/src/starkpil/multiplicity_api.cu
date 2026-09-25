@@ -18,21 +18,12 @@ extern "C" {
 
 // Off unless no cross-rank reduction is needed: the device accumulator holds only this rank's share.
 void mul_set_device_export(uint64_t enabled) {
-#ifdef __USE_CUDA__
     mulDeviceExportEnabled() = (enabled != 0);
-#else
-    (void)enabled;
-#endif
 }
 
 // True when the device produces this air's whole cm1, so the host must not build its trace.
 uint64_t mul_air_device_owned(uint64_t airId) {
-#ifdef __USE_CUDA__
     return mul_air_fully_owned(airId) ? 1 : 0;
-#else
-    (void)airId;
-    return 0;
-#endif
 }
 
 // Ordering point for the device export: once this returns every instance has launched its
@@ -40,26 +31,15 @@ uint64_t mul_air_device_owned(uint64_t airId) {
 void mul_sync_commits(uint64_t expectedCommits) {
     if (mulDecoders().empty()) return;
     if (!mul_await_commits(expectedCommits)) exitProcess();
-#ifdef __USE_CUDA__
-    mul_phase_report();
     mul_oob_report();
-#endif
 }
 
-// Fold the prover-owned spans into the caller's accumulator, once per proof. `hostAcc` is not retained.
-void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits) {
+// Fold the prover-owned spans into the caller's accumulator, once per proof, after
+// mul_sync_commits. `hostAcc` is not retained.
+void mul_fold(uint64_t airId, uint64_t *hostAcc) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
-
-    // Every instance must have counted, or a queued scatter leaves the counts short. Device
-    // mirrors exist only on a GPU run; a CPU run still reaches the host fold below.
-    if (!mul_await_commits(expectedCommits)) exitProcess();
-    if (!mulAccs().empty()) {
-        mul_phase_report();
-        mul_oob_report();
-        mul_fold_air(airId, hostAcc);
-    }
-
     // One of the two accumulators is always empty, so folding both keeps the caller backend-blind.
+    mul_fold_air(airId, hostAcc);
     mul_cpu_fold(airId, hostAcc);
 }
 
@@ -70,7 +50,7 @@ void mul_alloc(void *d_buffers_) {
     std::vector<int> gpuIds(d_buffers->n_gpus);
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) gpuIds[g] = (int)d_buffers->my_gpu_ids[g];
     mul_alloc_devices(gpuIds.data(), (int)gpuIds.size());
-    for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); mul_alloc_digits(id); }
+    for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); }
     if (gpuIds.size() > 1 && mulDeviceExportEnabled())
         for (int id : gpuIds) mul_alloc_peer_stage(id);
 

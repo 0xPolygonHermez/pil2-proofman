@@ -2,10 +2,11 @@
 #include "multiplicity_eval.cuh"
 #include "multiplicity_decoders.hpp"
 #include <algorithm>
-#include "warp_atomic.cuh"
 #include "multiplicity_combine.cuh"
 // Dedicated range-check scatter: tuple, selector and bus id are compiled programs, so a thread
 // evaluates all three from registers instead of running `computeExpressions_` once per hint.
+
+#define MUL_SCATTER_BLOCK 256   // rows per block
 
 // MulBases has named members, not an array: runtime indexing would spill it to local memory.
 // The second launch bound matches the occupancy the shared combining cache allows (5 blocks/SM),
@@ -21,19 +22,10 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
     mulCombineInit(comb);
     unsigned long long* gacc = (unsigned long long*)acc;
 
-    // Grid-stride loop. The trip count is uniform across the block: every thread must reach the
-    // flush barrier.
-    const uint64_t stride = (uint64_t)gridDim.x * MUL_SCATTER_BLOCK;
-    const uint64_t base   = (uint64_t)blockIdx.x * MUL_SCATTER_BLOCK + threadIdx.x;
-    const uint64_t nIter  = (rows + stride - 1) / stride;
-
-    for (uint64_t it = 0; it < nIter; ++it) {
-        const uint64_t localRow = base + it * stride;
-        if (localRow >= rows) continue;
-        // Everything is addressed by the global row.
-        const uint64_t row = bases.rowStart + localRow;
-
-        // Reset per row: the cached selector is only valid for the row it was computed on.
+    // One row per thread. No early return: every thread must reach the flush barrier.
+    const uint64_t row = (uint64_t)blockIdx.x * MUL_SCATTER_BLOCK + threadIdx.x;
+    if (row < rows) {
+        // The cached selector is only valid for the row it was computed on.
         uint32_t lastSelOff = 0xFFFFFFFFu;
         uint64_t lastSelVal = 0;
 
@@ -46,11 +38,12 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
             if (!j.selConstOne) {
                 // Jobs sharing a selector program share its offset and are ordered by it, so
                 // reusing the last result evaluates each run once.
-                if (j.selProgLen != 0 && j.selProgOff == lastSelOff) {
+                if (j.selProgOff == lastSelOff) {
                     sel = lastSelVal;
                 } else {
                     sel = mulEvalField(j.selProgOff, j.selProgLen, prog, bases, row, rowMask);
-                    if (j.selProgLen != 0) { lastSelOff = j.selProgOff; lastSelVal = sel; }
+                    lastSelOff = j.selProgOff;
+                    lastSelVal = sel;
                 }
                 if (sel == 0) continue;
             }
@@ -60,7 +53,7 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
                                          rowMask) != (uint64_t)j.tableId) continue;
 
             uint64_t key[MUL_MAX_TUPLE];
-            if (j.mapSlots == 0 && j.digitCols == 0) {
+            if (j.mapSlots == 0) {
                 key[0] = mulAddFE(mulEvalField(j.valProgOff, j.valProgLen, prog,
                                                bases, row, rowMask), j.biasFE);
             } else {
@@ -69,9 +62,8 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
                                           bases, row, rowMask);
             }
             uint64_t idx;
-            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx,
-                               j.digitCols, j.digitTab) || idx >= j.nTableRows) {
-                // nKey is 0 for an affine job (its value is in key[0]).
+            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx) || idx >= j.nTableRows) {
+                // nKey is 0 for a range job (its value is in key[0]).
                 mulRecordOob(oob, j.tableId, air, key, j.nKey ? j.nKey : 1u);
                 continue;
             }
@@ -83,43 +75,25 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
     mulCombineFlush(comb, gacc);
 }
 
-void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows,
-                             uint64_t rowBegin, uint64_t rowStart, const uint64_t* const* bases_,
-                             uint64_t traceRows, uint64_t fullRows, uint64_t* acc, uint64_t* oob,
-                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream,
-                             const uint64_t* packed, uint64_t wordsPerRow, const uint64_t* side,
-                             const uint64_t* table, uint64_t wordsPerEntry, uint64_t numEntries,
-                             uint64_t indexBits, uint32_t packedColMajor) {
+void mul_scatter_launch(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows, uint64_t domainSize,
+                        const uint64_t* const* bases_, uint64_t* acc, uint64_t* oob, uint64_t air,
+                        const MulInsnDev* d_prog, cudaStream_t stream,
+                        const uint64_t* packed, uint64_t wordsPerRow, const uint64_t* side,
+                        const uint64_t* table, uint64_t wordsPerEntry, uint64_t numEntries,
+                        uint64_t indexBits, uint32_t packedColMajor) {
     if (d_jobs == nullptr || nJobs == 0 || rows == 0) return;
     MulBases bases = { bases_[MUL_SRC_CONST],  bases_[MUL_SRC_TRACE],
                        bases_[MUL_SRC_AUX],    bases_[MUL_SRC_PUBLIC],
                        bases_[MUL_SRC_AIRVALUE], bases_[MUL_SRC_PROOFVALUE],
-                       bases_[MUL_SRC_AIRGROUPVALUE], bases_[MUL_SRC_CUSTOM],
-                       traceRows, rowBegin, rowStart };
+                       bases_[MUL_SRC_AIRGROUPVALUE], bases_[MUL_SRC_CUSTOM] };
     bases.packed = packed; bases.side = side; bases.wordsPerRow = wordsPerRow;
     bases.packedColMajor = packedColMajor;
     bases.table = table; bases.wordsPerEntry = wordsPerEntry;
     bases.numEntries = numEntries; bases.indexBits = indexBits;
-    // Same kernel as the full domain, over this tile's rows: never fork a tile-only copy.
     const uint32_t blocks = (uint32_t)((rows + MUL_SCATTER_BLOCK - 1) / MUL_SCATTER_BLOCK);
     mul_scatter_kernel_rows<<<blocks, MUL_SCATTER_BLOCK, 0, stream>>>(
-        d_jobs, nJobs, bases, fullRows - 1, rows, acc, oob, air, d_prog);
+        d_jobs, nJobs, bases, domainSize - 1, rows, acc, oob, air, d_prog);
     CHECKCUDAERR(cudaGetLastError());
-}
-
-void mul_scatter_launch_rows(const MulJobDev* d_jobs, uint32_t nJobs, const uint64_t* const* bases_,
-                             uint64_t domainSize, uint64_t maxRows, uint64_t* acc, uint64_t* oob,
-                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream) {
-    if (d_jobs == nullptr || nJobs == 0 || maxRows == 0) return;
-    const MulBases bases = { bases_[MUL_SRC_CONST],  bases_[MUL_SRC_TRACE],
-                             bases_[MUL_SRC_AUX],    bases_[MUL_SRC_PUBLIC],
-                             bases_[MUL_SRC_AIRVALUE], bases_[MUL_SRC_PROOFVALUE],
-                             bases_[MUL_SRC_AIRGROUPVALUE], bases_[MUL_SRC_CUSTOM],
-                             domainSize, 0, 0 };   // the whole domain: the tile mapping is identity
-    // One block per row chunk; the flush only touches slots a block claimed.
-    const uint32_t blocks = (uint32_t)((maxRows + MUL_SCATTER_BLOCK - 1) / MUL_SCATTER_BLOCK);
-    mul_scatter_kernel_rows<<<blocks, MUL_SCATTER_BLOCK, 0, stream>>>(
-        d_jobs, nJobs, bases, domainSize - 1, maxRows, acc, oob, air, d_prog);
 }
 
 // ---- Prover-owned table export: accumulator -> committed trace, on the device ----

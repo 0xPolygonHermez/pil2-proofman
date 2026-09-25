@@ -27,10 +27,7 @@ inline std::mutex& mulCpuAccsMutex() { static std::mutex m; return m; }
 inline void mul_cpu_alloc() {
     std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
     for (const auto& L : mulVtLayouts()) {
-        bool hosts = false;
-        for (const auto& d : mulDecoders())
-            if (L.accBase.count(d.table_id)) { hosts = true; break; }
-        if (!hosts || mulCpuAccs().count(L.airId)) continue;
+        if (!mulLayoutHostsMigrated(L) || mulCpuAccs().count(L.airId)) continue;
         mulCpuAccs().emplace(L.airId, std::vector<std::atomic<uint64_t>>(L.nCounters));
         zklog.trace("Multiplicity accumulator (CPU): " + std::to_string(L.nCounters * 8 / (1 << 20))
                    + " MB for air " + std::to_string(L.airId));
@@ -43,23 +40,17 @@ inline void mul_cpu_reset() {
         for (auto& c : kv.second) c.store(0, std::memory_order_relaxed);
 }
 
-// Move an air's counts into the std's host accumulator, then clear them. Mirrors mul_fold_air.
+// Add an air's counts into the std's host accumulator. Mirrors mul_fold_air.
 inline void mul_cpu_fold(uint64_t airId, uint64_t* hostAcc) {
     std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
     auto it = mulCpuAccs().find(airId);
     if (it == mulCpuAccs().end() || hostAcc == nullptr) return;
     for (const auto& d : mulDecoders()) {
-        bool owned = false;
-        for (const auto& L : mulVtLayouts())
-            if (L.airId == airId && L.accBase.count(d.table_id)) { owned = true; break; }
-        if (!owned) continue;
+        if (d.hostAirId != airId) continue;
         for (uint64_t i = 0; i < d.n_rows; ++i)
             hostAcc[d.acc_base + i] += it->second[d.acc_base + i].load(std::memory_order_relaxed);
     }
 }
-
-// Whatever did not compile still goes through the expression interpreter.
-void mul_scatter_fallback_cpu(SetupCtx& setupCtx, StepsParams& params, const MulPlan& plan);
 
 // Host copy of mulEvalProgram (multiplicity_eval.cuh); must match it. Only addressing differs:
 // sections are row-major here (`row * nCols + col`), column-major on the device.
@@ -102,7 +93,7 @@ inline uint64_t mulEvalProgramCPU(const MulInsnDev* prog, uint32_t n, const uint
 inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t airgroupId, uint64_t airId) {
     if (mulDecoders().empty()) return;
     const MulPlan& plan = mulPlanFor(setupCtx, airgroupId, airId);
-    if (plan.jobs.empty() && plan.fallback.empty()) return;
+    if (plan.jobs.empty()) return;
 
     const uint64_t* bases[MUL_SRC_N] = {
         (const uint64_t*)params.pConstPolsAddress, (const uint64_t*)params.trace,
@@ -111,8 +102,6 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
         (const uint64_t*)params.airgroupValues,    (const uint64_t*)params.pCustomCommitsFixed,
         nullptr, nullptr };   // slot-only sources; the CPU scatter never sees one
     const uint64_t rowMask = (1ULL << setupCtx.starkInfo.starkStruct.nBits) - 1;
-
-    mul_scatter_fallback_cpu(setupCtx, params, plan);
 
     // Every field is bytecode; the offsets in a job index this one buffer.
     const MulInsnDev* prog = plan.prog.data();
@@ -137,7 +126,7 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             if (j.hasBus && mulEvalProgramCPU(prog + j.busProgOff, j.busProgLen, bases, row, rowMask)
                             != (uint64_t)j.tableId) continue;
             uint64_t key[MUL_MAX_TUPLE];
-            if (j.mapSlots == 0 && j.digitCols == 0) {
+            if (j.mapSlots == 0) {
                 key[0] = mulAddFE(mulEvalProgramCPU(prog + j.valProgOff, j.valProgLen, bases, row, rowMask),
                                   j.biasFE);
             } else {
@@ -146,7 +135,7 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             }
             uint64_t idx;
             // Same resolve as the kernel.
-            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx, j.digitCols, j.digitTab) || idx >= j.nTableRows) {
+            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx) || idx >= j.nTableRows) {
                 if (oob.fetch_add(1, std::memory_order_relaxed) == 0)
                     firstBadIdx.store(key[0], std::memory_order_relaxed);
                 continue;
@@ -154,7 +143,6 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             (*acc)[j.accBase + idx].fetch_add(sel, std::memory_order_relaxed);
         }
         // A correct decode never lands outside the table; report it loudly.
-
         if (oob.load() != 0) {
             zklog.error("multiplicity: " + std::to_string(oob.load()) + " decodes outside table "
                         + std::to_string(j.tableId) + " from air " + std::to_string(airgroupId) + "/"

@@ -1910,20 +1910,9 @@ pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
     debug_assert_eq!(table_ids.len(), biases.len());
     unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
 }
-/// Hand down a row map recovered from a table's own fixed columns.
-pub fn mul_register_table_decode_c(table_id: u64, coef: &[u64], konst: u64) {
-    unsafe { mul_register_table_decode(table_id, coef.as_ptr(), coef.len() as u64, konst) }
-}
-
 /// Hand down an exact-match key->row map.
 pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: u64) {
     unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
-}
-
-/// Register a digit-recoding decoder: `row = sum_i tab[i * base + digit_i(v)]` over the first
-/// tuple column. Between the affine fit and the exact map; see `fit_digit_rule`.
-pub fn mul_register_table_digits_c(table_id: u64, tab: &[u64], cols: &[u32]) {
-    unsafe { mul_register_table_digits(table_id, tab.as_ptr(), tab.len() as u64, cols.as_ptr(), cols.len() as u64) }
 }
 
 pub fn mul_migrated_tables_c() -> Vec<u64> {
@@ -1965,25 +1954,19 @@ pub fn mul_sync_commits_c(expected_commits: u64) {
     unsafe { mul_sync_commits(expected_commits) }
 }
 
+/// Call after `mul_sync_commits_c`.
+///
 /// # Safety
 /// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
 /// duration of the call. The C++ side does not retain it.
-pub unsafe fn mul_fold_c(air_id: u64, host_acc: *mut u64, expected_commits: u64) {
-    unsafe { mul_fold(air_id, host_acc, expected_commits) }
+pub unsafe fn mul_fold_c(air_id: u64, host_acc: *mut u64) {
+    unsafe { mul_fold(air_id, host_acc) }
 }
 
 /// # Safety
 /// `d_buffers` must be the live device-buffers pointer.
 pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
     unsafe { mul_alloc(d_buffers) }
-}
-
-/// Whether this air feeds a table the prover counts itself.
-///
-/// # Safety
-/// `p_setup` must be live for the duration of the call.
-pub unsafe fn mul_air_has_lookups_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
-    unsafe { mul_air_has_lookups(p_setup, airgroup_id, air_id) != 0 }
 }
 
 /// Count one instance's lookups straight from its filled witness, for paths that never commit

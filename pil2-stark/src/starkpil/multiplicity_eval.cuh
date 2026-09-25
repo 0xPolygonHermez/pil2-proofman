@@ -2,7 +2,6 @@
 #define MULTIPLICITY_EVAL_CUH
 
 #include "multiplicity_job.hpp"
-#include "multiplicity_job.hpp"
 #include "multiplicity_decoders.hpp"
 
 // Per-row device evaluation of a lookup field. The single copy shared by the multiplicity scatter
@@ -11,11 +10,6 @@
 struct MulBases {
     const uint64_t *constPols, *trace, *aux, *publics, *airValues, *proofValues, *airgroupValues,
                    *customFixed;
-    // cm1 may be the whole domain or a tile. `traceRows` is its column stride, `rowBegin` the
-    // global row of its first row; (domainSize, 0) for a full trace.
-    uint64_t traceRows, rowBegin;
-    // First global row this launch COUNTS (a haloed tile's window starts earlier, at rowBegin).
-    uint64_t rowStart;
     // Packed witness (read before unpack) and the side buffer of prover-computed stage-1 columns
     // (witness_hints_slot.hpp). Last and defaulted so brace initialisers are unaffected.
     const uint64_t *packed = nullptr, *side = nullptr;
@@ -23,7 +17,7 @@ struct MulBases {
     // Indexed rows: the instruction table and its geometry, air-uniform.
     const uint64_t *table = nullptr;
     uint64_t wordsPerEntry = 0, numEntries = 0, indexBits = 0;
-    // If set, `packed` is column-major: word w of row r at packed[w * traceRows + r].
+    // If set, `packed` is column-major: word w of row r at packed[w * nRows + r].
     uint32_t packedColMajor = 0;
 };
 
@@ -58,9 +52,6 @@ __device__ __forceinline__ uint64_t mulTermOffset(const MulTermDev& t, const Mul
                                                   uint64_t row, uint64_t rowMask) {
     if (MUL_SRC_IS_UNIFORM(t.src)) return t.sectionOffset;
     const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
-    // Modular: a tile's halo wraps past row 0 / the last row.
-    if (t.src == MUL_SRC_TRACE)
-        return (uint64_t)t.col * b.traceRows + ((r - b.rowBegin) & rowMask);
     // Column-major: this backend stores a section as `col * nRows + row`.
     return t.sectionOffset + (uint64_t)t.col * (rowMask + 1) + r;
 }
@@ -75,14 +66,13 @@ __device__ __forceinline__ uint64_t mulPackedAtCol(const uint64_t* __restrict__ 
     return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : v;
 }
 
-// A term's value, given the GLOBAL row (the power-of-two mask wraps `'`-shifts). A tile holds no
-// neighbours, so mulPlanStreamable refuses airs with shifted cm1 terms.
+// A term's value at `row` (the power-of-two mask wraps `'`-shifts).
 __device__ __forceinline__ uint64_t mulTermValue(const MulTermDev& t, const MulBases& b,
                                                  uint64_t row, uint64_t rowMask) {
     if (t.src == MUL_SRC_PACKED) {
         const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
         if (b.packedColMajor)
-            return mulPackedAtCol(b.packed, b.traceRows, r, t.sectionOffset, t.nCols);
+            return mulPackedAtCol(b.packed, rowMask + 1, r, t.sectionOffset, t.nCols);
         return mulPackedAt(b.packed, b.wordsPerRow, r, t.sectionOffset, t.nCols);
     }
     if (t.src == MUL_SRC_PACKED_IDX) {
@@ -98,12 +88,6 @@ __device__ __forceinline__ uint64_t mulTermValue(const MulTermDev& t, const MulB
                                         + ((row + (uint64_t)t.rowStride) & rowMask)]));
     return mulCanonHD(__ldg(&mulBaseFor(b, t.src)[mulTermOffset(t, b, row, rowMask)]));
 }
-
-
-
-
-
-
 
 // One operand of a compiled program instruction.
 __device__ __forceinline__ uint64_t mulOperandVal(const MulOperandDev& o, const MulBases& bases,
@@ -154,6 +138,5 @@ __device__ __forceinline__ uint64_t mulEvalField(uint32_t progOff, uint32_t prog
                                                  const MulBases& bases, uint64_t row, uint64_t rowMask) {
     return mulEvalProgram(prog + progOff, progLen, bases, row, rowMask);
 }
-
 
 #endif

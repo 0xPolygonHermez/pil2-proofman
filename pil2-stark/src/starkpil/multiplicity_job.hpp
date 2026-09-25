@@ -20,10 +20,8 @@ inline bool mulIsUniformType(uint16_t type, uint32_t base) {
     return type == base + 2 || type == base + 4 || type == base + 5 || type == base + 6;
 }
 
-// One range-check lookup, resolved. Backend-neutral: the GPU kernel and the CPU scatter evaluate
-// the SAME jobs. Addresses are resolved at registration against flat column-major buffers
-// (goldilocks_trace_layout.cuh). Row-varying sources index by `elemBase + row`, uniform ones
-// (publics, value pools) by `elemBase`, known only once the proof starts.
+// The buffer a term reads. Backend-neutral: the GPU kernel and the CPU scatter evaluate the SAME
+// jobs; only the base pointers, known once the proof starts, differ.
 enum MulSrc : uint32_t {
     MUL_SRC_CONST = 0, MUL_SRC_TRACE = 1, MUL_SRC_AUX = 2,
     MUL_SRC_PUBLIC = 3, MUL_SRC_AIRVALUE = 4, MUL_SRC_PROOFVALUE = 5, MUL_SRC_AIRGROUPVALUE = 6,
@@ -56,8 +54,8 @@ static_assert(sizeof(MulTermDev) == 24, "MulTermDev size drifted -- update the L
 
 // A lookup field, compiled: `computeExpressions_`'s instruction stream is linear SSA (`args[i]`
 // op, `args[i+1]` dst temp, `args[i+2..7]` operands) and transliterates one-for-one into
-// instructions the scatter evaluates inline per row. The interpreter remains only for operands
-// this cannot address (dim3 temporaries, challenges).
+// instructions the scatter evaluates inline per row. Operands it cannot address (dim3 temporaries,
+// challenges) fail the compile.
 //
 // Temporaries are per-thread registers paid by every row; exceeding the cap below fails loudly.
 #define MUL_PROG_MAX_TEMP 12
@@ -86,7 +84,6 @@ struct MulInsnDev {
 
 struct MulProgram {
     std::vector<MulInsnDev> insns;
-    bool     ok    = false;
 };
 
 inline MulOperandDev mulOpConst(uint64_t k) {
@@ -110,9 +107,6 @@ struct MulJobDev {
     uint64_t   biasFE;     // -min, in the field
     uint64_t   mapSlots;
     const uint64_t* mapKV;
-    // Digit recoding of the first tuple column; see MulDecoder. Needs one column, not the tuple.
-    const uint64_t* digitTab;
-    uint32_t   digitCols;
     uint64_t   hostAirId;  // the air whose virtual table holds this lookup's counters
     uint32_t   nKey;
     uint32_t   tableId;
@@ -123,12 +117,6 @@ struct MulJobDev {
     uint32_t   selProgOff, selProgLen;
     uint32_t   busProgOff, busProgLen;
     uint32_t   keyProgOff[MUL_MAX_TUPLE], keyProgLen[MUL_MAX_TUPLE];
-
 };
-
-// `bases` is indexed by MulSrc; a null entry is fine as long as no term names it.
-
-// Rows one block covers. Here, not with the kernel, because the plan sizes its grid from it.
-#define MUL_SCATTER_BLOCK 256
 
 #endif

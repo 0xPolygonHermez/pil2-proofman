@@ -2628,15 +2628,11 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     // A scatter needs this block's h_params/d_params staging; gate on this air's own plan, or
     // every air pays the const-pol unpack. The accumulator is keyed by DEVICE, not airId: the
     // counters live in the table's host air, not the instance feeding it.
-    MulAcc *mulAcc = nullptr;
-    if (!mulDecoders().empty()) {
-        for (const auto &kv : mulAccs())
-            if (kv.first.second == (int)gpuId) { mulAcc = kv.second; break; }
-    }
+    MulAcc *mulAcc = mulAccOnGpu((int)gpuId);
     bool needMulScatter = false;
     if (mulAcc != nullptr) {
         const MulPlan &p = mulPlanFor(*setupCtx, airgroupId, airId);
-        needMulScatter = !p.jobs.empty() || !p.fallback.empty();
+        needMulScatter = !p.jobs.empty();
     }
 
     if (nWitnessHints == 0 && !needMulScatter) sd.dropFixedSlot();
@@ -2736,17 +2732,12 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         }
 
         if (needMulScatter) {
-            // witnessExprBody uploads aux_values and d_params; without hints it did not run.
-            if (nWitnessHints == 0) {
+            // witnessExprBody uploads aux_values; without hints it did not run.
+            if (nWitnessHints == 0)
                 CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values,
                                              totalCopySize * sizeof(Goldilocks::Element),
                                              cudaMemcpyHostToDevice, stream));
-                CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams),
-                                             cudaMemcpyHostToDevice, stream));
-            }
-            calculateMulCalcGPU(*setupCtx, h_params, d_params, airgroupId, airId, mulAcc->d_acc,
-                                air_instance_info->expressions_gpu, d_expsArgs, d_destParams,
-                                pinned_exps_params, pinned_exps_args, countId, timer, stream);
+            calculateMulCalcGPU(*setupCtx, h_params, airgroupId, airId, mulAcc->d_acc, timer, stream);
         }
     }
 
@@ -3325,8 +3316,8 @@ struct SlotCommitCtx {
     MulStreamCtx     *mul = nullptr;            // null when this air feeds no prover-owned table
 };
 
-static void slotCommitHook(const uint64_t *dPacked, const uint64_t *dWidths,
-                           const StreamCommitDims &dims, cudaStream_t stream, void *user) {
+static void slotCommitHook(const uint64_t *dPacked, const StreamCommitDims &dims,
+                           cudaStream_t stream, void *user) {
     SlotCommitCtx *c = (SlotCommitCtx *)user;
     if (c == nullptr) return;
     if (c->dVals != nullptr && c->hVals != nullptr && c->nVals != 0)
@@ -3338,7 +3329,7 @@ static void slotCommitHook(const uint64_t *dPacked, const uint64_t *dWidths,
                            dims.colMajorForHook, c->constPols,
                            c->dVals, c->valOff, c->side, c->nRows, stream);
     // Inline on the commit stream: the device is saturated, so a separate stream gains nothing.
-    if (c->mul != nullptr) mulStreamHook(dPacked, dWidths, dims, stream, c->mul);
+    if (c->mul != nullptr) mulStreamHook(dPacked, dims, stream, c->mul);
 }
 
 static void slotCommitChunkHook(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
@@ -3506,22 +3497,17 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         }
     }
 
-    MulAcc *mulAcc = nullptr;
-    if (aii != nullptr && !mulDecoders().empty()) {
-        for (const auto &kv : mulAccs())
-            if (kv.first.second == firstGpu) { mulAcc = kv.second; break; }
-    }
+    MulAcc *mulAcc = aii != nullptr ? mulAccOnGpu(firstGpu) : nullptr;
     // Packing layout for the scatter; an unpacked air is the identity packing (64 bits per column).
     if (aii != nullptr) slotMulLayout(aii, airgroupId, airId, nCols, hintPlan, mulCtx);
 
     bool needsCount = false;
     if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
         const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
-        needsCount = !p.jobs.empty() || !p.fallback.empty();
+        needsCount = !p.jobs.empty();
         // If this air feeds a prover-owned table it MUST be counted here, or the root is valid
-        // and the multiplicities silently wrong. The interpreter fallback and jobs the tile kernel
-        // does not model cannot run on a slot, so refuse it.
-        if (needsCount && (!p.fallback.empty() || !mulPlanStreamable(p))) {
+        // and the multiplicities silently wrong. Jobs that read what a slot does not hold refuse it.
+        if (needsCount && !mulPlanStreamable(p)) {
             static std::once_flag once;
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
@@ -3578,16 +3564,11 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.setupCtx = aii->setupCtx;
         mulCtx.airgroupId = airgroupId;
         mulCtx.airId = airId;
-        mulCtx.slotIdx = slotIdx;
         mulCtx.acc = mulAcc->d_acc;
         mulCtx.oob = mulOob(firstGpu);
-        mulCtx.dColSource = dColSource;
-        mulCtx.dColLane = dColLane;
         mulCtx.dTable = dTable;
         mulCtx.packedColMajor = dims.colMajorForHook ? 1u : 0u;
         mulCtx.constPols = dConstUnpacked;
-        mulCtx.hostVals = hVals;
-        mulCtx.nVals = nVals;
         mulCtx.dVals = (dSide != nullptr && nVals != 0)
                      ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
         mulCtx.offPublics        = offPublics;
@@ -3595,9 +3576,6 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.offAirgroupValues = offAirgroupValues;
         mulCtx.offAirValues      = offAirValues;
         mulCtx.hintSide      = dSide;
-        mulCtx.hintDestCols  = hintDev.destCols;
-        mulCtx.hintDestSlots = hintDev.destSlots;
-        mulCtx.hintNDest     = hintDev.nDest;
         mulCtx.timer         = &timer;
         slotCtx.mul = &mulCtx;
     }
@@ -3729,12 +3707,9 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
         }
     }
 
-    MulAcc *mulAcc = nullptr;
-    if (!mulDecoders().empty())
-        for (const auto &kv : mulAccs())
-            if (kv.first.second == gpu) { mulAcc = kv.second; break; }
+    MulAcc *mulAcc = mulAccOnGpu(gpu);
 
-    size_t maxSide = 0, maxConst = 0, maxVals = 0;
+    size_t maxSide = 0, maxConst = 0;
     for (auto &air : d_buffers->air_instances) {
         auto pit = air.second.find("basic");
         if (pit == air.second.end() || pit->second.empty()) continue;
@@ -3749,7 +3724,6 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
 
         const uint64_t n = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
         const uint64_t nVals = n <= PINNED_AUX_VALUES_MAX ? n : 0;
-        maxVals = std::max<size_t>(maxVals, nVals);
 
         const SlotHintPlan &hintPlan = slotHintPlanFor(*aii->setupCtx, airgroupId, airId,
                                                        aii->unpack_info_host, aii->num_packed_words);
@@ -3762,7 +3736,7 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
         bool counts = false;
         if (mulAcc != nullptr) {
             const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
-            if (!p.jobs.empty() && p.fallback.empty() && mulPlanStreamable(p)) {
+            if (!p.jobs.empty() && mulPlanStreamable(p)) {
                 MulStreamCtx mulCtx{};
                 slotMulLayout(aii, airgroupId, airId, nCols, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
                 mulPlanDevice(p, airgroupId, airId, gpu);
@@ -3774,16 +3748,15 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
     }
     for (uint64_t s = 0; s < d_buffers->streamCommitSlots; s++) {
         if ((maxSide && !slotHintSideBuffer(gpu, s, maxSide)) ||
-            (maxConst && !mulStreamConst(gpu, s, maxConst)) ||
-            (maxVals && !mulStreamVals(gpu, s, maxVals)))
+            (maxConst && !mulStreamConst(gpu, s, maxConst)))
             zklog.warning("stream_commit_warmup: could not preallocate slot " + std::to_string(s) +
                           " buffers; they will be allocated on first use");
     }
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     static std::once_flag logged;
     std::call_once(logged, [&] {
-        zklog.info("Streaming-commit warm-up: per slot " + std::to_string((maxSide + maxConst + maxVals) * 8 >> 20) +
-                   " MB of hint/const/value buffers");
+        zklog.info("Streaming-commit warm-up: per slot " + std::to_string((maxSide + maxConst) * 8 >> 20) +
+                   " MB of hint/const buffers");
     });
 }
 

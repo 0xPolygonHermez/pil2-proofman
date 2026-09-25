@@ -27,20 +27,16 @@ uint64_t mul_air_device_owned(uint64_t airId) {
     return 0;
 }
 
-// The GPU backend's ordering point. A no-op here (the CPU scatter is inline), kept for a uniform
-// call sequence.
+// The scatter runs on the instance workers, which the caller does not join before reading the
+// accumulator, so wait for every instance to have counted.
 void mul_sync_commits(uint64_t expectedCommits) {
     if (mulDecoders().empty()) return;
     if (!mul_await_commits(expectedCommits)) exitProcess();
 }
 
-// No commit barrier: the CPU scatter runs inline, so counts are in when the commit returns.
-// `expectedCommits` is ignored.
-void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits) {
+// After mul_sync_commits, which waits for every instance to have counted.
+void mul_fold(uint64_t airId, uint64_t *hostAcc) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
-    // The scatter runs on the instance workers, which the caller does not join before building the
-    // table trace, so wait for every instance to have counted before reading the accumulator.
-    if (!mul_await_commits(expectedCommits)) exitProcess();
     mul_cpu_fold(airId, hostAcc);
 }
 

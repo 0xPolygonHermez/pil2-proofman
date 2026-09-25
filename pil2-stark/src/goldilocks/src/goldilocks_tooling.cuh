@@ -574,7 +574,7 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, 2 * max_size_proof * sizeof(Goldilocks::Element)));
         // x2: parity halves for the pipeline (see genProof_gpu pipeSlot) -- the next proof's host
         // staging must not overwrite a slot whose H2D is still queued behind the running proof.
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, 2 * maxExps * MAX_DEST_PARAMS * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, 2 * maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, 2 * maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, 2 * sizeof(StepsParams)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, 2 * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
@@ -603,7 +603,7 @@ struct StreamData{
                                            stream);
 
         CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc(&d_destParams, MAX_DEST_PARAMS * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
     }
 
@@ -734,11 +734,11 @@ struct DeviceRecursiveFBuffers
         CHECKCUDAERR(cudaMallocHost((void**)&pinnedBufferConstTree, pinnedBufferSize));
         // Allocate reusable buffers
         CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * MAX_DEST_PARAMS * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
         CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * MAX_DEST_PARAMS * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
     }
     
     ~DeviceRecursiveFBuffers() {

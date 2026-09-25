@@ -28,32 +28,23 @@ struct MulStreamCtx {
     uint64_t airgroupId, airId;
     uint64_t *acc;
     uint64_t *oob;
-    const uint8_t *dColSource, *dColLane;
     const uint64_t *dTable;
     // Device, this air's const pols UNPACKED (column-major, `col * nRows + row`), expanded into
     // mulStreamConst. d_constPols is bit-packed behind a header and must not be handed to the jobs.
     const uint64_t *constPols;
-    uint64_t slotIdx;                   // which streaming-commit slot this call owns
-    // Publics and the value pools, packed host-side into one contiguous window (consecutive from
-    // `publics` in the aux trace), capped at PINNED_AUX_VALUES_MAX. The hook uploads it into its own
-    // buffer. Null = no value reads, which mulPlanStreamable must have excluded.
-    const uint64_t *hostVals;
-    uint64_t nVals;                     // words in the window
-    // Already on the device (the air's witness_calc hints read the same pools): used instead of uploading.
+    // Publics and the value pools, one contiguous device window (uploaded by the slot hook), capped
+    // at PINNED_AUX_VALUES_MAX.
     const uint64_t *dVals;
+    uint64_t offPublics, offAirValues, offProofValues, offAirgroupValues;  // words into it
     // Stage-1 columns the prover computes; the packed rows predate them, so the rewrite reads them
     // from this buffer. Null when the air has no witness_calc hints (see witness_hints_slot.hpp).
     const uint64_t *hintSide;
-    const uint32_t *hintDestCols, *hintDestSlots;
-    uint32_t hintNDest;
-    uint64_t offPublics, offAirValues, offProofValues, offAirgroupValues;  // words into it
     // Host-side packing layout for rewriting the program onto the packed rows. For an INDEXED air the
     // column map says whether a value sits in the compact row or the instruction table, and which lane.
     const std::vector<uint64_t> *widths = nullptr;
     const std::vector<uint8_t> *colSource = nullptr, *colLane = nullptr;
     const SlotHintPlan *hintPlan = nullptr;
     uint64_t indexBits = 0, wordsPerEntry = 0, numEntries = 0, lanes = 0;
-    // Custom commits are still absent: they are trace-sized, not value-sized.
     // Slot scatter timer, the counterpart of MUL_SCATTER_KERNEL on the legacy path.
     TimerGPU *timer;
 };
@@ -132,9 +123,8 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
     MulInsnDev* dp = nullptr;
     const size_t bytes = prog.size() * sizeof(MulInsnDev);
     if (cudaMalloc(&dp, bytes) != cudaSuccess) { cache[key] = r; return r; }
-    if (cudaMemcpy(dp, prog.data(), bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
-        cudaFree(dp); cache[key] = r; return r;
-    }
+    // Never on the default stream: it would poison concurrent graph captures.
+    mulCopySync(gpuId, dp, prog.data(), bytes, cudaMemcpyHostToDevice);
     r.prog = dp; r.ok = true;
     cache[key] = r;
     return r;
@@ -157,12 +147,6 @@ inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, 
     if (cudaMalloc(&e.first, elems * sizeof(uint64_t)) != cudaSuccess) return nullptr;
     e.second = elems;
     return e.first;
-}
-
-// Publics and the three value pools, staged per (device, slot).
-inline uint64_t* mulStreamVals(int gpuId, uint64_t slotIdx, size_t elems) {
-    static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems);
 }
 
 // Where the caller expands this air's const pols before the commit. Sized nConstants * N.
@@ -190,13 +174,13 @@ inline bool mulScatterWantsColMajor(SetupCtx &setupCtx, uint64_t airgroupId, uin
 }
 
 // The hook handed to streamCommitPacked.
-inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
-                          const StreamCommitDims &dims, cudaStream_t stream, void *user) {
+inline void mulStreamHook(const uint64_t *dPacked, const StreamCommitDims &dims, cudaStream_t stream,
+                          void *user) {
     MulStreamCtx *c = (MulStreamCtx *)user;
     if (c == nullptr || c->acc == nullptr || mulDecoders().empty()) return;
 
     const MulPlan &plan = mulPlanFor(*c->setupCtx, c->airgroupId, c->airId);
-    if (plan.jobs.empty()) return;     // the interpreter fallback cannot run here; see the caller
+    if (plan.jobs.empty()) return;
     // Asserted, not assumed: a later-stage read has nothing to read here and would be miscounted.
     if (!mulPlanStreamable(plan)) {
         zklog.error("multiplicity: air " + std::to_string(c->airgroupId) + "/"
@@ -209,21 +193,9 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
     int gpuId = 0;
     CHECKCUDAERR(cudaGetDevice(&gpuId));
     const MulPlanDev dev = mulPlanDevice(plan, c->airgroupId, c->airId, gpuId);
-    if (dev.jobs == nullptr) return;
 
     const uint64_t nRows = 1ull << dims.nBits;
     const uint64_t *vals = c->dVals;
-    if (vals == nullptr && c->hostVals != nullptr && c->nVals != 0) {
-        uint64_t *dst = mulStreamVals(gpuId, c->slotIdx, c->nVals);
-        if (dst == nullptr) {
-            zklog.error("multiplicity: no room for the value window on gpu "
-                        + std::to_string(gpuId) + " -- this air's lookups would go uncounted");
-            exitProcess();
-        }
-        CHECKCUDAERR(cudaMemcpyAsync(dst, c->hostVals, c->nVals * sizeof(uint64_t),
-                                     cudaMemcpyHostToDevice, stream));
-        vals = dst;
-    }
 
     // The rewrite was validated before the commit (the slot is refused otherwise), so it cannot fail
     // here. One launch over the whole domain; `'`-shifted reads wrap on rowMask.
@@ -242,12 +214,11 @@ inline void mulStreamHook(const uint64_t *dPacked, const uint64_t *dWidths,
         vals ? vals + c->offAirgroupValues : nullptr,
         nullptr, nullptr, nullptr, nullptr };
     if (c->timer) c->timer->startCategory("MUL_SCATTER_PACKED");
-    mul_scatter_launch_tile(dev.jobs, (uint32_t)plan.jobs.size(), nRows, 0, 0, bases,
-                            nRows, nRows, c->acc, c->oob,
-                            (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
-                            dPacked, dims.wordsPerRow, c->hintSide,
-                            c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits,
-                            c->packedColMajor);
+    mul_scatter_launch(dev.jobs, (uint32_t)plan.jobs.size(), nRows, nRows, bases, c->acc, c->oob,
+                       (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
+                       dPacked, dims.wordsPerRow, c->hintSide,
+                       c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits,
+                       c->packedColMajor);
     if (c->timer) c->timer->stopCategory("MUL_SCATTER_PACKED");
     mul_note_scatter(gpuId, stream);
 }

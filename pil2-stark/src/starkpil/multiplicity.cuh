@@ -7,12 +7,9 @@
 #include <vector>
 #include <map>
 #include <utility>
-#include <chrono>
 #include <mutex>
 #include <algorithm>
 #include <string>
-#include <tuple>
-#include <thread>
 #include "zklog.hpp"
 #include "exit_process.hpp"
 #include "cuda_utils.cuh"
@@ -62,85 +59,6 @@ inline void mul_note_scatter(int gpuId, cudaStream_t stream) {
     p.pending.push_back(e);
 }
 
-// Scatter profiling behind ZISK_MUL_PROFILE: event pairs read only after the fold's own sync.
-enum MulPhase { MUL_PHASE_KERNEL = 0, MUL_PHASE_INTERP = 1, MUL_PHASE_N = 2 };
-
-struct MulPhaseSpan { cudaEvent_t start, stop; int phase; uint64_t air; uint64_t jobs; uint64_t rows; };
-
-inline std::vector<MulPhaseSpan>& mulPhaseSpans() { static std::vector<MulPhaseSpan> v; return v; }
-
-inline bool mulProfileEnabled() {
-    static const bool on = getenv("ZISK_MUL_PROFILE") != nullptr;
-    return on;
-}
-
-// Returns the span's index, or SIZE_MAX when profiling is off.
-inline size_t mul_phase_begin(int phase, cudaStream_t stream, uint64_t air = 0, uint64_t jobs = 0,
-                              uint64_t rows = 0) {
-    if (!mulProfileEnabled()) return SIZE_MAX;
-    MulPhaseSpan sp{nullptr, nullptr, phase, air, jobs, rows};
-    CHECKCUDAERR(cudaEventCreate(&sp.start));
-    CHECKCUDAERR(cudaEventCreate(&sp.stop));
-    CHECKCUDAERR(cudaEventRecord(sp.start, stream));
-    std::lock_guard<std::mutex> lk(mulEventMutex());
-    mulPhaseSpans().push_back(sp);
-    return mulPhaseSpans().size() - 1;
-}
-
-inline void mul_phase_end(size_t idx, cudaStream_t stream) {
-    if (idx == SIZE_MAX) return;
-    std::lock_guard<std::mutex> lk(mulEventMutex());
-    CHECKCUDAERR(cudaEventRecord(mulPhaseSpans()[idx].stop, stream));
-}
-
-// Summed GPU time per phase (ms) and launch count. Clears what it reports.
-inline void mul_phase_report() {
-    if (!mulProfileEnabled()) return;
-    std::vector<MulPhaseSpan> take;
-    {
-        std::lock_guard<std::mutex> lk(mulEventMutex());
-        take.swap(mulPhaseSpans());
-    }
-    double total[MUL_PHASE_N] = {0.0, 0.0};
-    uint64_t count[MUL_PHASE_N] = {0, 0};
-    // Per (phase, air): time, launches, jobs, rows.
-    std::map<std::pair<int, uint64_t>, std::tuple<double, uint64_t, uint64_t, uint64_t>> byAir;
-    for (MulPhaseSpan& sp : take) {
-        float ms = 0.0f;
-        // A span whose stop never recorded (an aborted job) is skipped rather than charged.
-        if (cudaEventQuery(sp.stop) == cudaSuccess && cudaEventElapsedTime(&ms, sp.start, sp.stop) == cudaSuccess) {
-            total[sp.phase] += ms;
-            count[sp.phase] += 1;
-            auto& e = byAir[{sp.phase, sp.air}];
-            std::get<0>(e) += ms; std::get<1>(e) += 1;
-            std::get<2>(e) = sp.jobs; std::get<3>(e) = sp.rows;
-        }
-        cudaEventDestroy(sp.start);
-        cudaEventDestroy(sp.stop);
-    }
-    std::vector<std::pair<double, std::string>> lines;
-    for (auto& [k, v] : byAir) {
-        char lb[200];
-        snprintf(lb, sizeof(lb), "  %s air %llu:%llu  %.1f ms over %llu launches, %llu jobs (%llu mapped), %llu job-rows",
-                 k.first == MUL_PHASE_KERNEL ? "kernel" : "interp",
-                 (unsigned long long)(k.second >> 32), (unsigned long long)(k.second & 0xffffffffULL),
-                 std::get<0>(v), (unsigned long long)std::get<1>(v),
-                 (unsigned long long)(std::get<2>(v) & 0xffffffffULL),
-                 (unsigned long long)(std::get<2>(v) >> 32),
-                 (unsigned long long)std::get<3>(v));
-        lines.emplace_back(std::get<0>(v), std::string(lb));
-    }
-    std::sort(lines.begin(), lines.end(), [](auto& a, auto& b) { return a.first > b.first; });
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "Multiplicity GPU: scatter kernel %.1f ms (%llu launches), interpreter %.1f ms (%llu launches), total %.1f ms",
-             total[MUL_PHASE_KERNEL], (unsigned long long)count[MUL_PHASE_KERNEL],
-             total[MUL_PHASE_INTERP], (unsigned long long)count[MUL_PHASE_INTERP],
-             total[MUL_PHASE_KERNEL] + total[MUL_PHASE_INTERP]);
-    zklog.info(buf);
-    for (auto& l : lines) zklog.info(l.second);
-}
-
 inline void mul_wait_scatters(int gpuId) {
     std::vector<cudaEvent_t> take;
     {
@@ -181,15 +99,27 @@ inline std::map<std::pair<uint64_t,int>, MulAcc*>& mulAccs() {
     return m;
 }
 
-// True iff a registered decoder targets a table in this layout.
-inline bool mulLayoutHostsMigrated(const MulVtLayout& L) {
-    for (const auto& d : mulDecoders())
-        if (L.accBase.count(d.table_id)) return true;
-    return false;
+// This device's accumulator, or null when nothing is prover-owned.
+inline MulAcc* mulAccOnGpu(int gpuId) {
+    if (mulDecoders().empty()) return nullptr;
+    for (const auto& kv : mulAccs())
+        if (kv.first.second == gpuId) return kv.second;
+    return nullptr;
 }
 
 // Allocate mirrors for every air that hosts a migrated table. Idempotent.
 inline void mul_alloc_devices(const int* gpuIds, int nGpus) {
+    // The GPU scatter writes every job into its device's one accumulator (mulAccOnGpu) and ignores
+    // MulJobDev::hostAirId, so a second host air would get the first one's counts.
+    std::string hosts;
+    uint32_t nHosts = 0;
+    for (const auto& L : mulVtLayouts())
+        if (mulLayoutHostsMigrated(L)) { ++nHosts; hosts += " " + std::to_string(L.airId); }
+    if (nHosts > 1) {
+        zklog.error("multiplicity: virtual-table airs" + hosts + " all host prover-owned tables, but "
+                    "the GPU scatter supports one host air; keep the other airs' tables std-owned");
+        exitProcess();
+    }
     for (const auto& L : mulVtLayouts()) {
         if (!mulLayoutHostsMigrated(L)) continue;
         for (int g = 0; g < nGpus; ++g) {
@@ -217,43 +147,24 @@ inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulMapDev() {
     return m;
 }
 
-// Mirror a per-table host vector onto one GPU, once per (table, gpu). `what` is for the error
-// message; failure is fatal, since the lookups it decodes would silently count nothing.
-inline void mulMirrorPerGpu(const std::map<uint64_t, std::vector<uint64_t>>& host,
-                            std::map<std::pair<uint64_t,int>, uint64_t*>& dev,
-                            int gpuId, const char* what) {
+// Mirror every table's map onto one GPU, once per (table, gpu). Failure is fatal, since the
+// lookups it decodes would silently count nothing.
+inline void mul_alloc_maps(int gpuId) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
-    for (const auto& kv : host) {
+    for (const auto& kv : mulTableMaps()) {
         auto key = std::make_pair(kv.first, gpuId);
-        if (dev.count(key) || kv.second.empty()) continue;
-        const size_t bytes = kv.second.size() * sizeof(uint64_t);
+        const std::vector<uint64_t>& host = kv.second.kv;
+        if (mulMapDev().count(key) || host.empty()) continue;
+        const size_t bytes = host.size() * sizeof(uint64_t);
         uint64_t* d = nullptr;
         if (cudaMalloc(&d, bytes) != cudaSuccess) {
-            zklog.error(std::string("multiplicity: could not allocate the ") + what + " for table "
-                        + std::to_string(kv.first) + " (" + std::to_string(bytes / 1000000) + " MB)");
+            zklog.error("multiplicity: could not allocate the map for table " + std::to_string(kv.first)
+                        + " (" + std::to_string(bytes / 1000000) + " MB)");
             exitProcess();
         }
-        mulCopySync(gpuId, d, kv.second.data(), bytes, cudaMemcpyHostToDevice);
-        dev[key] = d;
+        mulCopySync(gpuId, d, host.data(), bytes, cudaMemcpyHostToDevice);
+        mulMapDev()[key] = d;
     }
-}
-
-inline void mul_alloc_maps(int gpuId) {
-    mulMirrorPerGpu(mulTableMaps(), mulMapDev(), gpuId, "map");
-}
-
-inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulDigitDev() {
-    static std::map<std::pair<uint64_t,int>, uint64_t*> m;
-    return m;
-}
-
-inline void mul_alloc_digits(int gpuId) {
-    mulMirrorPerGpu(mulTableDigits(), mulDigitDev(), gpuId, "digit table");
-}
-
-inline const uint64_t* mulDigitsFor(uint64_t tableId, int gpuId) {
-    auto it = mulDigitDev().find(std::make_pair(tableId, gpuId));
-    return it == mulDigitDev().end() ? nullptr : it->second;
 }
 
 inline const uint64_t* mulMapFor(uint64_t tableId, int gpuId) {
@@ -273,13 +184,11 @@ inline void mul_alloc_peer_stage(int gpuId) {
     CHECKCUDAERR(cudaMalloc(&stage, MUL_PEER_CHUNK * sizeof(uint64_t)));
 }
 
-// Total bytes this device holds for maps, digit tables and accumulators.
+// Total bytes this device holds for maps, accumulators and the peer staging.
 inline uint64_t mul_gpu_resident_bytes(int gpuId) {
     uint64_t bytes = 0;
     for (const auto& kv : mulMapDev())
-        if (kv.first.second == gpuId) bytes += mulTableMaps()[kv.first.first].size() * sizeof(uint64_t);
-    for (const auto& kv : mulDigitDev())
-        if (kv.first.second == gpuId) bytes += mulTableDigits()[kv.first.first].size() * sizeof(uint64_t);
+        if (kv.first.second == gpuId) bytes += mulTableMaps()[kv.first.first].kv.size() * sizeof(uint64_t);
     for (const auto& kv : mulAccs())
         if (kv.first.second == gpuId) bytes += kv.second->n_counters * sizeof(uint64_t);
     if (mulPeerStage().count(gpuId)) bytes += MUL_PEER_CHUNK * sizeof(uint64_t);
@@ -362,15 +271,17 @@ void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStre
 // Set by mul_set_device_export: off unless the counts need no cross-rank reduction.
 inline bool& mulDeviceExportEnabled() { static bool on = false; return on; }
 
-// True when every table of `airId` is prover-owned, i.e. the device can produce the whole cm1.
-inline bool mul_air_fully_owned(uint64_t airId) {
-    if (!mulDeviceExportEnabled()) return false;
-    const MulVtLayout* L = nullptr;
-    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
-    if (L == nullptr || L->accBase.empty()) return false;
-    for (const auto& kv : L->accBase) if (mulDecoderFor(kv.first) == nullptr) return false;
-    return !mulAccs().empty();
+// The layout of `airId` when every table of it is prover-owned, i.e. the device can produce the
+// whole cm1; else null.
+inline const MulVtLayout* mulFullyOwnedLayout(uint64_t airId) {
+    if (!mulDeviceExportEnabled() || mulAccs().empty()) return nullptr;
+    const MulVtLayout* L = mulLayoutFor(airId);
+    if (L == nullptr || L->accBase.empty()) return nullptr;
+    for (const auto& kv : L->accBase) if (mulDecoderFor(kv.first) == nullptr) return nullptr;
+    return L;
 }
+
+inline bool mul_air_fully_owned(uint64_t airId) { return mulFullyOwnedLayout(airId) != nullptr; }
 
 // Write air `airId`'s counts straight into the committed trace at `dst`, on the device.
 // Returns false when it cannot (no accumulator, unrecognised shape); the caller then takes the
@@ -378,9 +289,8 @@ inline bool mul_air_fully_owned(uint64_t airId) {
 inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
                                 uint64_t numRows, uint64_t nCols, cudaStream_t stream) {
     // Off with several ranks (the host reduces them) or when the std still counts a table here.
-    if (dst == nullptr || !mul_air_fully_owned(airId)) return false;
-    const MulVtLayout* L = nullptr;
-    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
+    // All or nothing: the transpose writes the whole cm1.
+    const MulVtLayout* L = dst != nullptr ? mulFullyOwnedLayout(airId) : nullptr;
     if (L == nullptr) return false;
 
     // The accumulator is numRows * num_muls; a mismatch means the layouts diverged.
@@ -389,11 +299,6 @@ inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
                     + "x" + std::to_string(nCols) + " but its accumulator holds "
                     + std::to_string(L->nCounters) + " counters");
         return false;
-    }
-
-    // All or nothing: the transpose writes the whole cm1, zeroing any table the std still counts.
-    for (const auto& kv : L->accBase) {
-        if (mulDecoderFor(kv.first) == nullptr) return false;
     }
 
     MulAcc* local = nullptr;
@@ -438,19 +343,14 @@ inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
 
 // Fold every prover-owned span of `airId` into the Rust accumulator, adding one pass per GPU.
 inline void mul_fold_air(uint64_t airId, uint64_t* host_acc) {
-    const MulVtLayout* L = nullptr;
-    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
-    if (L == nullptr) return;
-
     std::vector<uint64_t> staging;
     for (auto& kv : mulAccs()) {
         if (kv.first.first != airId) continue;
         // Scatters committed on their own streams; wait on their events (no device-wide sync).
-
         CHECKCUDAERR(cudaSetDevice(kv.second->gpuId));
         mul_wait_scatters(kv.second->gpuId);
         for (const auto& d : mulDecoders()) {
-            if (!L->accBase.count(d.table_id)) continue;
+            if (d.hostAirId != airId) continue;
             if (staging.size() < d.n_rows) staging.resize(d.n_rows);
             mul_acc_fold_span(kv.second, host_acc, d.acc_base, d.n_rows, staging.data());
         }
