@@ -56,6 +56,28 @@ uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
     return mul_migrated_tables_impl(out, cap);
 }
 
+uint64_t mul_air_has_owned(uint64_t airId) {
+    return mul_air_has_owned_tables(airId) ? 1 : 0;
+}
+
+// No device to export from: accepted and ignored so the caller need not know the backend.
+void mul_set_device_export(uint64_t enabled) {
+    (void)enabled;
+}
+
+// Never: this backend has no device accumulator, so every air's trace is built on the host.
+uint64_t mul_air_device_owned(uint64_t airId) {
+    (void)airId;
+    return 0;
+}
+
+// The GPU backend's ordering point. A no-op here (the CPU scatter is inline), kept for a uniform
+// call sequence.
+void mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return;
+    if (!mul_await_commits(expectedCommits)) exitProcess();
+}
+
 // No commit barrier: the CPU scatter runs inline, so counts are in when the commit returns.
 // `expectedCommits` is ignored.
 void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits) {

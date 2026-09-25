@@ -148,6 +148,7 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
+    mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
     stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
@@ -795,6 +796,19 @@ impl<F: PrimeField64> ProofMan<F> {
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
         if self.pctx.gpu {
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
+            // Record which airs the device can produce whole; see `device_owned_table_airs`.
+            if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
+                let mut owned = self.pctx.device_owned_table_airs.write().unwrap();
+                owned.clear();
+                for l in layouts {
+                    if mul_air_device_owned_c(l.air_id) {
+                        owned.push(l.air_id as usize);
+                    }
+                }
+                if !owned.is_empty() {
+                    tracing::info!("Virtual tables: air(s) {:?} are produced and committed on the device", owned);
+                }
+            }
         }
         // Not in VirtualTableAir::execute: it is fork-exposed under --asm, where this FFI call kills
         // the process silently.
@@ -2641,6 +2655,9 @@ where
         // Memoized (see `register_prover_multiplicities`).
         timer_start_info!(FITTING_VIRTUAL_TABLES);
         proofman.register_prover_multiplicities()?;
+        // Single rank: a fully prover-owned table can be produced and committed on the device. With
+        // several ranks the host must gather every rank's share.
+        mul_set_device_export_c(proofman.mpi_ctx.n_processes == 1);
         timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
 
         Ok(proofman)
@@ -2737,23 +2754,46 @@ where
         if !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
             return Ok(());
         }
-        let owned = collect_prover_owned_ranges(&self.pctx, &self.sctx)?;
-        // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`)
-        // are independent hints; a pilout can have either without the other, so neither may gate
-        // the other's registration below. Kept as ids past this point too, to tell apart -- in the
-        // summary below -- the range tables that also fall inside the virtual-table population from
-        // the ones living in their own dedicated range-check airs.
+        // What the caller kept for itself. Everything else is the prover's, and below a table it
+        // cannot fit is an error rather than a quiet hand-back: the fall back costs a pass over the
+        // whole table on every proof, and nothing in a normal run would say so.
+        let std_owned: std::collections::HashSet<u64> =
+            self.options.std_owned_tables.iter().copied().collect();
+
+        let owned: Vec<(u64, i64)> = collect_prover_owned_ranges(&self.pctx, &self.sctx)?
+            .into_iter()
+            .filter(|(id, _)| !std_owned.contains(id))
+            .collect();
+        // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`) are
+        // independent hints, so neither may gate the other's registration.
         let (range_ids, range_biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
         if !range_ids.is_empty() {
             mul_register_range_tables_c(&range_ids, &range_biases);
         }
 
-        // Tables the prover can address itself: an affine row map where the table's layout admits
-        // one, otherwise an exact map over the table's own entries. Both are derived from the
-        // setup and verified against every entry; a table that fits neither is simply not claimed,
-        // and the std keeps counting it exactly as before.
+        // Affine row map where the layout admits one, else an exact map over the table's entries; both
+        // verified against every entry. A table that fits neither must be in `std_owned_tables`.
         let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx)?;
-        for m in &fitted {
+
+        // Unkept and unclaimed by both the range path and the fitter: fail with the ids rather than
+        // run a slow path.
+        let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
+        let fitted_ids: std::collections::HashSet<u64> = fitted.iter().map(|m| m.table_id).collect();
+        let orphans: Vec<u64> = vt_summary
+            .unclaimed_ids
+            .iter()
+            .copied()
+            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t) && !fitted_ids.contains(t))
+            .collect();
+        if !orphans.is_empty() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "virtual tables {orphans:?} are neither declared in ProofmanOptions::std_owned_tables \
+                 nor derivable by the prover: no row map fits them. Either declare them, so the \
+                 witness counts them as before, or make their layout fittable."
+            )));
+        }
+
+        for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
             match m.map.as_ref() {
                 Some((nkey, kv, slots)) => mul_register_table_map_c(m.table_id, kv, *nkey, *slots),
                 None => match &m.digits {
@@ -2802,8 +2842,17 @@ where
             return Ok(());
         }
         let expected_commits = self.pctx.dctx_get_process_instances_no_tables().len() as u64;
+        // Ordering point: every instance has launched its scatter. Device-owned airs transpose the
+        // accumulator into the trace in their own commit.
+        mul_sync_commits_c(expected_commits);
+
         let mut counts = self.pctx.prover_counts.write().unwrap();
         for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+            // Nothing to hand over: the device commits the whole air, or the prover counts none of its
+            // tables (building the accumulator would only clear the table for nothing).
+            if mul_air_device_owned_c(l.air_id) || !mul_air_has_owned_c(l.air_id) {
+                continue;
+            }
             let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
             // The fold adds into the destination, so clear first: exporting twice must not double.
             buf.iter_mut().for_each(|c| *c = 0);

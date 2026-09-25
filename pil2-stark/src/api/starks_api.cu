@@ -1377,6 +1377,13 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
+    // Device-owned table: re-derive cm1 from the live accumulator (reset per proof, not per phase).
+    // Must match commit_witness_gpu, or the contribution root will not match.
+    const bool mulExported = !air_instance_info->is_packed &&
+                             mul_export_to_trace(airId, (int)sd.gpuId, dst, N, nCols, stream);
+    if (mulExported) {
+        // nothing to upload
+    } else
     // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
     // first version is in production); other GPUs use the legacy upload.
     if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
@@ -2406,11 +2413,19 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
-    // Stage into the zone on the copy stream, then land it with one D2D. NOT a look-ahead: this
-    // instance's own trace, staged the moment the commit starts. The zone is memory nothing else
-    // is using, so the H2D starts immediately instead of queueing behind the previous commit's
-    // compute on this stream. No free slot -> the plain upload.
-    {
+    // A prover-owned virtual table is counted on this device: transpose the accumulator into
+    // the destination. The air has nothing but cm1, so `params->trace` is unused.
+    const bool exported = !air_instance_info->is_packed &&
+                          mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
+    if (exported) {
+        TimerStartCategoryGPU(timer, H2D_COPY);
+        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
+        TimerStopCategoryGPU(timer, H2D_COPY);
+    } else {
+        // Stage into the zone on the copy stream, then land it with one D2D. NOT a look-ahead: this
+        // instance's own trace, staged the moment the commit starts. The zone is memory nothing else
+        // is using, so the H2D starts immediately instead of queueing behind the previous commit's
+        // compute on this stream. No free slot -> the plain upload.
         int slot = -1;
         if (d_buffers->prefetchArmed && gpuId == d_buffers->my_gpu_ids[0] &&
             total_size <= d_buffers->prefetchSlotStride * sizeof(gl64_t)) {

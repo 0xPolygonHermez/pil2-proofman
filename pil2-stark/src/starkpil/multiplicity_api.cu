@@ -55,6 +55,41 @@ uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
     return mul_migrated_tables_impl(out, cap);
 }
 
+// Whether the prover counts any table of this air.
+uint64_t mul_air_has_owned(uint64_t airId) {
+    return mul_air_has_owned_tables(airId) ? 1 : 0;
+}
+
+// Off unless no cross-rank reduction is needed: the device accumulator holds only this rank's share.
+void mul_set_device_export(uint64_t enabled) {
+#ifdef __USE_CUDA__
+    mulDeviceExportEnabled() = (enabled != 0);
+#else
+    (void)enabled;
+#endif
+}
+
+// True when the device produces this air's whole cm1, so the host must not build its trace.
+uint64_t mul_air_device_owned(uint64_t airId) {
+#ifdef __USE_CUDA__
+    return mul_air_fully_owned(airId) ? 1 : 0;
+#else
+    (void)airId;
+    return 0;
+#endif
+}
+
+// Ordering point for the device export: once this returns every instance has launched its
+// scatter, so the table's own commit sees a complete accumulator.
+void mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return;
+    if (!mul_await_commits(expectedCommits)) exitProcess();
+#ifdef __USE_CUDA__
+    mul_phase_report();
+    mul_oob_report();
+#endif
+}
+
 // Fold the prover-owned spans into the caller's accumulator, once per proof. `hostAcc` is not retained.
 void mul_fold(uint64_t airId, uint64_t *hostAcc, uint64_t expectedCommits) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
@@ -80,6 +115,8 @@ void mul_alloc(void *d_buffers_) {
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) gpuIds[g] = (int)d_buffers->my_gpu_ids[g];
     mul_alloc_devices(gpuIds.data(), (int)gpuIds.size());
     for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); mul_alloc_digits(id); mul_alloc_indexed_base(id); }
+    if (gpuIds.size() > 1 && mulDeviceExportEnabled())
+        for (int id : gpuIds) mul_alloc_peer_stage(id);
 
     // Coverage, then GPU memory per device (it competes with that device's prover arena).
     mul_log_coverage();

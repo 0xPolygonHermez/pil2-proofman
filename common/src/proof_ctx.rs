@@ -198,6 +198,10 @@ pub struct ProofmanOptions {
     /// Custom-commit name -> packed file, known up front: the const buffer then reserves each commit's
     /// real packed width instead of one word per column. Same map `register_custom_commits` takes.
     pub custom_commits_fixed: HashMap<String, PathBuf>,
+
+    /// Virtual tables the caller counts itself in the witness; the prover must not claim them. Every
+    /// other table is the prover's, and one it cannot derive a row map for is a setup error.
+    pub std_owned_tables: Vec<u64>,
 }
 
 impl Default for ProofmanOptions {
@@ -216,6 +220,7 @@ impl Default for ProofmanOptions {
             packed_info: HashMap::new(),
             final_snark: false,
             custom_commits_fixed: HashMap::new(),
+            std_owned_tables: Vec::new(),
         }
     }
 }
@@ -285,6 +290,11 @@ impl ProofmanOptions {
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
     }
+
+    /// Declare the virtual tables this caller counts itself. A prover table it cannot derive fails setup.
+    pub fn std_owned_tables(&mut self, table_ids: Vec<u64>) {
+        self.std_owned_tables = table_ids;
+    }
 }
 
 #[allow(dead_code)]
@@ -317,6 +327,10 @@ pub struct ProofCtx<F: PrimeField64> {
     /// the virtual table. Held here rather than read back over the FFI: the witness library and the
     /// host binary each link their own copy of libstarks, and only the binary's is ever registered.
     pub prover_owned_tables: RwLock<Vec<u64>>,
+
+    /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
+    /// skip the instance for looking empty.
+    pub device_owned_table_airs: RwLock<Vec<usize>>,
     pub prover_counts: RwLock<HashMap<usize, Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -366,6 +380,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
+            device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
             global_info,

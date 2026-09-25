@@ -3,7 +3,6 @@
 #include <algorithm>
 #include "warp_atomic.cuh"
 #include "multiplicity_combine.cuh"
-
 // Dedicated range-check scatter: tuple, selector and bus id are linear forms, so a thread
 // evaluates all three from registers instead of running `computeExpressions_` once per hint.
 
@@ -305,4 +304,58 @@ void mul_scatter_launch_rows(const MulJobDev* d_jobs, uint32_t nJobs, const uint
     const uint32_t blocks = (uint32_t)((maxRows + MUL_SCATTER_BLOCK - 1) / MUL_SCATTER_BLOCK);
     mul_scatter_kernel_rows<<<blocks, MUL_SCATTER_BLOCK, 0, stream>>>(
         d_jobs, nJobs, bases, domainSize - 1, maxRows, acc, oob, air, d_prog);
+}
+
+// ---- Prover-owned table export: accumulator -> committed trace, on the device ----
+//
+// The accumulator is [column][row] (a warp's atomics hit the same cache lines); the committed trace
+// is [row][column]. Transposed through shared memory so both sides coalesce; +1 pad avoids bank
+// conflicts.
+#define MUL_T_TILE 32
+__global__ __launch_bounds__(MUL_T_TILE * 8)
+void mul_transpose_acc_kernel(const uint64_t* __restrict__ acc, uint64_t* __restrict__ trace,
+                              uint64_t numRows, uint64_t nCols) {
+    __shared__ uint64_t tile[MUL_T_TILE][MUL_T_TILE + 1];
+
+    const uint64_t col0 = (uint64_t)blockIdx.y * MUL_T_TILE;
+    const uint64_t row0 = (uint64_t)blockIdx.x * MUL_T_TILE;
+
+    // Read a tile: consecutive threadIdx.x walk consecutive rows of one column (coalesced in acc).
+    for (uint32_t j = threadIdx.y; j < MUL_T_TILE; j += blockDim.y) {
+        const uint64_t c = col0 + j;
+        const uint64_t r = row0 + threadIdx.x;
+        tile[j][threadIdx.x] = (c < nCols && r < numRows) ? acc[c * numRows + r] : 0ULL;
+    }
+    __syncthreads();
+
+    // Write it back transposed: consecutive threadIdx.x now walk consecutive columns of one row
+    // (coalesced in trace).
+    for (uint32_t j = threadIdx.y; j < MUL_T_TILE; j += blockDim.y) {
+        const uint64_t r = row0 + j;
+        const uint64_t c = col0 + threadIdx.x;
+        if (r < numRows && c < nCols) trace[r * nCols + c] = tile[threadIdx.x][j];
+    }
+}
+
+void mul_transpose_acc_launch(const uint64_t* acc, uint64_t* trace, uint64_t numRows, uint64_t nCols,
+                              cudaStream_t stream) {
+    if (acc == nullptr || trace == nullptr || numRows == 0 || nCols == 0) return;
+    dim3 block(MUL_T_TILE, 8);
+    dim3 grid((uint32_t)((numRows + MUL_T_TILE - 1) / MUL_T_TILE),
+              (uint32_t)((nCols + MUL_T_TILE - 1) / MUL_T_TILE));
+    mul_transpose_acc_kernel<<<grid, block, 0, stream>>>(acc, trace, numRows, nCols);
+}
+
+// Elementwise add of a peer GPU's partial accumulator, staged on this device by the caller.
+__global__ __launch_bounds__(256)
+void mul_acc_add_kernel(uint64_t* __restrict__ dst, const uint64_t* __restrict__ src, uint64_t n) {
+    const uint64_t stride = (uint64_t)gridDim.x * blockDim.x;
+    for (uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride)
+        if (src[i]) dst[i] += src[i];
+}
+
+void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStream_t stream) {
+    if (dst == nullptr || src == nullptr || n == 0) return;
+    const uint32_t blocks = (uint32_t)std::min<uint64_t>((n + 255) / 256, 4096);
+    mul_acc_add_kernel<<<blocks, 256, 0, stream>>>(dst, src, n);
 }

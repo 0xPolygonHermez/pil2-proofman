@@ -18,7 +18,6 @@
 #include "cuda_utils.cuh"
 #include "multiplicity.hpp"
 
-
 // ---------------------------------------------------------------------------------------------
 // Every host<->device operation below runs on a per-device NON-BLOCKING stream. The legacy
 // default stream would fail and poison any graph another thread is capturing concurrently.
@@ -350,6 +349,18 @@ inline const uint64_t* mulMapFor(uint64_t tableId, int gpuId) {
     return it == mulMapDev().end() ? nullptr : it->second;
 }
 
+// Staging for folding another GPU's partial into this one, a fixed chunk per device. Allocated by
+// mul_alloc when there are several GPUs, never on the commit path.
+static constexpr uint64_t MUL_PEER_CHUNK = 8ull << 20;   // counters (64 MB)
+inline std::map<int, uint64_t*>& mulPeerStage() { static std::map<int, uint64_t*> m; return m; }
+
+inline void mul_alloc_peer_stage(int gpuId) {
+    uint64_t*& stage = mulPeerStage()[gpuId];
+    if (stage != nullptr) return;
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+    CHECKCUDAERR(cudaMalloc(&stage, MUL_PEER_CHUNK * sizeof(uint64_t)));
+}
+
 // Total bytes this device currently holds for maps, digit tables, indexed-base tables and
 // accumulators -- the one number that actually matters to an operator here, since it is
 // per-GPU and competes directly with the prover's own arena on that device.
@@ -363,6 +374,7 @@ inline uint64_t mul_gpu_resident_bytes(int gpuId) {
         if (kv.first.second == gpuId) bytes += mulTableIndexedBase()[kv.first.first].size() * sizeof(uint64_t);
     for (const auto& kv : mulAccs())
         if (kv.first.second == gpuId) bytes += kv.second->n_counters * sizeof(uint64_t);
+    if (mulPeerStage().count(gpuId)) bytes += MUL_PEER_CHUNK * sizeof(uint64_t);
     return bytes;
 }
 
@@ -433,6 +445,87 @@ inline uint64_t mul_oob_report() {
                     + "]) -- that decoder is wrong");
     }
     return total;
+}
+
+void mul_transpose_acc_launch(const uint64_t* acc, uint64_t* trace, uint64_t numRows, uint64_t nCols,
+                              cudaStream_t stream);
+void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStream_t stream);
+
+// Set by mul_set_device_export: off unless the counts need no cross-rank reduction.
+inline bool& mulDeviceExportEnabled() { static bool on = false; return on; }
+
+// True when every table of `airId` is prover-owned, i.e. the device can produce the whole cm1.
+inline bool mul_air_fully_owned(uint64_t airId) {
+    if (!mulDeviceExportEnabled()) return false;
+    const MulVtLayout* L = nullptr;
+    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
+    if (L == nullptr || L->accBase.empty()) return false;
+    for (const auto& kv : L->accBase) if (mulDecoderFor(kv.first) == nullptr) return false;
+    return !mulAccs().empty();
+}
+
+// Write air `airId`'s counts straight into the committed trace at `dst`, on the device.
+// Returns false when it cannot (no accumulator, unrecognised shape); the caller then takes the
+// host path, which a cross-rank reduction also needs.
+inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
+                                uint64_t numRows, uint64_t nCols, cudaStream_t stream) {
+    // Off with several ranks (the host reduces them) or when the std still counts a table here.
+    if (dst == nullptr || !mul_air_fully_owned(airId)) return false;
+    const MulVtLayout* L = nullptr;
+    for (const auto& l : mulVtLayouts()) if (l.airId == airId) { L = &l; break; }
+    if (L == nullptr) return false;
+
+    // The accumulator is numRows * num_muls; a mismatch means the layouts diverged.
+    if (numRows * nCols != L->nCounters) {
+        zklog.error("multiplicity: air " + std::to_string(airId) + " trace is " + std::to_string(numRows)
+                    + "x" + std::to_string(nCols) + " but its accumulator holds "
+                    + std::to_string(L->nCounters) + " counters");
+        return false;
+    }
+
+    // All or nothing: the transpose writes the whole cm1, zeroing any table the std still counts.
+    for (const auto& kv : L->accBase) {
+        if (mulDecoderFor(kv.first) == nullptr) return false;
+    }
+
+    MulAcc* local = nullptr;
+    std::vector<MulAcc*> remote;
+    for (auto& kv : mulAccs()) {
+        if (kv.first.first != airId) continue;
+        if (kv.first.second == gpuId) local = kv.second;
+        else remote.push_back(kv.second);
+    }
+    if (local == nullptr) return false;
+
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+    // Every scatter that fed this air, on every device, must be visible before the transpose.
+    mul_wait_scatters(gpuId);
+    for (MulAcc* r : remote) { CHECKCUDAERR(cudaSetDevice(r->gpuId)); mul_wait_scatters(r->gpuId); }
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+
+    // Fold the other GPUs' partials into this one through the staging chunk (peer access need
+    // not be enabled), then zero them, so a second export (the proof, on any GPU) stays exact.
+    if (!remote.empty()) {
+        uint64_t* stage = mulPeerStage()[gpuId];
+        if (stage == nullptr) {
+            zklog.error("multiplicity: no peer staging on gpu " + std::to_string(gpuId));
+            exitProcess();
+        }
+        for (MulAcc* r : remote) {
+            for (uint64_t off = 0; off < L->nCounters; off += MUL_PEER_CHUNK) {
+                const uint64_t n = std::min<uint64_t>(MUL_PEER_CHUNK, L->nCounters - off);
+                CHECKCUDAERR(cudaMemcpyPeerAsync(stage, gpuId, r->d_acc + off, r->gpuId,
+                                                 n * sizeof(uint64_t), stream));
+                mul_acc_add_launch(local->d_acc + off, stage, n, stream);
+            }
+        }
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        for (MulAcc* r : remote) mulMemsetSync(r->gpuId, r->d_acc, 0, L->nCounters * sizeof(uint64_t));
+        CHECKCUDAERR(cudaSetDevice(gpuId));
+    }
+
+    mul_transpose_acc_launch(local->d_acc, dst, numRows, nCols, stream);
+    return true;
 }
 
 // Fold every prover-owned span of `airId` into the Rust accumulator, adding one pass per GPU.

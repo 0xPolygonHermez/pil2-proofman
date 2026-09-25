@@ -819,6 +819,10 @@ extern "C" {
     );
     pub fn mul_reset();
     pub fn mul_fold(airId: u64, hostAcc: *mut u64, expectedCommits: u64);
+    pub fn mul_air_has_owned(airId: u64) -> u64;
+    pub fn mul_set_device_export(enabled: u64);
+    pub fn mul_air_device_owned(airId: u64) -> u64;
+    pub fn mul_sync_commits(expectedCommits: u64);
 }
 
 // Type definitions

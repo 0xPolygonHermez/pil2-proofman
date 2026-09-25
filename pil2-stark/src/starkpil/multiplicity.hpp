@@ -371,6 +371,15 @@ inline uint64_t mul_migrated_tables_impl(uint64_t* out, uint64_t cap) {
     return n;
 }
 
+// Whether the prover counts anything in this air; if not, the host builds no accumulator for it.
+inline bool mul_air_has_owned_tables(uint64_t airId) {
+    for (const auto& l : mulVtLayouts()) {
+        if (l.airId != airId) continue;
+        for (const auto& kv : l.accBase) if (mulDecoderFor(kv.first) != nullptr) return true;
+    }
+    return false;
+}
+
 // One aggregate line of what is still Rust-owned across all virtual-table airs, with the height a
 // decoder would have to cover. Shared by both backends' `mul_alloc`.
 inline void mul_log_coverage() {

@@ -205,8 +205,7 @@ pub struct VtFitSummary {
     /// Total bytes across every exact map (GPU-resident per device).
     pub exact_bytes: u64,
     pub elapsed_ms: u128,
-    /// Considered tables this function did not fit -- some are range tables claimed elsewhere (see
-    /// `collect_prover_owned_ranges`), the rest are genuinely left to the std to count.
+    /// Considered but not fitted: range tables (`collect_prover_owned_ranges`) or std-owned ones.
     pub unclaimed_ids: Vec<u64>,
 }
 
@@ -933,7 +932,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
 
             // The lookup states how many elements it sends; that is the key width.
             let Some(width) = arity.get(&tid).copied() else {
-                tracing::debug!("virtual table {tid}: no lookup found, left to the std");
+                tracing::debug!("virtual table {tid}: no lookup found, not fitted");
                 continue;
             };
             if width == 0 || width > 8 {
@@ -958,7 +957,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 let [only] = matches[..] else {
                     tracing::trace!(
                         "virtual table {tid}: group {g} matches {} proves-side hints, not one -- \
-                         left to the std",
+                         not fitted",
                         matches.len()
                     );
                     ok = false;
@@ -982,7 +981,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             if let Some(short) = tuple_cols.values().map(|c| c.len()).filter(|n| *n < width).min() {
                 tracing::debug!(
                     "virtual table {tid}: lookup sends {width} elements but a group carries only \
-                     {short} -- left to the std"
+                     {short} -- not fitted"
                 );
                 continue;
             }
@@ -1003,7 +1002,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
                 samples[i] = (tuple, row_in_table);
             }
             if !ok {
-                tracing::debug!("virtual table {tid}: proves-side tuple unavailable, left to the std");
+                tracing::debug!("virtual table {tid}: proves-side tuple unavailable, not fitted");
                 continue;
             }
 
@@ -1082,7 +1081,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             } else {
                 let ranges: Vec<u64> =
                     (0..width).map(|j| samples.iter().map(|(t, _)| t[j]).max().unwrap_or(0)).collect();
-                tracing::debug!("virtual table {tid}: no fit, left to the std ({} ms)", t_fit.elapsed().as_millis());
+                tracing::debug!("virtual table {tid}: no fit, not fitted ({} ms)", t_fit.elapsed().as_millis());
                 tracing::debug!(
                     "virtual table {tid}: NO FIT ({} entries, {width} columns) -- not affine and its \
                      tuple does not separate its rows; column maxima {ranges:?}",
@@ -1091,9 +1090,7 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
             }
         }
     }
-    // Considered tables not among the fitted ones: some are range tables (claimed via the separate
-    // `collect_prover_owned_ranges` path, which this function never examines), the rest genuinely
-    // left to the std. The caller, which has both populations in scope, tells them apart.
+    // Unfitted: range tables or std-owned; the caller tells them apart.
     let fitted_ids: std::collections::HashSet<u64> = out.iter().map(|m| m.table_id).collect();
     let unclaimed_ids: Vec<u64> = considered_ids.into_iter().filter(|tid| !fitted_ids.contains(tid)).collect();
     Ok((
@@ -1486,8 +1483,12 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
 
             self.calculated.store(true, Ordering::Relaxed);
 
+            // Device-owned air: the counts are already on the GPU, so skip the host path and the
+            // emptiness check (which would see zeros and drop the instance).
+            let device_owned = pctx.device_owned_table_airs.read().unwrap().contains(&self.air_id);
+
             // Before `distribute_multiplicities`, so the MPI path sees a complete accumulator.
-            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&self.air_id) {
+            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&self.air_id).filter(|_| !device_owned) {
                 for (slot, add) in self.multiplicities.iter().zip(counts.iter()) {
                     if *add != 0 {
                         slot.fetch_add(*add, Ordering::Relaxed);
@@ -1499,7 +1500,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
             // multiplicities are produced there, so there is no cross-rank reduction.
             let assigned = pctx.dctx_is_assigned_table(instance_id)?;
 
-            if self.shared_tables && !assigned {
+            if self.shared_tables && !assigned && !device_owned {
                 let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, self.num_cols, self.num_rows, owner_idx);
             }
@@ -1516,8 +1517,9 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
                     .take()
                     .expect("VirtualTableAir trace_buffer must be populated by reclaim before calculate_witness");
                 debug_assert_eq!(buffer.len(), buffer_size);
-                let any_nonzero = std::sync::atomic::AtomicBool::new(false);
+                let any_nonzero = std::sync::atomic::AtomicBool::new(device_owned);
                 let num_rows = self.num_rows;
+                if !device_owned {
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, slot) in chunk.iter_mut().enumerate() {
                         let v = self.multiplicities[col * num_rows + row].load(Ordering::Relaxed);
@@ -1527,6 +1529,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
                         *slot = F::from_u64(v);
                     }
                 });
+                }
                 if !any_nonzero.load(Ordering::Relaxed) {
                     tracing::info!(
                         "Skipping uninitialized virtual table (airgroup_id: {}, air_id: {})",
