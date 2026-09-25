@@ -51,8 +51,7 @@ void mul_alloc(void *d_buffers_) {
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) gpuIds[g] = (int)d_buffers->my_gpu_ids[g];
     mul_alloc_devices(gpuIds.data(), (int)gpuIds.size());
     for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); }
-    if (gpuIds.size() > 1 && mulDeviceExportEnabled())
-        for (int id : gpuIds) mul_alloc_peer_stage(id);
+    if (gpuIds.size() > 1 && mulDeviceExportEnabled()) mul_alloc_peers(gpuIds);
 
     // Coverage, then GPU memory per device (it competes with that device's prover arena).
     mul_log_coverage();

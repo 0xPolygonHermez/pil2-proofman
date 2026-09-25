@@ -1690,6 +1690,11 @@ pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 
     unsafe { get_stream_commit_slots(d_buffers) }
 }
 
+/// GPUs this process drives (not the node's device count).
+pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_gpus(d_buffers) }
+}
+
 pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_floor(d_buffers) }
 }

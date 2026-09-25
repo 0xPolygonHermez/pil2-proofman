@@ -172,16 +172,69 @@ inline const uint64_t* mulMapFor(uint64_t tableId, int gpuId) {
     return it == mulMapDev().end() ? nullptr : it->second;
 }
 
-// Staging for folding another GPU's partial into this one, a fixed chunk per device. Allocated by
-// mul_alloc when there are several GPUs, never on the commit path.
-static constexpr uint64_t MUL_PEER_CHUNK = 8ull << 20;   // counters (64 MB)
-inline std::map<int, uint64_t*>& mulPeerStage() { static std::map<int, uint64_t*> m; return m; }
+// Folding the other GPUs' partials into the exporting one. Per device: two streams, each with a
+// staging chunk, so one chunk's peer copy overlaps the previous chunk's add; `done` marks the end
+// of a device's pulls. Allocated by mul_alloc when there are several GPUs, never on the commit path.
+static constexpr uint64_t MUL_PEER_CHUNK = 4ull << 20;   // counters per staging (32 MB)
+struct MulPeer {
+    cudaStream_t stream[2] = {};
+    uint64_t* stage[2] = {};
+    cudaEvent_t done[2] = {};
+};
+inline std::map<int, MulPeer>& mulPeers() { static std::map<int, MulPeer> m; return m; }
 
-inline void mul_alloc_peer_stage(int gpuId) {
-    uint64_t*& stage = mulPeerStage()[gpuId];
-    if (stage != nullptr) return;
-    CHECKCUDAERR(cudaSetDevice(gpuId));
-    CHECKCUDAERR(cudaMalloc(&stage, MUL_PEER_CHUNK * sizeof(uint64_t)));
+// Air -> the GPU whose accumulator holds this proof's total (the others keep their partials).
+inline std::map<uint64_t, int>& mulFoldedOn() { static std::map<uint64_t, int> m; return m; }
+
+inline void mul_alloc_peers(const std::vector<int>& gpuIds) {
+    for (int a : gpuIds) {
+        if (mulPeers().count(a)) continue;
+        CHECKCUDAERR(cudaSetDevice(a));
+        // Direct DMA between the cards where the topology allows it; the driver bounces through
+        // the host otherwise.
+        for (int b : gpuIds) {
+            int can = 0;
+            if (a == b || cudaDeviceCanAccessPeer(&can, a, b) != cudaSuccess || !can) continue;
+            const cudaError_t e = cudaDeviceEnablePeerAccess(b, 0);
+            if (e != cudaSuccess && e != cudaErrorPeerAccessAlreadyEnabled) CHECKCUDAERR(e);
+            (void)cudaGetLastError();
+        }
+        MulPeer& p = mulPeers()[a];
+        for (int k = 0; k < 2; k++) {
+            CHECKCUDAERR(cudaStreamCreateWithFlags(&p.stream[k], cudaStreamNonBlocking));
+            CHECKCUDAERR(cudaMalloc(&p.stage[k], MUL_PEER_CHUNK * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaEventCreateWithFlags(&p.done[k], cudaEventDisableTiming));
+        }
+    }
+}
+
+void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStream_t stream);
+
+// Enqueue dst += src (add) or dst = src on dst's peer streams, after src's previous pulls.
+inline void mulPull(const MulAcc* dst, const MulAcc* src, uint64_t n, bool add) {
+    if (src == nullptr || !mulPeers().count(dst->gpuId) || !mulPeers().count(src->gpuId)) {
+        zklog.error("multiplicity: no peer fold context between gpu " + std::to_string(dst->gpuId) +
+                    " and gpu " + std::to_string(src ? src->gpuId : -1));
+        exitProcess();
+    }
+    MulPeer& p = mulPeers()[dst->gpuId];
+    const MulPeer& q = mulPeers()[src->gpuId];
+    CHECKCUDAERR(cudaSetDevice(dst->gpuId));
+    for (int k = 0; k < 2; k++)
+        for (int j = 0; j < 2; j++) CHECKCUDAERR(cudaStreamWaitEvent(p.stream[k], q.done[j], 0));
+    if (!add) {
+        CHECKCUDAERR(cudaMemcpyPeerAsync(dst->d_acc, dst->gpuId, src->d_acc, src->gpuId,
+                                         n * sizeof(uint64_t), p.stream[0]));
+    } else {
+        for (uint64_t off = 0, c = 0; off < n; off += MUL_PEER_CHUNK, c++) {
+            const int k = (int)(c & 1);
+            const uint64_t len = std::min<uint64_t>(MUL_PEER_CHUNK, n - off);
+            CHECKCUDAERR(cudaMemcpyPeerAsync(p.stage[k], dst->gpuId, src->d_acc + off, src->gpuId,
+                                             len * sizeof(uint64_t), p.stream[k]));
+            mul_acc_add_launch(dst->d_acc + off, p.stage[k], len, p.stream[k]);
+        }
+    }
+    for (int k = 0; k < 2; k++) CHECKCUDAERR(cudaEventRecord(p.done[k], p.stream[k]));
 }
 
 // Total bytes this device holds for maps, accumulators and the peer staging.
@@ -191,7 +244,7 @@ inline uint64_t mul_gpu_resident_bytes(int gpuId) {
         if (kv.first.second == gpuId) bytes += mulTableMaps()[kv.first.first].kv.size() * sizeof(uint64_t);
     for (const auto& kv : mulAccs())
         if (kv.first.second == gpuId) bytes += kv.second->n_counters * sizeof(uint64_t);
-    if (mulPeerStage().count(gpuId)) bytes += MUL_PEER_CHUNK * sizeof(uint64_t);
+    if (mulPeers().count(gpuId)) bytes += 2 * MUL_PEER_CHUNK * sizeof(uint64_t);
     return bytes;
 }
 
@@ -216,6 +269,7 @@ inline void mul_alloc_oob(int gpuId) {
 // Once per proof, from ProofMan::reset.
 inline void mul_reset_all() {
     mul_reset_commits();
+    mulFoldedOn().clear();
     for (auto& kv : mulOobMap()) {
         if (kv.second == nullptr) continue;
         CHECKCUDAERR(cudaSetDevice(kv.first));
@@ -266,7 +320,6 @@ inline uint64_t mul_oob_report() {
 
 void mul_transpose_acc_launch(const uint64_t* acc, uint64_t* trace, uint64_t numRows, uint64_t nCols,
                               cudaStream_t stream);
-void mul_acc_add_launch(uint64_t* dst, const uint64_t* src, uint64_t n, cudaStream_t stream);
 
 // Set by mul_set_device_export: off unless the counts need no cross-rank reduction.
 inline bool& mulDeviceExportEnabled() { static bool on = false; return on; }
@@ -316,24 +369,27 @@ inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
     for (MulAcc* r : remote) { CHECKCUDAERR(cudaSetDevice(r->gpuId)); mul_wait_scatters(r->gpuId); }
     CHECKCUDAERR(cudaSetDevice(gpuId));
 
-    // Fold the other GPUs' partials into this one through the staging chunk (peer access need
-    // not be enabled), then zero them, so a second export (the proof, on any GPU) stays exact.
+    // First export of the proof: a tree reduction onto this GPU, pairs in parallel, log2(n) rounds.
+    // Later ones (the proof, maybe on another GPU) copy the total from where it landed.
     if (!remote.empty()) {
-        uint64_t* stage = mulPeerStage()[gpuId];
-        if (stage == nullptr) {
-            zklog.error("multiplicity: no peer staging on gpu " + std::to_string(gpuId));
-            exitProcess();
+        auto folded = mulFoldedOn().find(airId);
+        std::vector<const MulAcc*> used;
+        if (folded == mulFoldedOn().end()) {
+            std::vector<const MulAcc*> order{local};
+            order.insert(order.end(), remote.begin(), remote.end());
+            for (size_t step = 1; step < order.size(); step *= 2)
+                for (size_t i = 0; i + step < order.size(); i += 2 * step)
+                    mulPull(order[i], order[i + step], L->nCounters, true);
+            used = order;
+            mulFoldedOn()[airId] = gpuId;
+        } else if (folded->second != gpuId) {
+            const MulAcc* holder = nullptr;
+            for (const MulAcc* r : remote) if (r->gpuId == folded->second) holder = r;
+            mulPull(local, holder, L->nCounters, false);
+            used = {local, holder};
         }
-        for (MulAcc* r : remote) {
-            for (uint64_t off = 0; off < L->nCounters; off += MUL_PEER_CHUNK) {
-                const uint64_t n = std::min<uint64_t>(MUL_PEER_CHUNK, L->nCounters - off);
-                CHECKCUDAERR(cudaMemcpyPeerAsync(stage, gpuId, r->d_acc + off, r->gpuId,
-                                                 n * sizeof(uint64_t), stream));
-                mul_acc_add_launch(local->d_acc + off, stage, n, stream);
-            }
-        }
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-        for (MulAcc* r : remote) mulMemsetSync(r->gpuId, r->d_acc, 0, L->nCounters * sizeof(uint64_t));
+        for (const MulAcc* a : used)
+            for (int k = 0; k < 2; k++) CHECKCUDAERR(cudaStreamSynchronize(mulPeers()[a->gpuId].stream[k]));
         CHECKCUDAERR(cudaSetDevice(gpuId));
     }
 

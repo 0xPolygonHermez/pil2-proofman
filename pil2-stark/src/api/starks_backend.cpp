@@ -76,6 +76,7 @@ uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
+uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes, uint64_t contribFootprintBytes);
@@ -157,6 +158,7 @@ StarksBackend cpu_backend = []() {
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
     backend.get_const_pols_aggregation_offset = nullptr;
     backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
+    backend.get_stream_commit_gpus = nullptr;
     backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
     backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
@@ -234,6 +236,7 @@ StarksBackend gpu_backend = []() {
     backend.get_first_gpu_buffer = get_first_gpu_buffer_gpu;
     backend.get_const_pols_aggregation_offset = get_const_pols_aggregation_offset_gpu;
     backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
+    backend.get_stream_commit_gpus = get_stream_commit_gpus_gpu;
     backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
     backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
@@ -540,6 +543,12 @@ uint64_t get_const_pols_aggregation_offset(void *d_buffers_) {
 uint64_t get_stream_commit_slots(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_stream_commit_slots ? backend->get_stream_commit_slots(d_buffers_) : 0;
+}
+
+// GPUs this process drives, each with its own slots (not the node's device count).
+uint64_t get_stream_commit_gpus(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_stream_commit_gpus ? backend->get_stream_commit_gpus(d_buffers_) : 0;
 }
 
 uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow) {

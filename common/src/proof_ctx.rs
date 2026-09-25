@@ -297,10 +297,25 @@ impl ProofmanOptions {
     }
 }
 
-/// `ProofCtx::witness_staged` states.
+/// `ProofCtx::witness_staged` states. A staged state carries its zone's GPU (local index) in the
+/// bits above `WITNESS_STAGED_KIND`; see [`witness_staged_on`] and [`witness_staged_gpu`].
 pub const WITNESS_NOT_STAGED: u8 = 0;
 pub const WITNESS_STAGED: u8 = 1;
 pub const WITNESS_STAGED_RELEASED: u8 = 2;
+pub const WITNESS_STAGED_KIND: u8 = 3;
+
+pub const fn witness_staged_on(kind: u8, gpu: u8) -> u8 {
+    kind | (gpu << 2)
+}
+
+/// The GPU whose zone holds the witness, or None when it is not staged.
+pub const fn witness_staged_gpu(state: u8) -> Option<usize> {
+    if state & WITNESS_STAGED_KIND == WITNESS_NOT_STAGED {
+        None
+    } else {
+        Some((state >> 2) as usize)
+    }
+}
 
 #[allow(dead_code)]
 pub struct ProofCtx<F: PrimeField64> {

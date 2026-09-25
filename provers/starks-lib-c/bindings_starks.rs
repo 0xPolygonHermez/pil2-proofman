@@ -754,6 +754,7 @@ extern "C" {
 
     pub fn get_const_pols_aggregation_offset(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_stream_commit_gpus(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64;
     pub fn configure_stream_commit_slots(

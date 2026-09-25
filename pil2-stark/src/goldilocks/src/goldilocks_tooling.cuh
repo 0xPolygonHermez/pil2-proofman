@@ -846,9 +846,7 @@ struct DeviceCommitBuffers
     uint64_t phaseAAliasOffset = 0;   // elements
     bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
-    // Prefetch region
-    gl64_t *prefetchRegionBase = nullptr;   // first GPU only
-    uint64_t prefetchRegionBytes = 0;
+    uint64_t prefetchRegionBytes = 0;  // per GPU
     // Mops-floor pad: raises the region BELOW the const pols to MOPS_FLOOR_BYTES so the
     // gpu-mops planner's borrow fits. The planner is offered that region MINUS the streaming-
     // commit slots (its ceiling is the slot floor); it carves 15.03 GiB of fixed regions (zisk
@@ -864,39 +862,40 @@ struct DeviceCommitBuffers
     static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
     uint64_t mopsFloorPadBytes = 0;
 
-    // Witness prefetch zone (PROOFMAN_PREFETCH): the next basic instance's trace is
-    // uploaded on a dedicated copy stream while the current proof computes; gen_proof
-    // consumes it with one D2D and records prefetchDrained so the next upload never
-    // overwrites live data. FIRST GPU only. prefetchInstanceId == -1 means free.
-    // The zone IS the prefetch region (slot s at prefetchRegionBase + s*prefetchSlotStride);
-    // prefetchArmed means configure ran: the stream and events below exist.
-    // A run of units, each half the largest trace: a witness takes ceil(bytes/unit) consecutive
-    // units, at most PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN.
+    // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
+    // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
+    // D2D and records `drained` so the next upload never overwrites live data. A run of units, each
+    // half the largest trace: a witness takes ceil(bytes/unit) consecutive units, at most
+    // PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN. prefetchArmed means
+    // configure ran: every zone's stream and events exist. instanceId == -1 means free.
     static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
     static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
+    struct PrefetchZone {
+        gl64_t *base = nullptr;
+        cudaStream_t stream = nullptr;
+        cudaEvent_t ready[PREFETCH_WITNESS_SLOTS] = {};
+        cudaEvent_t drained[PREFETCH_WITNESS_SLOTS] = {};
+        std::mutex mutex;
+        std::mutex copyMutex;       // one staging copies at a time
+        // Every unit of a span carries the instance id; only the head carries length and bytes.
+        int64_t instanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        uint64_t traceBytes[PREFETCH_WITNESS_SLOTS] = {};
+        uint32_t spanUnits[PREFETCH_WITNESS_SLOTS] = {};
+    };
+    PrefetchZone *prefetchZones = nullptr;  // [n_gpus], local index
     bool prefetchArmed = false;
     uint64_t prefetchSlotStride = 0; // elements between unit bases
-    cudaStream_t prefetchStream = nullptr;
-    cudaEvent_t prefetchReady[PREFETCH_WITNESS_SLOTS] = {};
-    cudaEvent_t prefetchDrained[PREFETCH_WITNESS_SLOTS] = {};
-    std::mutex prefetchMutex;
     // Witness H2D uploads keep one chunk in flight: a stream with a copy always pending holds the
     // copy engine and starves other streams' copies.
     static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
-    std::mutex prefetchCopyMutex;       // one staging copies at a time
-    // Every unit of a span carries the instance id; only the head carries length and bytes.
-    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
-    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-    uint32_t prefetchSpanUnits[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 
-    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
-    // GPU only -- the only one gpu-mops can borrow. Carved from the top of the unified buffer,
-    // immediately below the const-pols aggregation region. They overlap the
-    // Slot i starts at byte offset streamCommitFloorBytes + i * streamCommitSlotBytes
-    // from gpuMemoryBuffer[0]. streamCommitFloorBytes is the ceiling gpu-mops
-    // usage must stay under (UINT64_MAX when disabled, so comparisons degrade
-    // to the const-pols one).
+    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled): streamCommitSlots per GPU,
+    // carved from the top of each unified buffer, immediately below the prefetch region. A slot
+    // index is global, gpuLocal * streamCommitSlots + j; slot j of a GPU starts at byte offset
+    // streamCommitFloorBytes + j * streamCommitSlotBytes of that GPU's buffer (the layout is the
+    // same on every GPU). On the first GPU the floor is also the ceiling gpu-mops usage must stay
+    // under (UINT64_MAX when disabled, so comparisons degrade to the const-pols one).
     uint64_t streamCommitSlots = 0;
     uint64_t streamCommitSlotBytes = 0;
     uint64_t streamCommitFloorBytes = UINT64_MAX;
@@ -904,24 +903,24 @@ struct DeviceCommitBuffers
     // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
     uint64_t auxTraceTotalBytes = 0;
     uint64_t auxTraceRecursiveBytes = 0;
-    cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
+    cudaStream_t *streamCommitStreams = nullptr;  // [n_gpus * streamCommitSlots], global slot index
     // Pinned per-slot staging for the multiplicity hook's publics/values.
-    // [streamCommitSlots * PINNED_AUX_VALUES_MAX]
+    // [n_gpus * streamCommitSlots * PINNED_AUX_VALUES_MAX]
     Goldilocks::Element *streamCommitAuxValues = nullptr;
-    // Pinned per slot: the root and the column widths (so neither copy is pageable, which blocks
-    // the thread and holds the driver lock against the other slots' launches).
-    // [streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
+    // Pinned per slot (pageable copies block the driver): root and column widths.
+    // [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
     uint64_t *streamCommitHost = nullptr;
-    // Shared-hold of the overlapped legacy streams: the first in-flight slot
-    // commit claims every overlapped stream's selection mutex, the last
-    // releases them (see acquire/release in commit_witness_streaming_gpu).
-    std::mutex streamCommitRegionMutex;
-    uint32_t streamCommitInFlight = 0;
-    // Signalled when the quiesce lifts and when the last in-flight slot commit leaves.
-    std::condition_variable streamCommitCv;
-    // Quiesce: set by the gpu-mops borrower before its final planning phase (see
-    // stream_commit_pause), cleared on borrow release. A slot commit waits (single GPU) or is refused.
-
+    // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
+    // claims every overlapped stream's selection mutex, the last releases them. `cv` is signalled
+    // when the quiesce lifts and when the last in-flight commit leaves.
+    struct SlotRegion {
+        std::mutex mutex;
+        uint32_t inFlight = 0;
+        std::condition_variable cv;
+    };
+    SlotRegion *streamCommitRegions = nullptr;  // [n_gpus], local index
+    // Quiesce of the FIRST GPU's slots: set by the gpu-mops borrower before its final planning
+    // phase (see stream_commit_pause), cleared on borrow release. A slot commit there waits.
     std::atomic<uint32_t> streamCommitQuiesced{0};
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;

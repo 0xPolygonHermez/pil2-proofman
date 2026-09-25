@@ -6,12 +6,13 @@ use proofman_common::{
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
     SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo, WITNESS_NOT_STAGED, WITNESS_STAGED, WITNESS_STAGED_RELEASED,
+    WITNESS_STAGED_KIND, witness_staged_on, witness_staged_gpu,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    get_num_gpus_c, mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c,
-    mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
+    register_mul_vt_c,
 };
 use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
@@ -151,8 +152,8 @@ use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
     mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, stream_commit_slot_bytes_c,
-    configure_stream_commit_slots_c, get_stream_id_proof_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -558,19 +559,15 @@ impl CancellationInfoExt for RwLock<CancellationInfo> {
 /// this is not dispatch latency. Was 1ms: `n_streams` workers waking 1000x/s doing nothing.
 const CONTRIB_CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
-/// Streaming-slot commit context for the contributions phase: free-slot tokens
-/// (slot indices, first GPU only) plus the packed-trace metadata needed to
-/// drive commit_witness_streaming. Slots are the regions reserved below the
-/// const-pols aggregation area (STREAM_COMMIT_SLOTS env), usable while the
-/// first GPU's unified buffer is borrowed by gpu-mops.
+/// Streaming-slot commit context for the contributions phase: one pool of free-slot tokens per
+/// GPU (a token is the global slot index, gpu * slots_per_gpu + j) plus the packed-trace metadata
+/// needed to drive commit_witness_streaming. Every packed air commits on a slot; a refusal is
+/// fatal. Slots are the regions reserved below each GPU's prefetch region (STREAM_COMMIT_SLOTS
+/// env); the first GPU's stay usable while gpu-mops borrows its unified buffer.
 struct SlotCommitCtx {
-    pool_tx: Sender<u64>,
-    pool_rx: Receiver<u64>,
+    pools: Vec<(Sender<u64>, Receiver<u64>)>,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     committed: AtomicU64,
-    /// Single GPU: every packed air commits on a slot; transient refusals retry, others are fatal.
-    /// With several GPUs only the first has slots; the others use the legacy commit.
-    strict: bool,
 }
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
@@ -2930,24 +2927,27 @@ where
             let aux_scratch = self.aux_scratch.clone();
             let const_scratch = self.const_scratch.clone();
 
-            // Streaming-slot pool: one token per reserved commit slot (first
-            // GPU; STREAM_COMMIT_SLOTS env; None when disabled). Contribution
-            // workers take a token, commit a packed wide-trace AIR synchronously
-            // on the slot, and return the token; every other instance takes the
-            // legacy stream path untouched.
+            // Streaming-slot pools: one token per reserved commit slot, per GPU (STREAM_COMMIT_SLOTS
+            // env; None when disabled). Contribution workers take a token, commit a packed air
+            // synchronously on the slot, and return the token; the rest (virtual tables) take the
+            // legacy stream path.
             let slot_commit_ctx: Option<Arc<SlotCommitCtx>> = if self.pctx.gpu && self.options.packed {
                 let n_slots = get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr());
                 (n_slots > 0).then(|| {
-                    let (pool_tx, pool_rx) = unbounded();
-                    for slot in 0..n_slots {
-                        pool_tx.send(slot).unwrap();
-                    }
+                    // This process's GPUs: with several ranks per node the node count is larger.
+                    let pools = (0..get_stream_commit_gpus_c(self.pctx.get_device_buffers_ptr()))
+                        .map(|g| {
+                            let (tx, rx) = unbounded();
+                            for j in 0..n_slots {
+                                tx.send(g * n_slots + j).unwrap();
+                            }
+                            (tx, rx)
+                        })
+                        .collect();
                     Arc::new(SlotCommitCtx {
-                        pool_tx,
-                        pool_rx,
+                        pools,
                         packed_info: self.options.packed_info.clone(),
                         committed: AtomicU64::new(0),
-                        strict: get_num_gpus_c() == 1,
                     })
                 })
             } else {
@@ -2957,10 +2957,11 @@ where
             let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
             // Twice the slots: a worker stages and prepares on the CPU first, so one extra keeps each slot fed.
             let n_workers = match slot_commit_ctx.as_ref() {
-                Some(ctx) if ctx.strict => {
-                    (2 * get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) as usize).max(self.n_streams)
+                Some(ctx) => {
+                    let n_slots = get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) as usize;
+                    (2 * n_slots * ctx.pools.len()).max(self.n_streams)
                 }
-                _ => self.n_streams,
+                None => self.n_streams,
             };
             for _ in 0..n_workers {
                 let pctx_clone = self.pctx.clone();
@@ -2993,7 +2994,7 @@ where
                                     &pctx_clone,
                                     &zone_airs,
                                     &memory_handler_clone,
-                                    slot_commit_ctx_clone.as_ref().is_some_and(|c| c.strict),
+                                    slot_commit_ctx_clone.is_some(),
                                     slot_commit_ctx_clone.as_ref().map_or(&empty_packed, |c| &c.packed_info),
                                     instance_id,
                                 ) {
@@ -3005,7 +3006,7 @@ where
                                 };
                             }
                             // The host buffer is gone: the commit reads the zone and releases nothing.
-                            let staged = stage_state == WITNESS_STAGED_RELEASED;
+                            let staged = stage_state & WITNESS_STAGED_KIND == WITNESS_STAGED_RELEASED;
                             // Single-writer borrow of the shared scratch (see `SharedScratch`); the
                             // guards hold the invariant for the duration of get_contribution_air.
                             let mut aux_trace_local = aux_scratch.borrow_mut();
@@ -3020,6 +3021,7 @@ where
                                 &mut const_pols_local,
                                 slot_commit_ctx_clone.as_deref(),
                                 staged,
+                                witness_staged_gpu(stage_state),
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -5211,10 +5213,8 @@ where
         let sctx_admission = self.sctx.clone();
         let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
         let packed_info = Arc::new(self.options.packed_info.clone());
-        let strict_slots = self.pctx.gpu
-            && self.options.packed
-            && get_num_gpus_c() == 1
-            && get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) > 0;
+        let slots_on =
+            self.pctx.gpu && self.options.packed && get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) > 0;
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
@@ -5377,7 +5377,7 @@ where
                             &pctx_clone,
                             &zone_airs,
                             memory_handler_clone.as_ref(),
-                            strict_slots,
+                            slots_on,
                             &packed_info,
                             instance_id,
                         ) {
@@ -6100,11 +6100,12 @@ where
     }
 
     /// Commit `instance_id` on a streaming slot. Ok(false) means take the legacy path: the air has
-    /// no packed info (virtual tables), or, outside strict mode, no token is free or C refuses.
+    /// no packed info (virtual tables) or is not slot-eligible. A witness staged in a GPU's zone
+    /// commits on that GPU's slots; any other takes the first free slot on any GPU.
     ///
     /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
     /// (col_source / col_lane / index_bits / lanes / words_per_entry) and its uploaded
-    /// instruction table from the first GPU's AirInstanceInfo, and drives the indexed
+    /// instruction table from the slot GPU's AirInstanceInfo, and drives the indexed
     /// slot unpack -- hence airgroup_id/air_id are passed through.
     #[allow(clippy::too_many_arguments)]
     fn try_slot_commit(
@@ -6118,6 +6119,7 @@ where
         params: *mut u8,
         roots_contributions: &[[F; 4]],
         staged: bool,
+        staged_gpu: Option<usize>,
     ) -> ProofmanResult<bool> {
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
             return Ok(false);
@@ -6142,23 +6144,29 @@ where
             identity_widths = vec![64u64; n_cols as usize];
             (n_cols, identity_widths.as_slice())
         };
-        // Strict: wait for a token (C waits out quiesce and region), so one call commits or errors.
-        // Otherwise take a token only if free.
-        let slot = if ctx.strict {
-            match ctx.pool_rx.recv_timeout(std::time::Duration::from_secs(60)) {
-                Ok(slot) => slot,
-                Err(_) => {
-                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
-                    return Err(ProofmanError::ProofmanError(format!(
-                        "no streaming slot came free in 60 s for instance {instance_id} [{airgroup_id}:{air_id}]"
-                    )));
+        // Wait for a token (C waits out quiesce and region), so one call commits or errors.
+        let timeout = std::time::Duration::from_secs(60);
+        let (pool, slot) = match staged_gpu {
+            Some(g) => (g, ctx.pools[g].1.recv_timeout(timeout).ok()),
+            None => {
+                let mut sel = crossbeam_channel::Select::new();
+                for (_, rx) in &ctx.pools {
+                    sel.recv(rx);
+                }
+                match sel.select_timeout(timeout) {
+                    Ok(op) => {
+                        let g = op.index();
+                        (g, op.recv(&ctx.pools[g].1).ok())
+                    }
+                    Err(_) => (0, None),
                 }
             }
-        } else {
-            let Ok(slot) = ctx.pool_rx.try_recv() else {
-                return Ok(false);
-            };
-            slot
+        };
+        let Some(slot) = slot else {
+            dump_pipeline_state_c(pctx.get_device_buffers_ptr());
+            return Err(ProofmanError::ProofmanError(format!(
+                "no streaming slot came free in 60 s for instance {instance_id} [{airgroup_id}:{air_id}]"
+            )));
         };
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
@@ -6175,30 +6183,18 @@ where
             roots_contributions[instance_id].as_ptr() as *mut c_void,
             params as *mut c_void,
         );
-        ctx.pool_tx.send(slot).ok();
-        match rc {
-            0 => {
-                ctx.committed.fetch_add(1, Ordering::Relaxed);
-                Ok(true)
+        ctx.pools[pool].0.send(slot).ok();
+        if rc != 0 {
+            if rc == -20 || rc == -21 {
+                dump_pipeline_state_c(pctx.get_device_buffers_ptr());
             }
-            // -20 quiesced / -21 region held: transient, legacy takes it this time.
-            -20 | -21 if !ctx.strict => Ok(false),
-            _ if ctx.strict => {
-                if rc == -20 || rc == -21 {
-                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
-                }
-                Err(ProofmanError::ProofmanError(format!(
-                    "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; \
-                     -20/-21 mean the quiesce or the region did not lift in 60 s, anything else is a configuration error"
-                )))
-            }
-            _ => {
-                tracing::warn!(
-                    "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
-                );
-                Ok(false)
-            }
+            return Err(ProofmanError::ProofmanError(format!(
+                "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; \
+                 -20/-21 mean the quiesce or the region did not lift in 60 s, anything else is a configuration error"
+            )));
         }
+        ctx.committed.fetch_add(1, Ordering::Relaxed);
+        Ok(true)
     }
 
     /// Per air: the bytes its witness occupies on the wire (what the prefetch zone stages), and
@@ -6225,13 +6221,13 @@ where
         m
     }
 
-    /// Stage `instance_id`'s witness into the prefetch zone. Returns a `ProofCtx::witness_staged`
+    /// Stage `instance_id`'s witness into a GPU's prefetch zone. Returns a `ProofCtx::witness_staged`
     /// state: not staged, staged with the host buffer kept, or staged with it given back.
     fn stage_for_commit(
         pctx: &ProofCtx<F>,
         zone_airs: &HashMap<(usize, usize), (u64, bool)>,
         memory_handler: &MemoryHandler<F>,
-        strict_slots: bool,
+        slots_on: bool,
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         instance_id: usize,
     ) -> ProofmanResult<u8> {
@@ -6246,19 +6242,18 @@ where
         if trace.is_null() || bytes == 0 {
             return Ok(WITNESS_NOT_STAGED);
         }
-        let staged_ok =
-            stage_witness_c(pctx.get_device_buffers_ptr(), instance_id as u64, trace as *mut c_void, bytes) >= 0;
-        if !staged_ok {
+        let gpu = stage_witness_c(pctx.get_device_buffers_ptr(), instance_id as u64, trace as *mut c_void, bytes);
+        if gpu < 0 {
             return Ok(WITNESS_NOT_STAGED);
         }
-        // Only when the commit is certain to read the zone: a strict slot commit does, a legacy
-        // commit on another GPU would not find it.
-        let reads_zone = strict_slots && packed_info.contains_key(&(airgroup_id, air_id));
+        // Only when the commit is certain to read the zone: a slot commit on the zone's GPU does,
+        // a legacy commit on another GPU would not find it.
+        let reads_zone = slots_on && packed_info.contains_key(&(airgroup_id, air_id));
         if releasable && reads_zone && pctx.is_shared_buffer(instance_id) {
             memory_handler.to_be_released_buffer(instance_id);
-            return Ok(WITNESS_STAGED_RELEASED);
+            return Ok(witness_staged_on(WITNESS_STAGED_RELEASED, gpu as u8));
         }
-        Ok(WITNESS_STAGED)
+        Ok(witness_staged_on(WITNESS_STAGED, gpu as u8))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6272,6 +6267,7 @@ where
         const_pols: &mut [F],
         slot_commit: Option<&SlotCommitCtx>,
         staged: bool,
+        staged_gpu: Option<usize>,
     ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -6324,6 +6320,7 @@ where
                 p_steps_params,
                 roots_contributions,
                 staged,
+                staged_gpu,
             )?,
             None => false,
         };
