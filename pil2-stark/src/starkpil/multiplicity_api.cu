@@ -61,6 +61,7 @@ void mul_alloc(void *d_buffers_) {
             zklog.info("Multiplicity: " + to_string(bytes / (1024 * 1024))
                        + " MB GPU-resident on gpu " + to_string(id));
     }
+    mul_alloc_fold_staging();
     // After the accumulators: the warm-up builds the scatter programs that point into them.
     stream_commit_warmup_gpu(d_buffers_);
 }

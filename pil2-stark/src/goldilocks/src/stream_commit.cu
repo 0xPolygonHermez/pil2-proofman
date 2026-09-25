@@ -11,6 +11,8 @@
 #include "poseidon_goldilocks.cuh"
 #include "cuda_utils.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+#include "poseidon2_goldilocks.cuh"
+#include "poseidon2_goldilocks_constants.hpp"
 #include "blake3_goldilocks.cuh"
 
 // ===========================================================================
@@ -19,7 +21,12 @@
 
 
 using P16 = PoseidonGoldilocksGPU<16>;
+using P2_16 = Poseidon2GoldilocksGPU<16>;
 static constexpr uint32_t SC_TPB = 256;
+// Poseidon2 reuses the Poseidon1 slot layout (data | state, arity-4 nodes): same sponge geometry.
+static_assert(P2_16::RATE == P16::RATE && P2_16::CAPACITY == P16::CAPACITY &&
+              P2_16::SPONGE_WIDTH == P16::SPONGE_WIDTH,
+              "Poseidon2 W=16 must share the Poseidon1 W=16 sponge geometry");
 
 // Digest width shared by the leaf-copy / tree-size / reduction helpers, which
 // run for both families. The assert is what makes that sharing sound.
@@ -329,6 +336,80 @@ __global__ static void scPoseidon1NodeKernel(uint64_t nextN, uint64_t nextIndex,
 }
 
 // ===========================================================================
+// Poseidon2 kernels (W=16 sponge, arity-4 trees)
+// ===========================================================================
+
+// Own copies of the Poseidon2 W=16 round tables, for the same TU-locality reason as Poseidon1's.
+__device__ __constant__ uint64_t SC_POS2_C16[150];
+__device__ __constant__ uint64_t SC_POS2_D16[16];
+
+static void scPoseidon2EnsureConstants()
+{
+    static std::mutex mtx;
+    static bool uploaded[SC_MAX_DEVICES] = {};
+    int dev = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    const bool memoized = (dev >= 0 && dev < SC_MAX_DEVICES);
+    std::lock_guard<std::mutex> lk(mtx);
+    if (memoized && uploaded[dev]) return;
+    CHECKCUDAERR(cudaMemcpyToSymbol(SC_POS2_C16, Poseidon2GoldilocksConstants::C16, 150 * 8));
+    CHECKCUDAERR(cudaMemcpyToSymbol(SC_POS2_D16, Poseidon2GoldilocksConstants::D16, 16 * 8));
+    if (memoized) uploaded[dev] = true;
+}
+
+template <uint32_t W = P2_16::SPONGE_WIDTH>
+__device__ __forceinline__ void scPoseidon2PermuteSmem()
+{
+    poseidon2PermuteSmem<P2_16::RATE, P2_16::CAPACITY, W, P2_16::N_FULL_ROUNDS_TOTAL,
+                         P2_16::N_PARTIAL_ROUNDS>((const gl64_t *)SC_POS2_C16, (const gl64_t *)SC_POS2_D16);
+}
+
+// Matches Poseidon2's spongeAbsorb (linearHashKernel): rate = the chunk, zero padded; capacity = 0
+// on the first chunk, else the previous digest (the state's first CAPACITY slots).
+__global__ static void scPoseidon2AbsorbChunkKernel(const gl64_t *__restrict__ rate,
+                                                    gl64_t *__restrict__ cap,
+                                                    uint32_t cc, bool first, uint64_t nRows)
+{
+    const uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nRows) return;
+
+    for (uint32_t i = 0; i < P2_16::RATE; ++i)
+        scratchpad[i * blockDim.x + threadIdx.x] =
+            (i < cc) ? rate[(uint64_t)i * nRows + tid] : gl64_t(uint64_t(0));
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        scratchpad[(P2_16::RATE + i) * blockDim.x + threadIdx.x] =
+            first ? gl64_t(uint64_t(0)) : cap[(uint64_t)i * nRows + tid];
+
+    scPoseidon2PermuteSmem();
+
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        cap[(uint64_t)i * nRows + tid] = scratchpad[i * blockDim.x + threadIdx.x];
+}
+
+// Same node hash as Poseidon2's merkleNodeKernel: the arity*CAPACITY children are one W-wide state.
+__global__ static void scPoseidon2NodeKernel(uint64_t nextN, uint64_t nextIndex, uint64_t pending,
+                                             uint32_t arity, uint64_t *cursor)
+{
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nextN) return;
+    const uint32_t stride = arity * P2_16::CAPACITY;
+    const uint64_t base = nextIndex + tid * (uint64_t)stride;
+    const uint32_t n = (stride < P2_16::SPONGE_WIDTH) ? stride : P2_16::SPONGE_WIDTH;
+    for (uint32_t i = 0; i < n; ++i)
+        scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)cursor)[base + i];
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::SPONGE_WIDTH; ++i)
+        if (i >= n) scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
+    scPoseidon2PermuteSmem();
+    gl64_t *out = (gl64_t *)(&cursor[nextIndex + (pending + tid) * P2_16::CAPACITY]);
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        out[i] = scratchpad[i * blockDim.x + threadIdx.x];
+}
+
+// ===========================================================================
 // blake3 kernels (64-byte blocks, arity-2 trees)
 // ===========================================================================
 
@@ -512,6 +593,9 @@ static void scReduceTree(uint64_t *d_tree, uint64_t nLeaves, uint32_t arity,
         if (hash == StreamCommitHash::Blake3)
             scBlake3NodeKernel<<<blks, tpb, 0, s>>>(nextN, nextIndex,
                                                     pending + extraZeros, arity, d_tree);
+        else if (hash == StreamCommitHash::Poseidon2)
+            scPoseidon2NodeKernel<<<blks, tpb, (size_t)tpb * P2_16::SPONGE_WIDTH * 8, s>>>(
+                nextN, nextIndex, pending + extraZeros, arity, d_tree);
         else
             scPoseidon1NodeKernel<<<blks, tpb, (size_t)tpb * P16::SPONGE_WIDTH * 8, s>>>(
                 nextN, nextIndex, pending + extraZeros, arity, d_tree);
@@ -551,14 +635,8 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
 }
 
 
-int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
-                           const uint64_t *colWidths, const void *hPacked,
-                           uint64_t *hRoot, cudaStream_t stream,
-                           const uint8_t *dColSource, const uint8_t *dColLane,
-                           const uint64_t *dTable, StreamCommitHash hash,
-                           StreamCommitHook hook, void *hookUser, TimerGPU *timer,
-                           StreamCommitChunkHook chunkHook, void *chunkUser,
-                           uint64_t slotElems)
+int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSource,
+                          const uint8_t *dColLane, const uint64_t *dTable, StreamCommitHash hash)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -577,16 +655,36 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
 
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
+    const uint32_t dataCols = b3 ? blake3core::BLOCK_U64 : P16::RATE;
+    const uint64_t NExt = 1ull << dims.nBitsExt;
+    // Tree carved from the dead data region, never touching the state columns:
+    // arity 4 needs 16/3*NExt < 12*NExt, arity 2 needs 8*NExt - 4 <= 8*NExt.
+    if (scTreeNumElements(NExt, arity) > (uint64_t)dataCols * NExt) return -3;
+    return 0;
+}
+
+int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
+                           const uint64_t *colWidths, const void *hPacked,
+                           uint64_t *hRoot, cudaStream_t stream,
+                           const uint8_t *dColSource, const uint8_t *dColLane,
+                           const uint64_t *dTable, StreamCommitHash hash,
+                           StreamCommitHook hook, void *hookUser, TimerGPU *timer,
+                           StreamCommitChunkHook chunkHook, void *chunkUser,
+                           uint64_t slotElems)
+{
+    if (const int64_t rc = streamCommitCheck(dims, dColSource, dColLane, dTable, hash); rc != 0) return rc;
+    const bool indexed = (dColSource != nullptr);
+    const bool b3 = (hash == StreamCommitHash::Blake3);
+    const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
     const uint32_t chunkCols = b3 ? blake3core::BLOCK_U64 : P16::RATE;
     const uint32_t dataCols = chunkCols;  // data region = one chunk, per family
 
     const uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
     const uint64_t treeElems = scTreeNumElements(NExt, arity);
-    // Tree carved from the dead data region, never touching the state columns:
-    // arity 4 needs 16/3*NExt < 12*NExt, arity 2 needs 8*NExt - 4 <= 8*NExt.
-    if (treeElems > (uint64_t)dataCols * NExt) return -3;
 
-    if (!b3) scPoseidon1EnsureConstants();
+    const bool p2 = (hash == StreamCommitHash::Poseidon2);
+    if (p2) scPoseidon2EnsureConstants();
+    else if (!b3) scPoseidon1EnsureConstants();
 
     // Slot layout (see streamCommitSlotElems).
     const uint32_t stateCols = b3 ? scBlake3StateCols(dims.nCols) : SC_DIGEST;
@@ -667,6 +765,9 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         if (b3)
             scBlake3AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
                 d_rate, d_cap, d_park, cc, k, nChunks, NExt);
+        else if (p2)
+            scPoseidon2AbsorbChunkKernel<<<ablk, SC_TPB, (size_t)SC_TPB * P2_16::SPONGE_WIDTH * 8, stream>>>(
+                d_rate, d_cap, cc, k == 0, NExt);
         else
             scPoseidon1AbsorbChunkKernel<<<ablk, SC_TPB, (size_t)SC_TPB * P16::SPONGE_WIDTH * 8, stream>>>(
                 d_rate, d_cap, cc, k == 0, NExt);

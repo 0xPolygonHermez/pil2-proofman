@@ -440,9 +440,8 @@ struct StreamData{
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
-    // Per-stream pinned staging for the contributions aux_values H2D, enabling an
-    // async copy (no per-copy stream sync); reused only on event-gated stream
-    // reselect. Used by commit_witness_gpu only.
+    // Per-stream pinned staging for the aux_values H2D of the proof and verify-constraints paths,
+    // enabling an async copy (no per-copy stream sync); reused only on event-gated stream reselect.
     Goldilocks::Element *pinned_aux_values;
     // Dense scratch for whichever gate-band family needs one, gateBandScratchWordsGPU() words. Per
     // STREAM: the expander's memset/fill/scatter are ordered only within one. Allocated on this
@@ -479,7 +478,6 @@ struct StreamData{
     string recurserId;
 
     //callback inputs
-    void *root;
     void *pSetupCtx;
     uint64_t *proofBuffer; 
     string proofFile;
@@ -505,9 +503,11 @@ struct StreamData{
 
     bool recursive;
 
-    // This stream's aux-trace region intersects the streaming-commit slot area
-    // (only ever set on first-GPU streams -- slots exist only there)
+    // This stream's aux-trace region intersects its GPU's streaming-commit slot area.
     bool overlapsStreamCommitRegion = false;
+    // Set while slot commits on this GPU are in flight: the reserve paths must skip the stream.
+    // A flag, not a held mutex: the claiming and the releasing commit are different threads.
+    std::atomic<bool> slotHeld{false};
 
     // Field elements in this stream's slice of the unified buffer: a proof fits only when mapTotalN does.
     uint64_t auxTraceCapacity = 0;
@@ -582,7 +582,6 @@ struct StreamData{
             CHECKCUDAERR(cudaEventCreateWithFlags(&pipeSlots[k].done, cudaEventDisableTiming));
         }
 
-        root = nullptr;
         pSetupCtx = nullptr;
         recurserId = "";
         proofBuffer = nullptr;
@@ -622,7 +621,6 @@ struct StreamData{
         // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
 
-        root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
 
@@ -659,14 +657,6 @@ struct StreamData{
         constRecurserId = recurser;
         constTreeResident = false;
         return false;
-    }
-
-    // Nothing valid is cached any more: for paths that overwrite the aux trace without
-    // repopulating the const pols.
-    void dropFixedSlot(){
-        constPolsOffset = UINT64_MAX;
-        constRecurserId = "";
-        constTreeResident = false;
     }
 
     void free(){
@@ -890,7 +880,7 @@ struct DeviceCommitBuffers
     static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
 
 
-    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled): streamCommitSlots per GPU,
+    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU,
     // carved from the top of each unified buffer, immediately below the prefetch region. A slot
     // index is global, gpuLocal * streamCommitSlots + j; slot j of a GPU starts at byte offset
     // streamCommitFloorBytes + j * streamCommitSlotBytes of that GPU's buffer (the layout is the

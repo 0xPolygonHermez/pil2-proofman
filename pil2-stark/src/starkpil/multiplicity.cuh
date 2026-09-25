@@ -283,16 +283,13 @@ inline void mul_reset_all() {
 
 // One span into the Rust accumulator (Vec<AtomicU64>, layout-compatible). Adds, since each GPU
 // holds only its own instances' counts.
+// Plain adds: the fold runs on one thread (export_prover_multiplicities), once per proof.
 inline void mul_acc_fold_span(const MulAcc* a, uint64_t* host_acc,
                               uint64_t base, uint64_t n, uint64_t* staging) {
     CHECKCUDAERR(cudaSetDevice(a->gpuId));
     mulCopySync(a->gpuId, staging, a->d_acc + base, n * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    for (uint64_t i = 0; i < n; ++i) {
-        if (staging[i]) {
-            reinterpret_cast<std::atomic<uint64_t>*>(&host_acc[base + i])
-                ->fetch_add(staging[i], std::memory_order_relaxed);
-        }
-    }
+    uint64_t* dst = host_acc + base;
+    for (uint64_t i = 0; i < n; ++i) dst[i] += staging[i];
 }
 
 // Decodes outside their table's span; nonzero means a wrong decoder and wrong counts. Read once
@@ -398,8 +395,23 @@ inline bool mul_export_to_trace(uint64_t airId, int gpuId, uint64_t* dst,
 }
 
 // Fold every prover-owned span of `airId` into the Rust accumulator, adding one pass per GPU.
+// Pinned staging for the host fold, sized to the largest table by mul_alloc: a pageable D2H is
+// staged by the driver, a second copy.
+struct MulFoldStaging { uint64_t* ptr = nullptr; uint64_t elems = 0; };
+inline MulFoldStaging& mulFoldStaging() { static MulFoldStaging s; return s; }
+
+inline void mul_alloc_fold_staging() {
+    uint64_t need = 0;
+    for (const auto& d : mulDecoders()) need = std::max<uint64_t>(need, d.n_rows);
+    MulFoldStaging& s = mulFoldStaging();
+    if (need <= s.elems) return;
+    if (s.ptr != nullptr) CHECKCUDAERR(cudaFreeHost(s.ptr));
+    CHECKCUDAERR(cudaMallocHost((void**)&s.ptr, need * sizeof(uint64_t)));
+    s.elems = need;
+}
+
 inline void mul_fold_air(uint64_t airId, uint64_t* host_acc) {
-    std::vector<uint64_t> staging;
+    const MulFoldStaging& staging = mulFoldStaging();
     for (auto& kv : mulAccs()) {
         if (kv.first.first != airId) continue;
         // Scatters committed on their own streams; wait on their events (no device-wide sync).
@@ -407,8 +419,12 @@ inline void mul_fold_air(uint64_t airId, uint64_t* host_acc) {
         mul_wait_scatters(kv.second->gpuId);
         for (const auto& d : mulDecoders()) {
             if (d.hostAirId != airId) continue;
-            if (staging.size() < d.n_rows) staging.resize(d.n_rows);
-            mul_acc_fold_span(kv.second, host_acc, d.acc_base, d.n_rows, staging.data());
+            if (staging.elems < d.n_rows) {
+                zklog.error("multiplicity: fold staging holds " + std::to_string(staging.elems) +
+                            " counters, table needs " + std::to_string(d.n_rows) + " (mul_alloc not run?)");
+                exitProcess();
+            }
+            mul_acc_fold_span(kv.second, host_acc, d.acc_base, d.n_rows, staging.ptr);
         }
     }
 }

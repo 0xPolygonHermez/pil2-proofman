@@ -161,10 +161,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n_contributions(p_stark_info) }
-}
-
 pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_tree_size(p_stark_info) }
 }
@@ -1519,27 +1515,32 @@ pub fn alloc_device_large_buffers_c(
     }
 }
 
-pub fn configure_prefetch_zone_c(
-    d_buffers: *mut ::std::os::raw::c_void,
-    witness_bytes: u64,
-    fixed_tree_bytes: u64,
-    packed_const_bytes: u64,
-    rec_witness_bytes: u64,
-) {
-    unsafe {
-        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
-    }
+pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes) }
 }
 
-/// Stage a witness into the prefetch zone ahead of its commit. Returns the slot, or -1 when there
-/// is no zone or every slot still holds an unconsumed staging; the commit then stages for itself.
+/// Stage a witness into the prefetch zone ahead of its commit. Returns the zone's GPU, or -1 when
+/// there is no zone or no free run; the commit then uploads for itself. `host_sync` waits for the
+/// H2D, which a caller about to recycle `trace` needs; otherwise the commit waits for it on device.
 #[cfg(not(feature = "cpu-only"))]
-pub fn stage_witness_c(d_buffers: *mut c_void, instance_id: u64, trace: *mut c_void, total_size: u64) -> i64 {
-    unsafe { stage_witness(d_buffers, instance_id, trace, total_size) }
+pub fn stage_witness_c(
+    d_buffers: *mut c_void,
+    instance_id: u64,
+    trace: *mut c_void,
+    total_size: u64,
+    host_sync: bool,
+) -> i64 {
+    unsafe { stage_witness(d_buffers, instance_id, trace, total_size, host_sync) }
 }
 
 #[cfg(feature = "cpu-only")]
-pub fn stage_witness_c(_d_buffers: *mut c_void, _instance_id: u64, _trace: *mut c_void, _total_size: u64) -> i64 {
+pub fn stage_witness_c(
+    _d_buffers: *mut c_void,
+    _instance_id: u64,
+    _trace: *mut c_void,
+    _total_size: u64,
+    _host_sync: bool,
+) -> i64 {
     -1
 }
 
@@ -1617,17 +1618,6 @@ pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { harvest_pipeline(d_buffers) }
 }
 
-pub fn prefetch_witness_c(
-    p_setup_ctx: *mut ::std::os::raw::c_void,
-    d_buffers: *mut ::std::os::raw::c_void,
-    instance_id: u64,
-    airgroup_id: u64,
-    air_id: u64,
-    trace: *mut ::std::os::raw::c_void,
-) -> i64 {
-    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn reset_device_streams_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
@@ -1703,9 +1693,8 @@ pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, wor
     unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64,
-                                       contrib_footprint_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes, contrib_footprint_bytes) }
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
+    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
 }
 
 #[allow(clippy::too_many_arguments)]

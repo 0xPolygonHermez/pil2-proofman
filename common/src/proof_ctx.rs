@@ -356,6 +356,9 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Range tables the prover counts itself, and their counts, keyed by the virtual table's host air.
     /// Held here because the witness library and the host binary each link their own libstarks.
     pub prover_owned_tables: RwLock<Vec<u64>>,
+    /// Set once the prover multiplicities are registered; `prover_owned_tables` may legitimately stay
+    /// empty, so it cannot double as the guard. Registration is once per process (the C++ side never resets).
+    pub prover_multiplicities_registered: Mutex<bool>,
 
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
     /// skip the instance for looking empty.
@@ -409,6 +412,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
+            prover_multiplicities_registered: Mutex::new(false),
             device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
@@ -1388,6 +1392,12 @@ impl<F: PrimeField64> ProofCtx<F> {
                 headroom_extra += (PHASE_A_ALIAS_HEADROOM_MB * 1024 * 1024 / 8) as usize;
                 target = grow_to(headroom_extra);
             }
+            // 2 MiB granularity, so both halves (and the slot ceiling above them) stay 1 MiB aligned.
+            const HALVES_ALIGN: usize = 2 * (1 << 20) / 8;
+            let aligned = target & !(HALVES_ALIGN - 1);
+            if aligned >= current {
+                target = aligned;
+            }
             let half = target / 2;
             if half >= max_prover_recursive2_buffer_size {
                 layout.unused -= target - current;
@@ -1492,6 +1502,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
+                + prefetch_region_area
                 + if self.phase_b {
                     0
                 } else {

@@ -323,10 +323,6 @@ uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
 }
 
-uint64_t get_map_total_n_contributions(void *pStarkInfo)
-{
-    return ((StarkInfo *)pStarkInfo)->mapTotalNContributions;
-}
 
 void stark_info_free(void *pStarkInfo)
 {

@@ -125,8 +125,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //   0x465249   "FRI"   FRI fold+merkelize step (+ step in key)
     //   0x4752494e "GRIN"  grinding (+ powBits in key)
     //   0x515559   "QUY"   query proofs (+ d_const_tree in key: preloaded trees repoint it)
-    //   0x57455843 "WEXC"  contributions witness expressions   (commit_witness_gpu, starks_api.cu)
-    //   0x574c4445 "WLDE"  contributions LDE + Merkle + root   (commit_witness_gpu, starks_api.cu)
     const uint64_t graphCtxId = (uint64_t)(uintptr_t)&setupCtx;
 
     // Pipeline: pinned params/proof staging is parity-sliced by launchSeq (incremented at

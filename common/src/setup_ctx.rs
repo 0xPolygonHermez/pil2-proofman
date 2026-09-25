@@ -297,7 +297,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_const_size: usize,
     max_prover_buffer_size: usize,
     prover_buffer_sizes: Vec<((usize, usize), usize)>,
-    max_prover_contributions_size: usize,
     max_pinned_proof_size: usize,
     max_compact_trace_size: usize,
     total_const_pols_size: usize,
@@ -346,7 +345,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_const_tree_size = 0;
         let mut max_const_size = 0;
         let mut max_n_bits_ext = 0;
-        let mut max_prover_contributions_size = 0;
         let mut max_prover_buffer_size = 0;
         let mut prover_buffer_sizes: Vec<((usize, usize), usize)> = Vec::new();
         let mut max_pinned_proof_size = 0;
@@ -389,9 +387,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                         max_prover_buffer_size = setup.prover_buffer_size;
                     }
                     prover_buffer_sizes.push(((airgroup_id, air_id), setup.prover_buffer_size as usize));
-                    if max_prover_contributions_size < setup.contributions_size {
-                        max_prover_contributions_size = setup.contributions_size;
-                    }
                     if setup.gpu {
                         sized_airs.push((airgroup_id, air_id));
                         if !setup.verkey.is_empty() {
@@ -478,7 +473,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             global_info_file,
             max_const_tree_size,
             max_const_size,
-            max_prover_contributions_size: max_prover_contributions_size as usize,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             prover_buffer_sizes,
             max_pinned_proof_size: max_pinned_proof_size as usize,
@@ -498,7 +492,6 @@ pub struct SetupCtx<F: PrimeField64> {
     setup_repository: SetupRepository<F>,
     pub max_const_tree_size: usize,
     pub max_const_size: usize,
-    pub max_prover_contributions_size: usize,
     pub max_prover_buffer_size: usize,
     /// Per-air prover buffer size, largest first. See `SetupRepository::prover_buffer_sizes`.
     pub prover_buffer_sizes: Vec<((usize, usize), usize)>,
@@ -543,7 +536,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
-        let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let prover_buffer_sizes = setup_repository.prover_buffer_sizes.clone();
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
@@ -557,7 +549,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             setup_repository,
             max_const_tree_size,
             max_const_size,
-            max_prover_contributions_size,
             max_prover_buffer_size,
             prover_buffer_sizes,
             max_compact_trace_size,

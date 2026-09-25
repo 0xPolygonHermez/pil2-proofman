@@ -71,7 +71,6 @@ extern "C" {
     
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
         
-    pub fn get_map_total_n_contributions(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
@@ -710,8 +709,14 @@ extern "C" {
         phaseAAliasOffset: u64,
     );
 
-    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
-    pub fn stage_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64, trace: *mut ::std::os::raw::c_void, total_size: u64) -> i64;
+    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64);
+    pub fn stage_witness(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instanceId: u64,
+        trace: *mut ::std::os::raw::c_void,
+        total_size: u64,
+        host_sync: bool,
+    ) -> i64;
     pub fn release_staged_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64);
     pub fn get_prefetch_witness_slots() -> u32;
     pub fn get_mops_floor_bytes() -> u64;
@@ -723,14 +728,6 @@ extern "C" {
     pub fn set_phase_b(d_buffers_: *mut ::std::os::raw::c_void, state: u32) -> i64;
     pub fn harvest_pipeline(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn dump_pipeline_state(d_buffers_: *mut ::std::os::raw::c_void);
-    pub fn prefetch_witness(
-        pSetupCtx_: *mut ::std::os::raw::c_void,
-        d_buffers_: *mut ::std::os::raw::c_void,
-        instanceId: u64,
-        airgroupId: u64,
-        airId: u64,
-        trace: *mut ::std::os::raw::c_void,
-    ) -> i64;
     
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
@@ -757,12 +754,7 @@ extern "C" {
     pub fn get_stream_commit_gpus(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64;
-    pub fn configure_stream_commit_slots(
-        d_buffers: *mut ::std::os::raw::c_void,
-        n_slots: u64,
-        slot_bytes: u64,
-        contrib_footprint_bytes: u64,
-    );
+    pub fn configure_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64);
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,
         slot_idx: u64,
