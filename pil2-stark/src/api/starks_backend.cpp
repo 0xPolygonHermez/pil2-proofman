@@ -92,7 +92,7 @@ void harvest_pipeline_gpu(void *d_buffers_);
 void dump_pipeline_state_gpu(void *d_buffers_);
 int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
                              uint64_t airgroupId, uint64_t airId, void *trace);
-int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -629,11 +629,11 @@ int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
                                  uint64_t instanceId, uint64_t airgroupId, uint64_t airId,
                                  void *packed, uint64_t nBits, uint64_t nBitsExt,
                                  uint64_t nCols, uint64_t wordsPerRow,
-                                 void *colWidths, void *root) {
+                                 void *colWidths, void *root, void *params_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->commit_witness_streaming
                ? backend->commit_witness_streaming(d_buffers_, slotIdx, instanceId, airgroupId, airId, packed,
-                                                   nBits, nBitsExt, nCols, wordsPerRow, colWidths, root)
+                                                   nBits, nBitsExt, nCols, wordsPerRow, colWidths, root, params_)
                : -1;
 }
 

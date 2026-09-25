@@ -76,13 +76,17 @@ inline std::map<uint64_t, MulFittedMap>& mulFittedMaps() {
     return m;
 }
 
-// A table's row-map shape (fitted / exact-map / digit-rule / indexed-base) is meant to be
-// singular: mulResolveRow picks among the last three by a fixed priority with no diagnostic, so a
-// second, different shape registered for the same table would silently have one win and the other
-// dropped with nothing to say why. Tracked separately from mulDecoders() because registration
-// order is not fixed -- the decoder for this table may not exist yet when the conflict happens.
+// A table has one row-map shape (fitted / exact-map / digit-rule): mulResolveRow would silently
+// pick one by priority. Tracked apart from mulDecoders() since the decoder may not exist yet.
 inline std::map<uint64_t, std::string>& mulShapeClaims() { static std::map<uint64_t, std::string> m; return m; }
 inline std::mutex& mulShapeClaimsMutex() { static std::mutex m; return m; }
+
+// Every decode rule is also a claim on the table; without one nobody counts it.
+inline void mulClaimOwned(uint64_t tableId) {
+    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
+                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
+        mulOwnedReqs().push_back({tableId, 0});
+}
 
 inline void mulClaimShape(uint64_t tableId, const char* shape) {
     std::lock_guard<std::mutex> lk(mulShapeClaimsMutex());
@@ -111,12 +115,8 @@ inline void mul_register_table_decode_impl(uint64_t tableId, const uint64_t* coe
     f.konst = konst;
     for (uint64_t i = 0; i < nCoef; ++i) f.coef[i] = coef[i];
     mulFittedMaps()[tableId] = f;
-    // A fitted map is itself a claim on the table: without this the table would have a row map and
-    // no decoder, so nobody would count it. Bias is zero -- the fit's constant already places the
-    // row.
-    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
-                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
-        mulOwnedReqs().push_back({tableId, 0});
+    // Bias is zero: the fit's constant already places the row.
+    mulClaimOwned(tableId);
     // A decoder may already exist for this table (registration order is not fixed).
     for (auto& d : mulDecoders())
         if (d.table_id == tableId) { d.nCoef = f.nCoef; d.konst = f.konst;
@@ -148,11 +148,7 @@ inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, ui
     v.assign(kv, kv + n);
     mulTableMapKeys()[tableId] = (uint32_t)nKey;
     mulTableMapSlots()[tableId] = slots;
-    // A map is a claim on the table, exactly as a fitted row map is: without this the table gets a
-    // map and no decoder, so nobody counts it.
-    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
-                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
-        mulOwnedReqs().push_back({tableId, 0});
+    mulClaimOwned(tableId);
     for (auto& d : mulDecoders())
         if (d.table_id == tableId) { d.mapSlots = slots; d.mapKV = v.data(); d.nKey = (uint32_t)nKey; }
     zklog.trace("Multiplicity map: table " + std::to_string(tableId) + " " + std::to_string(slots)
@@ -186,10 +182,7 @@ inline void mul_register_table_digits_impl(uint64_t tableId, const uint64_t* tab
     }
     for (uint64_t i = 0; i < nCols; ++i) sh.col[i] = cols[i];
     mulTableDigitShape()[tableId] = sh;
-    // A digit rule is a claim on the table, exactly as a fitted row map or an exact map is.
-    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
-                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
-        mulOwnedReqs().push_back({tableId, 0});
+    mulClaimOwned(tableId);
     for (auto& d : mulDecoders())
         if (d.table_id == tableId) {
             d.digitCols = sh.cols;
@@ -201,93 +194,6 @@ inline void mul_register_table_digits_impl(uint64_t tableId, const uint64_t* tab
                + " bytes) -- no map needed");
 }
 
-// Indexed-base row maps, by table id: a per-block base plus uniform strides (table 125's shape).
-inline std::map<uint64_t, std::vector<uint64_t>>& mulTableIndexedBase() {
-    static std::map<uint64_t, std::vector<uint64_t>> m;
-    return m;
-}
-struct MulIndexedBaseShape {
-    uint32_t nSel = 0;
-    uint32_t selCol[MUL_MAX_TUPLE]   = {0};
-    uint32_t selShift[MUL_MAX_TUPLE] = {0};
-    uint64_t selMask[MUL_MAX_TUPLE]  = {0};
-    uint32_t nStride = 0;
-    uint32_t strideCol[MUL_MAX_TUPLE] = {0};
-    uint64_t strideVal[MUL_MAX_TUPLE] = {0};
-    // Lower bound on the tuple width the rule reads (max selCol/strideCol + 1). The registration
-    // call carries no explicit tuple width, so this is a derived floor -- exact for the plan
-    // builder, which evaluates the hint's own `fEx->values.size()` instead and never reads this;
-    // it exists so the interpreter fallback (hints.cu, expressions_gpu.cu), which has no access to
-    // the hint at that point, knows how many tuple columns to evaluate before calling mulResolveRow.
-    uint32_t nKey = 0;
-};
-inline std::map<uint64_t, MulIndexedBaseShape>& mulTableIndexedBaseShape() {
-    static std::map<uint64_t, MulIndexedBaseShape> m;
-    return m;
-}
-
-inline void mul_register_table_indexed_base_impl(uint64_t tableId, const uint64_t* sel, uint64_t nSel,
-                                                  const uint64_t* base, uint64_t nBase,
-                                                  const uint64_t* stride, uint64_t nStride) {
-    mulClaimShape(tableId, "indexed-base");
-    if (nSel == 0 || nSel > MUL_MAX_TUPLE || nStride > MUL_MAX_TUPLE) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " indexed-base rule has "
-                    + std::to_string(nSel) + " selector fields and " + std::to_string(nStride)
-                    + " strides; the cap is " + std::to_string(MUL_MAX_TUPLE));
-        exitProcess();
-    }
-    // The selector packs its fields most-significant-first, so the space it addresses is the
-    // product of (mask+1) over every field -- `base` must cover exactly that, or an in-range
-    // selector would read past the table (or a live entry would never be reached).
-    uint64_t want = 1;
-    for (uint64_t i = 0; i < nSel; ++i) want *= sel[3 * i + 2] + 1;
-    if (want != nBase) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " indexed-base has "
-                    + std::to_string(nBase) + " base entries, selector space is "
-                    + std::to_string(want));
-        exitProcess();
-    }
-    auto& v = mulTableIndexedBase()[tableId];
-    v.assign(base, base + nBase);
-    MulIndexedBaseShape sh{};
-    sh.nSel = (uint32_t)nSel;
-    for (uint64_t i = 0; i < nSel; ++i) {
-        sh.selCol[i]   = (uint32_t)sel[3 * i];
-        sh.selShift[i] = (uint32_t)sel[3 * i + 1];
-        sh.selMask[i]  = sel[3 * i + 2];
-    }
-    sh.nStride = (uint32_t)nStride;
-    for (uint64_t i = 0; i < nStride; ++i) {
-        sh.strideCol[i] = (uint32_t)stride[2 * i];
-        sh.strideVal[i] = stride[2 * i + 1];
-    }
-    for (uint64_t i = 0; i < nSel; ++i) sh.nKey = std::max(sh.nKey, sh.selCol[i] + 1);
-    for (uint64_t i = 0; i < nStride; ++i) sh.nKey = std::max(sh.nKey, sh.strideCol[i] + 1);
-    mulTableIndexedBaseShape()[tableId] = sh;
-    // An indexed-base rule is a claim on the table, exactly as a fitted row map, an exact map, or a
-    // digit rule is: without this the table gets a row map and no decoder, so nobody counts it.
-    if (std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
-                     [&](const MulOwnedReq& o){ return o.table_id == tableId; }) == mulOwnedReqs().end())
-        mulOwnedReqs().push_back({tableId, 0});
-    // A decoder may already exist for this table (registration order is not fixed).
-    for (auto& d : mulDecoders())
-        if (d.table_id == tableId) {
-            d.nSel = sh.nSel;
-            for (uint32_t i = 0; i < sh.nSel; ++i) {
-                d.selCol[i] = sh.selCol[i]; d.selShift[i] = sh.selShift[i]; d.selMask[i] = sh.selMask[i];
-            }
-            d.nStride = sh.nStride;
-            for (uint32_t i = 0; i < sh.nStride; ++i) {
-                d.strideCol[i] = sh.strideCol[i]; d.strideVal[i] = sh.strideVal[i];
-            }
-            d.baseTab = v.data();
-            d.nKey = sh.nKey;
-        }
-    // Per-table, like the map and digit registrations above -- trace, not info.
-    zklog.trace("Multiplicity indexed-base: table " + std::to_string(tableId) + " "
-               + std::to_string(nSel) + " selector fields, " + std::to_string(nBase) + " bases ("
-               + std::to_string(nBase * 8 / 1000000) + " MB), " + std::to_string(nStride) + " strides");
-}
 
 inline void mul_materialize_decoders() {
     for (const auto& L : mulVtLayouts()) {
@@ -304,20 +210,6 @@ inline void mul_materialize_decoders() {
                 d.digitCols = sh.cols;
                 for (uint32_t i = 0; i < sh.cols; ++i) d.digitCol[i] = sh.col[i];
                 d.digitTab = dg->second.data();
-            }
-            auto ib = mulTableIndexedBase().find(o.table_id);
-            if (ib != mulTableIndexedBase().end() && !ib->second.empty()) {
-                const MulIndexedBaseShape& sh = mulTableIndexedBaseShape()[o.table_id];
-                d.nSel = sh.nSel;
-                for (uint32_t i = 0; i < sh.nSel; ++i) {
-                    d.selCol[i] = sh.selCol[i]; d.selShift[i] = sh.selShift[i]; d.selMask[i] = sh.selMask[i];
-                }
-                d.nStride = sh.nStride;
-                for (uint32_t i = 0; i < sh.nStride; ++i) {
-                    d.strideCol[i] = sh.strideCol[i]; d.strideVal[i] = sh.strideVal[i];
-                }
-                d.baseTab = ib->second.data();
-                d.nKey = sh.nKey;
             }
             auto mp = mulTableMaps().find(o.table_id);
             if (mp != mulTableMaps().end()) {

@@ -12,15 +12,9 @@
 // slots to global at the end. A key whose slot is owned by another falls through to the global
 // counter, so this is never worse than plain atomics.
 //
-// How: a direct-mapped, write-once cache in shared memory, keyed by the ACCUMULATOR INDEX. A hot
-// key claims a slot on its first appearance and every later hit in this block is a shared-memory
-// add; the block flushes each live slot to global once at the end. A key whose slot is already
-// owned by another key falls straight through to the global counter -- exactly today's behaviour
-// for that key, so this is never worse, only better for whatever is hot.
-//
-// Nothing here knows about tables, ranges or ids: it keys on the accumulator index alone, so a
-// table added tomorrow is combined on the same terms.
-#define MUL_COMBINE_SLOTS 1024u
+// Only the few hot keys need to fit. 256 slots beats 1024: the freed shared memory is occupancy
+// the latency-bound column reads need. If an air needs more, make it per-plan instead.
+#define MUL_COMBINE_SLOTS 256u
 #define MUL_COMBINE_EMPTY 0xFFFFFFFFFFFFFFFFULL
 
 struct MulCombine {
@@ -70,13 +64,6 @@ __device__ __forceinline__ void mulCombineAdd(MulCombine c, unsigned mask, uint6
             total += __shfl_sync(peers, value, __ffs(rest) - 1);
     }
     if ((int)(threadIdx.x & 31) == leader) mulCombineDeposit(c, key, total, acc);
-}
-
-__device__ __forceinline__ void mulCombineInc(MulCombine c, unsigned mask, uint64_t key,
-                                              unsigned long long* acc) {
-    const unsigned peers = __match_any_sync(mask, key);
-    if ((int)(threadIdx.x & 31) == __ffs(peers) - 1)
-        mulCombineDeposit(c, key, (uint64_t)__popc(peers), acc);
 }
 
 // Every thread of the block must reach this, so the scatter loop is written with a uniform trip

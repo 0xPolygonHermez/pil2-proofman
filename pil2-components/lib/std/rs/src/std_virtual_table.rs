@@ -1520,15 +1520,15 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
                 let any_nonzero = std::sync::atomic::AtomicBool::new(device_owned);
                 let num_rows = self.num_rows;
                 if !device_owned {
-                buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
-                    for (col, slot) in chunk.iter_mut().enumerate() {
-                        let v = self.multiplicities[col * num_rows + row].load(Ordering::Relaxed);
-                        if v != 0 {
-                            any_nonzero.store(true, Ordering::Relaxed);
+                    buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
+                        for (col, slot) in chunk.iter_mut().enumerate() {
+                            let v = self.multiplicities[col * num_rows + row].load(Ordering::Relaxed);
+                            if v != 0 {
+                                any_nonzero.store(true, Ordering::Relaxed);
+                            }
+                            *slot = F::from_u64(v);
                         }
-                        *slot = F::from_u64(v);
-                    }
-                });
+                    });
                 }
                 if !any_nonzero.load(Ordering::Relaxed) {
                     tracing::info!(

@@ -211,37 +211,35 @@ inline void mul_alloc_devices(const int* gpuIds, int nGpus) {
     }
 }
 
-// Each table's key->row index, mirrored per device. Allocated once alongside the accumulators and
-// never freed: it is setup-derived and outlives every proof.
-inline std::map<std::pair<uint64_t,int>, uint32_t*>& mulIndexDev() {
-    static std::map<std::pair<uint64_t,int>, uint32_t*> m;
-    return m;
-}
-
+// Each table's exact-match map, mirrored per device. Setup-derived, never freed.
 inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulMapDev() {
     static std::map<std::pair<uint64_t,int>, uint64_t*> m;
     return m;
 }
 
-inline void mul_alloc_maps(int gpuId) {
+// Mirror a per-table host vector onto one GPU, once per (table, gpu). `what` is for the error
+// message; failure is fatal, since the lookups it decodes would silently count nothing.
+inline void mulMirrorPerGpu(const std::map<uint64_t, std::vector<uint64_t>>& host,
+                            std::map<std::pair<uint64_t,int>, uint64_t*>& dev,
+                            int gpuId, const char* what) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
-    for (const auto& kv : mulTableMaps()) {
+    for (const auto& kv : host) {
         auto key = std::make_pair(kv.first, gpuId);
-        if (mulMapDev().count(key) || kv.second.empty()) continue;
+        if (dev.count(key) || kv.second.empty()) continue;
         const size_t bytes = kv.second.size() * sizeof(uint64_t);
         uint64_t* d = nullptr;
         if (cudaMalloc(&d, bytes) != cudaSuccess) {
-            zklog.error("multiplicity: could not allocate the map for table "
+            zklog.error(std::string("multiplicity: could not allocate the ") + what + " for table "
                         + std::to_string(kv.first) + " (" + std::to_string(bytes / 1000000) + " MB)");
             exitProcess();
         }
         mulCopySync(gpuId, d, kv.second.data(), bytes, cudaMemcpyHostToDevice);
-        mulMapDev()[key] = d;
-        // Per (table, gpu) -- superseded, for an operator, by the aggregate per-device residency
-        // line mul_alloc logs once every table for that device has been mirrored.
-        zklog.trace("Multiplicity map: table " + std::to_string(kv.first) + " mirrored on gpu "
-                   + std::to_string(gpuId) + " (" + std::to_string(bytes / 1000000) + " MB)");
+        dev[key] = d;
     }
+}
+
+inline void mul_alloc_maps(int gpuId) {
+    mulMirrorPerGpu(mulTableMaps(), mulMapDev(), gpuId, "map");
 }
 
 inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulDigitDev() {
@@ -250,93 +248,7 @@ inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulDigitDev() {
 }
 
 inline void mul_alloc_digits(int gpuId) {
-    CHECKCUDAERR(cudaSetDevice(gpuId));
-    for (const auto& kv : mulTableDigits()) {
-        auto key = std::make_pair(kv.first, gpuId);
-        if (mulDigitDev().count(key) || kv.second.empty()) continue;
-        const size_t bytes = kv.second.size() * sizeof(uint64_t);
-        uint64_t* d = nullptr;
-        if (cudaMalloc(&d, bytes) != cudaSuccess) {
-            zklog.error("multiplicity: could not allocate the digit table for table "
-                        + std::to_string(kv.first));
-            exitProcess();
-        }
-        mulCopySync(gpuId, d, kv.second.data(), bytes, cudaMemcpyHostToDevice);
-        mulDigitDev()[key] = d;
-    }
-}
-
-// Indexed-base tables (table 125's shape): the base array mirrored per device, plus a small
-// device-resident MulDecoder shell whose baseTab already points at that mirror. A job's `dec`
-// pointer becomes this shell's device address (see mulPlanDevice in multiplicity_kernel.cuh) --
-// the kernel never dereferences the host struct in mulDecoders().
-inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulIndexedBaseTabDev() {
-    static std::map<std::pair<uint64_t,int>, uint64_t*> m;
-    return m;
-}
-inline std::map<std::pair<uint64_t,int>, MulDecoder*>& mulIndexedBaseDecDev() {
-    static std::map<std::pair<uint64_t,int>, MulDecoder*> m;
-    return m;
-}
-
-inline void mul_alloc_indexed_base(int gpuId) {
-    CHECKCUDAERR(cudaSetDevice(gpuId));
-    for (const auto& kv : mulTableIndexedBase()) {
-        auto key = std::make_pair(kv.first, gpuId);
-        if (mulIndexedBaseDecDev().count(key) || kv.second.empty()) continue;
-        const size_t bytes = kv.second.size() * sizeof(uint64_t);
-        uint64_t* dBase = nullptr;
-        if (cudaMalloc(&dBase, bytes) != cudaSuccess) {
-            zklog.error("multiplicity: could not allocate the indexed-base table for table "
-                        + std::to_string(kv.first) + " (" + std::to_string(bytes / 1000000) + " MB)");
-            exitProcess();
-        }
-        mulCopySync(gpuId, dBase, kv.second.data(), bytes, cudaMemcpyHostToDevice);
-        mulIndexedBaseTabDev()[key] = dBase;
-
-        // The shell carries only the selector/stride shape -- small and fixed-size -- with baseTab
-        // repointed at this GPU's mirror of the (potentially large) base array.
-        MulDecoder shell{};
-        const MulDecoder* host = mulDecoderFor(kv.first);
-        if (host != nullptr) {
-            shell.nSel = host->nSel;
-            for (uint32_t i = 0; i < host->nSel; ++i) {
-                shell.selCol[i] = host->selCol[i];
-                shell.selShift[i] = host->selShift[i];
-                shell.selMask[i] = host->selMask[i];
-            }
-            shell.nStride = host->nStride;
-            for (uint32_t i = 0; i < host->nStride; ++i) {
-                shell.strideCol[i] = host->strideCol[i];
-                shell.strideVal[i] = host->strideVal[i];
-            }
-        }
-        shell.baseTab = dBase;
-        MulDecoder* dDec = nullptr;
-        if (cudaMalloc(&dDec, sizeof(MulDecoder)) != cudaSuccess) {
-            zklog.error("multiplicity: could not allocate the indexed-base decoder shell for table "
-                        + std::to_string(kv.first));
-            exitProcess();
-        }
-        mulCopySync(gpuId, dDec, &shell, sizeof(MulDecoder), cudaMemcpyHostToDevice);
-        mulIndexedBaseDecDev()[key] = dDec;
-        // Per (table, gpu) -- same reasoning as the map registration above: trace, not info.
-        zklog.trace("Multiplicity indexed-base: table " + std::to_string(kv.first) + " mirrored on gpu "
-                   + std::to_string(gpuId) + " (" + std::to_string(bytes / 1000000) + " MB)");
-    }
-}
-
-inline const MulDecoder* mulIndexedBaseFor(uint64_t tableId, int gpuId) {
-    auto it = mulIndexedBaseDecDev().find(std::make_pair(tableId, gpuId));
-    return it == mulIndexedBaseDecDev().end() ? nullptr : it->second;
-}
-
-// The base array's own device mirror, for callers that patch a MulDecoder's baseTab field directly
-// (a copy-by-value decoder, e.g. the interpreter fallback's Dest::scatter.dec) rather than swap in
-// the whole device-resident shell mulIndexedBaseFor returns.
-inline const uint64_t* mulIndexedBaseTabFor(uint64_t tableId, int gpuId) {
-    auto it = mulIndexedBaseTabDev().find(std::make_pair(tableId, gpuId));
-    return it == mulIndexedBaseTabDev().end() ? nullptr : it->second;
+    mulMirrorPerGpu(mulTableDigits(), mulDigitDev(), gpuId, "digit table");
 }
 
 inline const uint64_t* mulDigitsFor(uint64_t tableId, int gpuId) {
@@ -361,17 +273,13 @@ inline void mul_alloc_peer_stage(int gpuId) {
     CHECKCUDAERR(cudaMalloc(&stage, MUL_PEER_CHUNK * sizeof(uint64_t)));
 }
 
-// Total bytes this device currently holds for maps, digit tables, indexed-base tables and
-// accumulators -- the one number that actually matters to an operator here, since it is
-// per-GPU and competes directly with the prover's own arena on that device.
+// Total bytes this device holds for maps, digit tables and accumulators.
 inline uint64_t mul_gpu_resident_bytes(int gpuId) {
     uint64_t bytes = 0;
     for (const auto& kv : mulMapDev())
         if (kv.first.second == gpuId) bytes += mulTableMaps()[kv.first.first].size() * sizeof(uint64_t);
     for (const auto& kv : mulDigitDev())
         if (kv.first.second == gpuId) bytes += mulTableDigits()[kv.first.first].size() * sizeof(uint64_t);
-    for (const auto& kv : mulIndexedBaseTabDev())
-        if (kv.first.second == gpuId) bytes += mulTableIndexedBase()[kv.first.first].size() * sizeof(uint64_t);
     for (const auto& kv : mulAccs())
         if (kv.first.second == gpuId) bytes += kv.second->n_counters * sizeof(uint64_t);
     if (mulPeerStage().count(gpuId)) bytes += MUL_PEER_CHUNK * sizeof(uint64_t);

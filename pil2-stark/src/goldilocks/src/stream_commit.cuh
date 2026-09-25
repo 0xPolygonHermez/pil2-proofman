@@ -114,7 +114,14 @@ void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
                             const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
                             uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
                             const uint8_t *dColSource = nullptr, const uint8_t *dColLane = nullptr,
-                            const uint64_t *dTable = nullptr);
+                            const uint64_t *dTable = nullptr, uint64_t dstStride = 0,
+                            uint64_t dstOff = 0);
+
+// Called after each chunk is unpacked and BEFORE it is extended in place. `dst` holds `cc` columns
+// from `c0`, ColMajor at the small-domain stride. Prover-computed stage-1 columns (witness_calc
+// hints) are written here.
+typedef void (*StreamCommitChunkHook)(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
+                                      cudaStream_t stream, void *user);
 
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
@@ -124,6 +131,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *dTable = nullptr,
                            StreamCommitHash hash = StreamCommitHash::Poseidon1,
                            StreamCommitHook hook = nullptr, void *hookUser = nullptr,
-                           TimerGPU *timer = nullptr);
+                           TimerGPU *timer = nullptr,
+                           StreamCommitChunkHook chunkHook = nullptr, void *chunkUser = nullptr);
 
 #endif

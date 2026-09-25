@@ -231,7 +231,8 @@ void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
                 (const uint64_t *)h_params.pConstPolsAddress, (const uint64_t *)h_params.trace,
                 (const uint64_t *)h_params.aux_trace,         (const uint64_t *)h_params.publicInputs,
                 (const uint64_t *)h_params.airValues,         (const uint64_t *)h_params.proofValues,
-                (const uint64_t *)h_params.airgroupValues,    (const uint64_t *)h_params.pCustomCommitsFixed };
+                (const uint64_t *)h_params.airgroupValues,    (const uint64_t *)h_params.pCustomCommitsFixed,
+                nullptr, nullptr };   // slot-only sources; the legacy scatter reads the unpacked trace
             mul_scatter_launch_rows(dev.jobs, (uint32_t)plan.jobs.size(), bases,
                                     domainSize, plan.maxRows,
                                     acc, oob, (airgroupId << 32) | airId, dev.prog, stream);
@@ -240,9 +241,8 @@ void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
         }
     }
 
-    // Whatever the extractor could not reduce still goes through the expression interpreter.
-    // The fold waits on these events rather than on the device, which a concurrent graph capture
-    // would forbid.
+    // Whatever did not compile still goes through the expression interpreter.
+    // The fold waits on these events (no device sync during graph capture).
     if (plan.fallback.empty()) { mul_note_scatter(gpuId, stream); return; }
     HintFieldOptions opts;
     timer.startCategory("MUL_SCATTER_INTERP");
@@ -259,8 +259,6 @@ void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
             dest.scatter.dec.mapKV = mulMapFor(fb.dec.table_id, gpuId);
         if (dest.scatter.dec.digitCols != 0)
             dest.scatter.dec.digitTab = mulDigitsFor(fb.dec.table_id, gpuId);
-        if (dest.scatter.dec.nSel != 0)
-            dest.scatter.dec.baseTab = mulIndexedBaseTabFor(fb.dec.table_id, gpuId);
         dest.scatter.air       = (airgroupId << 32) | airId;
         dest.scatter.rows      = fb.rows;
         dest.scatter.selConstOne = fb.selConstOne;
@@ -268,11 +266,11 @@ void calculateMulCalcGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
 
         // Value first, then selector, then bus id -- the order scatterPolynomial__ reads.
         // skipRedundantOne is off: a value that is the literal 1 must still occupy slot 0.
-        // A mapped or indexed-base table needs its whole tuple, not just the first element; for
-        // indexed-base, dec.nKey is the registration-time derived floor (max selCol/strideCol + 1)
-        // -- see MulIndexedBaseShape -- since this path has no access to the hint's own tuple width.
+        // Mapped and indexed-base tables need the whole tuple; for indexed-base, dec.nKey is the
+        // registration-time floor (max selCol/strideCol + 1).
+
         const uint32_t nVal = fb.dec.digitCols != 0 ? fb.dec.digitCols
-                            : ((fb.dec.mapSlots != 0 || fb.dec.nSel != 0) ? fb.dec.nKey : 1u);
+                            : (fb.dec.mapSlots != 0 ? fb.dec.nKey : 1u);
         for (uint32_t c = 0; c < nVal; ++c)
             addHintFieldAt(setupCtx, h_params, fb.hintId, dest, "expressions", c, opts, false);
         if (!fb.selConstOne) addHintField(setupCtx, h_params, fb.hintId, dest, "num_reps", opts);

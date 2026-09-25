@@ -86,6 +86,7 @@ struct AirInstanceInfo {
     bool is_packed = false;
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
+    std::vector<uint64_t> unpack_info_host;
     uint64_t* d_num_packed_words;
 
     // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
@@ -310,6 +311,7 @@ struct AirInstanceInfo {
             if (is_packed && num_packed_words > 0) {
                 CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+                unpack_info_host.assign(packedInfo->unpack_info, packedInfo->unpack_info + nCols);
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
 
@@ -886,6 +888,9 @@ struct DeviceCommitBuffers
     uint64_t auxTraceTotalBytes = 0;
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
+    // Pinned per-slot staging for the multiplicity hook's publics/values.
+    // [streamCommitSlots * PINNED_AUX_VALUES_MAX]
+    Goldilocks::Element *streamCommitAuxValues = nullptr;
     // Shared-hold of the overlapped legacy streams: the first in-flight slot
     // commit claims every overlapped stream's selection mutex, the last
     // releases them (see acquire/release in commit_witness_streaming_gpu).

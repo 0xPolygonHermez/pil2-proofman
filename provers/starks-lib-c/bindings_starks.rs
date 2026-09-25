@@ -772,6 +772,7 @@ extern "C" {
         words_per_row: u64,
         col_widths: *mut ::std::os::raw::c_void,
         root: *mut ::std::os::raw::c_void,
+        params: *mut ::std::os::raw::c_void,
     ) -> i64;
     pub fn stream_commit_pause();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;

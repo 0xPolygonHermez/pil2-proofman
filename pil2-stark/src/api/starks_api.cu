@@ -14,6 +14,7 @@
 #include "multiplicity.hpp"
 #include "multiplicity_decoders.hpp"
 #include "multiplicity_stream.cuh"
+#include "witness_hints_slot.hpp"
 #include "multiplicity.cuh"
 #include "multiplicity_plan.hpp"
 
@@ -800,6 +801,10 @@ void free_device_buffers_gpu(void *d_buffers_)
         CHECKCUDAERR(cudaSetDevice(prevDevice));
         free(d_buffers->streamCommitStreams);
         d_buffers->streamCommitStreams = nullptr;
+        if (d_buffers->streamCommitAuxValues != nullptr) {
+            cudaFreeHost(d_buffers->streamCommitAuxValues);
+            d_buffers->streamCommitAuxValues = nullptr;
+        }
         d_buffers->streamCommitSlots = 0;
     }
     // Drop the process-global pause handle if it points at this instance.
@@ -1555,7 +1560,21 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
-    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    // The third place a trace reaches the device, and the one verify-constraints and
+    // stats go through. The device producer has to run here too, for the same reason it
+    // runs in the commit paths: the std no longer fills a prover-owned virtual table on
+    // the host. Omitting it leaves that air all-zero, which every per-AIR constraint
+    // accepts and only the cross-air lookup balance rejects -- i.e. a failing GLOBAL
+    // constraint with nothing else to point at.
+    //
+    // `dst` is the small-domain staging area rather than the extended one, but its role
+    // is identical: the transform below reads exactly what the upload would have written
+    // there, so the producer targets the same slot as in the other two sites.
+    const bool mulExported = !air_instance_info->is_packed &&
+                             mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
+    if (!mulExported) {
+        copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    }
     PROOFMAN_SUMCHECK("proof_before_unpack", dst, total_size / sizeof(uint64_t), stream);
 
     size_t totalCopySize = 0;
@@ -3032,6 +3051,8 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     // here (and again at each commit, which runs on a different thread). Restore
     // the caller's device: this is a library entry, it should not leave thread
     // state changed under its caller.
+    CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitAuxValues,
+                                (size_t)nSlots * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
     d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nSlots * sizeof(cudaStream_t));
     int prevDevice = 0;
     CHECKCUDAERR(cudaGetDevice(&prevDevice));
@@ -3086,7 +3107,6 @@ static bool streamCommitAcquireRegion(DeviceCommitBuffers *d_buffers) {
     d_buffers->streamCommitInFlight++;
     return true;
 }
-
 static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers) {
     std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
     if (--d_buffers->streamCommitInFlight == 0) {
@@ -3096,6 +3116,45 @@ static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers) {
                 sd.mutex_stream_selection.unlock();
         }
     }
+}
+
+// Everything a slot commit does between the upload and the chunk loop, in the order it has to
+// happen: the value window both consumers read, then the prover's own stage-1 columns, then the
+// lookups -- which must see those columns, not the witness's stale ones.
+struct SlotCommitCtx {
+    const MulInsnDev *prog = nullptr;
+    const SlotHintOp *ops = nullptr;
+    uint32_t          nOps = 0;
+    uint64_t         *side = nullptr;
+    const uint32_t   *destCols = nullptr, *destSlots = nullptr;
+    uint32_t          nDest = 0;
+    const uint64_t   *constPols = nullptr;
+    uint64_t         *dVals = nullptr;          // device copy, at the tail of `side`
+    const uint64_t   *hVals = nullptr;          // pinned source for it
+    uint64_t          nVals = 0, nRows = 0;
+    SlotHintValOffsets valOff{};
+    MulStreamCtx     *mul = nullptr;            // null when this air feeds no prover-owned table
+};
+
+static void slotCommitHook(const uint64_t *dPacked, const uint64_t *dWidths,
+                           const StreamCommitDims &dims, cudaStream_t stream, void *user) {
+    SlotCommitCtx *c = (SlotCommitCtx *)user;
+    if (c == nullptr) return;
+    if (c->dVals != nullptr && c->hVals != nullptr && c->nVals != 0)
+        CHECKCUDAERR(cudaMemcpyAsync(c->dVals, c->hVals, c->nVals * sizeof(uint64_t),
+                                     cudaMemcpyHostToDevice, stream));
+    if (c->nOps != 0)
+        slotHintEvalLaunch(c->prog, c->ops, c->nOps, dPacked, dims.wordsPerRow, c->constPols,
+                           c->dVals, c->valOff, c->side, c->nRows, stream);
+    if (c->mul != nullptr) mulStreamHook(dPacked, dWidths, dims, stream, c->mul);
+}
+
+static void slotCommitChunkHook(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
+                                cudaStream_t stream, void *user) {
+    SlotCommitCtx *c = (SlotCommitCtx *)user;
+    if (c == nullptr || c->nDest == 0) return;
+    slotHintPatchLaunch(dst, c0, cc, nRows, 0, c->nRows, c->side, c->destCols, c->destSlots,
+                        c->nDest, stream);
 }
 
 // Commit a bit-packed witness on a streaming-commit slot (first GPU): upload,
@@ -3116,7 +3175,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                      uint64_t instanceId, uint64_t airgroupId, uint64_t airId,
                                      void *packed, uint64_t nBits, uint64_t nBitsExt,
                                      uint64_t nCols, uint64_t wordsPerRow,
-                                     void *colWidths, void *root) {
+                                     void *colWidths, void *root, void *params_) {
     if (d_buffers_ == nullptr) return -10;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers->streamCommitSlots == 0) return -11;
@@ -3173,11 +3232,80 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     gl64_t *slotBase = d_buffers->gpuMemoryBuffer[0] +
                        (d_buffers->streamCommitFloorBytes + slotIdx * d_buffers->streamCommitSlotBytes) /
                            sizeof(Goldilocks::Element);
-    // Counting the lookups of a slot-committed instance: the hook runs inside, between the upload
-    // and the chunk loop, which is the only window where the whole witness is readable.
+    // The hook runs between the upload and the chunk loop, the only window where the whole
+    // witness is readable. Own timer so slot commits show up in the phase's kernel accounting.
+    TimerGPU timer(d_buffers->streamCommitStreams[slotIdx]);
     MulStreamCtx mulCtx{};
+    SlotCommitCtx slotCtx{};
     StreamCommitHook hook = nullptr;
+    StreamCommitChunkHook chunkHook = nullptr;
     const int firstGpu = (int)d_buffers->my_gpu_ids[0];
+    const uint64_t nRowsSlot = 1ull << dims.nBits;
+    StepsParams *params = (StepsParams *)params_;
+
+    // Publics and the three value pools, packed consecutively into one host window (the slot has
+    // no aux trace). Offsets must come from THIS packing, not mapOffsets: a uniform term's
+    // `sectionOffset` is a flat index into its own pool.
+    const uint64_t *hVals = nullptr;
+    uint64_t nVals = 0, offPublics = 0, offProofValues = 0, offAirgroupValues = 0, offAirValues = 0;
+    if (aii != nullptr && aii->setupCtx != nullptr && params != nullptr) {
+        const StarkInfo &si = aii->setupCtx->starkInfo;
+        const uint64_t n = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
+        if (n > 0 && n <= PINNED_AUX_VALUES_MAX) {
+            Goldilocks::Element *h = d_buffers->streamCommitAuxValues + slotIdx * PINNED_AUX_VALUES_MAX;
+            uint64_t o = 0;
+            auto put = [&](void *src, uint64_t k) {
+                if (k) { memcpy(h + o, src, k * sizeof(Goldilocks::Element)); o += k; }
+            };
+            put(params->publicInputs, si.nPublics);
+            put(params->proofValues, si.proofValuesSize);
+            put(params->airgroupValues, si.airgroupValuesSize);
+            put(params->airValues, si.airValuesSize);
+            hVals = (const uint64_t *)h;
+            nVals = n;
+            offProofValues    = si.nPublics;
+            offAirgroupValues = si.nPublics + si.proofValuesSize;
+            offAirValues      = si.nPublics + si.proofValuesSize + si.airgroupValuesSize;
+        }
+    }
+
+    // witness_calc hints: evaluated from the packed rows into a side buffer and patched over each
+    // chunk before its LDE. An air whose hints cannot be expressed here must refuse the slot.
+    SlotHintPlanDev hintDev{};
+    uint64_t *dSide = nullptr;
+    uint32_t nHintOps = 0;
+    const SlotHintPlan *hintPlan = nullptr;
+    if (aii != nullptr && aii->setupCtx != nullptr) {
+        hintPlan = &slotHintPlanFor(*aii->setupCtx, airgroupId, airId, aii->unpack_info_host,
+                                    aii->num_packed_words);
+        if (!hintPlan->ok) {
+            static std::once_flag once;
+            std::call_once(once, [&] {
+                zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
+                           + std::to_string(airId) + " has witness_calc hints a slot cannot run ("
+                           + hintPlan->why + "); taking the legacy commit path");
+            });
+            streamCommitReleaseRegion(d_buffers);
+            return -14;
+        }
+        nHintOps = (uint32_t)hintPlan->ops.size();
+        if (nHintOps != 0) {
+            hintDev = slotHintPlanDevice(*hintPlan, airgroupId, airId, firstGpu);
+            if (!hintDev.ready) { streamCommitReleaseRegion(d_buffers); return -14; }
+        }
+    }
+    // One allocation for the hint columns and the value window: same lifetime, same per-slot key.
+    if (nHintOps != 0 || nVals != 0) {
+        const size_t elems = (size_t)hintDev.nDest * nRowsSlot + nVals;
+        dSide = slotHintSideBuffer(firstGpu, slotIdx, elems);
+        if (dSide == nullptr) {
+            zklog.error("commit_witness_streaming: no room for the slot's hint buffer on gpu "
+                        + std::to_string(firstGpu));
+            streamCommitReleaseRegion(d_buffers);
+            return -14;
+        }
+    }
+
     MulAcc *mulAcc = nullptr;
     if (aii != nullptr && !mulDecoders().empty()) {
         for (const auto &kv : mulAccs())
@@ -3191,11 +3319,9 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
         const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
         needsCount = !p.jobs.empty() || !p.fallback.empty();
-        // The interpreter fallback cannot run here (it needs the full expression machinery and a
-        // materialised trace). Nor can any read whose base is absent on a slot: the only buffers
-        // resident are the const pols and the tile this unpacks -- publics, the value pools and the
-        // custom commits all live in the aux trace, which is exactly what the slot does without.
-        // Either means this air cannot be counted on a slot, so it must not commit on one.
+        // If this air feeds a prover-owned table it MUST be counted here, or the root is valid
+        // and the multiplicities silently wrong. The interpreter fallback and jobs the tile kernel
+        // does not model cannot run on a slot, so refuse it.
         if (needsCount && (!p.fallback.empty() || !mulPlanStreamable(p))) {
             static std::once_flag once;
             std::call_once(once, [&] {
@@ -3211,6 +3337,32 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         streamCommitReleaseRegion(d_buffers);
         return -14;
     }
+
+    // The const pols, unpacked into a slot scratch: d_constPols is BIT-PACKED behind a header, and
+    // must never be handed to a consumer as field elements.
+    const uint64_t *dConstUnpacked = nullptr;
+    const bool wantConst = (mulAcc != nullptr || nHintOps != 0)
+                        && aii != nullptr && aii->const_pols_offset != UINT64_MAX;
+    if (wantConst) {
+        const uint64_t nConst = aii->setupCtx->starkInfo.nConstants;
+        if (nConst > 0) {
+            uint64_t *dConst = mulStreamConst(firstGpu, slotIdx, nConst * nRowsSlot);
+            if (dConst == nullptr) {
+                zklog.error("commit_witness_streaming: no room to expand the const pols for air "
+                            + std::to_string(airgroupId) + "/" + std::to_string(airId)
+                            + " on gpu " + std::to_string(firstGpu));
+                streamCommitReleaseRegion(d_buffers);
+                return -14;
+            }
+            gl64_t *packedConst = d_buffers->d_constPols[0] + aii->const_pols_offset;
+            unpack_fixed((uint64_t *)packedConst, (uint64_t *)(packedConst + 1),
+                         (uint64_t *)(packedConst + 1 + nConst), dConst, nConst, nRowsSlot,
+                         d_buffers->streamCommitStreams[slotIdx], timer);
+            CHECKCUDAERR(cudaGetLastError());
+            dConstUnpacked = dConst;
+        }
+    }
+
     if (mulAcc != nullptr && aii->const_pols_offset != UINT64_MAX) {
         mulCtx.setupCtx = aii->setupCtx;
         mulCtx.airgroupId = airgroupId;
@@ -3221,20 +3373,47 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.dColSource = dColSource;
         mulCtx.dColLane = dColLane;
         mulCtx.dTable = dTable;
-        mulCtx.constPols = (const uint64_t *)(d_buffers->d_constPols[0] + aii->const_pols_offset);
-        hook = mulStreamHook;
+        mulCtx.constPols = dConstUnpacked;
+        mulCtx.hostVals = hVals;
+        mulCtx.nVals = nVals;
+        mulCtx.dVals = (dSide != nullptr && nVals != 0)
+                     ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
+        mulCtx.offPublics        = offPublics;
+        mulCtx.offProofValues    = offProofValues;
+        mulCtx.offAirgroupValues = offAirgroupValues;
+        mulCtx.offAirValues      = offAirValues;
+        mulCtx.hintSide      = dSide;
+        mulCtx.hintDestCols  = hintDev.destCols;
+        mulCtx.hintDestSlots = hintDev.destSlots;
+        mulCtx.hintNDest     = hintDev.nDest;
+        slotCtx.mul = &mulCtx;
     }
 
-    // This commit does the same unpack + LDE + hash as the stream path, fused inside the slot.
-    // Without its own timer it lands in no report at all, and the phase's kernel accounting comes
-    // up short by however many instances happened to take this path -- which varies per run,
-    // because it is chosen on whether gpu-mops currently holds the unified buffer.
-    TimerGPU timer(d_buffers->streamCommitStreams[slotIdx]);
+    if (slotCtx.mul != nullptr || nHintOps != 0) {
+        slotCtx.prog = hintDev.prog;
+        slotCtx.ops = nHintOps ? hintPlan->ops.data() : nullptr;
+        slotCtx.nOps = nHintOps;
+        slotCtx.side = dSide;
+        slotCtx.destCols = hintDev.destCols;
+        slotCtx.destSlots = hintDev.destSlots;
+        slotCtx.nDest = hintDev.nDest;
+        slotCtx.constPols = dConstUnpacked;
+        slotCtx.dVals = (dSide != nullptr && nVals != 0)
+                      ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
+        slotCtx.hVals = hVals;
+        slotCtx.nVals = nVals;
+        slotCtx.nRows = nRowsSlot;
+        slotCtx.valOff = SlotHintValOffsets{offPublics, offProofValues, offAirgroupValues, offAirValues};
+        hook = slotCommitHook;
+        if (hintDev.nDest != 0) chunkHook = slotCommitChunkHook;
+    }
+
     TimerStartGPU(timer, STARK_GPU_COMMIT);
     int64_t rc = streamCommitPacked(slotBase, dims, (const uint64_t *)colWidths, packed,
                                     (uint64_t *)root, d_buffers->streamCommitStreams[slotIdx],
                                     dColSource, dColLane, dTable, scHash,
-                                    hook, hook ? &mulCtx : nullptr, &timer);
+                                    hook, hook ? (void *)&slotCtx : nullptr, &timer,
+                                    chunkHook, chunkHook ? (void *)&slotCtx : nullptr);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
     streamCommitReleaseRegion(d_buffers);

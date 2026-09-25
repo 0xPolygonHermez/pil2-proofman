@@ -82,7 +82,8 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
                                            const uint64_t *__restrict__ widths,
                                            uint64_t *__restrict__ dst,
                                            uint64_t nCols, uint64_t nRows,
-                                           uint64_t wordsPerRow, uint32_t c0, uint32_t cc)
+                                           uint64_t wordsPerRow, uint32_t c0, uint32_t cc,
+                                           uint64_t dstStride, uint64_t dstOff)
 {
     // Column bit offsets are row-uniform, so scanned once per block.
     extern __shared__ uint64_t scColStart[];
@@ -108,7 +109,7 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
         // Straddles only when boff > 0, so the shift below is always < 64.
         if (boff + nbits > 64) val |= packed_row[widx + 1] << (64 - boff);
         if (nbits < 64) val &= ((1ULL << nbits) - 1ULL);
-        dst[(uint64_t)j * nRows + row] = val;
+        dst[(uint64_t)j * dstStride + dstOff + row] = val;
     }
 }
 
@@ -125,7 +126,8 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
                                                   uint64_t nCols, uint64_t nRows,
                                                   uint64_t wordsPerRow, uint64_t wordsPerEntry,
                                                   uint64_t numEntries, uint64_t indexBits,
-                                                  uint64_t lanes, uint32_t c0, uint32_t cc)
+                                                  uint64_t lanes, uint32_t c0, uint32_t cc,
+                                                  uint64_t dstStride, uint64_t dstOff)
 {
     // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
     // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
@@ -180,7 +182,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
     for (uint64_t c = c0; c < cEnd; c++) {
         const uint64_t info = scInfo[c];
         if ((info >> 32) & 1ull) continue;
-        dst[(c - c0) * nRows + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
+        dst[(c - c0) * dstStride + dstOff + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
     }
 
     // One pass per lane; each lane's index sits at a known header offset. The extra passes
@@ -199,7 +201,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         for (uint64_t c = c0; c < cEnd; c++) {
             const uint64_t info = scInfo[c];
             if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            dst[(c - c0) * nRows + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
+            dst[(c - c0) * dstStride + dstOff + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
         }
     }
 }
@@ -482,18 +484,32 @@ void streamCommitUnpackTile(const uint64_t *dPacked, const uint64_t *dWidths,
                             const StreamCommitDims &dims, uint64_t rowBegin, uint64_t rows,
                             uint32_t c0, uint32_t cc, uint64_t *dst, cudaStream_t stream,
                             const uint8_t *dColSource, const uint8_t *dColLane,
-                            const uint64_t *dTable)
+                            const uint64_t *dTable, uint64_t dstStride, uint64_t dstOff)
 {
     if (rows == 0 || cc == 0) return;
+    // A caller assembling a haloed tile fills it in several passes, so the destination stride is
+    // the WHOLE tile's height, not this pass's row count.
+    if (dstStride == 0) dstStride = rows;
     const uint64_t *src = dPacked + rowBegin * dims.wordsPerRow;
     const uint32_t blk = (uint32_t)((rows + SC_TPB - 1) / SC_TPB);
     if (dColSource != nullptr) {
-        scUnpackRangeIndexedKernel<<<blk, SC_TPB, dims.nCols * sizeof(uint64_t), stream>>>(
+        // scInfo[nCols] + scStart[nCols] + one accumulator per lane -- the same three arrays
+        // the kernel carves out of `scShared`, and the same size the full-trace launch below
+        // passes. This asked for one nCols and the kernel ran off the end of the block's
+        // shared memory; it only ever showed up once an indexed air reached the multiplicity
+        // hook, which is the only caller of this function.
+        scUnpackRangeIndexedKernel<<<blk, SC_TPB,
+                                     (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t),
+                                     stream>>>(
             src, dTable, dWidths, dColSource, dColLane, dst, dims.nCols, rows, dims.wordsPerRow,
-            dims.wordsPerEntry, dims.numEntries, dims.indexBits, dims.lanes, c0, cc);
+            dims.wordsPerEntry, dims.numEntries, dims.indexBits, dims.lanes, c0, cc,
+            dstStride, dstOff);
     } else {
-        scUnpackRangeKernel<<<blk, SC_TPB, 0, stream>>>(src, dWidths, dst, dims.nCols, rows,
-                                                        dims.wordsPerRow, c0, cc);
+        // scColStart[cc] -- the same the full-trace launch passes. Zero here walked off the end
+        // of the block's shared memory; it never showed because the only air that reached this
+        // function was indexed, and took the branch above.
+        scUnpackRangeKernel<<<blk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(
+            src, dWidths, dst, dims.nCols, rows, dims.wordsPerRow, c0, cc, dstStride, dstOff);
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -503,7 +519,8 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource, const uint8_t *dColLane,
                            const uint64_t *dTable, StreamCommitHash hash,
-                           StreamCommitHook hook, void *hookUser, TimerGPU *timer)
+                           StreamCommitHook hook, void *hookUser, TimerGPU *timer,
+                           StreamCommitChunkHook chunkHook, void *chunkUser)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -579,14 +596,17 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                                          stream>>>(
                 d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
-                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc);
+                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc, N, 0);
         } else {
             scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
                                                              dims.nCols, N, dims.wordsPerRow,
-                                                             (uint32_t)(k * chunkCols), cc);
+                                                             (uint32_t)(k * chunkCols), cc, N, 0);
         }
         CHECKCUDAERR(cudaGetLastError());
         SC_CAT_STOP(timer, UNPACK_TRACE);
+        // Last moment these columns are the witness and not its LDE.
+        if (chunkHook != nullptr)
+            chunkHook((uint64_t *)d_rate, (uint32_t)(k * chunkCols), cc, N, stream, chunkUser);
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
         SC_CAT_START(timer, NTT);

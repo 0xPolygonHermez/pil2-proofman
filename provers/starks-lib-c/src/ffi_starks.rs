@@ -1695,6 +1695,9 @@ pub fn commit_witness_streaming_c(
     words_per_row: u64,
     col_widths: *mut ::std::os::raw::c_void,
     root: *mut ::std::os::raw::c_void,
+    // StepsParams: the slot stages publics and value pools from it. Null refuses the slot to airs
+    // whose lookups read them.
+    params: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe {
         commit_witness_streaming(
@@ -1710,6 +1713,7 @@ pub fn commit_witness_streaming_c(
             words_per_row,
             col_widths,
             root,
+            params,
         )
     }
 }

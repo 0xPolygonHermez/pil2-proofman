@@ -58,49 +58,45 @@ inline void mul_cpu_fold(uint64_t airId, uint64_t* hostAcc) {
     }
 }
 
-inline uint64_t mulEvalTermsCPU(const MulTermDev* t_, uint32_t n, uint64_t konst,
-                                const uint64_t* const* bases, uint64_t row, uint64_t rowMask) {
-    uint64_t acc = konst;
-    for (uint32_t i = 0; i < n; ++i) {
-        const MulTermDev& t = t_[i];
-        // Row-major: this backend stores a section as `row * nCols + col` (expressions_pack.hpp).
-        const uint64_t off = MUL_SRC_IS_UNIFORM(t.src)
-                           ? t.sectionOffset
-                           : t.sectionOffset + ((row + (uint64_t)t.rowStride) & rowMask) * t.nCols
-                             + t.col;
-        const uint64_t v = mulCanonHD(bases[t.src][off]);
-        acc = mulAddFE(acc, t.coef == 1 ? v : mulMulFE(v, t.coef));
-    }
-    return acc;
-}
-
-inline uint64_t mulEvalFormCPU(const MulFormDev& f, const uint64_t* const* bases,
-                               uint64_t row, uint64_t rowMask) {
-    const uint64_t a = mulEvalTermsCPU(f.t, f.n, f.konst, bases, row, rowMask);
-    if (!f.hasProduct) return a;
-    return mulMulFE(a, mulEvalTermsCPU(f.t2, f.n2, f.konst2, bases, row, rowMask));
-}
-
-// The lookups the extractor could not reduce to a closed form. The GPU commit path runs these
-// through the expression interpreter; this is the same thing on the host, so a CPU run counts
-// exactly what a GPU run does instead of coming up short by whatever failed to reduce.
-//
-// The fields are materialised into plain buffers and scattered afterwards rather than scattered
-// from inside the evaluator: the CPU evaluator has no scatter destination, and a hint that reaches
-// here is rare enough that one pass over a column costs nothing worth saving.
-// Defined in multiplicity_fallback_cpu.cpp: pulling the expression evaluator's headers in here
-// would close an include cycle through const_pols.hpp, and this is the only place that needs them.
+// Whatever did not compile still goes through the expression interpreter.
 void mul_scatter_fallback_cpu(SetupCtx& setupCtx, StepsParams& params, const MulPlan& plan);
 
-// Count one instance's lookups into its air's accumulator. Called from the CPU commit path once the
-// witness is filled, which is the same point the GPU launches its scatter.
-// A sum of products: the single-product evaluator, summed. Mirrors mulEvalPoly on the device.
-inline uint64_t mulEvalPolyCPU(const MulPolyDev& q, const uint64_t* const* bases,
-                               uint64_t row, uint64_t rowMask) {
-    uint64_t acc = 0;
-    for (uint32_t i = 0; i < q.nProd; ++i)
-        acc = mulAddFE(acc, mulEvalFormCPU(q.p[i], bases, row, rowMask));
-    return acc;
+// Host copy of mulEvalProgram (multiplicity_eval.cuh); must match it. Only addressing differs:
+// sections are row-major here (`row * nCols + col`), column-major on the device.
+inline uint64_t mulTermValueCPU(const MulTermDev& t, const uint64_t* const* bases,
+                                uint64_t row, uint64_t rowMask) {
+    if (MUL_SRC_IS_UNIFORM(t.src)) return mulCanonHD(bases[t.src][t.sectionOffset]);
+    // MUL_SRC_PACKED / MUL_SRC_HINTCOL are slot-commit sources; nothing reaches this backend.
+    const uint64_t r = (row + (uint64_t)t.rowStride) & rowMask;
+    return mulCanonHD(bases[t.src][t.sectionOffset + r * t.nCols + t.col]);
+}
+
+inline uint64_t mulOperandValCPU(const MulOperandDev& o, const uint64_t* const* bases,
+                                 uint64_t row, uint64_t rowMask, const uint64_t* tmp) {
+    if (o.kind == MUL_OPND_TEMP)  return tmp[o.tmp];
+    if (o.kind == MUL_OPND_CONST) return o.konst;
+    return mulTermValueCPU(o.term, bases, row, rowMask);
+}
+
+inline uint64_t mulEvalProgramCPU(const MulInsnDev* prog, uint32_t n, const uint64_t* const* bases,
+                                  uint64_t row, uint64_t rowMask) {
+    uint64_t tmp[MUL_PROG_MAX_TEMP];
+    uint64_t last = 0;
+    for (uint32_t k = 0; k < n; ++k) {
+        const MulInsnDev& in = prog[k];
+        const uint64_t a = mulOperandValCPU(in.a, bases, row, rowMask, tmp);
+        const uint64_t b = mulOperandValCPU(in.b, bases, row, rowMask, tmp);
+        uint64_t r;
+        switch (in.op) {
+            case 0:  r = mulAddFE(a, b); break;
+            case 1:  r = mulSubFEHD(a, b); break;
+            case 2:  r = mulMulFE(a, b); break;
+            default: r = mulSubFEHD(b, a); break;   // rsub
+        }
+        if (k + 1 == n) { last = r; break; }
+        tmp[in.dst] = r;
+    }
+    return last;
 }
 
 inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t airgroupId, uint64_t airId) {
@@ -112,10 +108,14 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
         (const uint64_t*)params.pConstPolsAddress, (const uint64_t*)params.trace,
         (const uint64_t*)params.aux_trace,         (const uint64_t*)params.publicInputs,
         (const uint64_t*)params.airValues,         (const uint64_t*)params.proofValues,
-        (const uint64_t*)params.airgroupValues,    (const uint64_t*)params.pCustomCommitsFixed };
+        (const uint64_t*)params.airgroupValues,    (const uint64_t*)params.pCustomCommitsFixed,
+        nullptr, nullptr };   // slot-only sources; the CPU scatter never sees one
     const uint64_t rowMask = (1ULL << setupCtx.starkInfo.starkStruct.nBits) - 1;
 
     mul_scatter_fallback_cpu(setupCtx, params, plan);
+
+    // Every field is bytecode; the offsets in a job index this one buffer.
+    const MulInsnDev* prog = plan.prog.data();
 
     for (const auto& j : plan.jobs) {
         // Per job: counters live in the air hosting the table.
@@ -126,29 +126,27 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             if (it == mulCpuAccs().end()) continue;
             acc = &it->second;
         }
-        // Resolved fresh here, once per job, rather than cached in the job at plan-build time:
-        // mulDecoders() keeps growing from other airs' registration and this plan may have been
-        // built before that finished. By the time a job is actually scattered (proving time),
-        // registration is done, so this lookup is safe and cheap relative to the per-row loop below.
-        const MulDecoder* dec = j.hasIndexedBase ? mulDecoderFor(j.tableId) : nullptr;
         std::atomic<uint64_t> oob{0}, firstBadIdx{0};
         #pragma omp parallel for schedule(static)
         for (int64_t row = 0; row < (int64_t)j.rows; ++row) {
             uint64_t sel = 1;
             if (!j.selConstOne) {
-                sel = mulEvalPolyCPU(j.sel, bases, row, rowMask);
+                sel = mulEvalProgramCPU(prog + j.selProgOff, j.selProgLen, bases, row, rowMask);
                 if (sel == 0) continue;
             }
-            if (j.hasBus && mulEvalPolyCPU(j.bus, bases, row, rowMask) != (uint64_t)j.tableId) continue;
+            if (j.hasBus && mulEvalProgramCPU(prog + j.busProgOff, j.busProgLen, bases, row, rowMask)
+                            != (uint64_t)j.tableId) continue;
             uint64_t key[MUL_MAX_TUPLE];
             if (j.mapSlots == 0 && j.digitCols == 0) {
-                key[0] = mulAddFE(mulEvalPolyCPU(j.value, bases, row, rowMask), j.biasFE);
+                key[0] = mulAddFE(mulEvalProgramCPU(prog + j.valProgOff, j.valProgLen, bases, row, rowMask),
+                                  j.biasFE);
             } else {
-                for (uint32_t c = 0; c < j.nKey; ++c) key[c] = mulEvalPolyCPU(j.key[c], bases, row, rowMask);
+                for (uint32_t c = 0; c < j.nKey; ++c)
+                    key[c] = mulEvalProgramCPU(prog + j.keyProgOff[c], j.keyProgLen[c], bases, row, rowMask);
             }
             uint64_t idx;
-            // Same resolve the kernel uses, so the two backends cannot disagree about a row.
-            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx, j.digitCols, j.digitTab, dec) || idx >= j.nTableRows) {
+            // Same resolve as the kernel.
+            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx, j.digitCols, j.digitTab) || idx >= j.nTableRows) {
                 if (oob.fetch_add(1, std::memory_order_relaxed) == 0)
                     firstBadIdx.store(key[0], std::memory_order_relaxed);
                 continue;

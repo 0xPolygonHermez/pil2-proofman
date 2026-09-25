@@ -1,9 +1,5 @@
-// The interpreter fallback for the host scatter.
-//
-// A lookup the extractor cannot reduce to a closed form is counted here instead, so a CPU run
-// counts exactly what a GPU run does rather than coming up short by whatever failed to reduce.
-// Its own translation unit because the expression evaluator's headers cannot be included from
-// multiplicity_cpu.hpp without closing an include cycle through const_pols.hpp.
+// The interpreter fallback for the host scatter: a lookup that does not compile is counted here,
+// so CPU and GPU runs count the same. Separate TU to avoid an include cycle through const_pols.hpp.
 #include "multiplicity_cpu.hpp"
 #include "expressions_pack.hpp"
 #include "hints.hpp"
@@ -11,9 +7,9 @@
 // Guard for the single-value affine path: a tuple-resolved decoder (map, digit rule, indexed-base)
 // must never reach it, or it would count a wrong row. Refuse loudly, as mulClaimShape does.
 static uint64_t mul_decode_checked(const MulDecoder& d, uint64_t value) {
-    if (d.mapSlots != 0 || d.digitCols != 0 || d.nSel != 0) {
+    if (d.mapSlots != 0 || d.digitCols != 0) {
         zklog.error("multiplicity: table " + std::to_string(d.table_id) + " has a map/digit/"
-                    "indexed-base row map but reached the single-value affine decode on the "
+                    "row map but reached the single-value affine decode on the "
                     "interpreter fallback -- a caller forgot to route it through mulResolveRow");
         exitProcess();
     }
@@ -40,11 +36,9 @@ void mul_scatter_fallback_cpu(SetupCtx& setupCtx, StepsParams& params, const Mul
             acc = &it->second;
         }
 
-        // A tuple-resolved table (map, digit rule, or indexed-base) needs every column
-        // mulResolveRow reads, not just the single folded value the affine/bias path uses --
-        // mirrors the GPU interpreter fallback's tupleForm branch (expressions_gpu.cu) so both
-        // backends resolve the same key the same way instead of disagreeing by construction.
-        const bool tupleForm = fb.dec.mapSlots != 0 || fb.dec.digitCols != 0 || fb.dec.nSel != 0;
+        // A tuple-resolved table needs every column mulResolveRow reads, not just the folded value;
+        // mirrors the GPU fallback's tupleForm branch (expressions_gpu.cu).
+        const bool tupleForm = fb.dec.mapSlots != 0 || fb.dec.digitCols != 0;
         const uint32_t nVal = fb.dec.digitCols != 0 ? fb.dec.digitCols
                                                      : (tupleForm ? fb.dec.nKey : 1u);
         if (nVal == 0 || nVal > MUL_MAX_TUPLE) {
@@ -106,7 +100,7 @@ void mul_scatter_fallback_cpu(SetupCtx& setupCtx, StepsParams& params, const Mul
                 for (uint32_t c = 0; c < nVal; ++c)
                     key[c] = mulCanonHD(Goldilocks::toU64(value[c][row * vStride[c]]));
                 if (!mulResolveRow(key, nVal, fb.dec.mapSlots, fb.dec.mapKV, idx,
-                                   fb.dec.digitCols, fb.dec.digitTab, &fb.dec)) {
+                                   fb.dec.digitCols, fb.dec.digitTab)) {
                     oob.fetch_add(1, std::memory_order_relaxed);
                     continue;
                 }

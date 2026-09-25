@@ -9,14 +9,12 @@
 #include <array>
 #include <algorithm>
 #include "multiplicity_extract.hpp"
-#include "multiplicity_program.hpp"
+#include "multiplicity_job.hpp"
 #include "multiplicity_job.hpp"
 #include "multiplicity.hpp"
 #include "setup_ctx.hpp"
 
-// What the dedicated kernel needs for one air, derived from setup alone: no trace, no challenges,
-// nothing that changes between instances. Built once per air and reused by every instance of it.
-// A lookup the extractor could not reduce, resolved so the interpreter path needs no hint walk.
+// A lookup that did not compile, resolved so the interpreter path needs no hint walk.
 struct MulFallbackJob {
     uint64_t   hintId = 0;
     MulDecoder dec {};
@@ -28,30 +26,38 @@ struct MulFallbackJob {
 // Per-air kernel plan, derived from setup alone and shared by every instance of the air.
 struct MulPlan {
     std::vector<MulJobDev>      jobs;      // lookups the kernel handles
-    // Instructions for the fields no closed form expresses, concatenated; jobs hold offsets into
-    // this. One buffer per air so the device needs a single allocation.
+    // All compiled programs, concatenated; jobs hold offsets into this.
     std::vector<MulInsnDev>     prog;
     std::vector<MulFallbackJob> fallback;  // the rest, for the interpreter
-    // The distinct stage-1 columns the jobs read, sorted. The streaming commit never materialises
-    // cm1 -- it unpacks a few columns at a time and LDEs them in place -- so serving that path
-    // means gathering exactly these columns for a tile of rows. Empty when nothing reads cm1.
-    std::vector<uint32_t>       cols1;
+    uint32_t                    nCols1 = 0;   // distinct stage-1 columns the jobs read
     bool                        packable = false;  // every term is cm1, a const pol, or a uniform
     // Bit per MulSrc read by the jobs. The streaming path gates on this, not on `packable`,
     // because a slot commit has no aux trace or custom commits on device.
     uint32_t                    srcMask = 0;
     uint64_t                    maxRows = 0;       // tallest job: the row-stationary grid height
+    // How far a cm1 reference reaches off its own row, in rows. A tile must carry this many
+    // extra rows on each side or those reads fall outside it; 0 for most airs, 4 for zisk
+    // Keccakf, whose shifts hide inside the compiled programs.
+    uint32_t                    traceHalo = 0;
 };
 
+// A tile carries this many extra rows on each side. Generous next to the 4 rows zisk's widest
+// air reaches, and still negligible against MUL_STREAM_TILE_ROWS.
+#define MUL_TILE_MAX_HALO 64u
+
 inline bool mulPlanStreamable(const MulPlan& p) {
-    const uint32_t resident = (1u << MUL_SRC_CONST) | (1u << MUL_SRC_TRACE);
-    // The tile kernel only knows the affine row map: it computes `value + bias` directly and never
-    // resolves a tuple. A compiled program, an exact map or a digit rule would all fall through it
-    // and count the wrong row -- or nothing. Refusing the streaming path here keeps that a routing
-    // decision rather than a silent shortfall.
-    for (const auto& j : p.jobs)
-        if (j.mapSlots != 0 || j.digitCols != 0 || j.hasIndexedBase) return false;
-    return p.packable && (p.srcMask & ~resident) == 0 && p.prog.empty();
+    // Const pols and the tile are resident by construction; publics and the three value pools are
+    // staged into the hook's own per-slot buffer (see MulStreamCtx::hostVals), which is cheap
+    // because PINNED_AUX_VALUES_MAX caps all four at 512 KB. Aux and the custom commits are
+    // trace-sized and stay out.
+    const uint32_t resident = (1u << MUL_SRC_CONST)   | (1u << MUL_SRC_TRACE)
+                            | (1u << MUL_SRC_PUBLIC)  | (1u << MUL_SRC_AIRVALUE)
+                            | (1u << MUL_SRC_PROOFVALUE) | (1u << MUL_SRC_AIRGROUPVALUE);
+    // Compiled programs, exact maps and digit rules used to be refused here because the tile
+    // had its own cut-down evaluator. It no longer has one -- a tile is the same kernel over a
+    // different window -- and a `'`-shifted CM1 reference is served by giving that window a halo,
+    // so the only thing left to refuse is a reach the halo would not cover.
+    return p.packable && (p.srcMask & ~resident) == 0 && p.traceHalo <= MUL_TILE_MAX_HALO;
 }
 
 inline std::string mulSrcName(uint32_t s) {
@@ -76,33 +82,10 @@ inline std::string mulSrcMaskNames(uint32_t mask) {
 }
 
 
-inline bool mulFormToDev(SetupCtx& setupCtx, const MulLinForm& f, uint64_t domainSize, MulFormDev& out) {
-    out = MulFormDev{};
-    out.konst = f.konst;
-    out.n = f.n;
-    for (uint8_t i = 0; i < f.n; ++i)
-        if (!mulTermToDev(setupCtx, f.t[i], domainSize, out.t[i])) return false;
-    out.hasProduct = f.hasProduct ? 1u : 0u;
-    out.konst2 = f.konst2;
-    out.n2 = f.n2;
-    for (uint8_t i = 0; i < f.n2; ++i)
-        if (!mulTermToDev(setupCtx, f.t2[i], domainSize, out.t2[i])) return false;
-    return true;
-}
 
-// A sum of products lowers to an array of the single-product form the kernel already evaluates.
-inline bool mulPolyToDev(SetupCtx& setupCtx, const MulPoly& q, uint64_t domainSize, MulPolyDev& out) {
-    if (!q.ok || q.nProd == 0 || q.nProd > MUL_MAX_PRODUCTS) return false;
-    out = MulPolyDev{};
-    out.nProd = q.nProd;
-    for (uint8_t i = 0; i < q.nProd; ++i)
-        if (!mulFormToDev(setupCtx, q.p[i], domainSize, out.p[i])) return false;
-    return true;
-}
 
 // Walk `gsum_debug_data` once per air and turn every range-check lookup it feeds into a job. A
-// lookup that does not reduce to a linear form goes to `fallback`: the extractor may give up,
-// never guess.
+// lookup that does not compile goes to `fallback`: the compiler may give up, never guess.
 inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
     MulPlan plan;
     std::map<std::string, uint32_t> progCache;
@@ -138,39 +121,15 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
         // Several opids, or a computed busid, means the bus is chosen per row.
         const bool dynBus = fOp->values.size() > 1 || (fld("busid") != nullptr && !isNum(fld("busid")));
 
-        // The three forms do not depend on which table the hint feeds, so extract them ONCE:
-        // deciding per (hint, table) would let one failed table re-count the ones that succeeded.
-        MulPolyDev value{}, selF{}, busF{};
+        // Compile the three forms once per hint, not per (hint, table), so one failed table
+        // cannot re-count the others. value/sel/bus get separate `ok`s: a mapped table ignores
+        // `value`, but sel and bus ARE the multiplicity.
         const char* whichField = "value";
-        const HintField* failed = nullptr;
-        auto extract = [&](const HintField* f, MulPolyDev& out) {
-            failed = f;
-            return f != nullptr && !f->values.empty()
-                && mulPolyToDev(setupCtx, mulExtractField(setupCtx, f->values[0], bufferCommitSize), nRows, out);
-        };
-        // Kept apart on purpose. A mapped table evaluates its key columns instead of the folded
-        // `value`, so a value the extractor cannot reduce costs it nothing -- but a selector or bus
-        // id it cannot reduce is the multiplicity itself, and proceeding would count with a
-        // default-constructed form. One `ok` for all three hid that: raising MUL_MAX_PRODUCTS moved
-        // the failures from `value` to `sel` and the counts went wrong with no diagnostic.
-        // Second rung: compile the expression as the PIL wrote it. Appends to `plan.prog` and
-        // hands back the (offset, length) the job carries. Only what this cannot address at all
-        // -- dim3 temporaries, challenges -- reaches the interpreter.
-        // Memoised by the expression it compiles: the lookups of one air share selectors heavily
-        // (Keccakf's 22 all read the same clock predicate), and an identical program must land at
-        // the same offset or the kernel cannot tell that two jobs evaluate the same thing.
-        // Deduplicated by the instructions themselves, not by the expression they came from.
-        // `lookup_assumes` gets a fresh expression id at every call site, so Keccakf's 22 xor5
-        // lookups -- which all pass the SAME `rounds_active` selector -- compile to 22 byte-identical
-        // 121-instruction programs under distinct ids. Keying on content collapses them to one
-        // offset, which is what lets the kernel evaluate the selector once for the whole run of
-        // jobs instead of 22 times a row.
-        auto compile = [&](const HintField* f, uint32_t& off, uint32_t& len) {
-            off = len = 0;
-            if (f == nullptr || f->values.empty()) return false;
-            MulProgram pg;
-            if (!mulCompileField(setupCtx, f->values[0], bufferCommitSize, nRows, pg)) return false;
-
+        const HintFieldValue* failed = nullptr;
+        // Append a program to `plan.prog`, deduplicated by instruction bytes (call sites get
+        // fresh expression ids). Identical programs must share an offset so the kernel can
+        // evaluate a shared selector once for a run of jobs.
+        auto place = [&](const MulProgram& pg, uint32_t& off, uint32_t& len) {
             const std::string body((const char*)pg.insns.data(), pg.insns.size() * sizeof(MulInsnDev));
             auto seen = progCache.find(body);
             if (seen != progCache.end()) {
@@ -185,37 +144,31 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
             return true;
         };
 
+        auto compile = [&](const HintField* f, uint32_t& off, uint32_t& len) {
+            off = len = 0;
+            if (f == nullptr || f->values.empty()) return false;
+            MulProgram pg;
+            if (!mulCompileField(setupCtx, f->values[0], bufferCommitSize, nRows, pg)) {
+                failed = &f->values[0];
+                return false;
+            }
+            return place(pg, off, len);
+        };
+
         uint32_t valPOff = 0, valPLen = 0, selPOff = 0, selPLen = 0, busPOff = 0, busPLen = 0;
-        bool okValue = extract(fEx, value);
-        if (!okValue) okValue = compile(fEx, valPOff, valPLen);
+        const bool okValue = compile(fEx, valPOff, valPLen);
         bool okSel = true, okBus = true;
-        if (!selConst1) {
-            whichField = "sel";
-            okSel = extract(fSel, selF);
-            if (!okSel) okSel = compile(fSel, selPOff, selPLen);
-        }
-        if (okSel && dynBus) {
-            whichField = "bus";
-            okBus = extract(fld("busid"), busF);
-            if (!okBus) okBus = compile(fld("busid"), busPOff, busPLen);
-        }
+        if (okValue && !selConst1) { whichField = "sel"; okSel = compile(fSel, selPOff, selPLen); }
+        if (okValue && okSel && dynBus) { whichField = "bus"; okBus = compile(fld("busid"), busPOff, busPLen); }
         const bool ok = okValue && okSel && okBus;
-        if (ok) whichField = "value";
-        // The fallback is the interpreter, which only the GPU commit path has -- so a hint that
-        // lands here is uncounted anywhere else. Say why, because closing the gap means extending
-        // the extractor rather than discovering the shortfall in a proof that will not close.
+        // Only the GPU commit path has the interpreter, so say why a hint lands there.
         if (!ok)
             zklog.warning(std::string("multiplicity: a lookup falls back to the interpreter -- field ")
-                          + whichField + ", operand kind "
-                          + std::to_string(failed && !failed->values.empty()
-                                           ? (int)failed->values[0].operand : -1)
-                          + ", expression " + std::to_string(failed && !failed->values.empty()
-                                                             ? (long long)failed->values[0].id : -1)
-                          + ", reason " + (mulWalkFailReason() ? mulWalkFailReason() : "operand kind not modelled")
+                          + whichField
+                          + ", operand kind " + std::to_string(failed ? (int)failed->operand : -1)
+                          + ", expression " + std::to_string(failed ? (long long)failed->id : -1)
                           + ", rows " + std::to_string(rows)
-                          + ", nOps " + std::to_string(mulWalkNOps()) + ", nTemp " + std::to_string(mulWalkNTemp())
-                          + ", program rung also failed: "
-                          + (mulProgFailReason() ? mulProgFailReason() : "unknown"));
+                          + ", reason " + (mulProgFailReason() ? mulProgFailReason() : "unknown"));
 
         for (const auto& dec : mulDecoders()) {
             bool feeds = false;
@@ -224,8 +177,8 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
             if (!feeds) continue;
             // A K-element tuple needs a row map (affine fit, exact map or digit rule); a
             // 1-element tuple is a range check and uses `bias`.
-            if (fEx->values.size() != 1 && dec.nCoef == 0 && dec.mapSlots == 0 && dec.digitCols == 0
-                && dec.nSel == 0) {
+            if (fEx->values.size() != 1 && dec.nCoef == 0 && dec.mapSlots == 0
+                && dec.digitCols == 0) {
                 static std::set<uint32_t> warned;
                 if (warned.insert(dec.table_id).second)
                     zklog.trace("multiplicity: table " + std::to_string(dec.table_id) + " has a "
@@ -252,12 +205,9 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
                     exitProcess();
                 }
             }
-            // A mapped table evaluates its key columns instead of the folded `value`, so a value
-            // the extractor cannot reduce costs it nothing -- that is why table 331, which reached
-            // the fallback this way, contributed zero. The selector and the bus id are a different
-            // matter: they ARE the multiplicity, and a job built with an unreduced one counts with
-            // a default-constructed form. Sharing a single `ok` across all three hid that.
-            if (!okSel || !okBus || (!okValue && dec.mapSlots == 0 && dec.nSel == 0)) {
+            // A mapped table does not need `value` (and the interpreter has no map support);
+            // sel and bus it always needs.
+            if (!okSel || !okBus || (!okValue && dec.mapSlots == 0)) {
                 plan.fallback.push_back({hints[i], dec, rows,
                                          (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
                 continue;
@@ -269,76 +219,51 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
                 if (L.accBase.count(dec.table_id)) { hostAirId = L.airId; break; }
             if (hostAirId == UINT64_MAX) continue;
 
-            // Fold a fitted tuple map into the single linear form the kernel already evaluates:
-            // sum(coef[j] * element_j) + konst is itself linear, so no new kernel, no new job
-            // shape, and the CPU mirror follows for free. A coefficient of zero marks a column the
-            // fit found irrelevant (an output, not part of the key) and costs nothing to skip.
-            MulPolyDev valueForTable = value;
+            // A fitted table's row is `sum(coef * element) + konst`; that fold replaces the
+            // field's value program.
             uint32_t valProgOffForTable = valPOff, valProgLenForTable = valPLen;
-            if (dec.nCoef != 0) {
-                MulPoly folded = mulPolyOf(mulLinConst(dec.konst));
-                bool foldOk = true;
-                for (uint8_t e = 0; e < nFold && foldOk; ++e) {
-                    if (dec.coef[e] == 0) continue;
-                    MulPoly el = mulExtractField(setupCtx, fEx->values[e], bufferCommitSize);
-                    MulPoly scaled{};
-                    foldOk = el.ok && mulPolyScale(scaled, el, dec.coef[e])
-                          && mulPolyAdd(folded, folded, scaled, false);
-                }
-                if (!foldOk || !mulPolyToDev(setupCtx, folded, nRows, valueForTable)) {
-                    // A fold over several elements has no single expression to compile; a
-                    // one-element one is just that element, so the program rung still applies.
-                    uint32_t fOff = 0, fLen = 0;
-                    if (nFold != 1 || !compile(fEx, fOff, fLen)) {
-                        plan.fallback.push_back({hints[i], dec, rows,
-                                                 (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
-                        continue;
-                    }
-                    valProgOffForTable = fOff;
-                    valProgLenForTable = fLen;
+            // coef == [1] is the range-check case: reuse the value program with konst as bias.
+            uint64_t biasForTable = dec.nCoef != 0 ? 0ULL : mulBiasFE(dec.bias);
+            if (dec.nCoef == 1 && dec.coef[0] == 1) {
+                biasForTable = dec.konst;
+            } else if (dec.nCoef != 0) {
+                MulProgram foldPg;
+                if (!mulCompileFold(setupCtx, fEx->values, dec.coef, nFold, dec.konst,
+                                    bufferCommitSize, nRows, foldPg)
+                    || !place(foldPg, valProgOffForTable, valProgLenForTable)) {
+                    plan.fallback.push_back({hints[i], dec, rows,
+                                             (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
+                    continue;
                 }
             }
 
             MulJobDev job{};
             job.hostAirId   = hostAirId;
-            job.value       = valueForTable;
-            job.sel         = selF;
-            job.bus         = busF;
             job.accBase     = dec.acc_base;
             job.nTableRows  = dec.n_rows;
-            job.biasFE      = dec.nCoef != 0 ? 0ULL : mulBiasFE(dec.bias);
+            job.biasFE      = biasForTable;
             job.mapSlots    = dec.mapSlots;
             job.mapKV       = dec.mapKV;
             job.digitTab    = dec.digitTab;
             job.digitCols   = dec.digitCols;
             job.nKey        = dec.nKey;
-            // An exact map looks the lookup's own tuple up verbatim, so the job carries one form
-            // per key column rather than the single folded value the affine path uses.
+            // An exact map looks the tuple up verbatim: one program per key column.
+            auto keyProg = [&](uint32_t slot, uint32_t src) {
+                if (src >= fEx->values.size()) {
+                    zklog.error("multiplicity: table " + std::to_string(dec.table_id)
+                                + " keys on column " + std::to_string(src)
+                                + " but the lookup supplies " + std::to_string(fEx->values.size()));
+                    exitProcess();
+                }
+                MulProgram pg;
+                return mulCompileField(setupCtx, fEx->values[src], bufferCommitSize, nRows, pg)
+                    && place(pg, job.keyProgOff[slot], job.keyProgLen[slot]);
+            };
             if (dec.digitCols != 0) {
                 // Only the columns the rule reads, in its own order.
                 job.nKey = dec.digitCols;
                 bool keyOk = true;
-                for (uint32_t c = 0; c < dec.digitCols && keyOk; ++c) {
-                    const uint32_t src = dec.digitCol[c];
-                    if (src >= fEx->values.size()) {
-                        zklog.error("multiplicity: table " + std::to_string(dec.table_id)
-                                    + " separable over column " + std::to_string(src)
-                                    + " but the lookup supplies " + std::to_string(fEx->values.size()));
-                        exitProcess();
-                    }
-                    keyOk = mulPolyToDev(setupCtx,
-                                         mulExtractField(setupCtx, fEx->values[src], bufferCommitSize),
-                                         nRows, job.key[c]);
-                    if (!keyOk) {
-                        MulProgram pg;
-                        if (mulCompileField(setupCtx, fEx->values[src], bufferCommitSize, nRows, pg)) {
-                            job.keyProgOff[c] = (uint32_t)plan.prog.size();
-                            job.keyProgLen[c] = (uint32_t)pg.insns.size();
-                            plan.prog.insert(plan.prog.end(), pg.insns.begin(), pg.insns.end());
-                            keyOk = true;
-                        }
-                    }
-                }
+                for (uint32_t c = 0; c < dec.digitCols && keyOk; ++c) keyOk = keyProg(c, dec.digitCol[c]);
                 if (!keyOk) {
                     plan.fallback.push_back({hints[i], dec, rows,
                                              (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
@@ -353,83 +278,19 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
                 }
                 bool keyOk = true;
                 uint32_t badCol = 0;
-                for (uint32_t c = 0; c < dec.nKey && keyOk; ++c) {
-                    badCol = c;
-                    keyOk = mulPolyToDev(setupCtx,
-                                         mulExtractField(setupCtx, fEx->values[c], bufferCommitSize),
-                                         nRows, job.key[c]);
-                    if (!keyOk) {
-                        MulProgram pg;
-                        if (mulCompileField(setupCtx, fEx->values[c], bufferCommitSize, nRows, pg)) {
-                            job.keyProgOff[c] = (uint32_t)plan.prog.size();
-                            job.keyProgLen[c] = (uint32_t)pg.insns.size();
-                            plan.prog.insert(plan.prog.end(), pg.insns.begin(), pg.insns.end());
-                            keyOk = true;
-                        }
-                    }
-                }
+                for (uint32_t c = 0; c < dec.nKey && keyOk; ++c) { badCol = c; keyOk = keyProg(c, c); }
                 if (!keyOk) {
-                    // The closed-form extractor cannot reduce this key, so evaluate it with the
-                    // general interpreter instead. Slower, but it needs no closed form at all and
-                    // never needs extending again -- which is the point of having this rung.
                     static std::set<uint32_t> warned;
                     if (warned.insert(dec.table_id).second)
-                    zklog.error("multiplicity: table " + std::to_string(dec.table_id)
-                                + " is mapped but key column " + std::to_string(badCol) + " of "
-                                + std::to_string(dec.nKey) + " does not reduce to a linear form"
-                                + " (reason: " + (mulWalkFailReason() ? mulWalkFailReason()
-                                                                     : "operand kind not modelled")
-                                + ") -- routed to the interpreter");
+                        zklog.error("multiplicity: table " + std::to_string(dec.table_id)
+                                    + " is mapped but key column " + std::to_string(badCol) + " of "
+                                    + std::to_string(dec.nKey) + " does not compile (reason: "
+                                    + (mulProgFailReason() ? mulProgFailReason() : "unknown")
+                                    + ") -- routed to the interpreter");
                     plan.fallback.push_back({hints[i], dec, rows,
                                              (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
                     continue;
                 }
-            } else if (dec.nSel != 0) {
-                // The selector and stride column indices are defined over the lookup's FULL tuple
-                // (see vt_rule.rs), unlike the digit rule's pruned-to-what-it-reads columns -- so
-                // every tuple element the lookup supplies must land in job.key at its own index.
-                if (fEx->values.size() > MUL_MAX_TUPLE) {
-                    zklog.error("multiplicity: table " + std::to_string(dec.table_id)
-                                + " indexed-base tuple has " + std::to_string(fEx->values.size())
-                                + " elements, more than the tuple holds");
-                    exitProcess();
-                }
-                job.nKey = (uint32_t)fEx->values.size();
-                bool keyOk = true;
-                uint32_t badCol = 0;
-                for (uint32_t c = 0; c < job.nKey && keyOk; ++c) {
-                    badCol = c;
-                    keyOk = mulPolyToDev(setupCtx,
-                                         mulExtractField(setupCtx, fEx->values[c], bufferCommitSize),
-                                         nRows, job.key[c]);
-                    if (!keyOk) {
-                        MulProgram pg;
-                        if (mulCompileField(setupCtx, fEx->values[c], bufferCommitSize, nRows, pg)) {
-                            job.keyProgOff[c] = (uint32_t)plan.prog.size();
-                            job.keyProgLen[c] = (uint32_t)pg.insns.size();
-                            plan.prog.insert(plan.prog.end(), pg.insns.begin(), pg.insns.end());
-                            keyOk = true;
-                        }
-                    }
-                }
-                if (!keyOk) {
-                    static std::set<uint32_t> warned;
-                    if (warned.insert(dec.table_id).second)
-                    zklog.error("multiplicity: table " + std::to_string(dec.table_id)
-                                + " is indexed-base but tuple column " + std::to_string(badCol)
-                                + " of " + std::to_string(job.nKey) + " does not reduce to a linear"
-                                " form (reason: " + (mulWalkFailReason() ? mulWalkFailReason()
-                                                                        : "operand kind not modelled")
-                                + ") -- routed to the interpreter");
-                    plan.fallback.push_back({hints[i], dec, rows,
-                                             (uint8_t)(selConst1 ? 1 : 0), (uint8_t)(dynBus ? 1 : 0)});
-                    continue;
-                }
-                // A table_id flag, not a cached pointer into mulDecoders(): that vector keeps
-                // growing from OTHER airs' registration calls and reallocates without warning, and
-                // this plan can be built before every air has registered. `dec` itself is resolved
-                // later, at use (mulPlanDevice for the GPU, mulDecoderFor(tableId) for the CPU).
-                job.hasIndexedBase = 1;
             }
             job.valProgOff  = valProgOffForTable;
             job.valProgLen  = valProgLenForTable;
@@ -448,52 +309,36 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx) {
     {
         std::set<uint32_t> cols;
         bool ok = true;
-        for (const auto& j : plan.jobs)
-            for (const MulPolyDev* q : {&j.value, &j.sel, &j.bus})
-              for (const MulFormDev* f = q->p; f < q->p + q->nProd; ++f)
-                {
-                    for (uint32_t k = 0; k < f->n; ++k) {
-                        plan.srcMask |= 1u << f->t[k].src;
-                        if (f->t[k].src == MUL_SRC_TRACE) cols.insert(f->t[k].col);
-                        else if (f->t[k].src == MUL_SRC_AUX) ok = false;
-                    }
-                    for (uint32_t k = 0; k < f->n2; ++k) {
-                        plan.srcMask |= 1u << f->t2[k].src;
-                        if (f->t2[k].src == MUL_SRC_TRACE) cols.insert(f->t2[k].col);
-                        else if (f->t2[k].src == MUL_SRC_AUX) ok = false;
-                    }
-                }
+        // Sources must come from the compiled operands, or mulPlanStreamable sees none.
+        for (const auto& in : plan.prog)
+            for (const MulOperandDev* o : {&in.a, &in.b}) {
+                if (o->kind != MUL_OPND_COL) continue;
+                plan.srcMask |= 1u << o->term.src;
+                if (o->term.src == MUL_SRC_TRACE) cols.insert(o->term.col);
+                else if (o->term.src == MUL_SRC_AUX) ok = false;
+            }
+
         // Group jobs sharing a selector so the kernel's carry-across hits; order is otherwise free.
         std::stable_sort(plan.jobs.begin(), plan.jobs.end(), [](const MulJobDev& a, const MulJobDev& b) {
             return a.selProgOff < b.selProgOff;
         });
-        if (!plan.prog.empty()) {
-            std::set<uint32_t> selProgs;
-            size_t withProg = 0;
-            for (const auto& j : plan.jobs) {
-                if (j.selProgLen) selProgs.insert(j.selProgOff);
-                if (j.selProgLen || j.valProgLen || j.busProgLen) ++withProg;
-            }
-        }
-        plan.cols1.assign(cols.begin(), cols.end());
+        plan.nCols1 = (uint32_t)cols.size();
         plan.packable = ok;
         for (const auto& j : plan.jobs) if (j.rows > plan.maxRows) plan.maxRows = j.rows;
-        uint32_t shifted = 0;
-        for (const auto& j : plan.jobs)
-            for (const MulPolyDev* q : {&j.value, &j.sel, &j.bus})
-              for (const MulFormDev* f = q->p; f < q->p + q->nProd; ++f)
-                {
-                    for (uint32_t k = 0; k < f->n; ++k)
-                        if (f->t[k].src == MUL_SRC_TRACE && f->t[k].rowStride != 0) ++shifted;
-                    for (uint32_t k = 0; k < f->n2; ++k)
-                        if (f->t2[k].src == MUL_SRC_TRACE && f->t2[k].rowStride != 0) ++shifted;
-                }
+        // The halo. Every field is a program, so its operands are the only place a cm1 reference
+        // can hide -- scanning anything less is what once made Keccakf look shift-free while 1720
+        // of its operands were shifted.
+        for (const auto& in : plan.prog)
+            for (const MulOperandDev* o : {&in.a, &in.b})
+                if (o->kind == MUL_OPND_COL && o->term.src == MUL_SRC_TRACE)
+                    plan.traceHalo = std::max(plan.traceHalo, (uint32_t)std::abs((int)o->term.rowStride));
+
         if (!plan.jobs.empty())
-            zklog.trace("Multiplicity plan: cm1 cols=" + std::to_string(plan.cols1.size())
+            zklog.trace("Multiplicity plan: cm1 cols=" + std::to_string(plan.nCols1)
                        + " packable=" + std::to_string((int)plan.packable)
-                       + " shiftedTerms=" + std::to_string(shifted)
                        + " reads=" + mulSrcMaskNames(plan.srcMask)
-                       + " streamable=" + std::to_string((int)mulPlanStreamable(plan)));
+                       + " streamable=" + std::to_string((int)mulPlanStreamable(plan))
+                       + " insns=" + std::to_string(plan.prog.size()));
     }
     return plan;
 }

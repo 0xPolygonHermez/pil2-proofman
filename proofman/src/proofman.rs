@@ -150,7 +150,7 @@ use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
     mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c,
     stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
@@ -570,9 +570,10 @@ struct SlotCommitCtx {
 }
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
+    // witness_calc hints do not disqualify an air: the slot evaluates them (witness_hints_slot.hpp)
+    // and refuses, with a reason, only hints it cannot express.
     proofman_common::hash_family::supports_stream_commit(hash)
         && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
-        && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -6012,6 +6013,7 @@ where
         airgroup_id: usize,
         air_id: usize,
         trace: *mut u8,
+        params: *mut u8,
         roots_contributions: &[[F; 4]],
     ) -> bool {
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
@@ -6051,6 +6053,7 @@ where
             pi.num_packed_words,
             pi.unpack_info.as_ptr() as *mut c_void,
             roots_contributions[instance_id].as_ptr() as *mut c_void,
+            params as *mut c_void,
         );
         ctx.pool_tx.send(slot).ok();
         if rc != 0 {
@@ -6128,6 +6131,7 @@ where
                 airgroup_id,
                 air_id,
                 steps_params.trace,
+                p_steps_params,
                 roots_contributions,
             ),
             None => false,

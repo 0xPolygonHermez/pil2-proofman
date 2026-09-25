@@ -18,9 +18,9 @@ void mul_scatter_launch_rows(const MulJobDev* d_jobs, uint32_t nJobs, const uint
 // Scatter over a tile of rows whose cm1 was materialised separately. `traceRows` is the tile's
 // height (tile-local rows); const pols and uniform pools stay full height.
 void mul_scatter_launch_tile(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows,
-                             uint64_t rowBegin, const uint64_t* const* bases, uint64_t traceRows,
-                             uint64_t fullRows, uint64_t* acc, uint64_t* oob, uint64_t air,
-                             cudaStream_t stream);
+                             uint64_t rowBegin, uint64_t rowStart, const uint64_t* const* bases,
+                             uint64_t traceRows, uint64_t fullRows, uint64_t* acc, uint64_t* oob,
+                             uint64_t air, const MulInsnDev* d_prog, cudaStream_t stream);
 
 // One device copy of the plan per (air, gpu), built on first use.
 struct MulPlanDev { const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; };
@@ -59,14 +59,6 @@ inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64
                     if (j.mapKV == nullptr) {
                         zklog.error("multiplicity: table " + std::to_string(j.tableId)
                                     + " has a map but no mirror on gpu " + std::to_string(gpuId));
-                        exitProcess();
-                    }
-                }
-                if (j.hasIndexedBase) {
-                    j.dec = mulIndexedBaseFor(j.tableId, gpuId);
-                    if (j.dec == nullptr) {
-                        zklog.error("multiplicity: table " + std::to_string(j.tableId)
-                                    + " has an indexed-base rule but no mirror on gpu " + std::to_string(gpuId));
                         exitProcess();
                     }
                 }

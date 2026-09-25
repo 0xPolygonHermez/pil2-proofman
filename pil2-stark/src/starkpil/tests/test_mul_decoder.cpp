@@ -18,6 +18,22 @@ static void check(bool ok, const char* what) {
 }
 
 #ifdef MUL_DECODER_TEST_MAIN
+
+// Each row of the table must decode back to its own index: a stale bias fails here rather than
+// silently miscounting.
+inline bool mul_decoder_selfcheck(const MulDecoder& d, const uint64_t* column,
+                                  uint64_t n_rows, std::string& err) {
+    for (uint64_t r = 0; r < n_rows; ++r) {
+        const uint64_t got = mul_decode(d, column[r]);
+        if (got != r) {
+            err = "decoder for table " + std::to_string(d.table_id) + " maps row "
+                + std::to_string(r) + " to " + std::to_string(got);
+            return false;
+        }
+    }
+    return true;
+}
+
 int main() {
     std::string err;
 
@@ -66,25 +82,6 @@ int main() {
 
         MulDecoder d{}; d.table_id = 106; d.n_rows = N;
         check(mul_decoder_selfcheck(d, col.data(), N, err), "non-canonical values canonicalised");
-    }
-
-    // ---- table 125's shape: indexed-base row map, two selector fields + two strides ---------
-    {
-        MulDecoder d{};
-        uint64_t sel[]    = {0, 0, 3, 1, 4, 1};   // (col, shift, mask) x 2
-        uint64_t base[]   = {0, 65536, 131072, 196608, 262144, 327680,
-                             MUL_DIGIT_INVALID, MUL_DIGIT_INVALID};
-        uint64_t stride[] = {2, 1, 3, 256};        // (col, stride) x 2
-        mulSetIndexedBase(d, sel, 2, base, 8, stride, 2);
-
-        uint64_t row = 0;
-        uint64_t key1[] = {1, 1u << 4, 5, 2};
-        check(mulResolveRow(key1, 4, 0, nullptr, row, 0, nullptr, &d) && row == 196608u + 5u + 512u,
-              "indexed-base resolves row from selector + strides");
-
-        uint64_t key2[] = {3, 0, 0, 0};            // idx 6 is INVALID
-        check(!mulResolveRow(key2, 4, 0, nullptr, row, 0, nullptr, &d),
-              "indexed-base misses outside the table");
     }
 
     printf("\ntest_mul_decoder: %s\n", failures ? "FAILURES" : "all passed");

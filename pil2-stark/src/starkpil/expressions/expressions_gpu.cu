@@ -5,7 +5,6 @@
 #include "goldilocks_cubic_extension.cuh"
 #include "expressions_codegen.cuh"
 #include "../warp_atomic.cuh"
-#include "../multiplicity.cuh"   // mulIndexedBaseTabFor: re-point scatter.dec.baseTab at this GPU
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
 #endif
@@ -254,18 +253,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
     h_expsArgs.scatter = dest.scatter;
-    // Defensive, not load-bearing today: hints.cu already re-points dest.scatter.dec.baseTab at its
-    // device mirror before this copy runs (the only place a `MulDecoder` is currently populated for
-    // this struct), so this value-copy already carries a device pointer. Kept here anyway, mirroring
-    // the mapKV/digitTab pattern, because this is the last host-side point before the whole struct
-    // crosses to the device -- any future caller that lands a fresh (host-pointer) decoder here
-    // gets corrected at the choke point instead of needing to remember the fixup itself.
-    if (h_expsArgs.scatter.dec.nSel != 0) {
-        int gpuId = 0;
-        CHECKCUDAERR(cudaGetDevice(&gpuId));
-        h_expsArgs.scatter.dec.baseTab = mulIndexedBaseTabFor(h_expsArgs.scatter.dec.table_id, gpuId);
-    }
-
+    // dest.scatter's decoder pointers must already be device pointers (hints.cu re-points them).
     assert(dest.params.size() >= 1 && dest.params.size() <= MAX_DEST_PARAMS);
 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
@@ -366,18 +354,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
     h_expsArgs.scatter = dest.scatter;
-    // Defensive, not load-bearing today: hints.cu already re-points dest.scatter.dec.baseTab at its
-    // device mirror before this copy runs (the only place a `MulDecoder` is currently populated for
-    // this struct), so this value-copy already carries a device pointer. Kept here anyway, mirroring
-    // the mapKV/digitTab pattern, because this is the last host-side point before the whole struct
-    // crosses to the device -- any future caller that lands a fresh (host-pointer) decoder here
-    // gets corrected at the choke point instead of needing to remember the fixup itself.
-    if (h_expsArgs.scatter.dec.nSel != 0) {
-        int gpuId = 0;
-        CHECKCUDAERR(cudaGetDevice(&gpuId));
-        h_expsArgs.scatter.dec.baseTab = mulIndexedBaseTabFor(h_expsArgs.scatter.dec.table_id, gpuId);
-    }
-
+    // dest.scatter's decoder pointers must already be device pointers (hints.cu re-points them).
     // The pinned slot and d_destParams hold at most 2 entries.
     assert(dest.params.size() >= 1 && dest.params.size() <= MAX_DEST_PARAMS);
 
@@ -566,11 +543,9 @@ __device__ __noinline__ void scatterPolynomial__(ExpsArguments *d_expsArgs,
     const uint64_t stride = (uint64_t)FIELD_EXTENSION * blockDim.x;
     const uint64_t *base = (const uint64_t *)destVals + threadIdx.x;
 
-    // A tuple-resolved table (map, digit rule, or indexed-base) occupies the first nVal slots; an
-    // affine one just slot 0. digitCols carries its own column count; the other two share nKey
-    // (mapSlots' own registration parameter, or indexed-base's derived max(selCol,strideCol)+1 --
-    // see MulIndexedBaseShape).
-    const bool tupleForm = sc.dec.mapSlots != 0 || sc.dec.digitCols != 0 || sc.dec.nSel != 0;
+    // A tuple-resolved table (map, digit rule, indexed-base) occupies the first nVal slots, an
+    // affine one slot 0. Digit decoders count columns in digitCols (nKey is 0 for them).
+    const bool tupleForm = sc.dec.mapSlots != 0 || sc.dec.digitCols != 0;
     const uint32_t nVal = sc.dec.digitCols != 0 ? sc.dec.digitCols : (tupleForm ? sc.dec.nKey : 1u);
 
     const uint64_t sel = sc.selConstOne ? 1ULL : mulCanonHD(base[nVal * stride]);
@@ -590,7 +565,7 @@ __device__ __noinline__ void scatterPolynomial__(ExpsArguments *d_expsArgs,
         for (uint32_t c = 0; c < nVal && c < MUL_MAX_TUPLE; ++c)
             keyv[c] = mulCanonHD(base[c * stride]);
         if (!mulResolveRow(keyv, nVal, sc.dec.mapSlots, sc.dec.mapKV, idx,
-                           sc.dec.digitCols, sc.dec.digitTab, &sc.dec)) {
+                           sc.dec.digitCols, sc.dec.digitTab)) {
             mulRecordOob(sc.oob, sc.dec.table_id, sc.air, keyv, nVal);
             return;
         }

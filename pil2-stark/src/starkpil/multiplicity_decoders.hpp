@@ -28,61 +28,19 @@ struct MulDecoder {
     uint8_t  nCoef    = 0;
     uint64_t coef[MUL_MAX_TUPLE] = {0};
     uint64_t konst    = 0;
-    // Exact-match map, for a table with no closed form: open addressing over slots of
-    // [key columns..., row]. The key is the lookup's own tuple elements, stored and compared
-    // VERBATIM -- no packing, so a column holding a negative field element (near p) or a full
-    // 32-bit value is no obstacle, and a tuple the table does not hold misses cleanly instead of
-    // landing on a wrong row.
+    // Exact-match map for a non-affine table: open addressing over slots of [key columns..., row],
+    // keys compared verbatim so a tuple the table does not hold misses cleanly.
     uint32_t nKey     = 0;              // key columns per slot; 0 = no map
     uint64_t mapSlots = 0;
     const uint64_t* mapKV = nullptr;    // mapSlots * (nKey + 1)
-    // Separable row map: row = sum over the columns it uses of sum_i tab[(c*digits + i)*base + d].
-    // Between the affine fit and the map -- 126's row is its packed column re-based and 125's is
-    // affine in most columns and table-driven in one, neither of which is affine but neither of
-    // which needs a map. `digitBase == 0` means "not a separable table".
-    // `digitCols == 0` means "not a separable table". The per-column base, digit count and table
-    // offsets ride in digitTab's own header -- `[base..][ndig..][off..][contributions..]` -- rather
-    // than here, so the scatter job that carries this stays small: register pressure in that kernel
-    // caps occupancy for every air, not just the tables that use a rule.
+    // Separable row map: row = sum over used columns of sum_i tab[(c*digits + i)*base + d].
+    // `digitCols == 0` means none. Base, digit count and offsets live in digitTab's header
+    // `[base..][ndig..][off..][contributions..]` to keep the scatter job (and its registers) small.
     uint32_t digitCols  = 0;
     uint32_t digitCol[MUL_MAX_TUPLE] = {0};   // which tuple element each rule column is
     const uint64_t* digitTab = nullptr;
-    // Indexed-base row map: row = base[idx] + sum_c stride[c] * key[c], where idx packs the
-    // selector bit-fields in order. Table 125 is 134 live bases plus two strides (A:1, B:256):
-    // the block a tuple lands in is chosen by (OP, POS_IND, CIN, bit 4 of FLAGS), and every block
-    // is exactly 2^16 rows with A and B uniform across the whole table.
-    // `nSel == 0` means "not an indexed-base table".
-    uint32_t nSel = 0;
-    uint32_t selCol[MUL_MAX_TUPLE]   = {0};
-    uint32_t selShift[MUL_MAX_TUPLE] = {0};
-    uint64_t selMask[MUL_MAX_TUPLE]  = {0};
-    const uint64_t* baseTab = nullptr;
-    uint32_t nStride = 0;
-    uint32_t strideCol[MUL_MAX_TUPLE] = {0};
-    uint64_t strideVal[MUL_MAX_TUPLE] = {0};
 };
 
-// Populate a MulDecoder's indexed-base fields from the flat arrays `mul_register_table_indexed_base`
-// carries: `sel` is (col, shift, mask) triples, `stride` is (col, stride) pairs, `base` is the flat
-// table the packed selector addresses. `nBase` is accepted for symmetry with the registration entry
-// point but not re-validated here -- the caller already checked it against the selector space.
-inline void mulSetIndexedBase(MulDecoder& d, const uint64_t* sel, uint64_t nSel,
-                              const uint64_t* base, uint64_t nBase,
-                              const uint64_t* stride, uint64_t nStride) {
-    (void)nBase;
-    d.nSel = (uint32_t)nSel;
-    for (uint64_t i = 0; i < nSel && i < MUL_MAX_TUPLE; ++i) {
-        d.selCol[i]   = (uint32_t)sel[3 * i];
-        d.selShift[i] = (uint32_t)sel[3 * i + 1];
-        d.selMask[i]  = sel[3 * i + 2];
-    }
-    d.baseTab = base;
-    d.nStride = (uint32_t)nStride;
-    for (uint64_t i = 0; i < nStride && i < MUL_MAX_TUPLE; ++i) {
-        d.strideCol[i] = (uint32_t)stride[2 * i];
-        d.strideVal[i] = stride[2 * i + 1];
-    }
-}
 
 #define MUL_DIGIT_INVALID 0xFFFFFFFFFFFFFFFFULL
 
@@ -95,39 +53,14 @@ inline void mulSetIndexedBase(MulDecoder& d, const uint64_t* sel, uint64_t nSel,
 // Longest probe chain a lookup may walk before it is treated as absent.
 #define MUL_MAP_MAX_PROBE 4096ULL
 
-// A key that lands outside the table.
-#define MUL_INDEX_NONE 0xFFFFFFFFu
-
 // Mirrors std_sum.pil: only the assumes side carries the tuple a lookup consumes.
 #define MUL_PIOP_ASSUMES 0
 
-// Key -> row. With no index the key IS the row (the range-check and affine-fit cases); with one,
-// the key selects a row through the table's own index. Returns false when the key is not in the
-// table, which the caller records as an out-of-range decode.
-// Key -> row. With no map the key IS the row (the affine case); with one, the tuple selects a row
-// through the table's own entries. Returns false when the tuple is not in the table, which the
-// caller records as an out-of-range decode.
+// Key -> row. With neither a rule nor a map the key IS the row. Returns false when the tuple is
+// not in the table; the caller records an out-of-range decode.
 MUL_HD inline bool mulResolveRow(const uint64_t* key, uint32_t nKey, uint64_t mapSlots,
                                  const uint64_t* mapKV, uint64_t& row,
-                                 uint32_t digitCols = 0, const uint64_t* digitTab = nullptr,
-                                 const MulDecoder* d = nullptr) {
-    if (d != nullptr && d->nSel != 0) {
-        // idx packs the selector bit-fields, most significant first; row is the block's base plus
-        // the strided columns (A, B for table 125). An idx the table never assigned a block --
-        // rather than one we simply never counted -- is marked MUL_DIGIT_INVALID at registration, so
-        // it misses cleanly here too.
-        uint64_t idx = 0;
-        for (uint32_t i = 0; i < d->nSel; ++i) {
-            const uint64_t v = (key[d->selCol[i]] >> d->selShift[i]) & d->selMask[i];
-            idx = idx * (d->selMask[i] + 1) + v;
-        }
-        const uint64_t b = d->baseTab[idx];
-        if (b == MUL_DIGIT_INVALID) return false;
-        uint64_t sum = b;
-        for (uint32_t c = 0; c < d->nStride; ++c) sum += d->strideVal[c] * key[d->strideCol[c]];
-        row = sum;
-        return true;
-    }
+                                 uint32_t digitCols = 0, const uint64_t* digitTab = nullptr) {
     if (digitCols != 0) {
         // The key holds exactly the columns the rule reads, in its order.
         uint64_t sum = 0;
@@ -247,8 +180,7 @@ __device__ __forceinline__ void mulRecordOob(uint64_t* oob, uint32_t tableId, ui
 }
 #endif
 
-// Subtraction, for the compiled-program evaluator: the closed form never needed it (it folds
-// signs into coefficients on the host), so these lived host-side in multiplicity_linear.hpp.
+// Subtraction, for the compiled-program evaluator.
 MUL_HD inline uint64_t mulNegFEHD(uint64_t a) { return a == 0 ? 0 : MUL_P - a; }
 MUL_HD inline uint64_t mulSubFEHD(uint64_t a, uint64_t b) { return mulAddFE(a, mulNegFEHD(b)); }
 
@@ -264,21 +196,6 @@ inline std::vector<MulDecoder>& mulDecoders() {
 inline const MulDecoder* mulDecoderFor(uint64_t table_id) {
     for (const auto& d : mulDecoders()) if (d.table_id == table_id) return &d;
     return nullptr;
-}
-
-// Each row of the table must decode back to its own index: a stale bias fails here rather than
-// silently miscounting.
-inline bool mul_decoder_selfcheck(const MulDecoder& d, const uint64_t* column,
-                                  uint64_t n_rows, std::string& err) {
-    for (uint64_t r = 0; r < n_rows; ++r) {
-        const uint64_t got = mul_decode(d, column[r]);
-        if (got != r) {
-            err = "decoder for table " + std::to_string(d.table_id) + " maps row "
-                + std::to_string(r) + " to " + std::to_string(got);
-            return false;
-        }
-    }
-    return true;
 }
 
 #endif
