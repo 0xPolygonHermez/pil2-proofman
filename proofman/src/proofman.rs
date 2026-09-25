@@ -5,20 +5,19 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo, WITNESS_NOT_STAGED, WITNESS_STAGED, WITNESS_STAGED_RELEASED,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    get_num_gpus_c,
-    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_decode_c,
-    mul_register_table_digits_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+    get_num_gpus_c, mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c,
+    mul_register_table_decode_c, mul_register_table_digits_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
 use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
-    harvest_pipeline_c, dump_pipeline_state_c,
-    prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    harvest_pipeline_c, dump_pipeline_state_c, prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c,
+    load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -152,8 +151,8 @@ use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
     mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, stream_commit_slot_bytes_c,
+    configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -304,7 +303,6 @@ impl Drop for CancellationThread {
 
 struct WorkerPoolGuard<T: Send + Clone + 'static> {
     sentinel: T,
-    n_streams: usize,
     tx: Sender<T>,
     handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
@@ -321,7 +319,8 @@ impl<T: Send + Clone + 'static> Drop for WorkerPoolGuard<T> {
             }
             std::mem::take(&mut *guard)
         };
-        for _ in 0..self.n_streams {
+        // One per worker: a pool can hold more workers than streams (the slot commit pool does).
+        for _ in 0..handles.len() {
             let _ = self.tx.send(self.sentinel.clone());
         }
         for h in handles {
@@ -515,17 +514,6 @@ impl Drop for WitnessGuard {
     }
 }
 
-/// `trace_owner` values. The witness thread claims only once its staging has landed, so its claim
-/// means the commit can source from the zone and will never read the host buffer.
-const TRACE_OWNER_WITNESS: u8 = 1;
-const TRACE_OWNER_COMMIT: u8 = 2;
-
-/// First caller wins. `who` won iff this returns true.
-fn claim_trace_owner(owners: &Mutex<HashMap<usize, u8>>, instance_id: usize, who: u8) -> bool {
-    let mut g = owners.lock().unwrap_or_else(|e| e.into_inner());
-    *g.entry(instance_id).or_insert(who) == who
-}
-
 #[derive(Debug, Default)]
 pub struct CancellationInfo {
     pub token: CancellationToken,
@@ -615,9 +603,6 @@ pub struct ProofMan<F: PrimeField64> {
     recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>>,
     roots_contributions: Arc<Vec<[F; 4]>>,
     values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
-    /// Who releases a contributions instance's host trace buffer: the witness thread that staged
-    /// it into the prefetch zone, or the commit. Exactly one of them does.
-    trace_owner: Arc<Mutex<HashMap<usize, u8>>>,
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
@@ -754,8 +739,15 @@ impl<F: PrimeField64> ProofMan<F> {
 
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
-        // Per job: a stale WITNESS claim makes the next job's commit null a trace nobody handed back.
-        self.trace_owner.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        // A cancelled job can leave an instance handed back or deferred; the next job reuses ids.
+        for flags in [&self.pctx.dispatch_deferred, &self.pctx.dispatch_pending] {
+            for f in flags.iter() {
+                f.store(false, Ordering::Relaxed);
+            }
+        }
+        for s in self.pctx.witness_staged.iter() {
+            s.store(WITNESS_NOT_STAGED, Ordering::Relaxed);
+        }
 
         for proof_lock in self.proofs.iter() {
             let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
@@ -788,7 +780,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // when their owner is dropped, so they must be joined through it, not via a sentinel send.
         self.stop_outer_aggregations();
 
-        for _ in 0..self.n_streams {
+        for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
@@ -1705,7 +1697,6 @@ where
 
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
-            n_streams: self.n_streams,
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
@@ -1821,7 +1812,7 @@ where
 
         self.pctx.set_proof_tx(None);
 
-        for _ in 0..self.n_streams {
+        for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
@@ -2651,7 +2642,6 @@ where
             const_tree,
             roots_contributions,
             values_contributions,
-            trace_owner: Arc::new(Mutex::new(HashMap::new())),
             thread_budget,
             witness_tx,
             witness_rx,
@@ -2784,11 +2774,9 @@ where
         if !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
             return Ok(());
         }
-        // What the caller kept for itself. Everything else is the prover's, and below a table it
-        // cannot fit is an error rather than a quiet hand-back: the fall back costs a pass over the
-        // whole table on every proof, and nothing in a normal run would say so.
-        let std_owned: std::collections::HashSet<u64> =
-            self.options.std_owned_tables.iter().copied().collect();
+        // What the caller kept for itself. Everything else is the prover's; a table it cannot fit is
+        // an error, since the fallback silently costs a full-table pass every proof.
+        let std_owned: std::collections::HashSet<u64> = self.options.std_owned_tables.iter().copied().collect();
 
         let owned: Vec<(u64, i64)> = collect_prover_owned_ranges(&self.pctx, &self.sctx)?
             .into_iter()
@@ -2923,7 +2911,6 @@ where
 
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
-            n_streams: self.n_streams,
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
@@ -2976,7 +2963,15 @@ where
                 None
             };
 
-            for _ in 0..self.n_streams {
+            let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
+            // Twice the slots: a worker stages and prepares on the CPU first, so one extra keeps each slot fed.
+            let n_workers = match slot_commit_ctx.as_ref() {
+                Some(ctx) if ctx.strict => {
+                    (2 * get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) as usize).max(self.n_streams)
+                }
+                _ => self.n_streams,
+            };
+            for _ in 0..n_workers {
                 let pctx_clone = self.pctx.clone();
                 let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
@@ -2988,7 +2983,8 @@ where
                 let aux_scratch = aux_scratch.clone();
                 let const_scratch = const_scratch.clone();
                 let slot_commit_ctx_clone = slot_commit_ctx.clone();
-                let trace_owner_clone = self.trace_owner.clone();
+                let zone_airs = zone_airs.clone();
+                let empty_packed: HashMap<(usize, usize), PackedInfo> = HashMap::new();
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
@@ -2998,11 +2994,27 @@ where
                             if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
-                            // Claim the host trace BEFORE touching it. Losing means the witness
-                            // thread staged this instance and already freed the buffer: the commit
-                            // must source from the zone and must not release.
-                            let owns_trace =
-                                claim_trace_owner(&trace_owner_clone, instance_id, TRACE_OWNER_COMMIT);
+                            // Stage now if the witness thread found the zone full, so the commit still takes one D2D.
+                            let mut stage_state =
+                                pctx_clone.witness_staged[instance_id].swap(WITNESS_NOT_STAGED, Ordering::AcqRel);
+                            if stage_state == WITNESS_NOT_STAGED {
+                                stage_state = match Self::stage_for_commit(
+                                    &pctx_clone,
+                                    &zone_airs,
+                                    &memory_handler_clone,
+                                    slot_commit_ctx_clone.as_ref().is_some_and(|c| c.strict),
+                                    slot_commit_ctx_clone.as_ref().map_or(&empty_packed, |c| &c.packed_info),
+                                    instance_id,
+                                ) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        cancellation_info_clone.write_recover().cancel(Some(e));
+                                        break;
+                                    }
+                                };
+                            }
+                            // The host buffer is gone: the commit reads the zone and releases nothing.
+                            let staged = stage_state == WITNESS_STAGED_RELEASED;
                             // Single-writer borrow of the shared scratch (see `SharedScratch`); the
                             // guards hold the invariant for the duration of get_contribution_air.
                             let mut aux_trace_local = aux_scratch.borrow_mut();
@@ -3016,7 +3028,7 @@ where
                                 &mut aux_trace_local,
                                 &mut const_pols_local,
                                 slot_commit_ctx_clone.as_deref(),
-                                !owns_trace,
+                                staged,
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -3032,12 +3044,9 @@ where
                             // Release a staging no commit consumed (the commit ran before the witness thread staged it);
                             // otherwise it holds its slot for the rest of the run. No-op when consumed.
                             if pctx_clone.gpu {
-                                release_staged_witness_c(
-                                    pctx_clone.get_device_buffers_ptr(),
-                                    instance_id as u64,
-                                );
+                                release_staged_witness_c(pctx_clone.get_device_buffers_ptr(), instance_id as u64);
                             }
-                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id) && owns_trace;
+                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id) && !staged;
                             if is_shared_buffer {
                                 // Trace H2D is async, so don't recycle the shared buffer until the
                                 // commit completes. Wait on the commit's stream (air_instance
@@ -3146,7 +3155,7 @@ where
 
             self.pctx.set_proof_tx(None);
 
-            for _ in 0..self.n_streams {
+            for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
                 self.contributions_tx.send(usize::MAX).ok();
             }
 
@@ -5209,42 +5218,12 @@ where
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
         let sctx_admission = self.sctx.clone();
-        // Bytes a witness occupies on the wire, per air, so a finished witness can be pushed to the
-        // device without re-deriving it per instance. Same expression the prefetch zone is sized
-        // with (see prefetch_witness_bytes).
-        let staged_bytes: Arc<HashMap<(usize, usize), u64>> = Arc::new({
-            let mut m = HashMap::new();
-            for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
-                for (air_id, _) in group.iter().enumerate() {
-                    let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
-                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
-                    let words = self
-                        .options
-                        .packed_info
-                        .get(&(airgroup_id, air_id))
-                        .filter(|pi| pi.is_packed && self.options.packed)
-                        .map(|pi| pi.num_packed_words)
-                        .unwrap_or(cm1);
-                    m.insert((airgroup_id, air_id), words * n * 8);
-                }
-            }
-            m
-        });
-        // clear_traces() also drops custom_commits_fixed, so an air whose commit needs those
-        // cannot have its buffer handed back early.
-        let early_release_ok: Arc<HashMap<(usize, usize), bool>> = Arc::new({
-            let mut m = HashMap::new();
-            for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
-                for (air_id, _) in group.iter().enumerate() {
-                    let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
-                    let has_custom = setup.stark_info.custom_commits.iter().any(|c| c.stage_widths[0] > 0);
-                    m.insert((airgroup_id, air_id), !has_custom);
-                }
-            }
-            m
-        });
-        let trace_owner = self.trace_owner.clone();
+        let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
+        let packed_info = Arc::new(self.options.packed_info.clone());
+        let strict_slots = self.pctx.gpu
+            && self.options.packed
+            && get_num_gpus_c() == 1
+            && get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) > 0;
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
@@ -5379,61 +5358,42 @@ where
 
                 let pctx_clone = pctx_clone.clone();
                 let gpu = pctx_clone.gpu;
-                let staged_bytes = staged_bytes.clone();
-                let early_release_ok = early_release_ok.clone();
-                let trace_owner = trace_owner.clone();
                 let cancellation_info_clone = cancellation_info_clone.clone();
-                // Only a contributions commit consumes a witness-thread staging.
-                let in_contributions = witness_start_time_clone.is_some();
+                let zone_airs = zone_airs.clone();
+                let packed_info = packed_info.clone();
+                // Contributions: stage the finished witness and give its buffer back BEFORE the
+                // commit can see the instance, so the two never race for the buffer.
+                let stage_first = gpu
+                    && !stats
+                    && witness_start_time_clone.is_some()
+                    && zone_airs.contains_key(&(airgroup_id, air_id));
                 let handle = std::thread::spawn(move || {
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    if stage_first {
+                        pctx_clone.dispatch_deferred[instance_id].store(true, Ordering::SeqCst);
+                    }
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                     }
+                    // The staging below is an H2D wait, not CPU work: give the tokens and the
+                    // admission slot back first so the next witness can start.
                     drop(tokens);
-                    // Free the slot before the counter so admission can refill immediately.
                     drop(slot);
-                    // Push the witness to the device as soon as it exists, instead of letting its
-                    // commit do it. The upload then overlaps with other witnesses computing, and by
-                    // the time the commit runs there is nothing to wait for -- commit_witness_gpu
-                    // finds the slot by instance id (starks_api.cu) and skips STAGED_WAIT, which is
-                    // 1.435 s of a 3.485 s CALCULATING_CONTRIBUTIONS.
-                    //
-                    // Ownership is deliberately unchanged: the buffer is still released by the
-                    // contribution completion handler. Releasing it here as well double-releases --
-                    // clear_traces() runs twice and the second empty Vec goes back into the pool --
-                    // which surfaces as "trace buffer has only 0 entries" in an unrelated instance.
-                    // -1 means no zone or no free slot, and the commit stages for itself as before.
-                    if gpu && !stats && in_contributions {
-                        if let Some(&bytes) = staged_bytes.get(&(airgroup_id, air_id)) {
-                            let trace = pctx_clone.get_air_instance_trace_ptr(instance_id);
-                            if !trace.is_null() && bytes != 0 {
-                                let slot = stage_witness_c(
-                                    pctx_clone.get_device_buffers_ptr(),
-                                    instance_id as u64,
-                                    trace as *mut c_void,
-                                    bytes,
-                                );
-                                // The bytes are on the device now, so nothing will read this
-                                // buffer again: hand it back instead of holding it until the
-                                // commit runs. 53% of witness-thread time in this phase is spent
-                                // blocked on that pool.
-                                //
-                                // Claim only AFTER the staging lands. add_air_instance dispatches
-                                // to the contributions channel from INSIDE calculate_witness, so
-                                // the commit may already own the buffer and be reading it -- we
-                                // then lose the claim and release nothing.
-                                if slot >= 0
-                                    && early_release_ok.get(&(airgroup_id, air_id)).copied().unwrap_or(false)
-                                    && pctx_clone.is_shared_buffer(instance_id)
-                                    && claim_trace_owner(&trace_owner, instance_id, TRACE_OWNER_WITNESS)
-                                {
-                                    memory_handler_clone.to_be_released_buffer(instance_id);
-                                }
-                            }
+                    if stage_first {
+                        match Self::stage_for_commit(
+                            &pctx_clone,
+                            &zone_airs,
+                            memory_handler_clone.as_ref(),
+                            strict_slots,
+                            &packed_info,
+                            instance_id,
+                        ) {
+                            Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
+                            Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
                         }
+                        pctx_clone.end_deferred_dispatch(instance_id);
                     }
                     // The buffer carries its own wait, whichever worker blocked for it.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
@@ -5900,19 +5860,10 @@ where
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
-                    let mut bytes = stream_commit_slot_bytes_c(
-                        ss.n_bits,
-                        ss.n_bits_ext,
-                        n_cols,
-                        pi.num_packed_words,
-                    );
-                    // Room at the tail for a column-major copy of the packed rows, which the
-                    // commit's unpack and the multiplicity scatter both read. Every non-indexed
-                    // air gets the allowance, so the per-commit "does it pay" decision can never
-                    // be refused for space -- a refusal mid-commit, after the witness was copied
-                    // in, is what produced a wrong global challenge. Costs 2049 -> 2497 MB per
-                    // slot; a third slot at that size no longer fits above gpu-mops, and was
-                    // measured worth nothing anyway. The indexed layout takes no copy.
+                    let mut bytes = stream_commit_slot_bytes_c(ss.n_bits, ss.n_bits_ext, n_cols, pi.num_packed_words);
+                    // Tail room for a column-major copy of the packed rows (read by unpack and the multiplicity
+                    // scatter). Reserved for every non-indexed air so the copy is never refused mid-commit, which
+                    // would corrupt the global challenge. The indexed layout takes no copy.
                     if pi.col_source.is_empty() {
                         bytes += (1u64 << ss.n_bits) * pi.num_packed_words * 8;
                     }
@@ -5931,8 +5882,12 @@ where
                     .unwrap_or(0)
                     * 8;
                 if slot_bytes > 0 {
-                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes,
-                                                    contrib_footprint_bytes);
+                    configure_stream_commit_slots_c(
+                        pctx.get_device_buffers_ptr(),
+                        n_slots,
+                        slot_bytes,
+                        contrib_footprint_bytes,
+                    );
                 } else {
                     tracing::info!(
                         "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
@@ -6196,57 +6151,123 @@ where
             identity_widths = vec![64u64; n_cols as usize];
             (n_cols, identity_widths.as_slice())
         };
-        loop {
-            let slot = if ctx.strict {
-                match ctx.pool_rx.recv() {
-                    Ok(slot) => slot,
-                    Err(_) => return Ok(false),
-                }
-            } else {
-                let Ok(slot) = ctx.pool_rx.try_recv() else {
-                    return Ok(false);
-                };
-                slot
-            };
-            let rc = commit_witness_streaming_c(
-                pctx.get_device_buffers_ptr(),
-                slot,
-                instance_id as u64,
-                airgroup_id as u64,
-                air_id as u64,
-                trace as *mut c_void,
-                ss.n_bits,
-                ss.n_bits_ext,
-                n_cols,
-                words_per_row,
-                widths.as_ptr() as *mut c_void,
-                roots_contributions[instance_id].as_ptr() as *mut c_void,
-                params as *mut c_void,
-            );
-            ctx.pool_tx.send(slot).ok();
-            match rc {
-                0 => {
-                    ctx.committed.fetch_add(1, Ordering::Relaxed);
-                    return Ok(true);
-                }
-                // Transient: the slots are quiesced for gpu-mops' final phase, or a legacy stream
-                // still holds the overlapped region. Both lift on their own.
-                -20 | -21 if ctx.strict => std::thread::sleep(std::time::Duration::from_micros(500)),
-                -20 | -21 => return Ok(false),
-                _ if ctx.strict => {
+        // Strict: wait for a token (C waits out quiesce and region), so one call commits or errors.
+        // Otherwise take a token only if free.
+        let slot = if ctx.strict {
+            match ctx.pool_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(slot) => slot,
+                Err(_) => {
+                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
                     return Err(ProofmanError::ProofmanError(format!(
-                        "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]: \
-                         every packed air commits on a slot, so this is a configuration error, not a fallback"
+                        "no streaming slot came free in 60 s for instance {instance_id} [{airgroup_id}:{air_id}]"
                     )));
                 }
-                _ => {
-                    tracing::warn!(
-                        "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
-                    );
-                    return Ok(false);
+            }
+        } else {
+            let Ok(slot) = ctx.pool_rx.try_recv() else {
+                return Ok(false);
+            };
+            slot
+        };
+        let rc = commit_witness_streaming_c(
+            pctx.get_device_buffers_ptr(),
+            slot,
+            instance_id as u64,
+            airgroup_id as u64,
+            air_id as u64,
+            trace as *mut c_void,
+            ss.n_bits,
+            ss.n_bits_ext,
+            n_cols,
+            words_per_row,
+            widths.as_ptr() as *mut c_void,
+            roots_contributions[instance_id].as_ptr() as *mut c_void,
+            params as *mut c_void,
+        );
+        ctx.pool_tx.send(slot).ok();
+        match rc {
+            0 => {
+                ctx.committed.fetch_add(1, Ordering::Relaxed);
+                Ok(true)
+            }
+            // -20 quiesced / -21 region held: transient, legacy takes it this time.
+            -20 | -21 if !ctx.strict => Ok(false),
+            _ if ctx.strict => {
+                if rc == -20 || rc == -21 {
+                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
                 }
+                Err(ProofmanError::ProofmanError(format!(
+                    "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; \
+                     -20/-21 mean the quiesce or the region did not lift in 60 s, anything else is a configuration error"
+                )))
+            }
+            _ => {
+                tracing::warn!(
+                    "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
+                );
+                Ok(false)
             }
         }
+    }
+
+    /// Per air: the bytes its witness occupies on the wire (what the prefetch zone stages), and
+    /// whether its host buffer may go back to the pool once staged.
+    fn zone_staging_airs(&self) -> HashMap<(usize, usize), (u64, bool)> {
+        let mut m = HashMap::new();
+        for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in group.iter().enumerate() {
+                let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                let words = self
+                    .options
+                    .packed_info
+                    .get(&(airgroup_id, air_id))
+                    .filter(|pi| pi.is_packed && self.options.packed)
+                    .map(|pi| pi.num_packed_words)
+                    .unwrap_or(cm1);
+                // clear_traces() also drops custom_commits_fixed, which such a commit still needs.
+                let releasable = !setup.stark_info.custom_commits.iter().any(|c| c.stage_widths[0] > 0);
+                m.insert((airgroup_id, air_id), (words * n * 8, releasable));
+            }
+        }
+        m
+    }
+
+    /// Stage `instance_id`'s witness into the prefetch zone. Returns a `ProofCtx::witness_staged`
+    /// state: not staged, staged with the host buffer kept, or staged with it given back.
+    fn stage_for_commit(
+        pctx: &ProofCtx<F>,
+        zone_airs: &HashMap<(usize, usize), (u64, bool)>,
+        memory_handler: &MemoryHandler<F>,
+        strict_slots: bool,
+        packed_info: &HashMap<(usize, usize), PackedInfo>,
+        instance_id: usize,
+    ) -> ProofmanResult<u8> {
+        if !pctx.gpu {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let Some(&(bytes, releasable)) = zone_airs.get(&(airgroup_id, air_id)) else {
+            return Ok(WITNESS_NOT_STAGED);
+        };
+        let trace = pctx.get_air_instance_trace_ptr(instance_id);
+        if trace.is_null() || bytes == 0 {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        let staged_ok =
+            stage_witness_c(pctx.get_device_buffers_ptr(), instance_id as u64, trace as *mut c_void, bytes) >= 0;
+        if !staged_ok {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        // Only when the commit is certain to read the zone: a strict slot commit does, a legacy
+        // commit on another GPU would not find it.
+        let reads_zone = strict_slots && packed_info.contains_key(&(airgroup_id, air_id));
+        if releasable && reads_zone && pctx.is_shared_buffer(instance_id) {
+            memory_handler.to_be_released_buffer(instance_id);
+            return Ok(WITNESS_STAGED_RELEASED);
+        }
+        Ok(WITNESS_STAGED)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6287,7 +6308,6 @@ where
         if staged {
             steps_params.trace = std::ptr::null_mut();
         }
-
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 

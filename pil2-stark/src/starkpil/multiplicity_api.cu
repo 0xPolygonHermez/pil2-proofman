@@ -12,6 +12,8 @@
 
 using namespace std;
 
+void stream_commit_warmup_gpu(void *d_buffers_);   // starks_api.cu
+
 extern "C" {
 
 // Off unless no cross-rank reduction is needed: the device accumulator holds only this rank's share.
@@ -80,6 +82,8 @@ void mul_alloc(void *d_buffers_) {
             zklog.info("Multiplicity: " + to_string(bytes / (1024 * 1024))
                        + " MB GPU-resident on gpu " + to_string(id));
     }
+    // After the accumulators: the warm-up builds the scatter programs that point into them.
+    stream_commit_warmup_gpu(d_buffers_);
 }
 
 void mul_reset() {

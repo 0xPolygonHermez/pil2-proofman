@@ -3,7 +3,7 @@ use std::{
     sync::RwLock,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
@@ -297,6 +297,11 @@ impl ProofmanOptions {
     }
 }
 
+/// `ProofCtx::witness_staged` states.
+pub const WITNESS_NOT_STAGED: u8 = 0;
+pub const WITNESS_STAGED: u8 = 1;
+pub const WITNESS_STAGED_RELEASED: u8 = 2;
+
 #[allow(dead_code)]
 pub struct ProofCtx<F: PrimeField64> {
     pub mpi_ctx: Arc<MpiCtx>,
@@ -323,9 +328,18 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
-    /// Range tables the prover counts itself, and the counts it produced, keyed by the air hosting
-    /// the virtual table. Held here rather than read back over the FFI: the witness library and the
-    /// host binary each link their own copy of libstarks, and only the binary's is ever registered.
+    /// Set while a contributions witness thread stages the instance before dispatching it itself;
+    /// `add_air_instance` then skips the send.
+    pub dispatch_deferred: Vec<AtomicBool>,
+    /// `add_air_instance` ran while the dispatch was deferred: the witness thread owes the send.
+    /// Separate from the trace, which a staged instance may have lost to eviction.
+    pub dispatch_pending: Vec<AtomicBool>,
+    /// What the witness thread did with the witness before dispatch: `WITNESS_NOT_STAGED`,
+    /// `WITNESS_STAGED` (host buffer kept) or `WITNESS_STAGED_RELEASED` (host buffer given back; the
+    /// commit must read the zone and not release again). Consumed by the commit.
+    pub witness_staged: Vec<AtomicU8>,
+    /// Range tables the prover counts itself, and their counts, keyed by the virtual table's host air.
+    /// Held here because the witness library and the host binary each link their own libstarks.
     pub prover_owned_tables: RwLock<Vec<u64>>,
 
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
@@ -404,6 +418,9 @@ impl<F: PrimeField64> ProofCtx<F> {
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
+            dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
+            witness_staged: (0..MAX_INSTANCES).map(|_| AtomicU8::new(WITNESS_NOT_STAGED)).collect(),
             basic_stream_sizes: Vec::new(),
             phase_b: false,
             phase_b_half: 0,
@@ -703,6 +720,29 @@ impl<F: PrimeField64> ProofCtx<F> {
             *slot = air_instance;
             slot.trace_generation = generation;
         }
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.dispatch_deferred[global_idx].load(SeqCst) {
+            // Publish, then re-check: if the witness thread ended the deferral meanwhile, one of us
+            // must still send, and the swap picks exactly one.
+            self.dispatch_pending[global_idx].store(true, SeqCst);
+            if self.dispatch_deferred[global_idx].load(SeqCst) || !self.dispatch_pending[global_idx].swap(false, SeqCst)
+            {
+                return;
+            }
+        }
+        self.dispatch_air_instance(global_idx);
+    }
+
+    /// End a deferral started with `dispatch_deferred`, sending the instance if it arrived meanwhile.
+    pub fn end_deferred_dispatch(&self, global_idx: usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.dispatch_deferred[global_idx].store(false, SeqCst);
+        if self.dispatch_pending[global_idx].swap(false, SeqCst) {
+            self.dispatch_air_instance(global_idx);
+        }
+    }
+
+    fn dispatch_air_instance(&self, global_idx: usize) {
         if let Some(proof_tx) = &*self.proof_tx.read().unwrap() {
             proof_tx.send(global_idx).unwrap();
         }

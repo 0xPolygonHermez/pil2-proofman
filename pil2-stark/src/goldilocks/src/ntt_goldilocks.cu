@@ -1470,6 +1470,12 @@ uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
 
 } // anonymous namespace
 
+void NTTGoldilocksGPU::warmTables()
+{
+    nttEnsureTables(false);
+    nttEnsureTables(true);
+}
+
 // ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt), over L2-sized column chunks. Each chunk
 // stages its iNTT compactly (stride N) and fuses the coset spread into the forward transform's
 // first launch, so the blowup-1 zeros per element are never materialized.
