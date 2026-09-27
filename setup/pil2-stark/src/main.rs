@@ -103,6 +103,11 @@ struct SetupArgs {
     #[arg(long)]
     compressed_final: Option<bool>,
 
+    /// Label written as `setupVersion` in pilout.globalInfo.json so a consumer can refuse a key
+    /// that does not match the one it was built for. Omitted from the file when not given.
+    #[arg(long)]
+    setup_version: Option<String>,
+
     /// Generate + compile per-AIR Q-expression CUDA kernels (.exps.so) at the end
     /// of setup. No-op if nvcc is not on PATH.
     #[arg(long, default_value_t = false)]
@@ -376,6 +381,7 @@ fn main() -> anyhow::Result<()> {
                 agg_arity,
                 recursive_n_bits: args.recursive_n_bits,
                 compressed_final,
+                setup_version: args.setup_version,
                 gen_exps: args.gen_exps,
                 exps_arch: args.exps_arch,
                 exps_cap: args.exps_cap,
