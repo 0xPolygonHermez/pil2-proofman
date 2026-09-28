@@ -2468,13 +2468,12 @@ where
                 Some((cap, n_streams.max(1)))
             }
         };
-        // Threads per recursive witness: each of the `n_streams` workers may solve one, so give each
-        // its share of the cores, between 8 and 32. Near the root few run at once and each is on the
-        // critical path; with many workers the floor of 8 keeps the old total (8 per worker was
-        // measured best while the GPU was the constraint: 1x RTX 5090, 2 streams, 52.5 s/proof at 8
-        // threads vs 55.4 s at 24). Re-measure wall clock, not just the phase timers, before changing.
+        // Threads per recursive witness: each of the `n_streams` workers may solve one, and those
+        // solves do not take the ThreadBudget, so each gets its share of the cores (at most 32).
+        // 8 per worker measured best while the GPU was the constraint (1x RTX 5090, 2 streams:
+        // 52.5 s/proof at 8 threads vs 55.4 s at 24); re-measure wall clock before changing.
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
-        let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(8, 32).min(max_num_threads).max(1);
+        let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(1, 32);
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             setups_vadcop.max_compact_trace_size,
