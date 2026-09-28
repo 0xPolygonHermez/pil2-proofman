@@ -76,7 +76,7 @@ __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint6
 
 __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint64_t offset, uint64_t n, uint64_t nFieldElements, uint32_t arity, uint64_t lastLevel);
 
-__global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel);
+__global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel, bool dropLeaves = false);
 
 __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Element shift, Goldilocks::Element w);
 __global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExtended, Goldilocks::Element sn, Goldilocks::Element w);
@@ -92,7 +92,7 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_
 
 void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
-void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
+void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream, bool dropLeaves = false);
 void extendAndMerkelizeFixed(SetupCtx&, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 

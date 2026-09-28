@@ -194,6 +194,8 @@ public:
     bool recursive = false;
     // GPU basic airs extend cm1/cm2 over their small traces (recursive airs need the cm1 root first).
     bool inplaceStageCommit = false;
+    // GPU GL commit trees (cm*, const) are stored from level 1; queries rehash level 0.
+    bool dropLeafLevel = false;
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
@@ -217,6 +219,9 @@ public:
     StarkInfo() {};
 
     uint64_t getTraceLandingOffset();
+    uint64_t getNumNodesMTCommit(uint64_t height);
+    /* Offset in a commit tree's stored nodes of the level last_levels copies, and its node count */
+    uint64_t getLastLevelOffset(uint64_t height, uint64_t &nNodes);
     
     /* Loads data from a json object */
     void load (json j);

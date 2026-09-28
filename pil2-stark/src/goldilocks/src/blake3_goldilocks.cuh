@@ -33,9 +33,14 @@ public:
                            uint64_t num_cols, uint64_t num_rows,
                            Layout layout, cudaStream_t stream);
 
+    // ld: height of the layout d_trace lives in, to hash a row sub-range (0 = num_rows).
     static void linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                            uint64_t num_cols, uint64_t num_rows,
-                           Layout layout, cudaStream_t stream);
+                           Layout layout, cudaStream_t stream, uint64_t ld = 0);
+
+    static void reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream);
+
+    static void reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream);
 
     static void merkletreeReduce(uint64_t *d_root, uint64_t *d_input,
                                  uint64_t num_elements, uint64_t arity,
