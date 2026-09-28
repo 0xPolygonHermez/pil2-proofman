@@ -1951,6 +1951,13 @@ where
     }
 
     pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<()> {
+        // A self-contained proof absorbs the cm1 root before stage 2, which the GPU's in-place
+        // stage commit (stage 2 first) cannot do.
+        if self.pctx.gpu {
+            return Err(ProofmanError::InvalidParameters(
+                "prove-air --witness-lib is not supported on GPU: basic airs commit stages 1-2 in place".into(),
+            ));
+        }
         let _computing = self.acquire_computing("generate_air_proof");
 
         self.set_partition(1, vec![0], 0)?;
