@@ -551,8 +551,14 @@ impl<F: PrimeField64> SetupCtx<F> {
         custom_commits_fixed: &HashMap<String, PathBuf>,
         self_contained: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository =
-            SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed, self_contained)?;
+        let setup_repository = SetupRepository::new(
+            global_info,
+            setup_type,
+            verify_constraints,
+            gpu,
+            custom_commits_fixed,
+            self_contained,
+        )?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
