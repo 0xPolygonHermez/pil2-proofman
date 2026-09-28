@@ -165,9 +165,11 @@ inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
         return false;
     }
     if (verify) {
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        // On this stream: the prover streams are blocking, so a plain cudaMemcpy would also
+        // wait for every other stream's queued proof.
         uint64_t pw0 = 0;
-        CHECKCUDAERR(cudaMemcpy(&pw0, os, sizeof(pw0), cudaMemcpyDeviceToHost));
+        CHECKCUDAERR(cudaMemcpyAsync(&pw0, os, sizeof(pw0), cudaMemcpyDeviceToHost, stream));
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
         if (pw0 == 0) {
             fprintf(stderr, "[exps] Q kernel launch did not execute (pw[0] still 0, likely lazy "
                             "module-load OOM); falling back to the interpreter\n");
