@@ -3732,10 +3732,13 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
     return 1;
 }
 
-// Give a reservation back without launching on it. A reserved stream sits at status==1, which every
-// selection pass treats as busy, so a caller that reserves and then fails before launching would
-// strand the slot for the process lifetime. Only status==1 is released, so this can never steal a
-// stream that has since been launched on (2) or torn down (0).
+// Give back a reservation the caller bailed out of. A reserved stream sits at status==1, which every
+// selection pass treats as busy, so a caller that reserves and then fails would strand the slot for
+// the process lifetime. Only status==1 is released, so this can never steal a stream that has since
+// been launched on (2) or torn down (0).
+// The caller may already have queued work (initialize/trace in verify-constraints), so the stream is
+// finished behind end_event (2), never marked idle (3): the next reserve waits on it before reset()
+// recycles the aux buffer. With nothing queued the event fires at once, and a drained 2 is as free as 3.
 // Takes ONLY the per-stream lock -- never stream_selection_mutex. The reserve paths take gsel then
 // the per-stream lock; acquiring them in the other order here would close a deadlock cycle.
 void release_stream_reservation_gpu(void* d_buffers_, uint32_t streamId){
@@ -3745,9 +3748,9 @@ void release_stream_reservation_gpu(void* d_buffers_, uint32_t streamId){
     StreamData& sd = d_buffers->streamsData[streamId];
     std::lock_guard<std::mutex> lg(sd.mutex_stream_selection);
     if (sd.status != 1) return;
-    // Back to "reusable, not unused": reserveStreamLocked already ran reset(false) and left the
-    // (airgroup,air,type) identity intact, so warm affinity still holds for the next pick.
-    sd.status = 3;
+    cudaSetDevice(sd.gpuId);
+    CHECKCUDAERR(cudaEventRecord(sd.end_event, sd.stream));
+    sd.status = 2;
 }
 
 // Requires the caller to hold streamsData[streamId].mutex_stream_selection

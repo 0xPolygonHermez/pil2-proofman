@@ -11,12 +11,14 @@ use proofman_common::{
 use std::os::raw::c_void;
 use colored::*;
 
+use crate::StreamReservation;
+
 pub fn verify_constraints<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     global_id: usize,
     n_print_constraints: u64,
-    stream_id: u64,
+    reservation: StreamReservation,
 ) -> ProofmanResult<Vec<ConstraintInfo>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id)?;
     let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -55,6 +57,8 @@ pub fn verify_constraints<F: PrimeField64>(
             })
             .collect();
 
+        let stream_id = reservation.stream_id() as u64;
+        reservation.commit();
         verify_constraints_c(
             p_setup,
             airgroup_id as u64,
@@ -160,9 +164,9 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     instance_id: usize,
     n_print_constraints: u64,
-    stream_id: u64,
+    reservation: StreamReservation,
 ) -> ProofmanResult<bool> {
-    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, stream_id)?;
+    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, reservation)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;

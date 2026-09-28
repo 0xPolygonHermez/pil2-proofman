@@ -50,7 +50,7 @@ pub struct StreamReservation {
 unsafe impl Send for StreamReservation {}
 
 impl StreamReservation {
-    fn new(d_buffers: usize, stream_id: u32) -> Self {
+    pub(crate) fn new(d_buffers: usize, stream_id: u32) -> Self {
         Self { d_buffers, stream_id, armed: true }
     }
 
