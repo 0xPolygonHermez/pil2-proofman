@@ -757,7 +757,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     if (!starks_gpu_mode_active()) {
         mul_cpu_alloc();   // idempotent; the accumulators are not allocated on a CPU run otherwise
-        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId);
+        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId, false);
         mul_note_commit();
     }
 

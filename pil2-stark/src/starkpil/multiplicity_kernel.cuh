@@ -22,7 +22,7 @@ void mul_scatter_launch(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows, 
                         uint64_t wordsPerEntry = 0, uint64_t numEntries = 0,
                         uint64_t indexBits = 0, uint32_t packedColMajor = 0);
 
-// One device copy of the plan per (air, gpu), built on first use.
+// One device copy of the plan per (air, gpu); mul_alloc builds every one before the first proof.
 struct MulPlanDev { const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; };
 
 inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64_t airId, int gpuId) {
@@ -44,9 +44,22 @@ inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64
                         + " -- every lookup this air feeds would go uncounted");
             exitProcess();
         }
+        uint32_t* dk = nullptr;
+        if (!plan.keyRefs.empty()) {
+            const size_t kb = plan.keyRefs.size() * sizeof(uint32_t);
+            const cudaError_t ek = cudaMalloc(&dk, kb);
+            if (ek != cudaSuccess) {
+                zklog.error("multiplicity: could not allocate the key programs for air "
+                            + std::to_string(airgroupId) + "/" + std::to_string(airId) + ": "
+                            + cudaGetErrorString(ek));
+                exitProcess();
+            }
+            mulCopySync(gpuId, dk, plan.keyRefs.data(), kb, cudaMemcpyHostToDevice);
+        }
         // Patch host index pointers to this GPU's mirror in the copy; the plan is shared.
         std::vector<MulJobDev> hj = plan.jobs;
         for (auto& j : hj) {
+            j.keyRefs = dk != nullptr ? dk + j.keyRefOff : nullptr;
             if (j.mapSlots != 0) {
                 j.mapKV = mulMapFor(j.tableId, gpuId);
                 if (j.mapKV == nullptr) {

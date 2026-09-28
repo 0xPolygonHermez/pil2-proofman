@@ -14,7 +14,9 @@ use proofman_starks_lib_c::{
     mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
     register_mul_vt_c,
 };
-use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
+use pil2_std_lib::{
+    collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
+};
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
     harvest_pipeline_c, dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
@@ -148,10 +150,11 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
-    mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
-    calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
+    mul_air_device_owned_c, mul_air_has_jobs_c, mul_air_has_owned_c, mul_air_reads_aux_c, mul_commit_count_c,
+    mul_set_device_export_c, mul_sync_commits_c, MulSync, calculate_witness_expressions_c, launch_callback_c,
+    initialize_instance_c, calculate_trace_instance_c, wait_trace_h2d_done_c, get_stream_commit_slots_c,
+    get_stream_commit_gpus_c, commit_witness_streaming_c, stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
+    get_stream_id_proof_c,
 };
 
 use std::{
@@ -909,8 +912,11 @@ impl<F: PrimeField64> ProofMan<F> {
                         owned.push((l.airgroup_id as usize, l.air_id as usize));
                     }
                 }
+                static LOGGED: std::sync::Once = std::sync::Once::new();
                 if !owned.is_empty() {
-                    tracing::info!("Virtual tables: air(s) {:?} are produced and committed on the device", owned);
+                    LOGGED.call_once(|| {
+                        tracing::info!("Virtual tables: air(s) {:?} are produced and committed on the device", owned)
+                    });
                 }
             }
         }
@@ -1665,7 +1671,7 @@ where
 
         let my_instances_tables = self.pctx.dctx_get_my_tables();
 
-        self.export_prover_multiplicities(scattered)?;
+        self.export_prover_multiplicities(scattered, &my_instances_tables, false)?;
         timer_start_info!(CALCULATING_TABLES);
         for instance_id in my_instances_tables.iter() {
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -1889,7 +1895,7 @@ where
             .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
             .collect::<Vec<_>>();
 
-        self.export_prover_multiplicities(my_instances_no_tables.len() as u64)?;
+        self.export_prover_multiplicities(my_instances_no_tables.len() as u64, &my_instances_tables, false)?;
         timer_start_debug!(CALCULATING_TABLES);
 
         for instance_id in my_instances_tables.iter() {
@@ -1952,14 +1958,6 @@ where
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
 
-        // The prove path counts from its commit hook, which never runs here.
-        // CPU only: on the GPU path the trace is on the device and this pointer must not be read.
-        if !self.pctx.gpu {
-            unsafe {
-                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
-            };
-        }
-
         #[cfg(feature = "diagnostic")]
         {
             let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id)?;
@@ -1971,6 +1969,14 @@ where
         self.wcm.calculate_witness(2, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
         calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+
+        // The prove path counts from its commit hook, which never runs here. After stage 2 and the
+        // im-pols, like the verify path. CPU only: on the GPU path the trace is on the device.
+        if !self.pctx.gpu {
+            unsafe {
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64, true)
+            };
+        }
 
         Ok(())
     }
@@ -2046,11 +2052,11 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
-        // Verify-constraints never runs the commit hook that counts on the prove path. Must follow the
-        // constraint evaluation, which populates the const pols read here. CPU only.
+        // Verify-constraints never runs the commit hook that counts on the prove path. After stage 2
+        // and the im-pols, so a lookup over them is counted from real values. CPU only.
         if !pctx.gpu {
             unsafe {
-                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64, true)
             };
         }
 
@@ -2888,9 +2894,6 @@ where
         // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`) are
         // independent hints, so neither may gate the other's registration.
         let (range_ids, range_biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
-        if !range_ids.is_empty() {
-            mul_register_range_tables_c(&range_ids, &range_biases);
-        }
 
         // An exact map over each table's entries, verified against every entry. A table that does not
         // fit must be in `std_owned_tables`.
@@ -2907,13 +2910,35 @@ where
             .filter(|t| !std_owned.contains(t) && !range_owned.contains(t))
             .collect();
         if !orphans.is_empty() {
+            let why: Vec<String> = orphans
+                .iter()
+                .map(|t| format!("{t}: {}", vt_summary.unclaimed_why.get(t).map_or("?", |w| w.as_str())))
+                .collect();
             return Err(ProofmanError::InvalidSetup(format!(
                 "virtual tables {orphans:?} are neither declared in ProofmanOptions::std_owned_tables \
-                 nor derivable by the prover: no row map fits them. Either declare them, so the \
-                 witness counts them as before, or make their layout fittable."
+                 nor derivable by the prover ({}). Either declare them, so the witness counts them as \
+                 before, or make their layout fittable.",
+                why.join("; ")
             )));
         }
 
+        // Checked before anything is registered: the C++ registries are process-wide.
+        let hosted: std::collections::HashSet<u64> = layouts.iter().flat_map(|l| l.table_ids.iter().copied()).collect();
+        let owning = |t: &u64| {
+            hosted.contains(t)
+                && !std_owned.contains(t)
+                && (range_owned.contains(t) || fitted.iter().any(|m| m.table_id == *t))
+        };
+        if let Some(t) = global_sum_assumed_tables(&self.sctx)?.into_iter().find(owning) {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "table {t} is looked up by a global sum, which the prover does not count; declare it in \
+                 ProofmanOptions::std_owned_tables"
+            )));
+        }
+
+        if !range_ids.is_empty() {
+            mul_register_range_tables_c(&range_ids, &range_biases);
+        }
         for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
             let (nkey, kv, slots) = &m.map;
             mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
@@ -2940,6 +2965,23 @@ where
         }
 
         let migrated = mul_migrated_tables_c();
+        // Every commit counts before stage 2, so a lookup over a stage-2 or im-pol value into a table
+        // the prover counts cannot be counted. Needs the decoders: the plans are built from them.
+        let mut reads_aux = Vec::new();
+        for (airgroup_id, airs) in self.pctx.global_info.airs.iter().enumerate() {
+            for air_id in 0..airs.len() {
+                let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                if mul_air_reads_aux_c((&setup.p_setup).into(), airgroup_id as u64, air_id as u64) {
+                    reads_aux.push((airgroup_id, air_id));
+                }
+            }
+        }
+        if !reads_aux.is_empty() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "airs {reads_aux:?} look up prover-owned tables with stage-2 or im-pol values, which a \
+                 commit cannot count; keep those tables in ProofmanOptions::std_owned_tables"
+            )));
+        }
         // A range table no virtual-table air hosts gets no decoder, so the std keeps counting it.
         let unhosted: Vec<u64> = range_ids.iter().copied().filter(|t| !migrated.contains(t)).collect();
         if !unhosted.is_empty() {
@@ -2954,14 +2996,28 @@ where
     /// Pull what the prover counted into pctx, for the virtual-table airs to merge in. In the host
     /// binary for the same linkage reason as `register_prover_multiplicities`. `expected_commits` is
     /// how many instances this run scatters: the caller knows which ones its debug filter skipped.
-    fn export_prover_multiplicities(&self, expected_commits: u64) -> ProofmanResult<()> {
+    ///
+    /// `tables` are this rank's table instances: they commit after the fold, so none may look up a
+    /// prover-owned table. `strict`: lookups outside their table fail the proof; the debug paths only
+    /// warn and leave the report to the constraint checks.
+    fn export_prover_multiplicities(
+        &self,
+        expected_commits: u64,
+        tables: &[usize],
+        strict: bool,
+    ) -> ProofmanResult<()> {
         use rayon::prelude::*;
-        if self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+        let owned = !self.pctx.prover_owned_tables.read().unwrap().is_empty();
+        if owned {
+            if let Err(e) = self.await_prover_counts(expected_commits, tables, strict) {
+                self.cancellation_info.write_recover().cancel(Some(e));
+            }
+        }
+        // Collective: a failure here or on any rank, or a cancelled instance, stops every rank alike.
+        self.check_cancel(true)?;
+        if !owned {
             return Ok(());
         }
-        // Ordering point: every instance has launched its scatter. Device-owned airs transpose the
-        // accumulator into the trace in their own commit.
-        mul_sync_commits_c(expected_commits);
 
         let mut counts = self.pctx.prover_counts.write().unwrap();
         for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
@@ -2977,6 +3033,55 @@ where
             unsafe { mul_fold_c(l.airgroup_id, l.air_id, buf.as_mut_ptr()) };
         }
         Ok(())
+    }
+
+    /// Wait until `expected` instances have counted their lookups, or the job is cancelled (the
+    /// failure is then already recorded), and check the counts.
+    fn await_prover_counts(&self, expected: u64, tables: &[usize], strict: bool) -> ProofmanResult<()> {
+        let mut table_airs = std::collections::HashSet::new();
+        for &instance_id in tables {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+            if !table_airs.insert((airgroup_id, air_id)) {
+                continue;
+            }
+            let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+            if mul_air_has_jobs_c((&setup.p_setup).into(), airgroup_id as u64, air_id as u64) {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "table air [{airgroup_id}:{air_id}] looks up a table the prover counts, but tables commit \
+                     after the fold, so those lookups would go uncounted"
+                )));
+            }
+        }
+        // The commits run on their own workers; a failed one never counts. Bounded by 120 s without
+        // progress.
+        let (mut seen, mut since) = (mul_commit_count_c(), std::time::Instant::now());
+        while seen < expected && since.elapsed() < std::time::Duration::from_secs(120) {
+            if self.cancellation_info.read_recover().token.is_cancelled() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            let now = mul_commit_count_c();
+            if now != seen {
+                (seen, since) = (now, std::time::Instant::now());
+            }
+        }
+        // Device-owned airs transpose the accumulator into the trace in their own commit.
+        match mul_sync_commits_c(expected) {
+            MulSync::Ok => Ok(()),
+            MulSync::OutOfTable if !strict => {
+                tracing::warn!(
+                    "Some lookups decode outside their table (see above); the constraint checks will report them"
+                );
+                Ok(())
+            }
+            MulSync::OutOfTable => Err(ProofmanError::InvalidProof(
+                "lookups decode outside their table: the witness or a table decoder is wrong (see above)".into(),
+            )),
+            status => Err(ProofmanError::InvalidProof(format!(
+                "multiplicity: {} commits counted for {expected} instances ({status:?})",
+                mul_commit_count_c()
+            ))),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3233,10 +3338,9 @@ where
 
             drop(witness_handles);
 
-            self.export_prover_multiplicities(my_instances_no_tables.len() as u64)?;
-            timer_start_debug!(CALCULATING_TABLES);
-
             let my_instances_tables = self.pctx.dctx_get_my_tables();
+            self.export_prover_multiplicities(my_instances_no_tables.len() as u64, &my_instances_tables, true)?;
+            timer_start_debug!(CALCULATING_TABLES);
 
             //evaluate witness for instances of type "tables"
             for instance_id in my_instances_tables.iter() {
@@ -5737,6 +5841,11 @@ where
                 );
             }
         }
+        // Witness workers may be parked on buffers the failed instances will never release; unpark
+        // them before anyone joins them (check_cancel does it only after the joins).
+        if self.cancellation_info.read_recover().token.is_cancelled() {
+            self.cancel_memory_handlers();
+        }
 
         let handles_to_join: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
         for handle in handles_to_join {
@@ -6345,8 +6454,13 @@ where
     /// whether its host buffer may go back to the pool once staged.
     fn zone_staging_airs(&self) -> HashMap<(usize, usize), (u64, bool)> {
         let mut m = HashMap::new();
+        // Their commit transposes the device accumulator and never reads a staging.
+        let device_owned = self.pctx.device_owned_table_airs.read().unwrap().clone();
         for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in group.iter().enumerate() {
+                if device_owned.contains(&(airgroup_id, air_id)) {
+                    continue;
+                }
                 let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
                 let n = 1u64 << setup.stark_info.stark_struct.n_bits;
                 let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);

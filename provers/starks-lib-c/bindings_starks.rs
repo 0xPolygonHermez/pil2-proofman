@@ -809,13 +809,17 @@ extern "C" {
         params: *mut ::std::os::raw::c_void,
         airgroupId: u64,
         airId: u64,
+        auxReady: u64,
     );
+    pub fn mul_air_has_jobs(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
+    pub fn mul_air_reads_aux(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
     pub fn mul_reset();
     pub fn mul_fold(airId: u64, hostAcc: *mut u64);
     pub fn mul_air_has_owned(airId: u64) -> u64;
     pub fn mul_set_device_export(enabled: u64);
     pub fn mul_air_device_owned(airId: u64) -> u64;
-    pub fn mul_sync_commits(expectedCommits: u64);
+    pub fn mul_sync_commits(expectedCommits: u64) -> u64;
+    pub fn mul_commit_count() -> u64;
 }
 
 // Type definitions

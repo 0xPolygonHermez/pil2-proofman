@@ -53,11 +53,15 @@ extern "C" {
     uint64_t mul_air_has_owned(uint64_t airKey);
     void mul_set_device_export(uint64_t enabled);
     uint64_t mul_air_device_owned(uint64_t airKey);
-    void mul_sync_commits(uint64_t expectedCommits);
+    // MUL_SYNC_* status (multiplicity.hpp): OK, or why the counts cannot be trusted.
+    uint64_t mul_sync_commits(uint64_t expectedCommits);
+    uint64_t mul_commit_count();
     // Allocate the accumulators (idempotent, no-op until a decoder is registered).
     void mul_alloc(void *d_buffers_);
     // Count one instance's lookups from a filled witness, for the paths that never commit.
-    void mul_scatter(void *pSetupCtx, void *params, uint64_t airgroupId, uint64_t airId);
+    void mul_scatter(void *pSetupCtx, void *params, uint64_t airgroupId, uint64_t airId, uint64_t auxReady);
+    uint64_t mul_air_has_jobs(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
+    uint64_t mul_air_reads_aux(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
     // Reset every mirror; called once per proof from the std's own reset point.
     void mul_reset();
 

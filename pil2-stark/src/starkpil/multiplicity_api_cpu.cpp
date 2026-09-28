@@ -27,14 +27,14 @@ uint64_t mul_air_device_owned(uint64_t airKey) {
     return 0;
 }
 
-// The scatter runs on the instance workers, which the caller does not join before reading the
-// accumulator, so wait for every instance to have counted.
-void mul_sync_commits(uint64_t expectedCommits) {
-    if (mulDecoders().empty()) return;
-    if (!mul_await_commits(expectedCommits)) exitProcess();
+// Called once every instance has counted (ProofMan waits on mul_commit_count).
+uint64_t mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return MUL_SYNC_OK;
+    if (const MulSyncStatus st = mul_check_commits(expectedCommits); st != MUL_SYNC_OK) return st;
+    return mulCpuOobTotal().load(std::memory_order_relaxed) != 0 ? MUL_SYNC_OOB : MUL_SYNC_OK;
 }
 
-// After mul_sync_commits, which waits for every instance to have counted.
+// After mul_sync_commits.
 void mul_fold(uint64_t airKey, uint64_t *hostAcc) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
     mul_cpu_fold(airKey, hostAcc);

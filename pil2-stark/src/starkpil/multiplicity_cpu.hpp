@@ -34,7 +34,11 @@ inline void mul_cpu_alloc() {
     }
 }
 
+// Bad decodes this proof over every CPU scatter, for mul_sync_commits.
+inline std::atomic<uint64_t>& mulCpuOobTotal() { static std::atomic<uint64_t> n{0}; return n; }
+
 inline void mul_cpu_reset() {
+    mulCpuOobTotal().store(0, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
     for (auto& kv : mulCpuAccs())
         for (auto& c : kv.second) c.store(0, std::memory_order_relaxed);
@@ -90,10 +94,17 @@ inline uint64_t mulEvalProgramCPU(const MulInsnDev* prog, uint32_t n, const uint
     return last;
 }
 
-inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t airgroupId, uint64_t airId) {
+// Before stage 2 (`!auxReady`) the aux trace holds another air's data.
+inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t airgroupId, uint64_t airId,
+                            bool auxReady) {
     if (mulDecoders().empty()) return;
     const MulPlan& plan = mulPlanFor(setupCtx, airgroupId, airId);
     if (plan.jobs.empty()) return;
+    if (!auxReady && (plan.srcMask & (1u << MUL_SRC_AUX)) != 0) {
+        zklog.error("multiplicity: air " + std::to_string(airgroupId) + "/" + std::to_string(airId)
+                    + " looks up a stage-2 or im-pol value, which this commit does not have yet");
+        exitProcess();
+    }
 
     const uint64_t* bases[MUL_SRC_N] = {
         (const uint64_t*)params.pConstPolsAddress, (const uint64_t*)params.trace,
@@ -115,7 +126,7 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             if (it == mulCpuAccs().end()) continue;
             acc = &it->second;
         }
-        std::atomic<uint64_t> oob{0}, firstBadIdx{0};
+        std::atomic<uint64_t> oob{0}, firstBadIdx{0}, badSel{0}, firstBadSel{0};
         #pragma omp parallel for schedule(static)
         for (int64_t row = 0; row < (int64_t)j.rows; ++row) {
             uint64_t sel = 1;
@@ -125,30 +136,46 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
             }
             if (j.hasBus && mulEvalProgramCPU(prog + j.busProgOff, j.busProgLen, bases, row, rowMask)
                             != (uint64_t)j.tableId) continue;
-            uint64_t key[MUL_MAX_TUPLE];
-            if (j.mapSlots == 0) {
-                key[0] = mulAddFE(mulEvalProgramCPU(prog + j.valProgOff, j.valProgLen, bases, row, rowMask),
-                                  j.biasFE);
-            } else {
-                for (uint32_t c = 0; c < j.nKey; ++c)
-                    key[c] = mulEvalProgramCPU(prog + j.keyProgOff[c], j.keyProgLen[c], bases, row, rowMask);
+            // Added as an integer: a "negative" field selector would wrap mod 2^64, not p.
+            if (sel >= MUL_SEL_MAX) {
+                if (badSel.fetch_add(1, std::memory_order_relaxed) == 0)
+                    firstBadSel.store(sel, std::memory_order_relaxed);
+                continue;
             }
-            uint64_t idx;
             // Same resolve as the kernel.
-            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx) || idx >= j.nTableRows) {
+            uint64_t idx = 0, first = 0;
+            bool ok = true;
+            if (j.mapSlots == 0) {
+                idx = first = mulAddFE(mulEvalProgramCPU(prog + j.valProgOff, j.valProgLen, bases, row, rowMask),
+                                       j.biasFE);
+            } else {
+                const uint32_t* refs = plan.keyRefs.data() + j.keyRefOff;
+                uint64_t kw[MUL_MAP_MAX_WORDS] = {};
+                for (uint32_t c = 0; c < j.nKey && ok; ++c) {
+                    const uint64_t v = mulEvalProgramCPU(prog + refs[2 * c], refs[2 * c + 1], bases, row, rowMask);
+                    if (c == 0) first = v;
+                    ok = mulMapPack(j.mapKV, c, v, kw);
+                }
+                ok = ok && mulMapFind(j.mapKV, kw, idx);
+            }
+            if (!ok || idx >= j.nTableRows) {
                 if (oob.fetch_add(1, std::memory_order_relaxed) == 0)
-                    firstBadIdx.store(key[0], std::memory_order_relaxed);
+                    firstBadIdx.store(first, std::memory_order_relaxed);
                 continue;
             }
             (*acc)[j.accBase + idx].fetch_add(sel, std::memory_order_relaxed);
         }
         // A correct decode never lands outside the table; report it loudly.
-        if (oob.load() != 0) {
+        mulCpuOobTotal().fetch_add(oob.load() + badSel.load(), std::memory_order_relaxed);
+        if (oob.load() != 0)
             zklog.error("multiplicity: " + std::to_string(oob.load()) + " decodes outside table "
                         + std::to_string(j.tableId) + " from air " + std::to_string(airgroupId) + "/"
                         + std::to_string(airId) + " (first " + std::to_string(firstBadIdx.load())
-                        + " of " + std::to_string(j.nTableRows) + ") -- that decoder is wrong");
-        }
+                        + " of " + std::to_string(j.nTableRows) + ")");
+        if (badSel.load() != 0)
+            zklog.error("multiplicity: " + std::to_string(badSel.load()) + " selectors >= 2^32 in lookups "
+                        "into table " + std::to_string(j.tableId) + " from air " + std::to_string(airgroupId)
+                        + "/" + std::to_string(airId) + " (first " + std::to_string(firstBadSel.load()) + ")");
     }
 }
 

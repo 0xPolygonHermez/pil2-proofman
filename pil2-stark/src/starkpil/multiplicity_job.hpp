@@ -112,7 +112,8 @@ struct MulJobDev {
     uint64_t   biasFE;     // -min, in the field
     uint64_t   mapSlots;
     const uint64_t* mapKV;
-    uint64_t   hostAirKey; // mulAirKey of the air whose virtual table holds the counters
+    uint64_t   hostAirKey; // mulAirKey of the air whose table holds the counters; the CPU picks its
+                           // accumulator by it, the GPU has one per device
     uint32_t   nKey;
     uint32_t   tableId;
     uint32_t   selConstOne;
@@ -121,7 +122,10 @@ struct MulJobDev {
     uint32_t   valProgOff, valProgLen;
     uint32_t   selProgOff, selProgLen;
     uint32_t   busProgOff, busProgLen;
-    uint32_t   keyProgOff[MUL_MAX_TUPLE], keyProgLen[MUL_MAX_TUPLE];
+    // Exact-map key: nKey (offset, length) program pairs. Points into this GPU's copy on the device;
+    // on the host the CPU scatter reads MulPlan::keyRefs at keyRefOff.
+    const uint32_t* keyRefs;
+    uint32_t   keyRefOff;
 };
 
 #endif

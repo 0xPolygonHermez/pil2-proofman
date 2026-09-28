@@ -16,9 +16,12 @@ struct MulPlan {
     std::vector<MulJobDev>      jobs;      // lookups the kernel handles
     // All compiled programs, concatenated; jobs hold offsets into this.
     std::vector<MulInsnDev>     prog;
+    // Key programs of every exact-map job, (offset, length) pairs; jobs index this at keyRefOff.
+    std::vector<uint32_t>       keyRefs;
     // Bit per MulSrc read by the jobs: a slot commit has no aux trace or custom commits on device.
     uint32_t                    srcMask = 0;
     uint64_t                    maxRows = 0;       // tallest job: the row-stationary grid height
+    uint64_t                    cm1Reads = 0;      // cm1 operands over `prog`, for the col-major choice
 };
 
 inline bool mulPlanStreamable(const MulPlan& p) {
@@ -42,6 +45,9 @@ inline std::string mulSrcName(uint32_t s) {
         case MUL_SRC_PROOFVALUE:    return "proofvalue";
         case MUL_SRC_AIRGROUPVALUE: return "airgroupvalue";
         case MUL_SRC_CUSTOM:        return "custom";
+        case MUL_SRC_PACKED:        return "packed";
+        case MUL_SRC_HINTCOL:       return "hintcol";
+        case MUL_SRC_PACKED_IDX:    return "packed_idx";
         default:                    return "?";
     }
 }
@@ -53,8 +59,8 @@ inline std::string mulSrcMaskNames(uint32_t mask) {
     return out.empty() ? "none" : out;
 }
 
-// Walk `gsum_debug_data` once per air and turn every range-check lookup it feeds into a job. A
-// lookup into a prover-owned table that does not compile is fatal: nothing else counts it.
+// Walk `gsum_debug_data` once per air and turn every lookup into a prover-owned table into a job.
+// One that does not compile, or whose hint cannot be read, is fatal: nothing else counts it.
 inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId) {
     MulPlan plan;
     std::map<std::string, uint32_t> progCache;
@@ -84,9 +90,20 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
         };
         const HintField *fEx = fld("expressions"), *fOp = fld("opids"), *fTy = fld("type_piop");
         const HintField *fDx = fld("deg_expr"), *fDs = fld("deg_sel");
-        if (!isNum(fOp) || !isNum(fTy) || !isNum(fDx) || !isNum(fDs)) continue;
-        if (fEx == nullptr || fEx->values.empty()) continue;
-        if (fTy->values[0].value != MUL_PIOP_ASSUMES) continue;
+        const bool readable = isNum(fOp) && isNum(fTy) && isNum(fDx) && isNum(fDs)
+                           && fEx != nullptr && !fEx->values.empty()
+                           && fTy->values[0].value == MUL_PIOP_ASSUMES;
+        if (!readable) {
+            // The proves side is the table itself; anything else naming a prover-owned table would
+            // go uncounted.
+            if (isNum(fTy) && fTy->values[0].value == MUL_PIOP_PROVES) continue;
+            if (fOp != nullptr)
+                for (const auto& ov : fOp->values)
+                    if (ov.operand == opType::number && mulDecoderFor(ov.value) != nullptr)
+                        fatal((uint32_t)ov.value, "its gsum_debug_data hint is not an assumes lookup the "
+                                                  "plan can read");
+            continue;
+        }
 
         // Degree zero in tuple and selector: counted once per instance, not per row. Read from
         // the hint, since an expression over airvalues is degree 0 too.
@@ -159,13 +176,14 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
                                 + std::to_string(fEx->values.size()));
                     exitProcess();
                 }
+                job.keyRefOff = (uint32_t)plan.keyRefs.size();
                 for (uint32_t c = 0; c < dec.nKey; ++c) {
                     const Field key = compile(&fEx->values[c]);
                     if (!key.why.empty())
                         fatal(dec.table_id, "key column " + std::to_string(c) + " does not compile ("
                                             + key.why + ")");
-                    job.keyProgOff[c] = key.off;
-                    job.keyProgLen[c] = key.len;
+                    plan.keyRefs.push_back(key.off);
+                    plan.keyRefs.push_back(key.len);
                 }
             }
             job.valProgOff  = val.off;
@@ -183,7 +201,10 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
     }
     for (const auto& in : plan.prog)
         for (const MulOperandDev* o : {&in.a, &in.b})
-            if (o->kind == MUL_OPND_COL) plan.srcMask |= 1u << o->term.src;
+            if (o->kind == MUL_OPND_COL) {
+                plan.srcMask |= 1u << o->term.src;
+                if (o->term.src == MUL_SRC_TRACE) plan.cm1Reads++;
+            }
 
     // Group jobs sharing a selector so the kernel's carry-across hits; order is otherwise free.
     std::stable_sort(plan.jobs.begin(), plan.jobs.end(), [](const MulJobDev& a, const MulJobDev& b) {

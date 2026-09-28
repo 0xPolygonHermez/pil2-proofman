@@ -25,15 +25,18 @@ struct SlotHintPlanDev {
 SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId, uint64_t airId,
                                    int gpuId);
 
-// Per-(device, slot) side buffer, grown to the widest air seen. Avoids a cudaMalloc on the
-// slot-commit critical path.
-uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems);
+// Per-(device, slot) side buffer, sized by the warm-up (`grow`) to the widest air; a commit never
+// allocates it.
+uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false);
 
 // Evaluate this air's witness_calc hints into `dSide`, one column per plan slot.
 // `hOps` is a HOST array, one launch per hint in declaration order. `dConstPols` must be the
-// UNPACKED const pols; it and `dVals` may be null only if the plan reads neither.
+// UNPACKED const pols; it and `dVals` may be null only if the plan reads neither. `dTable` and its
+// geometry are an INDEXED air's instruction table (null otherwise).
 void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_t nOps,
                         const uint64_t *dPacked, uint64_t wordsPerRow, bool packedColMajor,
+                        const uint64_t *dTable, uint64_t wordsPerEntry, uint64_t numEntries,
+                        uint64_t indexBits,
                         const uint64_t *dConstPols, const uint64_t *dCustomPols,
                         const uint64_t *dVals, const SlotHintValOffsets &vo, uint64_t *dSide,
                         uint64_t nRows, cudaStream_t stream);

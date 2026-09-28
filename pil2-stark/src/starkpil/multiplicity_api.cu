@@ -4,6 +4,7 @@
 #include "multiplicity.hpp"
 #include "multiplicity_decoders.hpp"
 #include "multiplicity.cuh"
+#include "multiplicity_kernel.cuh"
 #include "multiplicity_cpu.hpp"
 #include "zklog.hpp"
 #include "goldilocks_tooling.cuh"
@@ -26,12 +27,13 @@ uint64_t mul_air_device_owned(uint64_t airKey) {
     return mul_air_fully_owned(airKey) ? 1 : 0;
 }
 
-// Ordering point for the device export: once this returns every instance has launched its
-// scatter, so the table's own commit sees a complete accumulator.
-void mul_sync_commits(uint64_t expectedCommits) {
-    if (mulDecoders().empty()) return;
-    if (!mul_await_commits(expectedCommits)) exitProcess();
-    mul_oob_report();
+// Ordering point for the device export: once this returns MUL_SYNC_OK every instance has launched
+// its scatter, so the table's own commit sees a complete accumulator.
+uint64_t mul_sync_commits(uint64_t expectedCommits) {
+    if (mulDecoders().empty()) return MUL_SYNC_OK;
+    if (const MulSyncStatus st = mul_check_commits(expectedCommits); st != MUL_SYNC_OK) return st;
+    const uint64_t oob = mul_oob_report() + mulCpuOobTotal().load(std::memory_order_relaxed);
+    return oob != 0 ? MUL_SYNC_OOB : MUL_SYNC_OK;
 }
 
 // Fold the prover-owned spans into the caller's accumulator, once per proof, after
@@ -53,15 +55,47 @@ void mul_alloc(void *d_buffers_) {
     for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); }
     if (gpuIds.size() > 1 && mulDeviceExportEnabled()) mul_alloc_peers(gpuIds);
 
-    // Coverage, then GPU memory per device (it competes with that device's prover arena).
-    mul_log_coverage();
-    for (int id : gpuIds) {
-        const uint64_t bytes = mul_gpu_resident_bytes(id);
-        if (bytes != 0)
-            zklog.info("Multiplicity: " + to_string(bytes / (1024 * 1024))
-                       + " MB GPU-resident on gpu " + to_string(id));
-    }
+    // Coverage, then GPU memory per device (it competes with that device's prover arena). Once,
+    // though every reset gets here.
+    static std::once_flag logged;
+    std::call_once(logged, [&] {
+        mul_log_coverage();
+        for (int id : gpuIds) {
+            const uint64_t bytes = mul_gpu_resident_bytes(id);
+            if (bytes != 0)
+                zklog.info("Multiplicity: " + to_string(bytes / (1024 * 1024))
+                           + " MB GPU-resident on gpu " + to_string(id));
+        }
+    });
     mul_alloc_fold_staging();
+    // The prover streams' events (the verify path scatters there) and every plan's device copy.
+    if (!mulDecoders().empty()) {
+        int prev = 0;
+        CHECKCUDAERR(cudaGetDevice(&prev));
+        for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i)
+            mul_warm_stream_event((int)d_buffers->streamsData[i].gpuId, d_buffers->streamsData[i].stream);
+        // Basic setups only: mulPlanFor caches by (airgroup, air), which a recursive setup shares.
+        for (auto& air : d_buffers->air_instances) {
+            auto basic = air.second.find("basic");
+            if (basic == air.second.end()) continue;
+            for (uint32_t gl = 0; gl < basic->second.size() && gl < d_buffers->n_gpus; ++gl) {
+                AirInstanceInfo* aii = basic->second[gl];
+                if (aii == nullptr || aii->setupCtx == nullptr) continue;
+                // The transpose writes one word per column: a packed table air cannot be exported.
+                if (aii->is_packed && mul_air_fully_owned(mulAirKey(air.first.first, air.first.second))) {
+                    zklog.error("multiplicity: device-owned table air " + to_string(air.first.first) + "/"
+                                + to_string(air.first.second) + " is packed");
+                    exitProcess();
+                }
+                const MulPlan& p = mulPlanFor(*aii->setupCtx, air.first.first, air.first.second);
+                if (p.jobs.empty()) continue;
+                const int gpu = (int)d_buffers->my_gpu_ids[gl];
+                CHECKCUDAERR(cudaSetDevice(gpu));
+                mulPlanDevice(p, air.first.first, air.first.second, gpu);
+            }
+        }
+        CHECKCUDAERR(cudaSetDevice(prev));
+    }
     // After the accumulators: the warm-up builds the scatter programs that point into them.
     stream_commit_warmup_gpu(d_buffers_);
 }

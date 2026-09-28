@@ -17,7 +17,8 @@
 // calculateWitnessExpr_gpu before the LDE; a slot never materialises cm1, so hints are evaluated
 // from what a slot holds:
 //
-//   * cm1      -- the WHOLE packed witness is resident, so a `'`-shifted read is another row.
+//   * cm1      -- the WHOLE packed witness is resident, so a `'`-shifted read is another row; an
+//                 INDEXED air's table columns come from its instruction table (MulPackedLayout).
 //   * const    -- the unpacked const scratch the multiplicity hook allocates.
 //   * airvalue -- the pinned value window the multiplicity hook stages.
 //
@@ -40,25 +41,24 @@ struct SlotHintPlan {
     uint64_t                nRows = 0;
     bool                    ok = false;
     bool                    readsCustom = false;   // a hint reads the first fixed custom commit
+    // Air values a hint computes, as terms address them: the slot skips those hints, so nothing on it
+    // may read them.
+    std::set<uint64_t>      computedAirValues;
     std::string             why;       // why not, when !ok
 };
 
 
-// Compile this air's witness_calc hints into a schedule a slot can run. `widths` is the packed
-// column layout (PackedInfo::unpack_info) and `wordsPerRow` its row stride; unpacked airs cannot
-// use this. `ok` in the result says whether every hint was expressible.
-inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint64_t>& widths,
-                                      uint64_t wordsPerRow) {
+// Compile this air's witness_calc hints into a schedule a slot can run, reading cm1 through
+// `layout`. `ok` in the result says whether every hint was expressible.
+inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout) {
     SlotHintPlan plan;
     plan.nRows = 1ULL << setupCtx.starkInfo.starkStruct.nBits;
     const uint64_t nh = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
     if (nh == 0) { plan.ok = true; return plan; }          // nothing to do is a valid plan
-    if (widths.empty() || wordsPerRow == 0) { plan.why = "air is not packed"; return plan; }
-
-    std::vector<uint64_t> bitOf(widths.size(), 0);
-    uint64_t bit = 0;
-    for (size_t c = 0; c < widths.size(); ++c) { bitOf[c] = bit; bit += widths[c]; }
-    if (bit == 0 || bit > wordsPerRow * 64) { plan.why = "packed layout does not fit the row"; return plan; }
+    if (layout.widths == nullptr || layout.widths->empty() || layout.wordsPerRow == 0) {
+        plan.why = "air is not packed"; return plan;
+    }
+    if (!layout.build()) { plan.why = "packed layout does not fit the row"; return plan; }
 
     std::vector<uint64_t> ids(nh);
     setupCtx.expressionsBin.getHintIdsByName(ids.data(), "witness_calc");
@@ -69,7 +69,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
     // stream commit did, so the slot skips it.
     std::map<uint32_t, uint32_t> slotOf;
     std::vector<bool> intoAirValue(nh, false);
-    std::set<uint64_t> computedAirValues;
+    std::set<uint64_t>& computedAirValues = plan.computedAirValues;
     for (uint64_t i = 0; i < nh; ++i)
         for (auto& f : setupCtx.expressionsBin.hints[ids[i]].fields) {
             if (f.name != "reference" || f.values.empty()) continue;
@@ -121,12 +121,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
                     t.sectionOffset = sit->second;
                     continue;
                 }
-                if (t.col >= widths.size() || widths[t.col] == 0 || widths[t.col] > 64) {
-                    plan.why = "cm1 operand has no usable packed width"; return plan;
-                }
-                t.src = MUL_SRC_PACKED;
-                t.sectionOffset = bitOf[t.col];
-                t.nCols = (uint32_t)widths[t.col];
+                if (!layout.rewrite(t)) { plan.why = "cm1 operand has no usable packed width"; return plan; }
             }
 
         const auto& pm = setupCtx.starkInfo.cmPolsMap[fr->values[0].id];
@@ -149,14 +144,14 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
 
 // One plan per air; setup-derived, so it outlives every instance.
 inline SlotHintPlan& slotHintPlanFor(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId,
-                                     const std::vector<uint64_t>& widths, uint64_t wordsPerRow) {
+                                     const MulPackedLayout& layout) {
     static std::map<std::pair<uint64_t,uint64_t>, SlotHintPlan> plans;
     static std::mutex mtx;
     std::lock_guard<std::mutex> lock(mtx);
     auto key = std::make_pair(airgroupId, airId);
     auto it = plans.find(key);
     if (it == plans.end())
-        it = plans.emplace(key, slotHintBuildPlan(setupCtx, widths, wordsPerRow)).first;
+        it = plans.emplace(key, slotHintBuildPlan(setupCtx, layout)).first;
     return it->second;
 }
 

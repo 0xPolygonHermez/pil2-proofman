@@ -622,6 +622,12 @@ static uint32_t scBlake3StateCols(uint64_t nCols)
     return SC_DIGEST + parks * SC_DIGEST;
 }
 
+void streamCommitWarmConstants(StreamCommitHash hash)
+{
+    if (hash == StreamCommitHash::Poseidon2) scPoseidon2EnsureConstants();
+    else if (hash == StreamCommitHash::Poseidon1) scPoseidon1EnsureConstants();
+}
+
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash hash)
 {
     uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
