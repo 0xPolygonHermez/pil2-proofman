@@ -71,8 +71,6 @@ impl VerifyConstraintsCmd {
             options.gpu();
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
-
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
             if let Some((key, value)) = commit.split_once('=') {
@@ -81,6 +79,11 @@ impl VerifyConstraintsCmd {
                 eprintln!("Invalid commit format: {commit:?}");
             }
         }
+        // Before the constructor: the const buffer reserves each custom commit's real
+        // packed width only when sizing knows the file.
+        options.custom_commits_fixed(custom_commits_map.clone());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
         proofman.register_custom_commits(custom_commits_map)?;
 
         match self.field {

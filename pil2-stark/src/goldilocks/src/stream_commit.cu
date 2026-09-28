@@ -1,4 +1,9 @@
 #include "stream_commit.cuh"
+#include "gpu_timer.cuh"
+
+// Optional: the standalone build and the gtests pass none.
+#define SC_CAT_START(t, c) do { if (t) { TimerStartCategoryGPU((*(t)), c); } } while (0)
+#define SC_CAT_STOP(t, c)  do { if (t) { TimerStopCategoryGPU((*(t)), c); } } while (0)
 
 #include <mutex>
 #include <algorithm>
@@ -79,17 +84,31 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
                                            uint64_t nCols, uint64_t nRows,
                                            uint64_t wordsPerRow, uint32_t c0, uint32_t cc)
 {
+    // Column bit offsets are row-uniform, so scanned once per block.
+    extern __shared__ uint64_t scColStart[];
+    if (threadIdx.x == 0) {
+        uint64_t acc = 0;
+        for (uint64_t c = 0; c < (uint64_t)c0 && c < nCols; c++) acc += widths[c];
+        for (uint32_t j = 0; j < cc && (uint64_t)c0 + j < nCols; j++) {
+            scColStart[j] = acc;
+            acc += widths[c0 + j];
+        }
+    }
+    __syncthreads();
+
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
     const uint64_t *packed_row = src + row * wordsPerRow;
-    uint64_t word = packed_row[0];
-    uint64_t word_idx = 0, bit_offset = 0;
-    // Reposition over the columns this chunk does not write, then extract.
-    for (uint64_t c = 0; c < (uint64_t)c0 && c < nCols; c++)
-        scStepBits<false>(packed_row, wordsPerRow, word, word_idx, bit_offset, widths[c]);
-    for (uint64_t c = c0; c < nCols && c < (uint64_t)c0 + cc; c++) {
-        uint64_t val = scStepBits<true>(packed_row, wordsPerRow, word, word_idx, bit_offset, widths[c]);
-        dst[(uint64_t)(c - c0) * nRows + row] = val;
+
+    for (uint32_t j = 0; j < cc && (uint64_t)c0 + j < nCols; j++) {
+        const uint64_t nbits = widths[c0 + j];
+        const uint64_t start = scColStart[j];
+        const uint64_t widx = start >> 6, boff = start & 63;
+        uint64_t val = packed_row[widx] >> boff;
+        // Straddles only when boff > 0, so the shift below is always < 64.
+        if (boff + nbits > 64) val |= packed_row[widx + 1] << (64 - boff);
+        if (nbits < 64) val &= ((1ULL << nbits) - 1ULL);
+        dst[(uint64_t)j * nRows + row] = val;
     }
 }
 
@@ -111,38 +130,57 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
     // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
     // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
     // <= 512 B per block. Null map = lane 0. Hygiene: this kernel is DRAM-bound.
-    extern __shared__ uint64_t scInfo[];
+    // scStart: each column's bit offset within its own stream (the row for an untagged column,
+    // its lane's table entry otherwise). Row-uniform, so also staged once per block.
+    extern __shared__ uint64_t scShared[];
+    uint64_t *scInfo = scShared;
+    uint64_t *scStart = scShared + nCols;
+    uint64_t *scAcc = scShared + 2 * nCols;   // one accumulator per lane
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x)
         scInfo[i] = widths[i] | ((uint64_t)(colSource[i] != 0) << 32) |
                     ((uint64_t)(colLane != nullptr ? colLane[i] : 0) << 33);
     __syncthreads();
 
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= nRows) return;
-
-    const uint64_t *rbase = src + row * wordsPerRow;
     const uint64_t cEnd = ((uint64_t)c0 + cc < nCols) ? (uint64_t)c0 + cc : nCols;
     // 0 is the unlaned shape, same as 1. Normalized here, not just at the launch, so the
     // header offset below cannot collapse to 0 and skip every table pass.
     const uint64_t nLanes = lanes ? lanes : 1;
 
-    // Runtime pass: the untagged columns, from just past the header of `nLanes` indices.
-    {
-        const uint64_t hdrBits = nLanes * indexBits;
-        uint64_t ridx = hdrBits / 64, roff = hdrBits % 64;
-        uint64_t rword = (ridx < wordsPerRow) ? rbase[ridx] : 0;
-        // Reposition over the columns this chunk does not write, then extract.
-        for (uint64_t c = 0; c < (uint64_t)c0 && c < cEnd; c++) {
+    if (threadIdx.x == 0) {
+        uint64_t accRow = nLanes * indexBits;          // past the index header
+        for (uint64_t l = 0; l < nLanes; l++) scAcc[l] = 0;
+        for (uint64_t c = 0; c < cEnd; c++) {
             const uint64_t info = scInfo[c];
-            if ((info >> 32) & 1ull) continue;
-            scStepBits<false>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
+            const uint64_t nbits = info & 0xFFFFFFFFull;
+            if ((info >> 32) & 1ull) {
+                const uint64_t l = (info >> 33) & 0xFFull;
+                scStart[c] = scAcc[l];
+                scAcc[l] += nbits;
+            } else {
+                scStart[c] = accRow;
+                accRow += nbits;
+            }
         }
-        for (uint64_t c = c0; c < cEnd; c++) {
-            const uint64_t info = scInfo[c];
-            if ((info >> 32) & 1ull) continue;
-            dst[(c - c0) * nRows + row] =
-                scStepBits<true>(rbase, wordsPerRow, rword, ridx, roff, info & 0xFFFFFFFFull);
-        }
+    }
+    __syncthreads();
+    if (row >= nRows) return;
+
+    const uint64_t *rbase = src + row * wordsPerRow;
+
+    // One bit field at a known offset; no carried cursor.
+    auto extractAt = [](const uint64_t *base, uint64_t start, uint64_t nbits) -> uint64_t {
+        const uint64_t widx = start >> 6, boff = start & 63;
+        uint64_t v = base[widx] >> boff;
+        // Straddles only when boff > 0, so the shift below is always < 64.
+        if (boff + nbits > 64) v |= base[widx + 1] << (64 - boff);
+        return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : v;
+    };
+    // Runtime pass: the untagged columns this chunk writes.
+    for (uint64_t c = c0; c < cEnd; c++) {
+        const uint64_t info = scInfo[c];
+        if ((info >> 32) & 1ull) continue;
+        dst[(c - c0) * nRows + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
     }
 
     // One pass per lane; each lane's index sits at a known header offset. The extra passes
@@ -157,18 +195,11 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         if (index >= numEntries) index = 0;
 
         const uint64_t *tbase = table + index * wordsPerEntry;
-        uint64_t tword = tbase[0], tidx = 0, toff = 0;
-        // Warp-uniform: source and lane depend only on c, so neither loop diverges.
-        for (uint64_t c = 0; c < (uint64_t)c0 && c < cEnd; c++) {
-            const uint64_t info = scInfo[c];
-            if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            scStepBits<false>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
-        }
+        // Warp-uniform: source and lane depend only on c, so the loop does not diverge.
         for (uint64_t c = c0; c < cEnd; c++) {
             const uint64_t info = scInfo[c];
             if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            dst[(c - c0) * nRows + row] =
-                scStepBits<true>(tbase, wordsPerEntry, tword, tidx, toff, info & 0xFFFFFFFFull);
+            dst[(c - c0) * nRows + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
         }
     }
 }
@@ -451,7 +482,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource, const uint8_t *dColLane,
-                           const uint64_t *dTable, StreamCommitHash hash)
+                           const uint64_t *dTable, StreamCommitHash hash, TimerGPU *timer)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -492,6 +523,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     gl64_t *d_park     = d_cap + (uint64_t)SC_DIGEST * NExt;     // blake3 two-chunk rows only
     uint64_t *d_tree   = (uint64_t *)d_state;                    // valid only after last absorb
 
+    SC_CAT_START(timer, H2D_COPY);
     CHECKCUDAERR(cudaMemcpyAsync(d_widths, colWidths, dims.nCols * 8, cudaMemcpyHostToDevice, stream));
     // Chunked DIRECT copy: the witness pool is host-registered (MemoryHandler),
     // so each block is a plain pinned DMA with no staging memcpy; short blocks
@@ -503,6 +535,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_packed + off, (const uint8_t *)hPacked + off, len,
                                      cudaMemcpyHostToDevice, stream));
     }
+    SC_CAT_STOP(timer, H2D_COPY);
 
     NTTGoldilocksGPU ntt;
     const uint32_t ublk = (uint32_t)((N + SC_TPB - 1) / SC_TPB);
@@ -513,20 +546,28 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         uint32_t cc = (uint32_t)((uint64_t)(k + 1) * chunkCols <= dims.nCols
                                      ? chunkCols
                                      : dims.nCols - (uint64_t)k * chunkCols);
+        SC_CAT_START(timer, UNPACK_TRACE);
         if (indexed) {
-            scUnpackRangeIndexedKernel<<<ublk, SC_TPB, dims.nCols * sizeof(uint64_t), stream>>>(
+            // scInfo[nCols] + scStart[nCols] + one accumulator per lane.
+            scUnpackRangeIndexedKernel<<<ublk, SC_TPB,
+                                         (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t),
+                                         stream>>>(
                 d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
                 dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc);
         } else {
-            scUnpackRangeKernel<<<ublk, SC_TPB, 0, stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
+            scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
                                                              dims.nCols, N, dims.wordsPerRow,
                                                              (uint32_t)(k * chunkCols), cc);
         }
         CHECKCUDAERR(cudaGetLastError());
+        SC_CAT_STOP(timer, UNPACK_TRACE);
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
+        SC_CAT_START(timer, NTT);
         ntt.ldeColMajor(d_rate, d_rate, dims.nBits, dims.nBitsExt, cc, stream, false, d_scratch, N);
+        SC_CAT_STOP(timer, NTT);
+        SC_CAT_START(timer, MERKLE_TREE);
         if (b3)
             scBlake3AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
                 d_rate, d_cap, d_park, cc, k, nChunks, NExt);
@@ -534,11 +575,14 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
             scPoseidon1AbsorbChunkKernel<<<ablk, SC_TPB, (size_t)SC_TPB * P16::SPONGE_WIDTH * 8, stream>>>(
                 d_rate, d_cap, cc, k == 0, NExt);
         CHECKCUDAERR(cudaGetLastError());
+        SC_CAT_STOP(timer, MERKLE_TREE);
     }
 
+    SC_CAT_START(timer, MERKLE_TREE);
     scCapToLeavesKernel<<<ablk, SC_TPB, 0, stream>>>(d_cap, d_tree, NExt);
     CHECKCUDAERR(cudaGetLastError());
     scReduceTree(d_tree, NExt, arity, hash, stream);
+    SC_CAT_STOP(timer, MERKLE_TREE);
 
     CHECKCUDAERR(cudaMemcpyAsync(hRoot, d_tree + treeElems - SC_DIGEST, SC_DIGEST * 8,
                                  cudaMemcpyDeviceToHost, stream));
