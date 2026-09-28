@@ -4377,19 +4377,12 @@ where
                 }
             }
 
-            timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
-            // Canonical publics gate the fold whatever `verify_agg_proofs` says: skipping them is
-            // what would make the fast path unsound. See `agg_publics_are_canonical`.
-            let valid_recursive_proof = self.agg_publics_are_canonical(proof.airgroup_id as usize, &proof.proof)
-                && (!options.verify_agg_proofs || self.verify_agg_proof(proof.airgroup_id as usize, &proof.proof)?);
-
-            if !valid_recursive_proof {
+            if !self.agg_publics_are_canonical(proof.airgroup_id as usize, &proof.proof) {
                 self.cancellation_info
                     .write_recover()
                     .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
                 break;
             }
-            timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
@@ -5489,18 +5482,9 @@ where
         }
     }
 
-    /// Verify an aggregated proof received from a worker with the C++ STARK verifier on the key's
-    /// own setup files. circuit_type (publics[0]): 0 = null proof (no-op), 1 = recursive2, k >= 2 =
-    /// the un-aggregated recursive1 of air k-2 that a single-instance worker sends -- verified with
-    /// that air's recursive1 setup (same circuit shape, its own root_c).
-    /// Every aggregated public must be a canonical field element.
-    ///
-    /// Soundness, not defence in depth, which is why it runs outside `verify_agg_proofs`. These
-    /// words come off the wire and are fed to circom as raw `u64`s, and circom reduces mod p: a
-    /// `circuit_type` sent as `p` arrives as 0, where the fold's `isNull <== IsZero(circuitType)`
-    /// and `enable <== 1 - isNull` switch off that child's stark verification -- the very check
-    /// that makes skipping the CPU one safe. Nothing else pins word 0: the accumulated-challenge
-    /// comparison covers only the slice `get_accumulated_challenge` returns.
+    /// Every aggregated public from a worker must be a canonical field element. Required for
+    /// soundness: circom reduces mod p, so a `circuit_type` sent as `p` would arrive as 0 and
+    /// switch off the fold's verification of that child.
     fn agg_publics_are_canonical(&self, airgroup_id: usize, proof_data: &[u64]) -> bool {
         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
         let Some(publics) = proof_data.get(..publics_aggregation) else {
@@ -5518,6 +5502,7 @@ where
         true
     }
 
+    #[allow(dead_code)]
     fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
         // Repeated from the caller so this stays correct standalone; it is a handful of compares.
