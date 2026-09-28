@@ -593,6 +593,8 @@ void StarkInfo::setMapOffsets() {
 
     if (inplaceStageCommit) {
         mapOffsets[std::make_pair("cm1", false)] = mapOffsets[std::make_pair("cm1", true)];
+        // Contributions touch cm1ext and mt1 only: the small cm1 lives inside cm1ext.
+        mapTotalNContributions = mapTotalN;
         mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
         mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
         mapTotalN += NExtended * mapSectionsN["cm2"];
