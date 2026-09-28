@@ -26,7 +26,12 @@ inline cudaStream_t mulXferStream(int gpuId) {
     auto it = m.find(gpuId);
     if (it != m.end()) return it->second;
     cudaStream_t s = nullptr;
+    // A stream belongs to the device current at creation.
+    int prev = 0;
+    CHECKCUDAERR(cudaGetDevice(&prev));
+    CHECKCUDAERR(cudaSetDevice(gpuId));
     CHECKCUDAERR(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
+    CHECKCUDAERR(cudaSetDevice(prev));
     m[gpuId] = s;
     return s;
 }
@@ -43,35 +48,47 @@ inline void mulCopySync(int gpuId, void* dst, const void* src, size_t bytes, cud
     CHECKCUDAERR(cudaStreamSynchronize(s));
 }
 
-// Each scatter records an event on its stream and the fold waits on those, since
-// cudaDeviceSynchronize is illegal while another thread captures.
-struct MulEventPool { std::vector<cudaEvent_t> pending, freelist; };
-
-inline std::map<int, MulEventPool>& mulEventPools() { static std::map<int, MulEventPool> m; return m; }
+// Each scatter re-records its stream's event and the fold waits on those, since
+// cudaDeviceSynchronize is illegal while another thread captures. A stream runs in order, so its
+// last record covers every scatter before it: one event per stream, created at warmup.
+inline std::map<int, std::map<cudaStream_t, cudaEvent_t>>& mulStreamEvents() {
+    static std::map<int, std::map<cudaStream_t, cudaEvent_t>> m;
+    return m;
+}
 inline std::mutex& mulEventMutex() { static std::mutex m; return m; }
+
+inline cudaEvent_t mulEventForLocked(int gpuId, cudaStream_t stream) {
+    cudaEvent_t& e = mulStreamEvents()[gpuId][stream];
+    if (e == nullptr) {
+        // An event belongs to the device current at creation, and must match its stream's.
+        int prev = 0;
+        CHECKCUDAERR(cudaGetDevice(&prev));
+        CHECKCUDAERR(cudaSetDevice(gpuId));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaSetDevice(prev));
+    }
+    return e;
+}
+
+inline void mul_warm_stream_event(int gpuId, cudaStream_t stream) {
+    std::lock_guard<std::mutex> lk(mulEventMutex());
+    mulEventForLocked(gpuId, stream);
+}
 
 inline void mul_note_scatter(int gpuId, cudaStream_t stream) {
     std::lock_guard<std::mutex> lk(mulEventMutex());
-    MulEventPool& p = mulEventPools()[gpuId];
-    cudaEvent_t e = nullptr;
-    if (!p.freelist.empty()) { e = p.freelist.back(); p.freelist.pop_back(); }
-    else CHECKCUDAERR(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
-    CHECKCUDAERR(cudaEventRecord(e, stream));
-    p.pending.push_back(e);
+    CHECKCUDAERR(cudaEventRecord(mulEventForLocked(gpuId, stream), stream));
 }
 
 inline void mul_wait_scatters(int gpuId) {
-    std::vector<cudaEvent_t> take;
+    std::vector<cudaEvent_t> events;
     {
         std::lock_guard<std::mutex> lk(mulEventMutex());
-        auto it = mulEventPools().find(gpuId);
-        if (it == mulEventPools().end()) return;
-        take.swap(it->second.pending);
+        auto it = mulStreamEvents().find(gpuId);
+        if (it == mulStreamEvents().end()) return;
+        for (const auto& se : it->second) events.push_back(se.second);
     }
-    for (cudaEvent_t e : take) CHECKCUDAERR(cudaEventSynchronize(e));
-    std::lock_guard<std::mutex> lk(mulEventMutex());
-    MulEventPool& p = mulEventPools()[gpuId];
-    p.freelist.insert(p.freelist.end(), take.begin(), take.end());
+    for (cudaEvent_t e : events) CHECKCUDAERR(cudaEventSynchronize(e));
 }
 
 // Persistent per-device mirror. NOT a slice of d_aux_trace: that is per-stream scratch.
@@ -290,6 +307,8 @@ inline uint64_t mul_oob_report() {
         if (kv.second == nullptr) continue;
         uint64_t v[MUL_OOB_SLOTS] = {0};
         CHECKCUDAERR(cudaSetDevice(kv.first));
+        // Commits count once their scatter is enqueued, so it may still be writing the record.
+        mul_wait_scatters(kv.first);
         mulCopySync(kv.first, v, kv.second, sizeof(v), cudaMemcpyDeviceToHost);
         if (v[0] == 0) continue;
         total += v[0];
@@ -297,10 +316,12 @@ inline uint64_t mul_oob_report() {
         std::string keyStr;
         for (uint64_t c = 0; c < v[MUL_OOB_SLOTS - 1]; ++c)
             keyStr += (c ? "," : "") + std::to_string(v[4 + c]);
-        zklog.error("multiplicity: " + std::to_string(v[0]) + " decodes outside table "
-                    + std::to_string(v[1]) + " (first from air " + std::to_string(v[2] >> 32) + "/"
-                    + std::to_string(v[2] & 0xFFFFFFFF) + ", key=[" + keyStr
-                    + "]) -- that decoder is wrong");
+        const uint64_t air = v[2] & ~MUL_OOB_SELECTOR;
+        const std::string first = (v[2] & MUL_OOB_SELECTOR) ? "a selector " + std::to_string(v[3]) + " >= 2^32"
+                                                              : "key=[" + keyStr + "] outside it";
+        zklog.error("multiplicity: " + std::to_string(v[0]) + " bad lookups into table " + std::to_string(v[1])
+                    + " (first from air " + std::to_string(air >> 32) + "/" + std::to_string(air & 0xFFFFFFFF)
+                    + ": " + first + ")");
     }
     return total;
 }
@@ -324,8 +345,8 @@ inline const MulVtLayout* mulFullyOwnedLayout(uint64_t airKey) {
 inline bool mul_air_fully_owned(uint64_t airKey) { return mulFullyOwnedLayout(airKey) != nullptr; }
 
 // Write air `airKey`'s counts straight into the committed trace at `dst`, on the device.
-// Returns false when it cannot (no accumulator, unrecognised shape); the caller then takes the
-// host path, which a cross-rank reduction also needs.
+// False when the air is not device-owned: the caller takes the host path, which a cross-rank
+// reduction also needs. A device-owned air that cannot be exported is fatal: nothing fills its trace.
 inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
                                 uint64_t numRows, uint64_t nCols, cudaStream_t stream) {
     // Off with several ranks (the host reduces them) or when the std still counts a table here.
@@ -338,7 +359,7 @@ inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
         zklog.error("multiplicity: air " + mulAirName(airKey) + " trace is " + std::to_string(numRows)
                     + "x" + std::to_string(nCols) + " but its accumulator holds "
                     + std::to_string(L->nCounters) + " counters");
-        return false;
+        exitProcess();
     }
 
     MulAcc* local = nullptr;
@@ -348,7 +369,11 @@ inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
         if (kv.first.second == gpuId) local = kv.second;
         else remote.push_back(kv.second);
     }
-    if (local == nullptr) return false;
+    if (local == nullptr) {
+        zklog.error("multiplicity: air " + mulAirName(airKey) + " has no accumulator on gpu "
+                    + std::to_string(gpuId));
+        exitProcess();
+    }
 
     CHECKCUDAERR(cudaSetDevice(gpuId));
     // Every scatter that fed this air, on every device, must be visible before the transpose.

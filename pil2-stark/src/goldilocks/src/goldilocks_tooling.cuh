@@ -826,7 +826,7 @@ struct DeviceCommitBuffers
     // [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
     uint64_t *streamCommitHost = nullptr;
     // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
-    // claims every overlapped stream's selection mutex, the last releases them. `cv` is signalled
+    // sets every overlapped stream's `slotHeld` flag, the last clears them. `cv` is signalled
     // when the quiesce lifts and when the last in-flight commit leaves.
     struct SlotRegion {
         std::mutex mutex;

@@ -1947,10 +1947,32 @@ pub fn mul_air_device_owned_c(airgroup_id: u64, air_id: u64) -> bool {
     unsafe { mul_air_device_owned(mul_air_key(airgroup_id, air_id)) != 0 }
 }
 
-/// Wait until every instance has launched its scatter. The table's own commit reads the
-/// accumulator on the device, so this is the ordering point that makes it complete.
-pub fn mul_sync_commits_c(expected_commits: u64) {
-    unsafe { mul_sync_commits(expected_commits) }
+/// `mul_sync_commits_c`: whether the prover's counts can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulSync {
+    Ok,
+    Short,      // fewer commits than instances before the deadline
+    Extra,      // more: one counted twice
+    OutOfTable, // lookups decoded outside their table, or a selector >= 2^32
+    Unknown(u64),
+}
+
+/// Check, once every instance has launched its scatter, that the counts can be used. The table's
+/// own commit reads the accumulator on the device, so this is the ordering point that makes it
+/// complete.
+pub fn mul_sync_commits_c(expected_commits: u64) -> MulSync {
+    match unsafe { mul_sync_commits(expected_commits) } {
+        0 => MulSync::Ok,
+        1 => MulSync::Short,
+        2 => MulSync::Extra,
+        3 => MulSync::OutOfTable,
+        s => MulSync::Unknown(s),
+    }
+}
+
+/// Instances that have counted their lookups this proof.
+pub fn mul_commit_count_c() -> u64 {
+    unsafe { mul_commit_count() }
 }
 
 /// Call after `mul_sync_commits_c`.
@@ -1969,11 +1991,28 @@ pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
 }
 
 /// Count one instance's lookups straight from its filled witness, for paths that never commit
-/// (verify-constraints), where the commit hook does not run.
+/// (verify-constraints, debug), where the commit hook does not run. `aux_ready`: stage 2 and the
+/// im-pols are computed.
 /// # Safety
 /// `p_setup` and `steps_params` must be live for the duration of the call; neither is retained.
-pub unsafe fn mul_scatter_c(p_setup: *mut c_void, steps_params: *mut u8, airgroup_id: u64, air_id: u64) {
-    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id) }
+pub unsafe fn mul_scatter_c(
+    p_setup: *mut c_void,
+    steps_params: *mut u8,
+    airgroup_id: u64,
+    air_id: u64,
+    aux_ready: bool,
+) {
+    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id, aux_ready as u64) }
+}
+
+/// Whether the air looks up any table the prover counts.
+pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Whether such a lookup reads a stage-2 or im-pol value.
+pub fn mul_air_reads_aux_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_reads_aux(p_setup, airgroup_id, air_id) != 0 }
 }
 
 pub fn mul_reset_c() {

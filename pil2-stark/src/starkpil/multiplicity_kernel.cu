@@ -3,8 +3,8 @@
 #include "multiplicity_decoders.hpp"
 #include <algorithm>
 #include "multiplicity_combine.cuh"
-// Dedicated range-check scatter: tuple, selector and bus id are compiled programs, so a thread
-// evaluates all three from registers instead of running `computeExpressions_` once per hint.
+// The lookup scatter: value (or map key), selector and bus id are compiled programs, so a thread
+// evaluates them from registers instead of running `computeExpressions_` once per hint.
 
 #define MUL_SCATTER_BLOCK 256   // rows per block
 
@@ -28,6 +28,9 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
         // The cached selector is only valid for the row it was computed on.
         uint32_t lastSelOff = 0xFFFFFFFFu;
         uint64_t lastSelVal = 0;
+        // Likewise the bus id: a multi-opid hint is one job per table, adjacent and sharing it.
+        uint32_t lastBusOff = 0xFFFFFFFFu;
+        uint64_t lastBusVal = 0;
 
         for (uint32_t k = 0; k < nJobs; ++k) {
             const MulJobDev& j = jobs[k];
@@ -49,22 +52,43 @@ void mul_scatter_kernel_rows(const MulJobDev* __restrict__ jobs, uint32_t nJobs,
             }
 
             // Dynamic opid (multi_range_check): the bus id selects the table per row.
-            if (j.hasBus && mulEvalField(j.busProgOff, j.busProgLen, prog, bases, row,
-                                         rowMask) != (uint64_t)j.tableId) continue;
-
-            uint64_t key[MUL_MAX_TUPLE];
-            if (j.mapSlots == 0) {
-                key[0] = mulAddFE(mulEvalField(j.valProgOff, j.valProgLen, prog,
-                                               bases, row, rowMask), j.biasFE);
-            } else {
-                for (uint32_t c = 0; c < j.nKey; ++c)
-                    key[c] = mulEvalField(j.keyProgOff[c], j.keyProgLen[c], prog,
-                                          bases, row, rowMask);
+            if (j.hasBus) {
+                if (j.busProgOff != lastBusOff) {
+                    lastBusVal = mulEvalField(j.busProgOff, j.busProgLen, prog, bases, row, rowMask);
+                    lastBusOff = j.busProgOff;
+                }
+                if (lastBusVal != (uint64_t)j.tableId) continue;
             }
-            uint64_t idx;
-            if (!mulResolveRow(key, j.nKey, j.mapSlots, j.mapKV, idx) || idx >= j.nTableRows) {
-                // nKey is 0 for a range job (its value is in key[0]).
-                mulRecordOob(oob, j.tableId, air, key, j.nKey ? j.nKey : 1u);
+            // Added as an integer: a "negative" field selector would wrap mod 2^64, not p.
+            if (sel >= MUL_SEL_MAX) { mulRecordOob(oob, j.tableId, air | MUL_OOB_SELECTOR, sel); continue; }
+
+            uint64_t idx = 0;
+            bool ok = true;
+            if (j.mapSlots == 0) {
+                idx = mulAddFE(mulEvalField(j.valProgOff, j.valProgLen, prog, bases, row, rowMask),
+                               j.biasFE);
+            } else {
+                // Packed as it is evaluated, so the key costs its packed words, not its columns.
+                uint64_t kw[MUL_MAP_MAX_WORDS];
+                const uint32_t nw = mulMapWords(j.mapKV);
+                for (uint32_t w = 0; w < nw; ++w) kw[w] = 0;
+                for (uint32_t c = 0; c < j.nKey && ok; ++c)
+                    ok = mulMapPack(j.mapKV, c, mulEvalField(j.keyRefs[2 * c], j.keyRefs[2 * c + 1], prog,
+                                                             bases, row, rowMask), kw);
+                ok = ok && mulMapFind(j.mapKV, kw, idx);
+            }
+            if (!ok || idx >= j.nTableRows) {
+                if (j.mapSlots == 0) {
+                    mulRecordOob(oob, j.tableId, air, idx);
+                } else if (unsigned long long* o = mulClaimOob(oob, j.tableId, air, 0)) {
+                    // Re-evaluated for the report: the packed key is not the tuple.
+                    const uint32_t n = j.nKey < MUL_OOB_SLOTS - 5 ? j.nKey : MUL_OOB_SLOTS - 5;
+                    for (uint32_t c = 0; c < n; ++c)
+                        o[4 + c] = mulEvalField(j.keyRefs[2 * c], j.keyRefs[2 * c + 1], prog, bases, row,
+                                                rowMask);
+                    o[3] = o[4];
+                    o[MUL_OOB_SLOTS - 1] = n;
+                }
                 continue;
             }
             const uint64_t slot = j.accBase + idx;

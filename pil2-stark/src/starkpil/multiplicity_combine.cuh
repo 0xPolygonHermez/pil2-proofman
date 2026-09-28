@@ -43,7 +43,7 @@ __device__ __forceinline__ void mulCombineDeposit(MulCombine c, uint64_t key, ui
                                                   unsigned long long* acc) {
     const uint32_t s = mulCombineSlot(key);
     uint64_t prev = c.key[s];
-    if (prev != key)
+    if (prev == MUL_COMBINE_EMPTY)
         prev = (uint64_t)atomicCAS((unsigned long long*)&c.key[s], MUL_COMBINE_EMPTY,
                                    (unsigned long long)key);
     if (prev == MUL_COMBINE_EMPTY || prev == key) atomicAdd(&c.val[s], (unsigned long long)total);

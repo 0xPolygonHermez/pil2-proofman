@@ -122,6 +122,10 @@ inline bool streamCommitColMajorFits(const StreamCommitDims &dims, StreamCommitH
            streamCommitSlotElems(dims, hash) + need <= slotElems;
 }
 
+// The hash family's round constants on the current device, once; called by the warm-up so no
+// commit copies to a symbol.
+void streamCommitWarmConstants(StreamCommitHash hash);
+
 // The shape checks streamCommitPacked refuses on, callable before the witness is consumed.
 // 0 when the commit can run; otherwise the code streamCommitPacked would return.
 int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSource,

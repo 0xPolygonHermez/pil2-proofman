@@ -8,8 +8,6 @@
 #include <mutex>
 #include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <thread>
 #include "zklog.hpp"
 #include "exit_process.hpp"
 #include "multiplicity_decoders.hpp"
@@ -20,8 +18,8 @@ inline std::string mulAirName(uint64_t airKey) {
     return std::to_string(airKey >> 32) + "/" + std::to_string(airKey & 0xFFFFFFFFull);
 }
 
-// Virtual-table geometry, registered per run from StdVirtualTable::new. Integers only: the host
-// accumulator pointer is passed per call, never retained here.
+// Virtual-table geometry, registered once per process by ProofMan::register_prover_multiplicities.
+// Integers only: the host accumulator pointer is passed per call, never retained here.
 struct MulVtLayout {
     uint64_t airKey = 0;                     // mulAirKey(airgroup, air)
     uint64_t nCounters = 0;                  // numRows * num_muls
@@ -106,13 +104,17 @@ inline std::map<uint64_t, MulTableMap>& mulTableMaps() {
 
 inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, uint64_t n,
                                         uint64_t slots, uint64_t nKey) {
-    // The probe masks with `slots - 1`, so slots must be a power of two.
-    if (slots == 0 || (slots & (slots - 1)) != 0) {
-        zklog.error("multiplicity: table " + std::to_string(tableId) + " map has " + std::to_string(slots)
-                    + " slots, which is not a power of two -- the probe mask would be meaningless");
+    // The decoder trusts the header, so check it against what the builder says it wrote.
+    const bool shaped = n >= MUL_MAP_HEAD && kv[0] == MUL_MAP_MAGIC && (kv[1] & 0xFFFF) == nKey
+                        && kv[2] == slots && slots != 0 && mulMapWords(kv) != 0
+                        && mulMapWords(kv) <= MUL_MAP_MAX_WORDS
+                        && n == MUL_MAP_HEAD + 2 * nKey + slots * ((kv[1] >> 24) & 0xFF);
+    if (!shaped) {
+        zklog.error("multiplicity: table " + std::to_string(tableId) + " map (" + std::to_string(n)
+                    + " words, " + std::to_string(slots) + " slots, " + std::to_string(nKey)
+                    + " key cols) does not match its header -- the builder and the decoder disagree");
         exitProcess();
     }
-    // Length is given, never re-derived: a packed map is `1 + nKey + slots*2` words.
     MulTableMap& m = mulTableMaps()[tableId];
     m.kv.assign(kv, kv + n);
     m.nKey = (uint32_t)nKey;
@@ -122,9 +124,9 @@ inline void mul_register_table_map_impl(uint64_t tableId, const uint64_t* kv, ui
     for (auto& d : mulDecoders())
         if (d.table_id == tableId) { d.mapSlots = slots; d.mapKV = v.data(); d.nKey = (uint32_t)nKey; }
     zklog.trace("Multiplicity map: table " + std::to_string(tableId) + " " + std::to_string(slots)
-               + " slots x " + std::to_string(nKey) + " key cols"
-               + (v.empty() || v[0] != MUL_MAP_PACKED ? "" : ", packed")
-               + " (" + std::to_string(v.size() * 8 / 1000000) + " MB)");
+               + " slots x " + std::to_string(nKey) + " key cols in " + std::to_string(mulMapWords(kv))
+               + " words, " + std::to_string((kv[1] >> 24) & 0xFF) + " per slot ("
+               + std::to_string(v.size() * 8 / 1000000) + " MB)");
 }
 
 inline void mul_materialize_decoders() {
@@ -202,26 +204,20 @@ inline void mul_log_coverage() {
                + " airs; remaining:" + (todo.empty() ? " none" : todo));
 }
 
-// Commits completed this proof. mul_sync_commits runs inside CALCULATING_TABLES, before the commit
-// workers are joined, so it cannot assume every instance has scattered.
+// Commits completed this proof. The commit workers may still be running when the fold is reached:
+// ProofMan waits on this (mul_commit_count), cancellably, before mul_sync_commits.
 inline std::atomic<uint64_t>& mulCommits() { static std::atomic<uint64_t> n{0}; return n; }
 
 inline void mul_note_commit() { mulCommits().fetch_add(1, std::memory_order_release); }
 
-// Block until `expected` instances have committed. Bounded, so a wrong expectation fails loudly.
-inline bool mul_await_commits(uint64_t expected) {
-    using namespace std::chrono;
-    const auto deadline = steady_clock::now() + seconds(120);
-    while (mulCommits().load(std::memory_order_acquire) < expected) {
-        if (steady_clock::now() > deadline) {
-            zklog.error("multiplicity: only " + std::to_string(mulCommits().load())
-                        + " of " + std::to_string(expected)
-                        + " instances committed before the table fold -- counts would be short");
-            return false;
-        }
-        std::this_thread::sleep_for(milliseconds(1));
-    }
-    return true;
+// mul_sync_commits results; mirrored by MulSync in ffi_starks.rs.
+enum MulSyncStatus : uint64_t { MUL_SYNC_OK = 0, MUL_SYNC_SHORT = 1, MUL_SYNC_EXTRA = 2, MUL_SYNC_OOB = 3 };
+
+// Exactly `expected` commits, or why not (the caller reports it).
+inline MulSyncStatus mul_check_commits(uint64_t expected) {
+    const uint64_t n = mulCommits().load(std::memory_order_acquire);
+    if (n == expected) return MUL_SYNC_OK;
+    return n < expected ? MUL_SYNC_SHORT : MUL_SYNC_EXTRA;
 }
 
 inline void mul_reset_commits() { mulCommits().store(0, std::memory_order_release); }

@@ -36,6 +36,8 @@ void slotHintPatchKernel(uint64_t *__restrict__ dst, uint32_t c0, uint32_t cc, u
 
 void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_t nOps,
                         const uint64_t *dPacked, uint64_t wordsPerRow, bool packedColMajor,
+                        const uint64_t *dTable, uint64_t wordsPerEntry, uint64_t numEntries,
+                        uint64_t indexBits,
                         const uint64_t *dConstPols, const uint64_t *dCustomPols,
                         const uint64_t *dVals, const SlotHintValOffsets &vo, uint64_t *dSide,
                         uint64_t nRows, cudaStream_t stream) {
@@ -52,6 +54,10 @@ void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_
     b.side = dSide;
     b.wordsPerRow = wordsPerRow;
     b.packedColMajor = packedColMajor ? 1u : 0u;
+    b.table = dTable;
+    b.wordsPerEntry = wordsPerEntry;
+    b.numEntries = numEntries;
+    b.indexBits = indexBits;
     const uint32_t blocks = (uint32_t)((nRows + SLOT_HINT_BLOCK - 1) / SLOT_HINT_BLOCK);
     // Declaration order, one launch each on one stream: a hint may read an earlier hint's column.
     for (uint32_t i = 0; i < nOps; ++i) {
@@ -97,9 +103,10 @@ SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId
         const size_t cb = cols.size() * sizeof(uint32_t);
         if (cudaMalloc(&dp, pb) == cudaSuccess && cudaMalloc(&dc, cb) == cudaSuccess &&
             cudaMalloc(&ds, cb) == cudaSuccess) {
-            CHECKCUDAERR(cudaMemcpy(dp, plan.prog.data(), pb, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpy(dc, cols.data(), cb, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpy(ds, slots.data(), cb, cudaMemcpyHostToDevice));
+            // Never on the legacy stream: it would poison a graph another thread is capturing.
+            mulCopySync(gpuId, dp, plan.prog.data(), pb, cudaMemcpyHostToDevice);
+            mulCopySync(gpuId, dc, cols.data(), cb, cudaMemcpyHostToDevice);
+            mulCopySync(gpuId, ds, slots.data(), cb, cudaMemcpyHostToDevice);
             d.prog = dp; d.destCols = dc; d.destSlots = ds;
             d.nDest = (uint32_t)cols.size();
             d.ready = true;
@@ -112,13 +119,12 @@ SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId
     } else if (plan.ok) {
         d.ready = true;   // nothing to evaluate is a valid, ready plan
     }
-    bufs[key] = d;
+    if (d.ready) bufs[key] = d;   // a failed allocation is retried, not remembered
     return d;
 }
 
-uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems) {
+uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems, bool grow) {
     // Reuses the scatter's per-(device, slot) cache.
-
     static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems);
+    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
 }

@@ -80,8 +80,9 @@ inline bool mulTermToDev(SetupCtx& setupCtx, const MulLinTerm& t, MulTermDev& ou
 //   args[i+2..4]   src0 as (type, argIdx, argOffset)
 //   args[i+5..7]   src1
 // `type` decodes as in load__: at or below `nSections` it names a pol buffer (0 const, 1.. the
-// committed stages), `base` and `base+1` are the dim1/dim3 temporaries, and `base+2` upwards are
-// the constant pools -- of which only `base+3` (numbers) is known before the proof starts.
+// committed stages), the custom commits sit just below `base`, `base` and `base+1` are the dim1/dim3
+// temporaries, and `base+2` upwards are the constant pools -- of which only `base+3` (numbers) is
+// known before the proof starts.
 struct MulByteCode {
     const uint8_t*  ops     = nullptr;
     const uint16_t* args    = nullptr;
@@ -100,6 +101,7 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulPro
     auto bail = [&](const char* why) { mulProgFailReason() = why; return false; };
     if (bc.nOps == 0 || bc.ops == nullptr || bc.args == nullptr) return bail("no bytecode");
     if (bc.nTemp1 + 1 > MUL_PROG_MAX_TEMP) return bail("too many temporaries");
+    const uint32_t nCustom = (uint32_t)setupCtx.starkInfo.customCommits.size();
 
     auto operand = [&](uint16_t type, uint16_t argIdx, uint16_t argOff, MulOperandDev& o) -> bool {
         o = MulOperandDev{};
@@ -116,7 +118,8 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulPro
             return true;
         }
         if (!mulIsUniformType(type, bc.base) && type >= bc.base + 2) return bail("challenge/eval operand");
-        if (!mulIsUniformType(type, bc.base) && type > bc.nSections) return bail("zi / xDivXSub operand");
+        const bool custom = type >= bc.base - nCustom && type < bc.base;   // mulTermToDev resolves it
+        if (!mulIsUniformType(type, bc.base) && !custom && type > bc.nSections) return bail("zi / xDivXSub operand");
         o.kind = MUL_OPND_COL;
         if (!mulTermToDev(setupCtx, MulLinTerm{ type, argIdx, argOff }, o.term))
             return bail("operand address not resolvable");
@@ -229,5 +232,53 @@ inline bool mulCompileField(SetupCtx& setupCtx, const HintFieldValue& v, uint64_
     mulEmit(out, 0, o, 0 /*add*/, mulOpConst(0));
     return true;
 }
+
+// Where each cm1 column sits in a slot's packed rows, as unpackIndexedRow reads them: runtime columns
+// after the `lanes * indexBits` header, an INDEXED air's table columns from the start of their lane's
+// entry. Shared by the scatter and the slot hints.
+struct MulPackedLayout {
+    const std::vector<uint64_t>* widths = nullptr;
+    const std::vector<uint8_t>* colSource = nullptr;   // indexed when non-empty; nonzero = table
+    const std::vector<uint8_t>* colLane = nullptr;
+    uint64_t lanes = 0, indexBits = 0, wordsPerRow = 0;
+    std::vector<uint64_t> bitOf;                       // per column, in its own stream; see build()
+
+    bool indexed() const { return colSource != nullptr && !colSource->empty(); }
+    bool fromTable(size_t c) const { return indexed() && (*colSource)[c] != 0; }
+    uint8_t laneOf(size_t c) const { return (colLane != nullptr && c < colLane->size()) ? (*colLane)[c] : 0; }
+
+    // False when the rows cannot be read (no columns, or wider than the row).
+    bool build() {
+        if (widths == nullptr || widths->empty() || wordsPerRow == 0) return false;
+        if (indexed() && (colSource->size() < widths->size() || indexBits == 0)) return false;
+        const uint64_t nLanes = lanes ? lanes : 1;
+        bitOf.assign(widths->size(), 0);
+        uint64_t cur = indexed() ? nLanes * indexBits : 0;
+        for (size_t i = 0; i < widths->size(); ++i)
+            if (!fromTable(i)) { bitOf[i] = cur; cur += (*widths)[i]; }
+        if (cur == 0 || cur > wordsPerRow * 64) return false;
+        for (uint64_t l = 0; indexed() && l < nLanes; ++l) {   // one entry stream per lane
+            uint64_t e = 0;
+            for (size_t i = 0; i < widths->size(); ++i)
+                if (fromTable(i) && laneOf(i) == l) { bitOf[i] = e; e += (*widths)[i]; }
+        }
+        return true;
+    }
+
+    // Point a cm1 operand at its packed bits. False when its column has no usable width.
+    bool rewrite(MulTermDev& t) const {
+        if (t.col >= widths->size() || (*widths)[t.col] == 0 || (*widths)[t.col] > 64) return false;
+        const size_t col = t.col;
+        t.sectionOffset = bitOf[col];
+        t.nCols = (uint32_t)(*widths)[col];
+        if (fromTable(col)) {
+            t.src = MUL_SRC_PACKED_IDX;
+            t.col = laneOf(col);   // the lane, from here on
+        } else {
+            t.src = MUL_SRC_PACKED;
+        }
+        return true;
+    }
+};
 
 #endif

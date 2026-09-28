@@ -38,25 +38,21 @@ struct MulStreamCtx {
     // Publics and the value pools, one contiguous device window (uploaded by the slot hook), capped
     // at PINNED_AUX_VALUES_MAX.
     const uint64_t *dVals;
-    uint64_t offPublics, offAirValues, offProofValues, offAirgroupValues;  // words into it
+    SlotHintValOffsets valOff{};   // words into it, one per pool
     // Stage-1 columns the prover computes; the packed rows predate them, so the rewrite reads them
     // from this buffer. Null when the air has no witness_calc hints (see witness_hints_slot.hpp).
     const uint64_t *hintSide;
     // Host-side packing layout for rewriting the program onto the packed rows. For an INDEXED air the
     // column map says whether a value sits in the compact row or the instruction table, and which lane.
-    const std::vector<uint64_t> *widths = nullptr;
-    const std::vector<uint8_t> *colSource = nullptr, *colLane = nullptr;
+    MulPackedLayout layout;
     const SlotHintPlan *hintPlan = nullptr;
-    uint64_t indexBits = 0, wordsPerEntry = 0, numEntries = 0, lanes = 0;
+    uint64_t wordsPerEntry = 0, numEntries = 0;   // the instruction table, per program
     // Slot scatter timer, the counterpart of MUL_SCATTER_KERNEL on the legacy path.
     TimerGPU *timer;
 };
 
-// Rewrite the scatter to read the packed rows directly.
-//
-// Column addressing must mirror unpackIndexedRow bit for bit. Runtime columns start past the
-// index header, a table column at the start of its lane's entry; non-indexed is the degenerate
-// case. On refusal the CALLER declines the slot; the hook itself cannot refuse.
+// Rewrite the scatter to read the packed rows directly (MulPackedLayout). On refusal the CALLER
+// declines the slot; the hook itself cannot refuse. Only successes are cached.
 struct MulPackedProg { const MulInsnDev* prog = nullptr; bool ok = false; };
 
 inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx& c,
@@ -69,28 +65,8 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
     if (it != cache.end()) return it->second;
 
     MulPackedProg r;
-    const std::vector<uint64_t>* w = c.widths;
-    if (w == nullptr || w->empty() || plan.prog.empty()) { cache[key] = r; return r; }
-    const bool indexed = c.colSource != nullptr && !c.colSource->empty();
-    if (indexed && (c.colSource->size() < w->size() || c.numEntries == 0 || c.indexBits == 0)) {
-        cache[key] = r; return r;
-    }
-    const uint64_t nLanes = c.lanes ? c.lanes : 1;
-    auto laneOf = [&](size_t i) -> uint8_t {
-        return (c.colLane != nullptr && i < c.colLane->size()) ? (*c.colLane)[i] : 0;
-    };
-    auto fromTable = [&](size_t i) { return indexed && (*c.colSource)[i] != 0; };
-
-    // Bit offset of each column, in the stream it actually belongs to.
-    std::vector<uint64_t> bitOf(w->size(), 0);
-    { uint64_t cur = nLanes * c.indexBits;                       // runtime columns
-      for (size_t i = 0; i < w->size(); ++i)
-          if (!fromTable(i)) { bitOf[i] = cur; cur += (*w)[i]; } }
-    for (uint64_t l = 0; l < nLanes; ++l) {                      // one entry stream per lane
-        uint64_t cur = 0;
-        for (size_t i = 0; i < w->size(); ++i)
-            if (fromTable(i) && laneOf(i) == l) { bitOf[i] = cur; cur += (*w)[i]; }
-    }
+    MulPackedLayout L = c.layout;
+    if (plan.prog.empty() || !L.build()) return r;
 
     std::map<uint32_t,uint32_t> hintSlotOf;
     if (c.hintPlan != nullptr)
@@ -101,33 +77,24 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
         for (MulOperandDev* o : {&in.a, &in.b}) {
             if (o->kind != MUL_OPND_COL) continue;
             MulTermDev& t = o->term;
+            // The slot reads the host's air values, which a skipped hint never wrote.
+            if (t.src == MUL_SRC_AIRVALUE && c.hintPlan != nullptr
+                && c.hintPlan->computedAirValues.count(t.sectionOffset)) return r;
             if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST || MUL_SLOT_CUSTOM_OK(t)) continue;   // served as-is
-            if (t.src != MUL_SRC_TRACE) { cache[key] = r; return r; }
+            if (t.src != MUL_SRC_TRACE) return r;
             auto h = hintSlotOf.find(t.col);
             if (h != hintSlotOf.end()) {          // a column a hint produced, not the witness
                 t.src = MUL_SRC_HINTCOL;
                 t.sectionOffset = h->second;
                 continue;
             }
-            if (t.col >= w->size() || (*w)[t.col] == 0 || (*w)[t.col] > 64) { cache[key] = r; return r; }
-            const uint32_t width = (uint32_t)(*w)[t.col];
-            if (fromTable(t.col)) {
-                t.src = MUL_SRC_PACKED_IDX;
-                t.sectionOffset = bitOf[t.col];
-                t.col = laneOf(t.col);            // the lane, from here on
-                t.nCols = width;
-            } else {
-                t.src = MUL_SRC_PACKED;
-                t.sectionOffset = bitOf[t.col];
-                t.nCols = width;
-            }
+            if (!L.rewrite(t)) return r;
         }
 
     MulInsnDev* dp = nullptr;
     const size_t bytes = prog.size() * sizeof(MulInsnDev);
     if (cudaMalloc(&dp, bytes) != cudaSuccess) {
         (void)cudaGetLastError();   // tolerated: leave no sticky error for the next check
-        cache[key] = r;
         return r;
     }
     // Never on the default stream: it would poison concurrent graph captures.
@@ -137,17 +104,22 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
     return r;
 }
 
-// One scratch buffer per (device, slot), grown to the widest air seen; cached to keep cudaMalloc
-// off the critical path. Keyed by slot because distinct slots commit concurrently. Growing is
-// safe because each slot's commit syncs its stream before returning.
+// One scratch buffer per (device, slot), keyed by slot because distinct slots commit concurrently.
+// Only the warm-up (`grow`) allocates, to the widest air; a commit that needs more gets null.
 using MulStreamBufs = std::map<std::pair<int, uint64_t>, std::pair<uint64_t*, size_t>>;
 
 inline std::mutex& mulStreamBufsMutex() { static std::mutex m; return m; }
 
-inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, size_t elems) {
+inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, size_t elems, bool grow) {
     std::lock_guard<std::mutex> lk(mulStreamBufsMutex());
     auto& e = bufs[{gpuId, slotIdx}];
     if (e.second >= elems) return e.first;
+    if (!grow) {
+        zklog.error("multiplicity: slot " + std::to_string(slotIdx) + " on gpu " + std::to_string(gpuId)
+                    + " needs " + std::to_string(elems) + " scratch words; the warm-up sized it for "
+                    + std::to_string(e.second));
+        return nullptr;
+    }
     if (e.first != nullptr) cudaFree(e.first);
     e.first = nullptr;
     e.second = 0;
@@ -161,20 +133,20 @@ inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, 
 }
 
 // Where the caller expands this air's const pols before the commit. Sized nConstants * N.
-inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems) {
+inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false) {
     static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems);
+    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
 }
 
 // Where the caller expands this air's first fixed custom commit. Sized its width * N.
-inline uint64_t* mulStreamCustom(int gpuId, uint64_t slotIdx, size_t elems) {
+inline uint64_t* mulStreamCustom(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false) {
     static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems);
+    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
 }
 
-// Min cm1 reads per row for the scatter to get a column-major copy (StreamCommitDims::colMajorForHook).
-// The transpose costs one pass over the packed rows, so it pays only for read-heavy scatters
-// (Keccakf, BinaryHuge, BinaryExtensionLarge), not e.g. Mem.
+// Min cm1 operands in the (deduplicated) plan program for the scatter to get a column-major copy
+// (StreamCommitDims::colMajorForHook). The transpose costs one pass over the packed rows, so it pays
+// only for read-heavy scatters (Keccakf, BinaryHuge, BinaryExtensionLarge), not e.g. Mem.
 #define MUL_COLMAJOR_MIN_READS_PER_ROW 100
 
 inline bool mulScatterWantsColMajor(SetupCtx &setupCtx, uint64_t airgroupId, uint64_t airId,
@@ -183,11 +155,7 @@ inline bool mulScatterWantsColMajor(SetupCtx &setupCtx, uint64_t airgroupId, uin
     if (dims.indexBits != 0 || dims.wordsPerRow == 0) return false;
     const MulPlan &plan = mulPlanFor(setupCtx, airgroupId, airId);
     if (plan.jobs.empty() || !mulPlanStreamable(plan)) return false;
-    uint64_t reads = 0;
-    for (const MulInsnDev &in : plan.prog)
-        for (const MulOperandDev *o : {&in.a, &in.b})
-            if (o->kind == MUL_OPND_COL && o->term.src == MUL_SRC_TRACE) reads++;
-    return reads >= MUL_COLMAJOR_MIN_READS_PER_ROW;
+    return plan.cm1Reads >= MUL_COLMAJOR_MIN_READS_PER_ROW;
 }
 
 // The hook handed to streamCommitPacked.
@@ -225,16 +193,16 @@ inline void mulStreamHook(const uint64_t *dPacked, const StreamCommitDims &dims,
     }
     const uint64_t *bases[MUL_SRC_N] = {
         c->constPols, nullptr, nullptr,
-        vals ? vals + c->offPublics        : nullptr,
-        vals ? vals + c->offAirValues      : nullptr,
-        vals ? vals + c->offProofValues    : nullptr,
-        vals ? vals + c->offAirgroupValues : nullptr,
+        vals ? vals + c->valOff.publics        : nullptr,
+        vals ? vals + c->valOff.airValues      : nullptr,
+        vals ? vals + c->valOff.proofValues    : nullptr,
+        vals ? vals + c->valOff.airgroupValues : nullptr,
         c->customPols, nullptr, nullptr, nullptr };
     if (c->timer) c->timer->startCategory("MUL_SCATTER_PACKED");
     mul_scatter_launch(dev.jobs, (uint32_t)plan.jobs.size(), nRows, nRows, bases, c->acc, c->oob,
                        (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
                        dPacked, dims.wordsPerRow, c->hintSide,
-                       c->dTable, c->wordsPerEntry, c->numEntries, c->indexBits,
+                       c->dTable, c->wordsPerEntry, c->numEntries, c->layout.indexBits,
                        c->packedColMajor);
     if (c->timer) c->timer->stopCategory("MUL_SCATTER_PACKED");
     mul_note_scatter(gpuId, stream);

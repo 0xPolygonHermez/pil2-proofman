@@ -3153,19 +3153,29 @@ static uint64_t slotWordsPerRow(const AirInstanceInfo *aii, uint64_t nCols, bool
     return (packed && !aii->unpack_info_host.empty()) ? aii->num_packed_words : nCols;
 }
 
-// The packing layout the slot scatter reads, from the setup alone. Shared with the warm-up, which
-// must build the same cached programs the commit would.
+// How the slot's hints and scatter read the packed rows, from the setup alone. Shared with the
+// warm-up, which must build the same cached programs the commit would.
+static MulPackedLayout slotPackedLayout(AirInstanceInfo *aii, uint64_t airgroupId, uint64_t airId,
+                                        uint64_t nCols, bool packed) {
+    MulPackedLayout L;
+    L.widths      = &slotWidthsFor(aii, airgroupId, airId, nCols, packed);
+    L.wordsPerRow = slotWordsPerRow(aii, nCols, packed);
+    if (packed && aii->d_col_source != nullptr) {    // indexed: columns may live in the table
+        L.colSource = &aii->col_source_host;
+        L.colLane   = aii->col_lane_host.empty() ? nullptr : &aii->col_lane_host;
+        L.indexBits = aii->index_bits;
+        L.lanes     = aii->lanes;
+    }
+    return L;
+}
+
 static void slotMulLayout(AirInstanceInfo *aii, uint64_t airgroupId, uint64_t airId, uint64_t nCols,
                           bool packed, const SlotHintPlan *hintPlan, MulStreamCtx &mulCtx) {
-    mulCtx.widths    = &slotWidthsFor(aii, airgroupId, airId, nCols, packed);
-    mulCtx.hintPlan  = hintPlan;
-    if (packed && aii->d_col_source != nullptr) {    // indexed: columns may live in the table
-        mulCtx.colSource     = &aii->col_source_host;
-        mulCtx.colLane       = aii->col_lane_host.empty() ? nullptr : &aii->col_lane_host;
-        mulCtx.indexBits     = aii->index_bits;
+    mulCtx.layout   = slotPackedLayout(aii, airgroupId, airId, nCols, packed);
+    mulCtx.hintPlan = hintPlan;
+    if (mulCtx.layout.indexed()) {
         mulCtx.wordsPerEntry = aii->words_per_entry;
         mulCtx.numEntries    = aii->num_entries;
-        mulCtx.lanes         = aii->lanes;
     }
 }
 
@@ -3221,6 +3231,8 @@ struct SlotCommitCtx {
     const uint64_t   *customPols = nullptr;     // first fixed custom commit, when a hint reads it
     uint64_t         *dVals = nullptr;          // device copy, at the tail of `side`
     const uint64_t   *hVals = nullptr;          // pinned source for it
+    const uint64_t   *dTable = nullptr;         // an INDEXED air's instruction table, for the hints
+    uint64_t          wordsPerEntry = 0, numEntries = 0, indexBits = 0;
     uint64_t          nVals = 0, nRows = 0;
     SlotHintValOffsets valOff{};
     MulStreamCtx     *mul = nullptr;            // null when this air feeds no prover-owned table
@@ -3236,10 +3248,16 @@ static void slotCommitHook(const uint64_t *dPacked, const StreamCommitDims &dims
     if (c->nOps != 0)
         // `dPacked` is the transposed copy when colMajorForHook; both readers must agree.
         slotHintEvalLaunch(c->prog, c->ops, c->nOps, dPacked, dims.wordsPerRow,
-                           dims.colMajorForHook, c->constPols, c->customPols,
+                           dims.colMajorForHook, c->dTable, c->wordsPerEntry, c->numEntries,
+                           c->indexBits, c->constPols, c->customPols,
                            c->dVals, c->valOff, c->side, c->nRows, stream);
     // Inline on the commit stream: the device is saturated, so a separate stream gains nothing.
-    if (c->mul != nullptr) mulStreamHook(dPacked, dims, stream, c->mul);
+    // The counts are final once the scatter is enqueued (the fold waits on its event), so the
+    // commit counts (mul_commit_count) here, not after its LDE and Merkle tree.
+    if (c->mul != nullptr) {
+        mulStreamHook(dPacked, dims, stream, c->mul);
+        mul_note_commit();
+    }
 }
 
 static void slotCommitChunkHook(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
@@ -3250,20 +3268,20 @@ static void slotCommitChunkHook(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_
                         c->nDest, stream);
 }
 
-// Commit a bit-packed witness on a streaming-commit slot (first GPU): upload,
-// chunked unpack+LDE+sponge absorb, node reduction, root (4 u64) to `root`.
+// Commit a bit-packed witness on streaming-commit slot `slotIdx` (global: slot j of GPU gl):
+// upload, chunked unpack+LDE+sponge absorb, node reduction, root (4 u64) to `root`.
 // Poseidon1/Poseidon2 arity 4 or blake3 arity 2 (family checked here, arity by the caller).
 // Synchronous; safe to call concurrently on distinct slots, and while the
 // first GPU's buffer is borrowed by gpu-mops (touches only the slot).
 //
 // Indexed airs are supported: the compact-row descriptor and the uploaded
-// instruction table are read from the first GPU's AirInstanceInfo (separate
+// instruction table are read from that GPU's AirInstanceInfo (separate
 // cudaMalloc'd allocations, so the gpu-mops borrow of gpuMemoryBuffer[0] does
 // not disturb them) -- hence airgroupId/airId.
 //
-// Returns 0 on success, negative on misuse or refusal. On a single GPU the quiesce
-// and the overlapped region are waited out (up to 60 s, then -20/-21); with several
-// GPUs they are refused at once and the caller takes the legacy path.
+// Returns 0 on success, negative on misuse or refusal. The quiesce (first GPU) and the
+// overlapped region are waited out (up to 60 s, then -20/-21); there is no other commit
+// path, so the caller treats any refusal as an error.
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                      uint64_t instanceId, uint64_t airgroupId, uint64_t airId,
                                      void *packed, uint64_t nBits, uint64_t nBitsExt,
@@ -3386,8 +3404,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (aii != nullptr && aii->setupCtx != nullptr) {
         // An unpacked air reads its rows with the identity packing, as the scatter does.
         hintPlan = &slotHintPlanFor(*aii->setupCtx, airgroupId, airId,
-                                    slotWidthsFor(aii, airgroupId, airId, nCols, packedAir),
-                                    slotWordsPerRow(aii, nCols, packedAir));
+                                    slotPackedLayout(aii, airgroupId, airId, nCols, packedAir));
         if (!hintPlan->ok) {
             static std::once_flag once;
             std::call_once(once, [&] {
@@ -3526,10 +3543,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.customPols = dCustomUnpacked;
         mulCtx.dVals = (dSide != nullptr && nVals != 0)
                      ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
-        mulCtx.offPublics        = offPublics;
-        mulCtx.offProofValues    = offProofValues;
-        mulCtx.offAirgroupValues = offAirgroupValues;
-        mulCtx.offAirValues      = offAirValues;
+        mulCtx.valOff = SlotHintValOffsets{offPublics, offProofValues, offAirgroupValues, offAirValues};
         mulCtx.hintSide      = dSide;
         mulCtx.timer         = &timer;
         slotCtx.mul = &mulCtx;
@@ -3551,12 +3565,16 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         slotCtx.nVals = nVals;
         slotCtx.nRows = nRowsSlot;
         slotCtx.valOff = SlotHintValOffsets{offPublics, offProofValues, offAirgroupValues, offAirValues};
+        slotCtx.dTable = dTable;
+        slotCtx.wordsPerEntry = dims.wordsPerEntry;
+        slotCtx.numEntries = dims.numEntries;
+        slotCtx.indexBits = dims.indexBits;
         hook = slotCommitHook;
         if (hintDev.nDest != 0) chunkHook = slotCommitChunkHook;
     }
 
     // A witness staged ahead (stage_witness_gpu) is sourced from the zone, and its span freed.
-    // Claimed only after every early return above, so a refused slot leaves it for the legacy path.
+    // Claimed only after every early return above, so a refused commit leaves it to the reset.
     const void *packedSrc = packed;
     int stagedSlot = -1;
 
@@ -3618,6 +3636,9 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         stagedSlot = -1;
     }
 
+    // An air that scatters nothing holds no count back (a failed commit is fatal, see the caller).
+    if (slotCtx.mul == nullptr) mul_note_commit();
+
     TimerStartGPU(timer, STARK_GPU_COMMIT);
     memcpy(hWidths, colWidths, nCols * sizeof(uint64_t));
     int64_t rc = streamCommitPacked(slotBase, dims, hWidths, packedSrc,
@@ -3630,28 +3651,20 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
     streamCommitReleaseRegion(d_buffers, gl);
-    // See mul_await_commits.
-    if (rc == 0) mul_note_commit();
     return rc;
 }
 
 // Build, before the phase, everything a slot commit would otherwise build on first use (NTT
-// tables, hint and scatter programs, per-slot buffers at their max size), so no cudaMalloc
-// stalls other slots behind the driver lock.
-static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) {
+// tables, hash constants, hint and scatter programs, per-slot buffers at their max size), and name
+// the airs a slot will refuse, which would otherwise surface only at their first commit.
+static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl, std::string &refused) {
     const int gpu = (int)d_buffers->my_gpu_ids[gl];
     CHECKCUDAERR(cudaSetDevice(gpu));
     size_t maxSide = 0, maxConst = 0, maxCustom = 0;
     NTTGoldilocksGPU::warmTables();
-    {
-        std::lock_guard<std::mutex> lk(mulEventMutex());
-        MulEventPool &p = mulEventPools()[gpu];
-        while (p.freelist.size() + p.pending.size() < 256) {
-            cudaEvent_t e = nullptr;
-            CHECKCUDAERR(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
-            p.freelist.push_back(e);
-        }
-    }
+    streamCommitWarmConstants(streamCommitHashFor(get_hash_family()));
+    for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
+        mul_warm_stream_event(gpu, d_buffers->streamCommitStreams[gl * d_buffers->streamCommitSlots + j]);
 
     MulAcc *mulAcc = mulAccOnGpu(gpu);
 
@@ -3672,25 +3685,40 @@ static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) 
         const uint64_t nVals = n <= PINNED_AUX_VALUES_MAX ? n : 0;
 
         const SlotHintPlan &hintPlan = slotHintPlanFor(*aii->setupCtx, airgroupId, airId,
-                                                       slotWidthsFor(aii, airgroupId, airId, nCols, packed),
-                                                       slotWordsPerRow(aii, nCols, packed));
+                                                       slotPackedLayout(aii, airgroupId, airId, nCols, packed));
+        // The commit's refusals, in its order.
+        const std::string tag = " " + std::to_string(airgroupId) + "/" + std::to_string(airId) + "@gpu"
+                              + std::to_string(gpu);
+        const bool hints = hintPlan.ok && !hintPlan.ops.empty();
+        if (!hintPlan.ok) refused += tag + " (witness_calc hints: " + hintPlan.why + ")";
         SlotHintPlanDev hintDev{};
-        if (hintPlan.ok && !hintPlan.ops.empty())
+        if (hints) {
             hintDev = slotHintPlanDevice(hintPlan, airgroupId, airId, gpu);
+            if (!hintDev.ready) refused += tag + " (hint program not on the device)";
+        }
         if (hintDev.nDest != 0 || nVals != 0)
             maxSide = std::max<size_t>(maxSide, (size_t)hintDev.nDest * N + nVals);
 
         bool counts = false, countReadsCustom = false;
-        if (mulAcc != nullptr) {
-            const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
-            if (!p.jobs.empty() && mulPlanStreamable(p)) {
-                MulStreamCtx mulCtx{};
-                slotMulLayout(aii, airgroupId, airId, nCols, packed, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
-                mulPlanDevice(p, airgroupId, airId, gpu);
-                counts = mulPackedProgramFor(p, mulCtx, airgroupId, airId, gpu).ok;
-                countReadsCustom = counts && (p.srcMask & (1u << MUL_SRC_CUSTOM)) != 0;
-            }
+        const MulPlan *p = mulDecoders().empty() ? nullptr : &mulPlanFor(*aii->setupCtx, airgroupId, airId);
+        const bool needsCount = p != nullptr && !p->jobs.empty();
+        if (needsCount && !mulPlanStreamable(*p)) {
+            refused += tag + " (lookups read " + mulSrcMaskNames(p->srcMask) + ")";
+        } else if (needsCount) {
+            MulStreamCtx mulCtx{};
+            slotMulLayout(aii, airgroupId, airId, nCols, packed, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
+            mulPlanDevice(*p, airgroupId, airId, gpu);
+            counts = mulPackedProgramFor(*p, mulCtx, airgroupId, airId, gpu).ok;
+            if (!counts) refused += tag + " (lookups cannot be read from the packed rows)";
+            countReadsCustom = counts && (p->srcMask & (1u << MUL_SRC_CUSTOM)) != 0;
+            if (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)
+                refused += tag + " (no accumulator or const pols on this gpu)";
         }
+        if ((hints || needsCount) && n > PINNED_AUX_VALUES_MAX)
+            refused += tag + " (more values than PINNED_AUX_VALUES_MAX)";
+        if ((countReadsCustom || (hintPlan.ok && hintPlan.readsCustom)) &&
+            (aii->customPolsPackedWords == 0 || si.customCommits.empty()))
+            refused += tag + " (reads a custom commit this gpu does not hold)";
         // Same condition as the commit's `wantConst`.
         if ((counts || (hintPlan.ok && !hintPlan.ops.empty())) && aii->const_pols_offset != UINT64_MAX)
             maxConst = std::max<size_t>(maxConst, (size_t)si.nConstants * N);
@@ -3699,12 +3727,16 @@ static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) 
             !si.customCommits.empty())
             maxCustom = std::max<size_t>(maxCustom, (size_t)slotCustomWidth(si) * N);
     }
+    // A commit never grows these (mulStreamBuf).
     for (uint64_t s = 0; s < d_buffers->streamCommitSlots; s++) {
-        if ((maxSide && !slotHintSideBuffer(gpu, s, maxSide)) ||
-            (maxConst && !mulStreamConst(gpu, s, maxConst)) ||
-            (maxCustom && !mulStreamCustom(gpu, s, maxCustom)))
-            zklog.warning("stream_commit_warmup: could not preallocate slot " + std::to_string(s) +
-                          " buffers; they will be allocated on first use");
+        if ((maxSide && !slotHintSideBuffer(gpu, s, maxSide, true)) ||
+            (maxConst && !mulStreamConst(gpu, s, maxConst, true)) ||
+            (maxCustom && !mulStreamCustom(gpu, s, maxCustom, true))) {
+            zklog.error("stream_commit_warmup: cannot allocate slot " + std::to_string(s) + "'s "
+                        + std::to_string((maxSide + maxConst + maxCustom) * 8 >> 20)
+                        + " MB of hint/const buffers on gpu " + std::to_string(gpu));
+            exitProcess();
+        }
     }
     return maxSide + maxConst + maxCustom;
 }
@@ -3715,12 +3747,16 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
     int prevDevice = 0;
     CHECKCUDAERR(cudaGetDevice(&prevDevice));
     size_t perSlot = 0;
-    for (uint32_t gl = 0; gl < d_buffers->n_gpus; gl++) perSlot = streamCommitWarmupOn(d_buffers, gl);
+    std::string refused;
+    for (uint32_t gl = 0; gl < d_buffers->n_gpus; gl++) perSlot = streamCommitWarmupOn(d_buffers, gl, refused);
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     static std::once_flag logged;
     std::call_once(logged, [&] {
         zklog.info("Streaming-commit warm-up: per slot " + std::to_string(perSlot * 8 >> 20) +
                    " MB of hint/const buffers");
+        if (!refused.empty())
+            zklog.error("Streaming-commit warm-up: a slot will refuse air(s)" + refused
+                        + "; an instance of any of them fails its commit");
     });
 }
 
