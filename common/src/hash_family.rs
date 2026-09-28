@@ -286,7 +286,7 @@ pub fn transcript_out_size(arity: u64) -> u64 {
 /// re-checks via get_hash_family() and returns -15 on mismatch, so this list
 /// must stay in sync with commit_witness_streaming_gpu's family gate.
 pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "blake3")
+    matches!(family, "Poseidon1" | "Poseidon2" | "blake3")
 }
 
 /// True when the family's kernels support exactly one tree geometry

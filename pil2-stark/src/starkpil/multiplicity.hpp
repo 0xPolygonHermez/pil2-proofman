@@ -57,7 +57,11 @@ inline void mul_register_vt(uint64_t airgroupId, uint64_t airId,
     L.airId = airId;
     L.nCounters = numRows * numCols;
     for (uint64_t k = 0; k < nTables; ++k) L.accBase[tableIds[k]] = accBases[k];
-    mulVtLayouts().push_back(L);
+    // Re-registering an air replaces its layout, so a repeated call cannot duplicate it.
+    auto it = std::find_if(mulVtLayouts().begin(), mulVtLayouts().end(),
+                           [&](const MulVtLayout& o){ return o.airId == airId; });
+    if (it != mulVtLayouts().end()) *it = L;
+    else mulVtLayouts().push_back(L);
     zklog.trace("Virtual table air " + std::to_string(airgroupId) + "/" + std::to_string(airId) + ": "
                + std::to_string(numRows) + " rows x " + std::to_string(numCols) + " cols = "
                + std::to_string(L.nCounters) + " counters ("
