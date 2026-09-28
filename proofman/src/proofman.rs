@@ -1903,6 +1903,10 @@ where
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
         if is_shared_buffer {
+            // The trace H2D is asynchronous: recycle the buffer only once it has been read.
+            if pctx.gpu {
+                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64);
+            }
             memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
