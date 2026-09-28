@@ -775,100 +775,15 @@ __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_tw
     }
 }
 
-// Any ratio: each thread's ratio*FIELD_EXTENSION workspace is a shared-memory slice after the twiddles.
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_scratch, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
-{
-
-    extern __shared__ gl64_t s_twiddles[];
-    if (threadIdx.x == 0) {
-        uint64_t halfRatio = (1 << (prevBits - currentBits)) >> 1;
-        s_twiddles[0] = gl64_t(uint64_t(1));
-        for (uint32_t i = 1; i < halfRatio; i++) {
-            s_twiddles[i] = s_twiddles[i - 1] * gl64_t(omega_inv.fe);
-        }
-    }
-    __syncthreads();
-
-    uint32_t polBits = prevBits;
-    uint64_t sizePol = 1 << polBits;
-    uint32_t foldedPolBits = currentBits;
-    uint64_t sizeFoldedPol = 1 << foldedPolBits;
-    uint32_t ratio = sizePol / sizeFoldedPol;
-
-    int id = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (id < sizeFoldedPol)
-    {
-
-        gl64_t invShift(invShiftPow_);
-        gl64_t invW(invW_);
-        // Evaluate the sinv value for the id current component
-        gl64_t sinv = invShift;
-        gl64_t base = invW;
-        uint32_t exponent = id;
-
-        while (exponent > 0)
-        {
-            if (exponent % 2 == 1)
-            {
-                sinv *= base;
-            }
-            base *= base;
-            exponent /= 2;
-        }
-
-        gl64_t *ppar = d_scratch != nullptr ? d_scratch + (uint64_t)id * ratio * FIELD_EXTENSION
-                                            : s_twiddles + (ratio >> 1) + threadIdx.x * ratio * FIELD_EXTENSION;
-        for (int i = 0; i < ratio; i++)
-        {
-            int ind = i * FIELD_EXTENSION;
-            for (int k = 0; k < FIELD_EXTENSION; k++)
-            {
-                ppar[ind + k] = gl64_t(friPol[(i * sizeFoldedPol + id) * FIELD_EXTENSION + k]);
-            }
-        }
-        intt_tinny(ppar, ratio, prevBits - currentBits, s_twiddles, FIELD_EXTENSION);
-
-        // Multiply coefs by 1, shiftInv, shiftInv^2, shiftInv^3, ......
-        gl64_t r(1);
-        for (uint64_t i = 0; i < ratio; i++)
-        {
-            Goldilocks3GPU::Element *component = (Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION];
-            Goldilocks3GPU::mul(*component, *component, r);
-            r *= sinv;
-        }
-        // evalPol
-        if (ratio == 0)
-        {
-            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-            {
-                friPol[id * FIELD_EXTENSION + i]= gl64_t(uint64_t(0)); 
-            }
-        }
-        else
-        {
-            for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
-            {
-                friPol[id * FIELD_EXTENSION + i] = ppar[(ratio - 1) * FIELD_EXTENSION + i];
-            }
-            for (int i = ratio - 2; i >= 0; i--)
-            {
-                Goldilocks3GPU::Element aux;
-                Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)&d_challenge[0]));
-                Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
-            }
-        }
-    }
-}
-
 // fold with the per-thread ppar workspace in local memory instead of global
 // scratch. The generic kernel keys each thread's RATIO*FIELD_EXTENSION slots
 // contiguously in d_ppar, so every intt_tinny access is a fully scattered
 // global round-trip. Local memory is hardware-interleaved per thread, so the same
 // accesses coalesce; the arithmetic and its order are bit-identical.
+// challengeSquarings: fold with challenge^(2^challengeSquarings) (a sub-step of a larger fold).
 template<uint32_t RATIO>
 __global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Element omega_inv,
-                         uint64_t invShiftPow_, uint64_t invW_, uint64_t currentBits)
+                         uint64_t invShiftPow_, uint64_t invW_, uint64_t currentBits, uint32_t challengeSquarings)
 {
     extern __shared__ gl64_t s_twiddles[];
     if (threadIdx.x == 0) {
@@ -920,6 +835,9 @@ __global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Elemen
         Goldilocks3GPU::mul(*component, *component, r);
         r *= sinv;
     }
+    Goldilocks3GPU::Element challenge;
+    for (uint32_t k = 0; k < FIELD_EXTENSION; k++) challenge[k] = d_challenge[k];
+    for (uint32_t k = 0; k < challengeSquarings; k++) Goldilocks3GPU::mul(challenge, challenge, challenge);
     for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
     {
         friPol[id * FIELD_EXTENSION + i] = ppar[(RATIO - 1) * FIELD_EXTENSION + i];
@@ -927,72 +845,40 @@ __global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Elemen
     for (int i = RATIO - 2; i >= 0; i--)
     {
         Goldilocks3GPU::Element aux;
-        Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)&d_challenge[0]));
+        Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), challenge);
         Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *)&ppar[i * FIELD_EXTENSION]));
     }
 }
 
 void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream)
 {
-
-    uint32_t ratio = 1 << (prevBits - currentBits);
-    uint64_t halfRatio = ratio >> 1;
     gl64_t *d_friPol = (gl64_t *)(d_aux_trace + friPol_offset);
-
-    uint64_t sizeFoldedPol = 1 << currentBits;
-
-    Goldilocks::Element omega_inv = omegas_inv_[prevBits - currentBits];
-
-    // Precompute invShift^(2^(nBitsExt-prevBits)) on CPU to avoid redundant per-thread computation
-    Goldilocks::Element invShiftPow = Goldilocks::inv(Goldilocks::shift());
-    for (uint32_t j = 0; j < nBitsExt - prevBits; j++) {
-        Goldilocks::square(invShiftPow, invShiftPow);
-    }
-    // Precompute invW on CPU
-    Goldilocks::Element invW = Goldilocks::inv(Goldilocks::w(prevBits));
-
-    dim3 nThreads(256);
-    dim3 nBlocks((sizeFoldedPol + nThreads.x - 1) / nThreads.x);
-    size_t sharedMem = halfRatio * sizeof(gl64_t);
     TimerStartCategoryGPU(timer, FRI);
-    // Register/local-resident ppar for the common power-of-two ratios (every
-    // zisk FRI step folds by 3 bits -> ratio 8); the global-scratch kernel
-    // stays as the fallback for anything else.
-    switch (ratio) {
-    case 2:
-        fold_reg<2><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
-        break;
-    case 4:
-        fold_reg<4><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
-        break;
-    case 8:
-        fold_reg<8><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
-        break;
-    case 16:
-        fold_reg<16><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
-        break;
-    default: {
-        const uint64_t sliceElems = (uint64_t)ratio * FIELD_EXTENSION;
-        const uint64_t budgetElems = (48 * 1024) / sizeof(gl64_t);
-        if (budgetElems < halfRatio) {
-            zklog.error("fold_inplace: a fold by " + std::to_string(prevBits - currentBits) + " bits exceeds the 13-bit limit (twiddles in shared memory)");
-            exitProcess();
+    // A fold by R1*R2 is a fold by R1 with challenge a, then by R2 with a^R1, so any fold runs as
+    // in-place steps of at most 4 bits on the register kernels, with no scratch.
+    uint32_t squarings = 0;
+    for (uint64_t from = prevBits; from > currentBits;) {
+        const uint64_t bits = std::min<uint64_t>(4, from - currentBits);
+        const uint64_t to = from - bits;
+        const uint32_t ratio = 1u << bits;
+        const uint64_t sizeFoldedPol = 1ull << to;
+        const Goldilocks::Element omega_inv = omegas_inv_[bits];
+        // invShift^(2^(nBitsExt-from)) and w(from)^-1, on the host once per step.
+        Goldilocks::Element invShiftPow = Goldilocks::inv(Goldilocks::shift());
+        for (uint32_t j = 0; j < nBitsExt - from; j++) Goldilocks::square(invShiftPow, invShiftPow);
+        const Goldilocks::Element invW = Goldilocks::inv(Goldilocks::w(from));
+
+        dim3 nThreads(256);
+        dim3 nBlocks((sizeFoldedPol + nThreads.x - 1) / nThreads.x);
+        const size_t sharedMem = (ratio >> 1) * sizeof(gl64_t);
+        switch (ratio) {
+        case 2:  fold_reg<2><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, to, squarings); break;
+        case 4:  fold_reg<4><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, to, squarings); break;
+        case 8:  fold_reg<8><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, to, squarings); break;
+        default: fold_reg<16><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, to, squarings); break;
         }
-        if (budgetElems >= halfRatio + sliceElems) {
-            // Each thread's workspace is a shared-memory slice after the twiddles.
-            const uint64_t tpb = std::min<uint64_t>(256, (budgetElems - halfRatio) / sliceElems);
-            dim3 blocksShared((sizeFoldedPol + tpb - 1) / tpb);
-            fold<<<blocksShared, (uint32_t)tpb, (halfRatio + tpb * sliceElems) * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, nullptr, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
-        } else {
-            // A slice too wide for shared memory: stream-ordered global scratch (a graph memory
-            // node when captured), so nothing is reserved in the layout for this rare case.
-            gl64_t *d_scratch = nullptr;
-            CHECKCUDAERR(cudaMallocAsync((void **)&d_scratch, sizeFoldedPol * sliceElems * sizeof(gl64_t), stream));
-            fold<<<nBlocks, nThreads, halfRatio * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_scratch, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
-            CHECKCUDAERR(cudaFreeAsync(d_scratch, stream));
-        }
-        break;
-    }
+        squarings += bits;
+        from = to;
     }
     TimerStopCategoryGPU(timer, FRI);
     CHECKCUDAERR(cudaGetLastError());
