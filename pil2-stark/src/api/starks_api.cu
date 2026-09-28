@@ -1447,6 +1447,18 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                                          d_buffers->prefetchStream));
         }
     } else {
+        // A look-ahead may have staged this instance on the first GPU's zone though it runs here:
+        // that copy still reads the host trace, so order this upload (and its release gate)
+        // after it, and free the slot, which nothing will read.
+        if (d_buffers->prefetchArmed) {
+            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
+            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+                if (d_buffers->prefetchInstanceId[s] != (int64_t)instanceId) continue;
+                CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[s], 0));
+                d_buffers->prefetchInstanceId[s] = -1;
+                d_buffers->prefetchTraceBytes[s] = 0;
+            }
+        }
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
     

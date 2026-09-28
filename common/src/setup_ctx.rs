@@ -20,6 +20,9 @@ use crate::ProofType;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedGroup {
     pub owner: (usize, usize),
+    /// Words the slot reserves for custom commits: the largest member's, since members register
+    /// their own files into it. `None` = the air's own reservation (a group of one).
+    pub custom_words: Option<usize>,
 }
 
 /// Columns the recursion's HOST trace buffer needs for one air.
@@ -418,15 +421,19 @@ impl<F: PrimeField64> SetupRepository<F> {
         // one slot per group, in the same order the loader assigns offsets -- must not drift.
         let mut fixed_groups: HashMap<(usize, usize), FixedGroup> = HashMap::new();
         let mut sized_slots: HashSet<(usize, usize)> = HashSet::new();
+        let owner_of = |air: &(usize, usize)| groups.get(&setups[air].get_vk()).copied().unwrap_or(*air);
+        let mut group_custom_words: HashMap<(usize, usize), usize> = HashMap::new();
+        for air in &sized_airs {
+            let words = group_custom_words.entry(owner_of(air)).or_insert(0);
+            *words = (*words).max(setups[air].custom_commits_reserved_words);
+        }
         let mut shared_airs = 0;
         let mut saved = 0;
         for air in sized_airs {
             let setup = &setups[&air];
-            let group = match groups.get(&setup.get_vk()) {
-                Some(&owner) => FixedGroup { owner },
-                // Nothing to fingerprint with (no verkey): the air is its own group.
-                None => FixedGroup { owner: air },
-            };
+            // No verkey to fingerprint with: the air is its own group.
+            let owner = owner_of(&air);
+            let group = FixedGroup { owner, custom_words: Some(group_custom_words[&owner]) };
             fixed_groups.insert(air, group);
             max_const_pols_size_packed = max_const_pols_size_packed.max(setup.const_pols_size_packed);
             if sized_slots.insert(group.owner) {
@@ -434,8 +441,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                 total_const_pols_size += setup.const_pols_size_packed;
                 // Custom commits ride the same buffer; the slot is filled later, when
                 // register_custom_commits supplies the file path.
-                total_const_pols_size += setup.custom_commits_reserved_words;
-                total_custom_commits_reserved_words += setup.custom_commits_reserved_words;
+                total_const_pols_size += group_custom_words[&owner];
+                total_custom_commits_reserved_words += group_custom_words[&owner];
             } else {
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
