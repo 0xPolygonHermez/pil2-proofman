@@ -60,12 +60,20 @@ public:
     }
 
     // Pooled only once its last record completed: a pending one could be re-recorded by another
-    // stream. cudaEventDestroy defers the release of a pending event itself.
+    // stream. cudaEventDestroy defers the release of a pending event itself. Both run in the
+    // event's own context: teardown may reach here with another GPU current.
     void releaseEvent(cudaEvent_t event) {
         if (event == nullptr) return;
-        if (device < 0 || cudaEventQuery(event) != cudaSuccess) { cudaEventDestroy(event); return; }
-        std::lock_guard<std::mutex> lk(eventPoolMutex());
-        eventPool()[device].push_back(event);
+        int prev = -1;
+        const bool switched = device >= 0 && cudaGetDevice(&prev) == cudaSuccess && prev != device &&
+                              cudaSetDevice(device) == cudaSuccess;
+        if (device >= 0 && cudaEventQuery(event) == cudaSuccess) {
+            std::lock_guard<std::mutex> lk(eventPoolMutex());
+            eventPool()[device].push_back(event);
+        } else {
+            cudaEventDestroy(event);
+        }
+        if (switched) cudaSetDevice(prev);
     }
 
     bool createEvent(cudaEvent_t& event) {
