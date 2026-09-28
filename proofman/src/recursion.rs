@@ -328,7 +328,9 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
     witness: &mut Proof<F>,
-    new_proof: &Proof<F>,
+    // Base of the output proof buffer. The GPU fills it after this returns, so it must stay
+    // allocated until the proof completes.
+    new_proof: *mut u64,
     prover_buffer: &[F],
     const_tree: &[F],
     const_pols: &[F],
@@ -387,7 +389,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalCompressed {
         add_publics_aggregation_c(
-            new_proof.proof.as_ptr() as *mut u8,
+            new_proof as *mut u8,
             0,
             publics.as_ptr() as *mut u8,
             publics_aggregation as u64,
@@ -416,7 +418,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         const_pols_ptr,
         const_tree_ptr,
         publics.as_ptr() as *mut u8,
-        new_proof.proof[initial_idx..].as_ptr() as *mut u64,
+        unsafe { new_proof.add(initial_idx) },
         "",
         airgroup_id as u64,
         air_id as u64,
@@ -561,7 +563,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             memory_handler_recursive_witness,
                             setups,
                             &mut witness_proof,
-                            &recursive2_proof,
+                            recursive2_proof.proof.as_ptr() as *mut u64,
                             prover_buffer,
                             const_tree,
                             const_pols,
@@ -720,7 +722,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         memory_handler_recursive_witness,
         setups,
         &mut witness_final_proof,
-        &final_proof,
+        final_proof.proof.as_ptr() as *mut u64,
         prover_buffer,
         const_tree,
         const_pols,
@@ -810,7 +812,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         memory_handler_recursive_witness,
         setups,
         &mut witness_final_proof,
-        &final_proof,
+        final_proof.proof.as_ptr() as *mut u64,
         prover_buffer,
         const_tree,
         const_pols,
