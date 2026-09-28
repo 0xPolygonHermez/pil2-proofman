@@ -1164,7 +1164,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         if gpu {
-            let reserve = (GPU_MEMORY_RESERVE_MB * 1024 * 1024) as f64;
+            // Without aggregation nothing later trims the streams back to the post-allocation
+            // headroom (slot scratch, setup buffers, module loads), so reserve it here.
+            let reserve_bytes = if aggregation {
+                GPU_MEMORY_RESERVE_MB * 1024 * 1024
+            } else {
+                (GPU_MEMORY_RESERVE_MB * 1024 * 1024).max(get_post_alloc_headroom_bytes_c())
+            };
+            let reserve = reserve_bytes as f64;
             free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
             tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
         }

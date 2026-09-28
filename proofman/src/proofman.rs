@@ -2468,21 +2468,12 @@ where
                 Some((cap, n_streams.max(1)))
             }
         };
-        // Threads per recursive witness: 8, regardless of how many streams run concurrently.
-        //
-        // Capped at 8. Lifting it DOES speed the witness up -- it also drives the scatter, which is
-        // row-parallel and memory-latency bound (~20 ns/cell, two dependent loads) -- but it makes
-        // the pipeline slower, because the extra threads deschedule the ones driving the GPU.
-        // Measured on 1x RTX 5090, 24 cores, 2 streams (PIL2_CIRCOM_TIMERS, 482 warm calls):
-        //   threads   witness total   wall clock/proof
-        //         8        48.13 ms         52.5 s
-        //        12        41.00 ms         54.3 s
-        //        24        35.45 ms         55.4 s
-        // The GPU is the constraint here (99% utilisation), so witness time is not on the critical
-        // path and buying it with cores is a net loss. Re-measure wall clock, not just the phase
-        // timers, before raising this.
+        // Threads per recursive witness: each of the `n_streams` workers may solve one, and those
+        // solves do not take the ThreadBudget, so each gets its share of the cores (at most 32).
+        // 8 per worker measured best while the GPU was the constraint (1x RTX 5090, 2 streams:
+        // 52.5 s/proof at 8 threads vs 55.4 s at 24); re-measure wall clock before changing.
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
-        let recursive_witness_threads = max_num_threads.clamp(1, 8);
+        let recursive_witness_threads = (max_num_threads / n_streams.max(1)).clamp(1, 32);
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             setups_vadcop.max_compact_trace_size,
@@ -2514,10 +2505,9 @@ where
             )
         };
 
-        // Measured on a 24-core host: aggregate witness CPU is flat between 2 and 6 and only
-        // degrades past 12, while per-witness latency keeps improving, so the wide end is the
-        // safer default. Prove time is insensitive to this either way.
-        const DEFAULT_THREADS_PER_WITNESS: usize = 4;
+        // Enough threads that the long witnesses do not bound the phase, few enough that many
+        // witnesses still run concurrently.
+        const DEFAULT_THREADS_PER_WITNESS: usize = 8;
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
             false => DEFAULT_THREADS_PER_WITNESS.clamp(1, max_num_threads.max(1)),
@@ -5021,12 +5011,28 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
-                // First admissible, priority pool first. Not reordered: `weight` is the proof cost
-                // of the air, so it is equal for every instance of one, and the instances of an air
-                // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
+                // Priority pool first; within a pool, the admissible instance of the largest air
+                // (rows x cm1 columns), so the long witnesses start early. Ties keep arrival order.
+                let cost_of = |id: usize| -> u64 {
+                    let Ok((ag, air)) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
+                    sctx_admission
+                        .get_setup(ag, air)
+                        .map(|s| {
+                            let cols = s.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                            (1u64 << s.stark_info.stark_struct.n_bits) * cols
+                        })
+                        .unwrap_or(0)
+                };
                 let first = |pool: &std::collections::VecDeque<usize>,
                              held: &HashMap<(usize, usize), usize>|
-                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
+                 -> Option<usize> {
+                    // min_by_key keeps the first of equal keys, i.e. arrival order among ties.
+                    pool.iter()
+                        .enumerate()
+                        .filter(|&(_, &id)| admissible(id, held))
+                        .min_by_key(|&(_, &id)| std::cmp::Reverse(cost_of(id)))
+                        .map(|(pos, _)| pos)
+                };
                 let chosen: Option<(bool, usize)> = {
                     let held = in_flight.lock().unwrap();
                     first(&pending_priority, &held)
