@@ -105,12 +105,12 @@ __device__ void b3_hash_row(const uint64_t *in, uint32_t nCols, uint64_t row, ui
 }
 
 __global__ void b3_linearHashKernel(uint64_t *__restrict__ out, const uint64_t *__restrict__ in,
-                                    uint32_t num_cols, uint32_t num_rows, Layout layout)
+                                    uint32_t num_cols, uint32_t num_rows, Layout layout, uint64_t ld)
 {
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
     uint64_t dig[4];
-    b3_hash_row(in, num_cols, row, num_rows, layout, dig);
+    b3_hash_row(in, num_cols, row, ld, layout, dig);
     uint64_t *o = out + row * 4ull;
 #pragma unroll
     for (int i = 0; i < 4; ++i) o[i] = dig[i];
@@ -197,13 +197,13 @@ __global__ void b3_grindingKernel(uint64_t *nonce, uint64_t *__restrict__ nonceB
 // ---------------------------------------------------------------------------
 void Blake3GoldilocksGPU::linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                                      uint64_t num_cols, uint64_t num_rows,
-                                     Layout layout, cudaStream_t stream)
+                                     Layout layout, cudaStream_t stream, uint64_t ld)
 {
     if (num_rows == 0) return;
     uint32_t tpb = (num_rows < TPB_B3) ? (uint32_t)num_rows : TPB_B3;
     uint32_t blks = (uint32_t)((num_rows + TPB_B3 - 1) / TPB_B3);
     b3_linearHashKernel<<<blks, tpb, 0, stream>>>(
-        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
+        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout, ld ? ld : num_rows);
     CHECKCUDAERR(cudaGetLastError());
 }
 
@@ -213,9 +213,22 @@ void Blake3GoldilocksGPU::merkletree(uint32_t arity, uint64_t *d_tree, uint64_t 
 {
     if (num_rows == 0) return;
     linearHash(d_tree, d_input, num_cols, num_rows, layout, stream);
+    reduceLevels(arity, d_tree, num_rows, stream);
+}
 
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
+// `pending` digests (a multiple of arity) at d_nodes -> their parents, written right after them.
+void Blake3GoldilocksGPU::reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream)
+{
+    const uint64_t nextN = pending / arity;
+    uint32_t tpb = (nextN < TPB_B3) ? (uint32_t)nextN : TPB_B3;
+    uint32_t blks = (nextN < TPB_B3) ? 1u : (uint32_t)(nextN / TPB_B3 + 1);
+    b3_merkleNodeKernel<<<blks, tpb, 0, stream>>>(d_nodes, nextN, 0, pending, arity);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+// Every level above the `pending` digests at the start of d_tree.
+void Blake3GoldilocksGPU::reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream)
+{
     uint64_t nextIndex = 0;
     while (pending > 1)
     {
@@ -223,17 +236,10 @@ void Blake3GoldilocksGPU::merkletree(uint32_t arity, uint64_t *d_tree, uint64_t 
         if (extraZeros > 0)
             CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * CAPACITY, 0,
                                          extraZeros * CAPACITY * sizeof(uint64_t), stream));
-
-        uint32_t tpb = (nextN < TPB_B3) ? (uint32_t)nextN : TPB_B3;
-        uint32_t blks = (nextN < TPB_B3) ? 1u : (uint32_t)(nextN / TPB_B3 + 1);
-        b3_merkleNodeKernel<<<blks, tpb, 0, stream>>>(d_tree, nextN, nextIndex,
-                                                      pending + extraZeros, arity);
-
+        reduceOneLevel(arity, d_tree + nextIndex, pending + extraZeros, stream);
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
     }
-    CHECKCUDAERR(cudaGetLastError());
 }
 
 void Blake3GoldilocksGPU::merkletreeReduce(uint64_t *d_root, uint64_t *d_input,

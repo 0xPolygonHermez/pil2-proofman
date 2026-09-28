@@ -26,6 +26,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "poseidon_goldilocks.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include "blake3_goldilocks.cuh"
+#include "merkle_noleaves.cuh"
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
@@ -60,32 +61,48 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
 
+// Calls fn with a null pointer to the active hash family's GPU class for this arity.
+template <class Fn>
+static void withGpuHashFamily(uint32_t arity, Fn &&fn)
+{
+    if (get_hash_family() == HashFamily::Blake3) { fn((Blake3GoldilocksGPU *)nullptr); return; }
+    const bool p1 = get_hash_family() == HashFamily::Poseidon1;
+    switch (arity) {
+    case 2: p1 ? fn((PoseidonGoldilocksGPU<8> *)nullptr) : fn((Poseidon2GoldilocksGPU<8> *)nullptr); return;
+    case 3: p1 ? fn((PoseidonGoldilocksGPU<12> *)nullptr) : fn((Poseidon2GoldilocksGPU<12> *)nullptr); return;
+    case 4: p1 ? fn((PoseidonGoldilocksGPU<16> *)nullptr) : fn((Poseidon2GoldilocksGPU<16> *)nullptr); return;
+    default:
+        zklog.error("Poseidon Merkle trees support arity 2, 3 or 4");
+        exitProcess();
+        exit(-1);
+    }
+}
+
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
-    if (get_hash_family() == HashFamily::Blake3) {
-        Blake3GoldilocksGPU::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-    } else if (get_hash_family() == HashFamily::Poseidon1) {
-        switch (arity) {
-        case 2: PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
-        case 3: PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
-        case 4: PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
-        default:
-            zklog.error("buildMerkleTreeGPU: Poseidon1 supports arity 2, 3 or 4");
-            exitProcess();
-            exit(-1);
-        }
-    } else {
-        switch (arity) {
-        case 2: Poseidon2GoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
-        case 3: Poseidon2GoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
-        case 4: Poseidon2GoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
-        default:
-            zklog.error("buildMerkleTreeGPU: Poseidon2 supports arity 2, 3 or 4");
-            exitProcess();
-            exit(-1);
-        }
-    }
+    withGpuHashFamily(arity, [&](auto *h) {
+        std::remove_pointer_t<decltype(h)>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+    });
+}
+
+void buildMerkleTreeNoLeavesGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                                uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
+{
+    withGpuHashFamily(arity, [&](auto *h) {
+        merkletreeNoLeaves<std::remove_pointer_t<decltype(h)>>(arity, d_tree, d_input, nCols, nRows, layout, stream);
+    });
+}
+
+void leafSiblingsNoLeavesGPU(uint32_t arity, const uint64_t *d_trace, uint64_t nCols, uint64_t nRows, Layout layout,
+                             const uint64_t *d_queries, uint64_t nQueries, uint64_t *d_scratch, uint64_t *d_proofBuf,
+                             uint64_t bufferWidth, uint64_t maxTreeWidth, cudaStream_t stream)
+{
+    withGpuHashFamily(arity, [&](auto *h) {
+        leafSiblingsNoLeaves<std::remove_pointer_t<decltype(h)>>((const gl64_t *)d_trace, nCols, nRows, layout, d_queries,
+                                                                  nQueries, arity, (gl64_t *)d_scratch, (gl64_t *)d_proofBuf,
+                                                                  bufferWidth, maxTreeWidth, stream);
+    });
 }
 
 void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
@@ -2436,7 +2453,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     PROOFMAN_SUMCHECK("contrib_before_unpack", dst, total_size / sizeof(uint64_t), stream);
 
-    uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
+    // cm1's tree as the proof stores it (without its leaf level when dropLeafLevel).
+    uint64_t tree_size = setupCtx->starkInfo.getNumNodesMTCommit(NExtended);
 
     uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
@@ -2556,12 +2574,15 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
     auto commitLdeBody = [&] {
         // In place (equal bases) the source cannot be preserved.
-        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, offset_src != offset_dst, (gl64_t*)pNodes, setupCtx->starkInfo.getNumNodesMT(NExtended));
+        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, offset_src != offset_dst, (gl64_t*)pNodes, tree_size);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
         // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution
         // root read uninitialised in-tile padding -> non-det; keep the shared predicate.
-        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
+        if (setupCtx->starkInfo.dropLeafLevel)
+            buildMerkleTreeNoLeavesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
+        else
+            buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
         CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     };

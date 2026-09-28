@@ -264,6 +264,13 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
     x[k] = gl64_t(shift.fe) * w_k;
 }
 
+static void buildCommitTreeGPU(bool dropLeaves, uint32_t arity, uint64_t *nodes, uint64_t *src, uint64_t nCols,
+                               uint64_t nRows, Layout layout, cudaStream_t stream)
+{
+    if (dropLeaves) buildMerkleTreeNoLeavesGPU(arity, nodes, src, nCols, nRows, layout, stream);
+    else buildMerkleTreeGPU(arity, nodes, src, nCols, nRows, layout, stream);
+}
+
 void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
 {
     if (step <= setupCtx.starkInfo.nStages)
@@ -302,17 +309,18 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         // pNodes is LDE scratch until the merkelize fills it. An in-place stage (equal bases) cannot
         // preserve its source.
         const bool aliased = (src + offset_src) == (dst + offset_dst);
-        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMTCommit(NExtended));
         PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
     }
 
     if (nCols > 0)
     {
+        uint64_t tree_size = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
+        PROOFMAN_SUMCHECK("proof_root_cm%u", &pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream, (unsigned)step);
         if(d_transcript != nullptr) {
-            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
             d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
         }
     }
@@ -322,7 +330,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 // can reuse them instead of re-unpacking -- so for everything except an aliased air.
 // Extend one fixed/preprocessed section and build its Merkle tree in place. Sections are stored
 // fixedLayout() (ColMajor); pNodes sits above the LDE's writes, so it doubles as LDE scratch.
-void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt, uint64_t arity, uint64_t numNodes, Goldilocks::Element *d_pols, Goldilocks::Element *d_polsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream, bool dropLeaves) {
     uint64_t NExtended = 1ull << nBitsExt;
     NTTGoldilocksGPU ntt;
     Goldilocks::Element *pNodes = d_polsExtended + nCols * NExtended;
@@ -330,7 +338,7 @@ void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt
     ntt.ldeColMajor((gl64_t *)d_polsExtended, (gl64_t *)d_pols, nBits, nBitsExt, nCols, stream, preserve_src, (gl64_t *)pNodes, numNodes);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_polsExtended, nCols, NExtended, fixedLayout(), stream);
+    buildCommitTreeGPU(dropLeaves, arity, (uint64_t*)pNodes, (uint64_t*)d_polsExtended, nCols, NExtended, fixedLayout(), stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -339,8 +347,9 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     extendAndMerkelizeSection(setupCtx.starkInfo.nConstants, setupCtx.starkInfo.starkStruct.nBits,
                               setupCtx.starkInfo.starkStruct.nBitsExt,
                               setupCtx.starkInfo.starkStruct.merkleTreeArity,
-                              setupCtx.starkInfo.getNumNodesMT(NExtended),
-                              d_fixedPols, d_fixedPolsExtended, preserve_src, timer, stream);
+                              setupCtx.starkInfo.getNumNodesMTCommit(NExtended),
+                              d_fixedPols, d_fixedPolsExtended, preserve_src, timer, stream,
+                              setupCtx.starkInfo.dropLeafLevel);
 }
 
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
@@ -368,9 +377,10 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
 
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
-        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+        uint64_t tree_size = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
+        PROOFMAN_SUMCHECK("proof_root_cm%u", &pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream, (unsigned)step);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
         }
@@ -975,7 +985,8 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
     genMerkleProof_(nodes, &proof[(arity - 1) * nFieldElements], nextIdx, offset + nextN * arity, nextN, nFieldElements, arity, lastLevel);
 }
 
-__global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel)
+// dropLeaves: d_nodes starts at level 1; leafSiblingsNoLeavesGPU already wrote the level-0 siblings.
+__global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel, bool dropLeaves)
 {
 
     uint64_t idx_query = blockIdx.x * blockDim.x + threadIdx.x;
@@ -983,7 +994,11 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_fr
     {
         uint64_t row = d_friQueries[idx_query];
         uint64_t idx_buffer = idx_query * bufferWidth + maxTreeWidth;
-        genMerkleProof_(d_nodes, &d_buffer[idx_buffer], row, 0, nLeaves, nFieldElements, arity, lastLevel);
+        if (dropLeaves) {
+            genMerkleProof_(d_nodes, &d_buffer[idx_buffer + (arity - 1) * nFieldElements], row / arity, 0, (nLeaves + arity - 1) / arity, nFieldElements, arity, lastLevel);
+        } else {
+            genMerkleProof_(d_nodes, &d_buffer[idx_buffer], row, 0, nLeaves, nFieldElements, arity, lastLevel);
+        }
     }
 }
 
@@ -1019,6 +1034,15 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
     CHECKCUDAERR(cudaGetLastError());
 
 
+    const bool dropLeaves = setupCtx.starkInfo.dropLeafLevel;
+    auto leafSiblings = [&](uint64_t k, const gl64_t *trace, Layout layout) {
+        if (!dropLeaves) return;
+        uint64_t *scratch = (uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("query_rows_scratch", false)]);
+        leafSiblingsNoLeavesGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (const uint64_t *)trace, trees[k]->getMerkleTreeWidth(),
+                                trees[k]->getMerkleTreeHeight(), layout, d_friQueries, nQueries, scratch,
+                                (uint64_t *)(d_queries_buff + k * nQueries * maxBuffSize), maxBuffSize, maxTreeWidth, stream);
+    };
+
     // Node arrays come from the layout, never from tree-object state: the same source setProof
     // reads roots/ll from. A mismatch means a tree object was consumed with stale pointers.
     for (uint k = 0; k < nStages + 1; k++)
@@ -1028,16 +1052,19 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
             zklog.error("proveQueries: tree " + std::to_string(k) + " nodes pointer disagrees with the layout (stale tree object)");
             exitProcess();
         }
+        leafSiblings(k, d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(k + 1), true)],
+                     resolveLayout(setupCtx.starkInfo.starkStruct.nBits, trees[k]->getMerkleTreeWidth()));
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-        genMerkleProof<<<nblocks, nthreads, 0, stream>>>(nodesK, trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>(nodesK, trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, dropLeaves);
         CHECKCUDAERR(cudaGetLastError());
     }
     CHECKCUDAERR(cudaGetLastError());
 
+    leafSiblings(nStages + 1, d_constTree, fixedLayout());
     dim3 nthreads(64);
     dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification);
+    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_friQueries, nQueries, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, dropLeaves);
     CHECKCUDAERR(cudaGetLastError());
 
     if(nTrees > nStages + 2){
@@ -1108,10 +1135,13 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
     uint64_t initialOffset = 0;
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(NExtended);
+    // cm* and const trees may lack their leaf level; custom commit trees never do.
+    uint64_t numNodes = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
     uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
     uint32_t lastLevelVerification = setupCtx.starkInfo.starkStruct.lastLevelVerification;
     uint64_t numNodesLevel = std::pow(arity, lastLevelVerification);
+    uint64_t commitLastLevelCount;
+    const uint64_t commitLastLevelOffset = setupCtx.starkInfo.getLastLevelOffset(NExtended, commitLastLevelCount);
     for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
         uint64_t stage = i + 1;
         Goldilocks::Element *nodes = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + to_string(stage), true)];
@@ -1119,12 +1149,8 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
         initialOffset += HASH_SIZE;
 
         if (lastLevelVerification > 0) {
-            uint64_t n = NExtended;
-            uint64_t offset = 0;
-            while (n > std::pow(arity, lastLevelVerification)) {
-                n = (n + (arity - 1))/arity;
-                offset += n * arity * HASH_SIZE;
-            }
+            uint64_t n = commitLastLevelCount;
+            uint64_t offset = commitLastLevelOffset;
 
             CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + offset, n * HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
 
@@ -1136,12 +1162,8 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
 
     if (lastLevelVerification > 0) {
         Goldilocks::Element *nodes = h_const_tree + NExtended * setupCtx.starkInfo.nConstants;
-        uint64_t n = NExtended;
-        uint64_t offset = 0;
-        while (n > std::pow(arity, lastLevelVerification)) {
-            n = (n + (arity - 1))/arity;
-            offset += n * arity * HASH_SIZE;
-        }
+        uint64_t n = commitLastLevelCount;
+        uint64_t offset = commitLastLevelOffset;
 
         CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + offset, n * HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
 

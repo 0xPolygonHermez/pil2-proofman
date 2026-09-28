@@ -20,4 +20,10 @@ inline uint64_t getTreeNumElements(uint64_t degree, uint32_t arity = 2)
     return numNodes * HASH_SIZE;
 }
 
+// The same tree without its (padded) leaf level.
+inline uint64_t getTreeNumElementsNoLeaves(uint64_t degree, uint32_t arity = 2)
+{
+    return getTreeNumElements(degree, arity) - (degree + (arity - degree % arity) % arity) * HASH_SIZE;
+}
+
 #endif

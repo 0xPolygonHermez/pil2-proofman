@@ -461,7 +461,12 @@ void StarkInfo::setMapOffsets() {
 
     mapTotalN = 0;
 
-    uint64_t numNodes = getNumNodesMT(NExtended);
+    // Level 0 must lie below the last levels, and levels >= 2 must fit the build's leaf scratch.
+    const uint64_t arity = starkStruct.merkleTreeArity;
+    dropLeafLevel = gpu && starkStruct.verificationHashType == "GL" &&
+                    NExtended > (uint64_t)std::pow(arity, starkStruct.lastLevelVerification) &&
+                    NExtended >= arity * arity * arity;
+    uint64_t numNodes = getNumNodesMTCommit(NExtended);
 
     if(gpu) {
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
@@ -578,6 +583,9 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("proof_queries", false)] = mapTotalN;
         mapTotalN += queriesProofSize;
+
+        mapOffsets[std::make_pair("query_rows_scratch", false)] = mapTotalN;
+        if (dropLeafLevel) mapTotalN += starkStruct.nQueries * (starkStruct.merkleTreeArity - 1) * (maxTreeWidth + HASH_SIZE);
         
         // TODO: ADD EXPRESSIONS MEM
     }
@@ -753,6 +761,23 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
 uint64_t StarkInfo::getTraceLandingOffset() {
     uint64_t base = mapOffsets[std::make_pair("cm1", true)];
     return inplaceStageCommit ? base + (1ull << starkStruct.nBits) * mapSectionsN["cm1"] : base;
+}
+
+uint64_t StarkInfo::getNumNodesMTCommit(uint64_t height) {
+    uint64_t full = getNumNodesMT(height);
+    if (!dropLeafLevel) return full;
+    uint64_t a = starkStruct.merkleTreeArity;
+    return full - (height + (a - height % a) % a) * HASH_SIZE;
+}
+
+uint64_t StarkInfo::getLastLevelOffset(uint64_t height, uint64_t &nNodes) {
+    uint64_t a = starkStruct.merkleTreeArity, offset = 0;
+    nNodes = dropLeafLevel ? (height + a - 1) / a : height;
+    while (nNodes > std::pow(a, starkStruct.lastLevelVerification)) {
+        nNodes = (nNodes + a - 1) / a;
+        offset += nNodes * a * HASH_SIZE;
+    }
+    return offset;
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
