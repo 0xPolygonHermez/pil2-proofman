@@ -17,6 +17,7 @@
 #include "stream_commit.cuh"
 #include "ntt_goldilocks.cuh"
 #include "poseidon_goldilocks.cuh"
+#include "poseidon2_goldilocks.cuh"
 #include "blake3_goldilocks.cuh"
 #include "cuda_utils.cuh"
 
@@ -105,7 +106,9 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
                                    uint64_t wordsPerRow = MAIN_WORDS)
 {
     using P16 = PoseidonGoldilocksGPU<16>;
+    using P2 = Poseidon2GoldilocksGPU<16>;
     const bool b3 = (hash == StreamCommitHash::Blake3);
+    const bool p2 = (hash == StreamCommitHash::Poseidon2);
     const uint64_t nBitsExt = nBits + 1;
     const uint32_t arity    = b3 ? 2 : 4;
     const uint32_t CAP      = 4;
@@ -113,7 +116,8 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
 
     uint32_t gpu = 0; cudaGetDevice((int*)&gpu);
-    if (!b3) P16::initConstants(&gpu, 1);
+    if (p2) P2::initConstants(&gpu, 1);
+    else if (!b3) P16::initConstants(&gpu, 1);
     cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
     NTTGoldilocksGPU ntt;
 
@@ -148,8 +152,9 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
         const uint32_t ublk = (uint32_t)((N + TPB - 1) / TPB);
         refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, wordsPerRow);
         ntt.ldeColMajor(d_ext, d_src, nBits, nBitsExt, nCols, s, true, nullptr);
-        if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
-        else    P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        if (b3)      Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else if (p2) P2::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else         P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
         CHECKCUDAERR(cudaStreamSynchronize(s));
         CHECKCUDAERR(cudaMemcpy(rootRef.data(), d_tref + treeElems - CAP, CAP*8, cudaMemcpyDeviceToHost));
         CHECKCUDAERR(cudaFree(d_packed)); CHECKCUDAERR(cudaFree(d_src));
@@ -174,7 +179,8 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     if (reps > 1) total_ms /= (reps - 1);
 
     printf("[stream-commit] %s nBits=%lu nCols=%lu lib entry (H2D + commit): %.2f ms, slot %.0f MiB\n",
-           b3 ? "blake3" : "poseidon1", nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
+           b3 ? "blake3" : (p2 ? "poseidon2" : "poseidon1"), nBits, nCols, total_ms,
+           (double)slotElems * 8 / (1 << 20));
 
     for (uint32_t i = 0; i < CAP; i++)
         ASSERT_EQ(rootRef[i], rootCmp[i]) << "root element " << i << " differs";
@@ -517,4 +523,39 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_lanes_shape)
 TEST(GOLDILOCKS_TEST, stream_commit_reduced_wide)
 {
     runStreamCommitReducedWide(14, 245, 2, StreamCommitHash::Poseidon1);
+}
+
+// Poseidon2: same shapes, root compared against Poseidon2GoldilocksGPU<16>::merkletree.
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_small)
+{
+    runStreamCommitReduced(16, 38, 2, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_main_shape)
+{
+    runStreamCommitReduced(22, 38, 4, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_wide)
+{
+    runStreamCommitReducedWide(14, 245, 2, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_indexed_small)
+{
+    runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Poseidon2);
+}
+
+// Unpacked airs (virtual tables, Rom) take the identity packing: 64 bits per column, one word
+// each. 1 column (Rom), 12 and 22 (the zisk virtual tables), every family.
+static void runStreamCommitIdentity(uint64_t nBits, uint64_t nCols, StreamCommitHash hash)
+{
+    std::vector<uint64_t> widths(nCols, 64);
+    runStreamCommitReduced(nBits, nCols, 2, hash, widths.data(), nCols);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_identity_packing)
+{
+    for (StreamCommitHash h : {StreamCommitHash::Poseidon1, StreamCommitHash::Poseidon2, StreamCommitHash::Blake3})
+        for (uint64_t nCols : {1ull, 12ull, 22ull}) runStreamCommitIdentity(15, nCols, h);
 }

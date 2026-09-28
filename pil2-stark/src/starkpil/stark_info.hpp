@@ -197,7 +197,6 @@ public:
     bool calculateFixedExtended = false;
 
     uint64_t mapTotalN;
-    uint64_t mapTotalNContributions;
     uint64_t mapTotalNCustomCommitsFixed;
     
     uint64_t maxNBlocks, nrowsPack;

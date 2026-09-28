@@ -49,7 +49,7 @@ static constexpr uint64_t SC_MAX_LANES = 256;
 
 // Hash family the slot commits with. Must match the proving key's family --
 // the caller (commit_witness_streaming_gpu) derives it from get_hash_family().
-enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1 };
+enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1, Poseidon2 = 2 };
 
 struct StreamCommitDims {
     uint64_t nBits;        // log2 trace rows
@@ -124,6 +124,11 @@ inline bool streamCommitColMajorFits(const StreamCommitDims &dims, StreamCommitH
     return need != 0 && slotElems >= need &&
            streamCommitSlotElems(dims, hash) + need <= slotElems;
 }
+
+// The shape checks streamCommitPacked refuses on, callable before the witness is consumed.
+// 0 when the commit can run; otherwise the code streamCommitPacked would return.
+int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSource,
+                          const uint8_t *dColLane, const uint64_t *dTable, StreamCommitHash hash);
 
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,

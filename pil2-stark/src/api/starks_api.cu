@@ -53,18 +53,18 @@ extern "C" void expandGateBandsGPU(uint64_t *d_trace, uint64_t nCols, uint64_t n
 extern "C" void widenCompactWitnessGPU(uint64_t *d_trace, uint64_t nCols, uint64_t nRows,
                                        const uint64_t *d_compact, uint64_t mapCols, void *stream);
 
+using PrefetchZone = DeviceCommitBuffers::PrefetchZone;
+
 // Process-global handle for stream_commit_pause: the gpu-mops borrower calls
 // it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
 static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
 
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
-void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 static void harvestPipelineStream(DeviceCommitBuffers *d_buffers, uint64_t streamId, bool blocking);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
-void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
 
 // Calls fn with a null pointer to the active hash family's GPU class for this arity.
@@ -563,9 +563,10 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
 
         // Prefetch region lives INSIDE the unified buffer
         if (i == 0) {
-            d_buffers->prefetchRegionBase = prefetchRegionArea > 0 ? gpuMemoryBlock + offset : nullptr;
+            d_buffers->prefetchZones = new DeviceCommitBuffers::PrefetchZone[d_buffers->n_gpus];
             d_buffers->prefetchRegionBytes = prefetchRegionSize;
         }
+        d_buffers->prefetchZones[i].base = prefetchRegionArea > 0 ? gpuMemoryBlock + offset : nullptr;
         offset += prefetchRegionArea;
 
         // Mops-floor pad: nothing lives here, it only pushes the const pols up.
@@ -688,37 +689,46 @@ static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
             fflush(stdout);
         }
     }
-    // A queued look-ahead staging still reads its host trace: fence the zone's copy stream too.
-    if (d_buffers->prefetchArmed && d_buffers->prefetchStream != nullptr) {
-        cudaSetDevice(d_buffers->my_gpu_ids[0]);
-        const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (cudaStreamQuery(d_buffers->prefetchStream) == cudaErrorNotReady &&
-               std::chrono::steady_clock::now() < stream_deadline) {
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
+    // A queued staging still reads its host trace: fence every zone's copy stream too.
+    if (d_buffers->prefetchArmed) {
+        for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+            cudaStream_t zs = d_buffers->prefetchZones[g].stream;
+            if (zs == nullptr) continue;
+            cudaSetDevice(d_buffers->my_gpu_ids[g]);
+            const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (cudaStreamQuery(zs) == cudaErrorNotReady && std::chrono::steady_clock::now() < stream_deadline) {
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
+            cudaGetLastError();
         }
-        cudaGetLastError();
     }
 }
 
-// Wait for every staging in flight on the prefetch zone's copy stream: their host traces are
-// then free to recycle.
-void prefetch_zone_sync_gpu(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || d_buffers->prefetchStream == nullptr) return;
-    cudaSetDevice(d_buffers->my_gpu_ids[0]);
-    CHECKCUDAERR(cudaStreamSynchronize(d_buffers->prefetchStream));
+// Wait for every staging in flight on the zones' copy streams: their host traces are then free
+// to recycle.
+static void prefetchZonesSync(DeviceCommitBuffers *d_buffers) {
+    if (d_buffers == nullptr || !d_buffers->prefetchArmed) return;
+    for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+        if (d_buffers->prefetchZones[g].stream == nullptr) continue;
+        cudaSetDevice(d_buffers->my_gpu_ids[g]);
+        CHECKCUDAERR(cudaStreamSynchronize(d_buffers->prefetchZones[g].stream));
+    }
 }
 
 void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    prefetch_zone_sync_gpu(d_buffers_);
-    // Drained, so drop the stagings no proof consumed (a cancelled run's look-aheads): left
-    // marked, they would hold both slots and refuse every later staging.
+    prefetchZonesSync(d_buffers);
+    // Drained, so drop the stagings no commit consumed (a cancelled run's): left marked, they
+    // would hold their units and refuse every later staging.
     if (d_buffers->prefetchArmed) {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
-            d_buffers->prefetchInstanceId[s] = -1;
-            d_buffers->prefetchTraceBytes[s] = 0;
+        for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+            PrefetchZone &z = d_buffers->prefetchZones[g];
+            std::lock_guard<std::mutex> lk(z.mutex);
+            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+                z.instanceId[s] = -1;
+                z.spanUnits[s] = 0;
+                z.traceBytes[s] = 0;
+            }
         }
     }
 
@@ -784,11 +794,14 @@ void reset_device_streams_gpu(void *d_buffers_) {
     d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
 }
 
+static void slotConstCacheClear();
+
 void free_device_buffers_gpu(void *d_buffers_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     wait_device_idle_before_teardown(d_buffers);
+    slotConstCacheClear();
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -821,30 +834,30 @@ void free_device_buffers_gpu(void *d_buffers_)
             free(d_buffers->d_aux_traceAggregation[i]);
         }
     }
+    int prevDevice = 0;
+    CHECKCUDAERR(cudaGetDevice(&prevDevice));
     if (d_buffers->prefetchArmed) {
-        int prevDevice = 0;
-        CHECKCUDAERR(cudaGetDevice(&prevDevice));
-        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
-        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
-            if (d_buffers->prefetchReady[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(d_buffers->prefetchReady[s]));
-            if (d_buffers->prefetchDrained[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(d_buffers->prefetchDrained[s]));
+        for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+            CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
+            PrefetchZone &z = d_buffers->prefetchZones[g];
+            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+                if (z.ready[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(z.ready[s]));
+                if (z.drained[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(z.drained[s]));
+            }
+            if (z.stream != nullptr) CHECKCUDAERR(cudaStreamDestroy(z.stream));
         }
-        if (d_buffers->prefetchStream != nullptr) CHECKCUDAERR(cudaStreamDestroy(d_buffers->prefetchStream));
-        // The zone itself is part of the unified buffer, already freed above.
+        // The zones themselves are part of the unified buffers, already freed above.
         d_buffers->prefetchArmed = false;
-        CHECKCUDAERR(cudaSetDevice(prevDevice));
     }
+    delete[] d_buffers->prefetchZones;
+    d_buffers->prefetchZones = nullptr;
     if (d_buffers->streamCommitStreams != nullptr) {
-        // The slot streams belong to the FIRST GPU's context (created there in
-        // configure_stream_commit_slots). The per-GPU loop above left the last
-        // GPU current, so rebind before destroying and restore afterwards --
-        // destroying a stream from another device's context is invalid.
-        int prevDevice = 0;
-        CHECKCUDAERR(cudaGetDevice(&prevDevice));
-        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
-        for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
-            CHECKCUDAERR(cudaStreamDestroy(d_buffers->streamCommitStreams[j]));
-        CHECKCUDAERR(cudaSetDevice(prevDevice));
+        // A slot stream belongs to its GPU's context: destroying it from another one is invalid.
+        for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+            CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
+            for (uint64_t j = 0; j < d_buffers->streamCommitSlots; j++)
+                CHECKCUDAERR(cudaStreamDestroy(d_buffers->streamCommitStreams[g * d_buffers->streamCommitSlots + j]));
+        }
         free(d_buffers->streamCommitStreams);
         d_buffers->streamCommitStreams = nullptr;
         if (d_buffers->streamCommitAuxValues != nullptr) {
@@ -857,6 +870,9 @@ void free_device_buffers_gpu(void *d_buffers_)
         }
         d_buffers->streamCommitSlots = 0;
     }
+    delete[] d_buffers->streamCommitRegions;
+    d_buffers->streamCommitRegions = nullptr;
+    CHECKCUDAERR(cudaSetDevice(prevDevice));
     // Drop the process-global pause handle if it points at this instance.
     DeviceCommitBuffers *expected = d_buffers;
     gStreamCommitBuffers.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
@@ -1315,31 +1331,53 @@ static inline uint32_t prefetchUnitsFor(const DeviceCommitBuffers *d, uint64_t b
     return unit == 0 ? 0 : (uint32_t)((bytes + unit - 1) / unit);
 }
 
-// The three below take a span HEAD and need prefetchMutex held.
+// The zone of the GPU with device id `gpuId`.
+static inline PrefetchZone &zoneOf(DeviceCommitBuffers *d, uint32_t gpuId) {
+    return d->prefetchZones[d->gpus_g2l[gpuId]];
+}
+
+// Whether a borrow of the first GPU's buffer covers its zone: only without slots, whose floor caps
+// the borrower below them (and the zone above them).
+static inline bool borrowerCouldReachZone(const DeviceCommitBuffers *d) {
+    const uint64_t zoneOffset = (uint64_t)((const uint8_t *)d->prefetchZones[0].base -
+                                           (const uint8_t *)d->gpuMemoryBuffer[0]);
+    return d->streamCommitSlots == 0 || d->streamCommitFloorBytes > zoneOffset;
+}
+
+// The first GPU's zone is off limits to new stagings: the borrower owns those bytes.
+static inline bool firstZoneBorrowed(const DeviceCommitBuffers *d) {
+    return d->firstGpuBufferBorrowed.load(std::memory_order_acquire) != 0 && borrowerCouldReachZone(d);
+}
+
+// The three below take a span HEAD and need the zone's mutex held.
 
 // Retag every unit of the span -- the id for a staging, -2 while a reader holds it.
-static inline void prefetchMarkSpanLocked(DeviceCommitBuffers *d, int head, int64_t value) {
-    for (uint32_t k = 0; k < d->prefetchSpanUnits[head]; k++) d->prefetchInstanceId[head + k] = value;
+static inline void prefetchMarkSpanLocked(PrefetchZone &z, int head, int64_t value) {
+    for (uint32_t k = 0; k < z.spanUnits[head]; k++) z.instanceId[head + k] = value;
 }
 
 // Order a future staging behind this span's read. Must precede the free, which clears the length.
-static inline void prefetchRecordDrainedLocked(DeviceCommitBuffers *d, int head, cudaStream_t stream) {
-    for (uint32_t k = 0; k < d->prefetchSpanUnits[head]; k++)
-        CHECKCUDAERR(cudaEventRecord(d->prefetchDrained[head + k], stream));
+static inline void prefetchRecordDrainedLocked(PrefetchZone &z, int head, cudaStream_t stream) {
+    for (uint32_t k = 0; k < z.spanUnits[head]; k++)
+        CHECKCUDAERR(cudaEventRecord(z.drained[head + k], stream));
 }
 
-static inline void prefetchFreeSpanLocked(DeviceCommitBuffers *d, int head) {
-    for (uint32_t k = 0; k < d->prefetchSpanUnits[head]; k++) d->prefetchInstanceId[head + k] = -1;
-    d->prefetchSpanUnits[head] = 0;
-    d->prefetchTraceBytes[head] = 0;
+static inline void prefetchFreeSpanLocked(PrefetchZone &z, int head) {
+    for (uint32_t k = 0; k < z.spanUnits[head]; k++) z.instanceId[head + k] = -1;
+    z.spanUnits[head] = 0;
+    z.traceBytes[head] = 0;
 }
 
 // Head of the span holding `instanceId`, or -1. Frees by id land here too: a tail keeps
-// prefetchTraceBytes == 0, so only the head can match a sized lookup.
-static inline int prefetchFindSpanLocked(const DeviceCommitBuffers *d, uint64_t instanceId) {
+// traceBytes == 0, so only the head can match a sized lookup.
+static inline int prefetchFindSpanLocked(const PrefetchZone &z, uint64_t instanceId) {
     for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++)
-        if (d->prefetchInstanceId[s] == (int64_t)instanceId) return (int)s;
+        if (z.instanceId[s] == (int64_t)instanceId) return (int)s;
     return -1;
+}
+
+static inline gl64_t *prefetchUnitBase(const DeviceCommitBuffers *d, const PrefetchZone &z, int head) {
+    return z.base + (uint64_t)head * d->prefetchSlotStride;
 }
 
 // Host->device upload with one chunk in flight: the stream runs dry between chunks, handing the
@@ -1353,103 +1391,138 @@ static void uploadOneChunkInFlight(void *dst, const void *src, uint64_t bytes, c
     }
 }
 
-// Caller MUST hold prefetchMutex. First run of `need` FREE units, or -1. Never evicts: several
+// Caller MUST hold the zone's mutex. First run of `need` FREE units, or -1. Never evicts: several
 // workers stage at once and a sibling's upload still has a consumer coming.
-static int prefetchFindFreeRunLocked(const DeviceCommitBuffers *d_buffers, uint32_t need) {
+static int prefetchFindFreeRunLocked(const PrefetchZone &z, uint32_t need) {
     if (need == 0 || need > DeviceCommitBuffers::PREFETCH_UNIT_SPAN) return -1;
     for (uint32_t s = 0; s + need <= DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
         uint32_t k = 0;
-        while (k < need && d_buffers->prefetchInstanceId[s + k] == -1) k++;
+        while (k < need && z.instanceId[s + k] == -1) k++;
         if (k == need) return (int)s;
         s += k; // next viable start is past the unit that blocked this one
     }
     return -1;
 }
 
-// Caller MUST hold prefetchMutex. Claims a run of consecutive free units, orders the copy behind
-// each one's drain, records prefetchReady on the head. Returns the head unit used.
-static int stageWitnessSlotLocked(DeviceCommitBuffers *d_buffers, uint64_t instanceId,
+// Caller MUST hold the zone's mutex and have its GPU current. Claims a run of consecutive free
+// units, orders the copy behind each one's drain, records `ready` on the head. Returns the head.
+static int stageWitnessSlotLocked(DeviceCommitBuffers *d_buffers, PrefetchZone &z, uint64_t instanceId,
                                   const void *trace, uint64_t total_size) {
     const uint32_t need = prefetchUnitsFor(d_buffers, total_size);
-    const int slot = prefetchFindFreeRunLocked(d_buffers, need);
+    const int slot = prefetchFindFreeRunLocked(z, need);
     if (slot < 0) return -1;
-    uint8_t *slotBase = (uint8_t *)(d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride);
+    uint8_t *slotBase = (uint8_t *)prefetchUnitBase(d_buffers, z, slot);
     // Never overwrite a unit the proof stream has not drained yet. Waiting on a
     // never-recorded event is a no-op, so the first staging passes through.
     for (uint32_t k = 0; k < need; k++)
-        CHECKCUDAERR(cudaStreamWaitEvent(d_buffers->prefetchStream, d_buffers->prefetchDrained[slot + k], 0));
+        CHECKCUDAERR(cudaStreamWaitEvent(z.stream, z.drained[slot + k], 0));
     // Chunked so no single transfer monopolizes PCIe.
     const uint64_t blockBytes = 32ull << 20;
     for (uint64_t off = 0; off < total_size; off += blockBytes) {
         uint64_t len = std::min(blockBytes, total_size - off);
         CHECKCUDAERR(cudaMemcpyAsync(slotBase + off, (const uint8_t *)trace + off, len,
-                                     cudaMemcpyHostToDevice, d_buffers->prefetchStream));
+                                     cudaMemcpyHostToDevice, z.stream));
     }
-    CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchReady[slot], d_buffers->prefetchStream));
-    for (uint32_t k = 0; k < need; k++) d_buffers->prefetchInstanceId[slot + k] = (int64_t)instanceId;
-    d_buffers->prefetchSpanUnits[slot] = need;
-    d_buffers->prefetchTraceBytes[slot] = total_size;
+    CHECKCUDAERR(cudaEventRecord(z.ready[slot], z.stream));
+    for (uint32_t k = 0; k < need; k++) z.instanceId[slot + k] = (int64_t)instanceId;
+    z.spanUnits[slot] = need;
+    z.traceBytes[slot] = total_size;
     return slot;
 }
 
-// Stage a witness into the prefetch zone before its commit is scheduled, so its host buffer can
-// be recycled once the copy lands. Blocks on the H2D only. Returns the slot, or -1 when no free
-// run exists (the commit then stages for itself).
-int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size) {
+// Stage a witness into a GPU's prefetch zone before its commit is scheduled, so its host buffer
+// can be recycled once the copy lands. Blocks on the H2D only. The zone is the one with the most
+// free units (ties rotate), so stagings spread over the GPUs. Returns the zone's GPU local index,
+// or -1 when no zone has a free run (the commit then uploads for itself).
+int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr || !d_buffers->prefetchArmed || trace == nullptr) return -1;
     if (total_size > prefetchSpanBytes(d_buffers)) return -1;
     InFlightScope in_flight(d_buffers);
-    // The zone lives on the first GPU; witness threads have no current device of their own.
-    CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
     // Claim under the lock, copy outside it, publish at the end. Until then the units read -3
     // (occupied, matching no instance) so no consumer finds a half-written staging.
     const uint32_t need = prefetchUnitsFor(d_buffers, total_size);
-    int slot = -1;
-    {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        slot = prefetchFindFreeRunLocked(d_buffers, need);
-        if (slot < 0) return -1;
-        for (uint32_t k = 0; k < need; k++) {
-            CHECKCUDAERR(cudaStreamWaitEvent(d_buffers->prefetchStream, d_buffers->prefetchDrained[slot + k], 0));
-            d_buffers->prefetchInstanceId[slot + k] = -3;
+    static std::atomic<uint32_t> rotate{0};
+    const uint32_t first = rotate.fetch_add(1, std::memory_order_relaxed);
+    // Zones with a free run of `need` units first, then most free units (a hint read unlocked; the
+    // claim below is authoritative): free units alone can point at a fragmented zone that fails.
+    std::vector<std::pair<int, uint32_t>> order;
+    for (uint32_t k = 0; k < d_buffers->n_gpus; k++) {
+        const uint32_t g = (first + k) % d_buffers->n_gpus;
+        int nFree = 0, run = 0, bestRun = 0;
+        for (uint32_t u = 0; u < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; u++) {
+            const bool isFree = __atomic_load_n(&d_buffers->prefetchZones[g].instanceId[u], __ATOMIC_RELAXED) == -1;
+            nFree += isFree;
+            run = isFree ? run + 1 : 0;
+            bestRun = std::max(bestRun, run);
         }
-        d_buffers->prefetchSpanUnits[slot] = need;
-        d_buffers->prefetchTraceBytes[slot] = total_size;
+        const int fits = bestRun >= (int)need ? 1 : 0;
+        order.push_back({-(fits * (int)DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS + nFree), g});
     }
-    uint8_t *dst = (uint8_t *)(d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride);
+    std::stable_sort(order.begin(), order.end(),
+                     [](const auto &x, const auto &y) { return x.first < y.first; });
+    int slot = -1;
+    uint32_t gl = 0;
+    // A library entry: hand the caller's thread back on its own device.
+    int prevDevice = 0;
+    CHECKCUDAERR(cudaGetDevice(&prevDevice));
+    struct RestoreDevice { int d; ~RestoreDevice() { cudaSetDevice(d); } } restoreDevice{prevDevice};
+    for (const auto &o : order) {
+        PrefetchZone &z = d_buffers->prefetchZones[o.second];
+        std::lock_guard<std::mutex> lk(z.mutex);
+        // Checked under the zone lock: acquire raises the flag, then waits out the -3 units.
+        if (o.second == 0 && firstZoneBorrowed(d_buffers)) continue;
+        slot = prefetchFindFreeRunLocked(z, need);
+        if (slot < 0) continue;
+        gl = o.second;
+        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[gl]));
+        for (uint32_t k = 0; k < need; k++) {
+            CHECKCUDAERR(cudaStreamWaitEvent(z.stream, z.drained[slot + k], 0));
+            z.instanceId[slot + k] = -3;
+        }
+        z.spanUnits[slot] = need;
+        z.traceBytes[slot] = total_size;
+        break;
+    }
+    if (slot < 0) return -1;
+    PrefetchZone &z = d_buffers->prefetchZones[gl];
+    uint8_t *dst = (uint8_t *)prefetchUnitBase(d_buffers, z, slot);
     {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchCopyMutex);
-        uploadOneChunkInFlight(dst, trace, total_size, d_buffers->prefetchStream);
+        std::lock_guard<std::mutex> lk(z.copyMutex);
+        uploadOneChunkInFlight(dst, trace, total_size, z.stream);
     }
+    // With hostSync the caller releases the host buffer on return, so wait for the H2D -- while the
+    // units still read -3: nothing can be consumed, freed or re-staged over them, so `ready` is still
+    // this upload's. Publishing later costs nothing: the commit is dispatched only after this returns.
+    // Without it the consumer waits on `ready` on the device and the caller keeps the buffer.
     {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        CHECKCUDAERR(cudaEventRecord(d_buffers->prefetchReady[slot], d_buffers->prefetchStream));
-        for (uint32_t k = 0; k < need; k++) d_buffers->prefetchInstanceId[slot + k] = (int64_t)instanceId;
+        std::lock_guard<std::mutex> lk(z.mutex);
+        CHECKCUDAERR(cudaEventRecord(z.ready[slot], z.stream));
+        if (!hostSync)
+            for (uint32_t k = 0; k < need; k++) z.instanceId[slot + k] = (int64_t)instanceId;
     }
-    // The host buffer is readable until this fires; the caller releases it on return.
-    CHECKCUDAERR(cudaEventSynchronize(d_buffers->prefetchReady[slot]));
-    return slot;
+    if (hostSync) {
+        CHECKCUDAERR(cudaEventSynchronize(z.ready[slot]));
+        std::lock_guard<std::mutex> lk(z.mutex);
+        for (uint32_t k = 0; k < need; k++) z.instanceId[slot + k] = (int64_t)instanceId;
+    }
+    return gl;
 }
 
 // Hand back a staging no commit will consume (the commit may already have run with its own copy).
-// No drain event needed: stage_witness_gpu returns only after its H2D completed.
+// No drain event needed: nothing read it, and the next staging over these units is queued on the
+// same zone stream, so it runs after this one's H2D even when that was asynchronous.
 void release_staged_witness_gpu(void *d_buffers_, uint64_t instanceId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr || !d_buffers->prefetchArmed) return;
-    std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-    int head = prefetchFindSpanLocked(d_buffers, instanceId);
-    if (head >= 0) prefetchFreeSpanLocked(d_buffers, head);
+    for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+        PrefetchZone &z = d_buffers->prefetchZones[g];
+        std::lock_guard<std::mutex> lk(z.mutex);
+        int head = prefetchFindSpanLocked(z, instanceId);
+        if (head >= 0) { prefetchFreeSpanLocked(z, head); return; }
+    }
 }
 
-// Proof-phase witness look-ahead (producer and consumer). Off unless PROOFMAN_PROOF_LOOKAHEAD is set.
-static bool proofLookaheadEnabled() {
-    static const bool enabled = [] {
-        const char *v = getenv("PROOFMAN_PROOF_LOOKAHEAD");
-        return v != nullptr && v[0] != '0';
-    }();
-    return enabled;
-}
 
 uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
 
@@ -1556,64 +1629,50 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // The raw trace lands in cm1ext's upper half.
     uint64_t *dst = (uint64_t *)(d_aux_trace + setupCtx->starkInfo.getTraceLandingOffset());
     // Device-owned table: re-derive cm1 from the live accumulator (reset per proof, not per phase).
-    // Must match commit_witness_gpu, or the contribution root will not match.
+    // Must match the slot commit (commit_witness_streaming_gpu), or the contribution root will not match.
     const bool mulExported = !air_instance_info->is_packed &&
                              mul_export_to_trace(airId, (int)sd.gpuId, dst, N, nCols, stream);
     if (mulExported) {
         // nothing to upload
     } else
-    // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
-    // first version is in production); other GPUs use the legacy upload.
     // Not gated with the producer: the miss path stages on the copy stream rather than queueing
     // the H2D behind the previous proof's kernels. The caller releases every contributions
     // staging before the first proof, so none can be matched here.
-    if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        // Find the slot holding this instance's staged witness.
-        int slot = prefetchFindSpanLocked(d_buffers, instanceId);
-        if (slot >= 0 && d_buffers->prefetchTraceBytes[slot] != total_size) slot = -1;
-        if (slot >= 0) {
-            // Hit: the trace already uploaded to the zone on the copy stream while the
-            // previous proof computed. No host sync -- the proof stream waits on the
-            // copy's event.
-            CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[slot], 0));
-        } else {
-            // Miss: nothing staged for this instance. Stage host -> slot here,
-            // host-synced so the caller may recycle the buffer at once.
-            slot = stageWitnessSlotLocked(d_buffers, instanceId, params->trace, total_size);
-            if (slot >= 0) {
-                CHECKCUDAERR(cudaEventSynchronize(d_buffers->prefetchReady[slot]));
+    if (d_buffers->prefetchArmed) {
+        PrefetchZone &z = zoneOf(d_buffers, sd.gpuId);
+        {
+            std::lock_guard<std::mutex> lk(z.mutex);
+            // Find the slot holding this instance's staged witness.
+            int slot = prefetchFindSpanLocked(z, instanceId);
+            if (slot >= 0 && z.traceBytes[slot] != total_size) slot = -1;
+            if (slot < 0 && params->trace != nullptr) {
+                // Miss: nothing staged for this instance. Stage host -> slot here, asynchronously: the
+                // caller gates recycling the buffer on trace_copy_event (wait_trace_h2d_done).
+                slot = stageWitnessSlotLocked(d_buffers, z, instanceId, params->trace, total_size);
             }
-        }
-        if (slot < 0) {
-            // Every slot busy: the legacy upload, same as no zone at all.
-            copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-        } else {
-            // Land the staged trace into cm1ext with one D2D on the proof stream, then mark
-            // the span recyclable for the next staging.
-            gl64_t *slotBase = d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride;
-            CHECKCUDAERR(cudaMemcpyAsync(dst, slotBase, total_size,
-                                            cudaMemcpyDeviceToDevice, stream));
-            prefetchRecordDrainedLocked(d_buffers, slot, stream);
-            prefetchFreeSpanLocked(d_buffers, slot);
-            // Host-buffer release gate: the copy stream's tail is at/after this trace's H2D,
-            // so the event fires when the HOST buffer is free -- not when the proof runs.
-            CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event,
-                                         d_buffers->prefetchStream));
+            // Hit or miss, the proof stream waits on the copy's event; no host sync here.
+            if (slot >= 0) CHECKCUDAERR(cudaStreamWaitEvent(stream, z.ready[slot], 0));
+            if (slot < 0 && params->trace == nullptr) {
+                zklog.error("gen_proof: instance " + std::to_string(instanceId) +
+                            " has no host trace and no staging in its GPU's prefetch zone");
+                exitProcess();
+            }
+            if (slot < 0) {
+                // Every slot busy: the legacy upload, same as no zone at all.
+                copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+            } else {
+                // Land the staged trace into cm1ext with one D2D on the proof stream, then mark
+                // the span recyclable for the next staging.
+                CHECKCUDAERR(cudaMemcpyAsync(dst, prefetchUnitBase(d_buffers, z, slot), total_size,
+                                                cudaMemcpyDeviceToDevice, stream));
+                prefetchRecordDrainedLocked(z, slot, stream);
+                prefetchFreeSpanLocked(z, slot);
+                // Host-buffer release gate: the copy stream's tail is at/after this trace's H2D,
+                // so the event fires when the HOST buffer is free -- not when the proof runs.
+                CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, z.stream));
+            }
         }
     } else {
-        // A look-ahead may have staged this instance on the first GPU's zone though it runs here:
-        // that copy still reads the host trace, so order this upload (and its release gate)
-        // after it, and free the slot, which nothing will read.
-        if (d_buffers->prefetchArmed) {
-            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
-                if (d_buffers->prefetchInstanceId[s] != (int64_t)instanceId) continue;
-                CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[s], 0));
-                d_buffers->prefetchInstanceId[s] = -1;
-                d_buffers->prefetchTraceBytes[s] = 0;
-            }
-        }
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
     
@@ -1884,12 +1943,7 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 static void collectStreamResult(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     StreamData &sd = d_buffers->streamsData[streamId];
-    bool commitRoot = sd.root != nullptr;
-    if (commitRoot) {
-        get_commit_root(d_buffers, streamId);
-    } else if (sd.proofBuffer != nullptr) {
-        get_proof(d_buffers, streamId);
-    }
+    if (sd.proofBuffer != nullptr) get_proof(d_buffers, streamId);
     // reset() leaves instanceId/proofType untouched: proofType drives stream-affinity reuse
     // in selectStream, so a finished stream keeps advertising the air it last ran.
     sd.reset(false);
@@ -2558,295 +2612,6 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     return result;
 }
 
-uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
-    // Set by the custom-commit rebuild below; the matching wait sits before its first reader.
-    bool customFixedRebuilt = false;
-    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
-    StepsParams *params = (StepsParams *)params_;
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    // Count this thread as inside device work so a concurrent teardown waits for it.
-    InFlightScope in_flight(d_buffers);
-    uint32_t streamId = selectStream(d_buffers, airgroupId, airId, "basic");
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
-
-    // Check reuse against the stream's prior context before it is overwritten below.
-    StreamData &sd = d_buffers->streamsData[streamId];
-    bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
-
-    sd.root = root;
-    sd.instanceId = instanceId;
-    sd.airgroupId = airgroupId;
-    sd.airId = airId;
-    sd.proofType = "witness";
-
-    proofman_sumcheck_set_context(instanceId, airgroupId, airId);
-
-    auto key = std::make_pair(airgroupId, airId);
-    cudaSetDevice(gpuId);
-    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key]["basic"][gpuLocalId];
-
-    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
-    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
-    uint64_t arity = setupCtx->starkInfo.starkStruct.merkleTreeArity;
-    uint64_t nBits = setupCtx->starkInfo.starkStruct.nBits;
-    uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
-
-    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].curTimer();
-    TimerStartGPU(timer, STARK_GPU_COMMIT);
-
-#ifdef USE_CUDA_GRAPH
-    // Contributions-phase capture regions: this path runs outside genProof_gpu, so bind
-    // the thread-local cache to this stream's for the call. All host staging into pinned
-    // buffers stays OUTSIDE the regions (it must re-run before every replay); the regions
-    // hold only stream work with per-(air,stream) stable arguments. A body that hits the
-    // interpreter fallback poisons its capture (see stageExpsSlot).
-    cudagraph::current() = d_buffers->streamsData[streamId].graph_cache.get();
-    struct WitnessGraphCtxGuard {
-        ~WitnessGraphCtxGuard() { cudagraph::current() = nullptr; }
-    } witnessGraphCtxGuard;
-#endif
-    // Key tags 0x57455843 "WEXC" / 0x574c4445 "WLDE" — full tag table at graphCtxId in gen_proof.cuh.
-    const uint64_t witnessCtxId = (uint64_t)(uintptr_t)setupCtx;
-
-    gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
-    uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
-    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
-    // The raw trace lands in cm1ext's upper half; the small cm1 is the section's lower half.
-    uint64_t *dst = (uint64_t*)(d_aux_trace + setupCtx->starkInfo.getTraceLandingOffset());
-    // A prover-owned virtual table is counted on this device: transpose the accumulator into
-    // the destination. The air has nothing but cm1, so `params->trace` is unused.
-    const bool exported = !air_instance_info->is_packed &&
-                          mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
-    if (exported) {
-        // A witness staged ahead has no consumer: hand its span back.
-        if (d_buffers->prefetchArmed) {
-            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-            int head = prefetchFindSpanLocked(d_buffers, instanceId);
-            if (head >= 0) prefetchFreeSpanLocked(d_buffers, head);
-        }
-        TimerStartCategoryGPU(timer, H2D_COPY);
-        cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
-        TimerStopCategoryGPU(timer, H2D_COPY);
-    } else {
-        // Stage into the zone on the copy stream, then land it with one D2D. NOT a look-ahead: this
-        // instance's own trace, staged the moment the commit starts. The zone is memory nothing else
-        // is using, so the H2D starts immediately instead of queueing behind the previous commit's
-        // compute on this stream. No free slot -> the plain upload.
-        int slot = -1;
-        if (d_buffers->prefetchArmed && gpuId == d_buffers->my_gpu_ids[0] &&
-            total_size <= prefetchSpanBytes(d_buffers)) {
-            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-            // A witness staged ahead (stage_witness_gpu) needs only its copy event.
-            slot = prefetchFindSpanLocked(d_buffers, instanceId);
-            if (slot >= 0 && d_buffers->prefetchTraceBytes[slot] != total_size) slot = -1;
-            // Null host trace: the caller already released it after staging.
-            if (slot < 0 && params->trace != nullptr)
-                slot = stageWitnessSlotLocked(d_buffers, instanceId, params->trace, total_size);
-            if (slot >= 0) {
-                TimerStartCategoryGPU(timer, STAGED_WAIT);
-                CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->prefetchReady[slot], 0));
-                TimerStopCategoryGPU(timer, STAGED_WAIT);
-                gl64_t *slotBase =
-                    d_buffers->prefetchRegionBase + (uint64_t)slot * d_buffers->prefetchSlotStride;
-                TimerStartCategoryGPU(timer, STAGED_D2D);
-                CHECKCUDAERR(cudaMemcpyAsync(dst, slotBase, total_size, cudaMemcpyDeviceToDevice, stream));
-                TimerStopCategoryGPU(timer, STAGED_D2D);
-                prefetchRecordDrainedLocked(d_buffers, slot, stream);
-                prefetchFreeSpanLocked(d_buffers, slot);
-                CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event,
-                                             d_buffers->prefetchStream));
-            }
-        }
-        if (slot < 0) {
-            copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
-        }
-    }
-    PROOFMAN_SUMCHECK("contrib_before_unpack", dst, total_size / sizeof(uint64_t), stream);
-
-    // cm1's tree as the proof stores it (without its leaf level when dropLeafLevel).
-    uint64_t tree_size = setupCtx->starkInfo.getNumNodesMTCommit(NExtended);
-
-    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)];
-
-    Goldilocks::Element *pNodes = (Goldilocks::Element*)d_aux_trace + offset_mt;
-    NTTGoldilocksGPU ntt;
-
-    // Read the raw rows from the upper half (src) and write them column-major into the head (dst).
-    if (d_buffers->packedTrace && air_instance_info->is_packed) {
-        unpack_trace(air_instance_info, dst, (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
-    } else {
-        fromRowMajorToColMajor(N, nCols, (gl64_t *)dst, (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
-    }
-    PROOFMAN_SUMCHECK("contrib_after_unpack", d_aux_trace + offset_src, N * nCols, stream);
-
-    uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
-    // The trace write above lands inside a larger previous air's const region, so the claim
-    // has to be refreshed either way: adopted below when this path unpacks, dropped when it
-    // does not. Leaving a stale claim would let a later proof of that air skip its unpack --
-    // and the new slot-keyed affinity actively steers it back to this stream.
-    // A scatter needs this block's h_params/d_params staging; gate on this air's own plan, or
-    // every air pays the const-pol unpack. The accumulator is keyed by DEVICE, not airId: the
-    // counters live in the table's host air, not the instance feeding it.
-    MulAcc *mulAcc = mulAccOnGpu((int)gpuId);
-    bool needMulScatter = false;
-    if (mulAcc != nullptr) {
-        const MulPlan &p = mulPlanFor(*setupCtx, airgroupId, airId);
-        needMulScatter = !p.jobs.empty();
-    }
-
-    if (nWitnessHints == 0 && !needMulScatter) sd.dropFixedSlot();
-    if(nWitnessHints > 0 || needMulScatter) {
-        uint64_t countId = 0;
-        uint64_t offsetCm1 = offset_src;
-        uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-        uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-        uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-        uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-
-        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-        gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
-        gl64_t *d_aux_trace = auxTraceFor(d_buffers, streamId);
-        Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
-        Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
-        uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
-        // Claims the slot but not constTreeResident: this never touches the const tree.
-        // The scatter needs these too: lookup tuples can read const pols.
-        if (!sd.adoptFixedSlot(air_instance_info->const_pols_offset, offsetConstPols, false, "")) {
-            unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
-            CHECKCUDAERR(cudaGetLastError());
-        }
-
-        // Rebuild now, wait just before the commit body below reads it.
-        if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0 && !reuse_custom_fixed) {
-            Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            rebuildCustomCommitsFixed(d_buffers, setupCtx, air_instance_info, gpuLocalId, pCustomCommitsFixedDst, sd, timer);
-            customFixedRebuilt = true;
-        }
-
-        size_t totalCopySize = 0;
-        totalCopySize += setupCtx->starkInfo.nPublics;
-        totalCopySize += setupCtx->starkInfo.proofValuesSize;
-        totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
-        totalCopySize += setupCtx->starkInfo.airValuesSize;
-
-        // Stage into the per-stream pinned region for an async copy. Hard runtime check, not assert:
-        // must survive NDEBUG release builds, else it silently overflows the fixed pinned buffer.
-        if (totalCopySize > PINNED_AUX_VALUES_MAX) {
-            zklog.error("commit_witness_gpu: aux_values size " + std::to_string(totalCopySize) +
-                        " exceeds PINNED_AUX_VALUES_MAX " + std::to_string(PINNED_AUX_VALUES_MAX));
-            exitProcess();
-        }
-        Goldilocks::Element *aux_values = d_buffers->streamsData[streamId].pinned_aux_values;
-        uint64_t offset = 0;
-        memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
-        offset += setupCtx->starkInfo.nPublics;
-        if (setupCtx->starkInfo.proofValuesSize > 0) {
-            memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
-            offset += setupCtx->starkInfo.proofValuesSize;
-        }
-        if (setupCtx->starkInfo.airgroupValuesSize > 0) {
-            memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
-            offset += setupCtx->starkInfo.airgroupValuesSize;
-        }
-        if (setupCtx->starkInfo.airValuesSize > 0) {
-            memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
-            offset += setupCtx->starkInfo.airValuesSize;
-        }
-
-        StepsParams h_params = {
-            trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
-            aux_trace : (Goldilocks::Element *)d_aux_trace,
-            publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
-            proofValues : (Goldilocks::Element *)d_aux_trace + offsetProofValues,
-            challenges : nullptr,
-            airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
-            airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
-            evals : nullptr,
-            xDivXSub : nullptr,
-            pConstPolsAddress: d_const_pols_unpacked,
-            pConstPolsExtendedTreeAddress: nullptr,
-            pCustomCommitsFixed: setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0
-                ? (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)]
-                : nullptr,
-        };
-
-        // Host staging BEFORE the capture region: replays skip the region body, so pinned
-        // content must already be correct when the graph's H2D nodes read it.
-        StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
-        memcpy(params_pinned, &h_params, sizeof(StepsParams));
-        StepsParams *d_params =  d_buffers->streamsData[streamId].params;
-
-        ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
-        DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
-        Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
-        Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
-
-        auto witnessExprBody = [&] {
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
-            CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
-            calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-        };
-        if (nWitnessHints > 0) {
-            cudagraph::run(cudagraph::key(0x57455843ULL ^ witnessCtxId), countId, stream, witnessExprBody);
-        }
-
-        if (needMulScatter) {
-            // witnessExprBody uploads aux_values; without hints it did not run.
-            if (nWitnessHints == 0)
-                CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values,
-                                             totalCopySize * sizeof(Goldilocks::Element),
-                                             cudaMemcpyHostToDevice, stream));
-            calculateMulCalcGPU(*setupCtx, h_params, airgroupId, airId, mulAcc->d_acc, timer, stream);
-        }
-    }
-
-    // Counted for every instance, scatter or not (see mul_await_commits).
-    mul_note_commit();
-
-    if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
-
-    PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
-    auto commitLdeBody = [&] {
-        // In place (equal bases) the source cannot be preserved.
-        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, offset_src != offset_dst, (gl64_t*)pNodes, tree_size);
-        TimerStartCategoryGPU(timer, MERKLE_TREE);
-        // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
-        // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution
-        // root read uninitialised in-tile padding -> non-det; keep the shared predicate.
-        if (setupCtx->starkInfo.dropLeafLevel)
-            buildMerkleTreeNoLeavesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
-        else
-            buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, resolveLayout(nBits, nCols), stream);
-        TimerStopCategoryGPU(timer, MERKLE_TREE);
-        CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
-    };
-    uint64_t commitLdeCountId = 0;   // no expression launches in this body; dummy cursor
-    cudagraph::run(cudagraph::key(0x574c4445ULL ^ witnessCtxId), commitLdeCountId, stream, commitLdeBody);
-    PROOFMAN_SUMCHECK("contrib_after_lde", d_aux_trace + offset_dst, NExtended * nCols, stream);
-    TimerStopGPU(timer, STARK_GPU_COMMIT);
-    cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
-    d_buffers->streamsData[streamId].status = 2;
-    return streamId;
-}
-
-void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
-
-    Goldilocks::Element *root = (Goldilocks::Element *)d_buffers->streamsData[streamId].root;
-    memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, HASH_SIZE * sizeof(uint64_t));
-    uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
-    uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
-    uint64_t airId = d_buffers->streamsData[streamId].airId;
-    closeStreamTimer(d_buffers->streamsData[streamId].curTimer(), instanceId, airgroupId, airId, false);
-    // Contributions commit_root does NOT fire proof_done_callback: that decrement is owned by the
-    // Prove-path accounting, and firing it here could hit the NULL-callback window and wedge proofs_pending.
-}
-
 void init_gpu_setup_gpu(uint64_t arity) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
@@ -3153,6 +2918,11 @@ uint64_t get_stream_commit_slots_gpu(void *d_buffers_) {
     return ((DeviceCommitBuffers *)d_buffers_)->streamCommitSlots;
 }
 
+uint64_t get_stream_commit_gpus_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    return ((DeviceCommitBuffers *)d_buffers_)->n_gpus;
+}
+
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return UINT64_MAX;
     return ((DeviceCommitBuffers *)d_buffers_)->streamCommitFloorBytes;
@@ -3160,24 +2930,28 @@ uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
 
 // Byte size of one streaming-commit slot for the given packed-AIR shape (the
 // layout in streamCommitSlotElems). 0 = shape not slot-committable;
+// The slot kernels for the active hash family.
+static StreamCommitHash streamCommitHashFor(HashFamily f) {
+    switch (f) {
+        case HashFamily::Blake3:    return StreamCommitHash::Blake3;
+        case HashFamily::Poseidon2: return StreamCommitHash::Poseidon2;
+        default:                    return StreamCommitHash::Poseidon1;
+    }
+}
+
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
                                       uint64_t nCols, uint64_t wordsPerRow) {
     if (nCols == 0 || nCols > SC_MAX_COLS || nBitsExt <= nBits || wordsPerRow == 0) return 0;
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
-    const StreamCommitHash hash = (get_hash_family() == HashFamily::Blake3)
-                                      ? StreamCommitHash::Blake3
-                                      : StreamCommitHash::Poseidon1;
-    return streamCommitSlotElems(dims, hash) * sizeof(Goldilocks::Element);
+    return streamCommitSlotElems(dims, streamCommitHashFor(get_hash_family())) * sizeof(Goldilocks::Element);
 }
 
-// Enable nSlots streaming-commit slots of slotBytes each (FIRST GPU only --
-// the borrowable one). Called by proofman after buffer allocation with the
-// DERIVED slot size (stream_commit_slot_bytes over the eligible AIRs): carves
-// the slots top-down from the const-pols aggregation offset, flags the legacy
-// streams whose aux regions they overlap, and creates one lowest-priority
-// stream per slot. The byte offset where the lowest slot starts is the
-// "floor": slots live above it, and gpu-mops is only ever handed the region
-// below it (get_first_gpu_buffer clamps the borrowed size to it), which is
+// Enable nSlots streaming-commit slots of slotBytes each on every GPU. Called by proofman after
+// buffer allocation with the DERIVED slot size (stream_commit_slot_bytes over the eligible AIRs):
+// carves the slots top-down below the prefetch region (same offsets on every GPU), flags the
+// legacy streams whose aux regions they overlap, and creates one lowest-priority stream per slot.
+// The byte offset where the lowest slot starts is the "floor": on the first GPU gpu-mops is only
+// ever handed the region below it (get_first_gpu_buffer clamps the borrowed size to it), which is
 // what lets commits run while the buffer is borrowed.
 //
 // LOWEST priority streams: during the gpu-mops borrow window the commit
@@ -3185,11 +2959,8 @@ uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
 // (light) mops kernels and stretch the whole window. Low priority makes the
 // device dispatch mops first at each block boundary, so commits fill the true
 // gaps instead of creating a queue in front of mops.
-// `contribFootprintBytes`: the most a contribution commit touches of a basic stream's aux trace.
-// Slots are live only during contributions, so that is a stream's extent for the overlap test.
-// Zero means unknown (full extent).
-void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes,
-                                       uint64_t contribFootprintBytes) {
+// A stream overlaps the slots by its full extent: no stream commits a contribution any more.
+void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes) {
     if (d_buffers_ == nullptr || nSlots == 0 || slotBytes == 0) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers->streamCommitSlots != 0) return;  // already configured
@@ -3205,14 +2976,18 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     // Slots carve DOWNWARD and must stay below the prefetch region and mops pad (which sit under
     // the const pols); overlapping the zone silently corrupts staged witnesses.
     uint64_t slotCeilingBytes = constAggOffsetBytes - d_buffers->prefetchRegionBytes - d_buffers->mopsFloorPadBytes;
+    // Every contribution commits on a slot, so fewer slots beat none; none is left to the caller.
     if (nSlots * slotBytes > slotCeilingBytes) {
-        zklog.error("stream commit slots: " + std::to_string(nSlots) + " x " +
-                    std::to_string(slotBytes >> 20) + " MB does not fit below the prefetch region (" +
-                    std::to_string(slotCeilingBytes >> 20) + " MB) -- disabling slots");
-        return;
+        const uint64_t fit = slotCeilingBytes / slotBytes;
+        zklog.warning("stream commit slots: " + std::to_string(nSlots) + " x " +
+                      std::to_string(slotBytes >> 20) + " MB do not fit below the prefetch region (" +
+                      std::to_string(slotCeilingBytes >> 20) + " MB); using " + std::to_string(fit));
+        if (fit == 0) return;
+        nSlots = fit;
     }
     d_buffers->streamCommitSlotBytes = slotBytes;
-    d_buffers->streamCommitFloorBytes = slotCeilingBytes - nSlots * slotBytes;
+    // Aligned down too: the ceiling is a sum of stream sizes in elements, which can be an odd count.
+    d_buffers->streamCommitFloorBytes = (slotCeilingBytes - nSlots * slotBytes) & ~((1ull << 20) - 1);
 
     // The slot area may overlap legacy aux-trace regions (recursive ones, and
     // the tail basic ones when it reaches further down). Overlapped first-GPU
@@ -3223,7 +2998,6 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
     uint32_t overlappedBasic = 0, overlappedRecursive = 0;
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         StreamData &sd = d_buffers->streamsData[i];
-        if (d_buffers->gpus_g2l[sd.gpuId] != 0) continue;
         // Sizes differ per stream, so the offset is a prefix sum of the carve, not localStreamId * size.
         uint64_t start, end;
         if (sd.recursive && isPhaseAAlias(d_buffers, sd)) {
@@ -3238,129 +3012,149 @@ void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64
                 start += d_buffers->aux_trace_sizes[j] * sizeof(Goldilocks::Element);
             }
             end = start + d_buffers->aux_trace_sizes[sd.localStreamId] * sizeof(Goldilocks::Element);
-            if (contribFootprintBytes != 0)
-                end = std::min(end, start + contribFootprintBytes);
         }
         sd.overlapsStreamCommitRegion =
             start < slotCeilingBytes && end > d_buffers->streamCommitFloorBytes;
-        if (sd.overlapsStreamCommitRegion) {
+        if (sd.overlapsStreamCommitRegion && d_buffers->gpus_g2l[sd.gpuId] == 0) {
             if (sd.recursive) overlappedRecursive++; else overlappedBasic++;
         }
     }
 
-    // A stream belongs to the device current at creation, so bind the first GPU
-    // here (and again at each commit, which runs on a different thread). Restore
-    // the caller's device: this is a library entry, it should not leave thread
-    // state changed under its caller.
+    // A stream belongs to the device current at creation. Restore the caller's device: this is a
+    // library entry, it should not leave thread state changed under its caller.
+    const uint64_t nAll = (uint64_t)d_buffers->n_gpus * nSlots;
     CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitAuxValues,
-                                (size_t)nSlots * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+                                (size_t)nAll * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitHost,
-                                (size_t)nSlots * STREAM_COMMIT_HOST_WORDS * sizeof(uint64_t)));
-    d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nSlots * sizeof(cudaStream_t));
+                                (size_t)nAll * STREAM_COMMIT_HOST_WORDS * sizeof(uint64_t)));
+    d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nAll * sizeof(cudaStream_t));
+    d_buffers->streamCommitRegions = new DeviceCommitBuffers::SlotRegion[d_buffers->n_gpus];
     int prevDevice = 0;
     CHECKCUDAERR(cudaGetDevice(&prevDevice));
-    CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
-    int leastPriority = 0, greatestPriority = 0;
-    CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
-    for (uint64_t j = 0; j < nSlots; j++)
-        CHECKCUDAERR(cudaStreamCreateWithPriority(&d_buffers->streamCommitStreams[j],
-                                                  cudaStreamNonBlocking, leastPriority));
+    for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
+        int leastPriority = 0, greatestPriority = 0;
+        CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
+        for (uint64_t j = 0; j < nSlots; j++)
+            CHECKCUDAERR(cudaStreamCreateWithPriority(&d_buffers->streamCommitStreams[g * nSlots + j],
+                                                      cudaStreamNonBlocking, leastPriority));
+    }
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     // Set last: the count is the enable flag readers check.
     d_buffers->streamCommitSlots = nSlots;
 
-    zklog.info("Streaming-commit slots: " + std::to_string(nSlots) + " x " +
+    zklog.info("Streaming-commit slots: " + std::to_string(nSlots) + " per GPU x " +
                std::to_string(slotBytes >> 20) + " MB (derived), floor at " +
                std::to_string(d_buffers->streamCommitFloorBytes / (1024.0 * 1024.0 * 1024.0)) +
                " GB (overlapping " + std::to_string(overlappedBasic) + " basic + " +
-               std::to_string(overlappedRecursive) + " recursive streams on the first GPU)");
+               std::to_string(overlappedRecursive) + " recursive streams on each GPU; the layout is the same on all)");
 }
 
-// Shared hold of the legacy streams whose aux regions overlap the slot area
-// (first-GPU streams only -- slots exist only there): the FIRST in-flight slot
-// commit claims every overlapped stream's selection mutex (only if the stream
-// is idle/drained); the LAST releases them. While held, selectStream/
-// reserveStream try_lock and skip them, so no legacy work ever touches an
-// overlapped region concurrently with a slot commit -- and the streams return
-// to full rotation as soon as slots go idle.
-// Caller holds streamCommitRegionMutex.
-static bool streamCommitClaimRegionLocked(DeviceCommitBuffers *d_buffers) {
-    if (d_buffers->streamCommitInFlight != 0) return true;
-    std::vector<uint32_t> locked;
+// Shared hold of a GPU's legacy streams whose aux regions overlap its slot area: the FIRST
+// in-flight slot commit there sets every overlapped stream's `slotHeld` (only if the stream is
+// idle/drained); the LAST clears them. While held, the reserve paths skip them, so no legacy work ever touches an overlapped region concurrently with a slot commit
+// -- and the streams return to full rotation as soon as the GPU's slots go idle.
+// Caller holds the GPU's region mutex.
+static bool streamCommitClaimRegionLocked(DeviceCommitBuffers *d_buffers, uint32_t gl) {
+    DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
+    if (r.inFlight != 0) return true;
+    const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
+    std::vector<uint32_t> held;
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         StreamData &sd = d_buffers->streamsData[i];
-        if (!sd.overlapsStreamCommitRegion) continue;
+        if (!sd.overlapsStreamCommitRegion || sd.gpuId != gpuId) continue;
         bool ok = sd.mutex_stream_selection.try_lock();
         if (ok) {
             // Selected streams stay locked by their owner, so a successful
             // try_lock means unselected -- but kernels may still be draining.
             bool drained = sd.status == 2 && cudaEventQuery(sd.end_event) == cudaSuccess;
-            if (!(sd.status == 0 || sd.status == 3 || drained)) {
-                sd.mutex_stream_selection.unlock();
-                ok = false;
-            }
+            ok = sd.status == 0 || sd.status == 3 || drained;
+            // Under the lock: a reserve path that takes it next sees the flag.
+            if (ok) sd.slotHeld.store(true, std::memory_order_release);
+            sd.mutex_stream_selection.unlock();
         }
         if (!ok) {
-            for (uint32_t j : locked) d_buffers->streamsData[j].mutex_stream_selection.unlock();
+            for (uint32_t j : held) d_buffers->streamsData[j].slotHeld.store(false, std::memory_order_release);
             return false;
         }
-        locked.push_back(i);
+        held.push_back(i);
     }
     return true;
 }
 
-// Enter a slot commit: not quiesced, and the overlapped region claimed. A single GPU has no
-// legacy path, so it waits (up to 60 s, then -20/-21); multi-GPU refuses at once. The wait
-// polls every ms because an overlapped stream frees without a notify.
-static int streamCommitEnter(DeviceCommitBuffers *d_buffers) {
-    const bool wait = d_buffers->n_gpus == 1;
+// Enter a slot commit on GPU `gl`: not quiesced (first GPU only), and the overlapped region
+// claimed. Waits up to 60 s, then -20/-21. The wait polls every ms because an overlapped stream
+// frees without a notify.
+static int streamCommitEnter(DeviceCommitBuffers *d_buffers, uint32_t gl) {
+    DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    std::unique_lock<std::mutex> lk(d_buffers->streamCommitRegionMutex);
+    std::unique_lock<std::mutex> lk(r.mutex);
     for (;;) {
-        const bool quiesced = d_buffers->streamCommitQuiesced.load(std::memory_order_acquire) != 0;
-        if (!quiesced && streamCommitClaimRegionLocked(d_buffers)) {
-            d_buffers->streamCommitInFlight++;
+        const bool quiesced = gl == 0 && d_buffers->streamCommitQuiesced.load(std::memory_order_acquire) != 0;
+        if (!quiesced && streamCommitClaimRegionLocked(d_buffers, gl)) {
+            r.inFlight++;
             return 0;
         }
-        if (!wait || std::chrono::steady_clock::now() >= deadline) return quiesced ? -20 : -21;
-        d_buffers->streamCommitCv.wait_for(lk, std::chrono::milliseconds(1));
+        if (std::chrono::steady_clock::now() >= deadline) return quiesced ? -20 : -21;
+        r.cv.wait_for(lk, std::chrono::milliseconds(1));
     }
 }
 
-static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers) {
-    std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
-    if (--d_buffers->streamCommitInFlight == 0) {
+static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers, uint32_t gl) {
+    DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
+    std::lock_guard<std::mutex> lk(r.mutex);
+    if (--r.inFlight == 0) {
+        const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
         for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
             StreamData &sd = d_buffers->streamsData[i];
-            if (sd.overlapsStreamCommitRegion)
-                sd.mutex_stream_selection.unlock();
+            if (sd.overlapsStreamCommitRegion && sd.gpuId == gpuId)
+                sd.slotHeld.store(false, std::memory_order_release);
         }
-        d_buffers->streamCommitCv.notify_all();
+        r.cv.notify_all();
     }
 }
 
 static void streamCommitSetQuiesced(DeviceCommitBuffers *d_buffers, uint32_t v) {
-    std::lock_guard<std::mutex> lk(d_buffers->streamCommitRegionMutex);
+    if (d_buffers->streamCommitRegions == nullptr) {
+        d_buffers->streamCommitQuiesced.store(v, std::memory_order_release);
+        return;
+    }
+    DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[0];
+    std::lock_guard<std::mutex> lk(r.mutex);
     d_buffers->streamCommitQuiesced.store(v, std::memory_order_release);
-    if (v == 0) d_buffers->streamCommitCv.notify_all();
+    if (v == 0) r.cv.notify_all();
+}
+
+// Whether this air's host rows are packed: packing info alone is not enough, the run must write
+// packed traces too (options.packed). Same test as the proof path's upload size.
+static bool slotAirPacked(const DeviceCommitBuffers *d, const AirInstanceInfo *aii) {
+    return d->packedTrace && aii != nullptr && aii->is_packed;
+}
+
+// The column widths a slot reads the rows with: the packing, or for an unpacked air the identity
+// packing (64 bits per column, one word each). Stable references: the plans cache them.
+static const std::vector<uint64_t> &slotWidthsFor(AirInstanceInfo *aii, uint64_t airgroupId, uint64_t airId,
+                                                  uint64_t nCols, bool packed) {
+    if (packed && !aii->unpack_info_host.empty()) return aii->unpack_info_host;
+    static std::mutex idwMtx;
+    static std::map<std::pair<uint64_t,uint64_t>, std::vector<uint64_t>> idw;
+    std::lock_guard<std::mutex> lk(idwMtx);
+    auto &v = idw[{airgroupId, airId}];
+    if (v.empty()) v.assign(nCols, 64);
+    return v;
+}
+
+static uint64_t slotWordsPerRow(const AirInstanceInfo *aii, uint64_t nCols, bool packed) {
+    return (packed && !aii->unpack_info_host.empty()) ? aii->num_packed_words : nCols;
 }
 
 // The packing layout the slot scatter reads, from the setup alone. Shared with the warm-up, which
 // must build the same cached programs the commit would.
 static void slotMulLayout(AirInstanceInfo *aii, uint64_t airgroupId, uint64_t airId, uint64_t nCols,
-                          const SlotHintPlan *hintPlan, MulStreamCtx &mulCtx) {
-    static std::mutex idwMtx;
-    static std::map<std::pair<uint64_t,uint64_t>, std::vector<uint64_t>> idw;
-    const std::vector<uint64_t> *widths = &aii->unpack_info_host;
-    if (widths->empty()) {
-        std::lock_guard<std::mutex> lk(idwMtx);
-        auto &v = idw[{airgroupId, airId}];
-        if (v.empty()) v.assign(nCols, 64);
-        widths = &v;
-    }
-    mulCtx.widths    = widths;
+                          bool packed, const SlotHintPlan *hintPlan, MulStreamCtx &mulCtx) {
+    mulCtx.widths    = &slotWidthsFor(aii, airgroupId, airId, nCols, packed);
     mulCtx.hintPlan  = hintPlan;
-    if (aii->d_col_source != nullptr) {              // indexed: columns may live in the table
+    if (packed && aii->d_col_source != nullptr) {    // indexed: columns may live in the table
         mulCtx.colSource     = &aii->col_source_host;
         mulCtx.colLane       = aii->col_lane_host.empty() ? nullptr : &aii->col_lane_host;
         mulCtx.indexBits     = aii->index_bits;
@@ -3368,6 +3162,31 @@ static void slotMulLayout(AirInstanceInfo *aii, uint64_t airgroupId, uint64_t ai
         mulCtx.numEntries    = aii->num_entries;
         mulCtx.lanes         = aii->lanes;
     }
+}
+
+// Whether slot `j` of `gpu` already holds these packed const pols expanded in `buf`; records them if
+// not. The scratch outlives the commit; a setup's packed const pols never change in place.
+struct SlotConstTag { const uint64_t *buf = nullptr; const void *setup = nullptr, *src = nullptr; };
+static std::mutex slotConstTagsMutex;
+static std::map<std::pair<int, uint64_t>, SlotConstTag> &slotConstTags() {
+    static std::map<std::pair<int, uint64_t>, SlotConstTag> tags;
+    return tags;
+}
+
+// Forget every expansion: the next buffers may reuse these addresses for another setup.
+static void slotConstCacheClear() {
+    std::lock_guard<std::mutex> lk(slotConstTagsMutex);
+    slotConstTags().clear();
+}
+
+static bool slotConstCached(int gpu, uint64_t j, const uint64_t *buf, const void *setupCtx,
+                            const void *packedConst) {
+    using Tag = SlotConstTag;
+    std::lock_guard<std::mutex> lk(slotConstTagsMutex);
+    Tag &t = slotConstTags()[{gpu, j}];
+    if (t.buf == buf && t.setup == setupCtx && t.src == packedConst) return true;
+    t = Tag{buf, setupCtx, packedConst};
+    return false;
 }
 
 struct SlotCommitCtx {
@@ -3411,7 +3230,7 @@ static void slotCommitChunkHook(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_
 
 // Commit a bit-packed witness on a streaming-commit slot (first GPU): upload,
 // chunked unpack+LDE+sponge absorb, node reduction, root (4 u64) to `root`.
-// Poseidon1 arity 4 only (family checked here, arity by the caller).
+// Poseidon1/Poseidon2 arity 4 or blake3 arity 2 (family checked here, arity by the caller).
 // Synchronous; safe to call concurrently on distinct slots, and while the
 // first GPU's buffer is borrowed by gpu-mops (touches only the slot).
 //
@@ -3431,17 +3250,22 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (d_buffers_ == nullptr) return -10;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers->streamCommitSlots == 0) return -11;
-    if (slotIdx >= d_buffers->streamCommitSlots) return -12;
-    // The slot pipeline has kernels for Poseidon1 W=16 (arity 4) and blake3
-    // (arity 2) -- the caller checks the arity, this checks the family. 
+    if (slotIdx >= (uint64_t)d_buffers->n_gpus * d_buffers->streamCommitSlots) return -12;
+    // Global slot index: slot `j` of GPU `gl`.
+    const uint32_t gl = (uint32_t)(slotIdx / d_buffers->streamCommitSlots);
+    const uint64_t j = slotIdx % d_buffers->streamCommitSlots;
+    const int gpu = (int)d_buffers->my_gpu_ids[gl];
+    // The slot pipeline has kernels for Poseidon1 and Poseidon2 W=16 (arity 4) and blake3
+    // (arity 2) -- the caller checks the arity, this checks the family.
     const HashFamily scFamily = get_hash_family();
-    if (scFamily != HashFamily::Poseidon1 && scFamily != HashFamily::Blake3) return -15;
+    if (scFamily != HashFamily::Poseidon1 && scFamily != HashFamily::Poseidon2 &&
+        scFamily != HashFamily::Blake3) return -15;
 
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
 
-    // Indexed descriptor from the first GPU's AirInstanceInfo (d_col_source is set
+    // Indexed descriptor from this GPU's AirInstanceInfo (d_col_source is set
     // at setup from PackedInfo; d_instr_table arrives per program via
-    // register_instruction_table). Both live outside gpuMemoryBuffer[0].
+    // register_instruction_table). Both live outside the unified buffer.
     const uint8_t *dColSource = nullptr;
     const uint8_t *dColLane = nullptr;
     const uint64_t *dTable = nullptr;
@@ -3449,9 +3273,11 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     auto it = d_buffers->air_instances.find({airgroupId, airId});
     if (it != d_buffers->air_instances.end()) {
         auto pit = it->second.find("basic");
-        if (pit != it->second.end() && !pit->second.empty()) aii = pit->second[0];
+        if (pit != it->second.end() && pit->second.size() > gl) aii = pit->second[gl];
     }
-    if (aii != nullptr && aii->d_col_source != nullptr) {
+    // The indexed descriptor and the packing widths only describe packed host rows.
+    const bool packedAir = slotAirPacked(d_buffers, aii);
+    if (packedAir && aii->d_col_source != nullptr) {
         if (aii->d_instr_table == nullptr) {
             // Indexed air with no table yet: the plain walk would decode the compact
             // rows as full ones, so refuse rather than emit a wrong root. Distinct
@@ -3470,27 +3296,28 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         dims.lanes = aii->lanes;
     }
 
-    const StreamCommitHash scHash = (scFamily == HashFamily::Blake3)
-                                        ? StreamCommitHash::Blake3
-                                        : StreamCommitHash::Poseidon1;
+    const StreamCommitHash scHash = streamCommitHashFor(scFamily);
     if (streamCommitSlotElems(dims, scHash) * sizeof(Goldilocks::Element) > d_buffers->streamCommitSlotBytes)
         return -13;
 
     // Transpose the packed rows once into the slot's tail so the unpack and scatter read
     // column-major (coalesced). Decided before any work: it cannot be refused mid-commit.
     const uint64_t slotElems = d_buffers->streamCommitSlotBytes / sizeof(Goldilocks::Element);
-    dims.colMajorForHook = aii != nullptr && aii->is_packed && aii->setupCtx != nullptr &&
+    dims.colMajorForHook = packedAir && aii->setupCtx != nullptr &&
                            streamCommitColMajorFits(dims, scHash, slotElems) &&
                            mulScatterWantsColMajor(*aii->setupCtx, airgroupId, airId, dims);
 
     if (nCols > STREAM_COMMIT_HOST_WIDTH_WORDS) return -1;
-    if (const int enterRc = streamCommitEnter(d_buffers); enterRc != 0) return enterRc;
+    // streamCommitPacked's own shape refusals, here: past this point the witness is consumed (a
+    // zone staging freed, a released host buffer gone), so the commit must not refuse after it.
+    if (const int64_t rc = streamCommitCheck(dims, dColSource, dColLane, dTable, scHash); rc != 0) return rc;
+    if (const int enterRc = streamCommitEnter(d_buffers, gl); enterRc != 0) return enterRc;
     uint64_t *hRoot = d_buffers->streamCommitHost + slotIdx * STREAM_COMMIT_HOST_WORDS;
     uint64_t *hWidths = hRoot + STREAM_COMMIT_HOST_ROOT_WORDS;
 
-    cudaSetDevice(d_buffers->my_gpu_ids[0]);
-    gl64_t *slotBase = d_buffers->gpuMemoryBuffer[0] +
-                       (d_buffers->streamCommitFloorBytes + slotIdx * d_buffers->streamCommitSlotBytes) /
+    cudaSetDevice(gpu);
+    gl64_t *slotBase = d_buffers->gpuMemoryBuffer[gl] +
+                       (d_buffers->streamCommitFloorBytes + j * d_buffers->streamCommitSlotBytes) /
                            sizeof(Goldilocks::Element);
     // The hook runs between the upload and the chunk loop, the only window where the whole
     // witness is readable. Own timer so slot commits show up in the phase's kernel accounting.
@@ -3499,7 +3326,6 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     SlotCommitCtx slotCtx{};
     StreamCommitHook hook = nullptr;
     StreamCommitChunkHook chunkHook = nullptr;
-    const int firstGpu = (int)d_buffers->my_gpu_ids[0];
     const uint64_t nRowsSlot = 1ull << dims.nBits;
     StepsParams *params = (StepsParams *)params_;
 
@@ -3536,39 +3362,41 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     uint32_t nHintOps = 0;
     const SlotHintPlan *hintPlan = nullptr;
     if (aii != nullptr && aii->setupCtx != nullptr) {
-        hintPlan = &slotHintPlanFor(*aii->setupCtx, airgroupId, airId, aii->unpack_info_host,
-                                    aii->num_packed_words);
+        // An unpacked air reads its rows with the identity packing, as the scatter does.
+        hintPlan = &slotHintPlanFor(*aii->setupCtx, airgroupId, airId,
+                                    slotWidthsFor(aii, airgroupId, airId, nCols, packedAir),
+                                    slotWordsPerRow(aii, nCols, packedAir));
         if (!hintPlan->ok) {
             static std::once_flag once;
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " has witness_calc hints a slot cannot run ("
-                           + hintPlan->why + "); refusing the slot (fatal on a single GPU, legacy with several)");
+                           + hintPlan->why + "); refusing the slot");
             });
-            streamCommitReleaseRegion(d_buffers);
+            streamCommitReleaseRegion(d_buffers, gl);
             return -14;
         }
         nHintOps = (uint32_t)hintPlan->ops.size();
         if (nHintOps != 0) {
-            hintDev = slotHintPlanDevice(*hintPlan, airgroupId, airId, firstGpu);
-            if (!hintDev.ready) { streamCommitReleaseRegion(d_buffers); return -14; }
+            hintDev = slotHintPlanDevice(*hintPlan, airgroupId, airId, gpu);
+            if (!hintDev.ready) { streamCommitReleaseRegion(d_buffers, gl); return -14; }
         }
     }
     // One allocation for the hint columns and the value window: same lifetime, same per-slot key.
     if (nHintOps != 0 || nVals != 0) {
         const size_t elems = (size_t)hintDev.nDest * nRowsSlot + nVals;
-        dSide = slotHintSideBuffer(firstGpu, slotIdx, elems);
+        dSide = slotHintSideBuffer(gpu, j, elems);
         if (dSide == nullptr) {
             zklog.error("commit_witness_streaming: no room for the slot's hint buffer on gpu "
-                        + std::to_string(firstGpu));
-            streamCommitReleaseRegion(d_buffers);
+                        + std::to_string(gpu));
+            streamCommitReleaseRegion(d_buffers, gl);
             return -14;
         }
     }
 
-    MulAcc *mulAcc = aii != nullptr ? mulAccOnGpu(firstGpu) : nullptr;
+    MulAcc *mulAcc = aii != nullptr ? mulAccOnGpu(gpu) : nullptr;
     // Packing layout for the scatter; an unpacked air is the identity packing (64 bits per column).
-    if (aii != nullptr) slotMulLayout(aii, airgroupId, airId, nCols, hintPlan, mulCtx);
+    if (aii != nullptr) slotMulLayout(aii, airgroupId, airId, nCols, packedAir, hintPlan, mulCtx);
 
     bool needsCount = false;
     if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
@@ -3581,60 +3409,77 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " cannot be counted on a slot (reads "
-                           + mulSrcMaskNames(p.srcMask) + "); refusing the slot (fatal on a single GPU, legacy with several)");
+                           + mulSrcMaskNames(p.srcMask) + "); refusing the slot");
             });
-            streamCommitReleaseRegion(d_buffers);
+            streamCommitReleaseRegion(d_buffers, gl);
             return -14;
         }
         // The scatter must also be able to read the packed rows (a slot never materialises cm1).
         // Decided here: the hook cannot refuse once the commit is under way.
-        if (needsCount && !mulPackedProgramFor(p, mulCtx, airgroupId, airId, firstGpu).ok) {
+        if (needsCount && !mulPackedProgramFor(p, mulCtx, airgroupId, airId, gpu).ok) {
             static std::once_flag once;
             std::call_once(once, [&] {
                 zklog.info("commit_witness_streaming: air " + std::to_string(airgroupId) + "/"
                            + std::to_string(airId) + " cannot scatter from the packed rows; "
-                           "refusing the slot (fatal on a single GPU, legacy with several)");
+                           "refusing the slot");
             });
-            streamCommitReleaseRegion(d_buffers);
+            streamCommitReleaseRegion(d_buffers, gl);
             return -23;
         }
     }
     if (needsCount && (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)) {
-        streamCommitReleaseRegion(d_buffers);
+        streamCommitReleaseRegion(d_buffers, gl);
         return -22;  // countable but no accumulator / const pols on this device
+    }
+    // Hints and the scatter must not run against a null value window.
+    if ((nHintOps != 0 || needsCount) && aii->setupCtx != nullptr && hVals == nullptr) {
+        const StarkInfo &si = aii->setupCtx->starkInfo;
+        if (si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize > PINNED_AUX_VALUES_MAX) {
+            zklog.error("commit_witness_streaming: air " + std::to_string(airgroupId) + "/" +
+                        std::to_string(airId) + " has more values than PINNED_AUX_VALUES_MAX");
+            streamCommitReleaseRegion(d_buffers, gl);
+            return -14;
+        }
     }
 
     // The const pols, unpacked into a slot scratch: d_constPols is BIT-PACKED behind a header, and
     // must never be handed to a consumer as field elements.
     const uint64_t *dConstUnpacked = nullptr;
-    const bool wantConst = (mulAcc != nullptr || nHintOps != 0)
+    // Only for an air that reads them: an air that feeds no prover-owned table and has no hints
+    // would pay a full unpack for nothing.
+    const bool wantConst = (needsCount || nHintOps != 0)
                         && aii != nullptr && aii->const_pols_offset != UINT64_MAX;
     if (wantConst) {
         const uint64_t nConst = aii->setupCtx->starkInfo.nConstants;
         if (nConst > 0) {
-            uint64_t *dConst = mulStreamConst(firstGpu, slotIdx, nConst * nRowsSlot);
+            uint64_t *dConst = mulStreamConst(gpu, j, nConst * nRowsSlot);
             if (dConst == nullptr) {
                 zklog.error("commit_witness_streaming: no room to expand the const pols for air "
                             + std::to_string(airgroupId) + "/" + std::to_string(airId)
-                            + " on gpu " + std::to_string(firstGpu));
-                streamCommitReleaseRegion(d_buffers);
+                            + " on gpu " + std::to_string(gpu));
+                streamCommitReleaseRegion(d_buffers, gl);
                 return -14;
             }
-            gl64_t *packedConst = d_buffers->d_constPols[0] + aii->const_pols_offset;
-            unpack_fixed((uint64_t *)packedConst, (uint64_t *)(packedConst + 1),
-                         (uint64_t *)(packedConst + 1 + nConst), dConst, nConst, nRowsSlot,
-                         d_buffers->streamCommitStreams[slotIdx], timer);
-            CHECKCUDAERR(cudaGetLastError());
+            // A slot's scratch keeps the last air it expanded: consecutive instances of one air (the
+            // common case) unpack once. Ordered by the slot's own stream, which alone uses it.
+            gl64_t *packedConst = d_buffers->d_constPols[gl] + aii->const_pols_offset;
+            if (!slotConstCached(gpu, j, dConst, aii->setupCtx, packedConst)) {
+                unpack_fixed((uint64_t *)packedConst, (uint64_t *)(packedConst + 1),
+                             (uint64_t *)(packedConst + 1 + nConst), dConst, nConst, nRowsSlot,
+                             d_buffers->streamCommitStreams[slotIdx], timer);
+                CHECKCUDAERR(cudaGetLastError());
+            }
             dConstUnpacked = dConst;
         }
     }
 
-    if (mulAcc != nullptr && aii->const_pols_offset != UINT64_MAX) {
+    // needsCount implies an accumulator and const pols (refused with -22 above otherwise).
+    if (needsCount) {
         mulCtx.setupCtx = aii->setupCtx;
         mulCtx.airgroupId = airgroupId;
         mulCtx.airId = airId;
         mulCtx.acc = mulAcc->d_acc;
-        mulCtx.oob = mulOob(firstGpu);
+        mulCtx.oob = mulOob(gpu);
         mulCtx.dTable = dTable;
         mulCtx.packedColMajor = dims.colMajorForHook ? 1u : 0u;
         mulCtx.constPols = dConstUnpacked;
@@ -3675,22 +3520,29 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
 
     uint64_t *dPacked = (uint64_t *)slotBase + SC_MAX_COLS;   // where streamCommitPacked reads the rows
     const uint64_t packedWords = nRowsSlot * dims.wordsPerRow;
-    if (d_buffers->prefetchArmed) {
+    // A prover-owned virtual table: its rows come from the device accumulator, as in the legacy
+    // commit (row-major, one word per column). After every refusal: the export folds across GPUs.
+    const bool exported = aii != nullptr && !aii->is_packed &&
+                          mul_export_to_trace(airId, gpu, dPacked, nRowsSlot, nCols,
+                                              d_buffers->streamCommitStreams[slotIdx]);
+    if (exported) packedSrc = (const void *)dPacked;
+
+    PrefetchZone *zone = d_buffers->prefetchArmed ? &d_buffers->prefetchZones[gl] : nullptr;
+    if (!exported && zone != nullptr) {
         const uint64_t packedBytes = nRowsSlot * dims.wordsPerRow * sizeof(Goldilocks::Element);
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        stagedSlot = prefetchFindSpanLocked(d_buffers, instanceId);
-        if (stagedSlot >= 0 && d_buffers->prefetchTraceBytes[stagedSlot] != packedBytes) stagedSlot = -1;
+        std::lock_guard<std::mutex> lk(zone->mutex);
+        stagedSlot = prefetchFindSpanLocked(*zone, instanceId);
+        if (stagedSlot >= 0 && zone->traceBytes[stagedSlot] != packedBytes) stagedSlot = -1;
         if (stagedSlot >= 0) {
-            packedSrc = (const void *)(d_buffers->prefetchRegionBase +
-                                       (uint64_t)stagedSlot * d_buffers->prefetchSlotStride);
+            packedSrc = (const void *)prefetchUnitBase(d_buffers, *zone, stagedSlot);
             // Wait for the upload: the id is published under the lock but the H2D is async, and
             // this commit can already be running while the staging is mid-copy.
             CHECKCUDAERR(cudaStreamWaitEvent(d_buffers->streamCommitStreams[slotIdx],
-                                             d_buffers->prefetchReady[stagedSlot], 0));
+                                             zone->ready[stagedSlot], 0));
         }
         // -2 = in use: the read outlives this lock, and release_staged_witness matches by id.
         // Marks the whole span, or a tail could be freed out from under the head.
-        if (stagedSlot >= 0) prefetchMarkSpanLocked(d_buffers, stagedSlot, -2);
+        if (stagedSlot >= 0) prefetchMarkSpanLocked(*zone, stagedSlot, -2);
     }
 
     // Null `packed` means the caller released the host buffer after staging; no staging found
@@ -3698,15 +3550,13 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     if (packedSrc == nullptr) {
         zklog.error("commit_witness_streaming: air " + std::to_string(airgroupId) + "/" +
                     std::to_string(airId) + " instance " + std::to_string(instanceId) +
-                    " has no host trace and no staging in the prefetch zone");
-        streamCommitReleaseRegion(d_buffers);
+                    " has no host trace and no staging in gpu " + std::to_string(gpu) + "'s prefetch zone");
+        streamCommitReleaseRegion(d_buffers, gl);
         return -17;
     }
 
     // Land the rows in the slot first, so a zone staging can be freed once the copy is enqueued
-    // (the drained event orders the next staging). With several GPUs a refusal retries on the
-    // legacy path, which needs the staging, so it is kept until the end.
-    const bool freeEarly = d_buffers->n_gpus == 1;
+    // (the drained event orders the next staging).
     if (packedSrc != (const void *)dPacked) {
         cudaStream_t st = d_buffers->streamCommitStreams[slotIdx];
         const uint64_t bytes = packedWords * sizeof(uint64_t);
@@ -3719,10 +3569,10 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         timer.stopCategory("H2D_COPY");
         packedSrc = (const void *)dPacked;
     }
-    if (stagedSlot >= 0 && freeEarly) {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        prefetchRecordDrainedLocked(d_buffers, stagedSlot, d_buffers->streamCommitStreams[slotIdx]);
-        prefetchFreeSpanLocked(d_buffers, stagedSlot);
+    if (stagedSlot >= 0) {
+        std::lock_guard<std::mutex> lk(zone->mutex);
+        prefetchRecordDrainedLocked(*zone, stagedSlot, d_buffers->streamCommitStreams[slotIdx]);
+        prefetchFreeSpanLocked(*zone, stagedSlot);
         stagedSlot = -1;
     }
 
@@ -3736,19 +3586,8 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                     slotElems);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
-    // streamCommitPacked returned with the root on the host, so the copy out of the staging is done.
-    if (stagedSlot >= 0) {
-        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-        if (rc == 0) {
-            prefetchRecordDrainedLocked(d_buffers, stagedSlot, d_buffers->streamCommitStreams[slotIdx]);
-            prefetchFreeSpanLocked(d_buffers, stagedSlot);
-        } else {
-            // Refused: the caller retries on the legacy path, which needs to find this staging.
-            prefetchMarkSpanLocked(d_buffers, stagedSlot, (int64_t)instanceId);
-        }
-    }
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
-    streamCommitReleaseRegion(d_buffers);
+    streamCommitReleaseRegion(d_buffers, gl);
     // See mul_await_commits.
     if (rc == 0) mul_note_commit();
     return rc;
@@ -3757,13 +3596,10 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
 // Build, before the phase, everything a slot commit would otherwise build on first use (NTT
 // tables, hint and scatter programs, per-slot buffers at their max size), so no cudaMalloc
 // stalls other slots behind the driver lock.
-void stream_commit_warmup_gpu(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
-    const int gpu = (int)d_buffers->my_gpu_ids[0];
-    int prevDevice = 0;
-    CHECKCUDAERR(cudaGetDevice(&prevDevice));
+static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) {
+    const int gpu = (int)d_buffers->my_gpu_ids[gl];
     CHECKCUDAERR(cudaSetDevice(gpu));
+    size_t maxSide = 0, maxConst = 0;
     NTTGoldilocksGPU::warmTables();
     {
         std::lock_guard<std::mutex> lk(mulEventMutex());
@@ -3777,11 +3613,10 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
 
     MulAcc *mulAcc = mulAccOnGpu(gpu);
 
-    size_t maxSide = 0, maxConst = 0;
     for (auto &air : d_buffers->air_instances) {
         auto pit = air.second.find("basic");
-        if (pit == air.second.end() || pit->second.empty()) continue;
-        AirInstanceInfo *aii = pit->second[0];
+        if (pit == air.second.end() || pit->second.size() <= gl) continue;
+        AirInstanceInfo *aii = pit->second[gl];
         if (aii == nullptr || aii->setupCtx == nullptr) continue;
         const uint64_t airgroupId = air.first.first, airId = air.first.second;
         StarkInfo &si = aii->setupCtx->starkInfo;
@@ -3789,12 +3624,14 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
         auto cm1 = si.mapSectionsN.find("cm1");
         if (cm1 == si.mapSectionsN.end()) continue;
         const uint64_t nCols = cm1->second;
+        const bool packed = slotAirPacked(d_buffers, aii);
 
         const uint64_t n = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
         const uint64_t nVals = n <= PINNED_AUX_VALUES_MAX ? n : 0;
 
         const SlotHintPlan &hintPlan = slotHintPlanFor(*aii->setupCtx, airgroupId, airId,
-                                                       aii->unpack_info_host, aii->num_packed_words);
+                                                       slotWidthsFor(aii, airgroupId, airId, nCols, packed),
+                                                       slotWordsPerRow(aii, nCols, packed));
         SlotHintPlanDev hintDev{};
         if (hintPlan.ok && !hintPlan.ops.empty())
             hintDev = slotHintPlanDevice(hintPlan, airgroupId, airId, gpu);
@@ -3806,12 +3643,13 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
             const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
             if (!p.jobs.empty() && mulPlanStreamable(p)) {
                 MulStreamCtx mulCtx{};
-                slotMulLayout(aii, airgroupId, airId, nCols, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
+                slotMulLayout(aii, airgroupId, airId, nCols, packed, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
                 mulPlanDevice(p, airgroupId, airId, gpu);
                 counts = mulPackedProgramFor(p, mulCtx, airgroupId, airId, gpu).ok;
             }
         }
-        if ((counts || hintDev.nDest != 0) && aii->const_pols_offset != UINT64_MAX)
+        // Same condition as the commit's `wantConst`.
+        if ((counts || (hintPlan.ok && !hintPlan.ops.empty())) && aii->const_pols_offset != UINT64_MAX)
             maxConst = std::max<size_t>(maxConst, (size_t)si.nConstants * N);
     }
     for (uint64_t s = 0; s < d_buffers->streamCommitSlots; s++) {
@@ -3820,10 +3658,20 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
             zklog.warning("stream_commit_warmup: could not preallocate slot " + std::to_string(s) +
                           " buffers; they will be allocated on first use");
     }
+    return maxSide + maxConst;
+}
+
+void stream_commit_warmup_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
+    int prevDevice = 0;
+    CHECKCUDAERR(cudaGetDevice(&prevDevice));
+    size_t perSlot = 0;
+    for (uint32_t gl = 0; gl < d_buffers->n_gpus; gl++) perSlot = streamCommitWarmupOn(d_buffers, gl);
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     static std::once_flag logged;
     std::call_once(logged, [&] {
-        zklog.info("Streaming-commit warm-up: per slot " + std::to_string((maxSide + maxConst) * 8 >> 20) +
+        zklog.info("Streaming-commit warm-up: per slot " + std::to_string(perSlot * 8 >> 20) +
                    " MB of hint/const buffers");
     });
 }
@@ -3836,11 +3684,11 @@ void stream_commit_pause_gpu() {
     if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
     streamCommitSetQuiesced(d_buffers, 1);
     // Unbounded: returning with a commit still in flight hands its slot memory to the borrower.
-    std::unique_lock<std::mutex> lk(d_buffers->streamCommitRegionMutex);
-    if (!d_buffers->streamCommitCv.wait_for(lk, std::chrono::seconds(2),
-                                            [&] { return d_buffers->streamCommitInFlight == 0; })) {
+    DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[0];
+    std::unique_lock<std::mutex> lk(r.mutex);
+    if (!r.cv.wait_for(lk, std::chrono::seconds(2), [&] { return r.inFlight == 0; })) {
         zklog.warning("stream_commit_pause: slot commits still in flight after 2 s; waiting");
-        d_buffers->streamCommitCv.wait(lk, [&] { return d_buffers->streamCommitInFlight == 0; });
+        r.cv.wait(lk, [&] { return r.inFlight == 0; });
     }
 }
 
@@ -3862,6 +3710,23 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (d_buffers->streamsData[i].gpuId == firstGpuId)
             d_buffers->streamsData[i].mutex_stream_selection.unlock();
+    }
+
+    // A staging that claimed zone units before the flag is still uploading into bytes the borrower
+    // is about to own. New ones see the flag under the zone lock; wait for these to publish (their
+    // H2D has completed by then).
+    if (d_buffers->prefetchArmed && borrowerCouldReachZone(d_buffers)) {
+        PrefetchZone &z = d_buffers->prefetchZones[0];
+        for (;;) {
+            bool copying = false;
+            {
+                std::lock_guard<std::mutex> lk(z.mutex);
+                for (uint32_t u = 0; u < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; u++)
+                    copying |= z.instanceId[u] == -3;
+            }
+            if (!copying) break;
+            std::this_thread::sleep_for(std::chrono::microseconds(300));
+        }
     }
 
     // Drain: wait until no prover work is queued or running on the first GPU.
@@ -3902,13 +3767,10 @@ uint32_t get_prefetch_witness_slots_gpu() {
 }
 
 // Arm the witness prefetch zone (idempotent; no-op when witnessBytes == 0, i.e. the
-// feature is off). The other segments -- fixedTreeBytes (const-tree staging),
-// packedConstBytes (packed const-pols staging), recWitnessBytes (recursive-witness
-// slots) -- are accepted for ABI stability but not implemented yet: callers pass 0.
-void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes) {
+// feature is off). `witnessBytes` is the largest trace the zone stages.
+void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     if (d_buffers == nullptr || witnessBytes == 0 || d_buffers->prefetchArmed) return;
-    cudaSetDevice(d_buffers->my_gpu_ids[0]);
     // witnessBytes is the largest trace (power-of-two rows), so it must split exactly into units.
     if (witnessBytes % (DeviceCommitBuffers::PREFETCH_UNIT_SPAN * sizeof(gl64_t)) != 0) {
         zklog.warning("Prefetch witness size " + std::to_string(witnessBytes) + " B does not split into " +
@@ -3918,11 +3780,11 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64
     const uint64_t unitBytes = witnessBytes / DeviceCommitBuffers::PREFETCH_UNIT_SPAN;
     uint64_t witnessArea = unitBytes * DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS;
     d_buffers->prefetchSlotStride = unitBytes / sizeof(gl64_t);
-    const uint64_t needed = witnessArea + fixedTreeBytes + packedConstBytes + 2 * recWitnessBytes;
+    const uint64_t needed = witnessArea;
     // The zone IS the unified buffer's prefetch region, always: the Rust side sizes the
     // region from the same numbers it passes here, so a mismatch is a bug -- refuse to
     // arm (proofs fall back to the legacy upload) rather than allocate elsewhere.
-    if (d_buffers->prefetchRegionBase == nullptr || d_buffers->prefetchRegionBytes < needed) {
+    if (d_buffers->prefetchZones[0].base == nullptr || d_buffers->prefetchRegionBytes < needed) {
         zklog.warning("Prefetch region absent or too small (" +
                       std::to_string(d_buffers->prefetchRegionBytes >> 20) + " MB < " +
                       std::to_string(needed >> 20) + " MB); prefetch zone NOT armed");
@@ -3932,50 +3794,24 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64
                std::to_string(d_buffers->prefetchRegionBytes >> 20) + " MB region): " +
                std::to_string(DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS) + " units x " +
                std::to_string(unitBytes >> 20) + " MB, up to " +
-               std::to_string(DeviceCommitBuffers::PREFETCH_UNIT_SPAN) + " per witness");
-    CHECKCUDAERR(cudaStreamCreateWithFlags(&d_buffers->prefetchStream, cudaStreamNonBlocking));
-    for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
-        CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->prefetchReady[s], cudaEventDisableTiming));
-        CHECKCUDAERR(cudaEventCreateWithFlags(&d_buffers->prefetchDrained[s], cudaEventDisableTiming));
-        d_buffers->prefetchInstanceId[s] = -1;
-        d_buffers->prefetchSpanUnits[s] = 0;
-        d_buffers->prefetchTraceBytes[s] = 0;
+               std::to_string(DeviceCommitBuffers::PREFETCH_UNIT_SPAN) + " per witness, on each of " +
+               std::to_string(d_buffers->n_gpus) + " GPUs");
+    int prevDevice = 0;
+    CHECKCUDAERR(cudaGetDevice(&prevDevice));
+    for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
+        CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
+        PrefetchZone &z = d_buffers->prefetchZones[g];
+        CHECKCUDAERR(cudaStreamCreateWithFlags(&z.stream, cudaStreamNonBlocking));
+        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&z.ready[s], cudaEventDisableTiming));
+            CHECKCUDAERR(cudaEventCreateWithFlags(&z.drained[s], cudaEventDisableTiming));
+            z.instanceId[s] = -1;
+            z.spanUnits[s] = 0;
+            z.traceBytes[s] = 0;
+        }
     }
+    CHECKCUDAERR(cudaSetDevice(prevDevice));
     d_buffers->prefetchArmed = true;
-}
-
-// Upload `instanceId`'s trace into the prefetch zone on the copy stream, while the
-// current proof runs. Chunked so no single transfer monopolizes PCIe. The caller must
-// keep `trace` alive until the matching gen_proof consumes the zone. Returns 0 on
-// success; negative = zone absent/unknown air/too small/every slot busy (caller falls
-// back to the legacy upload silently, and MUST NOT record the instance as staged).
-int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
-                             uint64_t airgroupId, uint64_t airId, void *trace) {
-    // OFF unless asked for: unvalidated. Unlike stage_witness_gpu it does not wait on its own
-    // H2D, so the caller must keep the source alive; enabling it has produced wrong challenges.
-    if (!proofLookaheadEnabled()) return -1;
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || !d_buffers->prefetchArmed || trace == nullptr) return -1;
-    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
-    auto key = std::make_pair(airgroupId, airId);
-    auto it = d_buffers->air_instances.find(key);
-    if (it == d_buffers->air_instances.end()) return -2;
-    auto pit = it->second.find("basic");
-    if (pit == it->second.end() || pit->second.empty()) return -2;
-    AirInstanceInfo *aii = pit->second[0];
-
-    uint64_t N = (1ull << setupCtx->starkInfo.starkStruct.nBits);
-    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
-    uint64_t total_size = (d_buffers->packedTrace && aii->is_packed)
-                              ? aii->num_packed_words * N * sizeof(Goldilocks::Element)
-                              : N * nCols * sizeof(Goldilocks::Element);
-
-    if (total_size > prefetchSpanBytes(d_buffers)) return -4;
-
-    std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
-    cudaSetDevice(d_buffers->my_gpu_ids[0]);
-    // -1 when no slot was free: the caller must not record a staging that did not happen.
-    return stageWitnessSlotLocked(d_buffers, instanceId, trace, total_size) < 0 ? -5 : 0;
 }
 
 void release_first_gpu_buffer_gpu(void *d_buffers_) {
@@ -3988,6 +3824,9 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (d_buffers->streamsData[i].gpuId != firstGpuId) continue;
+        // Under the per-stream lock: a harvest reads `proofType` (a std::string) under it, and
+        // invalidateContext() frees it (see reset_device_streams_gpu).
+        std::lock_guard<std::mutex> lg(d_buffers->streamsData[i].mutex_stream_selection);
         d_buffers->streamsData[i].invalidateContext();
         d_buffers->streamsData[i].instanceId = -1;        // clobbered witness, not ready
     }
@@ -3996,19 +3835,17 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
     // borrow. They must: the host buffer may already be released. Without slots there is no
     // ceiling, so drop them.
     if (d_buffers->prefetchArmed) {
-        const uint64_t zoneOffset = (uint64_t)((const uint8_t *)d_buffers->prefetchRegionBase -
-                                               (const uint8_t *)d_buffers->gpuMemoryBuffer[0]);
-        const bool borrowerCouldReachZone =
-            d_buffers->streamCommitSlots == 0 || d_buffers->streamCommitFloorBytes > zoneOffset;
-        if (borrowerCouldReachZone) {
-            std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
+        PrefetchZone &z = d_buffers->prefetchZones[0];
+        if (borrowerCouldReachZone(d_buffers)) {
+            std::lock_guard<std::mutex> lk(z.mutex);
             for (uint32_t sIdx = 0; sIdx < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; sIdx++) {
-                // A unit mid-copy (-3) belongs to a staging that will publish it; freeing it would
-                // let a second staging claim the same bytes.
-                if (d_buffers->prefetchInstanceId[sIdx] == -3) continue;
-                d_buffers->prefetchInstanceId[sIdx] = -1;
-                d_buffers->prefetchTraceBytes[sIdx] = 0;
-                d_buffers->prefetchSpanUnits[sIdx] = 0;
+                // A unit mid-copy (-3) belongs to a staging that will publish it, one being read (-2)
+                // to a slot commit that will free it; freeing either would let a second staging
+                // claim the same bytes.
+                if (z.instanceId[sIdx] == -3 || z.instanceId[sIdx] == -2) continue;
+                z.instanceId[sIdx] = -1;
+                z.traceBytes[sIdx] = 0;
+                z.spanUnits[sIdx] = 0;
             }
         }
     }
@@ -4097,7 +3934,7 @@ static void tryOpenPhaseB(DeviceCommitBuffers* d_buffers){
         uint32_t ring;
         { std::lock_guard<std::mutex> plk(sd.pipeMutex); ring = sd.pipeCount; }
         cudaSetDevice(sd.gpuId);
-        const bool idle = ring == 0 &&
+        const bool idle = ring == 0 && !sd.slotHeld.load(std::memory_order_acquire) &&
             (st == 0 || st == 3 || (st == 2 && cudaEventQuery(sd.end_event) == cudaSuccess));
         sd.mutex_stream_selection.unlock();
         if (!idle) return;
@@ -4210,8 +4047,9 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
                 if (firstGpuBorrowed && sd.gpuId == firstGpuId) continue;
                 if (!phaseBEligible(d_buffers, sd)) continue;
                 if (!pool(sd) || !sd.mutex_stream_selection.try_lock()) continue;
-                // Re-check the borrow flag under the lock.
-                if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+                // Re-check the borrow flag under the lock; a stream under a slot commit is busy.
+                if ((sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire))
+                    || sd.slotHeld.load(std::memory_order_acquire)) {
                     sd.mutex_stream_selection.unlock();
                     continue;
                 }
@@ -4360,7 +4198,8 @@ uint32_t reserve_stream_if_free_gpu(void* d_buffers_, uint32_t streamId, uint64_
         // held across that. The per-stream lock, which guards the state, stays held.
         std::lock_guard<std::mutex> gsel(d_buffers->stream_selection_mutex);
         if (!sd.mutex_stream_selection.try_lock()) return 0;
-        if (sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+        if ((sd.gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire))
+            || sd.slotHeld.load(std::memory_order_acquire)) {
             sd.mutex_stream_selection.unlock();
             return 0;
         }
@@ -4410,7 +4249,7 @@ void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId){
         // A proof launched outside the ring (sd.proofBuffer set: legacy path, e.g. before the
         // pipeline was enabled) is collected only by the sync-and-collect below; skipping it
         // would drop its completion for good.
-        if (d_buffers->pipelineMode && !sd.recursive && sd.proofBuffer == nullptr && sd.root == nullptr) {
+        if (d_buffers->pipelineMode && !sd.recursive && sd.proofBuffer == nullptr) {
             // Pipeline: harvest whatever already fired, and reserve WITHOUT the
             // host sync as long as a ring slot is free -- that is the whole point.
             harvestPipelineStream(d_buffers, streamId, false);
@@ -4437,11 +4276,6 @@ void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId){
     sd.status = 1;
 }
 
-void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
-    d_buffers->streamsData[streamId].mutex_stream_selection.lock();
-    reserveStreamLocked(d_buffers, streamId);
-    d_buffers->streamsData[streamId].mutex_stream_selection.unlock();
-}
 void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_id, uint64_t air_id, bool isProve) {
     TimerSyncAndLogAllGPU(timer, instance_id, airgroup_id, air_id);
     TimerSyncCategoriesGPU(timer);
