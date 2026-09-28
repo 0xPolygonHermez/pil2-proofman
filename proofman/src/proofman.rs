@@ -3862,15 +3862,18 @@ where
                     }
 
                     if new_proof_type == ProofType::Recursive2 {
-                        let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                        let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+                        let new_proof_ptr = recursive2_proofs_ongoing_clone.read().unwrap()[id]
+                            .as_ref()
+                            .unwrap()
+                            .proof
+                            .as_ptr() as *mut u64;
 
                         if let Err(e) = generate_recursive_proof(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             &mut witness,
-                            new_proof_ref,
+                            new_proof_ptr,
                             &aux_trace_clone,
                             &const_tree_clone,
                             &const_pols_clone,
@@ -3889,7 +3892,7 @@ where
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             &mut witness,
-                            new_proof_ref,
+                            new_proof_ref.proof.as_ptr() as *mut u64,
                             &aux_trace_clone,
                             &const_tree_clone,
                             &const_pols_clone,
@@ -3908,7 +3911,7 @@ where
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             &mut witness,
-                            new_proof_ref,
+                            new_proof_ref.proof.as_ptr() as *mut u64,
                             &aux_trace_clone,
                             &const_tree_clone,
                             &const_pols_clone,
@@ -4719,15 +4722,15 @@ where
 
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+                let new_proof_ptr =
+                    recursive2_proofs_ongoing_clone.read().unwrap()[id].as_ref().unwrap().proof.as_ptr() as *mut u64;
 
                 if let Err(e) = generate_recursive_proof(
                     &pctx_clone,
                     &memory_handler_recursive_witness,
                     &setups_clone,
                     &mut witness,
-                    new_proof_ref,
+                    new_proof_ptr,
                     &aux_trace_clone,
                     &const_tree_clone,
                     &const_pols_clone,
@@ -4925,15 +4928,15 @@ where
                     let id = new_proof.global_idx.unwrap();
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                    let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                    let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+                    let new_proof_ptr =
+                        recursive2_proofs_ongoing_clone.read().unwrap()[id].as_ref().unwrap().proof.as_ptr() as *mut u64;
 
                     if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
                         &memory_handler_recursive_witness,
                         &setups_clone,
                         &mut witness,
-                        new_proof_ref,
+                        new_proof_ptr,
                         &aux_trace_clone,
                         &const_tree_clone,
                         &const_pols_clone,
