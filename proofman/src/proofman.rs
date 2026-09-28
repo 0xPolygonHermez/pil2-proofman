@@ -159,7 +159,9 @@ use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols,
 };
-use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof};
+use crate::{
+    verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof, StreamReservation,
+};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
@@ -1861,6 +1863,9 @@ where
         );
 
         pctx.set_instance_stream_id(instance_id, stream_id);
+        // Returns the stream if anything below bails before the check takes it over: a stranded
+        // reservation leaves every later instance of its class spinning in selectStream.
+        let reservation = StreamReservation::new(pctx.get_device_buffers_ptr() as usize, stream_id as u32);
 
         if !pctx.gpu {
             calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
@@ -1894,6 +1899,7 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
+        reservation.commit();
         let valid =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
 

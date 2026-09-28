@@ -1,6 +1,7 @@
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{
     get_n_constraints_c, get_n_global_constraints_c, verify_global_constraints_c, verify_constraints_c,
+    release_stream_reservation_c,
 };
 use std::cmp;
 use proofman_common::{
@@ -73,6 +74,9 @@ pub fn verify_constraints<F: PrimeField64>(
             info_rust.skip = info_c.skip;
             info_rust.n_print_constraints = info_c.n_print_constraints;
         }
+    } else {
+        // Nothing launched on the stream the caller reserved; hand it back.
+        release_stream_reservation_c(pctx.get_device_buffers_ptr(), stream_id as u32);
     }
 
     Ok(constraints_info)
