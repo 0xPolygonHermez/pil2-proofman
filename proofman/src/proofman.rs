@@ -571,6 +571,8 @@ struct SlotCommitCtx {
     /// Airs a slot can take. See `slot_commit_airs`.
     airs: std::collections::HashSet<(usize, usize)>,
     committed: AtomicU64,
+    /// Packed-witness bytes of the slot commits in flight per GPU: places an unpinned commit.
+    load_bytes: Vec<AtomicU64>,
 }
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
@@ -3039,7 +3041,8 @@ where
                 let n_slots = get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr());
                 (n_slots > 0).then(|| {
                     // This process's GPUs: with several ranks per node the node count is larger.
-                    let pools = (0..get_stream_commit_gpus_c(self.pctx.get_device_buffers_ptr()))
+                    let n_gpus = get_stream_commit_gpus_c(self.pctx.get_device_buffers_ptr()) as usize;
+                    let pools = (0..n_gpus as u64)
                         .map(|g| {
                             let (tx, rx) = unbounded();
                             for j in 0..n_slots {
@@ -3050,7 +3053,13 @@ where
                         .collect();
                     let packed_info = slot_packed_info(&self.options);
                     let airs = slot_commit_airs(&self.pctx, &self.sctx, &packed_info).1;
-                    Arc::new(SlotCommitCtx { pools, packed_info, airs, committed: AtomicU64::new(0) })
+                    Arc::new(SlotCommitCtx {
+                        pools,
+                        packed_info,
+                        airs,
+                        committed: AtomicU64::new(0),
+                        load_bytes: (0..n_gpus).map(|_| AtomicU64::new(0)).collect(),
+                    })
                 })
             } else {
                 None
@@ -6226,9 +6235,18 @@ where
         };
         // Wait for a token (C waits out quiesce and region), so one call commits or errors.
         let timeout = std::time::Duration::from_secs(60);
-        let (pool, slot) = match staged_gpu {
-            Some(g) => (g, ctx.pools[g].1.recv_timeout(timeout).ok()),
-            None => {
+        let bytes = words_per_row << (ss.n_bits + 3);
+        // Unpinned: a free slot on the least-loaded GPU. None free: the first slot to free up.
+        let least_loaded_free = || -> Option<(usize, u64)> {
+            let mut order: Vec<usize> = (0..ctx.pools.len()).collect();
+            order.sort_by_key(|&g| ctx.load_bytes[g].load(Ordering::Relaxed));
+            order.into_iter().find_map(|g| ctx.pools[g].1.try_recv().ok().map(|slot| (g, slot)))
+        };
+        let free = if staged_gpu.is_none() { least_loaded_free() } else { None };
+        let (pool, slot) = match (staged_gpu, free) {
+            (Some(g), _) => (g, ctx.pools[g].1.recv_timeout(timeout).ok()),
+            (None, Some((g, slot))) => (g, Some(slot)),
+            (None, None) => {
                 let mut sel = crossbeam_channel::Select::new();
                 for (_, rx) in &ctx.pools {
                     sel.recv(rx);
@@ -6248,6 +6266,7 @@ where
                 "no streaming slot came free in 60 s for instance {instance_id} [{airgroup_id}:{air_id}]"
             )));
         };
+        ctx.load_bytes[pool].fetch_add(bytes, Ordering::Relaxed);
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
             slot,
@@ -6263,6 +6282,7 @@ where
             roots_contributions[instance_id].as_ptr() as *mut c_void,
             params as *mut c_void,
         );
+        ctx.load_bytes[pool].fetch_sub(bytes, Ordering::Relaxed);
         ctx.pools[pool].0.send(slot).ok();
         if rc != 0 {
             if rc == -20 || rc == -21 {
