@@ -729,6 +729,7 @@ extern "C" {
         airId: u64,
         trace: *mut ::std::os::raw::c_void,
     ) -> i64;
+    pub fn prefetch_zone_sync(d_buffers_: *mut ::std::os::raw::c_void);
     
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,

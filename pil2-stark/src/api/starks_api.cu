@@ -667,8 +667,18 @@ static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
     }
 }
 
+// Wait for every staging in flight on the prefetch zone's copy stream: their host traces are
+// then free to recycle.
+void prefetch_zone_sync_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr || d_buffers->prefetchStream == nullptr) return;
+    cudaSetDevice(d_buffers->my_gpu_ids[0]);
+    CHECKCUDAERR(cudaStreamSynchronize(d_buffers->prefetchStream));
+}
+
 void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    prefetch_zone_sync_gpu(d_buffers_);
 
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
         // Fence the stream BEFORE taking the lock: this sync can block indefinitely on a wedged

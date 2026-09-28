@@ -11,7 +11,7 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
-    prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    prefetch_witness_c, prefetch_zone_sync_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -3743,6 +3743,10 @@ where
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Held (dequeued-ahead) basics are no longer in the scheduler's queues, so
                         // the teardown drain can't recover them either: same recovery inline.
+                        // A held trace may still be read by its look-ahead staging.
+                        if pctx_clone.gpu && !held.is_empty() {
+                            prefetch_zone_sync_c(pctx_clone.get_device_buffers_ptr());
+                        }
                         for (hid, _, _) in held.drain(..) {
                             let (is_shared, buf) = pctx_clone.free_instance(hid);
                             if is_shared {
