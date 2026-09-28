@@ -665,6 +665,16 @@ static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
             fflush(stdout);
         }
     }
+    // A queued look-ahead staging still reads its host trace: fence the zone's copy stream too.
+    if (d_buffers->prefetchArmed && d_buffers->prefetchStream != nullptr) {
+        cudaSetDevice(d_buffers->my_gpu_ids[0]);
+        const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (cudaStreamQuery(d_buffers->prefetchStream) == cudaErrorNotReady &&
+               std::chrono::steady_clock::now() < stream_deadline) {
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        cudaGetLastError();
+    }
 }
 
 // Wait for every staging in flight on the prefetch zone's copy stream: their host traces are
@@ -679,6 +689,15 @@ void prefetch_zone_sync_gpu(void *d_buffers_) {
 void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     prefetch_zone_sync_gpu(d_buffers_);
+    // Drained, so drop the stagings no proof consumed (a cancelled run's look-aheads): left
+    // marked, they would hold both slots and refuse every later staging.
+    if (d_buffers->prefetchArmed) {
+        std::lock_guard<std::mutex> lk(d_buffers->prefetchMutex);
+        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+            d_buffers->prefetchInstanceId[s] = -1;
+            d_buffers->prefetchTraceBytes[s] = 0;
+        }
+    }
 
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
         // Fence the stream BEFORE taking the lock: this sync can block indefinitely on a wedged
