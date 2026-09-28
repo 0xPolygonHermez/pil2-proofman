@@ -6,6 +6,8 @@
 #include <string>
 #include <cuda_runtime.h>
 #include <vector>
+#include <map>
+#include <mutex>
 #ifndef __GOLDILOCKS_ENV__
 #include "zklog.hpp"
 #endif
@@ -36,7 +38,41 @@ public:
 
     void init(cudaStream_t s) { stream = s; }
 
+    // Per-device event pool reused across timers: cudaEventCreate/Destroy take the driver lock.
+    static std::mutex& eventPoolMutex() { static std::mutex m; return m; }
+    static std::map<int, std::vector<cudaEvent_t>>& eventPool() {
+        static std::map<int, std::vector<cudaEvent_t>> p;
+        return p;
+    }
+    int device = -1;
+
+    // Fill the current device's pool up front, so the first job creates none on its hot path.
+    static void prewarmEvents(size_t n) {
+        int dev = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess) return;
+        std::lock_guard<std::mutex> lk(eventPoolMutex());
+        auto& v = eventPool()[dev];
+        while (v.size() < n) {
+            cudaEvent_t e;
+            if (cudaEventCreate(&e) != cudaSuccess) return;
+            v.push_back(e);
+        }
+    }
+
+    void releaseEvent(cudaEvent_t event) {
+        if (event == nullptr) return;
+        if (device < 0) { cudaEventDestroy(event); return; }
+        std::lock_guard<std::mutex> lk(eventPoolMutex());
+        eventPool()[device].push_back(event);
+    }
+
     bool createEvent(cudaEvent_t& event) {
+        if (device < 0 && cudaGetDevice(&device) != cudaSuccess) device = -1;
+        if (device >= 0) {
+            std::lock_guard<std::mutex> lk(eventPoolMutex());
+            auto& v = eventPool()[device];
+            if (!v.empty()) { event = v.back(); v.pop_back(); return true; }
+        }
         cudaError_t err = cudaEventCreate(&event);
         if (err != cudaSuccess) {
 #ifndef __GOLDILOCKS_ENV__
@@ -217,8 +253,8 @@ public:
     void clearCategories() {
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
+                releaseEvent(entry.start);
+                releaseEvent(entry.stop);
             }
         }
         multiTimers.clear();
@@ -227,8 +263,8 @@ public:
 
     void clear() {
         for (auto& [_, entry] : timers) {
-            cudaEventDestroy(entry.start);
-            cudaEventDestroy(entry.stop);
+            releaseEvent(entry.start);
+            releaseEvent(entry.stop);
         }
         timers.clear();
         order.clear();
@@ -236,8 +272,8 @@ public:
 
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
+                releaseEvent(entry.start);
+                releaseEvent(entry.stop);
             }
         }
         multiTimers.clear();
