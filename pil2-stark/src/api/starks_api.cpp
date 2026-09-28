@@ -1079,6 +1079,11 @@ void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* 
 }
 
 
+// The zkin json gen_recursive_proof_final returns; host-only, so one definition serves CPU and GPU.
+void free_recursivef_proof(void *zkin) {
+    delete (json *)zkin;
+}
+
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {
         free(json_str);
