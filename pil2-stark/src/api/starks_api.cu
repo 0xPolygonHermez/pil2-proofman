@@ -1405,7 +1405,12 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
-    uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
+    if (!setupCtx->starkInfo.inplaceStageCommit) {
+        zklog.error("gen_proof_gpu: basic GPU setups must use the in-place stage commit layout");
+        exitProcess();
+    }
+    // The raw trace lands in cm1ext's upper half.
+    uint64_t *dst = (uint64_t *)(d_aux_trace + setupCtx->starkInfo.getTraceLandingOffset());
     // Zone is FIRST-GPU only for now (extending to all GPUs is planned once the
     // first version is in production); other GPUs use the legacy upload.
     if (d_buffers->prefetchArmed && sd.gpuId == d_buffers->my_gpu_ids[0]) {
@@ -2426,7 +2431,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
-    uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
+    // The raw trace lands in cm1ext's upper half; the small cm1 is the section's lower half.
+    uint64_t *dst = (uint64_t*)(d_aux_trace + setupCtx->starkInfo.getTraceLandingOffset());
     copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     PROOFMAN_SUMCHECK("contrib_before_unpack", dst, total_size / sizeof(uint64_t), stream);
 
@@ -2440,9 +2446,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     NTTGoldilocksGPU ntt;
 
     if (d_buffers->packedTrace && air_instance_info->is_packed) {
-        unpack_trace(air_instance_info, (uint64_t *)(d_aux_trace + offset_dst), (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
+        unpack_trace(air_instance_info, dst, (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
     } else {
-        fromRowMajorToColMajor(N, nCols, (gl64_t *)(d_aux_trace + offset_dst), (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
+        fromRowMajorToColMajor(N, nCols, (gl64_t *)dst, (gl64_t *)(d_aux_trace + offset_src), resolveLayout(nBits, nCols), stream);
     }
     PROOFMAN_SUMCHECK("contrib_after_unpack", d_aux_trace + offset_src, N * nCols, stream);
 
@@ -2549,7 +2555,8 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     PROOFMAN_SUMCHECK("contrib_before_lde", d_aux_trace + offset_src, N * nCols, stream);
     auto commitLdeBody = [&] {
-        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx->starkInfo.getNumNodesMT(NExtended));
+        // In place (equal bases) the source cannot be preserved.
+        ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream, offset_src != offset_dst, (gl64_t*)pNodes, setupCtx->starkInfo.getNumNodesMT(NExtended));
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         // cm1 contribution commit: read the extended trace in the layout the LDE wrote (resolveLayout on
         // the small domain). When tiled AIRs existed, hardcoding ColMajor here made the tiled contribution

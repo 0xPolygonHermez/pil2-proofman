@@ -87,6 +87,12 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool fixedTreePending = false) {
+    // On a basic air `recursive` means selfContained, whose cm1 root must precede stage 2.
+    if (recursive && setupCtx.starkInfo.inplaceStageCommit) {
+        zklog.error("genProof_gpu: self-contained proofs of basic airs are not supported by the "
+                    "in-place stage commit (the cm1 root would be needed before stage 2)");
+        exitProcess();
+    }
     // Per-stream timer is reused: drop categories left open by an aborted job, and the load
     // phase's, so KERNELS CONTRIBUTIONS covers the proof window only.
     TimerResetCategoriesGPU(timer);
@@ -251,24 +257,29 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
 
-    uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offsetTraceLanding = setupCtx.starkInfo.getTraceLandingOffset();
     if (d_buffers->packedTrace && air_instance_info->is_packed) {
         uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
-        unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer);
+        unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetTraceLanding, (uint64_t*)h_params.trace, nCols, N, stream, timer);
     } else {
-        fromRowMajorToColMajor(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetCm1Extended, (gl64_t*)h_params.trace, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm1"]), stream);
+        fromRowMajorToColMajor(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetTraceLanding, (gl64_t*)h_params.trace, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm1"]), stream);
     }
     
-    TimerStopGPU(timer, STARK_STEP_0);
-    
-    TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
     cudagraph::run(cudagraph::key(0x57455850ULL ^ graphCtxId), countId, stream, [&] {
         calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     });
-    cudagraph::run(cudagraph::key(0x434d5431ULL ^ graphCtxId, recursive), countId, stream, [&] {
-    commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, timer, stream);
-    });
-    TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
+    TimerStopGPU(timer, STARK_STEP_0);
+
+    // In place, cm1 is extended over itself, so it commits after the stage-2 witness has read it.
+    // The transcript is unchanged: a non-recursive proof never absorbs the cm1 root.
+    auto commitStage1 = [&] {
+        TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
+        cudagraph::run(cudagraph::key(0x434d5431ULL ^ graphCtxId, recursive), countId, stream, [&] {
+        commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, timer, stream);
+        });
+        TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
+    };
+    if (!setupCtx.starkInfo.inplaceStageCommit) commitStage1();
 
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
     cudagraph::run(cudagraph::key(0x53544432ULL ^ graphCtxId), countId, stream, [&] {
@@ -293,6 +304,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     });
     TimerStopGPU(timer, CALCULATE_IM_POLS);
+
+    if (setupCtx.starkInfo.inplaceStageCommit) commitStage1();
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
     cudagraph::run(cudagraph::key(0x434d5432ULL ^ graphCtxId), countId, stream, [&] {

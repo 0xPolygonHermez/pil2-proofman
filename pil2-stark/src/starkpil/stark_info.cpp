@@ -13,6 +13,7 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
+    inplaceStageCommit = gpu_ && !final_ && !recursive_ && !verify_constraints_ && !verify_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -589,7 +590,19 @@ void StarkInfo::setMapOffsets() {
     mapTotalN += NExtended * mapSectionsN["cm1"];
     mapOffsets[std::make_pair("mt1", true)] = mapTotalN;
     mapTotalN += numNodes;
-    
+
+    if (inplaceStageCommit) {
+        mapOffsets[std::make_pair("cm1", false)] = mapOffsets[std::make_pair("cm1", true)];
+        mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
+        mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
+        mapTotalN += NExtended * mapSectionsN["cm2"];
+        mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
+        mapTotalN += numNodes;
+        mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
+        mapTotalN += NExtended * mapSectionsN["cm3"];
+        mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
+        mapTotalN += numNodes;
+    } else {
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
     mapTotalNContributions = recursive ? 0 : mapTotalN + N * mapSectionsN["cm1"];
 
@@ -600,7 +613,7 @@ void StarkInfo::setMapOffsets() {
     mapTotalN = std::max(mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"], mapTotalN);
 
     mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
-    
+
     mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm3"];
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
@@ -612,6 +625,7 @@ void StarkInfo::setMapOffsets() {
     }
 
     mapTotalN = std::max(mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"], mapTotalN);
+    }
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
@@ -732,6 +746,12 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     if(mapBuffHelper > mapTotalN) {
         mapTotalN = mapBuffHelper;
     }
+}
+
+// In place the small cm1 owns the section's lower half, so the raw trace lands in the upper one.
+uint64_t StarkInfo::getTraceLandingOffset() {
+    uint64_t base = mapOffsets[std::make_pair("cm1", true)];
+    return inplaceStageCommit ? base + (1ull << starkStruct.nBits) * mapSectionsN["cm1"] : base;
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {

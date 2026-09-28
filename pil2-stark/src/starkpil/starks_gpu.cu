@@ -299,9 +299,10 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     {
         // Stage label carries the commit step (cm1, cm2, ...) so each is distinguishable in the log.
         PROOFMAN_SUMCHECK("proof_before_lde_cm%u", src + offset_src, ((uint64_t)1 << setupCtx.starkInfo.starkStruct.nBits) * nCols, stream, (unsigned)step);
-        // pNodes is free scratch until the merkelize below fills it; its capacity lets the
-        // LDE stage a wider column chunk.
-        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, true, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
+        // pNodes is LDE scratch until the merkelize fills it. An in-place stage (equal bases) cannot
+        // preserve its source.
+        const bool aliased = (src + offset_src) == (dst + offset_dst);
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMT(NExtended));
         PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);

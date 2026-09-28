@@ -192,6 +192,8 @@ public:
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
     bool recursive = false;
+    // GPU basic airs extend cm1/cm2 over their small traces (recursive airs need the cm1 root first).
+    bool inplaceStageCommit = false;
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
@@ -213,6 +215,8 @@ public:
     /* Constructor */
     StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
     StarkInfo() {};
+
+    uint64_t getTraceLandingOffset();
     
     /* Loads data from a json object */
     void load (json j);
