@@ -328,8 +328,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
     witness: &mut Proof<F>,
-    // Base of the output proof buffer. The GPU fills it after this returns, so it must stay
-    // allocated until the proof completes.
+    // The output buffer; the GPU writes it after this returns, so it must outlive the proof.
     new_proof: *mut u64,
     prover_buffer: &[F],
     const_tree: &[F],
@@ -388,12 +387,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         };
 
     if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalCompressed {
-        add_publics_aggregation_c(
-            new_proof as *mut u8,
-            0,
-            publics.as_ptr() as *mut u8,
-            publics_aggregation as u64,
-        );
+        add_publics_aggregation_c(new_proof as *mut u8, 0, publics.as_ptr() as *mut u8, publics_aggregation as u64);
     }
     // For VadcopFinal / VadcopFinalCompressed the caller writes the public section from the `publics`
     // returned below — the circuit's OUTPUT publics (flag at index 0), NOT `pctx.get_publics()`, which
@@ -418,7 +412,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         const_pols_ptr,
         const_tree_ptr,
         publics.as_ptr() as *mut u8,
-        unsafe { new_proof.add(initial_idx) },
+        new_proof.wrapping_add(initial_idx),
         "",
         airgroup_id as u64,
         air_id as u64,
