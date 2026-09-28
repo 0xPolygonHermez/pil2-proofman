@@ -198,6 +198,9 @@ pub struct ProofmanOptions {
     /// Custom-commit name -> packed file, known up front: the const buffer then reserves each commit's
     /// real packed width instead of one word per column. Same map `register_custom_commits` takes.
     pub custom_commits_fixed: HashMap<String, PathBuf>,
+
+    /// Basic airs are proved with no global challenge (prove-air), so none takes the in-place commit.
+    pub self_contained: bool,
 }
 
 impl Default for ProofmanOptions {
@@ -216,6 +219,7 @@ impl Default for ProofmanOptions {
             packed_info: HashMap::new(),
             final_snark: false,
             custom_commits_fixed: HashMap::new(),
+            self_contained: false,
         }
     }
 }
@@ -266,6 +270,10 @@ impl ProofmanOptions {
     pub fn verify_constraints(&mut self) {
         self.verify_constraints = true;
         self.aggregation = false;
+    }
+
+    pub fn self_contained(&mut self) {
+        self.self_contained = true;
     }
 
     pub fn no_aggregation(&mut self) {

@@ -2169,6 +2169,7 @@ where
             self.options.gpu,
             Some(&vadcop_final_stem),
             &self.options.custom_commits_fixed,
+            false,
         )?;
 
         tracing::info!(
@@ -5534,6 +5535,7 @@ where
             options.verify_constraints,
             options.gpu,
             &options.custom_commits_fixed,
+            options.self_contained,
         )?);
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(

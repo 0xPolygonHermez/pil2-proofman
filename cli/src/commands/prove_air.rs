@@ -81,9 +81,38 @@ pub struct ProveAirCmd {
     #[clap(long, requires = "witness_lib")]
     pub no_verify: bool,
 
+    /// Prove the same air N times in one process and report per-run timings. Run 1 is reported
+    /// apart: it pays the lazy CUDA module load, so a single-shot run is never the steady state.
+    #[clap(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub repeat: u32,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
+}
+
+/// Per-run `--repeat` timings. Run 1 is kept out of the stats: it is the cold one.
+fn report_repeat(label: &str, times: &[std::time::Duration]) {
+    let ms = |d: &std::time::Duration| d.as_secs_f64() * 1e3;
+    for (i, d) in times.iter().enumerate() {
+        tracing::info!("    {label} run {:<3} {:>9.2} ms{}", i + 1, ms(d), if i == 0 { "   (cold)" } else { "" });
+    }
+    if times.len() < 2 {
+        return;
+    }
+    let mut warm: Vec<f64> = times[1..].iter().map(ms).collect();
+    warm.sort_by(|a, b| a.total_cmp(b));
+    let mean = warm.iter().sum::<f64>() / warm.len() as f64;
+    let median = warm[warm.len() / 2];
+    tracing::info!(
+        "    {label} warm ({} runs): min {:.2} / median {:.2} / mean {:.2} / max {:.2} ms",
+        warm.len(),
+        warm[0],
+        median,
+        mean,
+        warm[warm.len() - 1],
+    );
+    tracing::info!("    {label} cold run was {:+.1}% against the warm median", 100.0 * (ms(&times[0]) / median - 1.0));
 }
 
 impl ProveAirCmd {
@@ -105,6 +134,7 @@ impl ProveAirCmd {
     fn run_witness_lib(&self, witness_lib: &Path, air: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut options = ProofmanOptions::new();
         options.no_aggregation();
+        options.self_contained();
         if self.gpu {
             options.gpu();
         }
@@ -126,13 +156,22 @@ impl ProveAirCmd {
         options.verbose_mode(self.verbose.into());
 
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
-        proofman.generate_air_proof(
-            witness_lib.to_path_buf(),
-            self.public_inputs.clone(),
-            air,
-            self.verbose.into(),
-            !self.no_verify,
-        )?;
+        // ProofMan owns witness generation, so a repeat here times witness + proof together.
+        let mut times = Vec::with_capacity(self.repeat as usize);
+        for _ in 0..self.repeat {
+            let started = std::time::Instant::now();
+            proofman.generate_air_proof(
+                witness_lib.to_path_buf(),
+                self.public_inputs.clone(),
+                air,
+                self.verbose.into(),
+                !self.no_verify,
+            )?;
+            times.push(started.elapsed());
+        }
+        if self.repeat > 1 {
+            report_repeat("witness+proof", &times);
+        }
 
         Ok(())
     }
@@ -203,7 +242,15 @@ impl ProveAirCmd {
             ))));
         };
 
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&pctx.global_info, &setup_proof_type, false, self.gpu)?;
+        // Self-contained: a Basic-slot air must not take the in-place commit.
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new_with_commit_files(
+            &pctx.global_info,
+            &setup_proof_type,
+            false,
+            self.gpu,
+            &std::collections::HashMap::new(),
+            true,
+        )?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
@@ -347,32 +394,41 @@ impl ProveAirCmd {
 
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
-        timer_start_info!(GEN_RECURSIVE_PROOF);
-        let stream_id = gen_recursive_proof_c(
-            p_setup,
-            trace.as_ptr() as *mut u8,
-            aux_trace.as_ptr() as *mut u8,
-            const_pols_ptr,
-            const_tree_ptr,
-            publics.as_ptr() as *mut u8,
-            proof_buffer[publics_aggregation..].as_mut_ptr(),
-            "",
-            airgroup_id as u64,
-            air_id as u64,
-            0,
-            true,
-            pctx.get_device_buffers_ptr(),
-            &setup.const_pols_path,
-            &setup.const_pols_tree_path,
-            proof_type_str,
-            false,
-            "",
-            u64::MAX, // one-off launch: reserve stream internally
-        );
+        // Deterministic over a fixed trace, so each run rewrites the same proof; the last is verified below.
+        let mut times = Vec::with_capacity(self.repeat as usize);
+        for _ in 0..self.repeat {
+            let started = std::time::Instant::now();
+            timer_start_info!(GEN_RECURSIVE_PROOF);
+            let stream_id = gen_recursive_proof_c(
+                p_setup,
+                trace.as_ptr() as *mut u8,
+                aux_trace.as_ptr() as *mut u8,
+                const_pols_ptr,
+                const_tree_ptr,
+                publics.as_ptr() as *mut u8,
+                proof_buffer[publics_aggregation..].as_mut_ptr(),
+                "",
+                airgroup_id as u64,
+                air_id as u64,
+                0,
+                true,
+                pctx.get_device_buffers_ptr(),
+                &setup.const_pols_path,
+                &setup.const_pols_tree_path,
+                proof_type_str,
+                false,
+                "",
+                u64::MAX, // one-off launch: reserve stream internally
+            );
 
-        // Async: proof_buffer is only filled once the stream drains.
-        get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
-        timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
+            // Async: proof_buffer is only filled once the stream drains; timed, deliberately.
+            get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
+            timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
+            times.push(started.elapsed());
+        }
+        if self.repeat > 1 {
+            report_repeat("proof", &times);
+        }
 
         // challenges=None: the verifier reseeds from verkey + publics, as the prover did.
         timer_start_info!(VERIFY_RECURSIVE_PROOF);

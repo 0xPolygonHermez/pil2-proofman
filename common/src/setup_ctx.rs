@@ -86,6 +86,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 gpu,
                 None,
                 custom_commits_fixed,
+                false,
             )?;
 
             // Only if the key says it carries the stage. `Setup::new` reads the starkinfo from disk
@@ -103,6 +104,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     gpu,
                     None,
                     custom_commits_fixed,
+                    false,
                 )?)
             } else {
                 None
@@ -331,6 +333,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         verify_constraints: bool,
         gpu: bool,
         custom_commits_fixed: &HashMap<String, PathBuf>,
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
 
@@ -378,6 +381,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
                     custom_commits_fixed,
+                    self_contained,
                 )?;
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
@@ -536,7 +540,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         verify_constraints: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        Self::new_with_commit_files(global_info, setup_type, verify_constraints, gpu, &HashMap::new())
+        Self::new_with_commit_files(global_info, setup_type, verify_constraints, gpu, &HashMap::new(), false)
     }
 
     pub fn new_with_commit_files(
@@ -545,9 +549,10 @@ impl<F: PrimeField64> SetupCtx<F> {
         verify_constraints: bool,
         gpu: bool,
         custom_commits_fixed: &HashMap<String, PathBuf>,
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let setup_repository =
-            SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed)?;
+            SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed, self_contained)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
