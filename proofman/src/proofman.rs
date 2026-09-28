@@ -1863,7 +1863,7 @@ where
         );
 
         pctx.set_instance_stream_id(instance_id, stream_id);
-        // Returns the stream if anything below bails before the check takes it over: a stranded
+        // Returns the stream if anything bails before the check launches on it: a stranded
         // reservation leaves every later instance of its class spinning in selectStream.
         let reservation = StreamReservation::new(pctx.get_device_buffers_ptr() as usize, stream_id as u32);
 
@@ -1899,9 +1899,8 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
-        reservation.commit();
         let valid =
-            verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
+            verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, reservation)?;
 
         if !valid {
             valid_constraints.fetch_and(valid, Ordering::Relaxed);

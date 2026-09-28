@@ -1124,10 +1124,10 @@ pub fn reserve_stream_if_free_c(
     unsafe { reserve_stream_if_free(d_buffers, stream_id, airgroup_id, air_id, proof_type_ptr, force_recursive) != 0 }
 }
 
-/// Scheduler: give back a reservation the caller never launched on. A reserved stream reads as busy
-/// to every selection pass, so failing between reserve and launch without this would strand the slot
-/// for the process lifetime. Only releases a stream still in the reserved state, so it is safe to
-/// call unconditionally on an error path.
+/// Give back a reservation the caller bailed out of. A reserved stream reads as busy to every
+/// selection pass, so failing without this would strand the slot for the process lifetime. Work
+/// already queued on the stream drains before it is reused. Only releases a stream still in the
+/// reserved state, so it is safe to call unconditionally on an error path.
 pub fn release_stream_reservation_c(d_buffers: *mut c_void, stream_id: u32) {
     unsafe { release_stream_reservation(d_buffers, stream_id) }
 }
