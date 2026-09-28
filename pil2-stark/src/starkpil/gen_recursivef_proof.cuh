@@ -103,7 +103,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
     uint64_t offsetQ = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     uint64_t offsetFRI = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    uint64_t offsetHelper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
 
 
     StepsParams h_params = {
@@ -277,7 +276,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         if (step > 0) {
             uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-            fold_inplace(step, offsetFRI, offsetHelper, h_params.challenges, nBits, prevBits, currentBits, (gl64_t *)d_aux_trace, timer, stream);
+            fold_inplace(step, offsetFRI, h_params.challenges, nBits, prevBits, currentBits, (gl64_t *)d_aux_trace, timer, stream);
         }
         if (step < nStepsFRI - 1)
         {
