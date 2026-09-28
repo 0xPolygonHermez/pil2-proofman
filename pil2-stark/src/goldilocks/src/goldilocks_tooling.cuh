@@ -549,6 +549,8 @@ struct StreamData{
         CHECKCUDAERR(cudaEventCreateWithFlags(&fixedPolsDone, cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeDone, cudaEventDisableTiming));
         for (TimerGPU &t : timers) t.init(stream);
+        // Fill this device's timer event pool now, not on the first proof's hot path.
+        if (TimerGPU::on()) TimerGPU::prewarmEvents(2048);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
         recursive = recursive_;

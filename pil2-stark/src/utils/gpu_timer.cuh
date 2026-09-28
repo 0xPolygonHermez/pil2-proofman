@@ -59,9 +59,11 @@ public:
         }
     }
 
+    // Pooled only once its last record completed: a pending one could be re-recorded by another
+    // stream. cudaEventDestroy defers the release of a pending event itself.
     void releaseEvent(cudaEvent_t event) {
         if (event == nullptr) return;
-        if (device < 0) { cudaEventDestroy(event); return; }
+        if (device < 0 || cudaEventQuery(event) != cudaSuccess) { cudaEventDestroy(event); return; }
         std::lock_guard<std::mutex> lk(eventPoolMutex());
         eventPool()[device].push_back(event);
     }
