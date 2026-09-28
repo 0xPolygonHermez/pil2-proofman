@@ -4205,6 +4205,7 @@ where
                     let new_proof_type = new_proof.proof_type;
 
                     let id = new_proof.global_idx.unwrap();
+                    let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
                     if new_proof_type == ProofType::Recursive2 {
                         recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
                     } else if new_proof_type == ProofType::Compressor {
@@ -4213,67 +4214,21 @@ where
                         *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
 
-                    if new_proof_type == ProofType::Recursive2 {
-                        let new_proof_ptr = recursive2_proofs_ongoing_clone.read().unwrap()[id]
-                            .as_ref()
-                            .unwrap()
-                            .proof
-                            .as_ptr() as *mut u64;
-
-                        if let Err(e) = generate_recursive_proof(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &mut witness,
-                            new_proof_ptr,
-                            &aux_trace_clone,
-                            &const_tree_clone,
-                            &const_pols_clone,
-                            force_recursive_stream,
-                            reserved_stream,
-                            None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
-                    } else if new_proof_type == ProofType::Compressor {
-                        let compressor_lock = compressor_proofs_clone[id].read().unwrap();
-                        let new_proof_ref = compressor_lock.as_ref().unwrap();
-                        if let Err(e) = generate_recursive_proof(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &mut witness,
-                            new_proof_ref.proof.as_ptr() as *mut u64,
-                            &aux_trace_clone,
-                            &const_tree_clone,
-                            &const_pols_clone,
-                            force_recursive_stream,
-                            reserved_stream,
-                            None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
-                    } else {
-                        let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
-                        let new_proof_ref = recursive1_lock.as_ref().unwrap();
-                        if let Err(e) = generate_recursive_proof(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &mut witness,
-                            new_proof_ref.proof.as_ptr() as *mut u64,
-                            &aux_trace_clone,
-                            &const_tree_clone,
-                            &const_pols_clone,
-                            force_recursive_stream,
-                            reserved_stream,
-                            None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
+                    if let Err(e) = generate_recursive_proof(
+                        &pctx_clone,
+                        &memory_handler_recursive_witness,
+                        &setups_clone,
+                        &mut witness,
+                        new_proof_ptr,
+                        &aux_trace_clone,
+                        &const_tree_clone,
+                        &const_pols_clone,
+                        force_recursive_stream,
+                        reserved_stream,
+                        None,
+                    ) {
+                        cancellation_info_clone.write_recover().cancel(Some(e));
+                        break;
                     }
 
                     pending.commit();
@@ -5072,10 +5027,8 @@ where
                     }
                 };
 
+                let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
-
-                let new_proof_ptr =
-                    recursive2_proofs_ongoing_clone.read().unwrap()[id].as_ref().unwrap().proof.as_ptr() as *mut u64;
 
                 if let Err(e) = generate_recursive_proof(
                     &pctx_clone,
@@ -5278,10 +5231,8 @@ where
                     };
 
                     let id = new_proof.global_idx.unwrap();
+                    let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
-
-                    let new_proof_ptr =
-                        recursive2_proofs_ongoing_clone.read().unwrap()[id].as_ref().unwrap().proof.as_ptr() as *mut u64;
 
                     if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
