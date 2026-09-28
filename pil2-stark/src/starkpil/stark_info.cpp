@@ -643,8 +643,7 @@ void StarkInfo::setMapOffsets() {
 
     maxTotalN = std::max(maxTotalN, LEvSize);
 
-    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
+    // FRI layers follow q directly: x, zi and the expression tmps are dead once folding starts.
 
     if (!gpu) {
         uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];

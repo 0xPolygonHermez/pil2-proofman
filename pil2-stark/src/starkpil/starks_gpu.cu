@@ -775,7 +775,8 @@ __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_tw
     }
 }
 
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
+// Any ratio: each thread's ratio*FIELD_EXTENSION workspace is a shared-memory slice after the twiddles.
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
 {
 
     extern __shared__ gl64_t s_twiddles[];
@@ -816,7 +817,7 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
             exponent /= 2;
         }
 
-        gl64_t *ppar = (gl64_t *)d_ppar + id * ratio * FIELD_EXTENSION;
+        gl64_t *ppar = s_twiddles + (ratio >> 1) + threadIdx.x * ratio * FIELD_EXTENSION;
         for (int i = 0; i < ratio; i++)
         {
             int ind = i * FIELD_EXTENSION;
@@ -930,13 +931,12 @@ __global__ void fold_reg(gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Elemen
     }
 }
 
-void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream)
+void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream)
 {
 
     uint32_t ratio = 1 << (prevBits - currentBits);
     uint64_t halfRatio = ratio >> 1;
     gl64_t *d_friPol = (gl64_t *)(d_aux_trace + friPol_offset);
-    gl64_t *d_ppar = (gl64_t *)d_aux_trace + offset_helper;
 
     uint64_t sizeFoldedPol = 1 << currentBits;
 
@@ -970,9 +970,18 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     case 16:
         fold_reg<16><<<nBlocks, nThreads, sharedMem, stream>>>(d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, currentBits);
         break;
-    default:
-        fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+    default: {
+        const uint64_t sliceElems = (uint64_t)ratio * FIELD_EXTENSION;
+        const uint64_t budgetElems = (48 * 1024) / sizeof(gl64_t);
+        if (budgetElems < halfRatio + sliceElems) {
+            zklog.error("fold_inplace: a fold by " + std::to_string(prevBits - currentBits) + " bits does not fit in shared memory");
+            exitProcess();
+        }
+        const uint64_t tpb = std::min<uint64_t>(256, (budgetElems - halfRatio) / sliceElems);
+        dim3 blocksShared((sizeFoldedPol + tpb - 1) / tpb);
+        fold<<<blocksShared, (uint32_t)tpb, (halfRatio + tpb * sliceElems) * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
         break;
+    }
     }
     TimerStopCategoryGPU(timer, FRI);
     CHECKCUDAERR(cudaGetLastError());

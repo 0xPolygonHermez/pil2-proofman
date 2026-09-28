@@ -101,7 +101,7 @@ void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsEx
 
 void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, uint64_t nOpeningPoints, int64_t *openingPoints, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
 
-void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream);
+void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream);
 
 void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t step, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 
