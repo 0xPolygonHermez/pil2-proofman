@@ -776,7 +776,7 @@ __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_tw
 }
 
 // Any ratio: each thread's ratio*FIELD_EXTENSION workspace is a shared-memory slice after the twiddles.
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_scratch, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
 {
 
     extern __shared__ gl64_t s_twiddles[];
@@ -817,7 +817,8 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, Goldilo
             exponent /= 2;
         }
 
-        gl64_t *ppar = s_twiddles + (ratio >> 1) + threadIdx.x * ratio * FIELD_EXTENSION;
+        gl64_t *ppar = d_scratch != nullptr ? d_scratch + (uint64_t)id * ratio * FIELD_EXTENSION
+                                            : s_twiddles + (ratio >> 1) + threadIdx.x * ratio * FIELD_EXTENSION;
         for (int i = 0; i < ratio; i++)
         {
             int ind = i * FIELD_EXTENSION;
@@ -973,13 +974,23 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *d_
     default: {
         const uint64_t sliceElems = (uint64_t)ratio * FIELD_EXTENSION;
         const uint64_t budgetElems = (48 * 1024) / sizeof(gl64_t);
-        if (budgetElems < halfRatio + sliceElems) {
-            zklog.error("fold_inplace: a fold by " + std::to_string(prevBits - currentBits) + " bits does not fit in shared memory");
+        if (budgetElems < halfRatio) {
+            zklog.error("fold_inplace: a fold by " + std::to_string(prevBits - currentBits) + " bits exceeds the 13-bit limit (twiddles in shared memory)");
             exitProcess();
         }
-        const uint64_t tpb = std::min<uint64_t>(256, (budgetElems - halfRatio) / sliceElems);
-        dim3 blocksShared((sizeFoldedPol + tpb - 1) / tpb);
-        fold<<<blocksShared, (uint32_t)tpb, (halfRatio + tpb * sliceElems) * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+        if (budgetElems >= halfRatio + sliceElems) {
+            // Each thread's workspace is a shared-memory slice after the twiddles.
+            const uint64_t tpb = std::min<uint64_t>(256, (budgetElems - halfRatio) / sliceElems);
+            dim3 blocksShared((sizeFoldedPol + tpb - 1) / tpb);
+            fold<<<blocksShared, (uint32_t)tpb, (halfRatio + tpb * sliceElems) * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, nullptr, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+        } else {
+            // A slice too wide for shared memory: stream-ordered global scratch (a graph memory
+            // node when captured), so nothing is reserved in the layout for this rare case.
+            gl64_t *d_scratch = nullptr;
+            CHECKCUDAERR(cudaMallocAsync((void **)&d_scratch, sizeFoldedPol * sliceElems * sizeof(gl64_t), stream));
+            fold<<<nBlocks, nThreads, halfRatio * sizeof(gl64_t), stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_scratch, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
+            CHECKCUDAERR(cudaFreeAsync(d_scratch, stream));
+        }
         break;
     }
     }
