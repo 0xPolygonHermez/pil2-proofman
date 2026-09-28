@@ -14,10 +14,16 @@
 #include "exit_process.hpp"
 #include "multiplicity_decoders.hpp"
 
+// An air as the multiplicity registry names it: air ids repeat across airgroups.
+inline uint64_t mulAirKey(uint64_t airgroupId, uint64_t airId) { return (airgroupId << 32) | airId; }
+inline std::string mulAirName(uint64_t airKey) {
+    return std::to_string(airKey >> 32) + "/" + std::to_string(airKey & 0xFFFFFFFFull);
+}
+
 // Virtual-table geometry, registered per run from StdVirtualTable::new. Integers only: the host
 // accumulator pointer is passed per call, never retained here.
 struct MulVtLayout {
-    uint64_t airId = 0;
+    uint64_t airKey = 0;                     // mulAirKey(airgroup, air)
     uint64_t nCounters = 0;                  // numRows * num_muls
     std::map<uint64_t, uint64_t> accBase;    // table_id -> acc_height
 
@@ -38,8 +44,8 @@ inline std::vector<MulVtLayout>& mulVtLayouts() {
     return v;
 }
 
-inline const MulVtLayout* mulLayoutFor(uint64_t airId) {
-    for (const auto& l : mulVtLayouts()) if (l.airId == airId) return &l;
+inline const MulVtLayout* mulLayoutFor(uint64_t airKey) {
+    for (const auto& l : mulVtLayouts()) if (l.airKey == airKey) return &l;
     return nullptr;
 }
 
@@ -54,12 +60,12 @@ inline void mul_register_vt(uint64_t airgroupId, uint64_t airId,
                             uint64_t numRows, uint64_t numCols,
                             const uint64_t* tableIds, const uint64_t* accBases, uint64_t nTables) {
     MulVtLayout L;
-    L.airId = airId;
+    L.airKey = mulAirKey(airgroupId, airId);
     L.nCounters = numRows * numCols;
     for (uint64_t k = 0; k < nTables; ++k) L.accBase[tableIds[k]] = accBases[k];
     // Re-registering an air replaces its layout, so a repeated call cannot duplicate it.
     auto it = std::find_if(mulVtLayouts().begin(), mulVtLayouts().end(),
-                           [&](const MulVtLayout& o){ return o.airId == airId; });
+                           [&](const MulVtLayout& o){ return o.airKey == L.airKey; });
     if (it != mulVtLayouts().end()) *it = L;
     else mulVtLayouts().push_back(L);
     zklog.trace("Virtual table air " + std::to_string(airgroupId) + "/" + std::to_string(airId) + ": "
@@ -127,7 +133,7 @@ inline void mul_materialize_decoders() {
             if (!L.accBase.count(o.table_id) || mulDecoderFor(o.table_id) != nullptr) continue;
             MulDecoder d{};
             d.table_id = (uint32_t)o.table_id;
-            d.hostAirId = L.airId;
+            d.hostAirKey = L.airKey;
             d.acc_base = L.accBase.at(o.table_id);
             d.n_rows   = L.tableHeight(o.table_id);
             d.bias     = o.bias;
@@ -141,7 +147,7 @@ inline void mul_materialize_decoders() {
             zklog.trace("Multiplicity decoder: table " + std::to_string(o.table_id)
                        + " acc_base=" + std::to_string(d.acc_base)
                        + " n_rows=" + std::to_string(d.n_rows)
-                       + " bias=" + std::to_string(d.bias) + " air=" + std::to_string(L.airId));
+                       + " bias=" + std::to_string(d.bias) + " air=" + mulAirName(L.airKey));
         }
     }
 }
@@ -173,8 +179,8 @@ inline uint64_t mul_migrated_tables_impl(uint64_t* out, uint64_t cap) {
 }
 
 // Whether the prover counts anything in this air; if not, the host builds no accumulator for it.
-inline bool mul_air_has_owned_tables(uint64_t airId) {
-    const MulVtLayout* L = mulLayoutFor(airId);
+inline bool mul_air_has_owned_tables(uint64_t airKey) {
+    const MulVtLayout* L = mulLayoutFor(airKey);
     return L != nullptr && mulLayoutHostsMigrated(*L);
 }
 

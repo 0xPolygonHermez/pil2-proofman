@@ -34,14 +34,17 @@ static constexpr uint32_t SC_DIGEST = P16::CAPACITY;
 static_assert(Blake3GoldilocksGPU::CAPACITY == SC_DIGEST,
               "shared leaf/tree paths assume equal digest widths");
 
-// The blake3 absorb hashes a row as up to four blake3 chunks joined by parent nodes
-// (per-chunk counters, up to two parked chaining values).
-static_assert(SC_B3_MAX_COLS <= 4 * blake3core::CHUNK_U64,
-              "blake3 slot absorb parks two chaining values: at most four chunks per row");
-// A wider SC_MAX_COLS would silently mis-hash a row: lift SC_B3_MAX_COLS (a third park and the
-// C>4 cases in scBlake3AbsorbChunkKernel) first.
-static_assert(SC_MAX_COLS <= SC_B3_MAX_COLS,
-              "SC_MAX_COLS exceeds what the blake3 absorb can hash");
+// The blake3 absorb parks the chaining values of completed left subtrees on a stack of state
+// slots; the reference (b3_hash_row) holds CV_STACK of them, far above what SC_MAX_COLS needs.
+static constexpr uint32_t scBitLen(uint64_t v) { return v == 0 ? 0 : 1 + scBitLen(v >> 1); }
+static_assert(scBitLen((SC_MAX_COLS + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64 - 1)
+                  <= (uint32_t)blake3core::CV_STACK,
+              "SC_MAX_COLS needs a deeper chaining-value stack than b3_hash_row keeps");
+
+// Shared memory of the indexed unpack: scInfo[nCols] + scStart[nCols] + one accumulator per lane.
+static size_t scIndexedSmemBytes(const StreamCommitDims &dims) {
+    return (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t);
+}
 
 // ===========================================================================
 // Shared kernels: packed-witness unpack (family-agnostic)
@@ -175,8 +178,8 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
                                                   uint64_t dstStride, uint64_t dstOff)
 {
     // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
-    // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
-    // <= 512 B per block. Null map = lane 0. Hygiene: this kernel is DRAM-bound.
+    // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones.
+    // Null map = lane 0. Hygiene: this kernel is DRAM-bound.
     // scStart: each column's bit offset within its own stream (the row for an untagged column,
     // its lane's table entry otherwise). Row-uniform, so also staged once per block.
     extern __shared__ uint64_t scShared[];
@@ -427,12 +430,12 @@ __global__ static void scPoseidon2NodeKernel(uint64_t nextN, uint64_t nextIndex,
 // b3_hash_row block for block. Launch k is block k % 16 of blake3 chunk
 // k / 16 (the chunk index is the block counter): CHUNK_START on a chunk's
 // first block, CHUNK_END on its last. A row of one chunk (nCols <= 128)
-// carries ROOT on that last block and its CV packs straight to the leaf. A row
-// of two chunks (129..256 columns) parks chunk 0's final CV raw in `park`,
-// hashes chunk 1 with counter 1 and no ROOT, and the leaf is
-// parent_cv(chunk 0, chunk 1, root). Three or four chunks (257..512) park a
-// second CV: the leaf is parent(parent(c0, c1), c2), or
-// parent(parent(c0, c1), parent(c2, c3)) -- b3_hash_row's chunk tree.
+// carries ROOT on that last block and its CV packs straight to the leaf. A
+// wider row runs b3_hash_row's chunk tree on a stack of CVs parked in `park`:
+// a finished chunk c merges with the stack top while c + 1 has trailing zero
+// bits, then is pushed; the last chunk folds the whole stack, ROOT on the top
+// parent only. The stack depth before chunk c is popcount(c), so no count is
+// carried between launches.
 // The CV is carried RAW (u32 pairs packed per u64) in the state columns --
 // pack4 canonicalizes mod p, which is LOSSY on an intermediate CV (its packed
 // words may exceed p), so it runs only on the leaf, where it is exactly the
@@ -493,11 +496,9 @@ __global__ static void scBlake3AbsorbChunkKernel(const gl64_t *__restrict__ rate
                 (uint64_t)cv[2 * i] | ((uint64_t)cv[2 * i + 1] << 32);
         return;
     }
-    // Chunk tree as b3_hash_row builds it (see the header comment). ROOT belongs to the top
-    // parent only. Two park slots suffice for C <= 4 (SC_B3_MAX_COLS).
+    // Chunk tree as b3_hash_row builds it (see the header comment).
     const uint32_t nChunksRow = (nBlocks + BPC - 1) / BPC;
-    uint64_t *const park0 = (uint64_t *)park;
-    uint64_t *const park1 = park0 + (uint64_t)SC_DIGEST * nRows;
+    auto slotOf = [&](uint32_t level) { return (uint64_t *)park + (uint64_t)level * SC_DIGEST * nRows; };
     auto parkStore = [&](uint64_t *dst, const uint32_t *v) {
 #pragma unroll
         for (int i = 0; i < 4; ++i)
@@ -513,38 +514,24 @@ __global__ static void scBlake3AbsorbChunkKernel(const gl64_t *__restrict__ rate
     };
 
     uint32_t leaf[8];
-    if (singleChunk) {
 #pragma unroll
-        for (int i = 0; i < 8; ++i) leaf[i] = cv[i];
-    } else if (chunk == 0) {
-        parkStore(park0, cv);                       // pending at level 0
-        return;
-    } else if (chunk == 1) {
+    for (int i = 0; i < 8; ++i) leaf[i] = cv[i];
+    if (!singleChunk) {
+        uint32_t depth = __popc(chunk);
         uint32_t left[8];
-        parkLoad(park0, left);
-        if (nChunksRow == 2) {
-            blake3core::parent_cv(left, cv, true, leaf);
-        } else {
-            uint32_t merged[8];
-            blake3core::parent_cv(left, cv, false, merged);
-            parkStore(park1, merged);               // pending at level 1
+        if (chunk != nChunksRow - 1) {
+            for (uint32_t total = chunk + 1; (total & 1u) == 0; total >>= 1) {
+                parkLoad(slotOf(--depth), left);
+                blake3core::parent_cv(left, leaf, false, leaf);
+            }
+            parkStore(slotOf(depth), leaf);
             return;
         }
-    } else if (chunk == 2) {
-        if (nChunksRow == 3) {
-            uint32_t left[8];
-            parkLoad(park1, left);
-            blake3core::parent_cv(left, cv, true, leaf);
-        } else {
-            parkStore(park0, cv);                   // waits for chunk 3
-            return;
+        while (depth > 0) {
+            parkLoad(slotOf(depth - 1), left);
+            blake3core::parent_cv(left, leaf, depth == 1, leaf);
+            --depth;
         }
-    } else {
-        uint32_t left[8], right[8], top[8];
-        parkLoad(park0, left);
-        blake3core::parent_cv(left, cv, false, right);
-        parkLoad(park1, top);
-        blake3core::parent_cv(top, right, true, leaf);
     }
     uint64_t dig[4];
     blake3core::pack4(leaf, dig);
@@ -626,11 +613,12 @@ static uint64_t scTreeNumElements(uint64_t nLeaves, uint32_t arity)
     return total + SC_DIGEST; // root
 }
 
-// cap + ceil(log2(C)) parked chaining values for a row of C <= 4 blake3 chunks.
+// Cap + the parked chaining values of a row of C blake3 chunks: b3_hash_row's stack after chunk c
+// holds popcount(c + 1) values, at most bitlen(C - 1).
 static uint32_t scBlake3StateCols(uint64_t nCols)
 {
     const uint64_t chunks = (nCols + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64;
-    const uint32_t parks = chunks <= 1 ? 0 : (chunks <= 2 ? 1 : 2);
+    const uint32_t parks = chunks <= 1 ? 0 : scBitLen(chunks - 1);
     return SC_DIGEST + parks * SC_DIGEST;
 }
 
@@ -661,6 +649,13 @@ int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSourc
     if (indexed && (dims.lanes ? dims.lanes : 1) > SC_MAX_LANES) return -7;
     // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
     if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
+    // The indexed unpack stages two words per column in shared memory.
+    if (indexed) {
+        int dev = 0, optin = 0;
+        CHECKCUDAERR(cudaGetDevice(&dev));
+        CHECKCUDAERR(cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev));
+        if (scIndexedSmemBytes(dims) > (size_t)optin) return -8;
+    }
 
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
@@ -747,10 +742,12 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                                      : dims.nCols - (uint64_t)k * chunkCols);
         SC_CAT_START(timer, UNPACK_TRACE);
         if (indexed) {
-            // scInfo[nCols] + scStart[nCols] + one accumulator per lane.
-            scUnpackRangeIndexedKernel<<<ublk, SC_TPB,
-                                         (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t),
-                                         stream>>>(
+            const size_t smem = scIndexedSmemBytes(dims);
+            // Past the default 48 KB (about 2900 columns) the launch needs the opt-in, per device.
+            if (smem > 48 * 1024)
+                CHECKCUDAERR(cudaFuncSetAttribute(scUnpackRangeIndexedKernel,
+                                                  cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
+            scUnpackRangeIndexedKernel<<<ublk, SC_TPB, smem, stream>>>(
                 d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
                 dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc, N, 0);

@@ -45,7 +45,8 @@ __device__ __forceinline__ uint64_t mulPackedAt(const uint64_t* __restrict__ pac
     uint64_t v = __ldg(&r[widx]) >> boff;
     // Straddles only when boff > 0, so the shift below is always < 64.
     if (boff + nbits > 64) v |= __ldg(&r[widx + 1]) << (64 - boff);
-    return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : v;
+    // A full-width field (every column of an unpacked air) may hold a representative >= p.
+    return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : mulCanonHD(v);
 }
 
 __device__ __forceinline__ uint64_t mulTermOffset(const MulTermDev& t, const MulBases& b,
@@ -63,7 +64,7 @@ __device__ __forceinline__ uint64_t mulPackedAtCol(const uint64_t* __restrict__ 
     const uint64_t widx = bit >> 6, boff = bit & 63;
     uint64_t v = __ldg(&packed[widx * nRows + row]) >> boff;
     if (boff + nbits > 64) v |= __ldg(&packed[(widx + 1) * nRows + row]) << (64 - boff);
-    return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : v;
+    return (nbits < 64) ? (v & ((1ull << nbits) - 1ull)) : mulCanonHD(v);
 }
 
 // A term's value at `row` (the power-of-two mask wraps `'`-shifts).

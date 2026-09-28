@@ -330,7 +330,7 @@ struct AirInstanceInfo {
 
 // Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths.
 #define STREAM_COMMIT_HOST_ROOT_WORDS 4
-#define STREAM_COMMIT_HOST_WIDTH_WORDS 512
+#define STREAM_COMMIT_HOST_WIDTH_WORDS 4096   // SC_MAX_COLS (static_assert in starks_api.cu)
 #define STREAM_COMMIT_HOST_WORDS (STREAM_COMMIT_HOST_ROOT_WORDS + STREAM_COMMIT_HOST_WIDTH_WORDS)
 
 // Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging

@@ -36,13 +36,14 @@ void slotHintPatchKernel(uint64_t *__restrict__ dst, uint32_t c0, uint32_t cc, u
 
 void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_t nOps,
                         const uint64_t *dPacked, uint64_t wordsPerRow, bool packedColMajor,
-                        const uint64_t *dConstPols,
+                        const uint64_t *dConstPols, const uint64_t *dCustomPols,
                         const uint64_t *dVals, const SlotHintValOffsets &vo, uint64_t *dSide,
                         uint64_t nRows, cudaStream_t stream) {
     if (dProg == nullptr || nOps == 0 || dSide == nullptr || nRows == 0) return;
     // One base per value pool, as the scatter sets them.
     MulBases b{};
     b.constPols = dConstPols;
+    b.customFixed = dCustomPols;
     b.publics        = dVals ? dVals + vo.publics        : nullptr;
     b.proofValues    = dVals ? dVals + vo.proofValues    : nullptr;
     b.airgroupValues = dVals ? dVals + vo.airgroupValues : nullptr;
@@ -103,6 +104,7 @@ SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId
             d.nDest = (uint32_t)cols.size();
             d.ready = true;
         } else {
+            (void)cudaGetLastError();   // tolerated: leave no sticky error for the next check
             if (dp) cudaFree(dp);
             if (dc) cudaFree(dc);
             if (ds) cudaFree(ds);

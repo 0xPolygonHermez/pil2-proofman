@@ -57,8 +57,13 @@ static_assert(sizeof(MulTermDev) == 24, "MulTermDev size drifted -- update the L
 // instructions the scatter evaluates inline per row. Operands it cannot address (dim3 temporaries,
 // challenges) fail the compile.
 //
-// Temporaries are per-thread registers paid by every row; exceeding the cap below fails loudly.
-#define MUL_PROG_MAX_TEMP 12
+// Temporaries live in per-thread local memory (the most recent one in a register), touched only
+// when a program juggles several; exceeding the cap below fails loudly.
+#define MUL_PROG_MAX_TEMP 64
+
+// A slot serves only the first fixed custom commit (the one rebuildCustomCommitsFixed expands), whose
+// section starts the custom-fixed buffer: its terms address it at offset 0.
+#define MUL_SLOT_CUSTOM_OK(t) ((t).src == MUL_SRC_CUSTOM && (t).sectionOffset == 0)
 
 enum MulOperandKind : uint8_t {
     MUL_OPND_TEMP  = 0,   // a previously written temporary
@@ -107,7 +112,7 @@ struct MulJobDev {
     uint64_t   biasFE;     // -min, in the field
     uint64_t   mapSlots;
     const uint64_t* mapKV;
-    uint64_t   hostAirId;  // the air whose virtual table holds this lookup's counters
+    uint64_t   hostAirKey; // mulAirKey of the air whose virtual table holds the counters
     uint32_t   nKey;
     uint32_t   tableId;
     uint32_t   selConstOne;

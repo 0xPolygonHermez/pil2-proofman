@@ -884,8 +884,8 @@ impl<F: PrimeField64> ProofMan<F> {
                 let mut owned = self.pctx.device_owned_table_airs.write().unwrap();
                 owned.clear();
                 for l in layouts {
-                    if mul_air_device_owned_c(l.air_id) {
-                        owned.push(l.air_id as usize);
+                    if mul_air_device_owned_c(l.airgroup_id, l.air_id) {
+                        owned.push((l.airgroup_id as usize, l.air_id as usize));
                     }
                 }
                 if !owned.is_empty() {
@@ -1619,8 +1619,12 @@ where
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_witness_schedule(self.pctx.dctx_get_process_instances());
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-        // Each scatters once in `calculate_instance_witness`; a debug-skipped one never does.
+        // Each scatters once in `calculate_instance_witness`, CPU only (on GPU the aux trace and const
+        // pols are not on the host here); a debug-skipped one never does.
         let mut scattered = 0u64;
+        if self.pctx.gpu && !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+            tracing::warn!("Debug info on GPU: tables the prover counts are left at zero multiplicity");
+        }
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -1628,7 +1632,9 @@ where
             if instance_info.table || skip {
                 continue;
             }
-            scattered += 1;
+            if !self.pctx.gpu {
+                scattered += 1;
+            }
 
             self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
             self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -2933,9 +2939,7 @@ where
         if !unhosted.is_empty() {
             tracing::warn!("Range tables {unhosted:?} are hosted by no virtual-table air; the std counts them");
         }
-        // Read lazily by the std: the virtual table airs are built before this, so a value captured at
-        // construction would be empty and every claimed table double-counted.
-        pil2_std_lib::set_prover_owned_tables(migrated.clone());
+        // Read lazily by the std (VirtualTableAir::is_prover_owned), through this shared ProofCtx.
         *self.pctx.prover_owned_tables.write().unwrap() = migrated;
         *registered = true;
         Ok(())
@@ -2945,6 +2949,7 @@ where
     /// binary for the same linkage reason as `register_prover_multiplicities`. `expected_commits` is
     /// how many instances this run scatters: the caller knows which ones its debug filter skipped.
     fn export_prover_multiplicities(&self, expected_commits: u64) -> ProofmanResult<()> {
+        use rayon::prelude::*;
         if self.pctx.prover_owned_tables.read().unwrap().is_empty() {
             return Ok(());
         }
@@ -2956,13 +2961,14 @@ where
         for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
             // Nothing to hand over: the device commits the whole air, or the prover counts none of its
             // tables (building the accumulator would only clear the table for nothing).
-            if mul_air_device_owned_c(l.air_id) || !mul_air_has_owned_c(l.air_id) {
+            if mul_air_device_owned_c(l.airgroup_id, l.air_id) || !mul_air_has_owned_c(l.airgroup_id, l.air_id) {
                 continue;
             }
-            let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
+            let key = (l.airgroup_id as usize, l.air_id as usize);
+            let buf = counts.entry(key).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
             // The fold adds into the destination, so clear first: exporting twice must not double.
-            buf.iter_mut().for_each(|c| *c = 0);
-            unsafe { mul_fold_c(l.air_id, buf.as_mut_ptr()) };
+            buf.par_chunks_mut(1 << 16).for_each(|c| c.fill(0));
+            unsafe { mul_fold_c(l.airgroup_id, l.air_id, buf.as_mut_ptr()) };
         }
         Ok(())
     }
@@ -5937,7 +5943,12 @@ where
             let (slot_bytes, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
             // Fatal only if one is instantiated (try_slot_commit): an unused air must not stop the run.
             if !unfit.is_empty() {
-                tracing::warn!("No streaming slot can commit these airs: {}", unfit.join(", "));
+                tracing::warn!(
+                    "No streaming slot can commit these airs, and the GPU has no other contributions path: a proof \
+                     that instantiates one fails. Unsupported: more than 4096 cm1 columns, or a merkle arity other \
+                     than the hash family's. Airs: {}",
+                    unfit.join(", ")
+                );
             }
             if slot_bytes > 0 {
                 configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), STREAM_COMMIT_SLOTS, slot_bytes);
@@ -6197,7 +6208,7 @@ where
         let pi = ctx.packed_info.get(&(airgroup_id, air_id)).unwrap_or(&identity);
         // A null trace is fine when staged (the slot reads the zone) or when the device produces the
         // rows (a prover-owned virtual table, exported from its accumulator).
-        let device_rows = pctx.device_owned_table_airs.read().unwrap().contains(&air_id);
+        let device_rows = pctx.device_owned_table_airs.read().unwrap().contains(&(airgroup_id, air_id));
         if trace.is_null() && !staged && !device_rows {
             return refuse("no host trace and no staging");
         }
@@ -6206,8 +6217,8 @@ where
         let n_cols = setup.stark_info.map_sections_n["cm1"];
         // Slots are allowed outside the gpu-mops borrow window too. An unpacked air is the degenerate
         // packing (one 64-bit word per column), which the unpack cursor reads as identity.
-        // Any width fits: the C side refuses more than SC_MAX_COLS columns before reading these.
-        static IDENTITY_WIDTHS: [u64; 512] = [64; 512];
+        // SC_MAX_COLS: `ctx.airs` holds no wider air (stream_commit_slot_bytes refuses it).
+        static IDENTITY_WIDTHS: [u64; 4096] = [64; 4096];
         let (words_per_row, widths): (u64, &[u64]) = if pi.is_packed {
             (pi.num_packed_words, pi.unpack_info.as_slice())
         } else {

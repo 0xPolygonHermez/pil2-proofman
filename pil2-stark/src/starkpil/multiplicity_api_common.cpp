@@ -29,8 +29,8 @@ uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {
 }
 
 // Whether the prover counts any table of this air.
-uint64_t mul_air_has_owned(uint64_t airId) {
-    return mul_air_has_owned_tables(airId) ? 1 : 0;
+uint64_t mul_air_has_owned(uint64_t airKey) {
+    return mul_air_has_owned_tables(airKey) ? 1 : 0;
 }
 
 // The host scatter: a GPU build uses it for anything the device path declined.

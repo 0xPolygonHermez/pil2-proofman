@@ -39,6 +39,7 @@ struct SlotHintPlan {
     std::vector<uint32_t>   destCols;  // sorted; the chunk loop patches these after each unpack
     uint64_t                nRows = 0;
     bool                    ok = false;
+    bool                    readsCustom = false;   // a hint reads the first fixed custom commit
     std::string             why;       // why not, when !ok
 };
 
@@ -63,11 +64,20 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
     setupCtx.expressionsBin.getHintIdsByName(ids.data(), "witness_calc");
     const uint64_t bcs = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
 
-    // Pass 1: the stage-1 columns these hints write, and where each lands in the side buffer.
+    // Pass 1: the stage-1 columns these hints write, and where each lands in the side buffer. A hint
+    // into an air value leaves cm1 alone and the contribution hashes the host's air values, as the
+    // stream commit did, so the slot skips it.
     std::map<uint32_t, uint32_t> slotOf;
+    std::vector<bool> intoAirValue(nh, false);
+    std::set<uint64_t> computedAirValues;
     for (uint64_t i = 0; i < nh; ++i)
         for (auto& f : setupCtx.expressionsBin.hints[ids[i]].fields) {
             if (f.name != "reference" || f.values.empty()) continue;
+            if (f.values[0].operand == opType::airvalue) {
+                intoAirValue[i] = true;
+                computedAirValues.insert(mulAirValuePos(setupCtx.starkInfo, f.values[0].id));   // as terms address it
+                continue;
+            }
             if (f.values[0].operand != opType::cm) { plan.why = "hint writes something other than a column"; return plan; }
             const auto& pm = setupCtx.starkInfo.cmPolsMap[f.values[0].id];
             if (pm.stage != 1) { plan.why = "hint writes a later stage"; return plan; }
@@ -81,6 +91,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
     // column is accepted only once an EARLIER hint wrote it; forward references are refused.
     std::set<uint32_t> written;
     for (uint64_t i = 0; i < nh; ++i) {
+        if (intoAirValue[i]) continue;
         Hint& h = setupCtx.expressionsBin.hints[ids[i]];
         const HintField *fe = nullptr, *fr = nullptr;
         for (auto& f : h.fields) { if (f.name == "expression") fe = &f; if (f.name == "reference") fr = &f; }
@@ -96,7 +107,12 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
             for (MulOperandDev* o : {&in.a, &in.b}) {
                 if (o->kind != MUL_OPND_COL) continue;
                 MulTermDev& t = o->term;
+                // The slot reads the host's air values, which a skipped hint never wrote.
+                if (t.src == MUL_SRC_AIRVALUE && computedAirValues.count(t.sectionOffset)) {
+                    plan.why = "hint reads an air value another hint computes"; return plan;
+                }
                 if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST) continue;   // served as-is
+                if (MUL_SLOT_CUSTOM_OK(t)) { plan.readsCustom = true; continue; }
                 if (t.src != MUL_SRC_TRACE) { plan.why = "operand reads a stage a slot does not have"; return plan; }
                 auto sit = slotOf.find(t.col);
                 if (sit != slotOf.end()) {
@@ -105,7 +121,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, const std::vector<uint
                     t.sectionOffset = sit->second;
                     continue;
                 }
-                if (t.col >= widths.size() || widths[t.col] == 0 || widths[t.col] >= 64) {
+                if (t.col >= widths.size() || widths[t.col] == 0 || widths[t.col] > 64) {
                     plan.why = "cm1 operand has no usable packed width"; return plan;
                 }
                 t.src = MUL_SRC_PACKED;
