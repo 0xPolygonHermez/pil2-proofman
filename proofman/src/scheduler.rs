@@ -214,6 +214,13 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         if let Some((w, s)) = self.next_of_types(&[ProofType::Compressor], false) {
             return Some(WorkerPick::Recursive(w, s));
         }
+        // A ready recursive2 ahead of the basics (unless a ranked basic waits): aggregation left
+        // behind the basics drains at the end with little parallelism.
+        if !self.ranked_basic_ready() {
+            if let Some((w, s)) = self.next_of_types(&[ProofType::Recursive2], false) {
+                return Some(WorkerPick::Recursive(w, s));
+            }
+        }
         if let Some((id, s)) = self.next_basic() {
             return Some(WorkerPick::Basic(id, s));
         }
@@ -221,6 +228,11 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             return Some(WorkerPick::Recursive(w, s));
         }
         None
+    }
+
+    /// True while a ranked basic (see `big_keys`) is queued.
+    fn ranked_basic_ready(&self) -> bool {
+        self.basic_queue.iter().any(|(k, q)| !q.is_empty() && self.big_keys.contains_key(k))
     }
 
     /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`.
@@ -310,6 +322,11 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         // Pass 1 — REUSE: a stream already holding this key, free right now.
         for &key in candidates {
             let (ag, air, t) = key;
+            // Recursive2's const pols are resident on every GPU: reuse saves nothing and would stack
+            // recursive2 proofs on one GPU, so let the cold scan spread them.
+            if t == ProofType::Recursive2 {
+                continue;
+            }
             let type_str: &'static str = t.into();
             for (&s, &k) in self.stream_warm.iter() {
                 if k == key && reserve_stream_if_free_c(d, s as u32, ag as u64, air as u64, type_str, force_recursive) {
@@ -319,7 +336,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         }
         // Pass 2 — FRESH.
         for &key in candidates {
-            if self.is_warm_somewhere(key) {
+            if self.is_warm_somewhere(key) && key.2 != ProofType::Recursive2 {
                 continue; // loaded somewhere → not fresh
             }
             if let Some(s) = self.reserve_best(key, force_recursive) {

@@ -2482,7 +2482,8 @@ where
         // path and buying it with cores is a net loss. Re-measure wall clock, not just the phase
         // timers, before raising this.
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
-        let recursive_witness_threads = max_num_threads.clamp(1, 8);
+        // Few recursive witnesses run at once near the root, each on the critical path.
+        let recursive_witness_threads = max_num_threads.clamp(1, 32);
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new_with_signal_pool(
             max_witness_stored_recursive,
             setups_vadcop.max_compact_trace_size,
@@ -2514,10 +2515,9 @@ where
             )
         };
 
-        // Measured on a 24-core host: aggregate witness CPU is flat between 2 and 6 and only
-        // degrades past 12, while per-witness latency keeps improving, so the wide end is the
-        // safer default. Prove time is insensitive to this either way.
-        const DEFAULT_THREADS_PER_WITNESS: usize = 4;
+        // Enough threads that the long witnesses do not bound the phase, few enough that many
+        // witnesses still run concurrently.
+        const DEFAULT_THREADS_PER_WITNESS: usize = 8;
         let num_threads_per_witness = match options.are_threads_per_witness_set {
             true => options.number_threads_pools_witness,
             false => DEFAULT_THREADS_PER_WITNESS.clamp(1, max_num_threads.max(1)),
@@ -5021,12 +5021,28 @@ where
                     let cap = crate::witness_slot_cap(eligible_of(id), n_classes);
                     held.get(&key).copied().unwrap_or(0) < cap
                 };
-                // First admissible, priority pool first. Not reordered: `weight` is the proof cost
-                // of the air, so it is equal for every instance of one, and the instances of an air
-                // spread 4.6x in witness time -- it cannot rank the thing we would want to rank.
+                // Priority pool first; within a pool, the admissible instance of the largest air
+                // (rows x cm1 columns), so the long witnesses start early. Ties keep arrival order.
+                let cost_of = |id: usize| -> u64 {
+                    let Ok((ag, air)) = pctx_clone.dctx_get_instance_info(id) else { return 0 };
+                    sctx_admission
+                        .get_setup(ag, air)
+                        .map(|s| {
+                            let cols = s.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                            (1u64 << s.stark_info.stark_struct.n_bits) * cols
+                        })
+                        .unwrap_or(0)
+                };
                 let first = |pool: &std::collections::VecDeque<usize>,
                              held: &HashMap<(usize, usize), usize>|
-                 -> Option<usize> { pool.iter().position(|&id| admissible(id, held)) };
+                 -> Option<usize> {
+                    // min_by_key keeps the first of equal keys, i.e. arrival order among ties.
+                    pool.iter()
+                        .enumerate()
+                        .filter(|&(_, &id)| admissible(id, held))
+                        .min_by_key(|&(_, &id)| std::cmp::Reverse(cost_of(id)))
+                        .map(|(pos, _)| pos)
+                };
                 let chosen: Option<(bool, usize)> = {
                     let held = in_flight.lock().unwrap();
                     first(&pending_priority, &held)
