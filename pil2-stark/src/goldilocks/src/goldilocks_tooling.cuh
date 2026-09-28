@@ -13,6 +13,7 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
+#include <condition_variable>
 #include <map>
 #include <vector>
 #include "cuda_utils.cuh"
@@ -88,6 +89,9 @@ struct AirInstanceInfo {
     bool is_packed = false;
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
+    std::vector<uint64_t> unpack_info_host;
+    // Host mirrors of the indexed descriptor, for the multiplicity rewriter.
+    std::vector<uint8_t> col_source_host, col_lane_host;
     uint64_t* d_num_packed_words;
 
     // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
@@ -258,6 +262,7 @@ struct AirInstanceInfo {
             if (is_packed && num_packed_words > 0) {
                 CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+                unpack_info_host.assign(packedInfo->unpack_info, packedInfo->unpack_info + nCols);
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
 
@@ -268,11 +273,13 @@ struct AirInstanceInfo {
                 lanes = packedInfo->lanes;
                 CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                col_source_host.assign(packedInfo->col_source, packedInfo->col_source + nCols);
                 // Left null for a single-lane descriptor: the kernels then read lane 0. An
                 // all-zero map would instead disarm the null checks the refusals downstream rely on.
                 if (packedInfo->col_lane != nullptr) {
                     CHECKCUDAERR(cudaMalloc(&d_col_lane, nCols * sizeof(uint8_t)));
                     CHECKCUDAERR(cudaMemcpy(d_col_lane, packedInfo->col_lane, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                    col_lane_host.assign(packedInfo->col_lane, packedInfo->col_lane + nCols);
                 }
             }
         }
@@ -320,6 +327,11 @@ struct AirInstanceInfo {
 
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
+
+// Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths.
+#define STREAM_COMMIT_HOST_ROOT_WORDS 4
+#define STREAM_COMMIT_HOST_WIDTH_WORDS 512
+#define STREAM_COMMIT_HOST_WORDS (STREAM_COMMIT_HOST_ROOT_WORDS + STREAM_COMMIT_HOST_WIDTH_WORDS)
 
 // Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
 // buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against it. Shared by the
@@ -783,17 +795,24 @@ struct DeviceCommitBuffers
     // overwrites live data. FIRST GPU only. prefetchInstanceId == -1 means free.
     // The zone IS the prefetch region (slot s at prefetchRegionBase + s*prefetchSlotStride);
     // prefetchArmed means configure ran: the stream and events below exist.
-    // PREFETCH_WITNESS_SLOTS is the single source for the slot count (the Rust region
-    // sizing reads it through get_prefetch_witness_slots).
-    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 2;
+    // A run of units, each half the largest trace: a witness takes ceil(bytes/unit) consecutive
+    // units, at most PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN.
+    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
+    static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
     bool prefetchArmed = false;
-    uint64_t prefetchSlotStride = 0; // elements between slot bases
+    uint64_t prefetchSlotStride = 0; // elements between unit bases
     cudaStream_t prefetchStream = nullptr;
     cudaEvent_t prefetchReady[PREFETCH_WITNESS_SLOTS] = {};
     cudaEvent_t prefetchDrained[PREFETCH_WITNESS_SLOTS] = {};
     std::mutex prefetchMutex;
-    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1};
-    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0};
+    // Witness H2D uploads keep one chunk in flight: a stream with a copy always pending holds the
+    // copy engine and starves other streams' copies.
+    static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
+    std::mutex prefetchCopyMutex;       // one staging copies at a time
+    // Every unit of a span carries the instance id; only the head carries length and bytes.
+    int64_t prefetchInstanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    uint64_t prefetchTraceBytes[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint32_t prefetchSpanUnits[PREFETCH_WITNESS_SLOTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 
     // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
@@ -811,16 +830,23 @@ struct DeviceCommitBuffers
     uint64_t auxTraceTotalBytes = 0;
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
+    // Pinned per-slot staging for the multiplicity hook's publics/values.
+    // [streamCommitSlots * PINNED_AUX_VALUES_MAX]
+    Goldilocks::Element *streamCommitAuxValues = nullptr;
+    // Pinned per slot: the root and the column widths (so neither copy is pageable, which blocks
+    // the thread and holds the driver lock against the other slots' launches).
+    // [streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
+    uint64_t *streamCommitHost = nullptr;
     // Shared-hold of the overlapped legacy streams: the first in-flight slot
     // commit claims every overlapped stream's selection mutex, the last
     // releases them (see acquire/release in commit_witness_streaming_gpu).
     std::mutex streamCommitRegionMutex;
     uint32_t streamCommitInFlight = 0;
-    // Quiesce: set by the gpu-mops borrower right before its FINAL planning
-    // phase (whose host-paced micro-ops stretch ~40x under concurrent commit
-    // load — see stream_commit_pause). While set, commit_witness_streaming
-    // rejects new commits (-14, silent legacy fallback); cleared on the next
-    // borrow acquire.
+    // Signalled when the quiesce lifts and when the last in-flight slot commit leaves.
+    std::condition_variable streamCommitCv;
+    // Quiesce: set by the gpu-mops borrower before its final planning phase (see
+    // stream_commit_pause), cleared on borrow release. A slot commit waits (single GPU) or is refused.
+
     std::atomic<uint32_t> streamCommitQuiesced{0};
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;

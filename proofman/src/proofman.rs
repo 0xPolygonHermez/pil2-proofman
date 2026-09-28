@@ -5,17 +5,24 @@ use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance,
     CustomCommitValidation, CurveType, GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler,
     MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx,
-    SetupsVadcop, VerboseMode, WitnessPriority, MAX_INSTANCES, PackedInfo,
+    SetupsVadcop, VerboseMode, WitnessPriority, MAX_INSTANCES, PackedInfo, WITNESS_NOT_STAGED, WITNESS_STAGED,
+    WITNESS_STAGED_RELEASED,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
-    prefetch_witness_c, prefetch_zone_sync_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    get_num_gpus_c, mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c,
+    mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+};
+use pil2_std_lib::{collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps};
+use proofman_starks_lib_c::{
+    configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
+    harvest_pipeline_c, dump_pipeline_state_c, prefetch_witness_c, prefetch_zone_sync_c, set_gpu_mode_c,
+    set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
-    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
+    free_device_buffers_c, use_packed_trace_c, register_instruction_table_c,
 };
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
@@ -141,10 +148,11 @@ use crate::{
 };
 
 use proofman_starks_lib_c::{
-    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
+    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
+    mul_air_device_owned_c, mul_air_has_owned_c, mul_set_device_export_c, mul_sync_commits_c,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, n_hint_ids_by_name_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, commit_witness_streaming_c, stream_commit_slot_bytes_c,
+    configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -297,7 +305,6 @@ impl Drop for CancellationThread {
 
 struct WorkerPoolGuard<T: Send + Clone + 'static> {
     sentinel: T,
-    n_streams: usize,
     tx: Sender<T>,
     handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
@@ -314,7 +321,8 @@ impl<T: Send + Clone + 'static> Drop for WorkerPoolGuard<T> {
             }
             std::mem::take(&mut *guard)
         };
-        for _ in 0..self.n_streams {
+        // One per worker: a pool can hold more workers than streams (the slot commit pool does).
+        for _ in 0..handles.len() {
             let _ = self.tx.send(self.sentinel.clone());
         }
         for h in handles {
@@ -562,12 +570,16 @@ struct SlotCommitCtx {
     pool_rx: Receiver<u64>,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     committed: AtomicU64,
+    /// Single GPU: every packed air commits on a slot; transient refusals retry, others are fatal.
+    /// With several GPUs only the first has slots; the others use the legacy commit.
+    strict: bool,
 }
 
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
+    // witness_calc hints do not disqualify an air: the slot evaluates them (witness_hints_slot.hpp)
+    // and refuses, with a reason, only hints it cannot express.
     proofman_common::hash_family::supports_stream_commit(hash)
         && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
-        && n_hint_ids_by_name_c(setup.p_setup.p_expressions_bin, "witness_calc") == 0
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -756,6 +768,15 @@ impl<F: PrimeField64> ProofMan<F> {
 
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
+        // A cancelled job can leave an instance handed back or deferred; the next job reuses ids.
+        for flags in [&self.pctx.dispatch_deferred, &self.pctx.dispatch_pending] {
+            for f in flags.iter() {
+                f.store(false, Ordering::Relaxed);
+            }
+        }
+        for s in self.pctx.witness_staged.iter() {
+            s.store(WITNESS_NOT_STAGED, Ordering::Relaxed);
+        }
 
         self.pctx.set_witness_tx(None);
         self.pctx.set_proof_tx(None);
@@ -764,13 +785,20 @@ impl<F: PrimeField64> ProofMan<F> {
         // when their owner is dropped, so they must be joined through it, not via a sentinel send.
         self.stop_outer_aggregations();
 
-        for _ in 0..self.n_streams {
+        for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
         let handles = self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect::<Vec<_>>();
         for handle in handles {
             let _ = handle.join();
+        }
+        // The zone outlives the job; a leftover staging would match the next job's commit by instance id.
+        // Safe here: all commits are joined.
+        if self.pctx.gpu {
+            for instance_id in self.pctx.dctx_get_process_instances() {
+                release_staged_witness_c(self.pctx.get_device_buffers_ptr(), instance_id as u64);
+            }
         }
 
         self.last_gate.store(usize::MAX, Ordering::Release);
@@ -793,6 +821,25 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
+        if self.pctx.gpu {
+            unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
+            // Record which airs the device can produce whole; see `device_owned_table_airs`.
+            if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
+                let mut owned = self.pctx.device_owned_table_airs.write().unwrap();
+                owned.clear();
+                for l in layouts {
+                    if mul_air_device_owned_c(l.air_id) {
+                        owned.push(l.air_id as usize);
+                    }
+                }
+                if !owned.is_empty() {
+                    tracing::info!("Virtual tables: air(s) {:?} are produced and committed on the device", owned);
+                }
+            }
+        }
+        // Not in VirtualTableAir::execute: it is fork-exposed under --asm, where this FFI call kills
+        // the process silently.
+        mul_reset_c();
 
         // Launches write these through raw pointers: free them only once workers and device are done.
         for proof_lock in self.proofs.iter() {
@@ -1072,6 +1119,8 @@ where
     }
 
     pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self.execute_(output_path)
     }
 
@@ -1368,6 +1417,8 @@ where
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
     pub fn compute_witness_from_lib(&self, debug_info: &DebugInfo, options: ProofOptions) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self.pctx.set_debug_info(debug_info);
         self.compute_witness_(options)
     }
@@ -1403,10 +1454,7 @@ where
 
         let _ = self.exec()?;
 
-        let my_instances = self.pctx.dctx_get_process_instances();
-
-        let my_instances_no_tables =
-            self.pctx.dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
+        let my_instances_no_tables = self.pctx.dctx_witness_schedule(self.pctx.dctx_get_process_instances_no_tables());
 
         timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1486,6 +1534,8 @@ where
     }
 
     pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self._get_debug_info(debug_info)
     }
 
@@ -1544,6 +1594,7 @@ where
 
         let my_instances_tables = self.pctx.dctx_get_my_tables();
 
+        self.export_prover_multiplicities()?;
         timer_start_info!(CALCULATING_TABLES);
         for instance_id in my_instances_tables.iter() {
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -1628,6 +1679,8 @@ where
     }
 
     pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         self._verify_proof_constraints(debug_info)
     }
 
@@ -1666,7 +1719,6 @@ where
 
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
-            n_streams: self.n_streams,
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
@@ -1766,6 +1818,7 @@ where
             .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
             .collect::<Vec<_>>();
 
+        self.export_prover_multiplicities()?;
         timer_start_debug!(CALCULATING_TABLES);
 
         for instance_id in my_instances_tables.iter() {
@@ -1777,7 +1830,7 @@ where
 
         self.pctx.set_proof_tx(None);
 
-        for _ in 0..self.n_streams {
+        for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
             self.contributions_tx.send(usize::MAX).ok();
         }
 
@@ -1827,6 +1880,14 @@ where
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
+        // The prove path counts from its commit hook, which never runs here.
+        // CPU only: on the GPU path the trace is on the device and this pointer must not be read.
+        if !self.pctx.gpu {
+            unsafe {
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
+            };
+        }
 
         #[cfg(feature = "diagnostic")]
         {
@@ -1914,6 +1975,14 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
+        // Verify-constraints never runs the commit hook that counts on the prove path. Must follow the
+        // constraint evaluation, which populates the const pols read here. CPU only.
+        if !pctx.gpu {
+            unsafe {
+                mul_scatter_c((&setup.p_setup).into(), (&steps_params).into(), airgroup_id as u64, air_id as u64)
+            };
+        }
+
         let valid =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, reservation)?;
 
@@ -1982,6 +2051,8 @@ where
                 "prove-air --witness-lib is not supported on GPU: basic airs commit stages 1-2 in place".into(),
             ));
         }
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         let _computing = self.acquire_computing("generate_air_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -2363,6 +2434,8 @@ where
         proof_options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        // A statically linked witness library never goes through `register_witness`.
+        self.register_prover_multiplicities()?;
         if self.options.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has been initialized in verify_constraints mode".into(),
@@ -2570,7 +2643,7 @@ where
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
         let received_agg_proof_count = Arc::new(RwLock::new(vec![0usize; n_airgroups]));
 
-        Ok(Self {
+        let proofman = Self {
             pctx,
             sctx,
             mpi_ctx,
@@ -2626,7 +2699,18 @@ where
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
             computing: Mutex::new(()),
-        })
+        };
+
+        // Fitting reads only the proving key, so do it here rather than inside the first proof.
+        // Memoized (see `register_prover_multiplicities`).
+        timer_start_info!(FITTING_VIRTUAL_TABLES);
+        proofman.register_prover_multiplicities()?;
+        // Single rank: a fully prover-owned table can be produced and committed on the device. With
+        // several ranks the host must gather every rank's share.
+        mul_set_device_export_c(proofman.mpi_ctx.n_processes == 1);
+        timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
+
+        Ok(proofman)
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
@@ -2703,11 +2787,117 @@ where
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
         timer_start_info!(REGISTERING_WITNESS);
+        // Normally already fitted in `new`; memoized safety net for other construction paths.
+        self.register_prover_multiplicities()?;
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
         // Custom commits registered before the library was loaded could not be generated then.
         self.ensure_custom_commits_fixed()
+    }
+
+    /// Hand the prover the range tables it can count itself plus the geometry those counters live
+    /// in, and record which it accepted. Must run in the host binary: the witness library links its
+    /// own copy of libstarks, so a registration made there is invisible to the scatter and fold.
+    fn register_prover_multiplicities(&self) -> ProofmanResult<()> {
+        // Reached from `register_witness` and every `*_from_lib` entry.
+        if !self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+            return Ok(());
+        }
+        // What the caller kept for itself. Everything else is the prover's; a table it cannot fit is
+        // an error, since the fallback silently costs a full-table pass every proof.
+        let std_owned: std::collections::HashSet<u64> = self.options.std_owned_tables.iter().copied().collect();
+
+        let owned: Vec<(u64, i64)> = collect_prover_owned_ranges(&self.pctx, &self.sctx)?
+            .into_iter()
+            .filter(|(id, _)| !std_owned.contains(id))
+            .collect();
+        // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`) are
+        // independent hints, so neither may gate the other's registration.
+        let (range_ids, range_biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
+        if !range_ids.is_empty() {
+            mul_register_range_tables_c(&range_ids, &range_biases);
+        }
+
+        // An exact map over each table's entries, verified against every entry. A table that does not
+        // fit must be in `std_owned_tables`.
+        let layouts = collect_virtual_table_layouts(&self.pctx, &self.sctx)?;
+        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx, &layouts)?;
+
+        // Unkept and unclaimed by both the range path and the fitter (`unclaimed_ids` excludes the
+        // fitted ones): fail with the ids rather than run a slow path.
+        let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
+        let orphans: Vec<u64> = vt_summary
+            .unclaimed_ids
+            .iter()
+            .copied()
+            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t))
+            .collect();
+        if !orphans.is_empty() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "virtual tables {orphans:?} are neither declared in ProofmanOptions::std_owned_tables \
+                 nor derivable by the prover: no row map fits them. Either declare them, so the \
+                 witness counts them as before, or make their layout fittable."
+            )));
+        }
+
+        for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
+            let (nkey, kv, slots) = &m.map;
+            mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
+        }
+
+        // Unfitted tables also in `range_ids` are prover-owned via the range path; only the rest are
+        // left to the std. Exact-map bytes are GPU-resident, per device.
+        if vt_summary.considered > 0 {
+            let n_range_in_scope = vt_summary.unclaimed_ids.iter().filter(|t| range_owned.contains(t)).count();
+            let n_std_left = vt_summary.unclaimed_ids.len() - n_range_in_scope;
+            tracing::info!(
+                "Virtual tables: {}/{} prover-owned in {} ms -- {n_range_in_scope} range, {} exact map \
+                 ({} MB); {n_std_left} left to the std",
+                fitted.len() + n_range_in_scope,
+                vt_summary.considered,
+                vt_summary.elapsed_ms,
+                fitted.len(),
+                vt_summary.exact_bytes / 1_000_000,
+            );
+        }
+
+        for l in &layouts {
+            register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
+        }
+
+        let migrated = mul_migrated_tables_c();
+        // Read lazily by the std: the virtual table airs are built before this, so a value captured at
+        // construction would be empty and every claimed table double-counted.
+        pil2_std_lib::set_prover_owned_tables(migrated.clone());
+        *self.pctx.prover_owned_tables.write().unwrap() = migrated;
+        Ok(())
+    }
+
+    /// Pull what the prover counted into pctx, for the virtual-table airs to merge in. In the host
+    /// binary for the same linkage reason as `register_prover_multiplicities`.
+    fn export_prover_multiplicities(&self) -> ProofmanResult<()> {
+        if self.pctx.prover_owned_tables.read().unwrap().is_empty() {
+            return Ok(());
+        }
+        let expected_commits = self.pctx.dctx_get_process_instances_no_tables().len() as u64;
+        // Ordering point: every instance has launched its scatter. Device-owned airs transpose the
+        // accumulator into the trace in their own commit.
+        mul_sync_commits_c(expected_commits);
+
+        let mut counts = self.pctx.prover_counts.write().unwrap();
+        for l in collect_virtual_table_layouts(&self.pctx, &self.sctx)? {
+            // Nothing to hand over: the device commits the whole air, or the prover counts none of its
+            // tables (building the accumulator would only clear the table for nothing).
+            if mul_air_device_owned_c(l.air_id) || !mul_air_has_owned_c(l.air_id) {
+                continue;
+            }
+            let buf = counts.entry(l.air_id as usize).or_insert_with(|| vec![0u64; (l.num_rows * l.num_cols) as usize]);
+            // The fold adds into the destination, so clear first: exporting twice must not double.
+            buf.iter_mut().for_each(|c| *c = 0);
+            unsafe { mul_fold_c(l.air_id, buf.as_mut_ptr()) };
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2742,7 +2932,6 @@ where
 
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
-            n_streams: self.n_streams,
             tx: self.contributions_tx.clone(),
             handles: self.handle_contributions.clone(),
         };
@@ -2787,13 +2976,22 @@ where
                         pool_rx,
                         packed_info: self.options.packed_info.clone(),
                         committed: AtomicU64::new(0),
+                        strict: get_num_gpus_c() == 1,
                     })
                 })
             } else {
                 None
             };
 
-            for _ in 0..self.n_streams {
+            let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
+            // Twice the slots: a worker stages and prepares on the CPU first, so one extra keeps each slot fed.
+            let n_workers = match slot_commit_ctx.as_ref() {
+                Some(ctx) if ctx.strict => {
+                    (2 * get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) as usize).max(self.n_streams)
+                }
+                _ => self.n_streams,
+            };
+            for _ in 0..n_workers {
                 let pctx_clone = self.pctx.clone();
                 let first_contribution_logged = first_contribution_logged.clone();
                 let sctx_clone = self.sctx.clone();
@@ -2805,6 +3003,8 @@ where
                 let aux_scratch = aux_scratch.clone();
                 let const_scratch = const_scratch.clone();
                 let slot_commit_ctx_clone = slot_commit_ctx.clone();
+                let zone_airs = zone_airs.clone();
+                let empty_packed: HashMap<(usize, usize), PackedInfo> = HashMap::new();
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                         Ok(instance_id) => {
@@ -2814,6 +3014,27 @@ where
                             if cancellation_info_clone.read_recover().token.is_cancelled() {
                                 break;
                             }
+                            // Stage now if the witness thread found the zone full, so the commit still takes one D2D.
+                            let mut stage_state =
+                                pctx_clone.witness_staged[instance_id].swap(WITNESS_NOT_STAGED, Ordering::AcqRel);
+                            if stage_state == WITNESS_NOT_STAGED {
+                                stage_state = match Self::stage_for_commit(
+                                    &pctx_clone,
+                                    &zone_airs,
+                                    &memory_handler_clone,
+                                    slot_commit_ctx_clone.as_ref().is_some_and(|c| c.strict),
+                                    slot_commit_ctx_clone.as_ref().map_or(&empty_packed, |c| &c.packed_info),
+                                    instance_id,
+                                ) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        cancellation_info_clone.write_recover().cancel(Some(e));
+                                        break;
+                                    }
+                                };
+                            }
+                            // The host buffer is gone: the commit reads the zone and releases nothing.
+                            let staged = stage_state == WITNESS_STAGED_RELEASED;
                             // Single-writer borrow of the shared scratch (see `SharedScratch`); the
                             // guards hold the invariant for the duration of get_contribution_air.
                             let mut aux_trace_local = aux_scratch.borrow_mut();
@@ -2827,6 +3048,7 @@ where
                                 &mut aux_trace_local,
                                 &mut const_pols_local,
                                 slot_commit_ctx_clone.as_deref(),
+                                staged,
                             ) {
                                 Ok(stream_id) => stream_id,
                                 Err(e) => {
@@ -2839,7 +3061,12 @@ where
                                 tracing::info!("First GPU contribution queued");
                             }
 
-                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
+                            // Release a staging no commit consumed (the commit ran before the witness thread staged it);
+                            // otherwise it holds its slot for the rest of the run. No-op when consumed.
+                            if pctx_clone.gpu {
+                                release_staged_witness_c(pctx_clone.get_device_buffers_ptr(), instance_id as u64);
+                            }
+                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id) && !staged;
                             if is_shared_buffer {
                                 // Trace H2D is async, so don't recycle the shared buffer until the
                                 // commit completes. Wait on the commit's stream (air_instance
@@ -2896,13 +3123,10 @@ where
                 *witness_start_time.write().unwrap() = Some(std::time::Instant::now());
             }
 
-            let my_instances = self.pctx.dctx_get_process_instances();
-
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_no_tables = self
-                .pctx
-                .dctx_witness_schedule(my_instances.iter().copied().filter(|&idx| !self.pctx.dctx_is_table(idx)));
+            let my_instances_no_tables =
+                self.pctx.dctx_witness_schedule(self.pctx.dctx_get_process_instances_no_tables());
 
             timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
@@ -2931,6 +3155,7 @@ where
 
             drop(witness_handles);
 
+            self.export_prover_multiplicities()?;
             timer_start_debug!(CALCULATING_TABLES);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();
@@ -2950,7 +3175,7 @@ where
 
             self.pctx.set_proof_tx(None);
 
-            for _ in 0..self.n_streams {
+            for _ in 0..self.handle_contributions.lock().unwrap_or_else(|e| e.into_inner()).len() {
                 self.contributions_tx.send(usize::MAX).ok();
             }
 
@@ -3068,6 +3293,13 @@ where
         timer_start_info!(GENERATING_PROOFS);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
+
+        // Zone stagings match by instance id; drop contribution leftovers (all those commits are done).
+        if self.pctx.gpu {
+            for instance_id in self.pctx.dctx_get_process_instances() {
+                release_staged_witness_c(self.pctx.get_device_buffers_ptr(), instance_id as u64);
+            }
+        }
 
         debug_assert_eq!(
             self.pctx.dctx_count_witness_state(proofman_common::WitnessState::Running),
@@ -5067,6 +5299,12 @@ where
         let n_threads_witness = self.num_threads_per_witness;
         let witness_start_time_clone = witness_start_time.clone();
         let sctx_admission = self.sctx.clone();
+        let zone_airs = Arc::new(if self.pctx.gpu { self.zone_staging_airs() } else { HashMap::new() });
+        let packed_info = Arc::new(self.options.packed_info.clone());
+        let strict_slots = self.pctx.gpu
+            && self.options.packed
+            && get_num_gpus_c() == 1
+            && get_stream_commit_slots_c(self.pctx.get_device_buffers_ptr()) > 0;
         let class_sizes = self.pctx.basic_stream_sizes.clone();
         let n_classes = class_sizes.len();
         let witness_handler = if !minimal_memory && (self.pctx.gpu || stats) {
@@ -5075,6 +5313,8 @@ where
             // Bucketed once on arrival so admission never re-reads a band under `in_flight`.
             let mut pending: [std::collections::VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
             let in_flight: Arc<Mutex<HashMap<(usize, usize), usize>>> = Arc::new(Mutex::new(HashMap::new()));
+            // Witness threads not yet counted. Not `in_flight`: a staged witness frees its slot early.
+            let running = Arc::new(AtomicUsize::new(0));
             // Depth 1: a wakeup is a hint, not a count.
             let (slot_freed_tx, slot_freed_rx): (Sender<()>, Receiver<()>) = bounded(1);
             let mut arrivals_done = false;
@@ -5134,9 +5374,9 @@ where
                         }
                         // Nothing more can arrive and nothing runs to open the gate, so what is left
                         // (gated `Last` work) never will: the phase aborted before announcing it all.
-                        if arrivals_done && in_flight.lock().unwrap().values().all(|&n| n == 0) {
-                            // Re-read after the slots: a witness counts itself before freeing its slot,
-                            // so a completion that opened the gate since `scope` is visible here.
+                        if arrivals_done && running.load(Ordering::Acquire) == 0 {
+                            // Re-read now: a witness counts itself before it stops running, so a
+                            // completion that opened the gate since `scope` is visible here.
                             let scope_now =
                                 crate::bands_in_scope(witness_done_clone.value(), last_gate.load(Ordering::Acquire));
                             if scope_now == WitnessPriority::BANDS {
@@ -5204,14 +5444,50 @@ where
                 let pctx_clone = pctx_clone.clone();
                 let gpu = pctx_clone.gpu;
                 let cancellation_info_clone = cancellation_info_clone.clone();
+                let zone_airs = zone_airs.clone();
+                let packed_info = packed_info.clone();
+                // Contributions: stage the finished witness and give its buffer back BEFORE the
+                // commit can see the instance, so the two never race for the buffer.
+                let stage_first = gpu
+                    && !stats
+                    && witness_start_time_clone.is_some()
+                    && zone_airs.contains_key(&(airgroup_id, air_id));
+                running.fetch_add(1, Ordering::Relaxed);
+                let running_worker = running.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    if stage_first {
+                        pctx_clone.dispatch_deferred[instance_id].store(true, Ordering::SeqCst);
+                    }
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                     }
+                    // The staging below is an H2D wait, not CPU work: give the tokens and the
+                    // admission slot back first so the next witness can start.
                     drop(tokens);
+                    // With a staging to wait on (H2D, not CPU work), the admission slot goes back first so
+                    // the next witness can start, and admission is woken again once this one is counted.
+                    let (slot, wake) = if stage_first {
+                        let wake = slot.wake.clone();
+                        drop(slot);
+                        match Self::stage_for_commit(
+                            &pctx_clone,
+                            &zone_airs,
+                            memory_handler_clone.as_ref(),
+                            strict_slots,
+                            &packed_info,
+                            instance_id,
+                        ) {
+                            Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
+                            Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
+                        }
+                        pctx_clone.end_deferred_dispatch(instance_id);
+                        (None, Some(wake))
+                    } else {
+                        (Some(slot), None)
+                    };
                     // The buffer carries its own wait, whichever worker blocked for it. Read
                     // before the counter, so nothing touches the trace once the phase may proceed.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
@@ -5230,6 +5506,10 @@ where
                     // or the gate sits out an `ADMISSION_WAIT` it has no reason to.
                     witness_done_clone.increment();
                     drop(slot);
+                    if let Some(wake) = wake {
+                        let _ = wake.try_send(());
+                    }
+                    running_worker.fetch_sub(1, Ordering::Release);
                     timer_stop_and_log_debug_net!(
                         GENERATING_WC,
                         waited,
@@ -5688,15 +5968,34 @@ where
                         continue;
                     }
                     let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else { continue };
-                    slot_bytes = slot_bytes.max(stream_commit_slot_bytes_c(
-                        ss.n_bits,
-                        ss.n_bits_ext,
-                        n_cols,
-                        pi.num_packed_words,
-                    ));
+                    let mut bytes = stream_commit_slot_bytes_c(ss.n_bits, ss.n_bits_ext, n_cols, pi.num_packed_words);
+                    // Tail room for a column-major copy of the packed rows (read by unpack and the multiplicity
+                    // scatter). Reserved for every non-indexed air so the copy is never refused mid-commit, which
+                    // would corrupt the global challenge. The indexed layout takes no copy.
+                    if pi.col_source.is_empty() {
+                        bytes += (1u64 << ss.n_bits) * pi.num_packed_words * 8;
+                    }
+                    slot_bytes = slot_bytes.max(bytes);
                 }
+                // A slot only runs during contributions, so overlap with a basic stream is decided by the
+                // contribution footprint (mapTotalNContributions), not the stream's full extent.
+                let contrib_footprint_bytes = pctx
+                    .global_info
+                    .airs
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(ag, g)| (0..g.len()).map(move |ai| (ag, ai)))
+                    .filter_map(|(ag, ai)| sctx.get_setup(ag, ai).ok().map(|s| s.contributions_size))
+                    .max()
+                    .unwrap_or(0)
+                    * 8;
                 if slot_bytes > 0 {
-                    configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), n_slots, slot_bytes);
+                    configure_stream_commit_slots_c(
+                        pctx.get_device_buffers_ptr(),
+                        n_slots,
+                        slot_bytes,
+                        contrib_footprint_bytes,
+                    );
                 } else {
                     tracing::info!(
                         "Streaming-commit slots ({n_slots}) requested but no slot-eligible packed AIR found; slots disabled"
@@ -5917,9 +6216,8 @@ where
         Ok(())
     }
 
-    /// Try to commit `instance_id` on a reserved streaming slot. Returns false
-    /// (caller takes the legacy stream path) when the AIR is not slot-eligible,
-    /// no slot token is free, or the C side rejects the shape.
+    /// Commit `instance_id` on a streaming slot. Ok(false) means take the legacy path: the air has
+    /// no packed info (virtual tables), or, outside strict mode, no token is free or C refuses.
     ///
     /// Indexed AIRs are eligible: the C side looks up the air's indexed descriptor
     /// (col_source / col_lane / index_bits / lanes / words_per_entry) and its uploaded
@@ -5934,31 +6232,50 @@ where
         airgroup_id: usize,
         air_id: usize,
         trace: *mut u8,
+        params: *mut u8,
         roots_contributions: &[[F; 4]],
-    ) -> bool {
+        staged: bool,
+    ) -> ProofmanResult<bool> {
         let Some(pi) = ctx.packed_info.get(&(airgroup_id, air_id)) else {
-            return false;
+            return Ok(false);
         };
-        if !pi.is_packed || trace.is_null() {
-            return false;
+        // A null trace is fine when staged (the slot reads the zone); without a staging it is an error.
+        if trace.is_null() && !staged {
+            return Ok(false);
         }
         let ss = &setup.stark_info.stark_struct;
         if !stream_commit_eligible(&pctx.global_info.hash, setup) {
-            return false;
+            return Ok(false);
         }
         let Some(&n_cols) = setup.stark_info.map_sections_n.get("cm1") else {
-            return false;
+            return Ok(false);
         };
-        // Slots only pay off while gpu-mops holds the first GPU's buffer (no
-        // legacy stream is available there); once released, the legacy path is
-        // strictly better -- async, pinned, and it keeps witness residency.
-        if !is_first_gpu_buffer_borrowed_c(pctx.get_device_buffers_ptr()) {
-            return false;
-        }
-        // One-shot token take: a miss means all slots are busy right-now and the
-        // instance goes legacy.
-        let Ok(slot) = ctx.pool_rx.try_recv() else {
-            return false;
+        // Slots are allowed outside the gpu-mops borrow window too. An unpacked air is the degenerate
+        // packing (one 64-bit word per column), which the unpack cursor reads as identity.
+        let identity_widths: Vec<u64>;
+        let (words_per_row, widths): (u64, &[u64]) = if pi.is_packed {
+            (pi.num_packed_words, pi.unpack_info.as_slice())
+        } else {
+            identity_widths = vec![64u64; n_cols as usize];
+            (n_cols, identity_widths.as_slice())
+        };
+        // Strict: wait for a token (C waits out quiesce and region), so one call commits or errors.
+        // Otherwise take a token only if free.
+        let slot = if ctx.strict {
+            match ctx.pool_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(slot) => slot,
+                Err(_) => {
+                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
+                    return Err(ProofmanError::ProofmanError(format!(
+                        "no streaming slot came free in 60 s for instance {instance_id} [{airgroup_id}:{air_id}]"
+                    )));
+                }
+            }
+        } else {
+            let Ok(slot) = ctx.pool_rx.try_recv() else {
+                return Ok(false);
+            };
+            slot
         };
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
@@ -5970,31 +6287,95 @@ where
             ss.n_bits,
             ss.n_bits_ext,
             n_cols,
-            pi.num_packed_words,
-            pi.unpack_info.as_ptr() as *mut c_void,
+            words_per_row,
+            widths.as_ptr() as *mut c_void,
             roots_contributions[instance_id].as_ptr() as *mut c_void,
+            params as *mut c_void,
         );
         ctx.pool_tx.send(slot).ok();
-        if rc != 0 {
-            // -14 is returned for either of two expected, transient conditions:
-            // the slots are quiesced (gpu-mops entered its final planning phase,
-            // typical near the window close), or the overlapped legacy region is
-            // busy (streamCommitAcquireRegion could not claim every overlapped
-            // first-GPU stream). Both mean "take the legacy path this time".
-            // Anything else is a misconfiguration worth surfacing (e.g. -15 wrong
-            // hash family, -13 shape/slot-size drift, -16 indexed air whose
-            // instruction table was never registered, -4 incomplete indexed
-            // descriptor). Note the legacy fallback is NOT a rescue for -16: the
-            // prover-side unpack aborts on the same missing table.
-            if rc != -14 {
+        match rc {
+            0 => {
+                ctx.committed.fetch_add(1, Ordering::Relaxed);
+                Ok(true)
+            }
+            // -20 quiesced / -21 region held: transient, legacy takes it this time.
+            -20 | -21 if !ctx.strict => Ok(false),
+            _ if ctx.strict => {
+                if rc == -20 || rc == -21 {
+                    dump_pipeline_state_c(pctx.get_device_buffers_ptr());
+                }
+                Err(ProofmanError::ProofmanError(format!(
+                    "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; \
+                     -20/-21 mean the quiesce or the region did not lift in 60 s, anything else is a configuration error"
+                )))
+            }
+            _ => {
                 tracing::warn!(
                     "Streaming slot commit rejected (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; using legacy path"
                 );
+                Ok(false)
             }
-            return false;
         }
-        ctx.committed.fetch_add(1, Ordering::Relaxed);
-        true
+    }
+
+    /// Per air: the bytes its witness occupies on the wire (what the prefetch zone stages), and
+    /// whether its host buffer may go back to the pool once staged.
+    fn zone_staging_airs(&self) -> HashMap<(usize, usize), (u64, bool)> {
+        let mut m = HashMap::new();
+        for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in group.iter().enumerate() {
+                let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                let words = self
+                    .options
+                    .packed_info
+                    .get(&(airgroup_id, air_id))
+                    .filter(|pi| pi.is_packed && self.options.packed)
+                    .map(|pi| pi.num_packed_words)
+                    .unwrap_or(cm1);
+                // clear_traces() also drops custom_commits_fixed, which such a commit still needs.
+                let releasable = !setup.stark_info.custom_commits.iter().any(|c| c.stage_widths[0] > 0);
+                m.insert((airgroup_id, air_id), (words * n * 8, releasable));
+            }
+        }
+        m
+    }
+
+    /// Stage `instance_id`'s witness into the prefetch zone. Returns a `ProofCtx::witness_staged`
+    /// state: not staged, staged with the host buffer kept, or staged with it given back.
+    fn stage_for_commit(
+        pctx: &ProofCtx<F>,
+        zone_airs: &HashMap<(usize, usize), (u64, bool)>,
+        memory_handler: &MemoryHandler<F>,
+        strict_slots: bool,
+        packed_info: &HashMap<(usize, usize), PackedInfo>,
+        instance_id: usize,
+    ) -> ProofmanResult<u8> {
+        if !pctx.gpu {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let Some(&(bytes, releasable)) = zone_airs.get(&(airgroup_id, air_id)) else {
+            return Ok(WITNESS_NOT_STAGED);
+        };
+        let trace = pctx.get_air_instance_trace_ptr(instance_id);
+        if trace.is_null() || bytes == 0 {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        let staged_ok =
+            stage_witness_c(pctx.get_device_buffers_ptr(), instance_id as u64, trace as *mut c_void, bytes) >= 0;
+        if !staged_ok {
+            return Ok(WITNESS_NOT_STAGED);
+        }
+        // Only when the commit is certain to read the zone: a strict slot commit does, a legacy
+        // commit on another GPU would not find it.
+        let reads_zone = strict_slots && packed_info.contains_key(&(airgroup_id, air_id));
+        if releasable && reads_zone && pctx.is_shared_buffer(instance_id) {
+            memory_handler.to_be_released_buffer(instance_id);
+            return Ok(WITNESS_STAGED_RELEASED);
+        }
+        Ok(WITNESS_STAGED)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6007,6 +6388,7 @@ where
         aux_trace: &mut [F],
         const_pols: &mut [F],
         slot_commit: Option<&SlotCommitCtx>,
+        staged: bool,
     ) -> ProofmanResult<u64> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -6027,6 +6409,12 @@ where
             steps_params.aux_trace = aux_trace.as_mut_ptr() as *mut u8;
             load_const_pols(setup, const_pols);
             steps_params.p_const_pols = const_pols.as_mut_ptr() as *mut u8;
+        }
+
+        // Staged with the host buffer handed back, so the inherited pointer may be recycled. Null it;
+        // C reads the packed rows from the zone.
+        if staged {
+            steps_params.trace = std::ptr::null_mut();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();
@@ -6050,8 +6438,10 @@ where
                 airgroup_id,
                 air_id,
                 steps_params.trace,
+                p_steps_params,
                 roots_contributions,
-            ),
+                staged,
+            )?,
             None => false,
         };
 

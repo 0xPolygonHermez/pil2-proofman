@@ -1531,6 +1531,27 @@ pub fn configure_prefetch_zone_c(
     }
 }
 
+/// Stage a witness into the prefetch zone ahead of its commit. Returns the slot, or -1 when there
+/// is no zone or every slot still holds an unconsumed staging; the commit then stages for itself.
+#[cfg(not(feature = "cpu-only"))]
+pub fn stage_witness_c(d_buffers: *mut c_void, instance_id: u64, trace: *mut c_void, total_size: u64) -> i64 {
+    unsafe { stage_witness(d_buffers, instance_id, trace, total_size) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn stage_witness_c(_d_buffers: *mut c_void, _instance_id: u64, _trace: *mut c_void, _total_size: u64) -> i64 {
+    -1
+}
+
+/// Drop a staging whose commit already ran, so its slot goes back to the zone.
+#[cfg(not(feature = "cpu-only"))]
+pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
+    unsafe { release_staged_witness(d_buffers, instance_id) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
+
 pub fn get_prefetch_witness_slots_c() -> u32 {
     unsafe { get_prefetch_witness_slots() }
 }
@@ -1682,8 +1703,9 @@ pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, wor
     unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64,
+                                       contrib_footprint_bytes: u64) {
+    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes, contrib_footprint_bytes) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1700,6 +1722,9 @@ pub fn commit_witness_streaming_c(
     words_per_row: u64,
     col_widths: *mut ::std::os::raw::c_void,
     root: *mut ::std::os::raw::c_void,
+    // StepsParams: the slot stages publics and value pools from it. Null refuses the slot to airs
+    // whose lookups read them.
+    params: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe {
         commit_witness_streaming(
@@ -1715,6 +1740,7 @@ pub fn commit_witness_streaming_c(
             words_per_row,
             col_widths,
             root,
+            params,
         )
     }
 }
@@ -1857,4 +1883,105 @@ pub fn load_device_const_pols_c(
             already_loaded,
         );
     }
+}
+
+// ---- Prover-side multiplicities -------------------------------------------------------------
+// Geometry is registered once; the host accumulator pointer is passed per call and never retained
+// on the C++ side, so Rust stays free to reallocate or reset its accumulator.
+pub fn register_mul_vt_c(
+    airgroup_id: u64,
+    air_id: u64,
+    num_rows: u64,
+    num_cols: u64,
+    table_ids: &[u64],
+    acc_bases: &[u64],
+) {
+    debug_assert_eq!(table_ids.len(), acc_bases.len());
+    unsafe {
+        register_mul_vt(
+            airgroup_id,
+            air_id,
+            num_rows,
+            num_cols,
+            table_ids.as_ptr(),
+            acc_bases.as_ptr(),
+            table_ids.len() as u64,
+        );
+    }
+}
+
+/// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
+pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
+    debug_assert_eq!(table_ids.len(), biases.len());
+    unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
+}
+/// Hand down an exact-match key->row map.
+pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: u64) {
+    unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
+}
+
+pub fn mul_migrated_tables_c() -> Vec<u64> {
+    const CAP: u64 = 256;
+    let mut out = vec![0u64; CAP as usize];
+    let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), CAP) };
+    // The C side fills at most `CAP` entries without signalling truncation, so `n == CAP` may hide
+    // unlisted tables that the CPU path would then double-count. Fail instead.
+    assert!(
+        n < CAP,
+        "mul_migrated_tables_c: C side returned {n} tables, at the {CAP}-table cap -- this table \
+         count may have been silently truncated (mul_migrated_tables_impl stops writing at CAP with \
+         no log); raise CAP on the C side"
+    );
+    out.truncate(n as usize);
+    out
+}
+
+/// Whether the prover counts any table of `air_id`. An air where it counts none needs no host
+/// accumulator at all.
+pub fn mul_air_has_owned_c(air_id: u64) -> bool {
+    unsafe { mul_air_has_owned(air_id) != 0 }
+}
+
+/// Allow the device to export table traces by itself. Only sound when no cross-rank reduction is
+/// needed, since the device accumulator holds this process's counts alone.
+pub fn mul_set_device_export_c(enabled: bool) {
+    unsafe { mul_set_device_export(enabled as u64) }
+}
+
+/// Whether the device owns every table of `air_id`, so the host must not build its trace.
+pub fn mul_air_device_owned_c(air_id: u64) -> bool {
+    unsafe { mul_air_device_owned(air_id) != 0 }
+}
+
+/// Wait until every instance has launched its scatter. The table's own commit reads the
+/// accumulator on the device, so this is the ordering point that makes it complete.
+pub fn mul_sync_commits_c(expected_commits: u64) {
+    unsafe { mul_sync_commits(expected_commits) }
+}
+
+/// Call after `mul_sync_commits_c`.
+///
+/// # Safety
+/// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
+/// duration of the call. The C++ side does not retain it.
+pub unsafe fn mul_fold_c(air_id: u64, host_acc: *mut u64) {
+    unsafe { mul_fold(air_id, host_acc) }
+}
+
+/// # Safety
+/// `d_buffers` must be the live device-buffers pointer.
+pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
+    unsafe { mul_alloc(d_buffers) }
+}
+
+/// Count one instance's lookups straight from its filled witness, for paths that never commit
+/// (verify-constraints), where the commit hook does not run.
+/// # Safety
+/// `p_setup` and `steps_params` must be live for the duration of the call; neither is retained.
+pub unsafe fn mul_scatter_c(p_setup: *mut c_void, steps_params: *mut u8, airgroup_id: u64, air_id: u64) {
+    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id) }
+}
+
+pub fn mul_reset_c() {
+    unsafe { mul_reset() }
 }
