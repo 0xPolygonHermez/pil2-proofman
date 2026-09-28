@@ -1463,10 +1463,13 @@ int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, ui
                      [](const auto &x, const auto &y) { return x.first < y.first; });
     int slot = -1;
     uint32_t gl = 0;
-    // A library entry: hand the caller's thread back on its own device.
+    // A library entry: restore the caller's device, but only one of ours -- a thread that never set
+    // one reads device 0, and setting it would create a context on another rank's GPU.
     int prevDevice = 0;
     CHECKCUDAERR(cudaGetDevice(&prevDevice));
-    struct RestoreDevice { int d; ~RestoreDevice() { cudaSetDevice(d); } } restoreDevice{prevDevice};
+    bool prevOwned = false;
+    for (uint32_t k = 0; k < d_buffers->n_gpus; k++) prevOwned |= (int)d_buffers->my_gpu_ids[k] == prevDevice;
+    struct RestoreDevice { int d; bool on; ~RestoreDevice() { if (on) cudaSetDevice(d); } } restoreDevice{prevDevice, prevOwned};
     for (const auto &o : order) {
         PrefetchZone &z = d_buffers->prefetchZones[o.second];
         std::lock_guard<std::mutex> lk(z.mutex);
