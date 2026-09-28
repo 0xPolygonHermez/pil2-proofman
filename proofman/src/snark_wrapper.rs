@@ -193,6 +193,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             gpu,
             None,
             &std::collections::HashMap::new(),
+            false,
         )?;
 
         check_const_tree(&setup_recursivef, &d_buffers)?;
@@ -447,6 +448,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         gpu,
         None,
         &std::collections::HashMap::new(),
+        false,
     )?;
 
     calculate_fixed_tree_snark(&setup_recursivef);
@@ -492,6 +494,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         gpu,
         None,
         &std::collections::HashMap::new(),
+        false,
     )?;
 
     ensure_gpu_available(gpu)?;

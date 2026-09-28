@@ -302,6 +302,9 @@ impl<F: PrimeField64> Setup<F> {
         // Commit name -> packed file, when the caller knows them before the const buffer is
         // sized. Empty reserves each custom commit's worst case.
         custom_commits_fixed: &HashMap<String, PathBuf>,
+        // Proved with no global challenge (prove-air): the cm1 root enters the transcript before
+        // stage 2, so the StarkInfo is built as recursive to keep it off the in-place commit.
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let starkinfo_borrow_path = match setup_type {
             ProofType::Recursive1 => Some(
@@ -376,7 +379,7 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let recursive = setup_type != &ProofType::Basic;
+            let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
