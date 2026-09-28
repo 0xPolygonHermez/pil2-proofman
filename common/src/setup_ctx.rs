@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+use std::path::PathBuf;
 
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
@@ -19,6 +20,9 @@ use crate::ProofType;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedGroup {
     pub owner: (usize, usize),
+    /// Words the slot reserves for custom commits: the largest member's, since members register
+    /// their own files into it. `None` = the air's own reservation (a group of one).
+    pub custom_words: Option<usize>,
 }
 
 /// Columns the recursion's HOST trace buffer needs for one air.
@@ -67,6 +71,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         aggregation: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
+        let custom_commits_fixed = &HashMap::new();
         if aggregation {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu)?;
             let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu)?;
@@ -80,6 +85,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 verify_constraints,
                 gpu,
                 None,
+                custom_commits_fixed,
             )?;
 
             // Only if the key says it carries the stage. `Setup::new` reads the starkinfo from disk
@@ -96,6 +102,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     verify_constraints,
                     gpu,
                     None,
+                    custom_commits_fixed,
                 )?)
             } else {
                 None
@@ -323,6 +330,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
 
@@ -369,6 +377,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     verify_constraints,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
+                    custom_commits_fixed,
                 )?;
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
@@ -412,15 +421,19 @@ impl<F: PrimeField64> SetupRepository<F> {
         // one slot per group, in the same order the loader assigns offsets -- must not drift.
         let mut fixed_groups: HashMap<(usize, usize), FixedGroup> = HashMap::new();
         let mut sized_slots: HashSet<(usize, usize)> = HashSet::new();
+        let owner_of = |air: &(usize, usize)| groups.get(&setups[air].get_vk()).copied().unwrap_or(*air);
+        let mut group_custom_words: HashMap<(usize, usize), usize> = HashMap::new();
+        for air in &sized_airs {
+            let words = group_custom_words.entry(owner_of(air)).or_insert(0);
+            *words = (*words).max(setups[air].custom_commits_reserved_words);
+        }
         let mut shared_airs = 0;
         let mut saved = 0;
         for air in sized_airs {
             let setup = &setups[&air];
-            let group = match groups.get(&setup.get_vk()) {
-                Some(&owner) => FixedGroup { owner },
-                // Nothing to fingerprint with (no verkey): the air is its own group.
-                None => FixedGroup { owner: air },
-            };
+            // No verkey to fingerprint with: the air is its own group.
+            let owner = owner_of(&air);
+            let group = FixedGroup { owner, custom_words: Some(group_custom_words[&owner]) };
             fixed_groups.insert(air, group);
             max_const_pols_size_packed = max_const_pols_size_packed.max(setup.const_pols_size_packed);
             if sized_slots.insert(group.owner) {
@@ -428,8 +441,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                 total_const_pols_size += setup.const_pols_size_packed;
                 // Custom commits ride the same buffer; the slot is filled later, when
                 // register_custom_commits supplies the file path.
-                total_const_pols_size += setup.custom_commits_reserved_words;
-                total_custom_commits_reserved_words += setup.custom_commits_reserved_words;
+                total_const_pols_size += group_custom_words[&owner];
+                total_custom_commits_reserved_words += group_custom_words[&owner];
             } else {
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
@@ -515,13 +528,26 @@ pub struct SetupCtx<F: PrimeField64> {
 pub const RECURSIVE1_CONST_SLOTS: usize = 20;
 
 impl<F: PrimeField64> SetupCtx<F> {
+    /// Every custom commit reserves its worst case. Use `new_with_commit_files` when the caller
+    /// already knows the packed files: only then can the const buffer reserve their real width.
     pub fn new(
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, gpu)?;
+        Self::new_with_commit_files(global_info, setup_type, verify_constraints, gpu, &HashMap::new())
+    }
+
+    pub fn new_with_commit_files(
+        global_info: &GlobalInfo,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+        gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+    ) -> ProofmanResult<Self> {
+        let setup_repository =
+            SetupRepository::new(global_info, setup_type, verify_constraints, gpu, custom_commits_fixed)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;

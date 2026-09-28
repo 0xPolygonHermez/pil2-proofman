@@ -5,6 +5,7 @@
 #include <cstdint>
 
 class gl64_t;
+class TimerGPU;
 
 // Streaming commit for AIRs with a bit-packed witness.
 //
@@ -105,6 +106,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint8_t *dColSource = nullptr,
                            const uint8_t *dColLane = nullptr,
                            const uint64_t *dTable = nullptr,
-                           StreamCommitHash hash = StreamCommitHash::Poseidon1);
+                           StreamCommitHash hash = StreamCommitHash::Poseidon1,
+                           TimerGPU *timer = nullptr);
 
 #endif

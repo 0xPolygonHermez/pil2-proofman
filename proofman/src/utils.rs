@@ -1006,14 +1006,15 @@ fn load_const_pols_slot<F: PrimeField64>(
     if shared_slot.is_none() {
         slots.insert(group.owner, slot_offset);
         *offset += setup.const_pols_size_packed as u64;
-        *offset += setup.custom_commits_reserved_words as u64;
+        *offset += group.custom_words.unwrap_or(setup.custom_commits_reserved_words) as u64;
     }
 }
 
 /// Defaults to a group of its own for setups the repository did not fingerprint: the
 /// standalone vadcop_final setups, and any air without a verkey.
 fn fixed_group_or_own<F: PrimeField64>(sctx: Option<&SetupCtx<F>>, airgroup_id: usize, air_id: usize) -> FixedGroup {
-    sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id)).unwrap_or(FixedGroup { owner: (airgroup_id, air_id) })
+    sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id))
+        .unwrap_or(FixedGroup { owner: (airgroup_id, air_id), custom_words: None })
 }
 
 pub fn load_device_const_pols<F: PrimeField64>(
@@ -1164,7 +1165,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
             if setup_vadcop_final_compressed.gpu {
                 // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
-                let group = FixedGroup { owner: (0, 1) };
+                let group = FixedGroup { owner: (0, 1), custom_words: None };
                 load_const_pols_slot(
                     d_buffers,
                     setup_vadcop_final_compressed,

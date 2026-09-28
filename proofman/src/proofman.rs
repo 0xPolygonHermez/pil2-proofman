@@ -11,7 +11,7 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
-    prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
+    prefetch_witness_c, prefetch_zone_sync_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -1903,6 +1903,10 @@ where
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
         if is_shared_buffer {
+            // The trace H2D is asynchronous: recycle the buffer only once it has been read.
+            if pctx.gpu {
+                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64);
+            }
             memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
@@ -2159,6 +2163,7 @@ where
             false,
             self.options.gpu,
             Some(&vadcop_final_stem),
+            &self.options.custom_commits_fixed,
         )?;
 
         tracing::info!(
@@ -3738,6 +3743,10 @@ where
                     if cancellation_info_clone.read_recover().token.is_cancelled() {
                         // Held (dequeued-ahead) basics are no longer in the scheduler's queues, so
                         // the teardown drain can't recover them either: same recovery inline.
+                        // A held trace may still be read by its look-ahead staging.
+                        if pctx_clone.gpu && !held.is_empty() {
+                            prefetch_zone_sync_c(pctx_clone.get_device_buffers_ptr());
+                        }
                         for (hid, _, _) in held.drain(..) {
                             let (is_shared, buf) = pctx_clone.free_instance(hid);
                             if is_shared {
@@ -5514,8 +5523,13 @@ where
         }
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints, options.gpu)?);
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new_with_commit_files(
+            &pctx.global_info,
+            &ProofType::Basic,
+            options.verify_constraints,
+            options.gpu,
+            &options.custom_commits_fixed,
+        )?);
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -5870,6 +5884,7 @@ where
         let rc = commit_witness_streaming_c(
             pctx.get_device_buffers_ptr(),
             slot,
+            instance_id as u64,
             airgroup_id as u64,
             air_id as u64,
             trace as *mut c_void,

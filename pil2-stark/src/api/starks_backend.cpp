@@ -90,9 +90,10 @@ void configure_phase_b_gpu(void *d_buffers_);
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
 void harvest_pipeline_gpu(void *d_buffers_);
 void dump_pipeline_state_gpu(void *d_buffers_);
+void prefetch_zone_sync_gpu(void *d_buffers_);
 int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
                              uint64_t airgroupId, uint64_t airId, void *trace);
-int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -170,6 +171,7 @@ StarksBackend cpu_backend = []() {
     backend.harvest_pipeline = nullptr;                   // default: no-op
     backend.dump_pipeline_state = nullptr;                // default: no-op
     backend.prefetch_witness = nullptr;                   // default: declined
+    backend.prefetch_zone_sync = nullptr;                 // default: no zone
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
@@ -245,6 +247,7 @@ StarksBackend gpu_backend = []() {
     backend.harvest_pipeline = harvest_pipeline_gpu;
     backend.dump_pipeline_state = dump_pipeline_state_gpu;
     backend.prefetch_witness = prefetch_witness_gpu;
+    backend.prefetch_zone_sync = prefetch_zone_sync_gpu;
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
@@ -603,6 +606,11 @@ int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId
                : -1;
 }
 
+void prefetch_zone_sync(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->prefetch_zone_sync) backend->prefetch_zone_sync(d_buffers_);
+}
+
 uint64_t get_stream_commit_floor(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_stream_commit_floor ? backend->get_stream_commit_floor(d_buffers_) : UINT64_MAX;
@@ -616,13 +624,13 @@ void stream_commit_pause() {
 }
 
 int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
-                                 uint64_t airgroupId, uint64_t airId,
+                                 uint64_t instanceId, uint64_t airgroupId, uint64_t airId,
                                  void *packed, uint64_t nBits, uint64_t nBitsExt,
                                  uint64_t nCols, uint64_t wordsPerRow,
                                  void *colWidths, void *root) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->commit_witness_streaming
-               ? backend->commit_witness_streaming(d_buffers_, slotIdx, airgroupId, airId, packed,
+               ? backend->commit_witness_streaming(d_buffers_, slotIdx, instanceId, airgroupId, airId, packed,
                                                    nBits, nBitsExt, nCols, wordsPerRow, colWidths, root)
                : -1;
 }
