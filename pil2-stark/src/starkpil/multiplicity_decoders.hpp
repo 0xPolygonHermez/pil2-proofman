@@ -21,7 +21,7 @@
 
 struct MulDecoder {
     uint32_t table_id = 0;
-    uint64_t hostAirId = 0;         // the virtual-table air holding this table's counters
+    uint64_t hostAirKey = 0;        // mulAirKey of the virtual-table air holding the counters
     uint64_t acc_base = 0;
     uint64_t n_rows   = 0;
     int64_t  bias     = 0;          // -min, from the range_def hint (single-element tables)

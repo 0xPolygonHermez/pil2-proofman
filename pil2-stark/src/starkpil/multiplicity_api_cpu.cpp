@@ -22,8 +22,8 @@ void mul_set_device_export(uint64_t enabled) {
 }
 
 // Never: this backend has no device accumulator, so every air's trace is built on the host.
-uint64_t mul_air_device_owned(uint64_t airId) {
-    (void)airId;
+uint64_t mul_air_device_owned(uint64_t airKey) {
+    (void)airKey;
     return 0;
 }
 
@@ -35,9 +35,9 @@ void mul_sync_commits(uint64_t expectedCommits) {
 }
 
 // After mul_sync_commits, which waits for every instance to have counted.
-void mul_fold(uint64_t airId, uint64_t *hostAcc) {
+void mul_fold(uint64_t airKey, uint64_t *hostAcc) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
-    mul_cpu_fold(airId, hostAcc);
+    mul_cpu_fold(airKey, hostAcc);
 }
 
 void mul_alloc(void *d_buffers_) {

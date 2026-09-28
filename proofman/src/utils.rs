@@ -1242,6 +1242,17 @@ pub fn add_publics_aggregation<F: PrimeField64>(
 pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     wcm.register_component_std(std.prod_bus.clone());
     wcm.register_component_std(std.sum_bus.clone());
+    wcm.register_component_std(std.range_check.clone());
+    // Only non-virtual ranges have these airs (virtual ones are `None`); the std counts them.
+    if let Some(air) = std.range_check.u8air.clone() {
+        wcm.register_component_std(air);
+    }
+    if let Some(air) = std.range_check.u16air.clone() {
+        wcm.register_component_std(air);
+    }
+    if let Some(air) = std.range_check.specified_ranges_air.clone() {
+        wcm.register_component_std(air);
+    }
     wcm.register_component_std(std.virtual_table.clone());
     if std.virtual_table.virtual_table_airs.is_some() {
         for air in std.virtual_table.virtual_table_airs.clone().unwrap() {

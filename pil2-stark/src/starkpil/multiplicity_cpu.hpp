@@ -27,10 +27,10 @@ inline std::mutex& mulCpuAccsMutex() { static std::mutex m; return m; }
 inline void mul_cpu_alloc() {
     std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
     for (const auto& L : mulVtLayouts()) {
-        if (!mulLayoutHostsMigrated(L) || mulCpuAccs().count(L.airId)) continue;
-        mulCpuAccs().emplace(L.airId, std::vector<std::atomic<uint64_t>>(L.nCounters));
+        if (!mulLayoutHostsMigrated(L) || mulCpuAccs().count(L.airKey)) continue;
+        mulCpuAccs().emplace(L.airKey, std::vector<std::atomic<uint64_t>>(L.nCounters));
         zklog.trace("Multiplicity accumulator (CPU): " + std::to_string(L.nCounters * 8 / (1 << 20))
-                   + " MB for air " + std::to_string(L.airId));
+                   + " MB for air " + mulAirName(L.airKey));
     }
 }
 
@@ -41,12 +41,12 @@ inline void mul_cpu_reset() {
 }
 
 // Add an air's counts into the std's host accumulator. Mirrors mul_fold_air.
-inline void mul_cpu_fold(uint64_t airId, uint64_t* hostAcc) {
+inline void mul_cpu_fold(uint64_t airKey, uint64_t* hostAcc) {
     std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
-    auto it = mulCpuAccs().find(airId);
+    auto it = mulCpuAccs().find(airKey);
     if (it == mulCpuAccs().end() || hostAcc == nullptr) return;
     for (const auto& d : mulDecoders()) {
-        if (d.hostAirId != airId) continue;
+        if (d.hostAirKey != airKey) continue;
         for (uint64_t i = 0; i < d.n_rows; ++i)
             hostAcc[d.acc_base + i] += it->second[d.acc_base + i].load(std::memory_order_relaxed);
     }
@@ -111,7 +111,7 @@ inline void mul_scatter_cpu(SetupCtx& setupCtx, StepsParams& params, uint64_t ai
         std::vector<std::atomic<uint64_t>>* acc = nullptr;
         {
             std::lock_guard<std::mutex> lk(mulCpuAccsMutex());
-            auto it = mulCpuAccs().find(j.hostAirId);
+            auto it = mulCpuAccs().find(j.hostAirKey);
             if (it == mulCpuAccs().end()) continue;
             acc = &it->second;
         }

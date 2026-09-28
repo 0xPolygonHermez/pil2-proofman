@@ -559,3 +559,16 @@ TEST(GOLDILOCKS_TEST, stream_commit_identity_packing)
     for (StreamCommitHash h : {StreamCommitHash::Poseidon1, StreamCommitHash::Poseidon2, StreamCommitHash::Blake3})
         for (uint64_t nCols : {1ull, 12ull, 22ull}) runStreamCommitIdentity(15, nCols, h);
 }
+
+// Rows of hundreds to thousands of columns: blake3 runs b3_hash_row's chunk tree on up to five
+// parked chaining values (4096 columns = 32 chunks); Poseidon1/2 absorb one RATE chunk per launch.
+// 1024/1025 and 2048/2049 straddle a power-of-two chunk count, where the tree changes shape.
+TEST(GOLDILOCKS_TEST, stream_commit_very_wide_rows)
+{
+    const uint64_t shapes[] = {600, 1024, 1025, 2048, 2049, 3000, 4096};
+    for (StreamCommitHash h : {StreamCommitHash::Poseidon1, StreamCommitHash::Poseidon2, StreamCommitHash::Blake3})
+        for (uint64_t nCols : shapes) {
+            runStreamCommitReducedWide(10, nCols, 2, h);
+            runStreamCommitIdentity(10, nCols, h);
+        }
+}

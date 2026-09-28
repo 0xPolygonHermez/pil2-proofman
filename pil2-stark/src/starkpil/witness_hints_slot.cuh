@@ -34,7 +34,7 @@ uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems);
 // UNPACKED const pols; it and `dVals` may be null only if the plan reads neither.
 void slotHintEvalLaunch(const MulInsnDev *dProg, const SlotHintOp *hOps, uint32_t nOps,
                         const uint64_t *dPacked, uint64_t wordsPerRow, bool packedColMajor,
-                        const uint64_t *dConstPols,
+                        const uint64_t *dConstPols, const uint64_t *dCustomPols,
                         const uint64_t *dVals, const SlotHintValOffsets &vo, uint64_t *dSide,
                         uint64_t nRows, cudaStream_t stream);
 

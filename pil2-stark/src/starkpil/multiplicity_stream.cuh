@@ -32,6 +32,9 @@ struct MulStreamCtx {
     // Device, this air's const pols UNPACKED (column-major, `col * nRows + row`), expanded into
     // mulStreamConst. d_constPols is bit-packed behind a header and must not be handed to the jobs.
     const uint64_t *constPols;
+    // Device, the first fixed custom commit UNPACKED (column-major), expanded into mulStreamCustom.
+    // Null when the air's jobs read none.
+    const uint64_t *customPols = nullptr;
     // Publics and the value pools, one contiguous device window (uploaded by the slot hook), capped
     // at PINNED_AUX_VALUES_MAX.
     const uint64_t *dVals;
@@ -98,7 +101,7 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
         for (MulOperandDev* o : {&in.a, &in.b}) {
             if (o->kind != MUL_OPND_COL) continue;
             MulTermDev& t = o->term;
-            if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST) continue;   // served as-is
+            if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST || MUL_SLOT_CUSTOM_OK(t)) continue;   // served as-is
             if (t.src != MUL_SRC_TRACE) { cache[key] = r; return r; }
             auto h = hintSlotOf.find(t.col);
             if (h != hintSlotOf.end()) {          // a column a hint produced, not the witness
@@ -122,7 +125,11 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
 
     MulInsnDev* dp = nullptr;
     const size_t bytes = prog.size() * sizeof(MulInsnDev);
-    if (cudaMalloc(&dp, bytes) != cudaSuccess) { cache[key] = r; return r; }
+    if (cudaMalloc(&dp, bytes) != cudaSuccess) {
+        (void)cudaGetLastError();   // tolerated: leave no sticky error for the next check
+        cache[key] = r;
+        return r;
+    }
     // Never on the default stream: it would poison concurrent graph captures.
     mulCopySync(gpuId, dp, prog.data(), bytes, cudaMemcpyHostToDevice);
     r.prog = dp; r.ok = true;
@@ -144,13 +151,23 @@ inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, 
     if (e.first != nullptr) cudaFree(e.first);
     e.first = nullptr;
     e.second = 0;
-    if (cudaMalloc(&e.first, elems * sizeof(uint64_t)) != cudaSuccess) return nullptr;
+    if (cudaMalloc(&e.first, elems * sizeof(uint64_t)) != cudaSuccess) {
+        (void)cudaGetLastError();   // tolerated: leave no sticky error for the next check
+        e.first = nullptr;
+        return nullptr;
+    }
     e.second = elems;
     return e.first;
 }
 
 // Where the caller expands this air's const pols before the commit. Sized nConstants * N.
 inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems) {
+    static MulStreamBufs bufs;
+    return mulStreamBuf(bufs, gpuId, slotIdx, elems);
+}
+
+// Where the caller expands this air's first fixed custom commit. Sized its width * N.
+inline uint64_t* mulStreamCustom(int gpuId, uint64_t slotIdx, size_t elems) {
     static MulStreamBufs bufs;
     return mulStreamBuf(bufs, gpuId, slotIdx, elems);
 }
@@ -212,7 +229,7 @@ inline void mulStreamHook(const uint64_t *dPacked, const StreamCommitDims &dims,
         vals ? vals + c->offAirValues      : nullptr,
         vals ? vals + c->offProofValues    : nullptr,
         vals ? vals + c->offAirgroupValues : nullptr,
-        nullptr, nullptr, nullptr, nullptr };
+        c->customPols, nullptr, nullptr, nullptr };
     if (c->timer) c->timer->startCategory("MUL_SCATTER_PACKED");
     mul_scatter_launch(dev.jobs, (uint32_t)plan.jobs.size(), nRows, nRows, bases, c->acc, c->oob,
                        (c->airgroupId << 32) | c->airId, packedProg.prog, stream,

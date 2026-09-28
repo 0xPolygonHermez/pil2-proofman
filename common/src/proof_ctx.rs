@@ -369,8 +369,8 @@ pub struct ProofCtx<F: PrimeField64> {
 
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
     /// skip the instance for looking empty.
-    pub device_owned_table_airs: RwLock<Vec<usize>>,
-    pub prover_counts: RwLock<HashMap<usize, Vec<u64>>>,
+    pub device_owned_table_airs: RwLock<Vec<(usize, usize)>>,
+    pub prover_counts: RwLock<HashMap<(usize, usize), Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
     /// this is what makes stream eligibility visible to the Rust-side schedulers.

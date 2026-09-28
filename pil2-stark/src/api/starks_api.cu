@@ -1631,7 +1631,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // Device-owned table: re-derive cm1 from the live accumulator (reset per proof, not per phase).
     // Must match the slot commit (commit_witness_streaming_gpu), or the contribution root will not match.
     const bool mulExported = !air_instance_info->is_packed &&
-                             mul_export_to_trace(airId, (int)sd.gpuId, dst, N, nCols, stream);
+                             mul_export_to_trace(mulAirKey(airgroupId, airId), (int)sd.gpuId, dst, N, nCols, stream);
     if (mulExported) {
         // nothing to upload
     } else
@@ -1814,7 +1814,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // is identical: the transform below reads exactly what the upload would have written
     // there, so the producer targets the same slot as in the other two sites.
     const bool mulExported = !air_instance_info->is_packed &&
-                             mul_export_to_trace(airId, (int)gpuId, dst, N, nCols, stream);
+                             mul_export_to_trace(mulAirKey(airgroupId, airId), (int)gpuId, dst, N, nCols, stream);
     if (!mulExported) {
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
@@ -2928,8 +2928,8 @@ uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
     return ((DeviceCommitBuffers *)d_buffers_)->streamCommitFloorBytes;
 }
 
-// Byte size of one streaming-commit slot for the given packed-AIR shape (the
-// layout in streamCommitSlotElems). 0 = shape not slot-committable;
+static_assert(STREAM_COMMIT_HOST_WIDTH_WORDS >= SC_MAX_COLS, "a slot's pinned widths must hold its widest air");
+
 // The slot kernels for the active hash family.
 static StreamCommitHash streamCommitHashFor(HashFamily f) {
     switch (f) {
@@ -2939,6 +2939,8 @@ static StreamCommitHash streamCommitHashFor(HashFamily f) {
     }
 }
 
+// Byte size of one streaming-commit slot for the given packed-AIR shape (the
+// layout in streamCommitSlotElems). 0 = shape not slot-committable.
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
                                       uint64_t nCols, uint64_t wordsPerRow) {
     if (nCols == 0 || nCols > SC_MAX_COLS || nBitsExt <= nBits || wordsPerRow == 0) return 0;
@@ -3180,13 +3182,29 @@ static void slotConstCacheClear() {
 }
 
 static bool slotConstCached(int gpu, uint64_t j, const uint64_t *buf, const void *setupCtx,
-                            const void *packedConst) {
+                            const void *packedConst, bool custom = false) {
     using Tag = SlotConstTag;
     std::lock_guard<std::mutex> lk(slotConstTagsMutex);
-    Tag &t = slotConstTags()[{gpu, j}];
+    // The const and the custom-commit scratches of a slot keep separate tags.
+    Tag &t = slotConstTags()[{gpu, j * 2 + (custom ? 1 : 0)}];
     if (t.buf == buf && t.setup == setupCtx && t.src == packedConst) return true;
     t = Tag{buf, setupCtx, packedConst};
     return false;
+}
+
+// Expand bit-packed fixed columns (const pols, or the first fixed custom commit) into slot j's
+// scratch `dst`, unless it already holds them.
+static void slotExpandFixed(int gpu, uint64_t j, bool custom, uint64_t *dst, gl64_t *packed, uint64_t nCols,
+                            uint64_t nRows, const void *setupCtx, cudaStream_t stream, TimerGPU &timer) {
+    if (slotConstCached(gpu, j, dst, setupCtx, packed, custom)) return;
+    unpack_fixed((uint64_t *)packed, (uint64_t *)(packed + 1), (uint64_t *)(packed + 1 + nCols), dst, nCols, nRows,
+                 stream, timer);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+// Width of the first fixed custom commit, the one a slot serves (MUL_SLOT_CUSTOM_OK).
+static uint64_t slotCustomWidth(const StarkInfo &si) {
+    return si.mapSectionsN.at(si.customCommits[0].name + "0");
 }
 
 struct SlotCommitCtx {
@@ -3197,6 +3215,7 @@ struct SlotCommitCtx {
     const uint32_t   *destCols = nullptr, *destSlots = nullptr;
     uint32_t          nDest = 0;
     const uint64_t   *constPols = nullptr;
+    const uint64_t   *customPols = nullptr;     // first fixed custom commit, when a hint reads it
     uint64_t         *dVals = nullptr;          // device copy, at the tail of `side`
     const uint64_t   *hVals = nullptr;          // pinned source for it
     uint64_t          nVals = 0, nRows = 0;
@@ -3214,7 +3233,7 @@ static void slotCommitHook(const uint64_t *dPacked, const StreamCommitDims &dims
     if (c->nOps != 0)
         // `dPacked` is the transposed copy when colMajorForHook; both readers must agree.
         slotHintEvalLaunch(c->prog, c->ops, c->nOps, dPacked, dims.wordsPerRow,
-                           dims.colMajorForHook, c->constPols,
+                           dims.colMajorForHook, c->constPols, c->customPols,
                            c->dVals, c->valOff, c->side, c->nRows, stream);
     // Inline on the commit stream: the device is saturated, so a separate stream gains nothing.
     if (c->mul != nullptr) mulStreamHook(dPacked, dims, stream, c->mul);
@@ -3398,10 +3417,11 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // Packing layout for the scatter; an unpacked air is the identity packing (64 bits per column).
     if (aii != nullptr) slotMulLayout(aii, airgroupId, airId, nCols, packedAir, hintPlan, mulCtx);
 
-    bool needsCount = false;
+    bool needsCount = false, countReadsCustom = false;
     if (aii != nullptr && aii->setupCtx != nullptr && !mulDecoders().empty()) {
         const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
         needsCount = !p.jobs.empty();
+        countReadsCustom = needsCount && (p.srcMask & (1u << MUL_SRC_CUSTOM)) != 0;
         // If this air feeds a prover-owned table it MUST be counted here, or the root is valid
         // and the multiplicities silently wrong. Jobs that read what a slot does not hold refuse it.
         if (needsCount && !mulPlanStreamable(p)) {
@@ -3462,15 +3482,32 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             }
             // A slot's scratch keeps the last air it expanded: consecutive instances of one air (the
             // common case) unpack once. Ordered by the slot's own stream, which alone uses it.
-            gl64_t *packedConst = d_buffers->d_constPols[gl] + aii->const_pols_offset;
-            if (!slotConstCached(gpu, j, dConst, aii->setupCtx, packedConst)) {
-                unpack_fixed((uint64_t *)packedConst, (uint64_t *)(packedConst + 1),
-                             (uint64_t *)(packedConst + 1 + nConst), dConst, nConst, nRowsSlot,
-                             d_buffers->streamCommitStreams[slotIdx], timer);
-                CHECKCUDAERR(cudaGetLastError());
-            }
+            slotExpandFixed(gpu, j, false, dConst, d_buffers->d_constPols[gl] + aii->const_pols_offset, nConst,
+                            nRowsSlot, aii->setupCtx, d_buffers->streamCommitStreams[slotIdx], timer);
             dConstUnpacked = dConst;
         }
+    }
+
+    // The first fixed custom commit, when a hint or the scatter reads it: unpacked into a slot
+    // scratch like the const pols (its small domain only; rebuildCustomCommitsFixed also extends).
+    const uint64_t *dCustomUnpacked = nullptr;
+    if (countReadsCustom || (hintPlan != nullptr && hintPlan->readsCustom)) {
+        const StarkInfo &si = aii->setupCtx->starkInfo;
+        if (aii->customPolsPackedWords == 0 || si.customCommits.empty()) {
+            streamCommitReleaseRegion(d_buffers, gl);
+            return -22;  // reads a custom commit this device does not hold
+        }
+        const uint64_t w = slotCustomWidth(si);
+        uint64_t *dCustom = mulStreamCustom(gpu, j, w * nRowsSlot);
+        if (dCustom == nullptr) {
+            zklog.error("commit_witness_streaming: no room to expand the custom commit for air " +
+                        std::to_string(airgroupId) + "/" + std::to_string(airId) + " on gpu " + std::to_string(gpu));
+            streamCommitReleaseRegion(d_buffers, gl);
+            return -14;
+        }
+        slotExpandFixed(gpu, j, true, dCustom, d_buffers->d_constPols[gl] + aii->custom_pols_offset, w, nRowsSlot,
+                        aii->setupCtx, d_buffers->streamCommitStreams[slotIdx], timer);
+        dCustomUnpacked = dCustom;
     }
 
     // needsCount implies an accumulator and const pols (refused with -22 above otherwise).
@@ -3483,6 +3520,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         mulCtx.dTable = dTable;
         mulCtx.packedColMajor = dims.colMajorForHook ? 1u : 0u;
         mulCtx.constPols = dConstUnpacked;
+        mulCtx.customPols = dCustomUnpacked;
         mulCtx.dVals = (dSide != nullptr && nVals != 0)
                      ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
         mulCtx.offPublics        = offPublics;
@@ -3503,6 +3541,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         slotCtx.destSlots = hintDev.destSlots;
         slotCtx.nDest = hintDev.nDest;
         slotCtx.constPols = dConstUnpacked;
+        slotCtx.customPols = dCustomUnpacked;
         slotCtx.dVals = (dSide != nullptr && nVals != 0)
                       ? dSide + (size_t)hintDev.nDest * nRowsSlot : nullptr;
         slotCtx.hVals = hVals;
@@ -3523,7 +3562,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // A prover-owned virtual table: its rows come from the device accumulator, as in the legacy
     // commit (row-major, one word per column). After every refusal: the export folds across GPUs.
     const bool exported = aii != nullptr && !aii->is_packed &&
-                          mul_export_to_trace(airId, gpu, dPacked, nRowsSlot, nCols,
+                          mul_export_to_trace(mulAirKey(airgroupId, airId), gpu, dPacked, nRowsSlot, nCols,
                                               d_buffers->streamCommitStreams[slotIdx]);
     if (exported) packedSrc = (const void *)dPacked;
 
@@ -3599,7 +3638,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
 static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) {
     const int gpu = (int)d_buffers->my_gpu_ids[gl];
     CHECKCUDAERR(cudaSetDevice(gpu));
-    size_t maxSide = 0, maxConst = 0;
+    size_t maxSide = 0, maxConst = 0, maxCustom = 0;
     NTTGoldilocksGPU::warmTables();
     {
         std::lock_guard<std::mutex> lk(mulEventMutex());
@@ -3638,7 +3677,7 @@ static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) 
         if (hintDev.nDest != 0 || nVals != 0)
             maxSide = std::max<size_t>(maxSide, (size_t)hintDev.nDest * N + nVals);
 
-        bool counts = false;
+        bool counts = false, countReadsCustom = false;
         if (mulAcc != nullptr) {
             const MulPlan &p = mulPlanFor(*aii->setupCtx, airgroupId, airId);
             if (!p.jobs.empty() && mulPlanStreamable(p)) {
@@ -3646,19 +3685,25 @@ static size_t streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl) 
                 slotMulLayout(aii, airgroupId, airId, nCols, packed, hintPlan.ok ? &hintPlan : nullptr, mulCtx);
                 mulPlanDevice(p, airgroupId, airId, gpu);
                 counts = mulPackedProgramFor(p, mulCtx, airgroupId, airId, gpu).ok;
+                countReadsCustom = counts && (p.srcMask & (1u << MUL_SRC_CUSTOM)) != 0;
             }
         }
         // Same condition as the commit's `wantConst`.
         if ((counts || (hintPlan.ok && !hintPlan.ops.empty())) && aii->const_pols_offset != UINT64_MAX)
             maxConst = std::max<size_t>(maxConst, (size_t)si.nConstants * N);
+        // Same condition as the commit's custom-commit expansion.
+        if ((countReadsCustom || (hintPlan.ok && hintPlan.readsCustom)) && aii->customPolsPackedWords != 0 &&
+            !si.customCommits.empty())
+            maxCustom = std::max<size_t>(maxCustom, (size_t)slotCustomWidth(si) * N);
     }
     for (uint64_t s = 0; s < d_buffers->streamCommitSlots; s++) {
         if ((maxSide && !slotHintSideBuffer(gpu, s, maxSide)) ||
-            (maxConst && !mulStreamConst(gpu, s, maxConst)))
+            (maxConst && !mulStreamConst(gpu, s, maxConst)) ||
+            (maxCustom && !mulStreamCustom(gpu, s, maxCustom)))
             zklog.warning("stream_commit_warmup: could not preallocate slot " + std::to_string(s) +
                           " buffers; they will be allocated on first use");
     }
-    return maxSide + maxConst;
+    return maxSide + maxConst + maxCustom;
 }
 
 void stream_commit_warmup_gpu(void *d_buffers_) {

@@ -26,23 +26,19 @@ class TimerGPU;
 //   * blake3 (arity 2): chunks of 8 (one 64-byte block), raw chaining value
 //     carried in the 4 state columns, packed to the digest on the final
 //     block (matches b3_hash_row block for block). A row wider than one
-//     blake3 chunk (128 words) spans two chunks: chunk 0's chaining value is
-//     parked in 4 extra state columns and the leaf is the parent node of the
-//     two chunk values, as b3_hash_row builds it. The 12-column (16 for two
-//     chunks) working set makes a blake3 slot smaller than a Poseidon1 one
-//     for the same shape.
+//     blake3 chunk (128 words) spans several: the chaining values of completed
+//     left subtrees are parked in a stack of 4-column state slots and the leaf
+//     is the chunk tree's root node, as b3_hash_row builds it. The 12-column
+//     working set (+4 per parked value) keeps a blake3 slot smaller than a
+//     Poseidon1 one for rows of up to two chunks.
 //
 // All working memory lives inside one caller-provided slot (see layout in
 // streamCommitSlotElems); concurrent calls on different slots/streams are
 // independent.
 
-// Widest witness a slot commit accepts. Cost is only the slot head (one element per column for
-// the bit widths). 512 covers zisk Keccakf (453 columns).
-static constexpr uint64_t SC_MAX_COLS = 512;
-
-// Widest row blake3's absorb can hash (two parked CVs, four 128-word chunks). Tied to SC_MAX_COLS
-// by a static_assert in stream_commit.cu.
-static constexpr uint64_t SC_B3_MAX_COLS = 512;
+// Widest witness a slot commit accepts. Cost is the slot head (one element per column for the bit
+// widths, 32 KB) and a blake3 row's parked chaining values (see scBlake3StateCols).
+static constexpr uint64_t SC_MAX_COLS = 4096;
 
 // A lane is named by a u8 (dColLane, and bits 33-40 of the kernel's metadata word).
 static constexpr uint64_t SC_MAX_LANES = 256;
@@ -77,9 +73,9 @@ struct StreamCommitDims {
 //   [0, SC_MAX_COLS)              column bit widths (nCols used)
 //   [SC_MAX_COLS, +N*wordsPerRow) packed witness
 //   [.., +W*NExt)              hash working set (data | state), ColMajor;
-//                              W = 16 (Poseidon1: 12 + 4 state), 12 (blake3:
-//                              8 + 4 state) or 16 (blake3, nCols > 128: 8 + 4
-//                              state + 4 parked chunk-0 CV)
+//                              W = 16 (Poseidon1/2: 12 + 4 state) or, for
+//                              blake3, 8 + 4 state + 4 per parked chaining
+//                              value (bitlen(chunks - 1) of them)
 //   [.., +N)                   LDE scratch
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
                                StreamCommitHash hash = StreamCommitHash::Poseidon1);
@@ -103,7 +99,8 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 //
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot
-// layout contract, or an inconsistent indexed descriptor).
+// layout contract, an inconsistent indexed descriptor, or an indexed row too
+// wide for the device's shared memory, -8).
 
 // Called once, after the packed witness (`dPacked`, device) is uploaded and before the chunk loop.
 // The only point where the whole witness exists: the loop LDEs columns IN PLACE, so nothing after

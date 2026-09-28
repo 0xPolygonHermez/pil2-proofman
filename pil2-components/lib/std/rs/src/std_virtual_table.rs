@@ -37,6 +37,9 @@ pub struct VirtualTableAir<F: PrimeField64> {
     table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
     // Parallel to `table_ids`: prover-counted tables drop increments here (counts come via `ProofCtx::prover_counts`).
     prover_owned: std::sync::OnceLock<Vec<bool>>,
+    // Where the host publishes which tables it counts: the ProofCtx is shared with a dlopen'ed witness
+    // library, a static is not. None in unit tests.
+    pctx: Option<Arc<ProofCtx<F>>>,
     // Flat col-major: idx = col * num_rows + row. Single allocation.
     multiplicities: Vec<AtomicU64>,
     table_instance_id: AtomicU64,
@@ -66,19 +69,6 @@ pub struct VtLayout {
     pub num_cols: u64,
     pub table_ids: Vec<u64>,
     pub acc_bases: Vec<u64>,
-}
-
-/// Tables the prover counts itself. TEMPORARY: suppresses `inc_virtual_row` calls zisk still makes
-/// for claimed tables. Must be read lazily: the host sets it AFTER the virtual table airs are built,
-/// so reading it at construction would double-count.
-static PROVER_OWNED_TABLES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
-
-pub fn set_prover_owned_tables(tables: Vec<u64>) {
-    let _ = PROVER_OWNED_TABLES.set(tables);
-}
-
-fn prover_owned_tables() -> &'static [u64] {
-    PROVER_OWNED_TABLES.get().map(|v| v.as_slice()).unwrap_or(&[])
 }
 
 /// Counts from `fit_virtual_table_maps`, for the caller's summary (which also knows the
@@ -758,7 +748,7 @@ pub fn collect_virtual_table_layouts<F: PrimeField64>(
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
+    pub fn new(pctx: &Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -847,6 +837,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 num_cols: num_muls as usize,
                 table_ids: idxs,
                 prover_owned: std::sync::OnceLock::new(),
+                pctx: Some(pctx.clone()),
                 multiplicities,
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
@@ -930,6 +921,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             num_rows,
             num_cols,
             prover_owned: std::sync::OnceLock::new(),
+            pctx: None,
             table_ids,
             multiplicities: (0..num_cols * num_rows).map(|_| AtomicU64::new(0)).collect(),
             table_instance_id: AtomicU64::new(0),
@@ -974,10 +966,12 @@ impl<F: PrimeField64> VirtualTableAir<F> {
         }
     }
 
-    /// Whether the prover counts this table itself, resolved once on first use.
+    /// Whether the prover counts this table itself, resolved once on first use: the host fills
+    /// `prover_owned_tables` after these airs are built, so reading it at construction would
+    /// double-count.
     fn is_prover_owned(&self, id: usize) -> bool {
         self.prover_owned.get_or_init(|| {
-            let owned = prover_owned_tables();
+            let owned = self.pctx.as_ref().map(|p| p.prover_owned_tables.read().unwrap().clone()).unwrap_or_default();
             let flags: Vec<bool> = self.table_ids.iter().map(|(t, _)| owned.contains(&(*t as u64))).collect();
             let n = flags.iter().filter(|o| **o).count();
             if n > 0 {
@@ -1086,15 +1080,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
 
             // Device-owned air: the counts are already on the GPU, so skip the host path and the
             // emptiness check (which would see zeros and drop the instance).
-            let device_owned = pctx.device_owned_table_airs.read().unwrap().contains(&self.air_id);
+            let key = (self.airgroup_id, self.air_id);
+            let device_owned = pctx.device_owned_table_airs.read().unwrap().contains(&key);
 
             // Before `distribute_multiplicities`, so the MPI path sees a complete accumulator.
-            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&self.air_id).filter(|_| !device_owned) {
-                for (slot, add) in self.multiplicities.iter().zip(counts.iter()) {
+            if let Some(counts) = pctx.prover_counts.read().unwrap().get(&key).filter(|_| !device_owned) {
+                self.multiplicities.par_iter().zip(counts.par_iter()).for_each(|(slot, add)| {
                     if *add != 0 {
                         slot.fetch_add(*add, Ordering::Relaxed);
                     }
-                }
+                });
             }
 
             // An assigned table is computed only on its single owner node; its

@@ -22,9 +22,10 @@ struct MulPlan {
 };
 
 inline bool mulPlanStreamable(const MulPlan& p) {
-    // Const pols and packed rows are resident; publics and value pools are staged per slot
-    // (MulStreamCtx::dVals, capped by PINNED_AUX_VALUES_MAX). Aux and custom commits stay out.
-    const uint32_t resident = (1u << MUL_SRC_CONST)   | (1u << MUL_SRC_TRACE)
+    // Const pols, the first fixed custom commit and packed rows are resident; publics and value
+    // pools are staged per slot (MulStreamCtx::dVals, capped by PINNED_AUX_VALUES_MAX). Aux stays
+    // out. A later custom commit is refused by the packed rewrite (mulPackedProgramFor).
+    const uint32_t resident = (1u << MUL_SRC_CONST)   | (1u << MUL_SRC_TRACE)   | (1u << MUL_SRC_CUSTOM)
                             | (1u << MUL_SRC_PUBLIC)  | (1u << MUL_SRC_AIRVALUE)
                             | (1u << MUL_SRC_PROOFVALUE) | (1u << MUL_SRC_AIRGROUPVALUE);
     // Shifted cm1 reads wrap on rowMask over the whole domain, so no reach bound is needed.
@@ -143,7 +144,7 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
 
             MulJobDev job{};
             // Counters live in the air hosting the table, not the air being committed.
-            job.hostAirId   = dec.hostAirId;
+            job.hostAirKey  = dec.hostAirKey;
             job.accBase     = dec.acc_base;
             job.nTableRows  = dec.n_rows;
             job.biasFE      = mulBiasFE(dec.bias);

@@ -22,8 +22,8 @@ void mul_set_device_export(uint64_t enabled) {
 }
 
 // True when the device produces this air's whole cm1, so the host must not build its trace.
-uint64_t mul_air_device_owned(uint64_t airId) {
-    return mul_air_fully_owned(airId) ? 1 : 0;
+uint64_t mul_air_device_owned(uint64_t airKey) {
+    return mul_air_fully_owned(airKey) ? 1 : 0;
 }
 
 // Ordering point for the device export: once this returns every instance has launched its
@@ -36,11 +36,11 @@ void mul_sync_commits(uint64_t expectedCommits) {
 
 // Fold the prover-owned spans into the caller's accumulator, once per proof, after
 // mul_sync_commits. `hostAcc` is not retained.
-void mul_fold(uint64_t airId, uint64_t *hostAcc) {
+void mul_fold(uint64_t airKey, uint64_t *hostAcc) {
     if (mulDecoders().empty() || hostAcc == nullptr) return;
     // One of the two accumulators is always empty, so folding both keeps the caller backend-blind.
-    mul_fold_air(airId, hostAcc);
-    mul_cpu_fold(airId, hostAcc);
+    mul_fold_air(airKey, hostAcc);
+    mul_cpu_fold(airKey, hostAcc);
 }
 
 // Allocate device mirrors for airs hosting a migrated table. Idempotent; no-op without decoders.
