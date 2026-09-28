@@ -711,6 +711,8 @@ extern "C" {
     );
 
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, fixedTreeBytes: u64, packedConstBytes: u64, recWitnessBytes: u64);
+    pub fn stage_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64, trace: *mut ::std::os::raw::c_void, total_size: u64) -> i64;
+    pub fn release_staged_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64);
     pub fn get_prefetch_witness_slots() -> u32;
     pub fn get_mops_floor_bytes() -> u64;
     pub fn get_post_alloc_headroom_bytes() -> u64;
@@ -759,6 +761,7 @@ extern "C" {
         d_buffers: *mut ::std::os::raw::c_void,
         n_slots: u64,
         slot_bytes: u64,
+        contrib_footprint_bytes: u64,
     );
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,
@@ -773,6 +776,7 @@ extern "C" {
         words_per_row: u64,
         col_widths: *mut ::std::os::raw::c_void,
         root: *mut ::std::os::raw::c_void,
+        params: *mut ::std::os::raw::c_void,
     ) -> i64;
     pub fn stream_commit_pause();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
@@ -791,6 +795,35 @@ extern "C" {
     pub fn free_agg_readiness_tracker();
     pub fn agg_is_ready() -> i32;
     pub fn reset_agg_readiness_tracker();
+}
+
+extern "C" {
+    pub fn register_mul_vt(
+        airgroupId: u64,
+        airId: u64,
+        numRows: u64,
+        numCols: u64,
+        tableIds: *const u64,
+        accBases: *const u64,
+        nTables: u64,
+    );
+    pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
+    pub fn mul_register_table_map(table_id: u64, kv: *const u64, n: u64, slots: u64, n_key: u64);
+
+    pub fn mul_migrated_tables(out: *mut u64, cap: u64) -> u64;
+    pub fn mul_alloc(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn mul_scatter(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        params: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+    );
+    pub fn mul_reset();
+    pub fn mul_fold(airId: u64, hostAcc: *mut u64);
+    pub fn mul_air_has_owned(airId: u64) -> u64;
+    pub fn mul_set_device_export(enabled: u64);
+    pub fn mul_air_device_owned(airId: u64) -> u64;
+    pub fn mul_sync_commits(expectedCommits: u64);
 }
 
 // Type definitions

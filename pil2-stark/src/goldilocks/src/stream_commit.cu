@@ -27,11 +27,14 @@ static constexpr uint32_t SC_DIGEST = P16::CAPACITY;
 static_assert(Blake3GoldilocksGPU::CAPACITY == SC_DIGEST,
               "shared leaf/tree paths assume equal digest widths");
 
-// The blake3 absorb hashes a row as one or two blake3 chunks joined by a single
-// parent node (per-chunk counters, one parked chaining value). Rows of three or
-// more chunks would need b3_hash_row's general chaining-value stack.
-static_assert(SC_MAX_COLS <= 2 * blake3core::CHUNK_U64,
-              "blake3 slot absorb handles at most two chunks per row");
+// The blake3 absorb hashes a row as up to four blake3 chunks joined by parent nodes
+// (per-chunk counters, up to two parked chaining values).
+static_assert(SC_B3_MAX_COLS <= 4 * blake3core::CHUNK_U64,
+              "blake3 slot absorb parks two chaining values: at most four chunks per row");
+// A wider SC_MAX_COLS would silently mis-hash a row: lift SC_B3_MAX_COLS (a third park and the
+// C>4 cases in scBlake3AbsorbChunkKernel) first.
+static_assert(SC_MAX_COLS <= SC_B3_MAX_COLS,
+              "SC_MAX_COLS exceeds what the blake3 absorb can hash");
 
 // ===========================================================================
 // Shared kernels: packed-witness unpack (family-agnostic)
@@ -74,6 +77,38 @@ __device__ __forceinline__ static uint64_t scStepBits(
     return val;
 }
 
+// Row-major -> column-major, 32x32 tiles through shared memory: the read walks a row's words
+// and the write walks a word's rows, and both coalesce because a tile is transposed in shared.
+#define SC_TR_TILE 32
+__global__ static void scTransposePackedKernel(const uint64_t *__restrict__ src,
+                                               uint64_t *__restrict__ dst, uint64_t nRows,
+                                               uint64_t wordsPerRow) {
+    // +1 column so the strided read below hits 32 distinct banks.
+    __shared__ uint64_t tile[SC_TR_TILE][SC_TR_TILE + 1];
+    const uint64_t r0 = (uint64_t)blockIdx.x * SC_TR_TILE;
+    const uint64_t w0 = (uint64_t)blockIdx.y * SC_TR_TILE;
+    const uint64_t r = r0 + threadIdx.x;
+    for (uint32_t j = 0; j < SC_TR_TILE; j += blockDim.y) {
+        const uint64_t w = w0 + threadIdx.y + j;
+        tile[threadIdx.y + j][threadIdx.x] =
+            (r < nRows && w < wordsPerRow) ? src[r * wordsPerRow + w] : 0ull;
+    }
+    __syncthreads();
+    for (uint32_t j = 0; j < SC_TR_TILE; j += blockDim.y) {
+        const uint64_t w = w0 + threadIdx.y + j;
+        if (r < nRows && w < wordsPerRow) dst[w * nRows + r] = tile[threadIdx.y + j][threadIdx.x];
+    }
+}
+
+static void scTransposePacked(const uint64_t *src, uint64_t *dst, uint64_t nRows,
+                              uint64_t wordsPerRow, cudaStream_t stream) {
+    const dim3 blk(SC_TR_TILE, 8);
+    const dim3 grid((uint32_t)((nRows + SC_TR_TILE - 1) / SC_TR_TILE),
+                    (uint32_t)((wordsPerRow + SC_TR_TILE - 1) / SC_TR_TILE));
+    scTransposePackedKernel<<<grid, blk, 0, stream>>>(src, dst, nRows, wordsPerRow);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 // The prover's unpack bit walk (starks_gpu.cu unpack), writing only columns
 // [c0, c0+cc) into cc ColMajor columns of dst (columns before c0 are skipped
 // by advancing the cursor). Widths come from global memory so concurrent
@@ -82,7 +117,9 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
                                            const uint64_t *__restrict__ widths,
                                            uint64_t *__restrict__ dst,
                                            uint64_t nCols, uint64_t nRows,
-                                           uint64_t wordsPerRow, uint32_t c0, uint32_t cc)
+                                           uint64_t wordsPerRow, bool colMajor,
+                                           uint32_t c0, uint32_t cc,
+                                           uint64_t dstStride, uint64_t dstOff)
 {
     // Column bit offsets are row-uniform, so scanned once per block.
     extern __shared__ uint64_t scColStart[];
@@ -98,17 +135,19 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
 
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
-    const uint64_t *packed_row = src + row * wordsPerRow;
+    // Column-major: consecutive lanes (rows) read consecutive addresses.
+    const uint64_t *packed_row = colMajor ? src + row : src + row * wordsPerRow;
+    const uint64_t wStride = colMajor ? nRows : 1;
 
     for (uint32_t j = 0; j < cc && (uint64_t)c0 + j < nCols; j++) {
         const uint64_t nbits = widths[c0 + j];
         const uint64_t start = scColStart[j];
         const uint64_t widx = start >> 6, boff = start & 63;
-        uint64_t val = packed_row[widx] >> boff;
+        uint64_t val = packed_row[widx * wStride] >> boff;
         // Straddles only when boff > 0, so the shift below is always < 64.
-        if (boff + nbits > 64) val |= packed_row[widx + 1] << (64 - boff);
+        if (boff + nbits > 64) val |= packed_row[(widx + 1) * wStride] << (64 - boff);
         if (nbits < 64) val &= ((1ULL << nbits) - 1ULL);
-        dst[(uint64_t)j * nRows + row] = val;
+        dst[(uint64_t)j * dstStride + dstOff + row] = val;
     }
 }
 
@@ -125,7 +164,8 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
                                                   uint64_t nCols, uint64_t nRows,
                                                   uint64_t wordsPerRow, uint64_t wordsPerEntry,
                                                   uint64_t numEntries, uint64_t indexBits,
-                                                  uint64_t lanes, uint32_t c0, uint32_t cc)
+                                                  uint64_t lanes, uint32_t c0, uint32_t cc,
+                                                  uint64_t dstStride, uint64_t dstOff)
 {
     // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
     // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
@@ -189,7 +229,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
     for (uint64_t c = c0; c < cEnd; c++) {
         const uint64_t info = scInfo[c];
         if ((info >> 32) & 1ull) continue;
-        dst[(c - c0) * nRows + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
+        dst[(c - c0) * dstStride + dstOff + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
     }
 
     // One pass per lane; each lane's index sits at a known header offset. The extra passes
@@ -208,7 +248,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         for (uint64_t c = c0; c < cEnd; c++) {
             const uint64_t info = scInfo[c];
             if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            dst[(c - c0) * nRows + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
+            dst[(c - c0) * dstStride + dstOff + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
         }
     }
 }
@@ -307,10 +347,11 @@ __global__ static void scPoseidon1NodeKernel(uint64_t nextN, uint64_t nextIndex,
 // k / 16 (the chunk index is the block counter): CHUNK_START on a chunk's
 // first block, CHUNK_END on its last. A row of one chunk (nCols <= 128)
 // carries ROOT on that last block and its CV packs straight to the leaf. A row
-// of two chunks (SC_MAX_COLS = 256) parks chunk 0's final CV raw in `park`,
+// of two chunks (129..256 columns) parks chunk 0's final CV raw in `park`,
 // hashes chunk 1 with counter 1 and no ROOT, and the leaf is
-// parent_cv(chunk 0, chunk 1, root) -- b3_hash_row's two-chunk path, where the
-// chaining-value stack holds exactly one entry.
+// parent_cv(chunk 0, chunk 1, root). Three or four chunks (257..512) park a
+// second CV: the leaf is parent(parent(c0, c1), c2), or
+// parent(parent(c0, c1), parent(c2, c3)) -- b3_hash_row's chunk tree.
 // The CV is carried RAW (u32 pairs packed per u64) in the state columns --
 // pack4 canonicalizes mod p, which is LOSSY on an intermediate CV (its packed
 // words may exceed p), so it runs only on the leaf, where it is exactly the
@@ -371,28 +412,58 @@ __global__ static void scBlake3AbsorbChunkKernel(const gl64_t *__restrict__ rate
                 (uint64_t)cv[2 * i] | ((uint64_t)cv[2 * i + 1] << 32);
         return;
     }
-    if (!singleChunk && chunk == 0) {
-        // End of chunk 0 of two: park its CV; chunk 1 restarts from the IV.
+    // Chunk tree as b3_hash_row builds it (see the header comment). ROOT belongs to the top
+    // parent only. Two park slots suffice for C <= 4 (SC_B3_MAX_COLS).
+    const uint32_t nChunksRow = (nBlocks + BPC - 1) / BPC;
+    uint64_t *const park0 = (uint64_t *)park;
+    uint64_t *const park1 = park0 + (uint64_t)SC_DIGEST * nRows;
+    auto parkStore = [&](uint64_t *dst, const uint32_t *v) {
 #pragma unroll
         for (int i = 0; i < 4; ++i)
-            ((uint64_t *)park)[(uint64_t)i * nRows + tid] =
-                (uint64_t)cv[2 * i] | ((uint64_t)cv[2 * i + 1] << 32);
-        return;
-    }
+            dst[(uint64_t)i * nRows + tid] = (uint64_t)v[2 * i] | ((uint64_t)v[2 * i + 1] << 32);
+    };
+    auto parkLoad = [&](const uint64_t *src, uint32_t *v) {
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            uint64_t w = src[(uint64_t)i * nRows + tid];
+            v[2 * i]     = (uint32_t)w;
+            v[2 * i + 1] = (uint32_t)(w >> 32);
+        }
+    };
+
     uint32_t leaf[8];
     if (singleChunk) {
 #pragma unroll
         for (int i = 0; i < 8; ++i) leaf[i] = cv[i];
-    } else {
-        // End of chunk 1: the leaf is the root parent node over the two chunk CVs.
+    } else if (chunk == 0) {
+        parkStore(park0, cv);                       // pending at level 0
+        return;
+    } else if (chunk == 1) {
         uint32_t left[8];
-#pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            uint64_t w = ((const uint64_t *)park)[(uint64_t)i * nRows + tid];
-            left[2 * i]     = (uint32_t)w;
-            left[2 * i + 1] = (uint32_t)(w >> 32);
+        parkLoad(park0, left);
+        if (nChunksRow == 2) {
+            blake3core::parent_cv(left, cv, true, leaf);
+        } else {
+            uint32_t merged[8];
+            blake3core::parent_cv(left, cv, false, merged);
+            parkStore(park1, merged);               // pending at level 1
+            return;
         }
-        blake3core::parent_cv(left, cv, true, leaf);
+    } else if (chunk == 2) {
+        if (nChunksRow == 3) {
+            uint32_t left[8];
+            parkLoad(park1, left);
+            blake3core::parent_cv(left, cv, true, leaf);
+        } else {
+            parkStore(park0, cv);                   // waits for chunk 3
+            return;
+        }
+    } else {
+        uint32_t left[8], right[8], top[8];
+        parkLoad(park0, left);
+        blake3core::parent_cv(left, cv, false, right);
+        parkLoad(park1, top);
+        blake3core::parent_cv(top, right, true, leaf);
     }
     uint64_t dig[4];
     blake3core::pack4(leaf, dig);
@@ -471,11 +542,12 @@ static uint64_t scTreeNumElements(uint64_t nLeaves, uint32_t arity)
     return total + SC_DIGEST; // root
 }
 
-// blake3 state columns beyond the 8 data columns: the carried CV, plus the
-// parked chunk-0 CV when a row spans two blake3 chunks.
+// cap + ceil(log2(C)) parked chaining values for a row of C <= 4 blake3 chunks.
 static uint32_t scBlake3StateCols(uint64_t nCols)
 {
-    return SC_DIGEST + (nCols > blake3core::CHUNK_U64 ? SC_DIGEST : 0);
+    const uint64_t chunks = (nCols + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64;
+    const uint32_t parks = chunks <= 1 ? 0 : (chunks <= 2 ? 1 : 2);
+    return SC_DIGEST + parks * SC_DIGEST;
 }
 
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash hash)
@@ -487,11 +559,15 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
     return SC_MAX_COLS + N * dims.wordsPerRow + (uint64_t)wsCols * NExt + N;
 }
 
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
                            const uint8_t *dColSource, const uint8_t *dColLane,
-                           const uint64_t *dTable, StreamCommitHash hash, TimerGPU *timer)
+                           const uint64_t *dTable, StreamCommitHash hash,
+                           StreamCommitHook hook, void *hookUser, TimerGPU *timer,
+                           StreamCommitChunkHook chunkHook, void *chunkUser,
+                           uint64_t slotElems)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -537,14 +613,30 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // Chunked DIRECT copy: the witness pool is host-registered (MemoryHandler),
     // so each block is a plain pinned DMA with no staging memcpy; short blocks
     // keep any single transfer from monopolizing the copy engine.
+    // cudaMemcpyDefault: `hPacked` may be a device pointer into the prefetch zone.
     const uint64_t packedBytes = N * dims.wordsPerRow * 8;
     const uint64_t blockBytes = 32ull << 20;
-    for (uint64_t off = 0; off < packedBytes; off += blockBytes) {
+    // The caller may have landed the rows in place already.
+    for (uint64_t off = 0; hPacked != (const void *)d_packed && off < packedBytes; off += blockBytes) {
         uint64_t len = std::min(blockBytes, packedBytes - off);
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_packed + off, (const uint8_t *)hPacked + off, len,
-                                     cudaMemcpyHostToDevice, stream));
+                                     cudaMemcpyDefault, stream));
     }
     SC_CAT_STOP(timer, H2D_COPY);
+
+    // Hook runs before the chunk loop, which unpacks and LDEs in place: the last point where the
+    // whole packed witness is intact. An optional column-major copy lands in the slot's unused tail.
+    const uint64_t *d_hookPacked = d_packed;
+    if (dims.colMajorForHook) {
+        // Fit was checked by the caller (streamCommitColMajorFits).
+        const uint64_t need = N * dims.wordsPerRow;
+        uint64_t *d_col = (uint64_t *)slotBase + slotElems - need;
+        SC_CAT_START(timer, TRANSPOSE_PACKED);
+        scTransposePacked(d_packed, d_col, N, dims.wordsPerRow, stream);
+        SC_CAT_STOP(timer, TRANSPOSE_PACKED);
+        d_hookPacked = d_col;
+    }
+    if (hook != nullptr) hook(d_hookPacked, dims, stream, hookUser);
 
     NTTGoldilocksGPU ntt;
     const uint32_t ublk = (uint32_t)((N + SC_TPB - 1) / SC_TPB);
@@ -563,14 +655,18 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                                          stream>>>(
                 d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
-                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc);
+                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc, N, 0);
         } else {
-            scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
-                                                             dims.nCols, N, dims.wordsPerRow,
-                                                             (uint32_t)(k * chunkCols), cc);
+            scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(
+                d_hookPacked, d_widths, (uint64_t *)d_rate,
+                dims.nCols, N, dims.wordsPerRow, dims.colMajorForHook,
+                (uint32_t)(k * chunkCols), cc, N, 0);
         }
         CHECKCUDAERR(cudaGetLastError());
         SC_CAT_STOP(timer, UNPACK_TRACE);
+        // Last moment these columns are the witness and not its LDE.
+        if (chunkHook != nullptr)
+            chunkHook((uint64_t *)d_rate, (uint32_t)(k * chunkCols), cc, N, stream, chunkUser);
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
         SC_CAT_START(timer, NTT);
