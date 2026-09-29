@@ -1,0 +1,36 @@
+// PIL2 port of the pil-fflonk Fibonacci fixture: pil-fflonk/pil/sm_fibonacci/fibonacci.pil,
+// with N = 2^8 as in its `all` program (spec-seed.md, Annex G). One air, one instance,
+// stage 1 only, no std, no hints.
+//
+// Compile over BN254. PIL2C_EXEC must point at a pil2com that honours `prime` (the pinned
+// one ignores it and silently compiles over Goldilocks). compile-pil requires an `-I`, which
+// this program does not use:
+//   PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo run --bin proofman-setup -- compile-pil \
+//     -p pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I ./pil2-components/lib/std/pil \
+//     -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o <out>/fibonacci.pilout
+
+// PIL1 bound each public to a cell (`public in1 = l2c(0)`, ...). In PIL2 they are plain
+// inputs, tied to the trace only by the L1/LLAST constraints below.
+public in1;
+public in2;
+public out;
+
+airtemplate Fibonacci(const int N = 2**8) {
+    col fixed L1 = [1, 0...];           // 1 at the first row
+    col fixed LLAST = [0:(N-1), 1];     // 1 at the last row
+
+    col witness l1, l2;
+
+    (l2' - l1) * (1 - LLAST) === 0;
+
+    expr next = l1*l1 + l2*l2;
+    (l1' - next) * (1 - LLAST) === 0;
+
+    L1 * (l2 - in1) === 0;
+    L1 * (l1 - in2) === 0;
+    LLAST * (l1 - out) === 0;
+}
+
+airgroup Fibonacci {
+    Fibonacci(N: 2**8);
+}

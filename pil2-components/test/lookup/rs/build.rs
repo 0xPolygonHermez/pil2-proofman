@@ -20,6 +20,7 @@ fn main() {
         output_path: pilout.clone(),
         include_paths: vec![STD.to_string()],
         fixed_dir: None,
+        config: None,
         fixed_to_file: false,
         no_proto_fixed_data: false,
     })
