@@ -4,12 +4,11 @@ use crate::pil::constraint_poly::{generate_constraint_polynomial, Boundary, Cons
 use crate::expr::expression::Expression;
 use crate::expr::helpers::add_info_expressions;
 use crate::types::pilout_info::{ConstraintInfo, HintInfo, SetupResult, SymbolInfo};
-use crate::types::stark_struct::StarkStruct;
 
 /// Options controlling the preparePil flow.
 #[derive(Debug, Clone, Default)]
 pub struct PrepareOptions {
-    /// When true, skip starkStruct validation and code generation.
+    /// When true, skip code generation here, and the starkStruct validation in the STARK setup.
     pub debug: bool,
     /// When true, enable intermediate polynomial batching by stage.
     pub im_pols_stages: bool,
@@ -39,17 +38,10 @@ pub struct PreparePilResult {
 /// This function:
 /// 1. Calls `get_pilout_info` to extract raw pilout data
 /// 2. Sets up mapSectionsN for each stage
-/// 3. Validates starkStruct.nBits matches pilPower (unless debug mode)
-/// 4. Calls add_info_expressions on all constraints and remaining expressions
-/// 5. Computes opening points
-/// 6. Calls generate_constraint_polynomial
-pub fn prepare_pil(
-    pilout: &pb::PilOut,
-    airgroup_id: usize,
-    air_id: usize,
-    stark_struct: &StarkStruct,
-    options: &PrepareOptions,
-) -> PreparePilResult {
+/// 3. Calls add_info_expressions on all constraints and remaining expressions
+/// 4. Computes opening points
+/// 5. Calls generate_constraint_polynomial
+pub fn prepare_pil(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> PreparePilResult {
     let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id);
 
     // Set all expression stages to 1 (mirrors JS: pil.expressions[i].stage = 1)
@@ -62,23 +54,6 @@ pub fn prepare_pil(
     // Initialize mapSectionsN for each stage
     for s in 1..=(setup.n_stages + 1) {
         setup.map_sections_n.insert(format!("cm{}", s), 0);
-    }
-
-    // Validate starkStruct
-    if !options.debug {
-        if stark_struct.n_bits != setup.pil_power as usize {
-            panic!(
-                "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                air_id, airgroup_id, stark_struct.n_bits, setup.pil_power
-            );
-        }
-
-        if stark_struct.n_bits_ext != stark_struct.steps[0].n_bits {
-            panic!(
-                "starkStruct.nBitsExt and first step of starkStruct have a mismatch (nBitsExt:{} step0:{})",
-                stark_struct.n_bits_ext, stark_struct.steps[0].n_bits
-            );
-        }
     }
 
     let mut expressions = std::mem::take(&mut setup.expressions);

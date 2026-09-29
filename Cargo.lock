@@ -1211,7 +1211,13 @@ dependencies = [
 name = "pil-info"
 version = "1.4.0-alpha"
 dependencies = [
+ "anyhow",
+ "indexmap",
+ "pil2-pilout",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1248,6 +1254,7 @@ dependencies = [
  "clap",
  "indexmap",
  "mpi",
+ "pil-info",
  "pil2-pilout",
  "pil2-stark-recurser",
  "proofman-common",

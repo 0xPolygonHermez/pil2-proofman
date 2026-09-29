@@ -1,5 +1,5 @@
 pub mod commands;
-pub mod expr;
+pub use pil_info::expr;
 pub mod io;
 pub mod output;
 pub mod pil;

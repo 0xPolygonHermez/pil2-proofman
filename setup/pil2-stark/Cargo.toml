@@ -23,6 +23,7 @@ proofman-fields = { workspace = true, features = ["verify"] }
 proofman-common = { workspace = true }
 pil2-stark-recurser = { workspace = true }
 pil2-pilout = { workspace = true }
+pil-info = { workspace = true }
 proofman-util = { workspace = true }
 proofman-exps-codegen = { workspace = true }
 prost = { workspace = true }
