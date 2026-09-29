@@ -5,7 +5,7 @@
 //! ONLY for `exp` type nodes encountered during recursion (matching the JS
 //! pattern where only `exp.op === "exp"` nodes get `exp.line` cached).
 
-use crate::expr::expression::Expression;
+use crate::expr::expression::{ExprChild, Expression};
 use crate::types::pilout_info::SymbolInfo;
 
 /// Context for the pretty-printer, providing access to the various symbol maps.
@@ -54,14 +54,6 @@ pub fn print_expression_no_cache(
 fn print_expr_inner(ctx: &PrintCtx, expressions: &mut [Expression], idx: usize, is_constraint: bool) -> String {
     // Read fields from expression (clone what we need to avoid borrow issues)
     let op = expressions[idx].op.clone();
-    let values_snapshot: Vec<_> = expressions[idx]
-        .values
-        .iter()
-        .map(|c| match c {
-            crate::expr::expression::ExprChild::Id(id) => Some(*id),
-            crate::expr::expression::ExprChild::Inline(_) => None,
-        })
-        .collect();
 
     match op.as_str() {
         "exp" => {
@@ -77,51 +69,11 @@ fn print_expr_inner(ctx: &PrintCtx, expressions: &mut [Expression], idx: usize, 
             line
         }
 
-        "add" | "mul" | "sub" => {
-            let lhs_id = values_snapshot.first().copied().flatten();
-            let rhs_id = values_snapshot.get(1).copied().flatten();
+        "add" => print_binary(ctx, expressions, idx, " + ", is_constraint),
+        "sub" => print_binary(ctx, expressions, idx, " - ", is_constraint),
+        "mul" => print_binary(ctx, expressions, idx, " * ", is_constraint),
 
-            let lhs_str = if let Some(id) = lhs_id {
-                print_expr_inner(ctx, expressions, id, is_constraint)
-            } else {
-                let inline = match &expressions[idx].values[0] {
-                    crate::expr::expression::ExprChild::Inline(e) => (**e).clone(),
-                    _ => unreachable!(),
-                };
-                print_inline_expr(ctx, &inline, expressions, is_constraint)
-            };
-
-            let rhs_str = if let Some(id) = rhs_id {
-                print_expr_inner(ctx, expressions, id, is_constraint)
-            } else {
-                let inline = match &expressions[idx].values[1] {
-                    crate::expr::expression::ExprChild::Inline(e) => (**e).clone(),
-                    _ => unreachable!(),
-                };
-                print_inline_expr(ctx, &inline, expressions, is_constraint)
-            };
-
-            let op_str = match op.as_str() {
-                "add" => " + ",
-                "sub" => " - ",
-                "mul" => " * ",
-                _ => unreachable!(),
-            };
-            format!("({}{}{})", lhs_str, op_str, rhs_str)
-        }
-
-        "neg" => {
-            let child_id = values_snapshot.first().copied().flatten();
-            if let Some(id) = child_id {
-                print_expr_inner(ctx, expressions, id, is_constraint)
-            } else {
-                let inline = match &expressions[idx].values[0] {
-                    crate::expr::expression::ExprChild::Inline(e) => (**e).clone(),
-                    _ => unreachable!(),
-                };
-                print_inline_expr(ctx, &inline, expressions, is_constraint)
-            }
-        }
+        "neg" => print_child(ctx, expressions, idx, 0, is_constraint),
 
         "number" => expressions[idx].value.clone().unwrap_or_else(|| "0".to_string()),
 
@@ -177,6 +129,39 @@ fn print_expr_inner(ctx: &PrintCtx, expressions: &mut [Expression], idx: usize, 
         other => {
             format!("unknown_op_{}", other)
         }
+    }
+}
+
+/// Print `expressions[idx]`, a binary op of `symbol`, as `(lhs symbol rhs)`.
+fn print_binary(
+    ctx: &PrintCtx,
+    expressions: &mut [Expression],
+    idx: usize,
+    symbol: &str,
+    is_constraint: bool,
+) -> String {
+    let lhs_str = print_child(ctx, expressions, idx, 0, is_constraint);
+    let rhs_str = print_child(ctx, expressions, idx, 1, is_constraint);
+    format!("({}{}{})", lhs_str, symbol, rhs_str)
+}
+
+/// Print child `i` of `expressions[idx]`.
+fn print_child(ctx: &PrintCtx, expressions: &mut [Expression], idx: usize, i: usize, is_constraint: bool) -> String {
+    // A copy, since printing caches lines in `expressions`.
+    let child = expressions[idx].values[i].clone();
+    print_inline_child(ctx, &child, expressions, is_constraint)
+}
+
+/// Print a child that is not in `expressions`: an arena index, or an inline expression.
+fn print_inline_child(
+    ctx: &PrintCtx,
+    child: &ExprChild,
+    expressions: &mut [Expression],
+    is_constraint: bool,
+) -> String {
+    match child {
+        ExprChild::Id(id) => print_expr_inner(ctx, expressions, *id, is_constraint),
+        ExprChild::Inline(e) => print_inline_expr(ctx, e, expressions, is_constraint),
     }
 }
 
@@ -265,27 +250,10 @@ fn print_inline_expr(ctx: &PrintCtx, expr: &Expression, expressions: &mut [Expre
             let ref_id = expr.id.unwrap_or(0);
             print_expr_inner(ctx, expressions, ref_id, is_constraint)
         }
-        "add" | "mul" | "sub" => {
-            let lhs = match &expr.values[0] {
-                crate::expr::expression::ExprChild::Id(id) => print_expr_inner(ctx, expressions, *id, is_constraint),
-                crate::expr::expression::ExprChild::Inline(e) => print_inline_expr(ctx, e, expressions, is_constraint),
-            };
-            let rhs = match &expr.values[1] {
-                crate::expr::expression::ExprChild::Id(id) => print_expr_inner(ctx, expressions, *id, is_constraint),
-                crate::expr::expression::ExprChild::Inline(e) => print_inline_expr(ctx, e, expressions, is_constraint),
-            };
-            let op_str = match expr.op.as_str() {
-                "add" => " + ",
-                "sub" => " - ",
-                "mul" => " * ",
-                _ => unreachable!(),
-            };
-            format!("({}{}{})", lhs, op_str, rhs)
-        }
-        "neg" => match &expr.values[0] {
-            crate::expr::expression::ExprChild::Id(id) => print_expr_inner(ctx, expressions, *id, is_constraint),
-            crate::expr::expression::ExprChild::Inline(e) => print_inline_expr(ctx, e, expressions, is_constraint),
-        },
+        "add" => print_inline_binary(ctx, expr, expressions, " + ", is_constraint),
+        "sub" => print_inline_binary(ctx, expr, expressions, " - ", is_constraint),
+        "mul" => print_inline_binary(ctx, expr, expressions, " * ", is_constraint),
+        "neg" => print_inline_child(ctx, &expr.values[0], expressions, is_constraint),
         "number" => expr.value.clone().unwrap_or_else(|| "0".to_string()),
         "cm" | "const" | "custom" => {
             let id = expr.id.unwrap_or(0);
@@ -397,4 +365,17 @@ fn print_inline_expr(ctx: &PrintCtx, expr: &Expression, expressions: &mut [Expre
         "Zi" => "zh".to_string(),
         _ => format!("unknown_{}", expr.op),
     }
+}
+
+/// Print `expr`, an inline binary op of `symbol`, as `(lhs symbol rhs)`.
+fn print_inline_binary(
+    ctx: &PrintCtx,
+    expr: &Expression,
+    expressions: &mut [Expression],
+    symbol: &str,
+    is_constraint: bool,
+) -> String {
+    let lhs = print_inline_child(ctx, &expr.values[0], expressions, is_constraint);
+    let rhs = print_inline_child(ctx, &expr.values[1], expressions, is_constraint);
+    format!("({}{}{})", lhs, symbol, rhs)
 }

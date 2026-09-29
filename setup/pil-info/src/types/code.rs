@@ -1,7 +1,7 @@
 //! The typed form of a code block: operations over operand references, as the bytecode
 //! writers consume them.
 
-use anyhow::{bail, Result};
+use crate::error::{PilInfoError, Result};
 
 /// Operand type enum mirroring the C++ opType.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -46,7 +46,7 @@ impl OpType {
             "xDivXSubXi" => Ok(OpType::XDivXSubXi),
             "q" => Ok(OpType::Q),
             "f" => Ok(OpType::F),
-            _ => bail!("Unknown opType string: {}", s),
+            _ => Err(PilInfoError::UnknownOpType(s.to_string())),
         }
     }
 
@@ -92,4 +92,23 @@ pub struct CodeOperation {
     pub op: String,
     pub dest: CodeType,
     pub src: Vec<CodeType>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn op_types_parse_back() {
+        for t in [OpType::Const, OpType::Cm, OpType::Tmp, OpType::Number, OpType::XDivXSubXi, OpType::F] {
+            assert_eq!(OpType::parse(t.to_str()).unwrap(), t);
+        }
+    }
+
+    #[test]
+    fn an_unknown_op_type_is_an_error() {
+        let err = OpType::parse("exp").unwrap_err();
+        assert!(matches!(&err, PilInfoError::UnknownOpType(t) if t == "exp"), "{err}");
+        assert_eq!(err.to_string(), "unknown opType `exp`");
+    }
 }

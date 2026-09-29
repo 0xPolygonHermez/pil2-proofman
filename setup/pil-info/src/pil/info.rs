@@ -4,6 +4,7 @@
 use pil2_pilout::pilout as pb;
 
 use crate::cfg::PilInfoCfg;
+use crate::error::Result;
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
@@ -29,14 +30,17 @@ pub struct PilInfoResult {
 }
 
 /// Prepare the air and run every pass on it for `cfg`: `prepare_pil` then `pil_info`.
+///
+/// Fails on an air the pilout does not have, on a pilout that breaks its own format and on
+/// constraints the passes cannot process; see [`crate::PilInfoError`].
 pub fn run(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
     cfg: &PilInfoCfg,
     options: &PrepareOptions,
-) -> PilInfoResult {
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg.field);
+) -> Result<PilInfoResult> {
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg.field)?;
     pil_info(prepared, airgroup_id, air_id, cfg, options)
 }
 
@@ -53,7 +57,7 @@ pub fn pil_info(
     air_id: usize,
     cfg: &PilInfoCfg,
     options: &PrepareOptions,
-) -> PilInfoResult {
+) -> Result<PilInfoResult> {
     let mut setup = prepared.setup;
     let mut expressions = prepared.expressions;
     let mut constraints = prepared.constraints;
@@ -66,7 +70,7 @@ pub fn pil_info(
     let q_dim = constraint_poly.q_dim;
 
     // Calculate intermediate polynomials
-    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, &cfg.degree_policy, q_dim, &symbols);
+    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, &cfg.degree_policy, q_dim, &symbols)?;
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
@@ -93,7 +97,7 @@ pub fn pil_info(
         options.im_pols_stages,
         &boundary_tuples,
         &cfg.field,
-    );
+    )?;
     setup.n_commitments = n_commitments;
 
     // Store back into setup for mapping
@@ -171,7 +175,7 @@ pub fn pil_info(
         &setup.hints,
         options.debug,
         Some(&print_ctx),
-    );
+    )?;
 
     // Put expressions and symbols back
     setup.expressions = expressions;
@@ -183,5 +187,5 @@ pub fn pil_info(
     let im_pols_info = setup.im_pols_info.clone();
     let fri_exp_id = pil_code.fri_exp_id;
 
-    PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, fri_exp_id, q_deg, boundaries }
+    Ok(PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, fri_exp_id, q_deg, boundaries })
 }

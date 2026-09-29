@@ -353,7 +353,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         bail!("vadcop_final pilout has no AIR groups");
     }
 
-    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &final_stark_struct, &Default::default());
+    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &final_stark_struct, &Default::default())?;
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
@@ -409,7 +409,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
         let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
 
-        let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+        let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
         crate::io::bin_file::write_expressions_bin_file(
             files_dir.join("vadcop_final.bin").to_str().unwrap(),
             &stark_info_loaded,

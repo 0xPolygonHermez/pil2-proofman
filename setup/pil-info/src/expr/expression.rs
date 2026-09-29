@@ -30,14 +30,6 @@ impl ExprChild {
             ExprChild::Inline(_) => None,
         }
     }
-
-    /// Unwrap the arena index. Panics if this is an inline child.
-    pub fn id(&self) -> ExprId {
-        match self {
-            ExprChild::Id(id) => *id,
-            ExprChild::Inline(_) => panic!("Expected ExprChild::Id, got Inline"),
-        }
-    }
 }
 
 /// A single expression node in the arena.

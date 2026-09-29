@@ -250,7 +250,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         bail!("Compressed final pilout has no AIR groups");
     }
 
-    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &compressed_stark_struct, &Default::default());
+    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &compressed_stark_struct, &Default::default())?;
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
@@ -305,7 +305,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
         let si_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
 
-        let expr_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+        let expr_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
         crate::io::bin_file::write_expressions_bin_file(
             files_dir.join(format!("{}.bin", template)).to_str().unwrap(),
             &si_loaded,

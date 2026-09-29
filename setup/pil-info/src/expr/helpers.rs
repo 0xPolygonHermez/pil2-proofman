@@ -1,4 +1,5 @@
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 
 // ---------------------------------------------------------------------------
@@ -16,11 +17,11 @@ use crate::expr::expression::{ExprChild, Expression};
 ///
 /// Challenges, evaluations and the values of stages past the first get the
 /// field's extension dimension, and a `neg` becomes a multiplication by the
-/// field's `modulus − 1`.
-pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) {
+/// field's `modulus − 1`. Fails on an op it does not know.
+pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) -> Result<()> {
     // Guard: already processed (mirrors JS `if("expDeg" in exp) return;`)
     if expressions[idx].info_computed {
-        return;
+        return Ok(());
     }
 
     let op = expressions[idx].op.clone();
@@ -28,7 +29,7 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field
     match op.as_str() {
         "exp" => {
             let ref_id = expressions[idx].id.unwrap_or(0);
-            add_info_expressions(expressions, ref_id, field);
+            add_info_expressions(expressions, ref_id, field)?;
 
             let exp_deg = expressions[ref_id].exp_deg;
             let rows_offsets = expressions[ref_id].rows_offsets.clone();
@@ -103,21 +104,26 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field
             }
         }
         "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg(expressions, idx, field);
+            handle_binary_or_neg(expressions, idx, field)?;
         }
         _ => {
-            panic!("Exp op not defined: {}", op);
+            return Err(PilInfoError::UnknownOp { pass: "add_info_expressions", op });
         }
     }
     expressions[idx].info_computed = true;
+    Ok(())
 }
 
 /// Compute info (exp_deg, dim, stage, rows_offsets) on a standalone
 /// Expression that is NOT in the arena. Inline children are processed
 /// recursively; `exp` references are resolved via the arena.
-pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut Expression, field: &FieldCfg) {
+pub fn add_info_expression_inline(
+    expressions: &mut Vec<Expression>,
+    expr: &mut Expression,
+    field: &FieldCfg,
+) -> Result<()> {
     if expr.info_computed {
-        return;
+        return Ok(());
     }
 
     let op = expr.op.clone();
@@ -125,7 +131,7 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
     match op.as_str() {
         "exp" => {
             let ref_id = expr.id.unwrap_or(0);
-            add_info_expressions(expressions, ref_id, field);
+            add_info_expressions(expressions, ref_id, field)?;
 
             expr.exp_deg = expressions[ref_id].exp_deg;
             expr.rows_offsets = expressions[ref_id].rows_offsets.clone();
@@ -193,19 +199,20 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
             }
         }
         "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg_inline(expressions, expr, field);
+            handle_binary_or_neg_inline(expressions, expr, field)?;
         }
         _ => {
-            panic!("Exp op not defined: {}", op);
+            return Err(PilInfoError::UnknownOp { pass: "add_info_expressions", op });
         }
     }
     expr.info_computed = true;
+    Ok(())
 }
 
 /// Handle add/sub/mul/neg operations in add_info_expressions.
 /// Mirrors the JS logic including neg->mul transformation and
 /// zero-constant optimizations.
-fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) {
+fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) -> Result<()> {
     let op = expressions[idx].op.clone();
 
     // neg -> mul by modulus - 1  (inline, NOT pushed to arena — matches JS behaviour)
@@ -273,10 +280,10 @@ fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &F
     for i in 0..expressions[idx].values.len() {
         match expressions[idx].values[i].clone() {
             ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id, field);
+                add_info_expressions(expressions, child_id, field)?;
             }
             ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child, field);
+                add_info_expression_inline(expressions, &mut child, field)?;
                 expressions[idx].values[i] = ExprChild::Inline(child);
             }
         }
@@ -306,10 +313,15 @@ fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &F
         }
     }
     expressions[idx].rows_offsets = merged;
+    Ok(())
 }
 
 /// Handle add/sub/mul/neg for inline expressions (not in the arena).
-fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Expression, field: &FieldCfg) {
+fn handle_binary_or_neg_inline(
+    expressions: &mut Vec<Expression>,
+    expr: &mut Expression,
+    field: &FieldCfg,
+) -> Result<()> {
     let op = expr.op.clone();
 
     // neg -> mul by modulus - 1
@@ -369,10 +381,10 @@ fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Exp
     for i in 0..expr.values.len() {
         match expr.values[i].clone() {
             ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id, field);
+                add_info_expressions(expressions, child_id, field)?;
             }
             ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child, field);
+                add_info_expression_inline(expressions, &mut child, field)?;
                 expr.values[i] = ExprChild::Inline(child);
             }
         }
@@ -401,28 +413,30 @@ fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Exp
         }
     }
     expr.rows_offsets = merged;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // get_exp_dim
 // ---------------------------------------------------------------------------
 
-/// Get the field dimension of an expression, mirroring JS `getExpDim`.
-pub fn get_exp_dim(expressions: &[Expression], exp_id: usize, field: &FieldCfg) -> usize {
+/// Get the field dimension of an expression, mirroring JS `getExpDim`. Fails on an op it does not
+/// know.
+pub fn get_exp_dim(expressions: &[Expression], exp_id: usize, field: &FieldCfg) -> Result<usize> {
     get_exp_dim_inner(expressions, &expressions[exp_id], field)
 }
 
-fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> usize {
+fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> Result<usize> {
     if exp.dim > 0 && exp.op != "add" && exp.op != "sub" && exp.op != "mul" {
-        return exp.dim;
+        return Ok(exp.dim);
     }
 
-    match exp.op.as_str() {
+    let dim = match exp.op.as_str() {
         "add" | "sub" | "mul" => {
             let mut max_dim = 0;
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                let child_dim = get_exp_dim_inner(expressions, child_expr, field);
+                let child_dim = get_exp_dim_inner(expressions, child_expr, field)?;
                 if child_dim > max_dim {
                     max_dim = child_dim;
                 }
@@ -431,7 +445,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &Field
         }
         "exp" => {
             let id = exp.id.unwrap_or(0);
-            get_exp_dim_inner(expressions, &expressions[id], field)
+            get_exp_dim_inner(expressions, &expressions[id], field)?
         }
         "cm" | "custom" => {
             if exp.dim > 0 {
@@ -442,8 +456,9 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &Field
         }
         "const" | "number" | "public" | "Zi" => 1,
         "challenge" | "eval" | "xDivXSubXi" => field.ext_dim(),
-        _ => panic!("Exp op not defined: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "get_exp_dim", op: exp.op.clone() }),
+    };
+    Ok(dim)
 }
 
 /// Track which columns (cm, const, custom) are referenced by an expression tree.
@@ -580,7 +595,7 @@ mod tests {
     #[test]
     fn test_add_info_number() {
         let mut exprs = vec![make_number("42")];
-        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks());
+        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks()).unwrap();
         assert_eq!(exprs[0].exp_deg, 0);
         assert_eq!(exprs[0].dim, 1);
         assert_eq!(exprs[0].stage, 0);
@@ -589,7 +604,7 @@ mod tests {
     #[test]
     fn test_add_info_cm() {
         let mut exprs = vec![make_cm(0, 1)];
-        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks());
+        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks()).unwrap();
         assert_eq!(exprs[0].exp_deg, 1);
         assert_eq!(exprs[0].dim, 1);
         assert_eq!(exprs[0].stage, 1);
@@ -606,7 +621,7 @@ mod tests {
             ..Default::default()
         };
         let mut exprs = vec![cm1, cm2, mul_expr];
-        add_info_expressions(&mut exprs, 2, &FieldCfg::goldilocks());
+        add_info_expressions(&mut exprs, 2, &FieldCfg::goldilocks()).unwrap();
         assert_eq!(exprs[2].exp_deg, 2);
         assert_eq!(exprs[2].dim, 1);
         assert_eq!(exprs[2].stage, 1);
@@ -616,21 +631,21 @@ mod tests {
     fn test_get_exp_dim_number() {
         let exprs =
             vec![Expression { op: "number".to_string(), value: Some("1".to_string()), dim: 1, ..Default::default() }];
-        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 1);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()).unwrap(), 1);
     }
 
     #[test]
     fn test_get_exp_dim_challenge() {
         let exprs = vec![Expression { op: "challenge".to_string(), dim: 3, ..Default::default() }];
-        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 3);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()).unwrap(), 3);
     }
 
     /// A challenge whose dimension is not yet known takes the field's extension dimension.
     #[test]
     fn test_get_exp_dim_challenge_follows_the_field() {
         let exprs = vec![Expression { op: "challenge".to_string(), dim: 0, ..Default::default() }];
-        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 3);
-        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::bn254()), 1);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()).unwrap(), 3);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::bn254()).unwrap(), 1);
     }
 
     /// `challenge * cm2` (a stage-2 column): extension-valued over Goldilocks, base-valued over BN254.
@@ -646,7 +661,7 @@ mod tests {
                     ..Default::default()
                 },
             ];
-            add_info_expressions(&mut exprs, 2, &field);
+            add_info_expressions(&mut exprs, 2, &field).unwrap();
             assert_eq!(exprs[0].dim, dim);
             assert_eq!(exprs[1].dim, dim);
             assert_eq!(exprs[2].dim, dim);
@@ -661,14 +676,14 @@ mod tests {
                 make_cm(0, 1),
                 Expression { op: "neg".to_string(), values: vec![ExprChild::Id(0)], ..Default::default() },
             ];
-            add_info_expressions(&mut exprs, 1, &field);
+            add_info_expressions(&mut exprs, 1, &field).unwrap();
             assert_eq!(exprs[1].op, "mul");
             let lhs = exprs[1].values[0].resolve(&exprs);
             assert_eq!(lhs.op, "number");
             assert_eq!(lhs.value.as_deref(), Some(field.neg_one()));
 
             let mut inline = Expression { op: "neg".to_string(), values: vec![ExprChild::Id(0)], ..Default::default() };
-            add_info_expression_inline(&mut exprs, &mut inline, &field);
+            add_info_expression_inline(&mut exprs, &mut inline, &field).unwrap();
             assert_eq!(inline.op, "mul");
             assert_eq!(inline.values[0].resolve(&exprs).value.as_deref(), Some(field.neg_one()));
         }
@@ -690,5 +705,18 @@ mod tests {
         add_info_expressions_symbols(&mut ev_map, &exprs, 2, &mut explored);
         // Both children reference cm id=0 prime=0, so dedup should give 1 entry
         assert_eq!(ev_map.len(), 1);
+    }
+
+    /// Was `panic!("Exp op not defined")`.
+    #[test]
+    fn an_unknown_op_is_an_error() {
+        let bogus = || Expression { op: "bogus".to_string(), ..Default::default() };
+        let mut exprs = vec![bogus()];
+        let err = add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks()).unwrap_err();
+        assert!(matches!(&err, PilInfoError::UnknownOp { pass: "add_info_expressions", op } if op == "bogus"), "{err}");
+        let err = add_info_expression_inline(&mut exprs, &mut bogus(), &FieldCfg::goldilocks()).unwrap_err();
+        assert_eq!(err.to_string(), "add_info_expressions: unknown expression op `bogus`");
+        let err = get_exp_dim(&[Expression { dim: 0, ..bogus() }], 0, &FieldCfg::bn254()).unwrap_err();
+        assert_eq!(err.to_string(), "get_exp_dim: unknown expression op `bogus`");
     }
 }

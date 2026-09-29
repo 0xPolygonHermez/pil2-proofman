@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tracing::info;
 
 use crate::cfg::{DegreePolicy, FieldCfg};
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
 use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
@@ -16,24 +17,25 @@ use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 /// intermediate polynomial).
 ///
 /// When `cache_values` is true, computed degrees are stashed in `degree_cache`
-/// and reused on subsequent calls with the same expression index.
+/// and reused on subsequent calls with the same expression index. Fails on an op it does not
+/// know.
 pub fn calculate_exp_deg(
     expressions: &[Expression],
     exp_idx: usize,
     im_exps: &[usize],
     cache_values: bool,
     degree_cache: &mut HashMap<usize, i64>,
-) -> i64 {
+) -> Result<i64> {
     if cache_values {
         if let Some(&cached) = degree_cache.get(&exp_idx) {
-            return cached;
+            return Ok(cached);
         }
     }
-    let deg = calc_deg_inner(expressions, exp_idx, im_exps, cache_values, degree_cache);
+    let deg = calc_deg_inner(expressions, exp_idx, im_exps, cache_values, degree_cache)?;
     if cache_values {
         degree_cache.insert(exp_idx, deg);
     }
-    deg
+    Ok(deg)
 }
 
 fn calc_deg_inner(
@@ -42,7 +44,7 @@ fn calc_deg_inner(
     im_exps: &[usize],
     cache_values: bool,
     degree_cache: &mut HashMap<usize, i64>,
-) -> i64 {
+) -> Result<i64> {
     let exp = &expressions[idx];
     calc_deg_expr(expressions, exp, im_exps, cache_values, degree_cache)
 }
@@ -54,14 +56,14 @@ fn calc_deg_expr(
     im_exps: &[usize],
     cache_values: bool,
     degree_cache: &mut HashMap<usize, i64>,
-) -> i64 {
-    match exp.op.as_str() {
+) -> Result<i64> {
+    let deg = match exp.op.as_str() {
         "exp" => {
             let id = exp.id.unwrap_or(0);
             if im_exps.contains(&id) {
-                return 1;
+                return Ok(1);
             }
-            calculate_exp_deg(expressions, id, im_exps, cache_values, degree_cache)
+            calculate_exp_deg(expressions, id, im_exps, cache_values, degree_cache)?
         }
         "const" | "cm" | "custom" => 1,
         "Zi" => {
@@ -72,19 +74,20 @@ fn calc_deg_expr(
             }
         }
         "number" | "public" | "challenge" | "eval" | "airgroupvalue" | "airvalue" | "proofvalue" => 0,
-        "neg" => calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache),
+        "neg" => calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache)?,
         "add" | "sub" => {
-            let lhs = calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache);
-            let rhs = calc_deg_child(expressions, &exp.values[1], im_exps, cache_values, degree_cache);
+            let lhs = calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache)?;
+            let rhs = calc_deg_child(expressions, &exp.values[1], im_exps, cache_values, degree_cache)?;
             lhs.max(rhs)
         }
         "mul" => {
-            let lhs = calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache);
-            let rhs = calc_deg_child(expressions, &exp.values[1], im_exps, cache_values, degree_cache);
+            let lhs = calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache)?;
+            let rhs = calc_deg_child(expressions, &exp.values[1], im_exps, cache_values, degree_cache)?;
             lhs + rhs
         }
-        other => panic!("Exp op not defined: {}", other),
-    }
+        other => return Err(PilInfoError::UnknownOp { pass: "calculate_exp_deg", op: other.to_string() }),
+    };
+    Ok(deg)
 }
 
 /// Calculate degree for a child (either arena index or inline).
@@ -94,7 +97,7 @@ fn calc_deg_child(
     im_exps: &[usize],
     cache_values: bool,
     degree_cache: &mut HashMap<usize, i64>,
-) -> i64 {
+) -> Result<i64> {
     match child {
         ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values, degree_cache),
         ExprChild::Inline(expr) => calc_deg_expr(expressions, expr, im_exps, cache_values, degree_cache),
@@ -117,14 +120,14 @@ pub struct ImPolsResult {
 /// with the lowest `policy` cost: the fewest added base-field columns for the STARK, the lowest
 /// `nImPols + qDeg` for pilfflonk.
 ///
-/// Returns the optimal `(im_exps, q_deg)`.
+/// Returns the optimal `(im_exps, q_deg)`, or an error if no degree is feasible.
 pub fn calculate_intermediate_polynomials(
     expressions: &[Expression],
     c_exp_id: usize,
     policy: &DegreePolicy,
     q_dim: usize,
     symbols: &[SymbolInfo],
-) -> ImPolsResult {
+) -> Result<ImPolsResult> {
     let max_q_deg = policy.max_constraint_degree();
     info!("-------------------- POSSIBLE DEGREES ----------------------");
     match policy {
@@ -175,11 +178,9 @@ pub fn calculate_intermediate_polynomials(
         }
     }
 
-    let chosen = best.unwrap_or_else(|| {
-        panic!("No feasible intermediate-polynomial split found for constraint degrees 2..={}", max_q_deg.max(2))
-    });
+    let chosen = best.ok_or(PilInfoError::NoFeasibleDegree { max: max_q_deg.max(2) })?;
     describe_im_pols(expressions, &chosen, symbols);
-    chosen
+    Ok(chosen)
 }
 
 /// Say WHICH subexpressions were promoted, not just how many.
@@ -531,7 +532,7 @@ pub fn add_im_polynomials(
     im_pols_stages: bool,
     boundaries: &[(String, Option<i64>, Option<i64>)],
     field: &FieldCfg,
-) -> usize {
+) -> Result<usize> {
     let dim = field.ext_dim();
     let stage = n_stages + 1;
 
@@ -554,7 +555,7 @@ pub fn add_im_polynomials(
 
         let stage_id = symbols.iter().filter(|s| s.sym_type == "witness" && s.stage == Some(stage_im)).count();
 
-        let exp_dim = get_exp_dim(expressions, exp_id, field);
+        let exp_dim = get_exp_dim(expressions, exp_id, field)?;
 
         let pol_id = *n_commitments;
         *n_commitments += 1;
@@ -597,7 +598,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(cm_node)), ExprChild::Inline(Box::new(im_expr_copy))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut sub_expr, field);
+        add_info_expression_inline(expressions, &mut sub_expr, field)?;
         expressions.push(sub_expr);
         let constraint_id = expressions.len() - 1;
 
@@ -620,7 +621,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(vc_expr.clone())), ExprChild::Inline(Box::new(c_exp_ref))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut weighted, field);
+        add_info_expression_inline(expressions, &mut weighted, field)?;
         expressions.push(weighted);
         let weighted_id = expressions.len() - 1;
 
@@ -645,7 +646,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(weighted_ref)), ExprChild::Inline(Box::new(constraint_ref))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut accum, field);
+        add_info_expression_inline(expressions, &mut accum, field)?;
         expressions.push(accum);
         *c_exp_id = expressions.len() - 1;
     }
@@ -668,12 +669,12 @@ pub fn add_im_polynomials(
         values: vec![ExprChild::Inline(Box::new(c_exp_copy)), ExprChild::Inline(Box::new(zi_node))],
         ..Default::default()
     };
-    add_info_expression_inline(expressions, &mut q_expr, field);
+    add_info_expression_inline(expressions, &mut q_expr, field)?;
     expressions.push(q_expr);
     // JS does: res.cExpId++ after push, which means cExpId = expressions.length - 1
     *c_exp_id = expressions.len() - 1;
 
-    let c_exp_dim = get_exp_dim(expressions, *c_exp_id, field);
+    let c_exp_dim = get_exp_dim(expressions, *c_exp_id, field)?;
     expressions[*c_exp_id].dim = c_exp_dim;
 
     let q_dim = c_exp_dim;
@@ -694,7 +695,7 @@ pub fn add_im_polynomials(
         });
     }
 
-    q_dim
+    Ok(q_dim)
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +774,7 @@ mod tests {
     fn test_calc_exp_deg_leaf() {
         let exprs = vec![make_cm(0, 1)];
         let mut cache = HashMap::new();
-        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false, &mut cache), 1);
+        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false, &mut cache).unwrap(), 1);
     }
 
     #[test]
@@ -781,7 +782,7 @@ mod tests {
         // exprs[0] = cm, exprs[1] = cm, exprs[2] = mul(0,1)
         let exprs = vec![make_cm(0, 1), make_cm(1, 1), make_mul(0, 1, 2)];
         let mut cache = HashMap::new();
-        assert_eq!(calculate_exp_deg(&exprs, 2, &[], false, &mut cache), 2);
+        assert_eq!(calculate_exp_deg(&exprs, 2, &[], false, &mut cache).unwrap(), 2);
     }
 
     #[test]
@@ -795,16 +796,16 @@ mod tests {
         ];
         let mut cache = HashMap::new();
         // Without imPol
-        assert_eq!(calculate_exp_deg(&exprs, 4, &[], false, &mut cache), 2);
+        assert_eq!(calculate_exp_deg(&exprs, 4, &[], false, &mut cache).unwrap(), 2);
         // With imPol on expr 3
-        assert_eq!(calculate_exp_deg(&exprs, 4, &[3], false, &mut cache), 1);
+        assert_eq!(calculate_exp_deg(&exprs, 4, &[3], false, &mut cache).unwrap(), 1);
     }
 
     #[test]
     fn test_calc_exp_deg_number() {
         let exprs = vec![make_number("42")];
         let mut cache = HashMap::new();
-        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false, &mut cache), 0);
+        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false, &mut cache).unwrap(), 0);
     }
 
     // -----------------------------------------------------------------------
@@ -819,7 +820,8 @@ mod tests {
             make_mul(0, 1, 2), // 2: deg 2
         ];
         let result =
-            calculate_intermediate_polynomials(&exprs, 2, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1, &[]);
+            calculate_intermediate_polynomials(&exprs, 2, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1, &[])
+                .unwrap();
         assert!(
             result.im_exps.is_empty(),
             "No intermediate polynomials should be needed for degree-2 expr with maxQDeg=3"
@@ -843,7 +845,7 @@ mod tests {
         exprs[3].exp_deg = 2;
         exprs[7].exp_deg = 2;
 
-        let result = calculate_intermediate_polynomials(&exprs, 8, &DegreePolicy::Search { max: 2 }, 1, &[]);
+        let result = calculate_intermediate_polynomials(&exprs, 8, &DegreePolicy::Search { max: 2 }, 1, &[]).unwrap();
         assert!(
             !result.im_exps.is_empty(),
             "Intermediate polynomials should be needed for degree-4 expr with maxQDeg=2"
@@ -885,7 +887,7 @@ mod tests {
 
     /// Run `add_info_expressions` from the root, as `prepare_pil` does, so every node has its degree.
     fn with_info(mut exprs: Vec<Expression>, root: usize, field: &FieldCfg) -> Vec<Expression> {
-        crate::expr::helpers::add_info_expressions(&mut exprs, root, field);
+        crate::expr::helpers::add_info_expressions(&mut exprs, root, field).unwrap();
         exprs
     }
 
@@ -943,7 +945,7 @@ mod tests {
         println!("sum of quartics, (degree, (nImPols, qDeg)): {per_degree:?}");
         let min = per_degree.iter().filter_map(|(_, c)| c.map(|(n, q)| n as i64 + q)).min().unwrap();
 
-        let chosen = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]);
+        let chosen = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
 
         assert_eq!(cost(&chosen), min, "per degree: {per_degree:?}");
         assert!(chosen.im_exps.is_empty());
@@ -956,8 +958,9 @@ mod tests {
         let field = FieldCfg::bn254();
         let exprs = sum_of_quartics(&field);
 
-        let unbounded = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]);
-        let bounded = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 3 }, 1, &[]);
+        let unbounded =
+            calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
+        let bounded = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 3 }, 1, &[]).unwrap();
 
         assert_eq!(bounded.im_exps, vec![0, 1]);
         assert_eq!(bounded.q_deg, 2);
@@ -976,7 +979,7 @@ mod tests {
         assert_eq!(per_degree.last(), Some(&(9, Some((0, 8)))));
         let min = per_degree.iter().filter_map(|(_, c)| c.map(|(n, q)| n as i64 + q)).min().unwrap();
 
-        let chosen = calculate_intermediate_polynomials(&exprs, 3, &DegreePolicy::Search { max: 9 }, 1, &[]);
+        let chosen = calculate_intermediate_polynomials(&exprs, 3, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
 
         assert_eq!(cost(&chosen), min, "per degree: {per_degree:?}");
         assert_eq!(chosen.im_exps, vec![0, 1, 2]);
@@ -991,8 +994,9 @@ mod tests {
         let field = FieldCfg::goldilocks();
         let exprs = sum_of_quartics(&field);
 
-        let stark = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::FromBlowup { blowup_bits: 3 }, 3, &[]);
-        let fflonk = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 3, &[]);
+        let stark = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::FromBlowup { blowup_bits: 3 }, 3, &[])
+            .unwrap();
+        let fflonk = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 3, &[]).unwrap();
 
         assert_eq!((stark.im_exps.len(), stark.q_deg), (2, 2));
         assert_eq!((fflonk.im_exps.len(), fflonk.q_deg), (0, 3));
@@ -1030,7 +1034,8 @@ mod tests {
             false,
             &boundaries,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         // Should have added 1 Q polynomial witness symbol
         let q_symbols: Vec<_> = symbols.iter().filter(|s| s.name.starts_with("Q")).collect();
@@ -1075,7 +1080,8 @@ mod tests {
             false,
             &boundaries,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         // Should have: 1 ImPol witness + 1 Q witness = 2 symbols
         let im_symbols: Vec<_> = symbols.iter().filter(|s| s.name.contains("ImPol")).collect();
@@ -1092,5 +1098,13 @@ mod tests {
         // Expression for im_pol should be marked
         assert!(expressions[2].im_pol);
         assert!(expressions[2].pol_id.is_some());
+    }
+
+    /// Was `panic!("Exp op not defined")`.
+    #[test]
+    fn the_degree_of_an_unknown_op_is_an_error() {
+        let exprs = vec![Expression { op: "bogus".to_string(), ..Default::default() }];
+        let err = calculate_exp_deg(&exprs, 0, &[], false, &mut HashMap::new()).unwrap_err();
+        assert_eq!(err.to_string(), "calculate_exp_deg: unknown expression op `bogus`");
     }
 }

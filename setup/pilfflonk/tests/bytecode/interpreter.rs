@@ -402,7 +402,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
 
     // The passes again, as the setup ran them, for the qVerifier.
     let cfg = passes::cfg(DEFAULT_MAX_CONSTRAINT_DEGREE).unwrap();
-    let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default());
+    let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
     assert_eq!(Bytecode::from_bytes(&bin).unwrap(), Bytecode::from_pil_info(&result).unwrap());
     let context = CodeContext::from_pil_info(&result).unwrap();
     let q_verifier = Code::from_entries(&result.pil_code.verifier_info.q_verifier.code, &context, None).unwrap();

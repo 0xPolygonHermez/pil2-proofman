@@ -183,6 +183,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use pil_info::io::bin_file_writer::BinFileWriter;
+use pil_info::BinFileError;
 use pil_info::io::temporaries::get_id_maps;
 use pil_info::pil::gen_code::{ConstraintCodeEntry, ExpressionCodeEntry};
 use pil_info::types::code::{CodeOperation, CodeType, OpType};
@@ -232,7 +233,7 @@ pub enum BytecodeError {
     Write {
         path: PathBuf,
         #[source]
-        source: anyhow::Error,
+        source: BinFileError,
     },
 }
 
@@ -650,7 +651,10 @@ fn lower(code: &[CodeEntry], context: &CodeContext, redirect: Option<usize>, wha
         .map_or(0, |id| id + 1);
     let mut slots = vec![-1i64; max_id];
     let mut unused = vec![-1i64; max_id];
-    let (n_temp, n_temp_ext) = get_id_maps(max_id, &mut slots, &mut unused, &operations, 1);
+    let (n_temp, n_temp_ext) = match get_id_maps(max_id, &mut slots, &mut unused, &operations, 1) {
+        Ok(counts) => counts,
+        Err(e) => return encode_error(format!("{what}: {e}")),
+    };
     if n_temp_ext != 0 {
         return encode_error(format!("{what}: temporaries of the extension field"));
     }
@@ -989,9 +993,10 @@ impl Bytecode {
     /// Write the file at `path`.
     pub fn write(&self, path: &Path) -> BytecodeResult<()> {
         let sections = self.sections()?;
-        let write_error = |source: anyhow::Error| BytecodeError::Write { path: path.to_path_buf(), source };
+        let write_error = |source: BinFileError| BytecodeError::Write { path: path.to_path_buf(), source };
         let Some(path_str) = path.to_str() else {
-            return Err(write_error(anyhow::anyhow!("the path is not UTF-8")));
+            let not_utf8 = std::io::Error::new(std::io::ErrorKind::InvalidInput, "the path is not UTF-8");
+            return Err(write_error(not_utf8.into()));
         };
         let mut writer = BinFileWriter::new(path_str, BIN_FILE_TYPE, BIN_VERSION, N_SECTIONS).map_err(write_error)?;
         for (id, payload) in SECTIONS.into_iter().zip(&sections) {

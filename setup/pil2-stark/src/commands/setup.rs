@@ -242,7 +242,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false };
                 let pil_result =
-                    crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts);
+                    crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts)?;
                 let setup_result = &pil_result.setup;
                 let pil_code = &pil_result.pil_code;
 
@@ -426,7 +426,7 @@ fn write_bin_files_from_pil_code(
     let si_json: serde_json::Value = serde_json::from_str(starkinfo_json)?;
     let stark_info = StarkInfo::from_json(&si_json)?;
 
-    let ei = crate::types::stark_info::ExpressionsInfo::from(expressions_info);
+    let ei = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info)?;
     crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)?;
 
     let vi = crate::types::stark_info::VerifierInfo::try_from(verifier_info)?;

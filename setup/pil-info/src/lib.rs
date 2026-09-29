@@ -3,6 +3,7 @@
 //! `globalConstraints.json`.
 
 pub mod cfg;
+pub mod error;
 pub mod expr;
 pub mod io;
 pub mod output;
@@ -10,4 +11,5 @@ pub mod pil;
 pub mod types;
 
 pub use cfg::{DegreePolicy, FieldCfg, Opening, PilInfoCfg, DEFAULT_MAX_CONSTRAINT_DEGREE};
+pub use error::{BinFileError, PilInfoError};
 pub use pil::info::{run, PilInfoResult};

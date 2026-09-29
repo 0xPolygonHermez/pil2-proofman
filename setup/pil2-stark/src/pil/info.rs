@@ -2,6 +2,7 @@
 //! plus what is STARK-specific (the starkStruct validation, the degree bound from the blowup, the
 //! prover memory estimate and the printed AIR info summary).
 
+use anyhow::{bail, Context, Result};
 use pil2_pilout::pilout as pb;
 
 use crate::pil::constraint_poly::Boundary;
@@ -38,28 +39,36 @@ pub struct PilInfoResult {
 /// 2. validate starkStruct against the air (unless debug mode)
 /// 3. the remaining passes, with the degree bound the blowup allows
 /// 4. compute prover memory estimate and print AIR info summary
+///
+/// Fails on what the passes refuse (`pil_info::PilInfoError`) and on a starkStruct that does not
+/// fit the air.
 pub fn pil_info(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
-) -> PilInfoResult {
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks());
+) -> Result<PilInfoResult> {
+    let passes_failed = || format!("the symbolic passes failed on air {air_id} of airgroup {airgroup_id}");
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks()).with_context(passes_failed)?;
 
     // Validate starkStruct
     if !options.debug {
         if stark_struct.n_bits != prepared.setup.pil_power as usize {
-            panic!(
+            bail!(
                 "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                air_id, airgroup_id, stark_struct.n_bits, prepared.setup.pil_power
+                air_id,
+                airgroup_id,
+                stark_struct.n_bits,
+                prepared.setup.pil_power
             );
         }
 
         if stark_struct.n_bits_ext != stark_struct.steps[0].n_bits {
-            panic!(
+            bail!(
                 "starkStruct.nBitsExt and first step of starkStruct have a mismatch (nBitsExt:{} step0:{})",
-                stark_struct.n_bits_ext, stark_struct.steps[0].n_bits
+                stark_struct.n_bits_ext,
+                stark_struct.steps[0].n_bits
             );
         }
     }
@@ -68,8 +77,8 @@ pub fn pil_info(
     let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, fri_exp_id, q_deg, boundaries } =
-        passes::pil_info(prepared, airgroup_id, air_id, &cfg, options);
-    let fri_exp_id = fri_exp_id.expect("the FRI opening always yields friExpId");
+        passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
+    let fri_exp_id = fri_exp_id.context("the FRI opening yielded no friExpId")?;
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 
@@ -238,7 +247,7 @@ pub fn pil_info(
     println!("SUMMARY | {} | {}", setup.name, summary);
     println!("------------------------------------------------------------");
 
-    PilInfoResult {
+    Ok(PilInfoResult {
         setup,
         pil_code,
         summary,
@@ -247,7 +256,7 @@ pub fn pil_info(
         c_exp_id,
         fri_exp_id,
         q_deg,
-    }
+    })
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {
@@ -334,4 +343,19 @@ fn get_prover_memory(
 
     let gb = (prover_memory as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0);
     format!("{:.2}", gb)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the passes refuse, which they used to `panic!` on, is an error of the STARK setup.
+    #[test]
+    fn what_the_passes_refuse_is_an_error() {
+        let err = pil_info(&pb::PilOut::default(), 0, 5, &StarkStruct::default(), &PrepareOptions::default()).err();
+        assert_eq!(
+            err.map(|e| format!("{e:#}")).as_deref(),
+            Some("the symbolic passes failed on air 5 of airgroup 0: the pilout has no air 5 in airgroup 0")
+        );
+    }
 }

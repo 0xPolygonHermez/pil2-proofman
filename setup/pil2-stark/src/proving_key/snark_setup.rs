@@ -235,7 +235,7 @@ pub fn gen_snark_setup(
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
 
-    let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default());
+    let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default())?;
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
@@ -312,7 +312,7 @@ pub fn gen_snark_setup(
     // Write bin files.
     let si_val_rf: Value = serde_json::from_str(&starkinfo_rf_json)?;
     let si_loaded_rf = crate::types::stark_info::StarkInfo::from_json(&si_val_rf)?;
-    let ei_rf = crate::types::stark_info::ExpressionsInfo::from(expressions_info_rf);
+    let ei_rf = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_rf)?;
     crate::io::bin_file::write_expressions_bin_file(
         recursivef_dir.join("recursivef.bin").to_str().unwrap(),
         &si_loaded_rf,

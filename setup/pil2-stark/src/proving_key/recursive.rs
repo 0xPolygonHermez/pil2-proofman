@@ -735,7 +735,7 @@ pub fn gen_recursive_setup(
             };
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
-            let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
+            let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
@@ -813,7 +813,7 @@ pub fn gen_recursive_setup(
                     crate::output::json::to_json_string(expressions_info_ref)?,
                 )?;
 
-                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
                 crate::io::bin_file::write_expressions_bin_file(
                     files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,

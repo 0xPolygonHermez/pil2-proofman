@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::EvMapItem;
 use crate::types::pilout_info::SymbolInfo;
@@ -18,6 +19,9 @@ pub struct FriPolyResult {
 /// `expressions.push(friExp)` happens at the end. We match that by building
 /// the entire FRI tree with inline `ExprChild::Inline` children and pushing
 /// only the final composite expression.
+///
+/// Fails on an evaluation of a column without a symbol, and when there is no evaluation to
+/// combine.
 pub fn generate_fri_polynomial(
     n_stages: usize,
     expressions: &mut Vec<Expression>,
@@ -26,7 +30,7 @@ pub fn generate_fri_polynomial(
     opening_points: &[i64],
     challenges_map: &mut Vec<ChallengeMapEntry>,
     field: &FieldCfg,
-) -> FriPolyResult {
+) -> Result<FriPolyResult> {
     let dim = field.ext_dim();
     let stage = n_stages + 3;
 
@@ -101,7 +105,7 @@ pub fn generate_fri_polynomial(
     let mut fri_exps: BTreeMap<i64, Expression> = BTreeMap::new();
 
     for (i, ev) in ev_map.iter().enumerate() {
-        let symbol = find_symbol_for_ev(symbols, ev);
+        let symbol = find_symbol_for_ev(symbols, ev)?;
         let col_expr = build_column_expr(ev, &symbol);
 
         let eval_expr = Expression { op: "eval".to_string(), id: Some(i), dim, ..Default::default() };
@@ -175,29 +179,29 @@ pub fn generate_fri_polynomial(
     }
 
     // Push only the final FRI expression (matches JS: one expressions.push)
-    let mut fri_final = fri_exp.expect("At least one opening point required");
+    let mut fri_final = fri_exp.ok_or(PilInfoError::FriWithoutEvaluations)?;
     let fri_final_id = expressions.len();
 
     // Set dim and stage on the final expression
-    fri_final.dim = get_exp_dim_inline(expressions, &fri_final, field);
+    fri_final.dim = get_exp_dim_inline(expressions, &fri_final, field)?;
     fri_final.stage = n_stages + 2;
 
     expressions.push(fri_final);
 
-    FriPolyResult { fri_exp_id: fri_final_id }
+    Ok(FriPolyResult { fri_exp_id: fri_final_id })
 }
 
-/// Get dimension for an inline expression tree.
-fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> usize {
+/// Get dimension for an inline expression tree. Fails on an op it does not know.
+fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> Result<usize> {
     if exp.dim > 0 && exp.op != "add" && exp.op != "sub" && exp.op != "mul" {
-        return exp.dim;
+        return Ok(exp.dim);
     }
-    match exp.op.as_str() {
+    let dim = match exp.op.as_str() {
         "add" | "sub" | "mul" => {
             let mut max_dim = 0;
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                let d = get_exp_dim_inline(expressions, child_expr, field);
+                let d = get_exp_dim_inline(expressions, child_expr, field)?;
                 if d > max_dim {
                     max_dim = d;
                 }
@@ -206,7 +210,7 @@ fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &Fiel
         }
         "exp" => {
             let id = exp.id.unwrap_or(0);
-            get_exp_dim_inline(expressions, &expressions[id], field)
+            get_exp_dim_inline(expressions, &expressions[id], field)?
         }
         "cm" | "custom" => {
             if exp.dim > 0 {
@@ -217,8 +221,9 @@ fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &Fiel
         }
         "const" | "number" | "public" | "Zi" => 1,
         "challenge" | "eval" | "xDivXSubXi" => field.ext_dim(),
-        _ => panic!("Exp op not defined: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "get_exp_dim", op: exp.op.clone() }),
+    };
+    Ok(dim)
 }
 
 /// Entry in the challenges map (matches JSON output format).
@@ -244,12 +249,12 @@ fn extend_challenges_map(challenges_map: &mut Vec<ChallengeMapEntry>, id: usize,
 }
 
 /// Find the symbol matching an evaluation map entry.
-fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> SymbolInfo {
+fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> Result<SymbolInfo> {
     let sym_type_target = match ev.entry_type.as_str() {
         "const" => "fixed",
         "cm" => "witness",
         "custom" => "custom",
-        other => panic!("Unknown ev type: {}", other),
+        other => return Err(PilInfoError::UnknownEvaluation(other.to_string())),
     };
 
     symbols
@@ -259,8 +264,8 @@ fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> SymbolInfo {
                 && s.sym_type == sym_type_target
                 && (ev.entry_type != "custom" || s.commit_id == ev.commit_id)
         })
-        .unwrap_or_else(|| panic!("Symbol not found for ev type={} id={}", ev.entry_type, ev.id))
-        .clone()
+        .cloned()
+        .ok_or_else(|| PilInfoError::NoSymbolForEvaluation { entry_type: ev.entry_type.clone(), id: ev.id })
 }
 
 /// Build a column expression node for an evaluation entry.
@@ -339,7 +344,8 @@ mod tests {
             &opening_points,
             &mut challenges_map,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         // fri_exp_id is the index in the expressions arena; when the arena
         // starts empty (as in this test) the first pushed expression gets id 0.
@@ -373,10 +379,36 @@ mod tests {
             &opening_points,
             &mut challenges_map,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         // fri_exp_id is a valid index into the expressions arena
         assert!(result.fri_exp_id < expressions.len());
         assert!(!expressions.is_empty());
+    }
+
+    fn fri_err(ev_map: &[EvMapItem]) -> PilInfoError {
+        let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
+        let result = generate_fri_polynomial(
+            1,
+            &mut Vec::new(),
+            &mut symbols,
+            ev_map,
+            &[0],
+            &mut Vec::new(),
+            &FieldCfg::goldilocks(),
+        );
+        match result {
+            Ok(_) => panic!("the FRI polynomial was built"),
+            Err(err) => err,
+        }
+    }
+
+    /// Were `expect("At least one opening point required")` and `panic!("Unknown ev type")`.
+    #[test]
+    fn a_fri_polynomial_without_evaluations_or_of_an_unknown_one_is_an_error() {
+        assert!(matches!(fri_err(&[]), PilInfoError::FriWithoutEvaluations));
+        let ev = EvMapItem { entry_type: "tmp".to_string(), id: 0, prime: 0, commit_id: None };
+        assert!(matches!(fri_err(&[ev]), PilInfoError::UnknownEvaluation(t) if t == "tmp"));
     }
 }

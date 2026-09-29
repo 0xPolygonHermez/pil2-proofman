@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::types::stark_struct::{StarkStep, StarkStruct};
+use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
 
 pub use pil_info::types::code::{CodeOperation, CodeType, OpType};
 
@@ -154,22 +155,25 @@ fn get_bool(v: &Value, key: &str) -> bool {
     v.get(key).and_then(|x| x.as_bool()).unwrap_or(false)
 }
 
+/// The `"value"` of `v`, a string ([`goldilocks_u64`]) or a JSON number, as a canonical Goldilocks
+/// element; 0 when `v` has none. Anything else is an error, not a 0.
+fn get_goldilocks(v: &Value) -> Result<u64> {
+    match v.get("value") {
+        None => Ok(0),
+        Some(Value::String(s)) => goldilocks_u64(s),
+        Some(val) => match val.as_u64() {
+            Some(n) if n < GOLDILOCKS_MODULUS => Ok(n),
+            _ => {
+                Err(anyhow!("the value {val} is not a Goldilocks element (an integer below p = {GOLDILOCKS_MODULUS})"))
+            }
+        },
+    }
+}
+
 fn parse_code_type(v: &Value) -> Result<CodeType> {
     let type_str = get_str(v, "type");
     let op_type = OpType::parse(type_str)?;
-    let value = if let Some(val) = v.get("value") {
-        if let Some(s) = val.as_str() {
-            if s.starts_with("0x") || s.starts_with("0X") {
-                u64::from_str_radix(&s[2..], 16).unwrap_or(0)
-            } else {
-                s.parse::<u64>().unwrap_or(0)
-            }
-        } else {
-            val.as_u64().unwrap_or(0)
-        }
-    } else {
-        0
-    };
+    let value = get_goldilocks(v)?;
     Ok(CodeType {
         op_type,
         id: get_u64(v, "id"),
@@ -185,11 +189,10 @@ fn parse_code_type(v: &Value) -> Result<CodeType> {
 fn parse_code_operation(v: &Value) -> Result<CodeOperation> {
     let op = get_str(v, "op").to_string();
     let dest = parse_code_type(v.get("dest").unwrap_or(&Value::Null))?;
-    let src: Vec<CodeType> = v
-        .get("src")
-        .and_then(|s| s.as_array())
-        .map(|arr| arr.iter().map(|s| parse_code_type(s).unwrap_or_default()).collect())
-        .unwrap_or_default();
+    let src: Vec<CodeType> = match v.get("src").and_then(|s| s.as_array()) {
+        Some(arr) => arr.iter().map(parse_code_type).collect::<Result<_>>()?,
+        None => Vec::new(),
+    };
     Ok(CodeOperation { op, dest, src })
 }
 
@@ -311,11 +314,10 @@ impl StarkInfo {
 }
 
 fn parse_exp_code(v: &Value) -> Result<ExpCode> {
-    let code: Vec<CodeOperation> = v
-        .get("code")
-        .and_then(|c| c.as_array())
-        .map(|arr| arr.iter().map(|c| parse_code_operation(c).unwrap()).collect())
-        .unwrap_or_default();
+    let code: Vec<CodeOperation> = match v.get("code").and_then(|c| c.as_array()) {
+        Some(arr) => arr.iter().map(parse_code_operation).collect::<Result<_>>()?,
+        None => Vec::new(),
+    };
 
     Ok(ExpCode {
         exp_id: get_u64(v, "expId"),
@@ -330,17 +332,9 @@ fn parse_exp_code(v: &Value) -> Result<ExpCode> {
     })
 }
 
-fn parse_hint_field_value(v: &Value) -> HintFieldValue {
-    let value = if let Some(val) = v.get("value") {
-        if let Some(s) = val.as_str() {
-            s.parse::<u64>().unwrap_or(0)
-        } else {
-            val.as_u64().unwrap_or(0)
-        }
-    } else {
-        0
-    };
-    HintFieldValue {
+fn parse_hint_field_value(v: &Value) -> Result<HintFieldValue> {
+    let value = get_goldilocks(v)?;
+    Ok(HintFieldValue {
         op: get_str(v, "op").to_string(),
         id: get_u64(v, "id"),
         commit_id: get_u64(v, "commitId"),
@@ -354,51 +348,37 @@ fn parse_hint_field_value(v: &Value) -> HintFieldValue {
             .and_then(|p| p.as_array())
             .map(|arr| arr.iter().map(|v| v.as_u64().unwrap_or(0)).collect())
             .unwrap_or_default(),
+    })
+}
+
+/// The elements of array `key` of `v`, each parsed by `parse`; none when `v` has no such array.
+fn parse_array<T>(v: &Value, key: &str, parse: impl Fn(&Value) -> Result<T>) -> Result<Vec<T>> {
+    match v.get(key).and_then(|a| a.as_array()) {
+        Some(arr) => arr.iter().map(parse).collect(),
+        None => Ok(Vec::new()),
     }
 }
 
-fn parse_hint_field(v: &Value) -> HintField {
-    HintField {
-        name: get_str(v, "name").to_string(),
-        values: v
-            .get("values")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(parse_hint_field_value).collect())
-            .unwrap_or_default(),
-    }
+fn parse_hint_field(v: &Value) -> Result<HintField> {
+    Ok(HintField { name: get_str(v, "name").to_string(), values: parse_array(v, "values", parse_hint_field_value)? })
 }
 
-fn parse_hint(v: &Value) -> Hint {
-    Hint {
-        name: get_str(v, "name").to_string(),
-        fields: v
-            .get("fields")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(parse_hint_field).collect())
-            .unwrap_or_default(),
-    }
+fn parse_hint(v: &Value) -> Result<Hint> {
+    let name = get_str(v, "name").to_string();
+    let fields = parse_array(v, "fields", parse_hint_field).with_context(|| format!("hint {name}"))?;
+    Ok(Hint { name, fields })
 }
 
-fn parse_hints(v: &Value, key: &str) -> Vec<Hint> {
-    v.get(key).and_then(|a| a.as_array()).map(|arr| arr.iter().map(parse_hint).collect()).unwrap_or_default()
+fn parse_hints(v: &Value, key: &str) -> Result<Vec<Hint>> {
+    parse_array(v, key, parse_hint)
 }
 
 impl ExpressionsInfo {
     /// Parse from the expressionsInfo JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let expressions_code: Vec<ExpCode> = j
-            .get("expressionsCode")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|e| parse_exp_code(e).unwrap()).collect())
-            .unwrap_or_default();
-
-        let constraints: Vec<ExpCode> = j
-            .get("constraints")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|c| parse_exp_code(c).unwrap()).collect())
-            .unwrap_or_default();
-
-        let hints_info = parse_hints(j, "hintsInfo");
+        let expressions_code = parse_array(j, "expressionsCode", parse_exp_code)?;
+        let constraints = parse_array(j, "constraints", parse_exp_code)?;
+        let hints_info = parse_hints(j, "hintsInfo")?;
 
         Ok(ExpressionsInfo { expressions_code, constraints, hints_info })
     }
@@ -416,34 +396,27 @@ impl VerifierInfo {
 impl GlobalConstraintsInfo {
     /// Parse from global constraints JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let constraints: Vec<ExpCode> = j
-            .get("constraints")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|c| parse_exp_code(c).unwrap()).collect())
-            .unwrap_or_default();
-
-        let hints = parse_hints(j, "hints");
+        let constraints = parse_array(j, "constraints", parse_exp_code)?;
+        let hints = parse_hints(j, "hints")?;
 
         Ok(GlobalConstraintsInfo { constraints, hints })
     }
 }
 
 // ---------------------------------------------------------------------------
-// Direct From conversions from generate_pil_code types (avoids JSON round-trip)
+// Direct conversions from generate_pil_code types (avoids JSON round-trip)
+//
+// The passes keep numbers as decimal strings; here, where the STARK writers take them, they are
+// narrowed to the u64 of a Goldilocks element, and one that is not is an error (goldilocks_u64).
 // ---------------------------------------------------------------------------
 
-fn code_ref_to_code_type(r: &crate::types::output::CodeRef) -> CodeType {
-    let value = if let Some(ref v) = r.value {
-        if v.starts_with("0x") || v.starts_with("0X") {
-            u64::from_str_radix(&v[2..], 16).unwrap_or(0)
-        } else {
-            v.parse::<u64>().unwrap_or(0)
-        }
-    } else {
-        0
+fn code_ref_to_code_type(r: &crate::types::output::CodeRef) -> Result<CodeType> {
+    let value = match r.value {
+        Some(ref v) => goldilocks_u64(v)?,
+        None => 0,
     };
-    CodeType {
-        op_type: OpType::parse(&r.ref_type).unwrap_or_default(),
+    Ok(CodeType {
+        op_type: OpType::parse(&r.ref_type)?,
         id: r.id as u64,
         prime: r.prime.unwrap_or(0),
         dim: r.dim as u64,
@@ -451,58 +424,57 @@ fn code_ref_to_code_type(r: &crate::types::output::CodeRef) -> CodeType {
         commit_id: r.commit_id.unwrap_or(0) as u64,
         boundary_id: r.boundary_id.unwrap_or(0) as u64,
         airgroup_id: r.airgroup_id.unwrap_or(0) as u64,
-    }
+    })
 }
 
-fn code_entry_to_operation(e: &crate::types::output::CodeEntry) -> CodeOperation {
-    CodeOperation {
+fn code_entry_to_operation(e: &crate::types::output::CodeEntry) -> Result<CodeOperation> {
+    Ok(CodeOperation {
         op: e.op.clone(),
-        dest: code_ref_to_code_type(&e.dest),
-        src: e.src.iter().map(code_ref_to_code_type).collect(),
-    }
+        dest: code_ref_to_code_type(&e.dest)?,
+        src: e.src.iter().map(code_ref_to_code_type).collect::<Result<_>>()?,
+    })
 }
 
-fn expression_entry_to_exp_code(e: &crate::pil::gen_code::ExpressionCodeEntry) -> ExpCode {
-    ExpCode {
+fn code_to_operations(code: &[crate::types::output::CodeEntry]) -> Result<Vec<CodeOperation>> {
+    code.iter().map(code_entry_to_operation).collect()
+}
+
+fn expression_entry_to_exp_code(e: &crate::pil::gen_code::ExpressionCodeEntry) -> Result<ExpCode> {
+    Ok(ExpCode {
         exp_id: e.exp_id as u64,
         stage: e.stage as u64,
         tmp_used: e.tmp_used as u64,
-        code: e.code.iter().map(code_entry_to_operation).collect(),
+        code: code_to_operations(&e.code).with_context(|| format!("the code of expression {}", e.exp_id))?,
         line: e.line.clone(),
         boundary: String::new(),
         offset_min: 0,
         offset_max: 0,
         im_pol: 0,
-    }
+    })
 }
 
-fn constraint_entry_to_exp_code(c: &crate::pil::gen_code::ConstraintCodeEntry) -> ExpCode {
-    ExpCode {
+fn constraint_entry_to_exp_code(c: &crate::pil::gen_code::ConstraintCodeEntry) -> Result<ExpCode> {
+    let line = c.line.clone().unwrap_or_default();
+    Ok(ExpCode {
         exp_id: 0,
         stage: c.stage as u64,
         tmp_used: c.tmp_used as u64,
-        code: c.code.iter().map(code_entry_to_operation).collect(),
-        line: c.line.clone().unwrap_or_default(),
+        code: code_to_operations(&c.code).with_context(|| format!("the code of constraint {line}"))?,
+        line,
         boundary: c.boundary.clone(),
         offset_min: c.offset_min.unwrap_or(0) as u64,
         offset_max: c.offset_max.unwrap_or(0) as u64,
         im_pol: c.im_pol as u64,
-    }
+    })
 }
 
-fn processed_hint_field_to_value(v: &crate::pil::gen_code::ProcessedHintField) -> HintFieldValue {
-    let (value, string_value) = if let Some(ref s) = v.value {
-        if v.op == "string" {
-            (0u64, s.clone())
-        } else if s.starts_with("0x") || s.starts_with("0X") {
-            (u64::from_str_radix(&s[2..], 16).unwrap_or(0), String::new())
-        } else {
-            (s.parse::<u64>().unwrap_or(0), String::new())
-        }
-    } else {
-        (0, String::new())
+fn processed_hint_field_to_value(v: &crate::pil::gen_code::ProcessedHintField) -> Result<HintFieldValue> {
+    let (value, string_value) = match v.value {
+        Some(ref s) if v.op == "string" => (0u64, s.clone()),
+        Some(ref s) => (goldilocks_u64(s)?, String::new()),
+        None => (0, String::new()),
     };
-    HintFieldValue {
+    Ok(HintFieldValue {
         op: v.op.clone(),
         id: v.id.unwrap_or(0) as u64,
         commit_id: v.commit_id.unwrap_or(0) as u64,
@@ -512,30 +484,35 @@ fn processed_hint_field_to_value(v: &crate::pil::gen_code::ProcessedHintField) -
         string_value,
         airgroup_id: v.airgroup_id.unwrap_or(0) as u64,
         pos: v.pos.iter().map(|&p| p as u64).collect(),
-    }
+    })
 }
 
-impl From<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
-    fn from(ei: &crate::pil::gen_code::ExpressionsInfo) -> Self {
-        ExpressionsInfo {
-            expressions_code: ei.expressions_code.iter().map(expression_entry_to_exp_code).collect(),
-            constraints: ei.constraints.iter().map(constraint_entry_to_exp_code).collect(),
-            hints_info: ei
-                .hints_info
-                .iter()
-                .map(|h| Hint {
-                    name: h.name.clone(),
-                    fields: h
-                        .fields
-                        .iter()
-                        .map(|f| HintField {
-                            name: f.name.clone(),
-                            values: f.values.iter().map(processed_hint_field_to_value).collect(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-        }
+/// Fails on a number that is not a Goldilocks element, and on an operand of an unknown type.
+impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
+    type Error = anyhow::Error;
+
+    fn try_from(ei: &crate::pil::gen_code::ExpressionsInfo) -> Result<Self> {
+        let hints_info = ei
+            .hints_info
+            .iter()
+            .map(|h| {
+                let fields = h
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let values = f.values.iter().map(processed_hint_field_to_value).collect::<Result<_>>()?;
+                        Ok(HintField { name: f.name.clone(), values })
+                    })
+                    .collect::<Result<_>>()
+                    .with_context(|| format!("hint {}", h.name))?;
+                Ok(Hint { name: h.name.clone(), fields })
+            })
+            .collect::<Result<_>>()?;
+        Ok(ExpressionsInfo {
+            expressions_code: ei.expressions_code.iter().map(expression_entry_to_exp_code).collect::<Result<_>>()?,
+            constraints: ei.constraints.iter().map(constraint_entry_to_exp_code).collect::<Result<_>>()?,
+            hints_info,
+        })
     }
 }
 
@@ -545,12 +522,173 @@ impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
-        let query_verifier = vi.query_verifier.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("the STARK verifier needs a queryVerifier, which only the FRI opening has")
-        })?;
+        let query_verifier = vi
+            .query_verifier
+            .as_ref()
+            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the FRI opening has"))?;
         Ok(VerifierInfo {
-            q_verifier: expression_entry_to_exp_code(&vi.q_verifier),
-            query_verifier: expression_entry_to_exp_code(query_verifier),
+            q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
+            query_verifier: expression_entry_to_exp_code(query_verifier).context("the queryVerifier")?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pil::gen_code::{self, ExpressionCodeEntry, ProcessedHint, ProcessedHintField, ProcessedHintFieldEntry};
+    use crate::types::output::{CodeEntry, CodeRef};
+
+    /// BN254's `r − 1`: a constant of a pilout over BN254, which `parse().unwrap_or(0)` wrote as 0.
+    const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+
+    fn code_ref(ref_type: &str, value: Option<&str>) -> CodeRef {
+        CodeRef {
+            ref_type: ref_type.to_string(),
+            id: 0,
+            dim: 1,
+            prime: None,
+            value: value.map(str::to_string),
+            stage: None,
+            stage_id: None,
+            commit_id: None,
+            opening: None,
+            boundary_id: None,
+            airgroup_id: None,
+            exp_id: None,
+        }
+    }
+
+    /// The passes' code of expression 3, `tmp0 = number + tmp0`, and a hint holding `hint_number`.
+    fn passes_info(number: &str, hint_number: &str) -> gen_code::ExpressionsInfo {
+        let add = CodeEntry {
+            op: "add".to_string(),
+            dest: code_ref("tmp", None),
+            src: vec![code_ref("number", Some(number)), code_ref("tmp", None)],
+        };
+        let field = ProcessedHintField {
+            op: "number".to_string(),
+            id: None,
+            dim: Some(1),
+            pos: Vec::new(),
+            stage: Some(0),
+            stage_id: None,
+            value: Some(hint_number.to_string()),
+            row_offset: None,
+            row_offset_index: None,
+            commit_id: None,
+            airgroup_id: None,
+        };
+        gen_code::ExpressionsInfo {
+            hints_info: vec![ProcessedHint {
+                name: "h".to_string(),
+                fields: vec![ProcessedHintFieldEntry { name: "f".to_string(), values: vec![field] }],
+            }],
+            expressions_code: vec![ExpressionCodeEntry {
+                tmp_used: 1,
+                code: vec![add],
+                exp_id: 3,
+                stage: 1,
+                dest: None,
+                line: String::new(),
+            }],
+            constraints: Vec::new(),
+        }
+    }
+
+    fn not_goldilocks(value: &str) -> String {
+        format!("the number {value} is not a Goldilocks element (an integer below p = {GOLDILOCKS_MODULUS})")
+    }
+
+    #[test]
+    fn numbers_below_p_are_narrowed_as_is() {
+        let ei = ExpressionsInfo::try_from(&passes_info("18446744069414584320", "7")).unwrap();
+        assert_eq!(ei.expressions_code[0].code[0].src[0].value, GOLDILOCKS_MODULUS - 1);
+        assert_eq!(ei.hints_info[0].fields[0].values[0].value, 7);
+    }
+
+    /// The STARK writers refuse a number that is not a Goldilocks element, rather than truncate it
+    /// to 0 (wider than 64 bits) or let it through non-canonical (between p and 2^64).
+    #[test]
+    fn numbers_that_are_not_goldilocks_elements_are_refused() {
+        for wide in [R_MINUS_ONE, "18446744073709551616", "18446744073709551615", "18446744069414584321"] {
+            let err = ExpressionsInfo::try_from(&passes_info(wide, "0")).unwrap_err();
+            assert_eq!(format!("{err:#}"), format!("the code of expression 3: {}", not_goldilocks(wide)));
+
+            let err = ExpressionsInfo::try_from(&passes_info("0", wide)).unwrap_err();
+            assert_eq!(format!("{err:#}"), format!("hint h: {}", not_goldilocks(wide)));
+        }
+    }
+
+    /// End to end: the passes keep a constant wider than Goldilocks as it is, and the STARK writers
+    /// refuse it where they narrow it, instead of writing 0.
+    #[test]
+    fn a_wide_constant_of_the_pilout_is_refused_by_the_stark_writers() {
+        use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
+
+        // 2^64 + 5, big-endian.
+        let wide = vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0x05];
+        let operand = |o| Some(pb::Operand { operand: Some(o) });
+        let a = operand(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx: 0, row_offset: 0 }));
+        let c = operand(operand::Operand::Constant(operand::Constant { value: wide }));
+        let air = pb::Air {
+            name: Some("Wide".to_string()),
+            num_rows: Some(16),
+            stage_widths: vec![1],
+            expressions: vec![pb::Expression {
+                operation: Some(expression::Operation::Sub(expression::Sub { lhs: a, rhs: c })),
+            }],
+            constraints: vec![pb::Constraint {
+                constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+                    expression_idx: Some(operand::Expression { idx: 0 }),
+                    debug_line: None,
+                })),
+            }],
+            ..Default::default()
+        };
+        let pilout = pb::PilOut {
+            air_groups: vec![pb::AirGroup { airs: vec![air], ..Default::default() }],
+            num_challenges: vec![0],
+            symbols: vec![pb::Symbol {
+                name: "Wide.a".to_string(),
+                air_group_id: Some(0),
+                air_id: Some(0),
+                r#type: SymbolType::WitnessCol as i32,
+                stage: Some(1),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let result = pil_info::run(&pilout, 0, 0, &pil_info::PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
+        let err = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap_err();
+        assert!(format!("{err:#}").ends_with(&not_goldilocks("18446744073709551621")), "{err:#}");
+    }
+
+    /// The same refusal when the code is read back from its JSON (the recursive setups).
+    #[test]
+    fn numbers_of_the_json_that_are_not_goldilocks_elements_are_refused() {
+        let json = |value: &str| {
+            serde_json::json!({
+                "expressionsCode": [{
+                    "code": [{
+                        "op": "add",
+                        "dest": {"type": "tmp", "id": 0, "dim": 1},
+                        "src": [{"type": "number", "value": value, "dim": 1}, {"type": "tmp", "id": 0, "dim": 1}],
+                    }],
+                }],
+            })
+        };
+        let ei = ExpressionsInfo::from_json(&json("42")).unwrap();
+        assert_eq!(ei.expressions_code[0].code[0].src[0].value, 42);
+
+        let err = ExpressionsInfo::from_json(&json(R_MINUS_ONE)).unwrap_err();
+        assert_eq!(err.to_string(), not_goldilocks(R_MINUS_ONE));
+
+        let hints = serde_json::json!({"constraints": [], "hints": [{
+            "name": "h", "fields": [{"name": "f", "values": [{"op": "number", "value": R_MINUS_ONE, "pos": []}]}],
+        }]});
+        let err = GlobalConstraintsInfo::from_json(&hints).unwrap_err();
+        assert_eq!(format!("{err:#}"), format!("hint h: {}", not_goldilocks(R_MINUS_ONE)));
     }
 }

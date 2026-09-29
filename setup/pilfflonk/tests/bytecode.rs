@@ -526,7 +526,8 @@ fn a_bytecode_the_reader_would_refuse_is_not_written() {
 
 #[test]
 fn the_starks_passes_are_refused() {
-    let result = pil_info::run(&wide_constants_pilout(), 0, 0, &PilInfoCfg::goldilocks(1), &Default::default());
+    let result =
+        pil_info::run(&wide_constants_pilout(), 0, 0, &PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
     let err = Bytecode::from_pil_info(&result).unwrap_err().to_string();
     assert!(err.contains("FRI polynomial"), "{err}");
 }
@@ -692,7 +693,7 @@ fn wide_constants_pilout() -> pb::PilOut {
 }
 
 fn run_bn254(pilout: &pb::PilOut) -> PilInfoResult {
-    pil_info::run(pilout, 0, 0, &PilInfoCfg::bn254(), &Default::default())
+    pil_info::run(pilout, 0, 0, &PilInfoCfg::bn254(), &Default::default()).unwrap()
 }
 
 /// The file `write_air_bin` writes for `result`, checked against `result`'s code, and its bytes,

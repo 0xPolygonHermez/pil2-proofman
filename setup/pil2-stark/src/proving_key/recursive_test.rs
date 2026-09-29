@@ -227,7 +227,7 @@ pub fn gen_recursive_test_setup(
     };
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
-    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
+    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
 
     // -------------------------------------------------------------------------
     // Step 10: Build and write starkinfo JSON.
@@ -313,7 +313,7 @@ pub fn gen_recursive_test_setup(
     let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
     let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
 
-    let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(ei_ref);
+    let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(ei_ref)?;
     crate::io::bin_file::write_expressions_bin_file(
         files_dir.join(format!("{}.bin", NAME_FILE)).to_str().unwrap(),
         &stark_info_loaded,

@@ -228,7 +228,7 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     write_air_bin(&result, &bin_path)?;
     tracing::info!("wrote {}", bin_path.display());
     // No global constraint (D2): the file has none, and the global hints the setup ignores.
-    let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254())?;
+    let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254()).with_context(refused)?;
     write_text(&proving_key.join(GLOBAL_CONSTRAINTS_FILE), &to_json_string(&global_constraints)?)?;
 
     // Last, the vkey (§4.2.5, A.6), with [τ]₂ of the SRS and the fixed commitments of the verkey,

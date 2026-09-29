@@ -1,18 +1,22 @@
 //! Build `pilout.globalConstraints.json`: the code of the global constraints and the global hints.
 
-use anyhow::Result;
 use pil2_pilout::pilout as pb;
 use serde_json::json;
 
 use crate::cfg::FieldCfg;
+use crate::error::Result;
 use crate::output::expressions_info::{code_entries_to_json, hint_value_to_json};
 
 /// Build the globalConstraints JSON from pilout data, computing over `field`.
+///
+/// Fails on a global constraint or expression that refers to nothing, on a hint field without a
+/// value and on what the passes cannot process.
 pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> Result<serde_json::Value> {
     use crate::pil::codegen::{build_code, pil_code_gen, CodeGenCtx};
     use crate::expr::helpers::add_info_expressions;
     use crate::types::pilout_info::{
-        format_global_constraints, format_global_expressions, format_global_hints, format_global_symbols, SymbolInfo,
+        check_constraint_expressions, format_global_constraints, format_global_expressions, format_global_hints,
+        format_global_symbols, SymbolInfo,
     };
     use crate::expr::print::PrintCtx;
 
@@ -22,13 +26,14 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
     }
 
     let mut expressions =
-        format_global_expressions(&pilout.expressions, &pilout.num_challenges, &pilout.air_groups, field);
+        format_global_expressions(&pilout.expressions, &pilout.num_challenges, &pilout.air_groups, field)?;
 
     let constraints = format_global_constraints(&pilout.constraints);
+    check_constraint_expressions(&constraints, pilout.expressions.len(), "the global constraints")?;
     let symbols = format_global_symbols(&pilout.symbols, &pilout.num_challenges, field);
 
     for constraint in &constraints {
-        add_info_expressions(&mut expressions, constraint.e, field);
+        add_info_expressions(&mut expressions, constraint.e, field)?;
     }
 
     let publics_map: Vec<SymbolInfo> = symbols.iter().filter(|s| s.sym_type == "public").cloned().collect();
@@ -174,8 +179,8 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
     let mut constraints_json = Vec::new();
 
     for constraint in &constraints {
-        pil_code_gen(&mut ctx, &symbols, &expressions, constraint.e, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, constraint.e, 0)?;
+        let block = build_code(&mut ctx)?;
 
         ctx.tmp_used = block.tmp_used;
 
@@ -189,7 +194,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
         constraints_json.push(serde_json::Value::Object(obj));
     }
 
-    let hints = format_global_hints(pilout, &mut expressions, field);
+    let hints = format_global_hints(pilout, &mut expressions, field)?;
 
     let processed_hints = process_global_hints(&mut expressions, &hints, Some(&print_ctx));
 

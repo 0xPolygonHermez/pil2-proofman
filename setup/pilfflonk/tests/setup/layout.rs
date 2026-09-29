@@ -5,6 +5,7 @@
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, SymbolType};
+use pil_info::PilInfoError;
 use pilfflonk_setup::air_info::{air_setup, q_piece_name, AirRef, AirSetup};
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::grouping::GroupingError;
@@ -231,14 +232,19 @@ fn deep_expressions_run_on_the_stack_of_the_passes() {
     assert_eq!(info.q_deg, 0);
 }
 
-/// A panic of the passes (plan R6) is an error of the setup, with its message.
+/// What the passes refuse (M27: they return it rather than panic) is an error of the setup,
+/// with the passes' own error: here a constraint on an expression the air does not have.
 #[test]
-fn a_panic_of_the_passes_is_an_error() {
+fn what_the_passes_refuse_is_an_error() {
     let mut pilout = offsets_pilout();
     the_air(&mut pilout).constraints = vec![every_row(99)];
     let err = setup_air(&pilout, 9).unwrap_err();
-    assert!(matches!(&err, SetupError::Passes(m) if !m.is_empty()), "{err}");
-    assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: "), "{err}");
+    assert!(
+        matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m))
+            if m == "constraint 0 of air Offsets is expression 99, and there are 6"),
+        "{err}"
+    );
+    assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: invalid pilout: "), "{err}");
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use pil_info::PilInfoError;
 use proofman_pilfflonk::{PilfflonkError, BN254_R};
 use proofman_starks_lib_c::PilFflonkError;
 
@@ -96,10 +97,19 @@ pub enum SetupError {
     InvalidPilout(String),
 
     // --- What the passes decide (spec §4.2.2, §4.2.3) ----------------------------------------
-    /// The symbolic passes stopped: `pil-info` panics on what it cannot process (plan R6, until
-    /// M27), and the setup reports the panic's message.
+    /// The symbolic passes refused the AIR: a pilout that refers to nothing, or constraints they
+    /// cannot process.
     #[error("the symbolic passes (pil-info) failed: {0}")]
-    Passes(String),
+    Passes(#[source] PilInfoError),
+
+    /// The symbolic passes panicked: an invariant of their own broken, a bug of `pil-info` and not
+    /// of the pilout ([`crate::passes`]). The setup reports the panic's message.
+    #[error("the symbolic passes (pil-info) panicked: {0}")]
+    PassesPanicked(String),
+
+    /// The thread the passes run on, with their stack, could not be started.
+    #[error("cannot start the thread the symbolic passes (pil-info) run on: {0}")]
+    PassesThread(#[source] std::io::Error),
 
     /// What the passes returned does not fit pilfflonk: a value of dimension other than 1, an
     /// evaluation of an unknown kind, the quotient's pieces out of place. A bug of the passes or
