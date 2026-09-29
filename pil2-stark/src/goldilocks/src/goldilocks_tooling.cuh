@@ -70,8 +70,9 @@ struct AirInstanceInfo {
     EvalGroup *evalGroups = nullptr;
     uint64_t nEvalGroups = 0;
 
-    EvalInfo **evalsInfoFRI;
-    uint64_t *evalsInfoFRISizes;
+    // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for fri_expression.cuh.
+    FriTerm *friTerms = nullptr;
+    uint64_t *friTermStart = nullptr;
     
     SetupCtx *setupCtx;
 
@@ -201,62 +202,36 @@ struct AirInstanceInfo {
             throw std::runtime_error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
         }
 
-        EvalInfo **evalsInfoFRI_ = new EvalInfo*[nOpeningPoints];
-        uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
-
-        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        // Each opening's terms in eval-map order, which its vf2 powers follow.
+        const uint64_t NExt = 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt;
+        std::vector<std::vector<FriTerm>> byOpening(nOpeningPoints);
         for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
-            evalsInfoFRISizes_[setupCtx->starkInfo.evMap[i].openingPos]++;
+            const EvMap &ev = setupCtx->starkInfo.evMap[i];
+            const uint16_t src = ev.type == EvMap::eType::cm ? 0 : ev.type == EvMap::eType::custom ? 1 : 2;
+            const PolMap &pol = src == 0 ? setupCtx->starkInfo.cmPolsMap[ev.id]
+                              : src == 1 ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
+                                         : setupCtx->starkInfo.constPolsMap[ev.id];
+            const std::string stage = src == 0 ? "cm" + to_string(pol.stage)
+                                    : src == 1 ? setupCtx->starkInfo.customCommits[pol.commitId].name + "0"
+                                               : "const";
+            const Layout layout = src == 0 ? resolveLayout(setupCtx->starkInfo.starkStruct.nBits, setupCtx->starkInfo.mapSectionsN[stage])
+                                           : fixedLayout();
+            if (layout != Layout::ColMajor) throw std::runtime_error("AirInstanceInfo: FRI terms need ColMajor sections");
+            byOpening[ev.openingPos].push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt,
+                                                       (uint32_t)i, src, (uint16_t)pol.dim});
         }
-
-        EvalInfo** evalsInfoByOpeningPos = new EvalInfo*[nOpeningPoints];
-        for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
-            evalsInfoByOpeningPos[pos] = new EvalInfo[evalsInfoFRISizes_[pos]];
+        std::vector<FriTerm> terms;
+        std::vector<uint64_t> termStart{0};
+        for (const auto &opening : byOpening) {
+            terms.insert(terms.end(), opening.begin(), opening.end());
+            termStart.push_back(terms.size());
         }
-
-        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
-        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
-            EvMap ev = setupCtx->starkInfo.evMap[i];
-            uint64_t pos = ev.openingPos;
-
-            std::string type = (ev.type == EvMap::eType::cm) ? "cm" :
-                            (ev.type == EvMap::eType::custom) ? "custom" : "fixed";
-
-            PolMap polInfo = (type == "cm")      ? setupCtx->starkInfo.cmPolsMap[ev.id] :
-                            (type == "custom")  ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id] :
-                                                setupCtx->starkInfo.constPolsMap[ev.id];
-
-            EvalInfo* evInfo = &evalsInfoByOpeningPos[pos][evalsInfoFRISizes_[pos]];
-            evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
-            std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
-            evInfo->stagePos = polInfo.stagePos;
-            evInfo->offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
-            evInfo->stageCols = setupCtx->starkInfo.mapSectionsN[stage];
-            evInfo->dim = polInfo.dim;
-            evInfo->evalPos = i;
-            evInfo->openingPos = pos;
-
-            evalsInfoFRISizes_[pos]++;
+        CHECKCUDAERR(cudaMalloc(&friTermStart, termStart.size() * sizeof(uint64_t)));
+        CHECKCUDAERR(cudaMemcpy(friTermStart, termStart.data(), termStart.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        if (!terms.empty()) {
+            CHECKCUDAERR(cudaMalloc(&friTerms, terms.size() * sizeof(FriTerm)));
+            CHECKCUDAERR(cudaMemcpy(friTerms, terms.data(), terms.size() * sizeof(FriTerm), cudaMemcpyHostToDevice));
         }
-
-        for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
-            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI_[opening], evalsInfoByOpeningPos[opening],
-                                    evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
-                                    cudaMemcpyHostToDevice));
-            delete[] evalsInfoByOpeningPos[opening];
-        }
-        
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
-        CHECKCUDAERR(cudaMemcpy(evalsInfoFRI, evalsInfoFRI_, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyHostToDevice));
-        
-        delete[] evalsInfoFRI_;
-        
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
-        CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
-        
-        delete[] evalsInfoFRISizes_;
-        delete[] evalsInfoByOpeningPos;
 
         if (packedInfo != nullptr) {
             is_packed = packedInfo->is_packed;
@@ -299,26 +274,8 @@ struct AirInstanceInfo {
         if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
-        if (evalsInfoFRI != nullptr) {
-            uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
-            
-            EvalInfo **host_evalsInfoFRI = new EvalInfo*[nOpeningPoints];
-            CHECKCUDAERR(cudaMemcpy(host_evalsInfoFRI, evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyDeviceToHost));
-            
-            for (uint64_t i = 0; i < nOpeningPoints; ++i) {
-                if (host_evalsInfoFRI[i] != nullptr) {
-                    CHECKCUDAERR(cudaFree(host_evalsInfoFRI[i]));
-                }
-            }
-            
-            delete[] host_evalsInfoFRI;
-            
-            CHECKCUDAERR(cudaFree(evalsInfoFRI));
-        }
-
-        if (evalsInfoFRISizes != nullptr) {
-            CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
-        }
+        if (friTerms != nullptr) CHECKCUDAERR(cudaFree(friTerms));
+        if (friTermStart != nullptr) CHECKCUDAERR(cudaFree(friTermStart));
 
         if (unpack_info != nullptr) {
             CHECKCUDAERR(cudaFree(unpack_info));

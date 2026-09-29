@@ -1,253 +1,248 @@
-// Equivalence tests for the DEEP/FRI polynomial kernels (starkpil/fri_expression.cuh).
-//
-// The oracle is a host implementation written straight from the mathematical
-// definition; it was cross-checked bit-for-bit against the Horner kernel these
-// folded kernels replaced, before that kernel was removed.
+// Equivalence tests for the DEEP/FRI polynomial kernels (starkpil/fri_expression.cuh), against a host
+// reference written straight from the definition: it inverts every x[r] - xi_o itself, so it also checks
+// the shifted-denominator identity both kernels rely on.
 #include <gtest/gtest.h>
-#include <vector>
+#include <algorithm>
 #include <random>
+#include <tuple>
+#include <vector>
 #include "cuda_utils.cuh"
 #include "../../starkpil/fri_expression.cuh"
 
 namespace {
 
-// A synthetic instance small enough to reference-check on the host but shaped
-// like the real thing: several opening points (including an empty one and a
-// partial group of 4, to exercise the batched inversion), mixed dim 1/dim 3
-// columns, and all three source buffers (cm / custom / fixed).
+using F3 = Goldilocks3;
+
+// Shaped like a real instance: several openings (empty ones and partial groups of 4 included), mixed
+// dim 1 / dim 3 columns shared between openings, all three source buffers, and the coset the kernels
+// rely on: x[r] = s wExt^r and xi_o = xi w^o, w = wExt^(2^extendBits).
 struct FriCase {
-    uint64_t domainSize = 1024;
-    uint64_t nBits = 10;
-    std::vector<uint64_t> counts{3, 0, 5, 2, 4, 1};   // per opening point
-    uint64_t nDistinctCols = 5;                       // pool the evals draw from, so the
-                                                      // same column recurs across openings
-    uint64_t stageCols() const { return nDistinctCols + FIELD_EXTENSION; }
+    uint64_t nBitsExt = 11, extendBits = 1;
+    std::vector<uint64_t> counts{3, 0, 5, 2, 4, 1};   // terms per opening
+    std::vector<int64_t> openings;                      // default -2, -1, 0, ...
+    uint64_t nDistinctCols = 5;                         // the pool the terms draw columns from
 
-    std::vector<EvalInfo> evalInfo;                   // flattened, opening-major
-    std::vector<Goldilocks::Element> cmPols, customPols, fixedPols;
-    std::vector<Goldilocks::Element> evals, xDivXSub, x, vf1, vf2;
-
+    uint64_t domainSize() const { return 1ULL << nBitsExt; }
     uint64_t nOpenings() const { return counts.size(); }
-    uint64_t nEvals() const { uint64_t s = 0; for (auto c : counts) s += c; return s; }
+
+    std::vector<FriTerm> terms;   // opening-major
+    std::vector<uint64_t> termStart;
+    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xis, x, vf1, vf2;
 
     void build(uint64_t seed)
     {
         std::mt19937_64 rng(seed);
-        auto rnd = [&]() { return Goldilocks::fromU64(rng() % GOLDILOCKS_PRIME); };
+        auto rnd = [&] { return Goldilocks::fromU64(rng() % GOLDILOCKS_PRIME); };
+        const uint64_t n = domainSize(), buf = (nDistinctCols + FIELD_EXTENSION) * n;
+        cm.resize(buf); custom.resize(buf); fixed.resize(buf);
+        for (uint64_t i = 0; i < buf; i++) { cm[i] = rnd(); custom[i] = rnd(); fixed[i] = rnd(); }
 
-        uint64_t buf = stageCols() * domainSize;
-        cmPols.resize(buf); customPols.resize(buf); fixedPols.resize(buf);
-        for (uint64_t i = 0; i < buf; i++) { cmPols[i] = rnd(); customPols[i] = rnd(); fixedPols[i] = rnd(); }
+        const Goldilocks::Element wExt = Goldilocks::w(nBitsExt), w = Goldilocks::w(nBitsExt - extendBits);
+        x.resize(n);
+        x[0] = Goldilocks::shift();
+        for (uint64_t r = 1; r < n; r++) x[r] = Goldilocks::mul(x[r - 1], wExt);
+        if (openings.empty())
+            for (uint64_t o = 0; o < nOpenings(); o++) openings.push_back((int64_t)o - 2);
+        const Goldilocks::Element xi[FIELD_EXTENSION] = {rnd(), rnd(), rnd()};
+        xis.resize(nOpenings() * FIELD_EXTENSION);
+        for (uint64_t o = 0; o < nOpenings(); o++) {
+            Goldilocks::Element wo = Goldilocks::pow(w, (uint64_t)std::abs(openings[o]));
+            if (openings[o] < 0) wo = Goldilocks::inv(wo);
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++) xis[o * FIELD_EXTENSION + k] = Goldilocks::mul(xi[k], wo);
+        }
 
-        x.resize(domainSize);
-        for (uint64_t i = 0; i < domainSize; i++) x[i] = rnd();
+        vf1 = {rnd(), rnd(), rnd()};
+        vf2 = {rnd(), rnd(), rnd()};
 
-        // xi must differ from every x[r] or the denominator is zero.
-        xDivXSub.resize(nOpenings() * FIELD_EXTENSION);
-        for (uint64_t i = 0; i < xDivXSub.size(); i++) xDivXSub[i] = rnd();
-
-        vf1.resize(FIELD_EXTENSION); vf2.resize(FIELD_EXTENSION);
-        for (uint64_t i = 0; i < FIELD_EXTENSION; i++) { vf1[i] = rnd(); vf2[i] = rnd(); }
-
-        evals.resize(nEvals() * FIELD_EXTENSION);
-        for (uint64_t i = 0; i < evals.size(); i++) evals[i] = rnd();
-
-        uint64_t evalPos = 0;
+        uint64_t nTerms = 0;
+        for (uint64_t c : counts) nTerms += c;
+        termStart = {0};
         for (uint64_t o = 0; o < nOpenings(); o++) {
             for (uint64_t j = 0; j < counts[o]; j++) {
-                // Draw from a small pool so most columns are shared between openings,
-                // which is what the grouped kernel exists to exploit.
-                uint64_t col = (o * 3 + j * 7) % nDistinctCols;
-                EvalInfo e{};
-                e.type = col % 3;                     // cycle cm / custom / fixed
-                e.offset = 0;
-                e.dim = (col % 4 == 0) ? FIELD_EXTENSION : 1;
-                e.stageCols = stageCols();
-                e.stagePos = col;
-                e.openingPos = o;
-                e.evalPos = evalPos;
-                evalInfo.push_back(e);
-                evalPos++;
+                const uint64_t col = (o * 3 + j * 7) % nDistinctCols;
+                // evalPos reversed, so the kernels must follow it rather than the term index.
+                terms.push_back(FriTerm{col * n, (uint32_t)(nTerms - 1 - terms.size()), (uint16_t)(col % 3),
+                                        (uint16_t)(col % 4 == 0 ? FIELD_EXTENSION : 1)});
             }
+            termStart.push_back(terms.size());
         }
+        evals.resize(nTerms * FIELD_EXTENSION);
+        for (auto &e : evals) e = rnd();
     }
 
-    // Host reference, written straight from the mathematical definition:
-    //   fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_j vf2^(n_o-1-j) * (p_j[r] - e_j)
+    // fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_j vf2^(n_o-1-j) * (p_j[r] - e_j), by Horner.
     std::vector<Goldilocks::Element> reference() const
     {
-        using F3 = Goldilocks3;
-        std::vector<Goldilocks::Element> out(domainSize * FIELD_EXTENSION);
-        const F3::Element &vf1e = *(F3::Element *)vf1.data();
-        const F3::Element &vf2e = *(F3::Element *)vf2.data();
-
-        for (uint64_t r = 0; r < domainSize; r++) {
+        const uint64_t n = domainSize();
+        std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
+        F3::Element vf1e = {vf1[0], vf1[1], vf1[2]}, vf2e = {vf2[0], vf2[1], vf2[2]};
+        for (uint64_t r = 0; r < n; r++) {
             F3::Element fri;
             F3::zero(fri);
-            uint64_t flat = 0;
             for (uint64_t o = 0; o < nOpenings(); o++) {
                 F3::Element accum;
                 F3::zero(accum);
-                for (uint64_t j = 0; j < counts[o]; j++) {
-                    const EvalInfo &e = evalInfo[flat + j];
-                    const Goldilocks::Element *pol =
-                        (e.type == 0) ? cmPols.data() : (e.type == 1) ? customPols.data() : fixedPols.data();
-                    F3::Element term;
-                    for (uint64_t d = 0; d < FIELD_EXTENSION; d++) {
-                        term[d] = (d == 0 || e.dim == FIELD_EXTENSION)
-                                      ? pol[e.offset + (e.stagePos + d) * domainSize + r]
-                                      : Goldilocks::zero();
-                    }
-                    F3::Element &ev = *(F3::Element *)&evals[e.evalPos * FIELD_EXTENSION];
-                    F3::sub(term, term, ev);
-                    // vf2^(n_o-1-j): fold by Horner over j, same as the kernel
+                for (uint64_t t = termStart[o]; t < termStart[o + 1]; t++) {
+                    const FriTerm &m = terms[t];
+                    const Goldilocks::Element *pol = (m.src == 0 ? cm : m.src == 1 ? custom : fixed).data() + m.col + r;
+                    F3::Element term = {pol[0], m.dim == 1 ? Goldilocks::zero() : pol[n],
+                                        m.dim == 1 ? Goldilocks::zero() : pol[2 * n]};
+                    F3::sub(term, term, *(F3::Element *)&evals[m.evalPos * FIELD_EXTENSION]);
                     F3::mul(accum, accum, vf2e);
                     F3::add(accum, accum, term);
                 }
-                F3::Element &xi = *(F3::Element *)&xDivXSub[o * FIELD_EXTENSION];
-                F3::Element num, den;
-                num[0] = x[r]; num[1] = Goldilocks::zero(); num[2] = Goldilocks::zero();
-                F3::sub(den, num, xi);
-                F3::Element invDen;
-                F3::inv(invDen, den);
-                F3::mul(accum, accum, invDen);
-                // vf1^(O-1-o): Horner over o
+                F3::Element den = {x[r], Goldilocks::zero(), Goldilocks::zero()}, inv;
+                F3::sub(den, den, *(F3::Element *)&xis[o * FIELD_EXTENSION]);
+                F3::inv(inv, den);
+                F3::mul(accum, accum, inv);
                 F3::mul(fri, fri, vf1e);
                 F3::add(fri, fri, accum);
-                flat += counts[o];
             }
-            for (uint64_t d = 0; d < FIELD_EXTENSION; d++) out[r * FIELD_EXTENSION + d] = fri[d];
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++) out[r * FIELD_EXTENSION + k] = fri[k];
         }
         return out;
     }
 };
 
-// Device-side mirror of a FriCase: allocates and uploads everything the kernels read.
-struct FriDevice {
-    gl64_t *fri = nullptr, *evals = nullptr, *vf1 = nullptr, *vf2 = nullptr;
-    gl64_t *cm = nullptr, *custom = nullptr, *fixed = nullptr, *xDivXSub = nullptr, *x = nullptr;
-    uint64_t *counts = nullptr;
-    EvalInfo **evalInfoPerOpening = nullptr;
-    std::vector<EvalInfo *> perOpening;
-
-    template <typename T>
-    static T *upload(const std::vector<T> &v)
-    {
-        T *d = nullptr;
-        CHECKCUDAERR(cudaMalloc(&d, v.size() * sizeof(T)));
-        CHECKCUDAERR(cudaMemcpy(d, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice));
-        return d;
-    }
-
-    explicit FriDevice(const FriCase &c)
-    {
-        CHECKCUDAERR(cudaMalloc(&fri, c.domainSize * FIELD_EXTENSION * sizeof(gl64_t)));
-        evals = (gl64_t *)upload(c.evals);
-        vf1 = (gl64_t *)upload(c.vf1);
-        vf2 = (gl64_t *)upload(c.vf2);
-        cm = (gl64_t *)upload(c.cmPols);
-        custom = (gl64_t *)upload(c.customPols);
-        fixed = (gl64_t *)upload(c.fixedPols);
-        xDivXSub = (gl64_t *)upload(c.xDivXSub);
-        x = (gl64_t *)upload(c.x);
-        counts = upload(c.counts);
-
-        uint64_t flat = 0;
-        for (uint64_t o = 0; o < c.nOpenings(); o++) {
-            std::vector<EvalInfo> slice(c.evalInfo.begin() + flat, c.evalInfo.begin() + flat + c.counts[o]);
-            // cudaMalloc(0) yields nullptr, which the kernel never dereferences (count 0).
-            perOpening.push_back(slice.empty() ? nullptr : upload(slice));
-            flat += c.counts[o];
-        }
-        evalInfoPerOpening = upload(perOpening);
-    }
-
-    std::vector<Goldilocks::Element> download(uint64_t domainSize) const
-    {
-        std::vector<Goldilocks::Element> out(domainSize * FIELD_EXTENSION);
-        CHECKCUDAERR(cudaMemcpy(out.data(), fri, out.size() * sizeof(gl64_t), cudaMemcpyDeviceToHost));
-        return out;
-    }
-
-    ~FriDevice()
-    {
-        for (auto p : perOpening) cudaFree(p);
-        for (void *p : {(void *)fri, (void *)evals, (void *)vf1, (void *)vf2, (void *)cm, (void *)custom,
-                        (void *)fixed, (void *)xDivXSub, (void *)x, (void *)counts, (void *)evalInfoPerOpening})
-            cudaFree(p);
-    }
-};
-
-void expectEqual(const std::vector<Goldilocks::Element> &got, const std::vector<Goldilocks::Element> &want)
+template <typename T>
+T *upload(const std::vector<T> &v)
 {
-    ASSERT_EQ(got.size(), want.size());
-    for (uint64_t i = 0; i < got.size(); i++) {
-        ASSERT_EQ(Goldilocks::toU64(got[i]), Goldilocks::toU64(want[i])) << "element " << i;
+    T *d = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d, v.size() * sizeof(T)));
+    CHECKCUDAERR(cudaMemcpy(d, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice));
+    return d;
+}
+
+// Both kernels, as calculateFRIExpression launches them (256 threads).
+std::vector<Goldilocks::Element> runKernel(const FriCase &c, bool shifted)
+{
+    const uint64_t n = c.domainSize(), O = c.nOpenings(), nThreads = 256;
+    gl64_t *cm = (gl64_t *)upload(c.cm), *custom = (gl64_t *)upload(c.custom), *fixed = (gl64_t *)upload(c.fixed);
+    gl64_t *evals = (gl64_t *)upload(c.evals), *xis = (gl64_t *)upload(c.xis), *x = (gl64_t *)upload(c.x);
+    gl64_t *vf1 = (gl64_t *)upload(c.vf1), *vf2 = (gl64_t *)upload(c.vf2);
+    int64_t *openings = upload(c.openings);
+    uint64_t *termStart = upload(c.termStart);
+    FriTerm *terms = c.terms.empty() ? nullptr : upload(c.terms);
+    gl64_t *coef = nullptr, *k = nullptr, *fri = nullptr;
+    CHECKCUDAERR(cudaMalloc(&coef, (c.terms.size() + 1) * FIELD_EXTENSION * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&k, O * FIELD_EXTENSION * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&fri, n * FIELD_EXTENSION * sizeof(gl64_t)));
+
+    computeFRIFoldedConstants<<<(O + 63) / 64, 64>>>(O, openings, Goldilocks::w(c.nBitsExt - c.extendBits).fe,
+                                                    termStart, terms, evals, vf1, vf2, coef, k);
+    const int64_t oMin = *std::min_element(c.openings.begin(), c.openings.end());
+    const int64_t oMax = *std::max_element(c.openings.begin(), c.openings.end());
+    if (shifted) {
+        const uint64_t window = friShiftedWindow(oMin, oMax, c.extendBits, nThreads);
+        EXPECT_NE(window, 0u);
+        computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
+            n, c.extendBits, O, openings, oMax, window, termStart, terms, coef, k, cm, custom, fixed, xis, x, fri);
+    } else {
+        // Fewer blocks than rows / nThreads, so the grid-stride loop runs.
+        computeFRIExpressionFolded<<<2, nThreads>>>(n, c.extendBits, O, openings, termStart, terms, coef, k, cm,
+                                                   custom, fixed, xis, x, fri);
     }
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
+    CHECKCUDAERR(cudaMemcpy(out.data(), fri, out.size() * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+    for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xis, (void *)x, (void *)vf1,
+                    (void *)vf2, (void *)openings, (void *)termStart, (void *)terms, (void *)coef, (void *)k, (void *)fri})
+        cudaFree(p);
+    return out;
+}
+
+void expectMatches(const FriCase &c, bool shifted)
+{
+    const auto got = runKernel(c, shifted), want = c.reference();
+    ASSERT_EQ(got.size(), want.size());
+    for (uint64_t i = 0; i < got.size(); i++)
+        ASSERT_EQ(Goldilocks::toU64(got[i]), Goldilocks::toU64(want[i])) << "element " << i;
 }
 
 } // namespace
 
-TEST(FriExpression, FoldedMatchesHostReference)
+// Term counts (a single opening, exact and partial groups of 4, leading empties, a long vf2 chain) x
+// kernel x blowup 1, 2, 4.
+class FriExpressionShapes
+    : public ::testing::TestWithParam<std::tuple<std::vector<uint64_t>, bool, uint64_t>> {};
+
+TEST_P(FriExpressionShapes, MatchesHostReference)
 {
     FriCase c;
-    c.build(0xbeef);
-    FriDevice d(c);
-
-    gl64_t *coef = nullptr, *k = nullptr;
-    CHECKCUDAERR(cudaMalloc(&coef, c.nEvals() * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&k, c.nOpenings() * FIELD_EXTENSION * sizeof(gl64_t)));
-
-    computeFRIFoldedConstants<<<1, 64>>>(c.nOpenings(), d.counts, d.evalInfoPerOpening, d.evals,
-                                        d.vf1, d.vf2, coef, k);
-    computeFRIExpressionFolded<<<4, 256>>>(c.domainSize, c.nBits, c.nOpenings(), d.fri, d.counts,
-                                           d.evalInfoPerOpening, coef, k, d.cm, d.xDivXSub, d.x,
-                                           d.fixed, d.custom);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-
-    expectEqual(d.download(c.domainSize), c.reference());
-    cudaFree(coef);
-    cudaFree(k);
-}
-
-// Across the shapes that exercise the batched inversion (exact multiple of 4,
-// partial group, single opening), empty openings, and a long vf2 power chain.
-class FriExpressionShapes : public ::testing::TestWithParam<std::vector<uint64_t>> {};
-
-TEST_P(FriExpressionShapes, FoldedMatchesHostReference)
-{
-    FriCase c;
-    c.counts = GetParam();
-    c.build(0x5eed + c.nOpenings());
-    FriDevice d(c);
-
-    gl64_t *coef = nullptr, *k = nullptr;
-    CHECKCUDAERR(cudaMalloc(&coef, c.nEvals() * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&k, c.nOpenings() * FIELD_EXTENSION * sizeof(gl64_t)));
-    computeFRIFoldedConstants<<<1, 64>>>(c.nOpenings(), d.counts, d.evalInfoPerOpening, d.evals,
-                                        d.vf1, d.vf2, coef, k);
-    computeFRIExpressionFolded<<<4, 256>>>(c.domainSize, c.nBits, c.nOpenings(), d.fri, d.counts,
-                                          d.evalInfoPerOpening, coef, k, d.cm, d.xDivXSub, d.x,
-                                          d.fixed, d.custom);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-
-    expectEqual(d.download(c.domainSize), c.reference());
-    cudaFree(coef);
-    cudaFree(k);
+    std::tie(c.counts, std::ignore, c.extendBits) = GetParam();
+    c.build(0x5eed + c.nOpenings() + c.extendBits);
+    expectMatches(c, std::get<1>(GetParam()));
 }
 
 INSTANTIATE_TEST_SUITE_P(Shapes, FriExpressionShapes,
-    ::testing::Values(std::vector<uint64_t>{7},                       // single opening
-                      std::vector<uint64_t>{4, 4, 4, 4},              // exact group of 4
-                      std::vector<uint64_t>{1, 1, 1, 1, 1},           // partial group of 1
-                      std::vector<uint64_t>{0, 0, 3},                 // leading empty openings
-                      std::vector<uint64_t>{200, 1, 0, 37, 5, 5, 5},  // long vf2 chain
-                      std::vector<uint64_t>{2, 3, 4, 5, 6, 7, 8, 9})); // two full groups
+    ::testing::Combine(::testing::Values(std::vector<uint64_t>{7},
+                                         std::vector<uint64_t>{4, 4, 4, 4},
+                                         std::vector<uint64_t>{1, 1, 1, 1, 1},
+                                         std::vector<uint64_t>{0, 0, 3},
+                                         std::vector<uint64_t>{200, 1, 0, 37, 5, 5, 5},
+                                         std::vector<uint64_t>{2, 3, 4, 5, 6, 7, 8, 9}),
+                       ::testing::Bool(), ::testing::Values(0, 1, 2)));
+
+// Openings with gaps and the first one not the smallest, like the recursive compressors.
+TEST(FriExpression, MatchesHostReferenceWithOpeningGaps)
+{
+    for (bool shifted : {false, true}) {
+        FriCase c;
+        c.extendBits = 2;
+        c.counts = {2, 3, 1, 4, 2, 5};
+        c.openings = {0, -5, -3, 1, 4, 9};
+        c.build(0x6a95);
+        SCOPED_TRACE(shifted ? "shifted" : "folded");
+        expectMatches(c, shifted);
+    }
+}
+
+// Keccakf-like: openings -144..5, rows reaching around the domain.
+TEST(FriExpression, MatchesHostReferenceWideOpeningRange)
+{
+    for (bool shifted : {false, true}) {
+        FriCase c;
+        c.counts.clear();
+        for (int64_t o = -144; o <= 5; o++) {
+            c.openings.push_back(o);
+            c.counts.push_back((uint64_t)(o + 144) * 7 % 4);   // 0..3, empties included
+        }
+        c.nDistinctCols = 9;
+        c.build(0xacc);
+        SCOPED_TRACE(shifted ? "shifted" : "folded");
+        expectMatches(c, shifted);
+    }
+}
+
+// Up to 97 openings (examples/hashes Blake2b), where the vf1 exponent reaches its maximum.
+TEST(FriExpression, MatchesHostReferenceAtLargeOpeningCount)
+{
+    for (uint64_t O : {17, 32, 57, 73, 87, 97}) {
+        for (bool shifted : {false, true}) {
+            FriCase c;
+            c.counts.resize(O);
+            for (uint64_t o = 0; o < O; o++) c.counts[o] = (o * 5 + 1) % 9;   // 0..8, empties included
+            c.nDistinctCols = 11;
+            c.build(0xba5e + O);
+            SCOPED_TRACE("nOpeningPoints = " + std::to_string(O) + (shifted ? ", shifted" : ", folded"));
+            expectMatches(c, shifted);
+        }
+    }
+}
+
+TEST(FriExpression, ShiftedWindowFitsSharedMemory)
+{
+    EXPECT_EQ(friShiftedWindow(-144, 5, 1, 256), 256u + 149 * 2);
+    EXPECT_EQ(friShiftedWindow(0, 1792, 0, 256), 2048u);   // 2048 * 24 bytes = 48 KiB
+    EXPECT_EQ(friShiftedWindow(0, 1793, 0, 256), 0u);
+    EXPECT_EQ(friShiftedWindow(-1000, 0, 2, 256), 0u);
+}
 
 // ---------------------------------------------------------------------------
-// Timing A/B at the real shapes of the zisk proving key
+// Timing at the shapes of the zisk proving key. Disabled by default; run with
+// --gtest_also_run_disabled_tests.
 // ---------------------------------------------------------------------------
-// Disabled by default; run with --gtest_also_run_disabled_tests.
 namespace {
 
 struct BenchShape {
@@ -255,98 +250,64 @@ struct BenchShape {
     uint64_t nBits, nBitsExt, nOpenings, nEvals, nCols;
 };
 
-// Each column is opened at a RUN of consecutive opening points, which is how a
-// real eval map looks (a column read at prime -1 and 0 lands on adjacent
-// openingPos), and is what decides how much reuse a group of G can capture.
-std::vector<EvalInfo> benchEvalInfo(const BenchShape &sh, uint64_t stageCols)
+// Each column is opened at a run of consecutive openings, as in a real eval map.
+void benchTerms(const BenchShape &sh, std::vector<FriTerm> &terms, std::vector<uint64_t> &termStart)
 {
-    std::vector<EvalInfo> out;
-    uint64_t base = sh.nEvals / sh.nCols, extra = sh.nEvals % sh.nCols;
+    const uint64_t n = 1ULL << sh.nBitsExt, base = sh.nEvals / sh.nCols, extra = sh.nEvals % sh.nCols;
+    std::vector<std::vector<FriTerm>> byOpening(sh.nOpenings);
     uint64_t evalPos = 0;
     for (uint64_t c = 0; c < sh.nCols && evalPos < sh.nEvals; c++) {
-        uint64_t k = base + (c < extra ? 1 : 0);
-        if (k == 0) k = 1;
-        if (k > sh.nOpenings) k = sh.nOpenings;
-        uint64_t start = (c * 7) % (sh.nOpenings - k + 1);
-        for (uint64_t t = 0; t < k && evalPos < sh.nEvals; t++) {
-            EvalInfo e{};
-            e.type = 0;
-            e.offset = 0;
-            e.stagePos = c;
-            e.stageCols = stageCols;
-            e.dim = (c % 4 == 0) ? FIELD_EXTENSION : 1;
-            e.openingPos = start + t;
-            e.evalPos = evalPos++;
-            out.push_back(e);
-        }
+        const uint64_t k = std::min(std::max<uint64_t>(base + (c < extra ? 1 : 0), 1), sh.nOpenings);
+        const uint64_t start = (c * 7) % (sh.nOpenings - k + 1);
+        for (uint64_t t = 0; t < k && evalPos < sh.nEvals; t++)
+            byOpening[start + t].push_back(FriTerm{c * n, (uint32_t)evalPos++, 0, (uint16_t)(c % 4 == 0 ? FIELD_EXTENSION : 1)});
     }
-    return out;
+    termStart = {0};
+    for (const auto &o : byOpening) {
+        terms.insert(terms.end(), o.begin(), o.end());
+        termStart.push_back(terms.size());
+    }
 }
 
 void runBench(const BenchShape &sh)
 {
-    const uint64_t domainSize = 1ULL << sh.nBitsExt;
-    const uint64_t stageCols = sh.nCols + FIELD_EXTENSION;
-    std::vector<EvalInfo> ev = benchEvalInfo(sh, stageCols);
-    const uint64_t nEvals = ev.size();
+    const uint64_t n = 1ULL << sh.nBitsExt, extendBits = sh.nBitsExt - sh.nBits, nThreads = 256;
+    std::vector<FriTerm> terms;
+    std::vector<uint64_t> termStart;
+    benchTerms(sh, terms, termStart);
+    // Openings as in the keys: a run ending at +5 (Main: -1..1).
+    std::vector<int64_t> ops(sh.nOpenings);
+    const int64_t top = std::min<int64_t>(5, (int64_t)(sh.nOpenings - 1) / 2);
+    for (uint64_t o = 0; o < sh.nOpenings; o++) ops[o] = (int64_t)o - (int64_t)(sh.nOpenings - 1) + top;
 
-    std::vector<uint64_t> counts(sh.nOpenings, 0);
-    for (const auto &e : ev) counts[e.openingPos]++;
-
-    gl64_t *pols = nullptr, *fri = nullptr, *evals = nullptr, *x = nullptr, *xi = nullptr;
-    gl64_t *vf1 = nullptr, *vf2 = nullptr, *coef = nullptr, *k = nullptr;
-    uint64_t *dCounts = nullptr;
-    EvalInfo **infoPerOpening = nullptr;
-    const size_t polBytes = (size_t)stageCols * domainSize * sizeof(gl64_t);
+    gl64_t *pols = nullptr;
+    const size_t polBytes = (size_t)(sh.nCols + FIELD_EXTENSION) * n * sizeof(gl64_t);
     if (cudaMalloc(&pols, polBytes) != cudaSuccess) {
         cudaGetLastError();
         printf("[bench] %-14s SKIPPED (needs %zu MiB for the trace)\n", sh.name, polBytes >> 20);
         return;
     }
     CHECKCUDAERR(cudaMemset(pols, 1, polBytes));
-    CHECKCUDAERR(cudaMalloc(&fri, domainSize * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&evals, nEvals * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&coef, nEvals * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&k, sh.nOpenings * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&x, domainSize * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&xi, sh.nOpenings * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&vf1, FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&vf2, FIELD_EXTENSION * sizeof(gl64_t)));
-
     std::mt19937_64 rng(7);
-    auto uploadRandom = [&](gl64_t *dst, uint64_t n) {
-        std::vector<uint64_t> h(n);
+    auto random = [&](uint64_t count) {
+        std::vector<uint64_t> h(count);
         for (auto &v : h) v = rng() % GOLDILOCKS_PRIME;
-        CHECKCUDAERR(cudaMemcpy(dst, h.data(), n * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        return (gl64_t *)upload(h);
     };
-    uploadRandom(evals, nEvals * FIELD_EXTENSION);
-    uploadRandom(x, domainSize);
-    uploadRandom(xi, sh.nOpenings * FIELD_EXTENSION);
-    uploadRandom(vf1, FIELD_EXTENSION);
-    uploadRandom(vf2, FIELD_EXTENSION);
-    CHECKCUDAERR(cudaMalloc(&dCounts, sh.nOpenings * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemcpy(dCounts, counts.data(), sh.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    gl64_t *evals = random(sh.nEvals * FIELD_EXTENSION), *x = random(n), *xis = random(sh.nOpenings * FIELD_EXTENSION);
+    gl64_t *vf1 = random(FIELD_EXTENSION), *vf2 = random(FIELD_EXTENSION);
+    gl64_t *coef = nullptr, *k = nullptr, *fri = nullptr;
+    CHECKCUDAERR(cudaMalloc(&coef, sh.nEvals * FIELD_EXTENSION * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&k, sh.nOpenings * FIELD_EXTENSION * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&fri, n * FIELD_EXTENSION * sizeof(gl64_t)));
+    int64_t *dOps = upload(ops);
+    uint64_t *dStart = upload(termStart);
+    FriTerm *dTerms = upload(terms);
+    const uint64_t wTrace = Goldilocks::w(sh.nBits).fe;
+    const uint64_t window = friShiftedWindow(ops.front(), ops.back(), extendBits, nThreads);
 
-    std::vector<EvalInfo *> perOp;
-    uint64_t flat = 0;
-    std::vector<EvalInfo> sorted = ev;
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const EvalInfo &a, const EvalInfo &b) { return a.openingPos < b.openingPos; });
-    for (uint64_t o = 0; o < sh.nOpenings; o++) {
-        EvalInfo *d = nullptr;
-        if (counts[o]) {
-            CHECKCUDAERR(cudaMalloc(&d, counts[o] * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(d, sorted.data() + flat, counts[o] * sizeof(EvalInfo), cudaMemcpyHostToDevice));
-        }
-        perOp.push_back(d);
-        flat += counts[o];
-    }
-    CHECKCUDAERR(cudaMalloc(&infoPerOpening, sh.nOpenings * sizeof(EvalInfo *)));
-    CHECKCUDAERR(cudaMemcpy(infoPerOpening, perOp.data(), sh.nOpenings * sizeof(EvalInfo *), cudaMemcpyHostToDevice));
-
-    const uint64_t nThreads = 256, nBlocks = domainSize / nThreads;
-    const int reps = 5;
     auto timeMs = [&](auto &&launch) {
+        const int reps = 5;
         launch();
         CHECKCUDAERR(cudaDeviceSynchronize());
         cudaEvent_t a, b;
@@ -360,20 +321,26 @@ void runBench(const BenchShape &sh)
         cudaEventDestroy(a); cudaEventDestroy(b);
         return ms / reps;
     };
-
-    float folded = timeMs([&] {
-        computeFRIFoldedConstants<<<1, 64>>>(sh.nOpenings, dCounts, infoPerOpening, evals, vf1, vf2, coef, k);
-        computeFRIExpressionFolded<<<nBlocks, nThreads>>>(domainSize, sh.nBits, sh.nOpenings, fri, dCounts,
-                                                          infoPerOpening, coef, k, pols, xi, x, pols, pols);
+    auto constants = [&] {
+        computeFRIFoldedConstants<<<(sh.nOpenings + 63) / 64, 64>>>(sh.nOpenings, dOps, wTrace, dStart, dTerms, evals,
+                                                                   vf1, vf2, coef, k);
+    };
+    const float folded = timeMs([&] {
+        constants();
+        computeFRIExpressionFolded<<<n / nThreads, nThreads>>>(n, extendBits, sh.nOpenings, dOps, dStart, dTerms, coef, k,
+                                                              pols, pols, pols, xis, x, fri);
     });
-
-    printf("[bench] %-14s O=%-3lu evals=%-5lu cols=%-5lu  folded %8.3f ms\n",
-           sh.name, sh.nOpenings, nEvals, sh.nCols, folded);
+    const float shifted = window == 0 ? 0.f : timeMs([&] {
+        constants();
+        computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
+            n, extendBits, sh.nOpenings, dOps, ops.back(), window, dStart, dTerms, coef, k, pols, pols, pols, xis, x, fri);
+    });
+    printf("[bench] %-14s O=%-3lu evals=%-5lu cols=%-5lu  folded %8.3f ms  shifted %8.3f ms (window %lu)\n", sh.name,
+           sh.nOpenings, sh.nEvals, sh.nCols, folded, shifted, window);
     fflush(stdout);
 
-    for (auto p : perOp) cudaFree(p);
-    for (void *p : {(void *)pols, (void *)fri, (void *)evals, (void *)coef, (void *)k, (void *)x,
-                    (void *)xi, (void *)vf1, (void *)vf2, (void *)dCounts, (void *)infoPerOpening})
+    for (void *p : {(void *)pols, (void *)evals, (void *)x, (void *)xis, (void *)vf1, (void *)vf2, (void *)coef,
+                    (void *)k, (void *)fri, (void *)dOps, (void *)dStart, (void *)dTerms})
         cudaFree(p);
 }
 
@@ -381,46 +348,12 @@ void runBench(const BenchShape &sh)
 
 TEST(FriExpression, DISABLED_BenchZiskShapes)
 {
-    // Measured from /data/provingKey/zisk starkinfo.json (openingPoints, evMap,
-    // distinct columns in the eval map).
+    // From the zisk proving key's starkinfo.json (openingPoints, evMap, distinct columns in the eval map).
     const BenchShape shapes[] = {
-        {"Keccakf",     18, 19, 32, 5408, 2170},
-        {"Sha256f",     18, 19, 87, 1266,  114},
-        {"Poseidon",    17, 18, 17,  534,  316},
-        {"compressor",  20, 22,  9,  181,  134},
-        {"recursive2",  17, 20,  5,  135,  104},
-        {"Main",        22, 23,  3,   59,   50},
+        {"Keccakf",     21, 22, 150, 3635, 520},
+        {"compressor",  20, 21,  66, 1047, 388},
+        {"recursive2",  19, 21,  67, 1200, 341},
+        {"Main",        22, 23,   3,  194, 185},
     };
     for (const auto &sh : shapes) runBench(sh);
-}
-
-// Large opening counts: zisk Sha256f has 87 and examples/hashes Blake2b has 97,
-// so the og loop runs 15-25 times and the vf1 exponent reaches its maximum. The
-// end-to-end proofs available in-repo only reach 5 openings, so this is where
-// that range is checked.
-TEST(FriExpression, FoldedMatchesHostReferenceAtLargeOpeningCount)
-{
-    for (uint64_t O : {17, 32, 57, 73, 87, 97}) {
-        FriCase c;
-        c.counts.resize(O);
-        for (uint64_t o = 0; o < O; o++) c.counts[o] = (o * 5 + 1) % 9;  // 0..8, empties included
-        c.nDistinctCols = 11;
-        c.build(0xba5e + O);
-        FriDevice d(c);
-
-        gl64_t *coef = nullptr, *k = nullptr;
-        CHECKCUDAERR(cudaMalloc(&coef, c.nEvals() * FIELD_EXTENSION * sizeof(gl64_t)));
-        CHECKCUDAERR(cudaMalloc(&k, O * FIELD_EXTENSION * sizeof(gl64_t)));
-        computeFRIFoldedConstants<<<(O + 63) / 64, 64>>>(O, d.counts, d.evalInfoPerOpening, d.evals,
-                                                        d.vf1, d.vf2, coef, k);
-        computeFRIExpressionFolded<<<4, 256>>>(c.domainSize, c.nBits, O, d.fri, d.counts,
-                                              d.evalInfoPerOpening, coef, k, d.cm, d.xDivXSub, d.x,
-                                              d.fixed, d.custom);
-        CHECKCUDAERR(cudaDeviceSynchronize());
-
-        SCOPED_TRACE("nOpeningPoints = " + std::to_string(O));
-        expectEqual(d.download(c.domainSize), c.reference());
-        cudaFree(coef);
-        cudaFree(k);
-    }
 }

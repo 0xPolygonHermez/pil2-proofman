@@ -17,4 +17,14 @@ struct EvalInfo
     uint64_t evalPos;
 };
 
+// One term of the FRI polynomial (fri_expression.cuh): its column's first element in the buffer `src`
+// selects (0: cm, 1: custom, 2: fixed), ColMajor over the extended domain.
+struct FriTerm
+{
+    uint64_t col;
+    uint32_t evalPos;
+    uint16_t src;
+    uint16_t dim;
+};
+
 #endif
