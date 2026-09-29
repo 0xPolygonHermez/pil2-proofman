@@ -34,8 +34,9 @@ pub fn fr(decimal: &str) -> FrBytes {
 }
 
 // ---------------------------------------------------------------------------------------------
-// A valid pilout: one AIR of 8 rows, 4 fixed columns, 2 witness columns of stage 1, 2 publics and
-// a constraint that uses a constant of 254 bits.
+// A valid pilout: one AIR of 8 rows, 4 fixed columns (`L1`, the array `C[2]` and `U`), 2 witness
+// columns of stage 1, 2 publics, a constraint that uses a constant of 254 bits and one on `C`.
+// `U` is in no constraint: it is never opened.
 // ---------------------------------------------------------------------------------------------
 
 pub const N_BITS: u64 = 3;
@@ -101,7 +102,7 @@ pub fn every_row(idx: u32) -> pb::Constraint {
     }
 }
 
-fn symbol(name: &str, r#type: SymbolType, id: u32, stage: Option<u32>, air: bool) -> pb::Symbol {
+pub fn symbol(name: &str, r#type: SymbolType, id: u32, stage: Option<u32>, air: bool) -> pb::Symbol {
     pb::Symbol {
         name: name.to_string(),
         air_group_id: air.then_some(0),
@@ -116,13 +117,18 @@ fn symbol(name: &str, r#type: SymbolType, id: u32, stage: Option<u32>, air: bool
     }
 }
 
+/// The symbol of an array column of `length` elements, the first at `id`.
+pub fn array_symbol(name: &str, r#type: SymbolType, id: u32, stage: u32, length: u32) -> pb::Symbol {
+    pb::Symbol { lengths: vec![length], ..symbol(name, r#type, id, Some(stage), true) }
+}
+
 /// A hint of the AIR, or of the pilout when `air` is false.
 pub fn hint(name: &str, air: bool) -> pb::Hint {
     pb::Hint { name: name.to_string(), hint_fields: vec![], air_group_id: air.then_some(0), air_id: air.then_some(0) }
 }
 
-/// The valid pilout of the tests. Its constraint, `(a − L1)·(r − 1) · b`, has a constant of 254
-/// bits.
+/// The valid pilout of the tests. Its first constraint, `−((a − L1)·(r − 1)·b')`, has a constant
+/// of 254 bits; the second is `C[0] − C[1]`.
 pub fn pilout() -> pb::PilOut {
     let air = pb::Air {
         name: Some("Sample".into()),
@@ -134,8 +140,9 @@ pub fn pilout() -> pb::PilOut {
             mul(exp(0), constant(&big(R_MINUS_ONE))),
             mul(exp(1), witness(1, 1)),
             neg(exp(2)),
+            sub(fixed(1), fixed(2)),
         ],
-        constraints: vec![every_row(3)],
+        constraints: vec![every_row(3), every_row(4)],
         ..Default::default()
     };
     pb::PilOut {
@@ -149,6 +156,8 @@ pub fn pilout() -> pb::PilOut {
             symbol("in", SymbolType::PublicValue, 0, None, false),
             symbol("out", SymbolType::PublicValue, 1, None, false),
             symbol("Sample.L1", SymbolType::FixedCol, 0, Some(0), true),
+            array_symbol("Sample.C", SymbolType::FixedCol, 1, 0, 2),
+            symbol("Sample.U", SymbolType::FixedCol, 3, Some(0), true),
             symbol("Sample.a", SymbolType::WitnessCol, 0, Some(1), true),
             symbol("Sample.b", SymbolType::WitnessCol, 1, Some(1), true),
         ],

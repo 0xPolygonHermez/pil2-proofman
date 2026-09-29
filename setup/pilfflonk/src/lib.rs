@@ -9,12 +9,16 @@
 //! | reading and validating the pilout (spec §4.2.1) | [`validate`] |
 //! | the fixed columns and `<air>.const` | [`fixed`] |
 //! | `pilout.globalInfo.json` | [`global_info`] |
+//! | the symbolic passes over BN254 (§4.2.2, §4.2.3) | [`passes`] |
+//! | the committed polynomials, their bounds, `nBitsExt` and the layout (§4.2.4, A.1–A.3) | [`layout`] |
+//! | `<air>.pilfflonkinfo.json` from the passes' result | [`air_info`] |
 //! | `pilfflonk.srs.bin`, `<air>.verkey.json` and `[τ]₂` | [`keys`] |
 //! | the vkey's digest (A.6) | [`digest`] |
 //! | `<air>.bin` | [`bytecode`] |
 //!
 //! With the feature `test-ptau`, the module `test_ptau` writes a ptau with `τ = 1`, for tests only.
 
+pub mod air_info;
 pub mod bytecode;
 pub mod command;
 pub mod digest;
@@ -22,6 +26,8 @@ pub mod error;
 pub mod fixed;
 pub mod global_info;
 pub mod keys;
+pub mod layout;
+pub mod passes;
 pub mod validate;
 
 #[cfg(feature = "test-ptau")]

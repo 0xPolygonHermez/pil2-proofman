@@ -24,6 +24,23 @@ pub enum SetupError {
     #[error("the pilout has {n_airs} AIRs, and a pilfflonk proof holds exactly one instance of one AIR")]
     AirCount { n_airs: usize },
 
+    /// Air values: pil-fflonk has none, and neither has v1 (spec §7.1, D2).
+    #[error("air {air} has {n} air values, which pilfflonk does not support (spec D2)")]
+    AirValues { air: String, n: usize },
+
+    /// Airgroup values (spec §7.1, D2).
+    #[error("the pilout has {n} airgroup values, which pilfflonk does not support (spec D2)")]
+    AirgroupValues { n: usize },
+
+    /// Proof values (spec §7.1, D2).
+    #[error("the pilout has {n} proof values, which pilfflonk does not support (spec D2)")]
+    ProofValues { n: usize },
+
+    /// Global constraints (spec §7.1, D2): a pilfflonk proof holds one AIR, and its
+    /// `pilout.globalConstraints.json` none.
+    #[error("the pilout has {n} global constraints, which pilfflonk does not support (spec D2)")]
+    GlobalConstraints { n: usize },
+
     #[error("air {air} has {num_rows} rows, not a power of two of at most 2^28 (spec P2)")]
     NumRows { air: String, num_rows: u32 },
 
@@ -71,9 +88,26 @@ pub enum SetupError {
     )]
     FixedValues { column: usize, n_values: usize, n_rows: usize },
 
-    /// A pilout that breaks its own format: an index to nothing, an enum value out of range.
+    /// A pilout that breaks its own format: an index to nothing, an enum value out of range, a
+    /// column without a symbol.
     #[error("invalid pilout: {0}")]
     InvalidPilout(String),
+
+    // --- What the passes decide (spec §4.2.2, §4.2.3) ----------------------------------------
+    /// The symbolic passes stopped: `pil-info` panics on what it cannot process (plan R6, until
+    /// M27), and the setup reports the panic's message.
+    #[error("the symbolic passes (pil-info) failed: {0}")]
+    Passes(String),
+
+    /// What the passes returned does not fit pilfflonk: a value of dimension other than 1, an
+    /// evaluation of an unknown kind, the quotient's pieces out of place. A bug of the passes or
+    /// of this crate, not of the pilout.
+    #[error("the symbolic passes (pil-info) returned what pilfflonk cannot use: {0}")]
+    PassesOutput(String),
+
+    /// The constraints' degree in the columns is 0: `qDeg` (A.1) would be negative.
+    #[error("the constraints give qDeg = {0}: some constraint must depend on a column (spec A.1)")]
+    QDegree(i64),
 
     // --- What the setup refuses in its arguments (spec §4.2) ----------------------------------
     #[error("--max-constraint-degree {0}: the degree search starts at 2 (spec A.1, D5)")]

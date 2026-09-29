@@ -7,14 +7,18 @@ use std::fs;
 use std::path::Path;
 
 use pil2_pilout::pilout::{self as pb, SymbolType};
+use pilfflonk_setup::bytecode::Bytecode;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
+use pilfflonk_setup::digest::keccak256;
 use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
 use prost::Message;
+use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
-    AggType, AirFile, AirVerkey, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo, SetupParams,
+    AggType, AirFile, AirVerkey, FqBytes, G2Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
+    PilfflonkInfo, ProofNames, SetupParams, Vkey, WitnessShape,
 };
 use proofman_starks_lib_c::PilFflonkSrs;
 
@@ -140,7 +144,8 @@ fn the_global_info_has_the_common_part_and_pilfflonks_fields() {
     assert!(matches!(global_info(&pilout, params), Err(SetupError::InvalidPilout(_))));
 }
 
-/// The files of M15 in the `provingKey/` of spec §4.2.6, and nothing else yet.
+/// The `provingKey/` of spec §4.2.6, every file readable by its type, the same bytes on a second
+/// run.
 #[test]
 fn the_command_writes_the_files_of_the_proving_key() {
     let dir = TestDir::new("command");
@@ -151,9 +156,15 @@ fn the_command_writes_the_files_of_the_proving_key() {
     assert_eq!(
         files(&proving_key),
         [
+            "Synthetic/Group/airs/Sample/air/Sample.bin",
             "Synthetic/Group/airs/Sample/air/Sample.const",
+            "Synthetic/Group/airs/Sample/air/Sample.expressionsinfo.json",
+            "Synthetic/Group/airs/Sample/air/Sample.pilfflonkinfo.json",
+            "Synthetic/Group/airs/Sample/air/Sample.verifierinfo.json",
             "Synthetic/Group/airs/Sample/air/Sample.verkey.json",
             "Synthetic/pilfflonk/pilfflonk.srs.bin",
+            "Synthetic/pilfflonk/pilfflonk.vkey.json",
+            "pilout.globalConstraints.json",
             "pilout.globalInfo.json",
         ]
     );
@@ -166,14 +177,78 @@ fn the_command_writes_the_files_of_the_proving_key() {
     let fixed = FixedColumns::read_const(&air_file(AirFile::Const), N_BITS, 4).unwrap();
     assert_eq!(fixed, FixedColumns::from_air(&pilout().air_groups[0].airs[0]).unwrap());
 
-    // The SRS holds the N powers of the unpacked fixed f (M16 sizes it by the layout).
+    // The layout: every opened column in an f of its own, U (never opened) in none, Q last. The
+    // degrees (A.1–A.3): N = 8 for the fixed ones, N + |O| + 1 = 10 for a and b, and qDeg = 1
+    // (a·b'), |O|_max = 1: 8 + 2·1 + 1 = 11 for Q.
+    let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
+    let layout: Vec<(u64, u64, &str, Vec<i64>, u64)> = info
+        .layout
+        .0
+        .iter()
+        .map(|f| (f.stage, f.pols[0].id, f.pols[0].name.as_str(), f.offsets.clone(), f.degree))
+        .collect();
+    assert_eq!(
+        layout,
+        [
+            (0, 0, "Sample.L1", vec![0], 8),
+            (0, 1, "Sample.C[0]", vec![0], 8),
+            (0, 2, "Sample.C[1]", vec![0], 8),
+            (1, 0, "Sample.a", vec![0], 10),
+            (1, 1, "Sample.b", vec![1], 10),
+            (2, 2, "Q0", vec![0], 11),
+        ]
+    );
+    assert!(info.layout.0.iter().all(|f| f.k == 1 && f.pols.len() == 1));
+    assert_eq!((info.q_deg, info.q_dim, info.max_q_degree, info.n_bits), (1, 1, 0, N_BITS));
+    assert_eq!(
+        info.const_pols_map.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["Sample.L1", "Sample.C", "Sample.C", "Sample.U"]
+    );
+    WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
+    ProofNames::new(&gi, &[&info]).unwrap();
+
+    // The SRS holds exactly the largest degree of the layout, Q's 11 powers.
+    let srs_bytes = fs::read(gi.srs_path(&proving_key)).unwrap();
+    assert_eq!(srs_bytes.len(), 12 + 3 * 12 + 88 + 11 * 64 + 2 * 128);
     let srs = PilFflonkSrs::load(&gi.srs_path(&proving_key)).unwrap();
     assert!(srs.commit_fixed(N_BITS, 1, &vec![[0u8; 32]; N]).is_ok());
-    assert!(srs.commit_fixed(N_BITS, 2, &vec![[0u8; 32]; 2 * N]).is_err());
 
-    // One commitment per fixed column (the unpacked layout, R1), τ = 1: first rows 1, 2, 3, 0.
+    // A commitment per fixed f of the layout, τ = 1: the first rows of L1, C[0] and C[1], 1, 2
+    // and 3. U, whose first row is 0, is not committed.
     let verkey = AirVerkey::read(&air_file(AirFile::Verkey)).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![multiple_of_g(1), multiple_of_g(2), multiple_of_g(3), multiple_of_g(0)]));
+    assert_eq!(verkey, AirVerkey(vec![multiple_of_g(1), multiple_of_g(2), multiple_of_g(3)]));
+
+    // The code, in the STARK's formats: the verifierinfo has the qVerifier only.
+    let json = |file| -> serde_json::Value { serde_json::from_slice(&fs::read(air_file(file)).unwrap()).unwrap() };
+    let expressions_info = json(AirFile::ExpressionsInfo);
+    let keys = |v: &serde_json::Value| {
+        let mut keys = v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        keys
+    };
+    assert_eq!(keys(&expressions_info), ["constraints", "expressionsCode", "hintsInfo"]);
+    let verifier_info = json(AirFile::VerifierInfo);
+    assert_eq!(keys(&verifier_info), ["qVerifier"]);
+    let bytecode = Bytecode::read(&air_file(AirFile::Bin)).unwrap();
+    assert_eq!(bytecode.expressions.len(), expressions_info["expressionsCode"].as_array().unwrap().len());
+    let global_constraints: serde_json::Value =
+        serde_json::from_slice(&fs::read(proving_key.join(GLOBAL_CONSTRAINTS_FILE)).unwrap()).unwrap();
+    assert_eq!(global_constraints, serde_json::json!({"constraints": [], "hints": []}));
+
+    // The vkey: the pilfflonkinfo's evMap, layout and degrees, the verkey's points, [τ]₂ of the
+    // SRS (the generator of G2 with τ = 1), the qVerifier of the verifierinfo, and its digest.
+    let vkey = Vkey::read(&gi.vkey_path(&proving_key)).unwrap();
+    assert!(vkey.digest_matches(|data| keccak256(data).unwrap()).unwrap());
+    assert_eq!(
+        (vkey.ev_map.clone(), vkey.layout.clone(), vkey.boundaries.clone()),
+        (info.ev_map.clone(), info.layout.clone(), info.boundaries.clone())
+    );
+    assert_eq!((vkey.power, vkey.power_w, vkey.n_public, vkey.q_deg, vkey.max_q_degree), (N_BITS, 1, 2, 1, 0));
+    assert_eq!(vkey.num_challenges, gi.num_challenges);
+    assert_eq!(vkey.fixed_commitments.0, verkey.0);
+    assert_eq!(vkey.q_verifier, verifier_info["qVerifier"]);
+    let g2 = G2_GENERATOR.map(|c| FqBytes::from_decimal(c).unwrap());
+    assert_eq!(vkey.x_2, G2Affine { x: [g2[0], g2[1]], y: [g2[2], g2[3]] });
 
     // Running again gives the same bytes.
     let before: Vec<Vec<u8>> = files(&proving_key).iter().map(|f| fs::read(proving_key.join(f)).unwrap()).collect();
@@ -206,13 +281,17 @@ fn the_command_refuses_a_pilout_the_setup_does_not_support() {
     assert!(format!("{err:#}").contains("is not a pilout"), "{err:#}");
 }
 
-/// A ptau with too few powers is refused before any file is written.
+/// A ptau with fewer powers than the largest degree of the layout, Q's 11, is refused before any
+/// file is written; 11 are enough.
 #[test]
-fn the_command_refuses_a_ptau_too_small_for_the_fixed_f() {
+fn the_command_refuses_a_ptau_too_small_for_the_layout() {
     let dir = TestDir::new("command_small_ptau");
-    let opts = inputs(&dir, &pilout(), N - 1);
+    let opts = inputs(&dir, &pilout(), 10);
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");
-    assert!(message.contains("fewer than the 8 requested"), "{message}");
+    assert!(message.contains("fewer than the 11 requested"), "{message}");
     assert_eq!(files(&opts.build_dir), Vec::<String>::new());
+
+    let opts = inputs(&dir, &pilout(), 11);
+    run_setup_pilfflonk(&opts).unwrap();
 }

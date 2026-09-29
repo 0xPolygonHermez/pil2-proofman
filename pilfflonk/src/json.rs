@@ -55,7 +55,10 @@ impl PilfflonkError {
     }
 }
 
-pub(crate) fn to_json_string<T: Serialize + ?Sized>(value: &T) -> PilfflonkResult<String> {
+/// `value` in the layout of the files, `JSON.stringify(value, null, 1)`'s (see [`JsonFile`]), with
+/// no validation: for what the setup writes in the STARK's formats (`expressionsinfo.json`,
+/// `verifierinfo.json`, `globalConstraints.json`), whose types are `pil-info`'s.
+pub fn to_json_string<T: Serialize + ?Sized>(value: &T) -> PilfflonkResult<String> {
     let mut buffer = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
     let mut serializer = serde_json::Serializer::with_formatter(&mut buffer, formatter);

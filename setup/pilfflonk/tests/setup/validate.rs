@@ -2,7 +2,7 @@
 //! code from the valid one of `common`.
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, global_expression, global_operand};
+use pil2_pilout::pilout::{self as pb, global_expression, global_operand, SymbolType};
 use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::validate::{check_extended_domain, validate, PROVER_HINTS, WITNESS_AND_DEBUG_HINTS};
 use pilfflonk_setup::SetupError;
@@ -82,6 +82,50 @@ fn a_pilout_of_other_than_one_air_is_refused() {
         assert!(matches!(err, SetupError::AirCount { n_airs } if n_airs == n), "{err}");
         assert!(err.to_string().contains("exactly one instance of one AIR"), "{err}");
     }
+}
+
+/// Air values, airgroup values, proof values and global constraints are out of v1 (D2), whether
+/// the pilout declares them or only has their symbols.
+#[test]
+fn values_and_global_constraints_are_refused() {
+    let value_symbol = |kind: SymbolType| pb::Symbol {
+        name: "v".into(),
+        r#type: kind as i32,
+        stage: Some(1),
+        air_group_id: Some(0),
+        air_id: Some(0),
+        ..Default::default()
+    };
+
+    let mut p = pilout();
+    the_air(&mut p).air_values = vec![pb::AirValue { stage: 1 }; 2];
+    let err = refusal(&p);
+    assert!(matches!(&err, SetupError::AirValues { air, n: 2 } if air == "Sample"), "{err}");
+    let mut p = pilout();
+    p.symbols.push(value_symbol(SymbolType::AirValue));
+    assert!(matches!(refusal(&p), SetupError::AirValues { n: 1, .. }));
+
+    let mut p = pilout();
+    p.air_groups[0].air_group_values = vec![pb::AirGroupValue { agg_type: 0, stage: 2 }];
+    let err = refusal(&p);
+    assert!(matches!(err, SetupError::AirgroupValues { n: 1 }), "{err}");
+    let mut p = pilout();
+    p.symbols.push(value_symbol(SymbolType::AirGroupValue));
+    assert!(matches!(refusal(&p), SetupError::AirgroupValues { n: 1 }));
+
+    let mut p = pilout();
+    p.num_proof_values = vec![2, 1];
+    let err = refusal(&p);
+    assert!(matches!(err, SetupError::ProofValues { n: 3 }), "{err}");
+    let mut p = pilout();
+    p.symbols.push(value_symbol(SymbolType::ProofValue));
+    assert!(matches!(refusal(&p), SetupError::ProofValues { n: 1 }));
+
+    let mut p = pilout();
+    p.constraints = vec![pb::GlobalConstraint { expression_idx: None, debug_line: None }; 3];
+    let err = refusal(&p);
+    assert!(matches!(err, SetupError::GlobalConstraints { n: 3 }), "{err}");
+    assert!(err.to_string().contains("D2"), "{err}");
 }
 
 #[test]

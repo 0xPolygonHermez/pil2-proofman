@@ -1,10 +1,10 @@
 //! Reading a pilout for pilfflonk: what the setup refuses before any pass runs (spec §4.2.1).
 //!
 //! [`validate`] checks a whole pilout at once, but for two of §4.2.1's cases, which need what
-//! only the passes and the grouping know (M16):
+//! only the passes and the layout know (`crate::layout`):
 //!
-//! - the extended domain must fit in the 2-adicity of BN254: [`check_extended_domain`], to call
-//!   with `nBitsExt` once A.1 has fixed it;
+//! - the extended domain must fit in the 2-adicity of BN254: [`check_extended_domain`], called
+//!   with the `nBitsExt` of A.1 (`layout::Degrees`);
 //! - the ptau must hold as many powers `[τ^i]₁` as the largest `degree` of the layout:
 //!   [`crate::keys::write_srs`] asks the C++ reader for exactly that many, and the reader refuses a
 //!   ptau with fewer before it reads a point.
@@ -62,14 +62,16 @@ pub(crate) fn air_label(air: &pb::Air, airgroup_id: usize, air_id: usize) -> Str
 }
 
 /// Checks `pilout` against spec §4.2.1, but for what [the module](self) leaves to others, and
-/// returns its AIR. In order: the base field, one AIR only (D2), its number of rows, custom
-/// commits, periodic columns and public tables, the hints, the columns of stage 2 or above, and
+/// returns its AIR. In order: the base field; what v1 leaves out (D2): more than one AIR, air
+/// values, airgroup values, proof values and global constraints; the AIR's number of rows; custom
+/// commits, periodic columns and public tables; the hints; the columns of stage 2 or above; and
 /// the constants of the expressions.
 pub fn validate(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     check_base_field(pilout)?;
     let valid = only_air(pilout)?;
     let air = valid.air;
     let label = air_label(air, valid.airgroup_id, valid.air_id);
+    check_values(pilout, air, &label)?;
 
     let num_rows = air.num_rows.unwrap_or(0);
     if !num_rows.is_power_of_two() || u64::from(num_rows.trailing_zeros()) > MAX_NBITS {
@@ -96,7 +98,7 @@ pub fn validate(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
 }
 
 /// Checks that the extended domain of A.1, of `2^n_bits_ext` points, fits in the 2-adicity of
-/// BN254 (spec §4.2.1). M16 calls it once A.1 has fixed `nBitsExt`.
+/// BN254 (spec §4.2.1). The command calls it with the `nBitsExt` of `layout::Degrees`.
 pub fn check_extended_domain(n_bits_ext: u64) -> Result<(), SetupError> {
     if n_bits_ext > MAX_NBITS {
         return Err(SetupError::ExtendedDomain { n_bits_ext });
@@ -113,6 +115,31 @@ fn check_base_field(pilout: &pb::PilOut) -> Result<(), SetupError> {
     } else {
         Err(SetupError::NotBn254 { base_field: base_field.to_str_radix(10) })
     }
+}
+
+/// What v1 leaves out besides other AIRs (spec §4.2.1, D2): air values, airgroup values, proof
+/// values and global constraints. The values are counted where the pilout declares them and by
+/// their symbols, so that either one is enough to refuse them.
+fn check_values(pilout: &pb::PilOut, air: &pb::Air, label: &str) -> Result<(), SetupError> {
+    let symbols = |kind: pb::SymbolType| pilout.symbols.iter().filter(|s| s.r#type == kind as i32).count();
+    let air_values = air.air_values.len().max(symbols(pb::SymbolType::AirValue));
+    if air_values > 0 {
+        return Err(SetupError::AirValues { air: label.to_string(), n: air_values });
+    }
+    let airgroup_values = pilout.air_groups.iter().map(|ag| ag.air_group_values.len()).sum::<usize>();
+    let airgroup_values = airgroup_values.max(symbols(pb::SymbolType::AirGroupValue));
+    if airgroup_values > 0 {
+        return Err(SetupError::AirgroupValues { n: airgroup_values });
+    }
+    let proof_values = pilout.num_proof_values.iter().map(|&n| n as usize).sum::<usize>();
+    let proof_values = proof_values.max(symbols(pb::SymbolType::ProofValue));
+    if proof_values > 0 {
+        return Err(SetupError::ProofValues { n: proof_values });
+    }
+    if !pilout.constraints.is_empty() {
+        return Err(SetupError::GlobalConstraints { n: pilout.constraints.len() });
+    }
+    Ok(())
 }
 
 fn only_air(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {

@@ -2,25 +2,47 @@
 //! order of its steps. The steps are this crate's library functions; this module reports their
 //! errors with `anyhow`, as the other setup commands do (spec §5.4).
 //!
-//! It writes the `provingKey/` of spec §4.2.6 under the build directory. Today (plan M15) that
-//! is the files that do not depend on the passes: `pilout.globalInfo.json`, `<air>.const`,
-//! `pilfflonk.srs.bin` and `<air>.verkey.json`. M16 adds the passes, the layout, the bytecode and
-//! the vkey, where the steps below say.
+//! It writes the `provingKey/` of spec §4.2.6 under the build directory, for the one AIR of the
+//! pilout (D2):
+//!
+//! ```text
+//! <build>/provingKey/
+//! ├── pilout.globalInfo.json
+//! ├── pilout.globalConstraints.json
+//! └── <name>/
+//!     ├── pilfflonk/{pilfflonk.srs.bin, pilfflonk.vkey.json}
+//!     └── <airgroup>/airs/<air>/air/<air>.{const, pilfflonkinfo.json, expressionsinfo.json,
+//!                                           verifierinfo.json, bin, verkey.json}
+//! ```
+//!
+//! Everything that can be refused is refused before the first file is written: the pilout
+//! (§4.2.1), what the passes return, the extended domain, the names of the proof and the shape of
+//! the witness. The SRS is the first file, so that a ptau with too few powers writes nothing else;
+//! the vkey is the last, with its digest (A.6). The files depend only on the inputs: two runs
+//! write the same bytes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use pil2_pilout::pilout as pb;
+use pil_info::output::global_constraints::build_global_constraints_json;
+use pil_info::FieldCfg;
 use prost::Message;
-use proofman_pilfflonk::global_info::GLOBAL_INFO_FILE;
-use proofman_pilfflonk::{AirFile, AirVerkey, JsonFile, SetupParams};
+use proofman_pilfflonk::global_info::{GLOBAL_CONSTRAINTS_FILE, GLOBAL_INFO_FILE};
+use proofman_pilfflonk::json::to_json_string;
+use proofman_pilfflonk::{AirFile, JsonFile, ProofNames, SetupParams, Vkey, WitnessShape};
 
+use crate::air_info::{air_setup, AirRef, AirSetup};
+use crate::bytecode::write_air_bin;
+use crate::digest::seal_vkey;
 use crate::error::SetupError;
 use crate::fixed::FixedColumns;
 use crate::global_info::global_info;
-use crate::keys::{commit_fixed_f, load_srs, write_srs};
-use crate::validate::validate;
+use crate::keys::{air_verkey, load_srs, write_srs, x_2};
+use crate::layout::max_degree;
+use crate::passes::run_passes;
+use crate::validate::{check_extended_domain, validate};
 
 /// The directory the setup writes under the build directory.
 pub const PROVING_KEY_DIR: &str = "provingKey";
@@ -90,31 +112,57 @@ fn create_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))
 }
 
+/// Writes `text` at `path`, replacing any file there.
+fn write_text(path: &Path, text: &str) -> Result<()> {
+    fs::write(path, text).map_err(SetupError::io(path))?;
+    tracing::info!("wrote {}", path.display());
+    Ok(())
+}
+
 /// Runs `setup-pilfflonk`.
 pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     opts.check()?;
+    let refused = || format!("{} cannot be set up", opts.airout_path.display());
     let pilout = read_pilout(&opts.airout_path)?;
-    let air = validate(&pilout).with_context(|| format!("{} cannot be set up", opts.airout_path.display()))?;
-    let fixed = FixedColumns::from_air(air.air).with_context(|| format!("{}", opts.airout_path.display()))?;
-
-    // M16: pil_info::run(&pilout, air.airgroup_id, air.air_id, &cfg, …) with cfg = PilInfoCfg::bn254()
-    // and DegreePolicy::Search { max: max_constraint_degree }, then the layout (A.2, unpacked:
-    // R1), nBitsExt (A.1, checked with validate::check_extended_domain) and the bytecode.
-
-    let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+    let air = validate(&pilout).with_context(refused)?;
+    let fixed = FixedColumns::from_air(air.air).with_context(refused)?;
     let global_info = global_info(&pilout, opts.setup_params())?;
     let (airgroup_id, air_id) = (air.airgroup_id as u64, air.air_id as u64);
+    let air_ref = AirRef { name: &global_info.air(airgroup_id, air_id)?.name, airgroup_id, air_id };
+
+    // The passes (spec §4.2.2, §4.2.3), and what follows from them: the committed polynomials,
+    // their bounds and the unpacked layout (§4.2.4, A.1–A.3, plan R1), in the pilfflonkinfo.
+    let result = run_passes(&pilout, air, opts.max_constraint_degree).with_context(refused)?;
+    let AirSetup { info, committed } = air_setup(&result, air_ref, air.air, opts.max_q_degree).with_context(refused)?;
+    for name in &committed.unopened {
+        tracing::warn!("column {name} is never opened: it is not committed (spec A.2)");
+    }
+    let degrees = committed.degrees;
+    check_extended_domain(degrees.n_bits_ext).with_context(refused)?;
+    // What the prover will read of this key, checked now rather than when it proves: the names of
+    // the proof's values must not collide, and the witness must have the shape of the pilout's.
+    ProofNames::new(&global_info, &[&info]).with_context(refused)?;
+    WitnessShape::from_proving_key(&global_info, &[&info]).with_context(refused)?;
+    let n_g1 = max_degree(&info.layout);
+    tracing::info!(
+        "air {}: nBits {} | qDeg {} | {} im pols | {} f of k = 1 | |O|max {} | nBitsExt {} | {} powers [τ^i]₁",
+        info.name,
+        info.n_bits,
+        info.q_deg,
+        info.cm_pols_map.iter().filter(|p| p.im_pol).count(),
+        info.layout.0.len(),
+        degrees.max_openings,
+        degrees.n_bits_ext,
+        n_g1
+    );
+
+    let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+    let air_file = |file| global_info.air_file(&proving_key, airgroup_id, air_id, file);
     create_dir(&global_info.air_dir(&proving_key, airgroup_id, air_id)?)?;
     create_dir(&global_info.backend_dir(&proving_key))?;
 
-    // The fixed f_i and the size of the SRS. M16 takes them from the layout: keys::air_verkey over
-    // it, and write_srs with its largest degree, which is Q's. Until then, the fixed f_i of the
-    // unpacked layout (R1): one per column, in their order, with k = 1 and N coefficients.
-    let fixed_fs: Vec<Vec<u64>> = (0..fixed.n_columns() as u64).map(|id| vec![id]).collect();
-    let n_g1 = fixed.n_rows() as u64;
-
-    // The SRS first: a ptau with too few powers is refused (spec §4.2.1) before any other file is
-    // written.
+    // The SRS first: a ptau with fewer powers than the layout's largest degree is refused (spec
+    // §4.2.1) before any other file is written.
     let srs_path = global_info.srs_path(&proving_key);
     write_srs(&opts.powers_of_tau, n_g1, &srs_path)?;
     tracing::info!("wrote {} ({n_g1} powers [τ^i]₁)", srs_path.display());
@@ -123,19 +171,44 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     global_info.write(&global_info_path)?;
     tracing::info!("wrote {}", global_info_path.display());
 
-    let const_path = global_info.air_file(&proving_key, airgroup_id, air_id, AirFile::Const)?;
+    let const_path = air_file(AirFile::Const)?;
     fixed.write_const(&const_path)?;
     tracing::info!("wrote {} ({} columns of {} rows)", const_path.display(), fixed.n_columns(), fixed.n_rows());
 
     let srs = load_srs(&srs_path)?;
-    let verkey =
-        AirVerkey(fixed_fs.iter().map(|columns| commit_fixed_f(&srs, &fixed, columns)).collect::<Result<_, _>>()?);
-    let verkey_path = global_info.air_file(&proving_key, airgroup_id, air_id, AirFile::Verkey)?;
+    let verkey = air_verkey(&srs, &fixed, &info.layout)?;
+    let verkey_path = air_file(AirFile::Verkey)?;
     verkey.write(&verkey_path)?;
     tracing::info!("wrote {} ({} fixed commitments)", verkey_path.display(), verkey.0.len());
 
-    // M16: <air>.pilfflonkinfo.json, .expressionsinfo.json, .verifierinfo.json, .bin,
-    // pilout.globalConstraints.json, and last the vkey: Vkey::new(…, keys::x_2(&srs)?, &verkey, …),
-    // sealed with digest::seal_vkey.
+    let info_path = air_file(AirFile::PilfflonkInfo)?;
+    info.write(&info_path)?;
+    tracing::info!("wrote {}", info_path.display());
+
+    // The code, in the STARK's formats with dimension 1 (A.6), as pil-info serialises it for the
+    // STARK setup; the verifierinfo has only the qVerifier (Opening::Shplonk).
+    let pil_code = &result.pil_code;
+    write_text(&air_file(AirFile::ExpressionsInfo)?, &to_json_string(&pil_code.expressions_info)?)?;
+    write_text(&air_file(AirFile::VerifierInfo)?, &to_json_string(&pil_code.verifier_info)?)?;
+    let bin_path = air_file(AirFile::Bin)?;
+    write_air_bin(&result, &bin_path)?;
+    tracing::info!("wrote {}", bin_path.display());
+    // No global constraint (D2): the file has none, and the global hints the setup ignores.
+    let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254())?;
+    write_text(&proving_key.join(GLOBAL_CONSTRAINTS_FILE), &to_json_string(&global_constraints)?)?;
+
+    // Last, the vkey (§4.2.5, A.6): the qVerifier of the verifierinfo, the fixed commitments of
+    // the verkey and [τ]₂ of the SRS, sealed with its digest.
+    let verifier_info = serde_json::to_value(&pil_code.verifier_info)?;
+    let q_verifier = verifier_info
+        .get("qVerifier")
+        .cloned()
+        .ok_or_else(|| SetupError::PassesOutput("the verifierinfo has no qVerifier".to_string()))?;
+    let vkey =
+        Vkey::new(&info, global_info.n_publics, global_info.num_challenges.clone(), x_2(&srs)?, &verkey, q_verifier)?;
+    let vkey = seal_vkey(vkey)?;
+    let vkey_path = global_info.vkey_path(&proving_key);
+    vkey.write(&vkey_path)?;
+    tracing::info!("wrote {} (digest {})", vkey_path.display(), vkey.digest.to_hex());
     Ok(())
 }

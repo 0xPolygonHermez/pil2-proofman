@@ -16,12 +16,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand};
+use pilfflonk_setup::bytecode::Bytecode;
+use pilfflonk_setup::digest::keccak256;
 use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use prost::Message;
+use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
     AirFile, AirVerkey, FqBytes, FrBytes, G1Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
-    SetupParams,
+    PilfflonkInfo, ProofNames, SetupParams, Vkey, WitnessShape,
 };
 
 const BN254_R_BE: [u8; 32] = [
@@ -83,8 +86,9 @@ fn files(dir: &Path) -> Vec<String> {
     out
 }
 
-/// A BN254 pilout of one AIR of 4 rows: fixed columns `[1, 5, 6, 7]` and `[0, 1, 0, 1]`, a
-/// witness column, one public and the constraint `a − F0 = 0`.
+/// A BN254 pilout of one AIR of 4 rows: fixed columns `F0 = [1, 5, 6, 7]` and `F1 = [0, 1, 0,
+/// 1]`, a witness column `a`, one public and the constraint `a − F0 = 0`. `F1` is in no
+/// constraint: it is never opened.
 fn pilout() -> pb::PilOut {
     let op = |operand| Some(pb::Operand { operand: Some(operand) });
     let fixed_col = |values: [u8; 4]| pb::FixedCol { values: values.iter().map(|&v| vec![v]).collect() };
@@ -113,13 +117,77 @@ fn pilout() -> pb::PilOut {
         air_groups: vec![pb::AirGroup { name: Some("TinyGroup".into()), air_group_values: vec![], airs: vec![air] }],
         num_challenges: vec![0],
         num_public_values: 1,
-        symbols: vec![pb::Symbol {
-            name: "in".into(),
-            r#type: pb::SymbolType::PublicValue as i32,
-            ..Default::default()
-        }],
+        symbols: vec![
+            pb::Symbol { name: "in".into(), r#type: pb::SymbolType::PublicValue as i32, ..Default::default() },
+            column_symbol("Tiny.F0", pb::SymbolType::FixedCol, 0, 0),
+            column_symbol("Tiny.F1", pb::SymbolType::FixedCol, 1, 0),
+            column_symbol("Tiny.a", pb::SymbolType::WitnessCol, 0, 1),
+        ],
         ..Default::default()
     }
+}
+
+/// The symbol of column `id` of `stage` of the AIR.
+fn column_symbol(name: &str, kind: pb::SymbolType, id: u32, stage: u32) -> pb::Symbol {
+    pb::Symbol {
+        name: name.into(),
+        air_group_id: Some(0),
+        air_id: Some(0),
+        r#type: kind as i32,
+        id,
+        stage: Some(stage),
+        ..Default::default()
+    }
+}
+
+/// The files of the `provingKey/` of spec §4.2.6 for the pilout `name`, its airgroup and its AIR.
+fn proving_key_files(name: &str, airgroup: &str, air: &str) -> Vec<String> {
+    let mut files: Vec<String> =
+        ["bin", "const", "expressionsinfo.json", "pilfflonkinfo.json", "verifierinfo.json", "verkey.json"]
+            .iter()
+            .map(|ext| format!("{name}/{airgroup}/airs/{air}/air/{air}.{ext}"))
+            .collect();
+    files.push(format!("{name}/pilfflonk/pilfflonk.srs.bin"));
+    files.push(format!("{name}/pilfflonk/pilfflonk.vkey.json"));
+    files.push("pilout.globalConstraints.json".into());
+    files.push("pilout.globalInfo.json".into());
+    files
+}
+
+/// The layout of `info` as `(stage, id, name, offsets, degree)` for each `f`, all of `k = 1`.
+fn layout(info: &PilfflonkInfo) -> Vec<(u64, u64, String, Vec<i64>, u64)> {
+    assert!(info.layout.0.iter().all(|f| f.k == 1 && f.pols.len() == 1));
+    info.layout.0.iter().map(|f| (f.stage, f.pols[0].id, f.pols[0].name.clone(), f.offsets.clone(), f.degree)).collect()
+}
+
+/// What the prover and the verifier read of a `provingKey/` accepts this one: every file by its
+/// type, the vkey's digest, the names of the proof and the shape of the witness. Returns the
+/// globalInfo, the pilfflonkinfo and the vkey.
+fn check_proving_key(proving_key: &Path) -> (PilfflonkGlobalInfo, PilfflonkInfo, Vkey) {
+    let gi = PilfflonkGlobalInfo::from_proving_key(proving_key).unwrap();
+    let info = PilfflonkInfo::read(&gi.air_file(proving_key, 0, 0, AirFile::PilfflonkInfo).unwrap()).unwrap();
+    let verkey = AirVerkey::read(&gi.air_file(proving_key, 0, 0, AirFile::Verkey).unwrap()).unwrap();
+    let vkey = Vkey::read(&gi.vkey_path(proving_key)).unwrap();
+    assert!(vkey.digest_matches(|data| keccak256(data).unwrap()).unwrap());
+    assert_eq!((&vkey.layout, &vkey.ev_map, &vkey.fixed_commitments.0), (&info.layout, &info.ev_map, &verkey.0));
+    Bytecode::read(&gi.air_file(proving_key, 0, 0, AirFile::Bin).unwrap()).unwrap();
+    for file in [AirFile::ExpressionsInfo, AirFile::VerifierInfo] {
+        let text = fs::read(gi.air_file(proving_key, 0, 0, file).unwrap()).unwrap();
+        serde_json::from_slice::<serde_json::Value>(&text).unwrap();
+    }
+    let text = fs::read(proving_key.join(GLOBAL_CONSTRAINTS_FILE)).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&text).unwrap(),
+        serde_json::json!({"constraints": [], "hints": []})
+    );
+    ProofNames::new(&gi, &[&info]).unwrap();
+    WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
+    (gi, info, vkey)
+}
+
+/// The bytes of every file under `dir`, in the order of [`files`].
+fn contents(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    files(dir).into_iter().map(|f| (f.clone(), fs::read(dir.join(&f)).unwrap())).collect()
 }
 
 #[test]
@@ -165,16 +233,20 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 
     let proving_key = build.join("provingKey");
+    let mut expected = proving_key_files("tiny", "TinyGroup", "Tiny");
+    expected.sort();
+    assert_eq!(files(&proving_key), expected);
+    let (gi, info, _) = check_proving_key(&proving_key);
+    // a − F0 has degree 1: qDeg = 0, and Q has |O|_max + 1 = 2 coefficients (A.1). F1 is never
+    // opened, and not committed.
+    let s = |name: &str| name.to_string();
     assert_eq!(
-        files(&proving_key),
-        [
-            "pilout.globalInfo.json",
-            "tiny/TinyGroup/airs/Tiny/air/Tiny.const",
-            "tiny/TinyGroup/airs/Tiny/air/Tiny.verkey.json",
-            "tiny/pilfflonk/pilfflonk.srs.bin",
-        ]
+        layout(&info),
+        [(0, 0, s("Tiny.F0"), vec![0], 4), (1, 0, s("Tiny.a"), vec![0], 6), (2, 1, s("Q0"), vec![0], 2)]
     );
-    let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
+    // The SRS holds the largest degree, a's 6.
+    let srs = fs::read(gi.srs_path(&proving_key)).unwrap();
+    assert_eq!(srs.len(), 12 + 3 * 12 + 88 + 6 * 64 + 2 * 128);
     assert_eq!(
         gi.setup_params,
         SetupParams { max_constraint_degree: 4, extra_muls: 0, max_q_degree: 0, packing: false }
@@ -183,7 +255,14 @@ fn it_writes_the_proving_key_of_a_pilout() {
     let column: Vec<FrBytes> = [1, 5, 6, 7].map(FrBytes::from_u64).to_vec();
     assert_eq!(fixed.column(0).unwrap(), column.as_slice());
     let verkey = AirVerkey::read(&gi.air_file(&proving_key, 0, 0, AirFile::Verkey).unwrap()).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![g(), G1Affine::INFINITY]));
+    assert_eq!(verkey, AirVerkey(vec![g()]));
+
+    // A second run writes the same bytes.
+    let before = contents(&proving_key);
+    let out =
+        proofman_setup(&[&args[..], &["--no-packing", "--max-constraint-degree", "4", "--extra-muls", "0"]].concat());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(contents(&proving_key), before);
 
     // What the setup cannot do yet fails with the reason, and a non-zero status.
     for (extra, expected) in [
@@ -207,8 +286,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert!(stderr.contains("over Goldilocks") && stderr.contains("PIL2C_EXEC"), "{stderr}");
 }
 
-/// The Fibonacci fixture (plan M13), compiled over BN254: the files of M15 in the paths of spec
-/// §4.2.6, and their contents.
+/// The Fibonacci fixture (plan M13), compiled over BN254: the `provingKey/` of spec §4.2.6, with
+/// one im pol and `qDeg = 1` (M10), the bounds of A.1–A.3, and the same bytes on a second run.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
@@ -228,7 +307,7 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     let ptau = dir.file("tau_one.ptau");
     write_tau_one_ptau(&ptau, 1024).unwrap();
     let build = dir.file("build");
-    let out = proofman_setup(&[
+    let args = [
         "setup-pilfflonk",
         "-a",
         path(&pilout_path),
@@ -237,21 +316,16 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         "--powers-of-tau",
         path(&ptau),
         "--no-packing",
-    ]);
+    ];
+    let out = proofman_setup(&args);
     assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
 
     let proving_key = build.join("provingKey");
-    assert_eq!(
-        files(&proving_key),
-        [
-            "fibonacci/Fibonacci/airs/Fibonacci/air/Fibonacci.const",
-            "fibonacci/Fibonacci/airs/Fibonacci/air/Fibonacci.verkey.json",
-            "fibonacci/pilfflonk/pilfflonk.srs.bin",
-            "pilout.globalInfo.json",
-        ]
-    );
+    let mut expected = proving_key_files("fibonacci", "Fibonacci", "Fibonacci");
+    expected.sort();
+    assert_eq!(files(&proving_key), expected);
+    let (gi, info, vkey) = check_proving_key(&proving_key);
 
-    let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
     assert_eq!(gi.airs, vec![vec![GlobalInfoAir { name: "Fibonacci".into(), num_rows: 256 }]]);
     assert_eq!(gi.air_groups, vec!["Fibonacci".to_string()]);
     let publics: Vec<NameStageEntry> =
@@ -270,11 +344,53 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     assert_eq!(fixed.column(0).unwrap(), one_at(0).as_slice());
     assert_eq!(fixed.column(1).unwrap(), one_at(255).as_slice());
 
-    // With τ = 1: L1(1)·G = G and LLAST(1)·G, the point at infinity.
-    let verkey = AirVerkey::read(&gi.air_file(&proving_key, 0, 0, AirFile::Verkey).unwrap()).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![g(), G1Affine::INFINITY]));
+    // One im pol, l1' − (l1·l1 + l2·l2), after l1 and l2 in stage 1, and qDeg = 1 (M10). Its expId
+    // is the index of that expression in the pilout (the oracle's assumption, M14).
+    assert_eq!((info.n_bits, info.n_stages, info.q_deg, info.q_dim, info.max_q_degree), (8, 1, 1, 1, 0));
+    let names: Vec<(&str, u64, bool)> =
+        info.cm_pols_map.iter().map(|p| (p.name.as_str(), p.stage_id, p.im_pol)).collect();
+    assert_eq!(names, [("l1", 0, false), ("l2", 1, false), ("Fibonacci.ImPol", 2, true), ("Q0", 0, false)]);
+    let pilout = pb::PilOut::decode(fs::read(&pilout_path).unwrap().as_slice()).unwrap();
+    let exp_id = info.cm_pols_map[2].exp_id.unwrap() as usize;
+    let witness = |col_idx, row_offset| {
+        Some(pb::Operand {
+            operand: Some(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx, row_offset })),
+        })
+    };
+    match &pilout.air_groups[0].airs[0].expressions[exp_id].operation {
+        Some(expression::Operation::Sub(sub)) => assert_eq!(sub.lhs, witness(0, 1)),
+        other => panic!("expression {exp_id} is {other:?}"),
+    }
 
-    // The SRS: the 256 powers of the unpacked fixed f (M16 sizes it by the layout).
+    // The degrees (A.1–A.3): N = 256; l1 and l2 opened at {0, 1} have 256 + 2 + 1 coefficients,
+    // the im pol at {0} 256 + 1 + 1, the fixed columns 256; |O|_max = 2, so Q has
+    // 1·256 + 2·2 + 1 = 261, and the extended domain 2^9.
+    let s = |name: &str| name.to_string();
+    assert_eq!(
+        layout(&info),
+        [
+            (0, 0, s("Fibonacci.L1"), vec![0], 256),
+            (0, 1, s("Fibonacci.LLAST"), vec![0], 256),
+            (1, 0, s("l1"), vec![0, 1], 259),
+            (1, 1, s("l2"), vec![0, 1], 259),
+            (1, 2, s("Fibonacci.ImPol[0]"), vec![0], 258),
+            (2, 3, s("Q0"), vec![0], 261),
+        ]
+    );
+    assert_eq!(info.opening_points, [0, 1]);
+    assert_eq!(info.ev_map.len(), 7);
+
+    // With τ = 1: L1(1)·G = G and LLAST(1)·G, the point at infinity.
+    assert_eq!(vkey.fixed_commitments.0, [g(), G1Affine::INFINITY]);
+    assert_eq!((vkey.n_public, vkey.power, vkey.power_w, vkey.q_deg), (3, 8, 1, 1));
+
+    // The SRS: the 261 powers of Q's f, the largest of the layout.
     let srs = fs::read(gi.srs_path(&proving_key)).unwrap();
-    assert_eq!((&srs[..4], srs.len()), (&b"pfsr"[..], 12 + 3 * 12 + 88 + 256 * 64 + 2 * 128));
+    assert_eq!((&srs[..4], srs.len()), (&b"pfsr"[..], 12 + 3 * 12 + 88 + 261 * 64 + 2 * 128));
+
+    // A second run writes the same bytes.
+    let before = contents(&proving_key);
+    let out = proofman_setup(&args);
+    assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(contents(&proving_key), before);
 }
